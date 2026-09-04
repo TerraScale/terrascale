@@ -55,9 +55,18 @@ pub(crate) struct SqlLowered {
     pub(crate) collection: String,
     pub(crate) conditions: Vec<crate::query::QueryCondition>,
     pub(crate) ordering: Vec<crate::query::OrderingKey>,
-    pub(crate) projection: Option<Vec<String>>,
+    pub(crate) projection: Option<Vec<SqlProjection>>,
     pub(crate) offset: u64,
     pub(crate) limit: Option<u32>,
+}
+
+/// One SQL projection expression lowered to a document field.  The source
+/// field and output label are kept separately: aliases are presentation
+/// metadata and must not change the planner's field identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SqlProjection {
+    pub(crate) field: String,
+    pub(crate) output: String,
 }
 
 /// Execute-only SQL retained for shapes the typed subscribable model cannot
@@ -854,6 +863,28 @@ pub(crate) fn lower(
     {
         return Err(SqlError::binding(SqlErrorClass::UnsupportedStatement, "SELECT clauses"));
     }
+    let collection = lower_collection(select)?;
+
+    let mut used = std::collections::BTreeSet::new();
+    let mut conditions = Vec::new();
+    if let Some(selection) = &select.selection {
+        lower_condition(selection, parameters, &mut used, &mut conditions)?;
+    }
+
+    let projection = lower_projection(&select.projection)?;
+    let ordering = lower_ordering(statement.order_by.as_ref())?;
+    let (limit, offset) = lower_paging(statement.limit_clause.as_ref(), parameters, &mut used)?;
+    for name in parameters.names() {
+        if !used.contains(name) {
+            return Err(SqlError::binding(SqlErrorClass::UnexpectedParameter, name));
+        }
+    }
+    Ok(SqlLowered { collection, conditions, ordering, projection, offset, limit })
+}
+
+/// Resolves the single collection a launch query reads. Anything but one
+/// plain table reference is rejected rather than approximated.
+fn lower_collection(select: &Select) -> Result<String, SqlError> {
     let [table] = select.from.as_slice() else {
         return Err(SqlError::binding(SqlErrorClass::UnsupportedStatement, "one collection"));
     };
@@ -904,22 +935,7 @@ pub(crate) fn lower(
     if !valid_identifier(&collection) {
         return Err(SqlError::binding(SqlErrorClass::InvalidIdentifier, &collection));
     }
-
-    let mut used = std::collections::BTreeSet::new();
-    let mut conditions = Vec::new();
-    if let Some(selection) = &select.selection {
-        lower_condition(selection, parameters, &mut used, &mut conditions)?;
-    }
-
-    let projection = lower_projection(&select.projection)?;
-    let ordering = lower_ordering(statement.order_by.as_ref())?;
-    let (limit, offset) = lower_paging(statement.limit_clause.as_ref(), parameters, &mut used)?;
-    for name in parameters.names() {
-        if !used.contains(name) {
-            return Err(SqlError::binding(SqlErrorClass::UnexpectedParameter, name));
-        }
-    }
-    Ok(SqlLowered { collection, conditions, ordering, projection, offset, limit })
+    Ok(collection)
 }
 
 /// Validates every SQL query node's LIMIT/OFFSET before execution. `SQLite`'s
@@ -1081,16 +1097,25 @@ fn unsupported(construct: &str) -> SqlError {
     SqlError::binding(SqlErrorClass::UnsupportedStatement, construct)
 }
 
-fn lower_projection(items: &[SelectItem]) -> Result<Option<Vec<String>>, SqlError> {
+fn lower_projection(items: &[SelectItem]) -> Result<Option<Vec<SqlProjection>>, SqlError> {
     if items.len() == 1 && matches!(items[0], SelectItem::Wildcard(_)) {
         return Ok(None);
     }
     let mut fields = Vec::with_capacity(items.len());
     for item in items {
-        let (SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. }) = item else {
-            return Err(unsupported("projection"));
+        let (expr, output) = match item {
+            SelectItem::UnnamedExpr(expr) => (expr, None),
+            SelectItem::ExprWithAlias { expr, alias, .. } => (expr, Some(alias.value.as_str())),
+            _ => {
+                return Err(unsupported("projection"));
+            }
         };
-        fields.push(field_name(expr)?);
+        let field = field_name(expr)?;
+        let output = output.unwrap_or(field.as_str());
+        if !valid_identifier(output) || fields.iter().any(|known: &SqlProjection| known.output == output) {
+            return Err(SqlError::binding(SqlErrorClass::InvalidIdentifier, output));
+        }
+        fields.push(SqlProjection { field, output: output.to_owned() });
     }
     Ok(Some(fields))
 }

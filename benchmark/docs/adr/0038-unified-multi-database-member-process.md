@@ -9,17 +9,17 @@ authority: direct workspace-owner instruction
 ## Decision
 
 One production TerraBase Member is one Rust process containing the clustered
-engine, document and Data Family operations, query execution, native
-replication and repair, reactive delivery, schema, tiers, usage, maintenance,
-health, metrics, and graceful shutdown. Required TBEP operations cannot fall
+engine, document and Data Family operations, SQL query execution, native
+replication and repair, reactive delivery, schema, usage, maintenance, health,
+metrics, and graceful shutdown. Required TBEP operations cannot fall
 through to a partial host that refuses another plane.
 
-The Member may host many databases for DBaaS density. Each database opens a
-separate engine location with its own WAL, immutable files, manifests,
-publication journal, encryption keys, backup state, recovery frontier, quotas,
-and lifecycle. A database operation resolves its admitted database identity to
-exactly one location before engine dispatch. A tenant or database identifier
-from the request never becomes an unchecked filesystem path.
+The Member may host many databases for DBaaS density. Each database opens one
+SQLite file with its own WAL, publication journal, encryption keys, backup
+state, recovery frontier, quotas, and lifecycle. A database operation resolves
+its admitted database identity to exactly one file before engine dispatch. A
+tenant or database identifier from the request never becomes an unchecked
+filesystem path.
 
 All mutation, usage, replication, and reactive facts for one database derive
 from that database's durable engine journal. The process may retain bounded
@@ -56,7 +56,8 @@ restart.
 
 Release tests cover multiple databases in one process, tenant and filesystem
 isolation, fair admission under noisy load, independent keys and backups,
-partial location failure, concurrent compaction, process restart, crash
-recovery, dedicated-placement movement, and every required TBEP plane through
-one production host. The production daemon must become ready only with the
-complete host, never with a standalone document-only engine.
+partial database failure, SQLite checkpoint and recovery behavior, process
+restart, crash recovery, dedicated-placement movement, and every required
+TBEP plane through one production host. The production daemon must become
+ready only with the complete host, never with a standalone document-only
+engine.

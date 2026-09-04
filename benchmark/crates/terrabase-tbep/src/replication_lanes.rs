@@ -29,14 +29,14 @@
 //!   batched report ([`FrameKind::AckBatch`]) correlated to the batch's
 //!   message identity; only durable holdings are reported.
 //!
-//! Production socket adapter (TODO, S-09): the lanes bind any
-//! [`MemberTransport`] — the in-process lane here, and
-//! `terrabase-member-transport`'s `quic::QuicLane` as a loopback
-//! qualification tool. The production member boundary (the `production`
-//! module: real QUIC endpoints, lane-CA certificates, SPIFFE admission) is
-//! not yet a [`MemberTransport`] adapter; composing it onto this link and
-//! feeding it the `[replication] peers` list the server configuration
-//! enumerates is the member-composition step that lands with S-09.
+//! Production socket adapter: [`RegionLink`] consumes the common
+//! [`MemberTransport`] seam, so the real socket lane can be selected without
+//! changing the tailer. [`production_transport`] constructs
+//! `terrabase-member-transport`'s [`QuicLane`] (mutual-TLS QUIC sockets) for
+//! callers that have a member list. The server's external endpoint and peer
+//! admission wiring remain an integration dependency: that boundary must hand
+//! this link a `QuicLane` (or another authenticated `MemberTransport`) before
+//! it marks replication serving.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -53,6 +53,7 @@ use terrabase_member_transport::identity::{
     TenantId as LaneTenantId,
 };
 use terrabase_member_transport::transport::{FrameSelector, MemberTransport, TransportError};
+use terrabase_member_transport::{QuicLane, QuicLaneError};
 
 use crate::engine_host::EngineHost;
 use crate::host::HostingError;
@@ -84,6 +85,19 @@ pub const FRAME_EXPIRY_TICKS: u64 = 64;
 /// waiting for an earlier per-origin sequence.  Overflow is explicit: the
 /// caller must run anti-entropy rather than silently skipping a dependency.
 pub const MAX_PENDING_FRAMES: usize = MAX_INFLIGHT_FRAMES * 8;
+
+/// Constructs the authenticated production QUIC transport used by
+/// [`RegionLink`].  The returned lane implements [`MemberTransport`], so the
+/// exact same pull/apply/ack state machine used by the in-process tests runs
+/// over real member sockets when callers provide the production member list.
+///
+/// # Errors
+///
+/// Returns [`QuicLaneError`] when a socket or lane certificate cannot be
+/// initialized.
+pub fn production_transport(members: &[&str]) -> Result<QuicLane, QuicLaneError> {
+    QuicLane::new(members)
+}
 
 /// The bounded history used to distinguish a delayed duplicate report from a
 /// report fabricated for a message identity this link never issued.

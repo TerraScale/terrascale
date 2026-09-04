@@ -49,6 +49,10 @@ pub(crate) struct NormalizedQuery {
     predicate: QueryPredicate,
     ordering: QueryOrdering,
     projection: QueryProjection,
+    /// SQL output labels, parallel to `projection.selected()`.  `None` is
+    /// used by typed queries and whole-document SQL; labels never participate
+    /// in predicate/index planning.
+    sql_projection_outputs: Option<Vec<String>>,
     paging: QueryPaging,
     staleness: StalenessPolicy,
     loads: Vec<QueryLoad>,
@@ -68,6 +72,7 @@ impl NormalizedQuery {
         predicate: QueryPredicate,
         ordering: QueryOrdering,
         projection: QueryProjection,
+        sql_projection_outputs: Option<Vec<String>>,
         paging: QueryPaging,
         deadline: Option<Deadline>,
         cancellation: Option<Cancellation>,
@@ -77,6 +82,7 @@ impl NormalizedQuery {
             predicate,
             ordering,
             projection,
+            sql_projection_outputs,
             paging,
             staleness: super::StalenessPolicy::try_new(super::StalenessMode::Strict, Vec::new())
                 .expect("empty strict policy is valid"),
@@ -111,6 +117,7 @@ impl NormalizedQuery {
             predicate,
             ordering,
             projection,
+            sql_projection_outputs: None,
             paging,
             staleness,
             loads,
@@ -141,6 +148,13 @@ impl NormalizedQuery {
     /// Returns the typed projection.
     pub(crate) const fn projection(&self) -> &QueryProjection {
         &self.projection
+    }
+
+    /// Returns SQL presentation labels, when this model came from a field
+    /// projection in SQL.  The labels are kept out of the typed projection so
+    /// aliases cannot accidentally affect index selection.
+    pub(crate) fn sql_projection_outputs(&self) -> Option<&[String]> {
+        self.sql_projection_outputs.as_deref()
     }
 
     /// Returns the typed page request.

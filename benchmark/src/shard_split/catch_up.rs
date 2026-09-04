@@ -1,18 +1,35 @@
 //! Publication-journal catch-up interfaces.
 
+/// The operation represented by a publication-journal row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum JournalOperation {
+    /// Insert or replace the canonical document bytes.
+    Upsert,
+    /// Remove the document; `value` is empty and must not resurrect it.
+    Delete,
+}
+
 /// One journal operation in the moved key range.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JournalEntry {
     sequence: u64,
     key: Vec<u8>,
     value: Vec<u8>,
+    operation: JournalOperation,
 }
 
 impl JournalEntry {
     /// Creates a journal entry containing opaque canonical bytes.
     #[must_use]
     pub fn new(sequence: u64, key: Vec<u8>, value: Vec<u8>) -> Self {
-        Self { sequence, key, value }
+        Self { sequence, key, value, operation: JournalOperation::Upsert }
+    }
+
+    /// Creates a deletion tombstone. Tombstones are copied during catch-up,
+    /// so a delete acknowledged on the source cannot be lost at cutover.
+    #[must_use]
+    pub fn delete(sequence: u64, key: Vec<u8>) -> Self {
+        Self { sequence, key, value: Vec::new(), operation: JournalOperation::Delete }
     }
 
     /// Returns the global journal sequence.
@@ -32,6 +49,12 @@ impl JournalEntry {
     pub fn value(&self) -> &[u8] {
         &self.value
     }
+
+    /// Returns whether this row upserts or deletes the document.
+    #[must_use]
+    pub const fn operation(&self) -> JournalOperation {
+        self.operation
+    }
 }
 
 /// Reader seam for the durable publication journal.
@@ -50,6 +73,26 @@ pub trait JournalWriter {
 
     /// Applies a contiguous batch durably before returning.
     fn apply_journal(&mut self, entries: &[JournalEntry]) -> Result<(), Self::Error>;
+
+    /// Persists the source checkpoint after applying the selected rows.
+    ///
+    /// The default preserves the original adapter contract. SQLite adapters
+    /// should override this method and commit the rows plus checkpoint in one
+    /// transaction; a retry after a crash is then an idempotent transaction
+    /// replay rather than an acknowledged-write loss window.
+    fn advance_checkpoint(&mut self, _through: u64) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Applies selected rows and advances the checkpoint as one durable unit.
+    fn apply_journal_and_checkpoint(
+        &mut self,
+        entries: &[JournalEntry],
+        through: u64,
+    ) -> Result<(), Self::Error> {
+        self.apply_journal(entries)?;
+        self.advance_checkpoint(through)
+    }
 }
 
 /// Catch-up protocol failure detected before cutover.
@@ -142,9 +185,12 @@ impl JournalCatchUp {
         // rows which happen to belong to this range.  Advancing it when a
         // page contains only rows for another range is essential: otherwise
         // the same page is read forever and a split can never catch up.
-        if !selected.is_empty() {
-            writer.apply_journal(&selected).map_err(|_| CatchUpError::WriterFailed)?;
-        }
+        writer
+            .apply_journal_and_checkpoint(
+                &selected,
+                entries.last().map_or(self.applied_through, JournalEntry::sequence),
+            )
+            .map_err(|_| CatchUpError::WriterFailed)?;
         // Do this only after the target has durably accepted the selected
         // rows.  A retry after a crash before the caller persists this value
         // is safe because JournalWriter is explicitly idempotent.

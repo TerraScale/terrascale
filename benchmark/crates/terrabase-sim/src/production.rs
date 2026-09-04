@@ -262,19 +262,19 @@ impl ProductionWorld {
                 break;
             }
             for durable in &page {
-                // Local Engine commits retain the file-bound origin (a
-                // path-derived token), whereas replicated rows retain the
-                // simulation's `region-N` source origin. Resolve both forms
-                // against the durable sequence and the adapter's metadata.
-                let id = durable
-                    .origin
-                    .strip_prefix("region-")
-                    .and_then(|value| value.parse::<u32>().ok())
-                    .map_or((region, durable.origin_sequence), |origin| {
-                        (RegionId::new(origin), durable.origin_sequence)
-                    });
-                if self.records.contains_key(&id) {
-                    applied.insert(id);
+                // The engine's local origin is path-bound and therefore is
+                // intentionally different from the simulation's Region
+                // identity.  Rebuild the adapter cache from the durable
+                // operation identity embedded in the canonical journal row,
+                // rather than guessing from that local origin string.
+                for (id, row) in &self.records {
+                    if durable
+                        .canonical
+                        .windows(row_commit(row).len())
+                        .any(|window| window == row_commit(row).as_slice())
+                    {
+                        applied.insert(*id);
+                    }
                 }
                 cursor = cursor.max(durable.commit_sequence);
             }
@@ -322,6 +322,68 @@ impl ProductionWorld {
             .max()
             .unwrap_or(0);
         Ok(())
+    }
+
+    /// Reads the complete durable journal for one region.  This is deliberately
+    /// a fresh SQLite read on every proof operation; the simulation's row map
+    /// is metadata for causal scheduling, never evidence that a mutation was
+    /// persisted.
+    fn durable_journal(
+        &self,
+        region: RegionId,
+    ) -> Result<Vec<terrabase::engine::JournalRow>, ProductionWorldError> {
+        let engine = self.engine(region).ok_or(ProductionWorldError::EngineUnavailable)?;
+        let scope = engine.scope_for(&self.tenant);
+        let mut cursor = 0;
+        let mut rows = Vec::new();
+        loop {
+            let page = engine
+                .journal_rows(&scope, cursor, MAX_JOURNAL_PAGE)
+                .map_err(|_| ProductionWorldError::EngineUnavailable)?;
+            if page.is_empty() {
+                break;
+            }
+            cursor = page.iter().map(|row| row.commit_sequence).max().unwrap_or(cursor);
+            rows.extend(page);
+            if rows.len() > RECONCILIATION_LIMIT {
+                return Err(ProductionWorldError::ReconciliationFailure);
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Checks a logical simulation row against the actual canonical journal
+    /// bytes. Operation ids are part of the canonical encoding; matching them
+    /// catches a missing, substituted, or non-durable row without decoding an
+    /// engine-private format in the adapter.
+    fn durable_contains(
+        &self,
+        region: RegionId,
+        row: &JournalRow,
+    ) -> Result<bool, ProductionWorldError> {
+        let commit = row_commit(row);
+        if self
+            .durable_journal(region)?
+            .iter()
+            .any(|durable| durable.canonical.windows(commit.len()).any(|window| window == commit))
+        {
+            return Ok(true);
+        }
+        // A concurrent loser is intentionally absent from `documents` after
+        // apply, but its source operation remains durable in merge history.
+        let engine = self.engine(region).ok_or(ProductionWorldError::EngineUnavailable)?;
+        let scope = engine.scope_for(&self.tenant);
+        let collection = terrabase::types::CollectionName::try_new(COLLECTION)
+            .map_err(|_| ProductionWorldError::InvalidIdentifier)?;
+        let id = DocumentId::try_new(&format!("key-{}", row.key))
+            .map_err(|_| ProductionWorldError::InvalidIdentifier)?;
+        let conflicts = engine
+            .merge_conflicts_for(&scope, &collection, &id, MAX_JOURNAL_PAGE)
+            .map_err(|_| ProductionWorldError::EngineUnavailable)?;
+        Ok(conflicts.iter().any(|conflict| {
+            conflict.loser_commit_ulid.as_bytes() == commit.as_slice()
+                || conflict.winner_commit_ulid.as_bytes() == commit.as_slice()
+        }))
     }
 
     /// Alias for [`Self::restart_region`] used by simulation fault drivers.
@@ -707,6 +769,23 @@ impl ReplicationEngine for ProductionWorld {
                     else {
                         continue;
                     };
+                    // Do not canonicalize the transport back to the
+                    // bookkeeping row.  The frame's operation, provenance,
+                    // identity, and body must all agree with the durable
+                    // source row before it is eligible for causal apply.
+                    let expected_body = (!row.tombstone).then(|| {
+                        LaneValue::String(String::from_utf8_lossy(&row.value).into_owned())
+                    });
+                    if record.commit_ulid != row_commit_string(row)
+                        || record.hlc != row.hlc.value()
+                        || record.origin != format!("region-{}", row.origin.index())
+                        || record.origin_sequence != row.seq
+                        || record.collection.as_str() != COLLECTION
+                        || record.id.as_str() != format!("key-{}", row.key)
+                        || record.body != expected_body
+                    {
+                        continue;
+                    }
                     let _ = self.apply_row(target, &row);
                 }
             }
@@ -732,13 +811,43 @@ impl ReplicationEngine for ProductionWorld {
         let Some(state) = self.regions.iter().find(|state| state.id == region) else {
             return 0;
         };
-        // Fingerprints are over the reconciled journal set, including causal
-        // metadata and tombstones. A visible-document digest can falsely
-        // claim convergence when one member is missing a losing history row.
+        // Fingerprints are over the reconciled logical journal set, including
+        // causal metadata and tombstones.  The durable journal and SQLite
+        // bodies are independently inspected first: an in-memory applied set
+        // cannot prove that a write survived a close/reopen.
+        if self.durable_journal(region).is_err() {
+            return 0;
+        }
+        let Some(snapshot) = self.engine(region).and_then(|engine| {
+            let scope = engine.scope_for(&self.tenant);
+            let snapshot = engine.read_snapshot(&scope).ok()?;
+            let collection = terrabase::types::CollectionName::try_new(COLLECTION).ok()?;
+            engine.snapshot_documents_in_collection(&scope, &snapshot, &collection).ok()
+        }) else {
+            return 0;
+        };
         let mut hash = fnv_bytes(0xcbf2_9ce4_8422_2325, b"terrabase-sim-fingerprint-v2");
         hash = fnv_bytes(hash, &(state.applied.len() as u64).to_be_bytes());
+        // Include evidence derived from the durable files without hashing
+        // path-bound local origins, which intentionally differ after the
+        // same source row is applied on another member.
+        let durable_rows = state
+            .applied
+            .iter()
+            .filter_map(|id| self.records.get(id))
+            .filter(|row| self.durable_contains(region, row).unwrap_or(false))
+            .count();
+        hash = fnv_bytes(hash, &(durable_rows as u64).to_be_bytes());
+        hash = fnv_bytes(hash, &(snapshot.len() as u64).to_be_bytes());
+        for document in snapshot {
+            hash = fnv_bytes(hash, document.id().as_str().as_bytes());
+            if let DocumentValue::String(value) = document.value() {
+                hash = fnv_bytes(hash, value.as_bytes());
+            }
+        }
         for id in &state.applied {
             if let Some(row) = self.records.get(id) {
+                let Ok(true) = self.durable_contains(region, row) else { return 0 };
                 hash = fnv_bytes(hash, &row_bytes(row));
             }
         }
@@ -768,12 +877,26 @@ impl ReplicationEngine for ProductionWorld {
                     break;
                 }
             }
-            for id in &state.applied {
-                let Some(row) = self.records.get(id) else { continue };
-                if let Ok(id) = JournalRowId::new(format!("region-{}", row.origin.index()), row.seq)
-                {
-                    let hash = terrabase_replication_core::anti_entropy::row_hash(&row_bytes(row));
-                    table.insert(&RowSummary::new(id, hash));
+            // The reconciliation set is built from the durable journal, not
+            // the adapter cache.  Logical source metadata is restored from
+            // the simulation row only after the durable operation identity is
+            // proven present in SQLite.
+            for (id, row) in &self.records {
+                if !state.applied.contains(id) {
+                    continue;
+                }
+                let commit = row_commit(row);
+                let durable_has_row = durable.iter().any(|entry| {
+                    entry.canonical.windows(commit.len()).any(|window| window == commit)
+                });
+                if durable_has_row {
+                    if let Ok(row_id) =
+                        JournalRowId::new(format!("region-{}", row.origin.index()), row.seq)
+                    {
+                        let hash =
+                            terrabase_replication_core::anti_entropy::row_hash(&row_bytes(row));
+                        table.insert(&RowSummary::new(row_id, hash));
+                    }
                 }
             }
             table
@@ -835,12 +958,34 @@ impl ReplicationEngine for ProductionWorld {
     }
 
     fn is_uniform(&self, row: &JournalRow, selected: &[RegionId]) -> bool {
-        selected.iter().all(|region| {
-            let Some(state) = self.regions.iter().find(|state| state.id == *region) else {
-                return false;
-            };
-            state.applied.contains(&row.id()) && self.applied_frontier(*region).covers(&row.context)
-        })
+        // Global durability is a distinct acknowledgement class: a local
+        // `Synced` commit is RegionalDurable, while GlobalDurable requires at
+        // least two selected Regions to have durably accepted the source dot.
+        selected.len() >= 2
+            && selected.iter().all(|region| {
+                let Some(state) = self.regions.iter().find(|state| state.id == *region) else {
+                    return false;
+                };
+                !self.faults.region_down(*region, self.step)
+                    && state.applied.contains(&row.id())
+                    && self.durable_contains(*region, row).unwrap_or(false)
+                    && self.applied_frontier(*region).covers(&row.context)
+            })
+    }
+
+    /// Whether a row has reached this Region's durable SQLite journal.  This
+    /// is the proof behind `RegionalDurable`; it is intentionally independent
+    /// of the cross-Region applied cache.
+    #[must_use]
+    pub fn regional_durable(&self, row: &JournalRow, region: RegionId) -> bool {
+        self.durable_contains(region, row).unwrap_or(false)
+    }
+
+    /// Whether a row satisfies the simulation's `GlobalDurable` contract for
+    /// the selected Regions, including causal dependencies.
+    #[must_use]
+    pub fn global_durable(&self, row: &JournalRow, selected: &[RegionId]) -> bool {
+        self.is_uniform(row, selected)
     }
 
     fn read(&self, region: RegionId, token: &SessionToken, key: u64) -> Option<Option<u64>> {
@@ -1073,6 +1218,17 @@ fn row_bytes(row: &JournalRow) -> Vec<u8> {
             .join(","),
     )
     .into_bytes()
+}
+
+/// Returns the operation identity that the durable canonical journal encoder
+/// includes in every row.  Keeping this tiny probe here avoids depending on
+/// the engine's private codec while still proving journal membership.
+fn row_commit(row: &JournalRow) -> Vec<u8> {
+    format!("sim-r{}-{}", row.origin.index(), row.seq).into_bytes()
+}
+
+fn row_commit_string(row: &JournalRow) -> String {
+    String::from_utf8(row_commit(row)).expect("simulation operation ids are ASCII")
 }
 
 /// Capability token used by the deterministic cache seam.

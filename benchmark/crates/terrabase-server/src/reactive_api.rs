@@ -570,13 +570,20 @@ pub fn append_message(
 
 /// Attaches to a canonical SQL result view and issues its capability.
 #[utoipa::path(post, path = "/api/v1/reactive/views", responses((status = 201, description = "Canonical SQL view attached")))]
-pub async fn attach_view(State(state): State<Arc<ApiState>>, body: String) -> Response {
+pub async fn attach_view(
+    State(state): State<Arc<ApiState>>,
+    axum::extract::Extension(principal): axum::extract::Extension<crate::api_keys::Principal>,
+    body: String,
+) -> Response {
     let request: AttachRequest = match serde_json::from_str(&body) {
         Ok(request) => request,
         Err(_) => return invalid_attach("request").into_response(),
     };
     if request.database_id.is_empty() || request.database_id.len() > 256 {
         return invalid_attach("databaseId").into_response();
+    }
+    if !principal.scope().admits(crate::api_keys::Verbs::READ, &request.database_id) {
+        return ApiError::forbidden("read on the requested database").into_response();
     }
     let host = match crate::api::document_host(&state, &request.database_id) {
         Ok(host) => host,
@@ -698,10 +705,42 @@ pub async fn websocket(
     Path(name): Path<String>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    upgrade.on_upgrade(move |socket| serve_socket(socket, state, name))
+    if let Err(error) = crate::api::document_host(&state, &name) {
+        return error.into_response();
+    }
+    if let Err(error) =
+        crate::api::check_read_guard(&state, &name, terrabase::observability::Operation::Subscribe)
+    {
+        return error.into_response();
+    }
+    if let Err(rejection) = state.guards.acquire_ws(&name) {
+        state.metrics.record_admission_rejection(
+            terrabase::observability::Operation::Subscribe,
+            terrabase::observability::AdmissionReason::Capacity,
+        );
+        return ApiError::abuse_guard(&rejection).into_response();
+    }
+    let permit = WsPermit { guards: Arc::clone(&state.guards), database: name.clone() };
+    upgrade.on_upgrade(move |socket| serve_socket(socket, state, name, permit))
 }
 
-async fn serve_socket(mut socket: WebSocket, state: Arc<ApiState>, database: String) {
+struct WsPermit {
+    guards: Arc<crate::guards::AbuseGuards>,
+    database: String,
+}
+
+impl Drop for WsPermit {
+    fn drop(&mut self) {
+        self.guards.release_ws(&self.database);
+    }
+}
+
+async fn serve_socket(
+    mut socket: WebSocket,
+    state: Arc<ApiState>,
+    database: String,
+    _permit: WsPermit,
+) {
     let Some(Ok(Message::Binary(bytes))) = socket.recv().await else {
         return;
     };

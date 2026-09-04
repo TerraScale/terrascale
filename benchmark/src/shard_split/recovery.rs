@@ -13,6 +13,8 @@ pub enum RecoveryAction {
     VerifyCutOver,
     /// Remove source data after successful verification.
     CleanupSource,
+    /// Remove an unreferenced target after a pre-cutover abort.
+    RollbackTarget,
     /// No work remains for an aborted or complete split.
     Noop,
 }
@@ -72,10 +74,10 @@ impl RecoveryPlan {
     /// phase is [`SplitPhase::CutOver`] or [`SplitPhase::Complete`].
     pub fn rollback(state: &DurableSplitState) -> Result<RecoveryAction, RecoveryError> {
         match state.phase() {
-            SplitPhase::Planned
-            | SplitPhase::Backfilling
-            | SplitPhase::CatchingUp
-            | SplitPhase::Aborted => Ok(RecoveryAction::Noop),
+            SplitPhase::Planned => Ok(RecoveryAction::Noop),
+            SplitPhase::Backfilling | SplitPhase::CatchingUp | SplitPhase::Aborted => {
+                Ok(RecoveryAction::RollbackTarget)
+            }
             SplitPhase::CutOver | SplitPhase::Complete => {
                 Err(RecoveryError::CutoverAlreadyInstalled)
             }

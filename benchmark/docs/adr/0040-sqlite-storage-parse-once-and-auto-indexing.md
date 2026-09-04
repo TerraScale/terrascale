@@ -119,6 +119,7 @@ a rule auto-creates its descriptors.
 - Auto-indexing is benchmarked head-to-head against RavenDB (time-to-index,
   indexed latency, write-amplification curve, staleness behavior) and
   auto-published.
-- Workspace tasks: TB-20 (storage core), TB-21 (delete the old engine),
-  TB-22 (Litestream), TB-23 (auto-indexing), TB-7 (shard split), TB-5
-  (per-file encryption); gateway/SDK enforcement in INT-2/INT-3/INT-9/SDK-2.
+- Implementation is split across the SQLite storage, Litestream backup,
+  auto-indexing, and shard-routing modules. Public gateway and SDK behavior
+  follows the current contracts; verification runs through the repository
+  checks and benchmark tables without a separate evidence ledger.

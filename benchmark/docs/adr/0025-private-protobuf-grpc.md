@@ -15,16 +15,19 @@ client bindings permitted to communicate with TerraBase over private TBEP;
 the orchestrator and CLI use them. Public clients call the member's public
 HTTP API (D-34). They never call TBEP.
 
-TerraBase has no public binary protocol, public WebSocket protocol, or public
-MessagePack codec. The database remains greenfield, so the
-repository deletes those schemas, generated artifacts, fixtures, and
-requirements after the protobuf/gRPC replacement has equivalent test
-coverage.
+TBEP is not a public binary protocol. Public reactive delivery may use the
+documented HTTP snapshot/log format and optional WebSocket transport; its
+MessagePack frames are a public result-view representation, not TBEP. Private
+protobuf schemas, generated artifacts, and fixtures remain confined to the
+control boundary.
 
 TerraBase still owns the transport-independent reactive result-view state
-machine. TBEP exposes its bounded session, snapshot, delta, acknowledgement,
-resume, and close operations through gRPC. The member serves the public HTTP
-API itself (D-34); no gateway stands between public clients and members.
+machine. The member serves view attachment, immutable snapshot/log responses,
+and optional WebSocket or HTTP delivery through its public API. TBEP remains
+the private control protocol for placement, health, drain, administration, and
+fault operations; it does not carry customer query or reactive traffic. The
+member serves the public HTTP API itself (D-34); no gateway stands between
+public clients and members.
 
 ## Schema ownership and generation
 

@@ -421,6 +421,19 @@ impl AuthorizationPolicyStore {
         self.snapshot.policy(scope)
     }
 
+    /// Returns the durable authorization revision for an exact scope. This
+    /// advances on policy publication and revocation and is suitable for
+    /// invalidating query/view authorization caches.
+    pub fn revision(&self, scope: &ResourceScope) -> Result<u64, AuthorizationError> {
+        self.generations.get(scope).copied().ok_or(AuthorizationError::PolicyMissing)
+    }
+
+    /// Returns the generation at which this scope last invalidated grants.
+    /// A missing scope is fail-closed rather than interpreted as generation 0.
+    pub fn revocation_generation(&self, scope: &ResourceScope) -> Result<u64, AuthorizationError> {
+        self.revision(scope)
+    }
+
     /// Returns an immutable clone of all current scoped publications.
     #[must_use]
     pub fn snapshot(&self) -> PolicyStoreSnapshot {
@@ -917,6 +930,12 @@ fn encode_record(scope: &ResourceScope, policy: &Policy) -> Result<Vec<u8>, Auth
             put_string(&mut output, &predicate.claim)?;
             output.push(comparison_tag(predicate.comparison));
         }
+        // 0/1 retain the v1 relationship marker for journals written before
+        // CEL row rules existed; 2 introduces a persisted compiled rule.
+        if let Some(access_rule) = &rule.access_rule {
+            output.push(2);
+            put_string(&mut output, access_rule.expression())?;
+        }
         match &rule.relationship {
             None => output.push(0),
             Some(relationship) => {
@@ -987,7 +1006,16 @@ fn decode_record(bytes: &[u8]) -> Result<(ResourceScope, Policy), AuthorizationE
                 .map_err(|_| AuthorizationError::PolicyJournalCorrupt)?;
             rule = rule.with_claim_predicate(predicate);
         }
-        match decoder.byte()? {
+        let relationship_tag = decoder.byte()?;
+        let mut rule = if relationship_tag == 2 {
+            let expression = decoder.string()?;
+            let access_rule = super::CompiledAccessRule::try_compile(&expression, &indexed_fields)
+                .map_err(|_| AuthorizationError::PolicyJournalCorrupt)?;
+            rule.with_access_rule(access_rule)
+        } else {
+            rule
+        };
+        match if relationship_tag == 2 { decoder.byte()? } else { relationship_tag } {
             0 => {}
             1 => {
                 let relation = decoder.string()?;

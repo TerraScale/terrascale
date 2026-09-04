@@ -24,6 +24,13 @@
 //!   --target terrabase --boundary-class diagnostic-qualification \
 //!   --workload read --out bench/results
 //! ```
+//!
+//! To render the retained lane documents into the shared Markdown table:
+//!
+//! ```text
+//! cargo run --release --manifest-path bench/Cargo.toml -- \
+//!   --render-history --results bench/results --output bench/RESULTS.md
+//! ```
 
 mod config;
 mod history;

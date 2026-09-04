@@ -16,6 +16,7 @@ use crate::identity::{
 
 mod policy_store;
 mod signed;
+mod access_rule;
 
 pub use policy_store::{AuthorizationPolicyStore, PolicyStoreKey, PolicyStoreSnapshot};
 pub use signed::{
@@ -23,6 +24,7 @@ pub use signed::{
     PrincipalContextPayload, PrincipalContextReplayGuard, PrincipalContextSigner,
     PrincipalContextVerifier, SigningKeyProvenance,
 };
+pub use access_rule::{AccessRule, CompiledAccessRule};
 
 /// The canonical version of the engine authorization policy language.
 pub const AUTHORIZATION_FORMAT_VERSION: u16 = 1;
@@ -40,6 +42,10 @@ pub const MAX_PRINCIPAL_CLAIMS: usize = 128;
 pub const MAX_RELATIONSHIP_HOPS: u8 = 4;
 /// The largest relationship result bound supported by a policy placeholder.
 pub const MAX_RELATIONSHIP_MATCHES: u32 = 1_024;
+/// The largest CEL expression accepted at publication time.
+pub const MAX_ACCESS_RULE_BYTES: usize = 4 * 1024;
+/// The maximum number of CEL AST nodes evaluated for one row.
+pub const MAX_ACCESS_RULE_NODES: usize = 256;
 const MAX_IDENTIFIER_BYTES: usize = 255;
 
 /// A typed failure while publishing or constructing authorization state.
@@ -111,6 +117,8 @@ pub enum AuthorizationError {
     EntitlementDenied,
     /// A database is not hosted in the requested region.
     PlacementMismatch,
+    /// No verified principal context was supplied.
+    MissingContext,
 }
 
 impl fmt::Display for AuthorizationError {
@@ -179,6 +187,7 @@ impl fmt::Display for AuthorizationError {
             Self::PlacementMismatch => {
                 formatter.write_str("database placement does not admit this region")
             }
+            Self::MissingContext => formatter.write_str("verified principal context is required"),
         }
     }
 }
@@ -293,7 +302,11 @@ impl PrincipalClaims {
     {
         let mut map = BTreeMap::new();
         for (key, value) in claims {
-            if map.insert(key.into(), value).is_some() {
+            let key: String = key.into();
+            if !valid_identifier(&key) || !valid_claim_value(&value) {
+                return Err(AuthorizationError::InvalidIdentifier);
+            }
+            if map.insert(key, value).is_some() {
                 return Err(AuthorizationError::DuplicateClaim);
             }
         }
@@ -316,6 +329,36 @@ impl PrincipalClaims {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Returns one claim without exposing the backing map for mutation.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&AttributeValue> {
+        self.0.get(name)
+    }
+
+    fn validate(&self) -> Result<(), AuthorizationError> {
+        if self.0.len() > MAX_PRINCIPAL_CLAIMS
+            || self.0.iter().any(|(name, value)| {
+                !valid_identifier(name) || !valid_claim_value(value)
+            })
+        {
+            return Err(AuthorizationError::InvalidContextPayload);
+        }
+        Ok(())
+    }
+}
+
+const MAX_CLAIM_VALUE_BYTES: usize = 4 * 1024;
+
+fn valid_claim_value(value: &AttributeValue) -> bool {
+    match value {
+        AttributeValue::Boolean(_) | AttributeValue::Integer(_) => true,
+        AttributeValue::String(value) => {
+            !value.is_empty()
+                && value.len() <= MAX_CLAIM_VALUE_BYTES
+                && !value.chars().any(char::is_control)
+        }
     }
 }
 
@@ -432,6 +475,7 @@ impl PrincipalContext {
         if input.policy_generation == 0 {
             return Err(AuthorizationError::InvalidGeneration);
         }
+        input.claims.validate()?;
         Ok(Self {
             scope: input.scope,
             environment: input.environment,
@@ -741,6 +785,14 @@ impl FieldProjection {
             .collect()
     }
 
+    /// Returns whether a single field is visible under this projection.
+    #[must_use]
+    pub fn allows(&self, field: &str) -> bool {
+        valid_field_path(field)
+            && self.allow.as_ref().is_none_or(|allow| allow.contains(field))
+            && !self.deny.contains(field)
+    }
+
     fn canonical_key(&self) -> String {
         let allow = self.allow.as_ref().map_or_else(
             || "*".to_owned(),
@@ -759,6 +811,7 @@ pub struct PolicyRule {
     claim_predicates: Vec<ClaimPredicate>,
     relationship: Option<RelationshipPredicate>,
     projection: FieldProjection,
+    access_rule: Option<CompiledAccessRule>,
 }
 
 impl PolicyRule {
@@ -794,6 +847,7 @@ impl PolicyRule {
             claim_predicates: Vec::new(),
             relationship: None,
             projection: FieldProjection::all(),
+            access_rule: None,
         })
     }
 
@@ -818,6 +872,13 @@ impl PolicyRule {
         self
     }
 
+    /// Adds a bounded CEL row predicate to this grant.
+    #[must_use]
+    pub fn with_access_rule(mut self, rule: CompiledAccessRule) -> Self {
+        self.access_rule = Some(rule);
+        self
+    }
+
     /// Returns the operation.
     #[must_use]
     pub const fn operation(&self) -> Operation {
@@ -836,6 +897,24 @@ impl PolicyRule {
         &self.collection
     }
 
+    /// Returns the optional compiled row predicate.
+    #[must_use]
+    pub fn access_rule(&self) -> Option<&CompiledAccessRule> {
+        self.access_rule.as_ref()
+    }
+
+    /// Returns claim predicates attached to this grant.
+    #[must_use]
+    pub fn claim_predicates(&self) -> &[ClaimPredicate] {
+        &self.claim_predicates
+    }
+
+    /// Returns the field projection attached to this grant.
+    #[must_use]
+    pub const fn projection(&self) -> &FieldProjection {
+        &self.projection
+    }
+
     fn canonical_key(&self) -> String {
         let mut predicates = self
             .claim_predicates
@@ -848,13 +927,15 @@ impl PolicyRule {
         let predicates = predicates.join(",");
         let relation =
             self.relationship.as_ref().map_or_else(String::new, RelationshipPredicate::key);
+        let access = self.access_rule.as_ref().map_or_else(String::new, CompiledAccessRule::canonical);
         format!(
-            "{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}",
             self.operation.tag(),
             self.collection,
             predicates,
             relation,
-            self.projection.canonical_key()
+            self.projection.canonical_key(),
+            access
         )
     }
 }
@@ -947,6 +1028,18 @@ impl Policy {
             {
                 return Err(AuthorizationError::UnboundedRelationship);
             }
+            if let Some(access_rule) = &rule.access_rule {
+                if access_rule.nodes() > MAX_ACCESS_RULE_NODES {
+                    return Err(AuthorizationError::AccessRuleTooLarge);
+                }
+                if let Some(field) = access_rule
+                    .fields()
+                    .iter()
+                    .find(|field| !indexed_fields.contains(*field))
+                {
+                    return Err(AuthorizationError::UnindexedAccessRuleField(field.clone()));
+                }
+            }
         }
         rules.sort_by_key(PolicyRule::canonical_key);
         if rules.windows(2).any(|pair| pair[0].canonical_key() == pair[1].canonical_key()) {
@@ -977,6 +1070,40 @@ impl Policy {
     #[must_use]
     pub const fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Returns the monotonic rule revision. In format v1 this is the policy
+    /// generation, and durable stores advance it for every rule publication.
+    #[must_use]
+    pub const fn revision(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the fields referenced by this policy's row predicates.
+    #[must_use]
+    pub fn required_indexed_fields(&self) -> BTreeSet<String> {
+        self.rules
+            .iter()
+            .flat_map(|rule| rule.access_rule.iter().flat_map(|access| access.fields().iter().cloned()))
+            .chain(self.rules.iter().flat_map(|rule| rule.claim_predicates.iter().map(|predicate| predicate.field.clone())))
+            .collect()
+    }
+
+    /// Builds a policy after deriving indexes from every bounded row/claim
+    /// predicate. The returned index set is deterministic and capped by the
+    /// same limits as explicit publication.
+    pub fn try_new_with_derived_indexes(
+        policy_id: AuthorizationPolicyUlid,
+        generation: u64,
+        rules: impl IntoIterator<Item = PolicyRule>,
+    ) -> Result<Self, AuthorizationError> {
+        let rules: Vec<PolicyRule> = rules.into_iter().collect();
+        let indexed = rules
+            .iter()
+            .flat_map(|rule| rule.access_rule.iter().flat_map(|access| access.fields().iter().cloned()))
+            .chain(rules.iter().flat_map(|rule| rule.claim_predicates.iter().map(|predicate| predicate.field.clone())))
+            .collect::<BTreeSet<_>>();
+        Self::try_new_with_id(policy_id, generation, indexed, rules)
     }
 
     /// Returns grants in canonical order.
@@ -1065,12 +1192,44 @@ impl AuthorizationRequest {
     pub const fn action(&self) -> Action {
         self.action
     }
+
+    /// Returns the exact tenant/project/database scope requested.
+    #[must_use]
+    pub const fn scope(&self) -> &ResourceScope {
+        &self.scope
+    }
+
+    /// Returns the request audience.
+    #[must_use]
+    pub fn audience(&self) -> &str {
+        &self.audience
+    }
+
+    /// Returns the exact collection route.
+    #[must_use]
+    pub fn collection(&self) -> &str {
+        &self.collection
+    }
+
+    /// Returns row values supplied to predicates and projection.
+    #[must_use]
+    pub fn fields(&self) -> &BTreeMap<String, AttributeValue> {
+        &self.fields
+    }
+
+    /// Returns the request clock used for expiry checks.
+    #[must_use]
+    pub const fn now(&self) -> u64 {
+        self.now
+    }
 }
 
 /// Why a request was refused.  These variants are intentionally typed so a
 /// gateway can audit a denial without receiving sensitive claim contents.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DenialReason {
+    /// No verified context was supplied by the authentication boundary.
+    MissingContext,
     /// The tenant, Project, or database did not match.
     ScopeMismatch,
     /// The request audience did not match the verified context.
@@ -1158,10 +1317,14 @@ pub fn evaluate(
             .relationship
             .as_ref()
             .is_none_or(|relationship| request.relationship_evidence.contains(&relationship.key()));
+        let access_rule_matches = rule
+            .access_rule
+            .as_ref()
+            .is_none_or(|access_rule| access_rule.evaluate(&request.fields, &context.claims));
         // Grants are alternatives: a failed conditional grant must not mask
         // a later grant for the same operation and collection. Rules are in
         // canonical order, so the first successful projection is stable.
-        if claims_match && relationship_matches {
+        if claims_match && relationship_matches && access_rule_matches {
             return AuthorizationDecision::Allow { fields: rule.projection.apply(&request.fields) };
         }
     }
@@ -1170,6 +1333,21 @@ pub fn evaluate(
     } else {
         AuthorizationDecision::Deny(DenialReason::NoMatchingRule)
     }
+}
+
+/// Evaluates an optional context with a fail-closed missing-context result.
+/// Public callers should use this seam when authentication can be absent;
+/// there is deliberately no implicit anonymous grant.
+#[must_use]
+pub fn evaluate_optional(
+    context: Option<&PrincipalContext>,
+    policy: &Policy,
+    request: &AuthorizationRequest,
+) -> AuthorizationDecision {
+    context.map_or(
+        AuthorizationDecision::Deny(DenialReason::MissingContext),
+        |context| evaluate(context, policy, request),
+    )
 }
 
 fn compare(left: &AttributeValue, right: &AttributeValue, comparison: ClaimComparison) -> bool {

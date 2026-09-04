@@ -1058,6 +1058,18 @@ pub(crate) trait StoragePort: Send {
         None
     }
 
+    /// Returns the opaque, versioned causal context persisted with the
+    /// document's newest row. Storage keeps this as bytes so merge and
+    /// replication can carry it without a JSON/document decode on reads.
+    fn document_context(
+        &self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &DocumentId,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+
     /// Records one deterministic conflict loser (D-36): the side a merge
     /// superseded, with the winner, policy, and explanation. The default
     /// keeps no conflicts.

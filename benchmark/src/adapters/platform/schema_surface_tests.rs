@@ -14,7 +14,7 @@
 //! backend-supplied context, content-free audit, and the scripted
 //! declare → refuse → migrate → valid scenario at this seam only. The wire
 //! registration is proven by the `terrabase-tbep` crate's own rows; the
-//! host, CLI, and studio surfaces have their own test families.
+//! host and CLI surfaces have their own test families.
 
 use std::{collections::BTreeMap, path::PathBuf, sync::atomic::AtomicU64, time::Duration};
 

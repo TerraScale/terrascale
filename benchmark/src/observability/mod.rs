@@ -137,6 +137,149 @@ pub const MAX_EGRESS_SERIES: usize = MAX_REGION_LABEL_VALUES * MAX_EGRESS_KIND_L
 /// counter, both unlabeled because the host is the Prometheus `instance`.
 pub const MAX_CLOCK_SERIES: usize = 2;
 
+/// A closed subsystem vocabulary for adapter-facing observations.
+///
+/// This is deliberately separate from [`Component`]. Components describe
+/// readiness; subsystems describe where a bounded event happened. It is the
+/// only subsystem value accepted by the generic adapter hooks, so database,
+/// tenant, view, document, and query identifiers cannot become labels.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Subsystem {
+    /// SQLite pages, WAL and storage accounting.
+    Storage,
+    /// Group commit and durability.
+    Commit,
+    /// Read-only SQL parsing and execution.
+    Sql,
+    /// Automatic-index planning and lifecycle.
+    Index,
+    /// Reactive and collection synchronization.
+    Sync,
+    /// Cross-Region replication and repair.
+    Replication,
+    /// Backup and restore workers.
+    Backup,
+    /// Authoritative usage-fact publication.
+    Usage,
+    /// Host clock discipline and write refusal.
+    Clock,
+    /// Direct OCI member egress.
+    Egress,
+    /// Admission and abuse guards.
+    Guard,
+}
+
+impl Subsystem {
+    /// Returns the stable Prometheus/log value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Storage => "storage",
+            Self::Commit => "commit",
+            Self::Sql => "sql",
+            Self::Index => "index",
+            Self::Sync => "sync",
+            Self::Replication => "replication",
+            Self::Backup => "backup",
+            Self::Usage => "usage",
+            Self::Clock => "clock",
+            Self::Egress => "egress",
+            Self::Guard => "guard",
+        }
+    }
+}
+
+/// Every admitted subsystem value in stable order.
+pub const SUBSYSTEMS: [Subsystem; 11] = [
+    Subsystem::Storage,
+    Subsystem::Commit,
+    Subsystem::Sql,
+    Subsystem::Index,
+    Subsystem::Sync,
+    Subsystem::Replication,
+    Subsystem::Backup,
+    Subsystem::Usage,
+    Subsystem::Clock,
+    Subsystem::Egress,
+    Subsystem::Guard,
+];
+
+/// A closed guard category. Guard hits are aggregate facts, never customer
+/// identifiers or request parameters.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum GuardKind {
+    /// Request-rate or concurrency guard.
+    Rate,
+    /// Direct member egress guard.
+    Egress,
+    /// Storage or logical-byte guard.
+    Storage,
+    /// Write or queue budget guard.
+    Capacity,
+    /// Clock-offset safety guard.
+    Clock,
+}
+
+impl GuardKind {
+    /// Returns the stable label value.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rate => "rate",
+            Self::Egress => "egress",
+            Self::Storage => "storage",
+            Self::Capacity => "capacity",
+            Self::Clock => "clock",
+        }
+    }
+}
+
+/// Every admitted guard category in stable order.
+pub const GUARD_KINDS: [GuardKind; 5] =
+    [GuardKind::Rate, GuardKind::Egress, GuardKind::Storage, GuardKind::Capacity, GuardKind::Clock];
+
+/// A typed, bounded label accepted by adapter integrations.
+///
+/// Host is intentionally an opaque deployment value (the Prometheus target
+/// supplies it as `instance`); Region and subsystem are closed enums. There
+/// is no string-valued constructor for a label, making high-cardinality IDs a
+/// compile-time/API-boundary concern instead of a renderer convention.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum BoundedLabel {
+    /// The deployment host is supplied by the scrape target.
+    Host,
+    /// A closed TerraScale Region.
+    Region(Region),
+    /// A closed engine subsystem.
+    Subsystem(Subsystem),
+}
+
+/// Returns whether a textual label key is forbidden because it identifies a
+/// customer or an individual operation. This helper is useful at integration
+/// boundaries that receive external metadata before converting it to enums.
+#[must_use]
+pub fn is_high_cardinality_label_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "db" | "database"
+            | "database_id"
+            | "tenant"
+            | "tenant_id"
+            | "view"
+            | "view_id"
+            | "document"
+            | "document_id"
+            | "doc"
+            | "doc_id"
+            | "query"
+            | "query_id"
+            | "request"
+            | "request_id"
+            | "collection"
+            | "collection_id"
+    )
+}
+
 /// A bounded operation family used by request metrics.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Operation {
@@ -820,6 +963,12 @@ struct RequestKey {
     outcome: Outcome,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct SubsystemKey {
+    subsystem: Subsystem,
+    outcome: Outcome,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct Histogram {
     buckets: [u64; REQUEST_LATENCY_BUCKETS.len()],
@@ -975,6 +1124,41 @@ pub struct ComponentHealth {
     status: HealthStatus,
 }
 
+/// One aggregate operation observation for a closed subsystem.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SubsystemSeries {
+    subsystem: Subsystem,
+    outcome: Outcome,
+    total: u64,
+    duration: HistogramSnapshot,
+}
+
+impl SubsystemSeries {
+    /// Returns the closed subsystem label.
+    #[must_use]
+    pub const fn subsystem(&self) -> Subsystem {
+        self.subsystem
+    }
+
+    /// Returns the closed outcome label.
+    #[must_use]
+    pub const fn outcome(&self) -> Outcome {
+        self.outcome
+    }
+
+    /// Returns the aggregate operation count.
+    #[must_use]
+    pub const fn total(&self) -> u64 {
+        self.total
+    }
+
+    /// Returns the aggregate duration histogram.
+    #[must_use]
+    pub const fn duration(&self) -> &HistogramSnapshot {
+        &self.duration
+    }
+}
+
 impl ComponentHealth {
     /// Returns the component label.
     #[must_use]
@@ -1017,6 +1201,15 @@ pub struct MetricsSnapshot {
     clock_offset_seconds: Option<f64>,
     clock_write_refusals: u64,
     egress_bytes: Vec<(Region, EgressKind, u64)>,
+    subsystem_operations: Vec<SubsystemSeries>,
+    guard_hits: Vec<(GuardKind, u64)>,
+    storage_bytes: Option<u64>,
+    storage_capacity_bytes: Option<u64>,
+    storage_errors: u64,
+    active_indexes: Option<u64>,
+    index_regressions: u64,
+    sync_backlog_bytes: Option<u64>,
+    sync_active_views: Option<u64>,
 }
 
 impl MetricsSnapshot {
@@ -1163,6 +1356,63 @@ impl MetricsSnapshot {
         &self.egress_bytes
     }
 
+    /// Returns aggregate operation observations for storage, SQL, indexes,
+    /// sync, replication, backup, usage, clock, egress, and guard adapters.
+    #[must_use]
+    pub fn subsystem_operations(&self) -> &[SubsystemSeries] {
+        &self.subsystem_operations
+    }
+
+    /// Returns aggregate abuse/safety guard hits in stable guard order.
+    #[must_use]
+    pub fn guard_hits(&self) -> &[(GuardKind, u64)] {
+        &self.guard_hits
+    }
+
+    /// Returns current logical storage bytes, when a storage collector has
+    /// published a finite observation.
+    #[must_use]
+    pub const fn storage_bytes(&self) -> Option<u64> {
+        self.storage_bytes
+    }
+
+    /// Returns configured storage capacity, when known.
+    #[must_use]
+    pub const fn storage_capacity_bytes(&self) -> Option<u64> {
+        self.storage_capacity_bytes
+    }
+
+    /// Returns storage errors observed by this member.
+    #[must_use]
+    pub const fn storage_errors(&self) -> u64 {
+        self.storage_errors
+    }
+
+    /// Returns the number of currently visible indexes, when known.
+    #[must_use]
+    pub const fn active_indexes(&self) -> Option<u64> {
+        self.active_indexes
+    }
+
+    /// Returns automatic-index regressions observed by this member.
+    #[must_use]
+    pub const fn index_regressions(&self) -> u64 {
+        self.index_regressions
+    }
+
+    /// Returns queued synchronization bytes, when known.
+    #[must_use]
+    pub const fn sync_backlog_bytes(&self) -> Option<u64> {
+        self.sync_backlog_bytes
+    }
+
+    /// Returns the aggregate attached-view count, when known. Individual view
+    /// IDs are intentionally not represented.
+    #[must_use]
+    pub const fn sync_active_views(&self) -> Option<u64> {
+        self.sync_active_views
+    }
+
     /// Renders this immutable snapshot as Prometheus 0.0.4 text.
     #[must_use]
     pub fn render_prometheus(&self) -> String {
@@ -1200,6 +1450,8 @@ impl MetricsSnapshot {
         write_background_metrics(&mut output, self);
         write_clock_metrics(&mut output, self);
         write_egress_metrics(&mut output, self);
+        write_subsystem_metrics(&mut output, self);
+        write_storage_index_sync_metrics(&mut output, self);
         write_health_metrics(&mut output, self);
         output
     }
@@ -1226,6 +1478,16 @@ struct MetricsState {
     clock_offset_seconds: Option<f64>,
     clock_write_refusals: u64,
     egress_bytes: BTreeMap<(Region, EgressKind), u64>,
+    subsystem_totals: BTreeMap<SubsystemKey, u64>,
+    subsystem_durations: BTreeMap<SubsystemKey, Histogram>,
+    guard_hits: BTreeMap<GuardKind, u64>,
+    storage_bytes: Option<u64>,
+    storage_capacity_bytes: Option<u64>,
+    storage_errors: u64,
+    active_indexes: Option<u64>,
+    index_regressions: u64,
+    sync_backlog_bytes: Option<u64>,
+    sync_active_views: Option<u64>,
     service_state: ServiceState,
     started: bool,
     health_ready: bool,
@@ -1244,6 +1506,164 @@ fn required_health_is_ready(health: &BTreeMap<Component, HealthStatus>) -> bool 
 /// changing the production exposition contract.
 pub struct MetricsRegistry {
     state: Mutex<MetricsState>,
+}
+
+/// Error returned when an integration attempts to construct an unbounded
+/// label set. Values are intentionally not included in the error, avoiding a
+/// second accidental diagnostic leak.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LabelBoundaryError {
+    /// The key is a database, tenant, view, document, query, or request ID.
+    HighCardinality,
+    /// The key is not one of `host`, `region`, or `subsystem`.
+    Unsupported,
+    /// A closed value was malformed or not admitted for this deployment.
+    InvalidValue,
+    /// A key appeared more than once.
+    Duplicate,
+}
+
+/// A label set safe to pass to a Prometheus/log adapter.
+///
+/// Host is represented only by presence because the scrape target supplies
+/// its value as `instance`. Region and subsystem are closed enums. This type
+/// is useful for adapters that receive metadata from another process and
+/// need a single fail-closed conversion point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoundedLabelSet {
+    host: bool,
+    region: Option<Region>,
+    subsystem: Option<Subsystem>,
+}
+
+impl BoundedLabelSet {
+    /// Constructs a label set from closed values.
+    #[must_use]
+    pub const fn new(host: bool, region: Option<Region>, subsystem: Option<Subsystem>) -> Self {
+        Self { host, region, subsystem }
+    }
+
+    /// Converts textual adapter metadata while rejecting high-cardinality
+    /// names and values that are not in the closed vocabulary.
+    pub fn try_from_pairs(pairs: &[(&str, &str)]) -> Result<Self, LabelBoundaryError> {
+        let mut labels = Self::new(false, None, None);
+        for (name, value) in pairs {
+            if is_high_cardinality_label_name(name) {
+                return Err(LabelBoundaryError::HighCardinality);
+            }
+            match *name {
+                "host" => {
+                    if labels.host {
+                        return Err(LabelBoundaryError::Duplicate);
+                    }
+                    // Host value is deliberately never retained or rendered.
+                    if value.is_empty() || value.len() > MAX_LOG_FIELD_BYTES {
+                        return Err(LabelBoundaryError::InvalidValue);
+                    }
+                    labels.host = true;
+                }
+                "region" => {
+                    if labels.region.is_some() {
+                        return Err(LabelBoundaryError::Duplicate);
+                    }
+                    let region = Region::from_code(value);
+                    if region == Region::Unknown && *value != "unknown" {
+                        return Err(LabelBoundaryError::InvalidValue);
+                    }
+                    labels.region = Some(region);
+                }
+                "subsystem" => {
+                    if labels.subsystem.is_some() {
+                        return Err(LabelBoundaryError::Duplicate);
+                    }
+                    labels.subsystem =
+                        Some(subsystem_from_str(value).ok_or(LabelBoundaryError::InvalidValue)?);
+                }
+                _ => return Err(LabelBoundaryError::Unsupported),
+            }
+        }
+        Ok(labels)
+    }
+
+    /// Whether the scrape target supplies a host label.
+    #[must_use]
+    pub const fn has_host(&self) -> bool {
+        self.host
+    }
+
+    /// Returns the optional closed Region.
+    #[must_use]
+    pub const fn region(&self) -> Option<Region> {
+        self.region
+    }
+
+    /// Returns the optional closed subsystem.
+    #[must_use]
+    pub const fn subsystem(&self) -> Option<Subsystem> {
+        self.subsystem
+    }
+}
+
+fn subsystem_from_str(value: &str) -> Option<Subsystem> {
+    SUBSYSTEMS.iter().copied().find(|subsystem| subsystem.as_str() == value)
+}
+
+/// Read-only source implemented by private Prometheus adapters.
+pub trait MetricsSource {
+    /// Takes one immutable, internally consistent snapshot.
+    fn metrics_snapshot(&self) -> MetricsSnapshot;
+
+    /// Renders one bounded exposition body, or rejects it if a future schema
+    /// expansion exceeds the configured response limit.
+    fn metrics_body(&self) -> Result<String, ExpositionTooLarge> {
+        self.metrics_snapshot().try_render_prometheus()
+    }
+}
+
+impl MetricsSource for MetricsRegistry {
+    fn metrics_snapshot(&self) -> MetricsSnapshot {
+        self.snapshot()
+    }
+}
+
+/// Sink implemented by a process's structured-log adapter.
+pub trait LogSink {
+    /// Accepts one already-redacted record. Implementations must not add
+    /// customer identifiers as fields.
+    fn emit(&self, record: &LogRecord);
+}
+
+/// The narrow wiring surface shared by storage/server/replication adapters.
+///
+/// It deliberately exposes no method accepting a database, tenant, view,
+/// document, query, or request ID. Each subsystem can report bounded outcomes
+/// and durations through this value without knowing the exposition format.
+pub struct ObservabilityHooks<'a> {
+    metrics: &'a MetricsRegistry,
+}
+
+impl<'a> ObservabilityHooks<'a> {
+    /// Creates adapter hooks backed by one registry.
+    #[must_use]
+    pub const fn new(metrics: &'a MetricsRegistry) -> Self {
+        Self { metrics }
+    }
+
+    /// Returns the backing registry for specialized existing hooks.
+    #[must_use]
+    pub const fn metrics(&self) -> &'a MetricsRegistry {
+        self.metrics
+    }
+
+    /// Records a bounded subsystem operation.
+    pub fn operation(&self, subsystem: Subsystem, outcome: Outcome, duration: Duration) {
+        self.metrics.record_subsystem(subsystem, outcome, duration);
+    }
+
+    /// Records a bounded guard hit.
+    pub fn guard(&self, kind: GuardKind) {
+        self.metrics.record_guard_hit(kind);
+    }
 }
 
 impl Default for MetricsRegistry {
@@ -1273,6 +1693,106 @@ impl MetricsRegistry {
         let total = state.request_totals.entry(key).or_default();
         *total = total.saturating_add(1);
         state.request_durations.entry(key).or_default().observe(duration);
+    }
+
+    /// Records one bounded operation in a named subsystem.
+    ///
+    /// This is the integration hook for storage, SQL, index, sync,
+    /// replication, backup, usage, clock, direct-egress, and guard adapters.
+    /// It accepts only closed enums and therefore cannot create a series for a
+    /// database, tenant, view, document, query, or request identifier.
+    pub fn record_subsystem(&self, subsystem: Subsystem, outcome: Outcome, duration: Duration) {
+        let key = SubsystemKey { subsystem, outcome };
+        let mut state = lock(&self.state);
+        saturating_increment(state.subsystem_totals.entry(key).or_default());
+        state.subsystem_durations.entry(key).or_default().observe(duration);
+    }
+
+    /// Records a storage operation without admitting a storage identifier.
+    pub fn record_storage(&self, outcome: Outcome, duration: Duration) {
+        self.record_subsystem(Subsystem::Storage, outcome, duration);
+    }
+
+    /// Records a SQL operation without admitting statement text or query IDs.
+    pub fn record_sql(&self, outcome: Outcome, duration: Duration) {
+        self.record_subsystem(Subsystem::Sql, outcome, duration);
+    }
+
+    /// Records an automatic-index operation without admitting index names or
+    /// collection identifiers.
+    pub fn record_index(&self, outcome: Outcome, duration: Duration) {
+        self.record_subsystem(Subsystem::Index, outcome, duration);
+    }
+
+    /// Records one synchronization operation without admitting a view ID.
+    pub fn record_sync(&self, outcome: Outcome, duration: Duration) {
+        self.record_subsystem(Subsystem::Sync, outcome, duration);
+    }
+
+    /// Records one bounded guard hit. Guard categories are closed and contain
+    /// no customer or request identity.
+    pub fn record_guard_hit(&self, guard: GuardKind) {
+        let mut state = lock(&self.state);
+        saturating_increment(state.guard_hits.entry(guard).or_default());
+    }
+
+    /// Sets current logical bytes occupied by SQLite data and retained
+    /// history. Non-finite values cannot enter because the value is integral.
+    pub fn set_storage_bytes(&self, bytes: u64) {
+        lock(&self.state).storage_bytes = Some(bytes);
+    }
+
+    /// Sets the configured storage capacity. A missing observation remains
+    /// unknown and is not rendered as unlimited capacity.
+    pub fn set_storage_capacity_bytes(&self, bytes: u64) {
+        lock(&self.state).storage_capacity_bytes = Some(bytes);
+    }
+
+    /// Clears storage gauges when the collector loses its source.
+    pub fn clear_storage_capacity(&self) {
+        let mut state = lock(&self.state);
+        state.storage_bytes = None;
+        state.storage_capacity_bytes = None;
+    }
+
+    /// Records one storage failure without retaining its path or database ID.
+    pub fn record_storage_error(&self) {
+        let mut state = lock(&self.state);
+        state.storage_errors = state.storage_errors.saturating_add(1);
+    }
+
+    /// Sets the number of currently visible automatic indexes.
+    pub fn set_active_indexes(&self, count: u64) {
+        lock(&self.state).active_indexes = Some(count);
+    }
+
+    /// Clears the automatic-index count when its collector is unavailable.
+    pub fn clear_active_indexes(&self) {
+        lock(&self.state).active_indexes = None;
+    }
+
+    /// Records an automatic-index regression. The affected template and
+    /// collection are deliberately not accepted at this boundary.
+    pub fn record_index_regression(&self) {
+        let mut state = lock(&self.state);
+        state.index_regressions = state.index_regressions.saturating_add(1);
+    }
+
+    /// Sets aggregate synchronization backlog bytes.
+    pub fn set_sync_backlog_bytes(&self, bytes: u64) {
+        lock(&self.state).sync_backlog_bytes = Some(bytes);
+    }
+
+    /// Sets aggregate attached synchronization views, never individual IDs.
+    pub fn set_sync_active_views(&self, count: u64) {
+        lock(&self.state).sync_active_views = Some(count);
+    }
+
+    /// Clears aggregate synchronization gauges when the collector is stale.
+    pub fn clear_sync_gauges(&self) {
+        let mut state = lock(&self.state);
+        state.sync_backlog_bytes = None;
+        state.sync_active_views = None;
     }
 
     /// Sets the current in-flight count for one bounded operation family.
@@ -1531,6 +2051,19 @@ impl MetricsRegistry {
             .iter()
             .map(|((region, kind), bytes)| (*region, *kind, *bytes))
             .collect();
+        let subsystem_operations = state
+            .subsystem_totals
+            .iter()
+            .map(|(key, total)| SubsystemSeries {
+                subsystem: key.subsystem,
+                outcome: key.outcome,
+                total: *total,
+                duration: HistogramSnapshot::from_histogram(
+                    state.subsystem_durations.get(key).copied().unwrap_or_default(),
+                ),
+            })
+            .collect();
+        let guard_hits = state.guard_hits.iter().map(|(guard, total)| (*guard, *total)).collect();
         MetricsSnapshot {
             service_state: state.service_state,
             started: state.started,
@@ -1553,6 +2086,15 @@ impl MetricsRegistry {
             clock_offset_seconds: state.clock_offset_seconds,
             clock_write_refusals: state.clock_write_refusals,
             egress_bytes,
+            subsystem_operations,
+            guard_hits,
+            storage_bytes: state.storage_bytes,
+            storage_capacity_bytes: state.storage_capacity_bytes,
+            storage_errors: state.storage_errors,
+            active_indexes: state.active_indexes,
+            index_regressions: state.index_regressions,
+            sync_backlog_bytes: state.sync_backlog_bytes,
+            sync_active_views: state.sync_active_views,
         }
     }
 
@@ -1608,7 +2150,7 @@ fn write_request_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
         output,
         "terrabase_request_duration_seconds",
         "TerraBase request duration in seconds by bounded Region, operation, and outcome.",
-        "histogram",
+        "gauge",
     );
     for series in &snapshot.requests {
         write_histogram(output, series);
@@ -1631,16 +2173,17 @@ fn write_duration_histogram(
     labels: &str,
     histogram: HistogramSnapshot,
 ) {
+    let separator = if labels.is_empty() { "" } else { "," };
     for (index, upper_bound) in REQUEST_LATENCY_BUCKETS.iter().enumerate() {
         writeln!(
             output,
-            "{name}_bucket{{{labels},le=\"{}\"}} {}",
+            "{name}_bucket{{{labels}{separator}le=\"{}\"}} {}",
             format_bound(*upper_bound),
             histogram.cumulative_buckets[index]
         )
         .expect("writing String cannot fail");
     }
-    writeln!(output, "{name}_bucket{{{labels},le=\"+Inf\"}} {}", histogram.count)
+    writeln!(output, "{name}_bucket{{{labels}{separator}le=\"+Inf\"}} {}", histogram.count)
         .expect("writing String cannot fail");
     writeln!(output, "{name}_sum{{{labels}}} {}", format_float(histogram.sum_seconds))
         .expect("writing String cannot fail");
@@ -1911,6 +2454,199 @@ fn write_egress_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     }
 }
 
+fn write_subsystem_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
+    write_help_type(
+        output,
+        "terrabase_subsystem_operations_total",
+        "Aggregate subsystem operations by closed subsystem and outcome.",
+        "counter",
+    );
+    let total = snapshot
+        .subsystem_operations
+        .iter()
+        .map(|observation| observation.total)
+        .fold(0_u64, u64::saturating_add);
+    writeln!(output, "terrabase_subsystem_operations_total {total}")
+        .expect("writing String cannot fail");
+    write_help_type(
+        output,
+        "terrabase_subsystem_operation_duration_seconds",
+        "Aggregate subsystem operation duration in seconds by closed subsystem and outcome.",
+        "histogram",
+    );
+    let mut duration = Histogram::default();
+    for observation in &snapshot.subsystem_operations {
+        duration.count = duration.count.saturating_add(observation.duration.count());
+        duration.sum_seconds += observation.duration.sum_seconds();
+        for (index, count) in observation.duration.cumulative_buckets().iter().enumerate() {
+            // Convert cumulative snapshots back to per-bucket counts before
+            // adding, then let the renderer produce cumulative values.
+            let previous = if index == 0 {
+                0
+            } else {
+                observation.duration.cumulative_buckets()[index - 1]
+            };
+            duration.buckets[index] = duration.buckets[index]
+                .saturating_add(count.saturating_sub(previous));
+        }
+    }
+    writeln!(
+        output,
+        "terrabase_subsystem_operation_duration_seconds {}",
+        format_float(duration.sum_seconds)
+    )
+    .expect("writing String cannot fail");
+    // Stable aliases make the most important lanes discoverable without
+    // creating separate, potentially unbounded registries in each adapter.
+    for (name, subsystem, help) in [
+        (
+            "terrabase_sql_queries_total",
+            Subsystem::Sql,
+            "Read-only SQL operations by bounded outcome.",
+        ),
+        (
+            "terrabase_index_operations_total",
+            Subsystem::Index,
+            "Automatic-index operations by bounded outcome.",
+        ),
+        (
+            "terrabase_sync_operations_total",
+            Subsystem::Sync,
+            "Synchronization operations by bounded outcome.",
+        ),
+    ] {
+        write_help_type(output, name, help, "counter");
+        let total = snapshot
+            .subsystem_operations
+            .iter()
+            .filter(|observation| observation.subsystem == subsystem)
+            .map(|observation| observation.total)
+            .fold(0_u64, u64::saturating_add);
+        writeln!(output, "{name} {total}").expect("writing String cannot fail");
+    }
+    for (name, subsystem, help) in [
+        (
+            "terrabase_sql_query_duration_seconds",
+            Subsystem::Sql,
+            "Read-only SQL duration in seconds by bounded outcome.",
+        ),
+        (
+            "terrabase_index_operation_duration_seconds",
+            Subsystem::Index,
+            "Automatic-index operation duration in seconds by bounded outcome.",
+        ),
+        (
+            "terrabase_sync_operation_duration_seconds",
+            Subsystem::Sync,
+            "Synchronization operation duration in seconds by bounded outcome.",
+        ),
+    ] {
+        write_help_type(output, name, help, "gauge");
+        let mut duration = Histogram::default();
+        for observation in snapshot
+            .subsystem_operations
+            .iter()
+            .filter(|observation| observation.subsystem == subsystem)
+        {
+            duration.count = duration.count.saturating_add(observation.duration.count());
+            duration.sum_seconds += observation.duration.sum_seconds();
+            for (index, count) in observation.duration.cumulative_buckets().iter().enumerate() {
+                let previous = if index == 0 {
+                    0
+                } else {
+                    observation.duration.cumulative_buckets()[index - 1]
+                };
+                duration.buckets[index] = duration.buckets[index]
+                    .saturating_add(count.saturating_sub(previous));
+            }
+        }
+        writeln!(output, "{name} {}", format_float(duration.sum_seconds))
+            .expect("writing String cannot fail");
+    }
+    write_help_type(
+        output,
+        "terrabase_guard_hits_total",
+        "Admission and abuse guard hits by closed guard category.",
+        "counter",
+    );
+    let total = snapshot
+        .guard_hits
+        .iter()
+        .map(|(_, total)| *total)
+        .fold(0_u64, u64::saturating_add);
+    writeln!(output, "terrabase_guard_hits_total {total}").expect("writing String cannot fail");
+}
+
+fn write_storage_index_sync_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
+    write_help_type(
+        output,
+        "terrabase_storage_bytes",
+        "Current logical SQLite storage bytes including retained history.",
+        "gauge",
+    );
+    if let Some(bytes) = snapshot.storage_bytes {
+        writeln!(output, "terrabase_storage_bytes {bytes}").expect("writing String cannot fail");
+    }
+    write_help_type(
+        output,
+        "terrabase_storage_capacity_bytes",
+        "Configured SQLite storage capacity in bytes.",
+        "gauge",
+    );
+    if let Some(bytes) = snapshot.storage_capacity_bytes {
+        writeln!(output, "terrabase_storage_capacity_bytes {bytes}")
+            .expect("writing String cannot fail");
+    }
+    write_help_type(
+        output,
+        "terrabase_storage_errors_total",
+        "Storage failures observed by this member.",
+        "counter",
+    );
+    writeln!(output, "terrabase_storage_errors_total {}", snapshot.storage_errors)
+        .expect("writing String cannot fail");
+
+    write_help_type(
+        output,
+        "terrabase_active_indexes",
+        "Currently visible automatic indexes.",
+        "gauge",
+    );
+    if let Some(count) = snapshot.active_indexes {
+        writeln!(output, "terrabase_active_indexes {count}")
+            .expect("writing String cannot fail");
+    }
+    write_help_type(
+        output,
+        "terrabase_index_regressions_total",
+        "Automatic-index regressions that caused a lifecycle response.",
+        "counter",
+    );
+    writeln!(output, "terrabase_index_regressions_total {}", snapshot.index_regressions)
+        .expect("writing String cannot fail");
+
+    write_help_type(
+        output,
+        "terrabase_sync_backlog_bytes",
+        "Aggregate synchronization backlog bytes.",
+        "gauge",
+    );
+    if let Some(bytes) = snapshot.sync_backlog_bytes {
+        writeln!(output, "terrabase_sync_backlog_bytes {bytes}")
+            .expect("writing String cannot fail");
+    }
+    write_help_type(
+        output,
+        "terrabase_sync_active_views",
+        "Aggregate attached synchronization views.",
+        "gauge",
+    );
+    if let Some(count) = snapshot.sync_active_views {
+        writeln!(output, "terrabase_sync_active_views {count}")
+            .expect("writing String cannot fail");
+    }
+}
+
 fn write_health_metrics(output: &mut String, snapshot: &MetricsSnapshot) {
     write_help_type(
         output,
@@ -2145,6 +2881,82 @@ impl LogRecord {
             // fail-closed path so a future schema edit cannot produce an
             // unsafe key or leak a caller-supplied value.
             r#"{"error":"invalid log schema"}"#.to_owned()
+        }
+    }
+}
+
+#[derive(Default)]
+struct SamplerState {
+    second: Option<u64>,
+    info_seen: u64,
+    dropped_info: u64,
+}
+
+/// A deterministic per-host structured-log sampler.
+///
+/// At most [`LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST`] Info records are
+/// accepted in each one-second timestamp bucket. Warnings and errors always
+/// pass through. The host agent remains responsible for the deployment-wide
+/// rate and retention policy; this sampler protects in-process sinks and makes
+/// the boundary testable without a wall-clock dependency.
+pub struct LogSampler {
+    state: Mutex<SamplerState>,
+}
+
+impl Default for LogSampler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LogSampler {
+    /// Creates an empty sampler.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { state: Mutex::new(SamplerState::default()) }
+    }
+
+    /// Returns whether a record should be emitted. Timestamp buckets are
+    /// derived from the record's trusted integer timestamp, so concurrent
+    /// callers and test replay are deterministic.
+    pub fn should_emit(&self, record: &LogRecord) -> bool {
+        self.should_emit_at(record.timestamp_millis(), record.level())
+    }
+
+    /// Returns whether a level at a millisecond timestamp should be emitted.
+    /// Non-Info records are never sampled.
+    pub fn should_emit_at(&self, timestamp_millis: u64, level: LogLevel) -> bool {
+        if level != LogLevel::Info {
+            return true;
+        }
+        let second = timestamp_millis / 1_000;
+        let mut state = lock(&self.state);
+        if state.second != Some(second) {
+            state.second = Some(second);
+            state.info_seen = 0;
+        }
+        if state.info_seen < LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST {
+            state.info_seen += 1;
+            true
+        } else {
+            state.dropped_info = state.dropped_info.saturating_add(1);
+            false
+        }
+    }
+
+    /// Returns the number of Info records dropped since construction.
+    #[must_use]
+    pub fn dropped_info(&self) -> u64 {
+        lock(&self.state).dropped_info
+    }
+
+    /// Emits a record only when the sampler admits it.
+    pub fn emit<S: LogSink>(&self, sink: &S, record: &LogRecord) -> bool {
+        if self.should_emit(record) {
+            sink.emit(record);
+            true
+        } else {
+            false
         }
     }
 }
@@ -2966,5 +3778,78 @@ mod tests {
         let output = redact_diagnostic(&input);
         assert!(output.len() <= MAX_DIAGNOSTIC_BYTES);
         assert!(output.contains("tenant=public"));
+    }
+
+    #[test]
+    fn subsystem_contract_is_closed_and_integrates_without_ids() {
+        assert_eq!(SUBSYSTEMS.len(), 11);
+        assert!(SUBSYSTEMS.iter().all(|subsystem| !subsystem.as_str().is_empty()));
+        let metrics = MetricsRegistry::new();
+        let hooks = ObservabilityHooks::new(&metrics);
+        for subsystem in SUBSYSTEMS {
+            hooks.operation(subsystem, Outcome::Success, Duration::from_millis(1));
+        }
+        hooks.guard(GuardKind::Rate);
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.subsystem_operations().len(), SUBSYSTEMS.len());
+        assert_eq!(snapshot.guard_hits(), &[(GuardKind::Rate, 1)]);
+        let exposition = snapshot.render_prometheus();
+        assert!(exposition.contains(
+            "terrabase_subsystem_operations_total{subsystem=\"sql\",outcome=\"success\"} 1"
+        ));
+        assert!(exposition.contains("terrabase_guard_hits_total{guard=\"rate\"} 1"));
+        for forbidden in [
+            "database=",
+            "database_id=",
+            "tenant=",
+            "tenant_id=",
+            "view=",
+            "view_id=",
+            "document=",
+            "document_id=",
+            "query=",
+            "query_id=",
+            "request_id=",
+        ] {
+            assert!(!exposition.contains(forbidden), "forbidden label {forbidden}");
+        }
+    }
+
+    #[test]
+    fn textual_label_boundary_rejects_high_cardinality_and_unknown_values() {
+        assert_eq!(
+            BoundedLabelSet::try_from_pairs(&[("tenant_id", "customer-1")]),
+            Err(LabelBoundaryError::HighCardinality)
+        );
+        assert_eq!(
+            BoundedLabelSet::try_from_pairs(&[("view", "view-1")]),
+            Err(LabelBoundaryError::HighCardinality)
+        );
+        assert_eq!(
+            BoundedLabelSet::try_from_pairs(&[("query_text", "select 1")]),
+            Err(LabelBoundaryError::Unsupported)
+        );
+        assert_eq!(
+            BoundedLabelSet::try_from_pairs(&[("region", "sa-saopaulo-1")]),
+            Err(LabelBoundaryError::InvalidValue)
+        );
+        assert_eq!(
+            BoundedLabelSet::try_from_pairs(&[("region", "GRU"), ("subsystem", "sql")]),
+            Ok(BoundedLabelSet::new(false, Some(Region::Gru), Some(Subsystem::Sql)))
+        );
+    }
+
+    #[test]
+    fn log_sampler_caps_info_per_second_and_preserves_failures() {
+        let sampler = LogSampler::new();
+        let info =
+            LogRecord::new(2_000, LogLevel::Info, Component::Metrics, LogEvent::Progress, "ok");
+        for _ in 0..LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST {
+            assert!(sampler.should_emit(&info));
+        }
+        assert!(!sampler.should_emit(&info));
+        assert_eq!(sampler.dropped_info(), 1);
+        assert!(sampler.should_emit_at(2_999, LogLevel::Error));
+        assert!(sampler.should_emit_at(3_000, LogLevel::Info));
     }
 }

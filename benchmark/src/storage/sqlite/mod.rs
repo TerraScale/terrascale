@@ -309,8 +309,8 @@ impl ExtractedState {
     ///
     /// The base row carries sixteen placeholders — twelve originals, the
     /// four provenance columns (D-35: `kind`, `origin`, `origin_seq`, `hlc`),
-    /// and the TTL expiry and idempotency columns — so the extracted columns
-    /// start at placeholder 19.
+    /// the causal context, and the TTL expiry and idempotency columns — so
+    /// the extracted columns start at placeholder 20.
     fn refresh_put_sql(&mut self) {
         let mut columns = String::new();
         let mut placeholders = String::new();
@@ -320,16 +320,16 @@ impl ExtractedState {
             columns.push_str(", ");
             columns.push_str(&quote_identifier(&numeric_column(field)));
             placeholders.push_str(", ?");
-            placeholders.push_str(&(19 + 2 * position).to_string());
-            placeholders.push_str(", ?");
             placeholders.push_str(&(20 + 2 * position).to_string());
+            placeholders.push_str(", ?");
+            placeholders.push_str(&(21 + 2 * position).to_string());
         }
         self.put_insert_sql = format!(
             "INSERT INTO documents
              (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
-              digest, version, deleted, committed_at, body, kind, origin, origin_seq, hlc, expires_at,
+             digest, version, deleted, committed_at, body, kind, origin, origin_seq, hlc, context, expires_at,
               client_request_ulid{columns})
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18{placeholders})"
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19{placeholders})"
         );
     }
 
@@ -527,6 +527,27 @@ fn migrate_documents_ttl(connection: &Connection) -> Result<(), ()> {
         return Ok(());
     }
     connection.execute_batch("ALTER TABLE documents ADD COLUMN expires_at INTEGER;").map_err(|_| ())
+}
+
+/// Adds the durable causal-context column to pre-D-42 files. The default is
+/// deliberately empty: old rows predate causal metadata and cannot be made
+/// more informative without inventing dependencies. New rows are populated
+/// by the commit transaction and are validated by the context codec.
+fn migrate_documents_context(connection: &Connection) -> Result<(), ()> {
+    let mut statement = connection.prepare("PRAGMA table_info(documents)").map_err(|_| ())?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    if columns.iter().any(|column| column == "context") {
+        return Ok(());
+    }
+    connection
+        .execute("ALTER TABLE documents ADD COLUMN context BLOB NOT NULL DEFAULT X''", [])
+        .map(|_| ())
+        .map_err(|_| ())
 }
 
 /// Adds the durable operation identity column to pre-D-42 files.  The
@@ -813,6 +834,9 @@ CREATE TABLE IF NOT EXISTS documents (
     origin      TEXT    NOT NULL DEFAULT '',
     origin_seq  INTEGER NOT NULL DEFAULT 0,
     hlc         INTEGER NOT NULL DEFAULT 0,
+    -- Versioned dotted causal frontier. Empty is accepted only for rows
+    -- written by the pre-context migration; all new rows carry a blob.
+    context     BLOB    NOT NULL DEFAULT X'',
     expires_at  INTEGER,
     client_request_ulid TEXT NOT NULL DEFAULT '',
     -- Canonical D-42 names. The legacy aliases remain query-compatible while
@@ -1443,6 +1467,7 @@ impl SqliteStorage {
             .map_err(|_| StorageOpenError::Unavailable)?;
         migrate_documents_origin_sequence(&mut writer, &local_origin)
             .map_err(|()| StorageOpenError::Unavailable)?;
+        migrate_documents_context(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_idempotency(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_row_aliases(&writer).map_err(|()| StorageOpenError::Unavailable)?;
@@ -1677,15 +1702,27 @@ impl CommitContext {
         writer: &mut Connection,
         intents: &[CommitIntent],
     ) -> Result<Vec<CommitResult>, ()> {
-        // RF=2 databases get their durability from the fsynced WAL follower,
-        // so NORMAL is the correct steady state. FULL is selected only for a
-        // configured single-replica database where SQLite itself is the
-        // durability witness.
+        // The synchronous pragma is connection-local. Keep the override in
+        // this wrapper so every error path (including a failed BEGIN,
+        // staging, metering flush, injected WAL fault, or COMMIT) restores
+        // NORMAL before the writer is returned to the committer loop.
         let wants_full = self.single_replica
             && intents.iter().any(|intent| intent.durability == LocalDurability::Synced);
         if wants_full {
             writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())?;
         }
+        let result = self.commit_transaction_inner(writer, intents);
+        if wants_full {
+            writer.execute_batch("PRAGMA synchronous = NORMAL").map_err(|_| ())?;
+        }
+        result
+    }
+
+    fn commit_transaction_inner(
+        &self,
+        writer: &mut Connection,
+        intents: &[CommitIntent],
+    ) -> Result<Vec<CommitResult>, ()> {
         let transaction =
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
@@ -1763,9 +1800,6 @@ impl CommitContext {
             }
         }
         transaction.commit().map_err(|_| ())?;
-        if wants_full {
-            let _ = writer.execute_batch("PRAGMA synchronous = NORMAL");
-        }
         Ok(results.into_iter().map(Option::unwrap).collect())
     }
 }
@@ -1953,6 +1987,7 @@ fn stage_intent(
         origin: provenance.origin(),
         origin_sequence,
         hlc: provenance.hlc(),
+        context: context_frontier(transaction, &intent.tenant)?,
     };
     let mut published_writes: Vec<PublishedWrite> = Vec::with_capacity(intent.writes.len());
     let mut billed_writes = 0_u64;
@@ -1970,20 +2005,21 @@ fn stage_intent(
                 .map_or(1, |prior| prior.saturating_add(1));
                 let mut published = document.clone();
                 published.set_version(version);
+                let body = encode_document_body(&published);
                 insert_put_row(
                     transaction,
                     &intent.tenant,
                     &published,
                     sequence,
                     version,
-                    &encode_document_body(&published),
+                    &body,
                     &commit,
                     extracted_fields,
                     put_insert_sql,
                     descriptors,
                     fts_descriptors,
                 )?;
-                let body_len = encode_document_body(&published).len() as u64;
+                let body_len = body.len() as u64;
                 billed_writes = billed_writes.saturating_add(billed_writes_for_bytes(body_len));
                 billed_bytes = billed_bytes.saturating_add(body_len);
                 published_writes.push(PublishedWrite::Put { document: published });
@@ -2355,6 +2391,7 @@ fn insert_put_row(
     parameters.push(Value::Text(commit.origin.to_owned()));
     parameters.push(Value::Integer(commit.origin_sequence as i64));
     parameters.push(Value::Integer(commit.hlc as i64));
+    parameters.push(Value::Blob(commit.context.clone()));
     parameters.push(match extract_expires_at(document) {
         Some(millis) => Value::Integer(millis),
         None => Value::Null,
@@ -2405,9 +2442,9 @@ fn insert_document_row(
         .prepare_cached(
             "INSERT INTO documents
              (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
-              digest, version, deleted, committed_at, body, kind, origin, origin_seq, hlc,
+              digest, version, deleted, committed_at, body, kind, origin, origin_seq, hlc, context,
               client_request_ulid)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         )
         .and_then(|mut statement| {
             statement.execute(rusqlite::params![
@@ -2427,6 +2464,7 @@ fn insert_document_row(
                 commit.origin,
                 commit.origin_sequence as i64,
                 commit.hlc as i64,
+                commit.context.as_slice(),
                 commit.operation.as_str(),
             ])
         })
@@ -2525,6 +2563,8 @@ struct FoldedCommit<'a> {
     origin: &'a str,
     origin_sequence: u64,
     hlc: u64,
+    /// Canonical dotted causal frontier observed before this commit.
+    context: Vec<u8>,
 }
 
 impl FoldedCommit<'_> {
@@ -2535,6 +2575,43 @@ impl FoldedCommit<'_> {
             JournalKind::Replicated => ROW_KIND_REPLICATED,
         }
     }
+}
+
+/// Encodes the per-origin frontier visible at the transaction's commit cut.
+/// The query runs inside the same `BEGIN IMMEDIATE` transaction as the row,
+/// so every row in a commit carries the exact same causal context and a
+/// restart reconstructs it from durable bytes rather than recomputing it from
+/// current state. A version byte leaves room for interval contexts later.
+fn context_frontier(
+    transaction: &rusqlite::Transaction<'_>,
+    tenant: &TenantId,
+) -> Result<Vec<u8>, ()> {
+    let mut statement = transaction
+        .prepare_cached(
+            "SELECT origin, MAX(origin_seq) FROM documents
+             WHERE tenant = ?1 AND origin <> '' AND origin_seq > 0
+             GROUP BY origin ORDER BY origin",
+        )
+        .map_err(|_| ())?;
+    let rows = statement
+        .query_map([tenant.as_str()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+        .map_err(|_| ())?;
+    let mut entries = Vec::new();
+    for row in rows {
+        let (origin, sequence) = row.map_err(|_| ())?;
+        let sequence = u64::try_from(sequence).map_err(|_| ())?;
+        if sequence != 0 {
+            entries.push((origin, sequence));
+        }
+    }
+    let mut output = Vec::with_capacity(5 + entries.len() * 20);
+    codec::push_u8(&mut output, 1);
+    codec::push_u32(&mut output, entries.len() as u32);
+    for (origin, sequence) in entries {
+        codec::push_str(&mut output, &origin);
+        codec::push_u64(&mut output, sequence);
+    }
+    Ok(output)
 }
 
 /// The public revision string of one row: the sequence it committed at.
@@ -2556,6 +2633,7 @@ fn canonical_journal_row(
     origin: &str,
     origin_sequence: i64,
     hlc: i64,
+    context: &[u8],
 ) -> Vec<u8> {
     let mut output = Vec::new();
     for value in [collection, id, commit_ulid, origin] {
@@ -2566,6 +2644,8 @@ fn canonical_journal_row(
     }
     codec::push_u32(&mut output, body.len() as u32);
     output.extend_from_slice(body);
+    codec::push_u32(&mut output, context.len() as u32);
+    output.extend_from_slice(context);
     output
 }
 
@@ -3807,6 +3887,25 @@ impl StoragePort for SqliteStorage {
         })
     }
 
+    fn document_context(
+        &self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+    ) -> Option<Vec<u8>> {
+        let reader = self.reader();
+        reader
+            .connection()
+            .query_row(
+                "SELECT context FROM documents
+                 WHERE tenant = ?1 AND collection = ?2 AND id = ?3
+                 ORDER BY commit_seq DESC LIMIT 1",
+                rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str()],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .ok()
+    }
+
     fn record_merge_conflict(
         &mut self,
         tenant: &TenantId,
@@ -4577,7 +4676,7 @@ impl StoragePort for SqliteStorage {
         let Ok(mut statement) = connection.prepare(
             "SELECT commit_seq, collection, id, commit_ulid, revision, requested,
                     digest, version, deleted, committed_at, body, kind, origin,
-                    origin_seq, hlc
+                    origin_seq, hlc, context
              FROM documents WHERE tenant = ?1 AND commit_seq > ?2 AND commit_seq IN (
                  SELECT commit_seq FROM documents WHERE tenant = ?1 AND commit_seq > ?2
                  ORDER BY commit_seq LIMIT ?3
@@ -4598,6 +4697,7 @@ impl StoragePort for SqliteStorage {
                 let origin = row.get::<_, String>(12)?;
                 let origin_sequence = row.get::<_, i64>(13)?;
                 let hlc = row.get::<_, i64>(14)?;
+                let context = row.get::<_, Vec<u8>>(15)?;
                 Ok(JournalRow {
                     commit_sequence: u64::try_from(commit_sequence).unwrap_or(0),
                     origin: origin.clone(),
@@ -4611,6 +4711,7 @@ impl StoragePort for SqliteStorage {
                         &origin,
                         origin_sequence,
                         hlc,
+                        &context,
                     ),
                 })
             },

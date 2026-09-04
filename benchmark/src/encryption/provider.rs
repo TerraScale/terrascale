@@ -4,8 +4,11 @@
 //! Orchestrator-owned adapter resolves a canonical `RegionCode` to provider
 //! configuration outside `TerraBase`.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::time::{Duration, Instant};
+
+use zeroize::Zeroize;
 
 use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid, Ulid, UlidError, process_generator};
 use crate::regions::RegionCode;
@@ -89,6 +92,8 @@ impl KeyPurpose {
 /// The artifact domain whose key is derived from a database key.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ArtifactKind {
+    /// The SQLite database file and its durable catalog metadata.
+    Database,
     /// A write-ahead log artifact.
     Wal,
     /// An immutable data segment.
@@ -101,6 +106,10 @@ pub enum ArtifactKind {
     Snapshot,
     /// A backup artifact.
     Backup,
+    /// A customer export produced from the database state.
+    Export,
+    /// A restore-to-new-database or development branch artifact.
+    Branch,
     /// A large-value chunk.
     LargeValueChunk,
     /// A checkpoint token or checkpoint-state artifact.
@@ -112,12 +121,15 @@ impl ArtifactKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Database => "database",
             Self::Wal => "wal",
             Self::Segment => "segment",
             Self::Index => "index",
             Self::Manifest => "manifest",
             Self::Snapshot => "snapshot",
             Self::Backup => "backup",
+            Self::Export => "export",
+            Self::Branch => "branch",
             Self::LargeValueChunk => "large-value-chunk",
             Self::Checkpoint => "checkpoint",
         }
@@ -128,8 +140,10 @@ impl ArtifactKind {
     pub const fn key_purpose(self) -> KeyPurpose {
         match self {
             Self::Backup => KeyPurpose::Backup,
+            Self::Export | Self::Branch => KeyPurpose::Backup,
             Self::Checkpoint => KeyPurpose::Checkpoint,
             Self::Wal
+            | Self::Database
             | Self::Segment
             | Self::Index
             | Self::Manifest
@@ -337,7 +351,14 @@ impl WrappedDatabaseKey {
         provider_reference_digest: [u8; 32],
         material: Vec<u8>,
     ) -> Result<Self, EncryptionError> {
-        if material.is_empty() || material.len() > MAX_WRAPPED_KEY_BYTES {
+        // A wrapper is a production catalog fact.  Do not allow a provider
+        // adapter (or a malformed catalog record) to smuggle an inactive
+        // Region or a local-file wrapper into the OCI hierarchy.
+        if provider != KeyProviderIdentity::OciVault
+            || !crate::regions::RegionCatalog::production().is_registered(&region)
+            || material.is_empty()
+            || material.len() > MAX_WRAPPED_KEY_BYTES
+        {
             return Err(EncryptionError::InvalidWrappedKey);
         }
         Ok(Self { metadata, region, provider, provider_reference_digest, material })
@@ -383,6 +404,159 @@ impl fmt::Debug for WrappedDatabaseKey {
             .field("provider", &self.provider)
             .field("wrapped_bytes", &self.material.len())
             .finish_non_exhaustive()
+    }
+}
+
+impl Drop for WrappedDatabaseKey {
+    fn drop(&mut self) {
+        self.material.zeroize();
+    }
+}
+
+/// The regional wrapper set for one database-key version.
+///
+/// The DEK itself is deliberately not retained here.  A provider adapter
+/// creates it for one wrapping operation and this value retains only the
+/// opaque OCI Vault wrappers needed to recover it in the selected Regions.
+/// The set is exact: every selected Region has one wrapper and no wrapper
+/// from outside the placement lock is admitted.
+pub struct DatabaseKeyHierarchy {
+    metadata: KeyVersionMetadata,
+    wrappers: BTreeMap<RegionCode, WrappedDatabaseKey>,
+}
+
+impl fmt::Debug for DatabaseKeyHierarchy {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DatabaseKeyHierarchy")
+            .field("metadata", &self.metadata)
+            .field("regions", &self.wrappers.keys().collect::<Vec<_>>())
+            .field("crypto_shredded", &self.wrappers.is_empty())
+            .finish()
+    }
+}
+
+impl DatabaseKeyHierarchy {
+    /// Builds a hierarchy from wrappers loaded beside a placement record.
+    ///
+    /// This validates the exact Region set and common key metadata before a
+    /// caller can unwrap any key.  It is the catalog-read hook used by the
+    /// Orchestrator/member integration; no provider or OCI identifier is
+    /// stored in the public value beyond the opaque wrapper bytes.
+    pub fn from_wrappers(
+        metadata: KeyVersionMetadata,
+        selected_regions: impl IntoIterator<Item = RegionCode>,
+        wrappers: impl IntoIterator<Item = WrappedDatabaseKey>,
+    ) -> Result<Self, EncryptionError> {
+        let regions: std::collections::BTreeSet<_> = selected_regions.into_iter().collect();
+        if regions.is_empty()
+            || regions.iter().any(|region| {
+                !crate::regions::RegionCatalog::production().is_registered(region)
+            })
+        {
+            return Err(EncryptionError::InvalidWrappedKey);
+        }
+        let mut by_region = BTreeMap::new();
+        for wrapper in wrappers {
+            if wrapper.metadata() != &metadata
+                || wrapper.provider() != KeyProviderIdentity::OciVault
+                || !regions.contains(&wrapper.region())
+                || by_region.insert(wrapper.region(), wrapper).is_some()
+            {
+                return Err(EncryptionError::InvalidWrappedKey);
+            }
+        }
+        if by_region.len() != regions.len() {
+            return Err(EncryptionError::InvalidWrappedKey);
+        }
+        Ok(Self { metadata, wrappers: by_region })
+    }
+
+    /// Creates and wraps a fresh per-database DEK in every selected Region.
+    ///
+    /// The provider is expected to use its regional OCI Vault KEK.  The
+    /// currently shipped provider is intentionally unconfigured, so this
+    /// method returns [`EncryptionError::KeyProviderUnconfigured`] until the
+    /// Orchestrator supplies an authorized adapter.
+    pub fn create(
+        provider: &dyn KeyWrappingProvider,
+        scope: KeyScope,
+        version: DatabaseKeyVersion,
+        selected_regions: impl IntoIterator<Item = RegionCode>,
+    ) -> Result<Self, EncryptionError> {
+        let regions: Vec<_> = selected_regions.into_iter().collect();
+        if regions.is_empty()
+            || regions.iter().any(|region| {
+                !crate::regions::RegionCatalog::production().is_registered(region)
+            })
+        {
+            return Err(EncryptionError::InvalidWrappedKey);
+        }
+        let metadata = KeyVersionMetadata::new(scope, version);
+        let mut dek = DatabaseKey::generate()?;
+        let mut wrappers = Vec::with_capacity(regions.len());
+        for region in regions {
+            let wrapper = provider.wrap_database_key(&metadata, region, &dek)?;
+            if wrapper.metadata() != &metadata
+                || wrapper.provider() != provider.identity()
+                || wrapper.region() != region
+            {
+                return Err(EncryptionError::InvalidWrappedKey);
+            }
+            wrappers.push(wrapper);
+        }
+        dek.destroy();
+        let wrapper_regions: Vec<_> = wrappers.iter().map(|wrapper| wrapper.region()).collect();
+        Self::from_wrappers(metadata, wrapper_regions, wrappers)
+    }
+
+    /// Returns the version metadata shared by every regional wrapper.
+    #[must_use]
+    pub const fn metadata(&self) -> &KeyVersionMetadata {
+        &self.metadata
+    }
+
+    /// Returns the exact selected Regions carrying wrappers.
+    #[must_use]
+    pub fn regions(&self) -> impl Iterator<Item = RegionCode> + '_ {
+        self.wrappers.keys().copied()
+    }
+
+    /// Returns the wrapper for one selected Region, if it has not been
+    /// crypto-shredded.
+    #[must_use]
+    pub fn wrapper(&self, region: RegionCode) -> Option<&WrappedDatabaseKey> {
+        self.wrappers.get(&region)
+    }
+
+    /// Returns whether all regional wrappers have been destroyed.
+    #[must_use]
+    pub fn is_crypto_shredded(&self) -> bool {
+        self.wrappers.is_empty()
+    }
+
+    /// Destroys every regional wrapper and removes the DEK recovery path.
+    ///
+    /// Destruction is incremental and retryable: wrappers successfully
+    /// destroyed before a provider error are removed, while the remaining
+    /// wrappers stay available for a later repair attempt.  No success is
+    /// reported until every selected Region is gone.
+    pub fn crypto_shred(
+        &mut self,
+        provider: &dyn KeyWrappingProvider,
+    ) -> Result<(), EncryptionError> {
+        if provider.identity() != KeyProviderIdentity::OciVault {
+            return Err(EncryptionError::InvalidWrappedKey);
+        }
+        let regions: Vec<_> = self.wrappers.keys().copied().collect();
+        for region in regions {
+            let wrapper = self.wrappers.remove(&region).expect("wrapper key exists");
+            if let Err(error) = provider.destroy_wrapper(&wrapper) {
+                self.wrappers.insert(region, wrapper);
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 }
 

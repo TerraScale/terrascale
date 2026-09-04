@@ -44,12 +44,21 @@ pub const MAX_USAGE_CONTINUATION_BYTES: usize = 1_024;
 /// Largest admitted-request cost accepted in one authoritative fact.
 pub const MAX_ADMITTED_REQUEST_UNITS_PER_FACT: i128 = 1_000_000;
 
+/// Largest document write-unit observation accepted in one fact.
+pub const MAX_DOCUMENT_WRITE_UNITS_PER_FACT: i128 = 1_000_000;
+
 /// Largest public-egress observation accepted in one authoritative fact.
 /// Larger streams must record independently idempotent bounded chunks.
 pub const MAX_PUBLIC_EGRESS_BYTES_PER_FACT: i128 = 1_099_511_627_776;
 
 /// The number of logical bytes in one billed write unit (D-16).
 pub const WRITE_UNIT_BYTES: u64 = 4 * 1024;
+
+/// The canonical key for document write units in usage exports.
+pub const DOCUMENT_WRITE_UNITS_KEY: &str = "document_write_units";
+
+/// The canonical key for logical storage byte-seconds in usage exports.
+pub const STORAGE_BYTE_SECONDS_KEY: &str = "storage_byte_seconds";
 
 /// Typed failures in the usage domain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -118,6 +127,8 @@ pub enum UsageError {
     InvalidCommitSequence,
     /// An export cursor moved backwards.
     CursorRegression,
+    /// The requested meter is not one of the two billable D-16 meters.
+    NonBillableMeter,
 }
 
 impl fmt::Display for UsageError {
@@ -155,6 +166,7 @@ impl fmt::Display for UsageError {
             Self::InvalidRegionCount => "usage Region count must be positive",
             Self::InvalidCommitSequence => "usage commit sequence must be nonzero",
             Self::CursorRegression => "usage export cursor moved backwards",
+            Self::NonBillableMeter => "usage meter is not billable",
         })
     }
 }
@@ -297,38 +309,80 @@ impl UsageScope {
 /// One initial billable meter from the GOAL catalog.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MeterKind {
+    /// One create/update/patch/delete operation, rounded in 4 KiB units.
+    DocumentWriteUnits,
+    /// Logical bytes retained by current documents and history, measured in
+    /// byte-seconds and multiplied by selected Regions.
+    StorageByteSeconds,
     /// Stored bytes multiplied by elapsed hours for each selected Region copy.
+    #[deprecated(note = "use StorageByteSeconds; retained only as an unbilled attribution kind")]
     StoredByteHours,
     /// Admitted public request units under a versioned cost table.
+    #[deprecated(note = "requests are unbilled; retained only as an attribution kind")]
     AdmittedRequestUnits,
     /// Public response and change-stream egress bytes.
+    #[deprecated(note = "egress is unbilled; retained only as an attribution kind")]
     PublicEgressBytes,
     /// Active Region seats multiplied by elapsed hours.
+    #[deprecated(note = "Region seats are unbilled; retained only as a guard kind")]
     ActiveRegionSeats,
     /// Optional immutable backup bytes multiplied by elapsed hours.
+    #[deprecated(note = "backups are unbilled; retained only as an attribution kind")]
     BackupByteHours,
     /// Explicit restore work.
+    #[deprecated(note = "restore is unbilled; retained only as an attribution kind")]
     RestoreWork,
 }
 
 impl MeterKind {
     /// Returns every initial meter in canonical order.
     #[must_use]
-    pub const fn all() -> [Self; 6] {
+    pub const fn all() -> [Self; 2] {
         [
-            Self::StoredByteHours,
-            Self::AdmittedRequestUnits,
-            Self::PublicEgressBytes,
-            Self::ActiveRegionSeats,
-            Self::BackupByteHours,
-            Self::RestoreWork,
+            Self::DocumentWriteUnits,
+            Self::StorageByteSeconds,
         ]
+    }
+
+    /// Returns whether this kind can create a chargeable usage fact.
+    #[must_use]
+    pub const fn is_billable(self) -> bool {
+        matches!(self, Self::DocumentWriteUnits | Self::StorageByteSeconds)
+    }
+
+    /// Returns the stable wire key, or `None` for legacy guard/attribution
+    /// kinds. Unknown keys must not be converted into a meter by callers.
+    #[must_use]
+    pub const fn key(self) -> Option<&'static str> {
+        match self {
+            Self::DocumentWriteUnits => Some(DOCUMENT_WRITE_UNITS_KEY),
+            Self::StorageByteSeconds => Some(STORAGE_BYTE_SECONDS_KEY),
+            Self::StoredByteHours
+            | Self::AdmittedRequestUnits
+            | Self::PublicEgressBytes
+            | Self::ActiveRegionSeats
+            | Self::BackupByteHours
+            | Self::RestoreWork => None,
+        }
+    }
+
+    /// Resolves only the closed, published billable meter vocabulary.
+    pub fn from_key(key: &str) -> Result<Self, UsageError> {
+        match key {
+            DOCUMENT_WRITE_UNITS_KEY => Ok(Self::DocumentWriteUnits),
+            STORAGE_BYTE_SECONDS_KEY => Ok(Self::StorageByteSeconds),
+            _ => Err(UsageError::UnknownMeterDefinition),
+        }
     }
 }
 
 /// The integer unit of one meter.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MeterUnit {
+    /// One document operation per 4 KiB of canonical body bytes.
+    WriteUnit,
+    /// One logical byte retained for one second.
+    ByteSecond,
     /// Bytes multiplied by hours.
     ByteHour,
     /// One admitted request cost unit.
@@ -344,6 +398,10 @@ pub enum MeterUnit {
 /// The accounting scope a meter charges.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ChargeScope {
+    /// One document mutation operation.
+    DocumentWrite,
+    /// Logical current/history bytes retained by the database.
+    LogicalStorage,
     /// One selected active Region's copy.
     ActiveRegionCopy,
     /// One admitted request at its origin.
@@ -361,6 +419,10 @@ pub enum ChargeScope {
 /// The rule that mints a unit and identifies excluded internal work.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MintingRule {
+    /// Mint exactly once for an accepted document mutation.
+    DocumentWrite,
+    /// Mint from retained logical current/history revisions.
+    LogicalStorage,
     /// Mint once for an accepted origin commit; retries and replicas do not mint.
     AcceptedOriginCommit,
     /// Mint once for a stable admitted request identity.
@@ -465,6 +527,12 @@ impl MeterDefinition {
     pub const fn correction(self) -> CorrectionProcedure {
         self.correction
     }
+
+    /// Returns whether this definition can contribute to an invoice.
+    #[must_use]
+    pub const fn is_billable(self) -> bool {
+        self.kind.is_billable()
+    }
 }
 
 /// The initial versioned meter catalog.
@@ -474,7 +542,7 @@ pub struct MeterCatalog {
 }
 
 impl MeterCatalog {
-    /// Builds version one of every initial GOAL meter.
+    /// Builds version one of the two chargeable D-16 meters.
     #[must_use]
     #[allow(clippy::missing_panics_doc)]
     pub fn initial() -> Self {
@@ -497,6 +565,9 @@ impl MeterCatalog {
 
     /// Registers a new immutable version.
     pub fn register(&mut self, definition: MeterDefinition) -> Result<(), UsageError> {
+        if !definition.is_billable() {
+            return Err(UsageError::NonBillableMeter);
+        }
         let key = (definition.kind, definition.version);
         if self.definitions.contains_key(&key) {
             return Err(UsageError::DuplicateMeterDefinition);
@@ -511,6 +582,12 @@ impl MeterCatalog {
         self.definitions.get(&(kind, version))
     }
 
+    /// Resolves a published meter key without accepting arbitrary strings.
+    pub fn get_key(&self, key: &str, version: u32) -> Result<&MeterDefinition, UsageError> {
+        let kind = MeterKind::from_key(key)?;
+        self.get(kind, version).ok_or(UsageError::UnknownMeterDefinition)
+    }
+
     /// Returns definitions in deterministic meter/version order.
     pub fn definitions(&self) -> impl Iterator<Item = &MeterDefinition> {
         self.definitions.values()
@@ -520,6 +597,10 @@ impl MeterCatalog {
 /// A stable identity used by one fact's minting rule.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MintingIdentity {
+    /// The accepted document mutation identity.
+    DocumentWrite(UsageFactId),
+    /// The retained logical storage observation identity.
+    LogicalStorage(UsageFactId),
     /// The accepted origin commit identity.
     AcceptedOriginCommit(UsageFactId),
     /// The stable admitted request identity.
@@ -539,6 +620,8 @@ impl MintingIdentity {
     #[must_use]
     pub fn rule(&self) -> MintingRule {
         match self {
+            Self::DocumentWrite(_) => MintingRule::DocumentWrite,
+            Self::LogicalStorage(_) => MintingRule::LogicalStorage,
             Self::AcceptedOriginCommit(_) => MintingRule::AcceptedOriginCommit,
             Self::StableAdmittedRequest(_) => MintingRule::StableAdmittedRequest,
             Self::PublicResponse(_) => MintingRule::PublicResponseBytes,
@@ -552,7 +635,9 @@ impl MintingIdentity {
     #[must_use]
     pub fn id(&self) -> &UsageFactId {
         match self {
-            Self::AcceptedOriginCommit(id)
+            Self::DocumentWrite(id)
+            | Self::LogicalStorage(id)
+            | Self::AcceptedOriginCommit(id)
             | Self::StableAdmittedRequest(id)
             | Self::PublicResponse(id)
             | Self::ActiveRegionHour(id)
@@ -611,6 +696,12 @@ impl UsageFact {
     #[must_use]
     pub const fn meter(&self) -> MeterKind {
         self.meter
+    }
+
+    /// Returns whether this fact belongs to the closed chargeable vocabulary.
+    #[must_use]
+    pub const fn is_billable(&self) -> bool {
+        self.meter.is_billable()
     }
 
     /// Returns the meter version.
@@ -871,7 +962,7 @@ impl UsageAdmissionContext {
             return Err(UsageError::InvalidTimestamp);
         }
         validate_usage_region(origin_region)?;
-        if MeterCatalog::initial().get(MeterKind::AdmittedRequestUnits, meter_version).is_none() {
+        if MeterCatalog::initial().get(MeterKind::DocumentWriteUnits, meter_version).is_none() {
             return Err(UsageError::UnknownMeterDefinition);
         }
         Ok(Self {
@@ -953,23 +1044,49 @@ impl UsageAdmissionContext {
 /// The closed meters accepted by the standalone usage-record command.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum UsageRecordMeter {
+    /// One document mutation billed in 4 KiB write units.
+    DocumentWriteUnits,
+    /// Logical storage byte-seconds; normally emitted by the storage rollup,
+    /// not by an external usage-record command.
+    StorageByteSeconds,
     /// One admitted read, query, stream, or other non-mutation request.
+    #[deprecated(note = "requests are unbilled")]
     AdmittedRequestUnits,
     /// Public response or change-stream egress bytes.
+    #[deprecated(note = "egress is unbilled")]
     PublicEgressBytes,
 }
 
 impl UsageRecordMeter {
     const fn meter_kind(self) -> MeterKind {
         match self {
+            Self::DocumentWriteUnits => MeterKind::DocumentWriteUnits,
+            Self::StorageByteSeconds => MeterKind::StorageByteSeconds,
             Self::AdmittedRequestUnits => MeterKind::AdmittedRequestUnits,
             Self::PublicEgressBytes => MeterKind::PublicEgressBytes,
+        }
+    }
+
+    /// Returns whether this command can mint a billable fact.
+    #[must_use]
+    pub const fn is_billable(self) -> bool {
+        self.meter_kind().is_billable()
+    }
+
+    /// Resolves a standalone command key from the closed vocabulary.
+    pub fn from_key(key: &str) -> Result<Self, UsageError> {
+        match MeterKind::from_key(key)? {
+            MeterKind::DocumentWriteUnits => Ok(Self::DocumentWriteUnits),
+            MeterKind::StorageByteSeconds => Ok(Self::StorageByteSeconds),
+            _ => Err(UsageError::UnknownMeterDefinition),
         }
     }
 }
 
 const fn usage_record_unit_limit(meter: UsageRecordMeter) -> i128 {
     match meter {
+        UsageRecordMeter::DocumentWriteUnits => MAX_DOCUMENT_WRITE_UNITS_PER_FACT,
+        UsageRecordMeter::StorageByteSeconds => i128::MAX,
         UsageRecordMeter::AdmittedRequestUnits => MAX_ADMITTED_REQUEST_UNITS_PER_FACT,
         UsageRecordMeter::PublicEgressBytes => MAX_PUBLIC_EGRESS_BYTES_PER_FACT,
     }
@@ -1014,6 +1131,12 @@ impl UsageRecordRequest {
         meter_version: u32,
         integer_units: i128,
     ) -> Result<Self, UsageError> {
+        if !meter.meter_kind().is_billable() {
+            return Err(UsageError::NonBillableMeter);
+        }
+        if matches!(meter, UsageRecordMeter::StorageByteSeconds) {
+            return Err(UsageError::InvalidMeterDefinition);
+        }
         if integer_units <= 0 {
             return Err(UsageError::InvalidIntegerUnits);
         }
@@ -1109,6 +1232,12 @@ impl UsageRecordRequest {
             region_id: self.origin_region,
         };
         let identity = match self.meter {
+            UsageRecordMeter::DocumentWriteUnits => {
+                MintingIdentity::DocumentWrite(self.fact_id.clone())
+            }
+            UsageRecordMeter::StorageByteSeconds => {
+                MintingIdentity::LogicalStorage(self.fact_id.clone())
+            }
             UsageRecordMeter::AdmittedRequestUnits => {
                 MintingIdentity::StableAdmittedRequest(self.fact_id.clone())
             }
@@ -1428,6 +1557,9 @@ impl UsageSegment {
         integer_total: i128,
         correction_of: Option<SegmentId>,
     ) -> Result<Self, UsageError> {
+        if !definition.is_billable() {
+            return Err(UsageError::NonBillableMeter);
+        }
         measurement_window.validate_for(definition.cadence)?;
         if integer_total == 0 {
             return Err(UsageError::ZeroDelta);
@@ -1659,6 +1791,9 @@ impl UsageSegment {
     }
 
     fn validate_shape(&self) -> Result<(), UsageError> {
+        if !self.meter.is_billable() {
+            return Err(UsageError::NonBillableMeter);
+        }
         if self.meter_version == 0 {
             return Err(UsageError::InvalidMeterVersion);
         }
@@ -1862,6 +1997,364 @@ pub fn storage_byte_seconds_current_and_history(
             .ok_or(UsageError::IntegerOverflow)?;
     }
     Ok(byte_millis / 1_000)
+}
+
+/// One logical revision contributing to storage billing.
+///
+/// `retained_until_millis` is the history/pruner boundary and
+/// `ttl_expires_at_millis` is the document TTL boundary. Both are exclusive;
+/// the earlier boundary wins. A current document has no history boundary,
+/// while a retained history row has one. Expired rows contribute zero and are
+/// deliberately not represented by a billed tombstone.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageRevision {
+    revision_id: UsageFactId,
+    logical_bytes: u64,
+    retained_from_millis: u64,
+    retained_until_millis: Option<u64>,
+    ttl_expires_at_millis: Option<u64>,
+    history: bool,
+}
+
+impl StorageRevision {
+    /// Creates a current-document observation. `ttl_expires_at_millis`, when
+    /// present, stops billing at expiry even if cleanup has not run yet.
+    pub fn current(
+        revision_id: UsageFactId,
+        logical_bytes: u64,
+        retained_from_millis: u64,
+        ttl_expires_at_millis: Option<u64>,
+    ) -> Result<Self, UsageError> {
+        Self::try_new(
+            revision_id,
+            logical_bytes,
+            retained_from_millis,
+            None,
+            ttl_expires_at_millis,
+            false,
+        )
+    }
+
+    /// Creates a retained-history observation. History is billed only until
+    /// its retention boundary, and also stops at an earlier TTL boundary.
+    pub fn history(
+        revision_id: UsageFactId,
+        logical_bytes: u64,
+        retained_from_millis: u64,
+        retained_until_millis: u64,
+        ttl_expires_at_millis: Option<u64>,
+    ) -> Result<Self, UsageError> {
+        Self::try_new(
+            revision_id,
+            logical_bytes,
+            retained_from_millis,
+            Some(retained_until_millis),
+            ttl_expires_at_millis,
+            true,
+        )
+    }
+
+    /// Creates an observation with explicit current/history retention shape.
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        revision_id: UsageFactId,
+        logical_bytes: u64,
+        retained_from_millis: u64,
+        retained_until_millis: Option<u64>,
+        ttl_expires_at_millis: Option<u64>,
+        history: bool,
+    ) -> Result<Self, UsageError> {
+        if retained_until_millis.is_some_and(|end| end < retained_from_millis) {
+            return Err(UsageError::InvalidMeasurementWindow);
+        }
+        if history && retained_until_millis.is_none() {
+            return Err(UsageError::InvalidMeasurementWindow);
+        }
+        Ok(Self {
+            revision_id,
+            logical_bytes,
+            retained_from_millis,
+            retained_until_millis,
+            ttl_expires_at_millis,
+            history,
+        })
+    }
+
+    /// Returns this revision's idempotency identity.
+    #[must_use]
+    pub fn revision_id(&self) -> &UsageFactId {
+        &self.revision_id
+    }
+
+    /// Returns canonical logical document bytes (never indexes/WAL/backup).
+    #[must_use]
+    pub const fn logical_bytes(&self) -> u64 {
+        self.logical_bytes
+    }
+
+    /// Returns when this revision became retained.
+    #[must_use]
+    pub const fn retained_from_millis(&self) -> u64 {
+        self.retained_from_millis
+    }
+
+    /// Returns the history retention boundary, if any.
+    #[must_use]
+    pub const fn retained_until_millis(&self) -> Option<u64> {
+        self.retained_until_millis
+    }
+
+    /// Returns the TTL boundary, if any.
+    #[must_use]
+    pub const fn ttl_expires_at_millis(&self) -> Option<u64> {
+        self.ttl_expires_at_millis
+    }
+
+    /// Returns whether this is a retained history revision.
+    #[must_use]
+    pub const fn is_history(&self) -> bool {
+        self.history
+    }
+
+    fn byte_millis_until(&self, as_of_millis: u64) -> Result<u128, UsageError> {
+        let mut end = as_of_millis;
+        if let Some(boundary) = self.retained_until_millis {
+            end = end.min(boundary);
+        }
+        if let Some(boundary) = self.ttl_expires_at_millis {
+            end = end.min(boundary);
+        }
+        if end <= self.retained_from_millis {
+            return Ok(0);
+        }
+        u128::from(self.logical_bytes)
+            .checked_mul(u128::from(end - self.retained_from_millis))
+            .ok_or(UsageError::IntegerOverflow)
+    }
+}
+
+/// Computes one TTL-aware logical storage rollup over current documents and
+/// retained history. Region multiplication is applied exactly once after all
+/// revisions have been deduplicated and their boundaries applied.
+pub fn storage_byte_seconds_for_revisions(
+    revisions: &[StorageRevision],
+    selected_regions: u32,
+    as_of_millis: u64,
+) -> Result<u128, UsageError> {
+    if selected_regions == 0 {
+        return Err(UsageError::InvalidRegionCount);
+    }
+    if as_of_millis == 0 {
+        return Err(UsageError::InvalidTimestamp);
+    }
+    let byte_millis = revisions.iter().try_fold(0_u128, |total, revision| {
+        total
+            .checked_add(revision.byte_millis_until(as_of_millis)?)
+            .ok_or(UsageError::IntegerOverflow)
+    })?;
+    byte_millis
+        .checked_mul(u128::from(selected_regions))
+        .ok_or(UsageError::IntegerOverflow)
+        .map(|value| value / 1_000)
+}
+
+/// A durable storage rollup emitted for one database and journal frontier.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageRollupFact {
+    db: UsageScopeId,
+    seq_hi: u64,
+    selected_regions: u32,
+    byte_seconds: u128,
+}
+
+impl StorageRollupFact {
+    /// Creates one validated storage rollup.
+    pub fn try_new(
+        db: &str,
+        seq_hi: u64,
+        selected_regions: u32,
+        byte_seconds: u128,
+    ) -> Result<Self, UsageError> {
+        if seq_hi == 0 {
+            return Err(UsageError::InvalidCommitSequence);
+        }
+        if selected_regions == 0 {
+            return Err(UsageError::InvalidRegionCount);
+        }
+        Ok(Self {
+            db: UsageScopeId::try_new(db)?,
+            seq_hi,
+            selected_regions,
+            byte_seconds,
+        })
+    }
+
+    /// Database identity.
+    #[must_use]
+    pub fn db(&self) -> &str {
+        self.db.as_str()
+    }
+
+    /// Journal high-water sequence included in this rollup.
+    #[must_use]
+    pub const fn seq_hi(&self) -> u64 {
+        self.seq_hi
+    }
+
+    /// Number of selected Region copies included exactly once.
+    #[must_use]
+    pub const fn selected_regions(&self) -> u32 {
+        self.selected_regions
+    }
+
+    /// TTL-aware logical byte-seconds across selected Regions.
+    #[must_use]
+    pub const fn byte_seconds(&self) -> u128 {
+        self.byte_seconds
+    }
+}
+
+/// Restart-safe storage rollup builder. Replaying one revision identity is a
+/// no-op; reusing it with different retention/bytes fails closed.
+#[derive(Clone, Debug)]
+pub struct StorageRollup {
+    db: UsageScopeId,
+    selected_regions: u32,
+    revisions: BTreeMap<UsageFactId, StorageRevision>,
+}
+
+impl StorageRollup {
+    /// Starts a rollup for one database and selected Region set.
+    pub fn try_new(db: &str, selected_regions: u32) -> Result<Self, UsageError> {
+        if selected_regions == 0 {
+            return Err(UsageError::InvalidRegionCount);
+        }
+        Ok(Self {
+            db: UsageScopeId::try_new(db)?,
+            selected_regions,
+            revisions: BTreeMap::new(),
+        })
+    }
+
+    /// Adds one current or retained-history revision observation.
+    pub fn add(&mut self, revision: StorageRevision) -> Result<bool, UsageError> {
+        if let Some(previous) = self.revisions.get(revision.revision_id()) {
+            return if previous == &revision {
+                Ok(false)
+            } else {
+                Err(UsageError::FactIdentityConflict)
+            };
+        }
+        self.revisions.insert(revision.revision_id().clone(), revision);
+        Ok(true)
+    }
+
+    /// Finishes a rollup at the supplied wall-clock boundary.
+    pub fn finish(self, seq_hi: u64, as_of_millis: u64) -> Result<StorageRollupFact, UsageError> {
+        let revisions: Vec<_> = self.revisions.into_values().collect();
+        let byte_seconds =
+            storage_byte_seconds_for_revisions(&revisions, self.selected_regions, as_of_millis)?;
+        StorageRollupFact::try_new(
+            self.db.as_str(),
+            seq_hi,
+            self.selected_regions,
+            byte_seconds,
+        )
+    }
+}
+
+/// One journal row sufficient to rebuild a storage rollup after restart.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JournalStorageFact {
+    db: UsageScopeId,
+    sequence: u64,
+    revision: StorageRevision,
+    selected_regions: u32,
+}
+
+impl JournalStorageFact {
+    /// Creates one validated journal-derived storage observation.
+    pub fn try_new(
+        db: &str,
+        sequence: u64,
+        revision: StorageRevision,
+        selected_regions: u32,
+    ) -> Result<Self, UsageError> {
+        if sequence == 0 {
+            return Err(UsageError::InvalidCommitSequence);
+        }
+        if selected_regions == 0 {
+            return Err(UsageError::InvalidRegionCount);
+        }
+        Ok(Self {
+            db: UsageScopeId::try_new(db)?,
+            sequence,
+            revision,
+            selected_regions,
+        })
+    }
+
+    /// Database identity.
+    #[must_use]
+    pub fn db(&self) -> &str {
+        self.db.as_str()
+    }
+
+    /// Journal sequence carrying this revision.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Revision observation.
+    #[must_use]
+    pub fn revision(&self) -> &StorageRevision {
+        &self.revision
+    }
+
+    /// Selected Region count.
+    #[must_use]
+    pub const fn selected_regions(&self) -> u32 {
+        self.selected_regions
+    }
+}
+
+/// Reconciles storage observations from folded document/history journal rows.
+/// Duplicate `(database, revision)` rows are accepted only when byte and TTL
+/// boundaries match. The result is sorted by database for cursor export.
+pub fn reconcile_storage_journal(
+    journal: &[JournalStorageFact],
+    as_of_millis: u64,
+) -> Result<Vec<StorageRollupFact>, UsageError> {
+    let mut unique: BTreeMap<(UsageScopeId, UsageFactId), &JournalStorageFact> = BTreeMap::new();
+    for row in journal {
+        let key = (row.db.clone(), row.revision.revision_id().clone());
+        if let Some(previous) = unique.get(&key) {
+            if *previous != row {
+                return Err(UsageError::FactIdentityConflict);
+            }
+        } else {
+            unique.insert(key, row);
+        }
+    }
+    let mut rollups: BTreeMap<UsageScopeId, (u64, u32, Vec<StorageRevision>)> = BTreeMap::new();
+    for row in unique.values() {
+        let entry = rollups
+            .entry(row.db.clone())
+            .or_insert_with(|| (0, row.selected_regions, Vec::new()));
+        if entry.1 != row.selected_regions {
+            return Err(UsageError::InvalidRegionCount);
+        }
+        entry.0 = entry.0.max(row.sequence);
+        entry.2.push(row.revision.clone());
+    }
+    rollups
+        .into_iter()
+        .map(|(db, (seq_hi, regions, revisions))| {
+            let bytes = storage_byte_seconds_for_revisions(&revisions, regions, as_of_millis)?;
+            StorageRollupFact::try_new(db.as_str(), seq_hi, regions, bytes)
+        })
+        .collect()
 }
 
 /// A group-commit metering fact: `(db, seq_hi, writes, logical bytes)`.
@@ -2200,6 +2693,22 @@ pub enum UsageActivity {
     Read,
     /// A SQL query or query subscription evaluation.
     Query,
+    /// Result-view fan-out to attached clients.
+    Fanout,
+    /// A subscriber connection or reattachment.
+    Subscriber,
+    /// Webhook delivery.
+    Webhook,
+    /// Replay of a retained publication log.
+    Replay,
+    /// Catch-up from a checkpoint or replica frontier.
+    CatchUp,
+    /// TTL expiry/removal work.
+    TtlExpiry,
+    /// Response or network egress bytes.
+    Egress,
+    /// Active Region seat, backup, or restore bookkeeping.
+    Infrastructure,
 }
 
 impl UsageActivity {
@@ -2213,6 +2722,26 @@ impl UsageActivity {
     #[must_use]
     pub const fn is_unbilled(self) -> bool {
         !self.is_billed()
+    }
+
+    /// Returns the only activity that may create a chargeable meter. Every
+    /// other activity is intentionally represented as `None`, so adding a new
+    /// serving path cannot accidentally become a bill.
+    #[must_use]
+    pub const fn billable_meter(self) -> Option<MeterKind> {
+        match self {
+            Self::Write => Some(MeterKind::DocumentWriteUnits),
+            Self::Read
+            | Self::Query
+            | Self::Fanout
+            | Self::Subscriber
+            | Self::Webhook
+            | Self::Replay
+            | Self::CatchUp
+            | Self::TtlExpiry
+            | Self::Egress
+            | Self::Infrastructure => None,
+        }
     }
 }
 
@@ -2231,6 +2760,20 @@ const fn expected_meter(
     kind: MeterKind,
 ) -> (MeterUnit, ChargeScope, MintingRule, MeasurementCadence, CorrectionProcedure) {
     match kind {
+        MeterKind::DocumentWriteUnits => (
+            MeterUnit::WriteUnit,
+            ChargeScope::DocumentWrite,
+            MintingRule::DocumentWrite,
+            MeasurementCadence::PerEvent,
+            CorrectionProcedure::AppendOnlySegmentReference,
+        ),
+        MeterKind::StorageByteSeconds => (
+            MeterUnit::ByteSecond,
+            ChargeScope::LogicalStorage,
+            MintingRule::LogicalStorage,
+            MeasurementCadence::Interval,
+            CorrectionProcedure::AppendOnlySegmentReference,
+        ),
         MeterKind::StoredByteHours => (
             MeterUnit::ByteHour,
             ChargeScope::ActiveRegionCopy,
@@ -2278,58 +2821,68 @@ const fn expected_meter(
 
 fn meter_to_u8(meter: MeterKind) -> u8 {
     match meter {
-        MeterKind::StoredByteHours => 0,
-        MeterKind::AdmittedRequestUnits => 1,
-        MeterKind::PublicEgressBytes => 2,
-        MeterKind::ActiveRegionSeats => 3,
-        MeterKind::BackupByteHours => 4,
-        MeterKind::RestoreWork => 5,
+        MeterKind::DocumentWriteUnits => 0,
+        MeterKind::StorageByteSeconds => 1,
+        MeterKind::StoredByteHours => 2,
+        MeterKind::AdmittedRequestUnits => 3,
+        MeterKind::PublicEgressBytes => 4,
+        MeterKind::ActiveRegionSeats => 5,
+        MeterKind::BackupByteHours => 6,
+        MeterKind::RestoreWork => 7,
     }
 }
 
 fn meter_from_u8(value: u8) -> Result<MeterKind, UsageError> {
     Ok(match value {
-        0 => MeterKind::StoredByteHours,
-        1 => MeterKind::AdmittedRequestUnits,
-        2 => MeterKind::PublicEgressBytes,
-        3 => MeterKind::ActiveRegionSeats,
-        4 => MeterKind::BackupByteHours,
-        5 => MeterKind::RestoreWork,
+        0 => MeterKind::DocumentWriteUnits,
+        1 => MeterKind::StorageByteSeconds,
+        2 => MeterKind::StoredByteHours,
+        3 => MeterKind::AdmittedRequestUnits,
+        4 => MeterKind::PublicEgressBytes,
+        5 => MeterKind::ActiveRegionSeats,
+        6 => MeterKind::BackupByteHours,
+        7 => MeterKind::RestoreWork,
         _ => return Err(UsageError::MalformedEncoding),
     })
 }
 
 fn charge_scope_to_u8(scope: ChargeScope) -> u8 {
     match scope {
-        ChargeScope::ActiveRegionCopy => 0,
-        ChargeScope::AdmittedRequest => 1,
-        ChargeScope::PublicEgress => 2,
-        ChargeScope::ActiveRegionSeat => 3,
-        ChargeScope::BackupCopy => 4,
-        ChargeScope::ExplicitRestore => 5,
+        ChargeScope::DocumentWrite => 0,
+        ChargeScope::LogicalStorage => 1,
+        ChargeScope::ActiveRegionCopy => 2,
+        ChargeScope::AdmittedRequest => 3,
+        ChargeScope::PublicEgress => 4,
+        ChargeScope::ActiveRegionSeat => 5,
+        ChargeScope::BackupCopy => 6,
+        ChargeScope::ExplicitRestore => 7,
     }
 }
 
 fn charge_scope_from_u8(value: u8) -> Result<ChargeScope, UsageError> {
     Ok(match value {
-        0 => ChargeScope::ActiveRegionCopy,
-        1 => ChargeScope::AdmittedRequest,
-        2 => ChargeScope::PublicEgress,
-        3 => ChargeScope::ActiveRegionSeat,
-        4 => ChargeScope::BackupCopy,
-        5 => ChargeScope::ExplicitRestore,
+        0 => ChargeScope::DocumentWrite,
+        1 => ChargeScope::LogicalStorage,
+        2 => ChargeScope::ActiveRegionCopy,
+        3 => ChargeScope::AdmittedRequest,
+        4 => ChargeScope::PublicEgress,
+        5 => ChargeScope::ActiveRegionSeat,
+        6 => ChargeScope::BackupCopy,
+        7 => ChargeScope::ExplicitRestore,
         _ => return Err(UsageError::MalformedEncoding),
     })
 }
 
 fn identity_kind(identity: &MintingIdentity) -> u8 {
     match identity {
-        MintingIdentity::AcceptedOriginCommit(_) => 0,
-        MintingIdentity::StableAdmittedRequest(_) => 1,
-        MintingIdentity::PublicResponse(_) => 2,
-        MintingIdentity::ActiveRegionHour(_) => 3,
-        MintingIdentity::BackupByteHour(_) => 4,
-        MintingIdentity::ExplicitRestore(_) => 5,
+        MintingIdentity::DocumentWrite(_) => 0,
+        MintingIdentity::LogicalStorage(_) => 1,
+        MintingIdentity::AcceptedOriginCommit(_) => 2,
+        MintingIdentity::StableAdmittedRequest(_) => 3,
+        MintingIdentity::PublicResponse(_) => 4,
+        MintingIdentity::ActiveRegionHour(_) => 5,
+        MintingIdentity::BackupByteHour(_) => 6,
+        MintingIdentity::ExplicitRestore(_) => 7,
     }
 }
 
@@ -2342,12 +2895,14 @@ fn decode_identity(reader: &mut Reader<'_>) -> Result<MintingIdentity, UsageErro
     let kind = reader.u8()?;
     let id = UsageFactId::try_new(&reader.string()?)?;
     Ok(match kind {
-        0 => MintingIdentity::AcceptedOriginCommit(id),
-        1 => MintingIdentity::StableAdmittedRequest(id),
-        2 => MintingIdentity::PublicResponse(id),
-        3 => MintingIdentity::ActiveRegionHour(id),
-        4 => MintingIdentity::BackupByteHour(id),
-        5 => MintingIdentity::ExplicitRestore(id),
+        0 => MintingIdentity::DocumentWrite(id),
+        1 => MintingIdentity::LogicalStorage(id),
+        2 => MintingIdentity::AcceptedOriginCommit(id),
+        3 => MintingIdentity::StableAdmittedRequest(id),
+        4 => MintingIdentity::PublicResponse(id),
+        5 => MintingIdentity::ActiveRegionHour(id),
+        6 => MintingIdentity::BackupByteHour(id),
+        7 => MintingIdentity::ExplicitRestore(id),
         _ => return Err(UsageError::MalformedEncoding),
     })
 }

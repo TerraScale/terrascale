@@ -19,9 +19,10 @@ mod provider;
 pub use local_file::LocalFileKeyProvider;
 pub use oci_vault::UnconfiguredOciVaultProvider;
 pub use provider::{
-    ArtifactKind, DatabaseKeyLease, DatabaseKeyVersion, KeyProviderIdentity, KeyPurpose,
-    KeyRotation, KeyScope, KeyVersionMetadata, KeyWrappingProvider, MAX_DATABASE_KEY_LEASE,
-    MAX_WRAPPED_KEY_BYTES, ProductionCapabilityStatus, ProviderCapability, WrappedDatabaseKey,
+    ArtifactKind, DatabaseKeyHierarchy, DatabaseKeyLease, DatabaseKeyVersion,
+    KeyProviderIdentity, KeyPurpose, KeyRotation, KeyScope, KeyVersionMetadata,
+    KeyWrappingProvider, MAX_DATABASE_KEY_LEASE, MAX_WRAPPED_KEY_BYTES,
+    ProductionCapabilityStatus, ProviderCapability, WrappedDatabaseKey,
     production_capability_status,
 };
 
@@ -173,11 +174,21 @@ impl DatabaseKey {
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self { bytes }
     }
+
+    /// Immediately destroys this key's material.
+    ///
+    /// This is used by key-lifecycle owners when a database is deleted or a
+    /// failed rotation must not retain a live DEK until scope exit.  The
+    /// destructor performs the same operation, so calling this method is
+    /// idempotent.
+    pub fn destroy(&mut self) {
+        self.bytes.zeroize();
+    }
 }
 
 impl Drop for DatabaseKey {
     fn drop(&mut self) {
-        self.bytes.zeroize();
+        self.destroy();
     }
 }
 

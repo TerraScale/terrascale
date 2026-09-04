@@ -515,6 +515,16 @@ impl<'engine> QueryStore<'engine> {
         snapshot: &ReadSnapshot,
     ) -> Result<QueryResult, QueryError> {
         if let Some(runtime) = &plan.sql_runtime {
+            // A lowered single-collection statement is the same immutable
+            // query model as the typed input.  Keep it on that path so the
+            // optimizer's descriptor/index visibility and the durable source
+            // document identity are preserved.  SQLite remains the execution
+            // adapter for execute-only SQL (joins, aggregates, CTEs) and
+            // EXPLAIN, whose result shape cannot be represented by the typed
+            // document model.
+            if plan.sql_execute_only_operator().is_none() {
+                return execute::execute(self.engine, &self.indexes, plan, snapshot);
+            }
             return sql_execute::execute(self.engine, plan, runtime, snapshot);
         }
         execute::execute(self.engine, &self.indexes, plan, snapshot)

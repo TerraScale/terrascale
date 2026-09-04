@@ -544,7 +544,7 @@ impl SchemaStatusRequest {
 /// recorded schema.
 ///
 /// Validation is pure: nothing is staged and nothing is written, so the
-/// operation is the on-demand check the studio and the CLI surface. The
+/// operation is the on-demand check the operator and CLI surfaces. The
 /// value arrives as a [`DocumentValue`]; the answer's violations are the
 /// schema model's field-and-kind vocabulary and never carry a field value.
 #[derive(Clone, Debug, PartialEq)]

@@ -106,8 +106,8 @@ use crate::backup::manifest::ENCRYPTED_MANIFEST_FILE;
 use crate::backup::manifest::point_directory;
 use crate::backup::records::Record;
 use crate::backup::{
-    BackupError, BackupKind, BackupManifest, RestorePlan, discover_points, select_latest_chain,
-    validate_chain_frontier,
+    BackupError, BackupKind, BackupManifest, PlacementLock, RestorePlan, discover_points,
+    select_latest_chain, validate_chain_frontier,
 };
 use crate::encryption::ArtifactCipher;
 use crate::engine::{Engine, EngineConfig};
@@ -118,6 +118,7 @@ use crate::types::{
     CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
     StorageSequence, TenantId,
 };
+use crate::regions::RegionCode;
 
 /// The reserved family collection, mirrored from the family contract (the
 /// canonical constant stays private to the family state module; the query
@@ -834,6 +835,25 @@ impl RestorePlan {
         execute_restore(destination, target, &Selection::Latest)
     }
 
+    /// Restores the newest point when the caller has already resolved the
+    /// immutable placement lock for `target_region`.
+    ///
+    /// The member/orchestrator integration supplies the durable source
+    /// placement and must call this checked entry point for PITR and branch
+    /// creation.  This native seam verifies the requested target Region
+    /// before admitting the target directory.
+    pub fn restore_latest_in_region(
+        destination: &Path,
+        target: &Path,
+        placement: &PlacementLock,
+        target_region: RegionCode,
+    ) -> Result<RecoveryReceipt, BackupError> {
+        if !placement.allows(target_region) {
+            return Err(BackupError::PlacementMismatch);
+        }
+        execute_restore(destination, target, &Selection::Latest)
+    }
+
     /// Restores the newest encrypted recovery-point chain using the caller's
     /// authenticated backup cipher. Plaintext and encrypted point namespaces
     /// are intentionally not interchangeable.
@@ -848,6 +868,20 @@ impl RestorePlan {
         target: &Path,
         cipher: &ArtifactCipher,
     ) -> Result<RecoveryReceipt, BackupError> {
+        execute_restore_encrypted(destination, target, &Selection::Latest, cipher)
+    }
+
+    /// Encrypted counterpart of [`Self::restore_latest_in_region`].
+    pub fn restore_latest_encrypted_in_region(
+        destination: &Path,
+        target: &Path,
+        cipher: &ArtifactCipher,
+        placement: &PlacementLock,
+        target_region: RegionCode,
+    ) -> Result<RecoveryReceipt, BackupError> {
+        if !placement.allows(target_region) {
+            return Err(BackupError::PlacementMismatch);
+        }
         execute_restore_encrypted(destination, target, &Selection::Latest, cipher)
     }
 
@@ -872,6 +906,23 @@ impl RestorePlan {
         execute_restore(destination, target, &Selection::Point { identity: identity.to_owned() })
     }
 
+    /// Restores a named point only into a Region admitted by the placement
+    /// lock.  This is the PITR/branch integration hook for a selected chain
+    /// depth.
+    pub fn restore_recovery_point_in_region(
+        identity: &str,
+        destination: &Path,
+        target: &Path,
+        placement: &PlacementLock,
+        target_region: RegionCode,
+    ) -> Result<RecoveryReceipt, BackupError> {
+        crate::backup::manifest::validate_identity(identity)?;
+        if !placement.allows(target_region) {
+            return Err(BackupError::PlacementMismatch);
+        }
+        execute_restore(destination, target, &Selection::Point { identity: identity.to_owned() })
+    }
+
     /// Restores one named encrypted recovery point and its predecessor chain.
     ///
     /// # Errors
@@ -886,6 +937,28 @@ impl RestorePlan {
         cipher: &ArtifactCipher,
     ) -> Result<RecoveryReceipt, BackupError> {
         crate::backup::manifest::validate_identity(identity)?;
+        execute_restore_encrypted(
+            destination,
+            target,
+            &Selection::Point { identity: identity.to_owned() },
+            cipher,
+        )
+    }
+
+    /// Encrypted named-point counterpart of
+    /// [`Self::restore_recovery_point_in_region`].
+    pub fn restore_recovery_point_encrypted_in_region(
+        identity: &str,
+        destination: &Path,
+        target: &Path,
+        cipher: &ArtifactCipher,
+        placement: &PlacementLock,
+        target_region: RegionCode,
+    ) -> Result<RecoveryReceipt, BackupError> {
+        crate::backup::manifest::validate_identity(identity)?;
+        if !placement.allows(target_region) {
+            return Err(BackupError::PlacementMismatch);
+        }
         execute_restore_encrypted(
             destination,
             target,

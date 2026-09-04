@@ -286,7 +286,7 @@ write_config() {
 
 ensure_binary() {
   if dry_run; then
-    log "DRY-RUN: would use $BIN (or cargo build --locked -p terrabase-server)"
+    log "DRY-RUN: would use $BIN (or nice -n 19 cargo build --locked -p terrabase-server)"
     return 0
   fi
   if [ -x "$BIN" ]; then
@@ -297,7 +297,7 @@ ensure_binary() {
   fi
   need_cmd cargo "install the Rust toolchain to build the member binary"
   log "building terrabase-server (first boot only; later boots reuse $BIN)"
-  (cd "$ROOT" && cargo build --locked -p terrabase-server)
+  (cd "$ROOT" && nice -n 19 cargo build --locked -p terrabase-server)
 }
 
 # --- members ---------------------------------------------------------------
@@ -571,11 +571,45 @@ run_x6() {
     run_or_print node --experimental-strip-types "$EDGE_RUN"
     return 0
   fi
+  # The edge harness intentionally strips customer credentials before its
+  # origin fetch. This adapter supplies the stack bootstrap credential and
+  # preserves the member-issued view capability, while still sending all
+  # snapshot/log reads through the real local member (never the X-4 stub).
+  local capability_key
+  capability_key="$(printf '%s' 'terrascale-reactive-capability-v1' | od -An -tx1 | tr -d ' \n')"
   (cd "$PROXY_DIR" && \
     TERRABASE_VIEW_ENDPOINT="$endpoint" \
     LOCAL_EDGE_QUALIFICATION="$qualification" \
-    LOCAL_EDGE_CAPABILITY_KEY="${LOCAL_EDGE_CAPABILITY_KEY:-}" \
-    node --experimental-strip-types harness/local-edge/run.ts) >"$LOG_DIR/edge-qualify.log" 2>&1 || {
+    LOCAL_EDGE_CAPABILITY_KEY="$capability_key" \
+    STACK_BOOTSTRAP_KEY="$(bootstrap_key)" \
+    node --experimental-strip-types --input-type=module -e '
+      import { runLocalEdgeQualification } from "./harness/local-edge/local-edge.ts";
+      let issuedCapability;
+      const token = process.env.STACK_BOOTSTRAP_KEY;
+      const fetchImpl = async (input, init) => {
+        const incoming = new Request(input, init);
+        const headers = new Headers(incoming.headers);
+        headers.set("authorization", `Bearer ${token}`);
+        if (incoming.method === "POST" && new URL(incoming.url).pathname === "/api/v1/reactive/views") {
+          const request = JSON.parse(await incoming.text());
+          const body = JSON.stringify({
+            databaseId: "local",
+            subscription: "local-edge",
+            statement: request.query,
+            parameters: Buffer.from(JSON.stringify({})).toString("base64"),
+            checkpoint: null,
+            entitlement_epoch: request.entitlement_epoch ?? 1,
+          });
+          const response = await fetch(new Request(incoming, { headers, body }));
+          if (response.ok) issuedCapability = (await response.clone().json()).capability;
+          return response;
+        }
+        if (issuedCapability !== undefined) headers.set("x-terrascale-view-capability", issuedCapability);
+        return fetch(new Request(incoming, { headers }));
+      };
+      const report = await runLocalEdgeQualification({ fetchImpl });
+      console.log(JSON.stringify(report, null, 2));
+    ') >"$LOG_DIR/edge-qualify.log" 2>&1 || {
       tail -n 40 "$LOG_DIR/edge-qualify.log" >&2 || true
       die "X-6 local edge qualification failed against real member GRU"
     }
@@ -723,6 +757,8 @@ cmd_test() {
     TERRASCALE_API_BASE_URL="http://127.0.0.1:7101" \
     TERRASCALE_E2E_ACCESS_TOKEN="$(bootstrap_key)" \
     TERRASCALE_G1_STRICT=1 \
+    TERRASCALE_E2E_RUN_ID="stack" \
+    TERRASCALE_DASHBOARD_BASE_URL="http://127.0.0.1:$DASHBOARD_PORT" \
     TERRASCALE_E2E_REGION_BASE_URLS="GRU=http://127.0.0.1:7101,SFO=http://127.0.0.1:7102,FRA=http://127.0.0.1:7103" \
     npm test -- --run test/journey.test.ts) 2>&1 | tee "$LOG_DIR/p3-journey.log"
   run_x6 1

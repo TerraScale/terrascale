@@ -3,7 +3,7 @@
 //! Every limit in this module is the D-64 table, per database, per plan
 //! (Free / Starter / Pro / Scale / custom, owner-tunable): read + query
 //! requests/s `100 / 1_000 / 5_000 / custom`, direct member read bandwidth
-//! `50 GiB / 500 GiB / 2 TiB / custom` per month, distinct active shared
+//! `50 GB / 500 GB / 2 TB / custom` per month, distinct active shared
 //! views `1k / 10k / 100k / custom`, WebSocket connections
 //! `100 / 1_000 / 10_000 / custom`, and webhook endpoints `3 / 10 / 50 /
 //! custom`. CDN-delivered reactive data has no bandwidth guard; subscribers
@@ -25,10 +25,12 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-/// Bytes in one gibibyte, the unit the D-64 bandwidth cells are read in.
+/// Bytes in one decimal gigabyte, the unit the D-64 bandwidth cells use.
+const GB: u64 = 1_000_000_000;
+/// Bytes in one decimal terabyte, the unit the Pro bandwidth cell uses.
+const TB: u64 = 1_000 * GB;
+/// Bytes in one binary gibibyte, retained for cgroup memory bounds only.
 const GIB: u64 = 1024 * 1024 * 1024;
-/// Bytes in one tebibyte, the unit the Pro bandwidth cell is read in.
-const TIB: u64 = 1024 * GIB;
 /// The fixed rate window every read/query budget is accounted in.
 const RATE_WINDOW: Duration = Duration::from_secs(1);
 /// The longest guard identity (view name, endpoint) tracked per database.
@@ -75,11 +77,11 @@ impl AbuseLimits {
 /// The billed plan selecting one row of the D-64 table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Plan {
-    /// `100 req/s, 50 GiB, 1k views, 100 WS, 3 webhooks`.
+    /// `100 req/s, 50 GB, 1k views, 100 WS, 3 webhooks`.
     Free,
-    /// `1_000 req/s, 500 GiB, 10k views, 1_000 WS, 10 webhooks`.
+    /// `1_000 req/s, 500 GB, 10k views, 1_000 WS, 10 webhooks`.
     Starter,
-    /// `5_000 req/s, 2 TiB, 100k views, 10_000 WS, 50 webhooks`.
+    /// `5_000 req/s, 2 TB, 100k views, 10_000 WS, 50 webhooks`.
     Pro,
     /// Owner-tunable limits for negotiated databases. A Scale database must
     /// receive an explicit override through [`AbuseGuards::set_limits`]; an
@@ -108,21 +110,21 @@ impl Plan {
         match self {
             Self::Free => AbuseLimits {
                 read_query_rps: 100,
-                direct_read_bandwidth_bytes_per_month: 50 * GIB,
+                direct_read_bandwidth_bytes_per_month: 50 * GB,
                 distinct_views: 1_000,
                 ws_connections: 100,
                 webhook_endpoints: 3,
             },
             Self::Starter => AbuseLimits {
                 read_query_rps: 1_000,
-                direct_read_bandwidth_bytes_per_month: 500 * GIB,
+                direct_read_bandwidth_bytes_per_month: 500 * GB,
                 distinct_views: 10_000,
                 ws_connections: 1_000,
                 webhook_endpoints: 10,
             },
             Self::Pro => AbuseLimits {
                 read_query_rps: 5_000,
-                direct_read_bandwidth_bytes_per_month: 2 * TIB,
+                direct_read_bandwidth_bytes_per_month: 2 * TB,
                 distinct_views: 100_000,
                 ws_connections: 10_000,
                 webhook_endpoints: 50,
@@ -188,7 +190,7 @@ impl GuardKind {
             Self::DirectReadBandwidth => format!(
                 "direct member reads passed the {} monthly budget; serve repeat reads \
                  from the CDN (sync.api.*) or raise the D-64 bandwidth guard \
-                 (Free 50 GiB / Starter 500 GiB / Pro 2 TiB / custom)",
+                 (Free 50 GB / Starter 500 GB / Pro 2 TB / custom)",
                 bytes_text(limit)
             ),
             Self::DistinctViews => format!(
@@ -212,12 +214,12 @@ impl GuardKind {
 
 /// Renders a bandwidth cell the way the fix text spells it.
 fn bytes_text(bytes: u64) -> String {
-    if bytes == 50 * GIB {
-        "50 GiB".to_owned()
-    } else if bytes == 500 * GIB {
-        "500 GiB".to_owned()
-    } else if bytes == 2 * TIB {
-        "2 TiB".to_owned()
+    if bytes == 50 * GB {
+        "50 GB".to_owned()
+    } else if bytes == 500 * GB {
+        "500 GB".to_owned()
+    } else if bytes == 2 * TB {
+        "2 TB".to_owned()
     } else {
         format!("{bytes} bytes")
     }
@@ -915,19 +917,19 @@ mod tests {
             Plan::Free.limits(),
             AbuseLimits {
                 read_query_rps: 100,
-                direct_read_bandwidth_bytes_per_month: 50 * GIB,
+                direct_read_bandwidth_bytes_per_month: 50 * GB,
                 distinct_views: 1_000,
                 ws_connections: 100,
                 webhook_endpoints: 3,
             }
         );
         assert_eq!(Plan::Starter.limits().read_query_rps, 1_000);
-        assert_eq!(Plan::Starter.limits().direct_read_bandwidth_bytes_per_month, 500 * GIB);
+        assert_eq!(Plan::Starter.limits().direct_read_bandwidth_bytes_per_month, 500 * GB);
         assert_eq!(Plan::Starter.limits().distinct_views, 10_000);
         assert_eq!(Plan::Starter.limits().ws_connections, 1_000);
         assert_eq!(Plan::Starter.limits().webhook_endpoints, 10);
         assert_eq!(Plan::Pro.limits().read_query_rps, 5_000);
-        assert_eq!(Plan::Pro.limits().direct_read_bandwidth_bytes_per_month, 2 * TIB);
+        assert_eq!(Plan::Pro.limits().direct_read_bandwidth_bytes_per_month, 2 * TB);
         assert_eq!(Plan::Pro.limits().distinct_views, 100_000);
         assert_eq!(Plan::Pro.limits().ws_connections, 10_000);
         assert_eq!(Plan::Pro.limits().webhook_endpoints, 50);
@@ -1101,7 +1103,7 @@ mod tests {
         for _ in 0..100 {
             assert!(guards.check_read_query("victim").is_ok(), "the victim is unaffected");
         }
-        assert!(guards.record_direct_read_bytes("attacker", 50 * GIB).is_ok());
+        assert!(guards.record_direct_read_bytes("attacker", 50 * GB).is_ok());
         assert!(guards.record_direct_read_bytes("attacker", 1).is_err());
         assert!(guards.record_direct_read_bytes("victim", 1).is_ok());
     }

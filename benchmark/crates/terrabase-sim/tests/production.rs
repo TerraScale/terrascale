@@ -63,6 +63,40 @@ fn transport_faults_are_applied_and_heal_without_ack_loss() {
             .delivered
             > 0
     );
+    assert!(world.regional_durable(&row, regions[0]));
+    assert!(world.global_durable(&row, &regions));
+}
+
+#[test]
+fn reorder_fault_reaches_the_real_lane_and_still_converges() {
+    let mut faults = FaultPlan::new();
+    faults.push(Fault::reorder(
+        terrabase_sim::RegionId::new(0),
+        terrabase_sim::RegionId::new(1),
+        4,
+        0,
+        20,
+    ));
+    let mut world = ProductionWorld::with_faults(2, faults).expect("durable simulation world");
+    let left = terrabase_sim::RegionId::new(0);
+    let right = terrabase_sim::RegionId::new(1);
+    for key in 0..8 {
+        world.submit(left, key, key + 10).expect("origin commit");
+        world.step();
+    }
+    for _ in 0..64 {
+        if world.is_quiescent() {
+            break;
+        }
+        world.step();
+    }
+    let left_member = terrabase_member_transport::MemberId::try_new("sim-member-0").unwrap();
+    let right_member = terrabase_member_transport::MemberId::try_new("sim-member-1").unwrap();
+    assert!(
+        world.transport().link_stats(&left_member, &right_member).reordered > 0,
+        "the reorder control must affect delivered frames"
+    );
+    assert_eq!(world.fingerprint(left), world.fingerprint(right));
 }
 
 #[test]

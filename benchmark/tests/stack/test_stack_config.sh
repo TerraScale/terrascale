@@ -31,6 +31,25 @@ test_plan="$(STACK_DRY_RUN=1 "$STACK" test)"
 grep -Fq 'P-3 journey' <<<"$test_plan"
 grep -Fq 'X-6 qualification' <<<"$test_plan"
 
+# The stack invokes the live journey in strict mode so missing implementation
+# is a visible G1 diagnostic rather than an unconditional skip.
+grep -Fq 'TERRASCALE_G1_STRICT' "$ROOT/../ts-typescript/test/journey.test.ts" || {
+  echo 'journey must expose strict G1 diagnostics' >&2
+  exit 1
+}
+grep -Fq 'TERRASCALE_E2E_REGION_BASE_URLS' "$STACK" || {
+  echo 'stack test must exercise every local Region endpoint' >&2
+  exit 1
+}
+grep -Fq 'TERRASCALE_DASHBOARD_BASE_URL' "$STACK" || {
+  echo 'stack test must exercise the local Dashboard endpoint' >&2
+  exit 1
+}
+grep -Fq 'nice -n 19 cargo build' "$STACK" || {
+  echo 'stack Rust builds must run at reduced priority' >&2
+  exit 1
+}
+
 make_plan="$(make -n stack stack-check stack-test stack-pre-engine stack-down)"
 grep -Fq './scripts/stack.sh up' <<<"$make_plan"
 grep -Fq './scripts/stack.sh check' <<<"$make_plan"

@@ -114,6 +114,8 @@ pub enum SessionTokenError {
         /// The epoch found in the supplied token or frontier.
         observed: SessionEpoch,
     },
+    /// Adding an origin would make the encoded token exceed the public bound.
+    OriginLimitExceeded,
 }
 
 impl fmt::Display for SessionTokenError {
@@ -135,6 +137,9 @@ impl fmt::Display for SessionTokenError {
                     "session epoch mismatch (expected {}, observed {})",
                     expected.0, observed.0
                 )
+            }
+            Self::OriginLimitExceeded => {
+                formatter.write_str("session token frontier exceeds the 16 KiB origin bound")
             }
         }
     }
@@ -166,12 +171,10 @@ impl SessionFrontier {
     ) -> Result<Self, SessionTokenError> {
         let mut frontier = Self::new(epoch);
         for (origin, sequence) in entries {
-            if sequence == 0 {
-                return Err(SessionTokenError::ZeroSequence);
-            }
-            if frontier.origins.insert(origin, sequence).is_some() {
+            if frontier.origins.contains_key(&origin) {
                 return Err(SessionTokenError::NonCanonical);
             }
+            frontier.advance(origin, sequence)?;
         }
         Ok(Self { last_write, ..frontier })
     }
@@ -203,6 +206,32 @@ impl SessionFrontier {
     pub fn advance(&mut self, origin: RegionId, sequence: u64) -> Result<bool, SessionTokenError> {
         if sequence == 0 {
             return Err(SessionTokenError::ZeroSequence);
+        }
+        let is_new = !self.origins.contains_key(&origin);
+        if is_new {
+            // Keep the infallible `encode` API safe: a token constructed via
+            // repeated `advance` calls must never truncate the u16 origin
+            // count or produce a wire value that decode rejects as too large.
+            let origin_bytes = origin.as_str().len();
+            let projected = 4_usize
+                .saturating_add(1)
+                .saturating_add(8)
+                .saturating_add(8)
+                .saturating_add(8)
+                .saturating_add(2)
+                .saturating_add(2)
+                .saturating_add(origin_bytes)
+                .saturating_add(8)
+                .saturating_add(
+                    self.origins
+                        .keys()
+                        .map(|existing| 2 + existing.as_str().len() + 8)
+                        .sum::<usize>(),
+                )
+                .saturating_add(SESSION_TOKEN_CHECKSUM_BYTES);
+            if projected > MAX_SESSION_TOKEN_BYTES || self.origins.len() >= u16::MAX as usize {
+                return Err(SessionTokenError::OriginLimitExceeded);
+            }
         }
         let entry = self.origins.entry(origin).or_insert(0);
         if sequence > *entry {
@@ -767,6 +796,10 @@ pub enum SessionError {
     SessionToken(SessionTokenError),
     /// The member was behind the token after the bounded causal wait.
     StaleReplica(StaleReplica),
+    /// A durable commit completed but its causal write frontier could not be
+    /// observed advancing. The save is reported as failed closed because a
+    /// successful save must never lose read-your-writes state.
+    WriteFrontierUnavailable,
 }
 
 impl From<EngineError> for SessionError {
@@ -1799,6 +1832,12 @@ impl<'engine> Session<'engine> {
         // every staged write and deferred command shares it.
         let operation = self.next_operation_id();
         let snapshot = self.engine.read_snapshot(&self.scope)?;
+        // Capture the causal cut before publishing. A successful commit must
+        // be followed by an observation that advances this cut; merely
+        // reading an unrelated (or stale) frontier is not enough to maintain
+        // the session guarantee.
+        let write_baseline =
+            self.engine.session_frontier(&self.scope).map_err(SessionError::from)?;
 
         // Generated ids are derived before any staging: the range is read
         // on this save's snapshot, the puts join the batch below, and the
@@ -1907,6 +1946,10 @@ impl<'engine> Session<'engine> {
         let outcome = transaction.commit(self.options.durability);
 
         if let CommitOutcome::Committed(receipt) = &outcome {
+            let observed = self.engine.session_frontier(&self.scope).map_err(SessionError::from)?;
+            if !frontier_advanced(&write_baseline, &observed) {
+                return Err(SessionError::WriteFrontierUnavailable);
+            }
             // Committed state clears (V1
             // ClearSessionStateAfterSuccessfulSaveChanges): stored
             // documents re-base (the checked expectation is consumed),
@@ -1944,14 +1987,9 @@ impl<'engine> Session<'engine> {
                 hook(&event);
             }
             // The commit's provenance is now part of the durable frontier.
-            // A failure to probe it must not turn a known committed write
-            // into an apparent save failure; the next causal read retries the
-            // observation before serving.
-            // A committed write without a refreshed token would let the next
-            // causal read proceed with an empty or stale frontier. Fail
-            // closed after the durable commit instead of claiming the
-            // session guarantee was maintained.
-            self.observe_read_frontier()?;
+            // Merge the exact post-commit observation only after the durable
+            // advancement check above succeeds.
+            self.session_token.merge(&SessionToken::from_frontier(observed))?;
         }
         Ok(Some(outcome))
     }
@@ -2103,6 +2141,18 @@ impl<'engine> Session<'engine> {
         self.operation_counter = self.operation_counter.saturating_add(1);
         id
     }
+}
+
+/// Returns whether `observed` contains progress beyond the pre-save cut.
+///
+/// A local commit always allocates a new per-origin sequence and HLC stamp,
+/// while the frontier itself is a multi-origin vector. Checking both fields
+/// keeps this guard correct when another origin advances concurrently and
+/// makes a missing/empty provenance observation fail closed.
+fn frontier_advanced(before: &SessionFrontier, observed: &SessionFrontier) -> bool {
+    before.epoch() == observed.epoch()
+        && (observed.last_write() > before.last_write()
+            || observed.entries().any(|(origin, sequence)| sequence > before.sequence(origin)))
 }
 
 /// One open session document stream over the W4-STREAM seam.

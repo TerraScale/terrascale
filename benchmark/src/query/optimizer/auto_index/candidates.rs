@@ -1,4 +1,4 @@
-//! Candidate generation and the SQLite hypothetical-compile seam.
+//! Candidate generation and the `SQLite` hypothetical-compile seam.
 //!
 //! Candidate shape is deliberately kept in the compatibility module.  This
 //! file owns the production boundary around that shape: inputs are bounded
@@ -13,7 +13,8 @@ use rusqlite::Connection;
 
 use super::{
     Candidate, CandidateColumn, CandidateKind, CandidateSource, ColumnRole, ColumnSketch,
-    PredicateKind, Template, WeightedTemplate, equality_selectivity, estimated_width_bytes,
+    PredicateKind, Template, TemplatePredicate, WeightedTemplate, equality_selectivity,
+    estimated_width_bytes,
 };
 
 /// The maximum number of candidates one collection may retain.
@@ -27,11 +28,11 @@ pub(crate) const MAX_CANDIDATE_FIELDS: usize = super::super::MAX_DEFINITION_FIEL
 /// bounded groups are the largest statement the compiler will construct.
 const MAX_HYPOTHETICAL_FIELDS: usize = MAX_CANDIDATE_FIELDS.saturating_mul(3);
 
-/// Fixed row count used to give SQLite a useful, deterministic cardinality
+/// Fixed row count used to give `SQLite` a useful, deterministic cardinality
 /// without copying production data into the what-if connection.
 const HYPOTHETICAL_ROWS: usize = 256;
 
-/// Refuse unexpectedly large generated SQL before passing it to SQLite.
+/// Refuse unexpectedly large generated SQL before passing it to `SQLite`.
 const MAX_HYPOTHETICAL_SQL_BYTES: usize = 128 * 1024;
 
 /// Why candidate generation or hypothetical compilation refused to proceed.
@@ -46,13 +47,13 @@ pub(crate) enum CandidateError {
     InvalidSchemaVersion,
     /// The candidate kind has no supported scratch-schema representation.
     UnsupportedCandidate,
-    /// SQLite produced a planner row this adapter does not recognize.
+    /// `SQLite` produced a planner row this adapter does not recognize.
     UnknownPlannerOutput,
     /// The scratch schema or EXPLAIN statement failed.
     ScratchSchemaFailure,
 }
 
-/// Result of asking SQLite whether a candidate changes the chosen plan.
+/// Result of asking `SQLite` whether a candidate changes the chosen plan.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum CompileDecision {
     /// The hypothetical index is selected by the planner.
@@ -62,10 +63,53 @@ pub(crate) enum CompileDecision {
     NotUsed,
 }
 
-/// Port implemented by the SQLite planner integration.
+/// Port implemented by the `SQLite` planner integration.
 pub(crate) trait HypotheticalCompiler {
     /// Plans `template` against `candidate` without mutating the live schema.
     fn compile(&mut self, template: &Template, candidate: &Candidate) -> CompileDecision;
+}
+
+/// Builds the full-text candidate when the template names one.
+///
+/// Returns `None` when the template has no full-text predicate so the caller
+/// continues with the `btree` prefix.
+fn full_text_candidate(
+    inner: &Template,
+    weight: f64,
+    extracted: &BTreeSet<String>,
+) -> Result<Option<Vec<Candidate>>, CandidateError> {
+    if !inner.has_full_text() {
+        return Ok(None);
+    }
+    let Some(field) = inner
+        .predicates()
+        .iter()
+        .find(|predicate| predicate.kind() == PredicateKind::FullText)
+        .map(TemplatePredicate::field)
+    else {
+        return Ok(Some(Vec::new()));
+    };
+    if !extracted.contains(field) {
+        return Ok(Some(Vec::new()));
+    }
+    let column = CandidateColumn::try_new(field, ColumnRole::Equality)
+        .map_err(|_| CandidateError::InvalidIdentifier)?;
+    Ok(Some(vec![Candidate {
+        collection: inner.collection().to_owned(),
+        columns: vec![column],
+        kind: CandidateKind::Fts,
+        source: CandidateSource::Workload,
+        needs_descriptor: false,
+        benefit_per_byte: weight.max(1.0),
+    }]))
+}
+
+/// Converts a byte width into a benefit divisor.
+///
+/// Width-to-float conversion feeds a ranking ratio, never exact accounting.
+#[allow(clippy::cast_precision_loss, reason = "benefit prior; rounding is noise")]
+fn benefit_per_byte(weight: f64, prior: f64, width: u64) -> f64 {
+    (weight * prior / width.max(1) as f64).max(0.0)
 }
 
 /// Generates the deterministic candidates for one weighted template.
@@ -85,28 +129,8 @@ pub(crate) fn try_generate(
     // Candidates are executable only over STORED/extracted columns.  A
     // missing descriptor is a separate write-path operation and must never be
     // smuggled into an index proposal by this read-side generator.
-    if inner.has_full_text() {
-        let Some(field) = inner
-            .predicates()
-            .iter()
-            .find(|predicate| predicate.kind() == PredicateKind::FullText)
-            .map(|predicate| predicate.field())
-        else {
-            return Ok(Vec::new());
-        };
-        if !extracted.contains(field) {
-            return Ok(Vec::new());
-        }
-        let column = CandidateColumn::try_new(field, ColumnRole::Equality)
-            .map_err(|_| CandidateError::InvalidIdentifier)?;
-        return Ok(vec![Candidate {
-            collection: inner.collection().to_owned(),
-            columns: vec![column],
-            kind: CandidateKind::Fts,
-            source: CandidateSource::Workload,
-            needs_descriptor: false,
-            benefit_per_byte: template.weight().max(1.0),
-        }]);
+    if let Some(candidates) = full_text_candidate(inner, template.weight(), extracted)? {
+        return Ok(candidates);
     }
 
     let mut columns = Vec::new();
@@ -159,7 +183,7 @@ pub(crate) fn try_generate(
         kind: CandidateKind::BTree,
         source: CandidateSource::Workload,
         needs_descriptor: false,
-        benefit_per_byte: (template.weight() * prior / width as f64).max(0.0),
+        benefit_per_byte: benefit_per_byte(template.weight(), prior, width),
     };
     let mut candidates = vec![base];
 
@@ -187,7 +211,7 @@ pub(crate) fn try_generate(
                 kind: CandidateKind::BTree,
                 source: CandidateSource::Workload,
                 needs_descriptor: false,
-                benefit_per_byte: (template.weight() * prior / covering_width as f64).max(0.0),
+                benefit_per_byte: benefit_per_byte(template.weight(), prior, covering_width),
             });
         }
     }
@@ -267,7 +291,7 @@ fn valid_identifier(identifier: &str) -> bool {
     crate::query::spec::validate_field_name(identifier).is_ok()
 }
 
-/// A compiler that asks SQLite about an index in a private scratch schema.
+/// A compiler that asks `SQLite` about an index in a private scratch schema.
 ///
 /// The connection is opened with `:memory:` and the candidate index is
 /// dropped before every compile.  Only the `EXPLAIN QUERY PLAN` text is
@@ -300,6 +324,7 @@ impl SqliteHypotheticalCompiler {
 
     /// Compiles a candidate after checking the caller's schema version.
     /// Unknown planner output and all scratch failures are refusals.
+    #[allow(clippy::too_many_lines, reason = "hypothetical compile is a linear audit sequence")]
     pub(crate) fn compile_checked(
         &mut self,
         template: &Template,
@@ -340,21 +365,22 @@ impl SqliteHypotheticalCompiler {
         create.push_str(");");
         self.scratch.execute_batch(&create).map_err(|_| CandidateError::ScratchSchemaFailure)?;
 
-        // A small deterministic population gives SQLite enough cardinality to
+        // A small deterministic population gives `SQLite` enough cardinality to
         // distinguish a selective search from a full table scan without
         // carrying any production rows into the what-if schema.
         let placeholders = (1..=fields.len()).map(|index| format!("?{index}")).collect::<Vec<_>>();
         if !fields.is_empty() {
+            let columns =
+                fields.iter().map(|field| quote_identifier(field)).collect::<Vec<_>>().join(",");
+            let placeholders_str = placeholders.join(",");
             let insert = format!(
-                "INSERT INTO \"__terrabase_hypothetical\" ({}) VALUES ({})",
-                fields.iter().map(|field| format!("\"{field}\"")).collect::<Vec<_>>().join(","),
-                placeholders.join(",")
+                "INSERT INTO \"__terrabase_hypothetical\" ({columns}) VALUES ({placeholders_str})"
             );
-            for row in 0..256_i64 {
+            for row in 0..HYPOTHETICAL_ROWS {
                 let values = fields
                     .iter()
                     .enumerate()
-                    .map(|(index, _)| format!("{}-{}", index, row))
+                    .map(|(index, _)| format!("{index}-{row}"))
                     .collect::<Vec<_>>();
                 self.scratch
                     .execute(&insert, rusqlite::params_from_iter(values.iter()))
@@ -365,7 +391,7 @@ impl SqliteHypotheticalCompiler {
         let index_fields = candidate
             .columns()
             .iter()
-            .map(|column| format!("\"{}\"", column.field()))
+            .map(|column| quote_identifier(column.field()))
             .collect::<Vec<_>>()
             .join(",");
         let create_index = format!(
@@ -483,13 +509,12 @@ fn quote_identifier(identifier: &str) -> String {
 }
 
 fn query_for(template: &Template, fields: &[String]) -> Result<String, CandidateError> {
-    let projection = template
-        .projection()
-        .filter(|projection| !projection.is_empty())
-        .map(|projection| {
+    let projection = template.projection().filter(|projection| !projection.is_empty()).map_or_else(
+        || "*".to_owned(),
+        |projection| {
             projection.iter().map(|field| quote_identifier(field)).collect::<Vec<_>>().join(",")
-        })
-        .unwrap_or_else(|| "*".to_owned());
+        },
+    );
     let mut query = format!("SELECT {projection} FROM \"__terrabase_hypothetical\"");
     let mut conditions = Vec::new();
     let mut parameter = 1_u32;
@@ -500,7 +525,8 @@ fn query_for(template: &Template, fields: &[String]) -> Result<String, Candidate
             PredicateKind::FullText => return Err(CandidateError::UnsupportedCandidate),
             PredicateKind::Other => continue,
         };
-        conditions.push(format!("{} {operator} ?{parameter}", quote_identifier(predicate.field())));
+        let quoted = quote_identifier(predicate.field());
+        conditions.push(format!("{quoted} {operator} ?{parameter}"));
         parameter += 1;
     }
     if !conditions.is_empty() {
@@ -513,7 +539,10 @@ fn query_for(template: &Template, fields: &[String]) -> Result<String, Candidate
             &template
                 .ordering()
                 .iter()
-                .map(|field| format!("{} ASC", quote_identifier(field)))
+                .map(|field| {
+                    let quoted = quote_identifier(field);
+                    format!("{quoted} ASC")
+                })
                 .collect::<Vec<_>>()
                 .join(","),
         );

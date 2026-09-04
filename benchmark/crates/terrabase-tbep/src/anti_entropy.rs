@@ -618,6 +618,11 @@ pub fn snapshot_bootstrap(
     peer_location: &Path,
     target_location: &Path,
 ) -> Result<SnapshotBootstrap, HostingError> {
+    reject_snapshot_path(peer_location, false)?;
+    reject_snapshot_path(target_location, true)?;
+    if peer_location == target_location {
+        return Err(HostingError::Invalid("the snapshot source and target must differ".into()));
+    }
     if target_location.exists() && !is_empty_dir(target_location) {
         return Err(HostingError::Invalid("the snapshot target must be a fresh directory".into()));
     }
@@ -646,10 +651,36 @@ fn is_empty_dir(path: &Path) -> bool {
     std::fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none())
 }
 
+/// Snapshot placement is immutable: source and target directories, and every
+/// copied file, must be ordinary filesystem entries. Following a symlink here
+/// could install bytes from a different residency domain after the placement
+/// was admitted.
+fn reject_snapshot_path(path: &Path, target: bool) -> Result<(), HostingError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(HostingError::Invalid(
+            if target {
+                "the snapshot target must not be a symlink"
+            } else {
+                "the snapshot source must not be a symlink"
+            }
+            .into(),
+        )),
+        Ok(metadata) if !metadata.is_dir() && (target || path.exists()) => {
+            Err(HostingError::Invalid("the snapshot location must be a directory".into()))
+        }
+        Ok(_) => Ok(()),
+        Err(error) if target && error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => {
+            Err(HostingError::EngineFailure("the snapshot location could not be inspected".into()))
+        }
+    }
+}
+
 /// Copies one required location file, fsyncing the copy by content before
 /// returning. Permissions travel with the bytes.
 fn copy_required(peer: &Path, target: &Path, name: &str) -> Result<(), HostingError> {
     let source = peer.join(name);
+    reject_snapshot_file(&source)?;
     let permissions = std::fs::metadata(&source)
         .map_err(|_| HostingError::EngineFailure("the snapshot source is incomplete".into()))?
         .permissions();
@@ -673,6 +704,7 @@ fn copy_required(peer: &Path, target: &Path, name: &str) -> Result<(), HostingEr
 fn copy_optional(peer: &Path, target: &Path, name: &str) -> Result<bool, HostingError> {
     match std::fs::metadata(peer.join(name)) {
         Ok(permissions) => {
+            reject_snapshot_file(&peer.join(name))?;
             let mut reader = std::fs::File::open(peer.join(name)).map_err(|_| {
                 HostingError::EngineFailure("the snapshot source is incomplete".into())
             })?;
@@ -692,4 +724,13 @@ fn copy_optional(peer: &Path, target: &Path, name: &str) -> Result<bool, Hosting
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(_) => Err(HostingError::EngineFailure("the snapshot source is incomplete".into())),
     }
+}
+
+fn reject_snapshot_file(path: &Path) -> Result<(), HostingError> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|_| HostingError::EngineFailure("the snapshot source is incomplete".into()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(HostingError::Invalid("the snapshot source contains an invalid file".into()));
+    }
+    Ok(())
 }

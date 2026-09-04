@@ -4,5 +4,5 @@
 mod implementation;
 
 pub use implementation::{
-    CatchUpError, JournalCatchUp, JournalEntry, JournalReader, JournalWriter,
+    CatchUpError, JournalCatchUp, JournalEntry, JournalOperation, JournalReader, JournalWriter,
 };

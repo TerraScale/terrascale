@@ -681,7 +681,7 @@ fn row_model_pragmas_and_idle_hook_are_explicit() {
         .expect("synchronous pragma");
     assert_eq!(synchronous, 1, "RF=2 files use synchronous NORMAL");
     drop(connection);
-    assert!(!storage.close_idle(Duration::from_secs(60)), "a newly opened file is not idle");
+    assert!(!storage.close_idle(Duration::from_mins(1)), "a newly opened file is not idle");
     std::thread::sleep(Duration::from_millis(2));
     assert!(storage.close_idle(Duration::from_millis(1)), "idle hook reports a quiet file");
     drop(storage);
@@ -1049,6 +1049,52 @@ fn crash_window_torn_wal_tail_after_last_commit_loses_nothing_committed() {
     let reopened = SqliteStorage::open(&dir).expect("recovery stops at the last valid frame");
     assert_eq!(reopened.documents_at(reopened.published_state().0, &tenant()), expected);
     assert_journal_binding(&dir);
+}
+
+#[test]
+fn every_new_row_persists_a_versioned_causal_context_across_restart() {
+    let (dir, mut storage) = sqlite_store("causal-context-restart");
+    commit(
+        &mut storage,
+        "context-op-1",
+        vec![put(document("context-1", "users", "one"), ExpectedVersion::New)],
+    );
+    commit(
+        &mut storage,
+        "context-op-2",
+        vec![put(document("context-2", "users", "two"), ExpectedVersion::New)],
+    );
+    let before: Vec<Vec<u8>> = {
+        let connection = storage.raw_writer_connection();
+        let mut statement = connection
+            .prepare("SELECT context FROM documents ORDER BY commit_seq")
+            .expect("context column");
+        statement
+            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+            .expect("context rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("context bytes")
+    };
+    assert_eq!(before.len(), 2);
+    assert!(before.iter().all(|context| context.first() == Some(&1)));
+    assert!(before.iter().all(|context| context.len() >= 5));
+    assert_ne!(before[0], before[1], "the second commit observes the first dot");
+    drop(storage);
+
+    let reopened = SqliteStorage::open(&dir).expect("context restart");
+    let after: Vec<Vec<u8>> = {
+        let connection = reopened.raw_writer_connection();
+        let mut statement = connection
+            .prepare("SELECT context FROM documents ORDER BY commit_seq")
+            .expect("context column after restart");
+        statement
+            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+            .expect("context rows after restart")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("context bytes after restart")
+    };
+    assert_eq!(after, before, "restart must not reconstruct a different causal cut");
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

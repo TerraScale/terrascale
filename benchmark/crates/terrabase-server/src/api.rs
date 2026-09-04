@@ -31,15 +31,14 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::get;
 use terrabase::CommitOutcome;
-use terrabase::observability::MetricsRegistry;
-use terrabase::observability::ServiceState;
-use terrabase::regions::RegionCode;
-use terrabase::regions::RegionCatalog;
 use terrabase::Session;
 use terrabase::SessionError;
 use terrabase::SessionOptions;
 use terrabase::SessionToken;
-use terrabase::SessionTokenError;
+use terrabase::observability::MetricsRegistry;
+use terrabase::observability::ServiceState;
+use terrabase::regions::RegionCatalog;
+use terrabase::regions::RegionCode;
 use terrabase::types::CollectionName;
 use terrabase::types::Document;
 use terrabase::types::DocumentId;
@@ -47,13 +46,12 @@ use terrabase::types::DocumentValue;
 use terrabase::types::ExpectedVersion;
 use terrabase::types::LocalDurability;
 use terrabase::types::OperationId;
-use terrabase::types::RegionId;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 use utoipa_scalar::Scalar;
 use utoipa_scalar::Servable;
 
-use crate::api_keys::Verbs;
+use crate::api_keys::{Principal, Verbs};
 
 /// The public API's path prefix.
 pub const API_PREFIX: &str = "/api/v1";
@@ -125,6 +123,18 @@ impl ApiError {
             fix: "send Authorization: Bearer <api key> (terrabase api-keys create prints the \
                   key exactly once)"
                 .into(),
+            placement: None,
+        }
+    }
+
+    /// A typed refusal for a header whose bytes are not valid HTTP text.
+    #[must_use]
+    pub fn invalid_header(name: &'static str) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_header",
+            message: format!("{name} is not valid ASCII header text"),
+            fix: format!("send a valid {name} header or omit it"),
             placement: None,
         }
     }
@@ -706,7 +716,17 @@ fn enrich_openapi(raw: String) -> String {
                 }
                 if matches!(operation_id.as_str(), "put_document" | "patch_document") {
                     set_response_header(operation, "200", "ETag", "string");
-                    set_response_header(operation, "200", "X-TerraScale-Session", "integer");
+                }
+                if matches!(
+                    operation_id.as_str(),
+                    "get_document"
+                        | "put_document"
+                        | "patch_document"
+                        | "delete_document"
+                        | "batch_documents"
+                ) {
+                    set_response_header(operation, "200", "X-TerraScale-Session", "string");
+                    set_response_header(operation, "204", "X-TerraScale-Session", "string");
                 }
                 if operation_id == "poll" {
                     set_response_header(operation, "200", "X-TerraScale-Subscription", "integer");
@@ -786,14 +806,26 @@ fn add_route_parameters(operation: &mut serde_json::Map<String, serde_json::Valu
         "get_document" => {
             add_parameter(operation, "at", "query", false, "integer");
             add_parameter(operation, "if-none-match", "header", false, "string");
-            add_parameter(operation, "x-terrascale-session", "header", false, "integer");
+            add_parameter(operation, "x-terrascale-session", "header", false, "string");
             set_parameter_format(operation, "at", "query", "int64");
-            set_parameter_format(operation, "x-terrascale-session", "header", "int64");
+            set_parameter_max_length(
+                operation,
+                "x-terrascale-session",
+                "header",
+                MAX_SESSION_HEADER_BYTES,
+            );
         }
         "put_document" | "patch_document" | "delete_document" => {
             add_parameter(operation, "if-match", "header", false, "string");
             add_parameter(operation, "idempotency-key", "header", false, "string");
             add_parameter(operation, "x-terrascale-durability", "header", false, "string");
+            add_parameter(operation, "x-terrascale-session", "header", false, "string");
+            set_parameter_max_length(
+                operation,
+                "x-terrascale-session",
+                "header",
+                MAX_SESSION_HEADER_BYTES,
+            );
             set_parameter_enum(
                 operation,
                 "x-terrascale-durability",
@@ -804,6 +836,13 @@ fn add_route_parameters(operation: &mut serde_json::Map<String, serde_json::Valu
         "batch_documents" => {
             add_parameter(operation, "idempotency-key", "header", false, "string");
             add_parameter(operation, "x-terrascale-durability", "header", false, "string");
+            add_parameter(operation, "x-terrascale-session", "header", false, "string");
+            set_parameter_max_length(
+                operation,
+                "x-terrascale-session",
+                "header",
+                MAX_SESSION_HEADER_BYTES,
+            );
             set_parameter_enum(
                 operation,
                 "x-terrascale-durability",
@@ -899,6 +938,26 @@ fn set_parameter_bounds(
     schema.insert("maximum".to_owned(), serde_json::json!(maximum));
 }
 
+fn set_parameter_max_length(
+    operation: &mut serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    location: &str,
+    maximum: usize,
+) {
+    let Some(parameters) =
+        operation.get_mut("parameters").and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    let Some(parameter) = parameters.iter_mut().find(|parameter| {
+        parameter.get("name").and_then(serde_json::Value::as_str) == Some(name)
+            && parameter.get("in").and_then(serde_json::Value::as_str) == Some(location)
+    }) else {
+        return;
+    };
+    parameter["schema"]["maxLength"] = serde_json::json!(maximum);
+}
+
 fn set_request_body(
     operation: &mut serde_json::Map<String, serde_json::Value>,
     schema: &str,
@@ -953,6 +1012,8 @@ fn set_response_header(
     schema.insert("type".to_owned(), serde_json::json!(schema_type));
     if schema_type == "integer" {
         schema.insert("format".to_owned(), serde_json::json!("int64"));
+    } else if name.eq_ignore_ascii_case("X-TerraScale-Session") {
+        schema.insert("maxLength".to_owned(), serde_json::json!(MAX_SESSION_HEADER_BYTES));
     }
     let headers = response
         .get_mut("headers")
@@ -1262,6 +1323,7 @@ async fn authenticate(
             } else if verb == Verbs::ADMIN && !principal.scope().admits_global(verb) {
                 return ApiError::forbidden("deployment administration").into_response();
             }
+            request.extensions_mut().insert(principal.clone());
             let mut response = next.run(request).await;
             if let Ok(label) = HeaderValue::from_str(principal.label()) {
                 response.headers_mut().insert("x-terrascale-principal", label);
@@ -1429,7 +1491,7 @@ async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Re
             regions
                 .iter()
                 .filter_map(serde_json::Value::as_str)
-                .map(|text| RegionCode::from_text(text).ok())
+                .map(|text| RegionCatalog::production().parse(text).ok())
                 .collect::<Option<Vec<_>>>()
         })
     }) else {
@@ -1447,11 +1509,26 @@ async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Re
             // from the fleet's per-database registry — Free until the
             // billing lane supplies the database's plan (D-25 retention,
             // fail-closed).
-            if let Some(catalog) = state.catalog.clone() {
-                let _ = catalog.host_for(&state.scope.0, &state.scope.1, name);
-                let location = catalog.location_for(&state.scope.0, &state.scope.1, name);
-                let plan = state.backups.plan_for(name);
-                let _ = state.backups.attach_with_plan(name, &location, &state.backup_root, &plan);
+            if record.placement.contains(&state.region) {
+                if let Some(catalog) = state.catalog.clone() {
+                    if catalog.host_for(&state.scope.0, &state.scope.1, name).is_err() {
+                        let _ = control.soft_delete(name);
+                        return ApiError::storage_failure().into_response();
+                    }
+                    let location = catalog.location_for(&state.scope.0, &state.scope.1, name);
+                    let plan = state.backups.plan_for(name);
+                    if let Err(error) = attach_backup(
+                        &state.backups,
+                        name,
+                        &location,
+                        &state.backup_root,
+                        &plan,
+                        state.region,
+                    ) {
+                        let _ = control.soft_delete(name);
+                        return ApiError::backup(error).into_response();
+                    }
+                }
             }
             record_response(StatusCode::CREATED, &record)
         }
@@ -1867,8 +1944,11 @@ fn has_idempotency_key(headers: &axum::http::HeaderMap) -> bool {
 }
 
 fn write_operation(headers: &axum::http::HeaderMap, kind: &str) -> Result<OperationId, ApiError> {
-    let identity = match headers.get("idempotency-key").and_then(|value| value.to_str().ok()) {
-        Some(key) => format!("{kind}-idem-{key}"),
+    let identity = match headers.get("idempotency-key") {
+        Some(value) => {
+            let key = value.to_str().map_err(|_| ApiError::invalid_header("Idempotency-Key"))?;
+            format!("{kind}-idem-{key}")
+        }
         None => format!("{kind}-{}", unix_millis_nanos()),
     };
     OperationId::try_new(identity.as_str()).map_err(|_| ApiError {
@@ -1964,6 +2044,23 @@ async fn batch_documents(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
+    let mut session = match open_session(engine, &scope, &headers) {
+        Ok(session) => session,
+        Err(error) => return error.into_response(),
+    };
+    let mut session_ids = std::collections::BTreeSet::new();
+    for item in operations {
+        if let Some(id) = item.get("id").and_then(serde_json::Value::as_str)
+            && let Ok(id) = DocumentId::try_new(id)
+        {
+            session_ids.insert(id);
+        }
+    }
+    for id in &session_ids {
+        if let Err(error) = session.load(&collection, id) {
+            return session_error(error).into_response();
+        }
+    }
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::storage_failure().into_response();
     };
@@ -1985,7 +2082,12 @@ async fn batch_documents(
                     operations.len()
                 ),
             );
-            with_session(&mut response, receipt.sequence().get());
+            for id in &session_ids {
+                if let Err(error) = session.refresh(&collection, id) {
+                    return session_error(error).into_response();
+                }
+            }
+            with_session(&mut response, session.session_token());
             response
         }
         CommitOutcome::Rejected(reason) => ApiError {
@@ -2178,7 +2280,9 @@ fn open_session<'engine>(
     Session::open(
         engine,
         scope,
-        token.map_or_else(SessionOptions::new, |token| SessionOptions::new().with_session_token(token)),
+        token.map_or_else(SessionOptions::new, |token| {
+            SessionOptions::new().with_session_token(token)
+        }),
     )
     .map_err(session_error)
 }
@@ -2274,6 +2378,31 @@ pub(crate) fn response_bytes(len: usize) -> u64 {
     u64::try_from(len).unwrap_or(u64::MAX)
 }
 
+/// Attaches a database stream using the member's registered Region. The
+/// lower-level convenience method predates placement-aware members and
+/// defaults to GRU; public API paths must carry the actual placement.
+fn attach_backup(
+    backups: &crate::backup::BackupStreams,
+    database: &str,
+    location: &std::path::Path,
+    backup_root: &std::path::Path,
+    plan: &str,
+    region: RegionCode,
+) -> std::io::Result<()> {
+    use terrabase::encryption::{DatabaseKeyVersion, KeyProviderIdentity};
+    let config = crate::backup::BackupAttachConfig::new(
+        location.to_path_buf(),
+        crate::backup::BackupDestination::File { root: backup_root.to_path_buf(), region },
+        crate::backup::retention_for_plan(plan).to_owned(),
+        crate::backup::BackupEncryptionConfig::new(
+            KeyProviderIdentity::LocalFile,
+            DatabaseKeyVersion::generate(),
+        ),
+    );
+    backups.set_plan(database, plan);
+    backups.attach_with_config(database, region, config)
+}
+
 /// The typed refusal for a malformed collection or identifier path.
 fn invalid_identifier(kind: &str, value: &str) -> ApiError {
     ApiError {
@@ -2306,11 +2435,10 @@ fn check_if_match(
     collection: &CollectionName,
     id: &DocumentId,
 ) -> Result<(), ApiError> {
-    let Some(expected) =
-        headers.get(axum::http::header::IF_MATCH).and_then(|value| value.to_str().ok())
-    else {
+    let Some(header) = headers.get(axum::http::header::IF_MATCH) else {
         return Ok(());
     };
+    let expected = header.to_str().map_err(|_| ApiError::invalid_header("If-Match"))?;
     let live = transaction
         .revision_in_collection(collection, id)
         .map_err(|_| ApiError::storage_failure())?;
@@ -2420,13 +2548,17 @@ async fn get_document(
     let document = if let Some(session) = &mut session {
         match session.load(&collection, &id) {
             Ok(Some(document)) => document,
-            Ok(None) => return document_not_found(collection.as_str(), id.as_str()).into_response(),
+            Ok(None) => {
+                return document_not_found(collection.as_str(), id.as_str()).into_response();
+            }
             Err(error) => return session_error(error).into_response(),
         }
     } else {
         match transaction.read_in_collection(&collection, &id) {
             Ok(Some(document)) => document,
-            Ok(None) => return document_not_found(collection.as_str(), id.as_str()).into_response(),
+            Ok(None) => {
+                return document_not_found(collection.as_str(), id.as_str()).into_response();
+            }
             Err(_) => return ApiError::storage_failure().into_response(),
         }
     };
@@ -2639,7 +2771,7 @@ async fn put_document(
         .into_response();
     }
     match transaction.commit(durability) {
-        CommitOutcome::Committed(receipt) => {
+        CommitOutcome::Committed(_receipt) => {
             let revision = match live_revision(engine, &scope, &probe.0, &probe.1) {
                 Ok(revision) => revision,
                 Err(error) => return error.into_response(),
@@ -2755,7 +2887,7 @@ async fn patch_document(
     let mut merged = existing.value().clone();
     merge_patch(&mut merged, &json_value(&value));
     let probe = (collection.clone(), id.clone());
-    let patched = Document::new(id, collection, merged);
+    let patched = Document::new(id.clone(), collection.clone(), merged);
     // The merge base is snapshot state, not the logical request: with an
     // idempotency key the expected clause is Any so an unchanged-state
     // retry replays; without one the base version must hold.
@@ -2775,7 +2907,7 @@ async fn patch_document(
         .into_response();
     }
     match transaction.commit(durability) {
-        CommitOutcome::Committed(receipt) => {
+        CommitOutcome::Committed(_receipt) => {
             let revision = match live_revision(engine, &scope, &probe.0, &probe.1) {
                 Ok(revision) => revision,
                 Err(error) => return error.into_response(),
@@ -2921,7 +3053,7 @@ async fn delete_document(
     // delete_in_collection stages without a pre-read (the caller owns
     // existence, and this route read the target above); the commit's
     // conflict rejection is the version check.
-    transaction.delete_in_collection(&collection, id, expected);
+    transaction.delete_in_collection(&collection, id.clone(), expected);
     match transaction.commit(durability) {
         CommitOutcome::Committed(_) => {
             let token = match refresh_session(&mut session, &collection, &id) {
@@ -3424,7 +3556,17 @@ fn restore_or_branch(
             // its own stream under the source's plan (Free until the
             // billing lane supplies plans; D-25 retention, fail-closed).
             let plan = state.backups.plan_for(&name);
-            let _ = state.backups.attach_with_plan(target, &location, &state.backup_root, &plan);
+            if let Err(error) = attach_backup(
+                &state.backups,
+                target,
+                &location,
+                &state.backup_root,
+                &plan,
+                state.region,
+            ) {
+                let _ = control.soft_delete(target);
+                return ApiError::backup(error).into_response();
+            }
             record_response(StatusCode::CREATED, &record)
         }
         Err(error) => {
@@ -3605,6 +3747,8 @@ mod tests {
     use super::API_PREFIX;
     use super::ApiError;
     use super::ApiState;
+    use super::decode_session_header;
+    use super::encode_base64url;
     use super::openapi_json;
     use super::router;
     use axum::body::Body;
@@ -3613,8 +3757,11 @@ mod tests {
     use axum::http::header;
     use axum::response::IntoResponse;
     use std::sync::Arc;
+    use terrabase::SessionEpoch;
+    use terrabase::SessionToken;
     use terrabase::observability::MetricsRegistry;
     use terrabase::regions::RegionCode;
+    use terrabase::types::RegionId;
     use tower::util::ServiceExt;
 
     fn state() -> Arc<ApiState> {
@@ -3681,6 +3828,43 @@ mod tests {
             active_regions: 3,
             guards: Arc::new(crate::guards::AbuseGuards::default()),
         })
+    }
+
+    #[test]
+    fn session_header_is_opaque_canonical_and_multi_origin() {
+        let mut token = SessionToken::for_epoch(7).expect("epoch");
+        token.advance(RegionId::try_new("GRU").expect("origin"), 11).expect("frontier");
+        token.advance(RegionId::try_new("FRA").expect("origin"), 19).expect("frontier");
+        let encoded = encode_base64url(&token.encode());
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(SESSION_HEADER.clone(), HeaderValue::from_str(&encoded).expect("header"));
+        assert_eq!(decode_session_header(&headers).expect("decode"), Some(token));
+
+        // Decimal legacy values, padding, malformed alphabet, and tampering
+        // are all rejected before a request reaches an engine.
+        for value in ["1".to_owned(), format!("{encoded}="), "!!!!".to_owned()] {
+            headers.insert(SESSION_HEADER.clone(), HeaderValue::from_str(&value).expect("header"));
+            assert!(decode_session_header(&headers).is_err(), "rejected {value}");
+        }
+        let mut tampered = encoded.into_bytes();
+        tampered[0] = if tampered[0] == b'A' { b'B' } else { b'A' };
+        headers.insert(SESSION_HEADER.clone(), HeaderValue::from_bytes(&tampered).expect("header"));
+        assert!(decode_session_header(&headers).is_err(), "checksum rejects tampering");
+    }
+
+    #[test]
+    fn session_epoch_mismatch_stays_fail_closed() {
+        let first = SessionToken::for_epoch(7).expect("epoch");
+        let second = SessionToken::for_epoch(8).expect("epoch");
+        assert!(first.merge(&second).is_err());
+        let error = super::session_error(terrabase::SessionError::SessionToken(
+            terrabase::SessionTokenError::EpochMismatch {
+                expected: SessionEpoch::new(7).expect("epoch"),
+                observed: SessionEpoch::new(8).expect("epoch"),
+            },
+        ));
+        assert_eq!(error.status, StatusCode::BAD_REQUEST);
+        assert_eq!(error.code, "invalid_session_token");
     }
 
     #[tokio::test]

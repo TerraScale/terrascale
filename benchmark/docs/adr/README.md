@@ -7,7 +7,6 @@ choices, not release authorization.
 
 ## Accepted decisions
 
-- [0007 — NoSQL, optional schemas, and migrations](0007-nosql-optional-schemas-and-migrations.md)
 - [0010 — Automatic indexing and query optimizer](0010-auto-indexing-and-query-optimizer.md)
 - [0021 — Native document relationships](0021-native-document-relationships.md)
 - [0022 — Native causal model and CRDT algebra](0022-native-causal-model-and-crdt-algebra.md)

@@ -2,6 +2,7 @@
 //!
 #![allow(clippy::all, reason = "shard split contracts are integrated by the routing worker")]
 #![allow(clippy::pedantic, reason = "shard split contracts are integrated by the routing worker")]
+mod adapters;
 mod cutover;
 mod journal;
 mod lifecycle;
@@ -12,15 +13,23 @@ mod state;
 mod trigger;
 mod verification;
 
+pub use adapters::{
+    AtomicSplitCutover, CutoverContext, SplitEngineAdapter, SplitOrchestratorAdapter,
+    SplitWiringReport,
+};
 pub use cutover::{CutoverPermit, FenceError, WriterFence, WriterFenceState};
-pub use journal::{CatchUpError, JournalCatchUp, JournalEntry, JournalReader, JournalWriter};
+pub use journal::{
+    CatchUpError, JournalCatchUp, JournalEntry, JournalOperation, JournalReader, JournalWriter,
+};
 pub use lifecycle::{ShardSplit, SplitCutoverError, SplitPhase, SplitPlanError};
 pub use range_copy::{
     CopyBatch, CopyEntry, CopyError, RangeCopier, RangeCopySource, RangeCopyTarget,
 };
 pub use recovery::{RecoveryAction, RecoveryDecision, RecoveryError, RecoveryPlan};
 pub use routing::{RouteError, RouteTable, ShardRoute, ShardRouter};
-pub use state::{DurableSplitState, SPLIT_STATE_VERSION, SplitStateError, SplitStateStore};
+pub use state::{
+    DurableSplitState, SPLIT_STATE_VERSION, SplitContext, SplitStateError, SplitStateStore,
+};
 #[cfg(test)]
 pub(crate) use trigger::WRITE_BUCKET_MILLIS;
 pub use trigger::{

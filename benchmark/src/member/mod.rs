@@ -1,9 +1,9 @@
 //! The root-owned Member catalog and lifecycle boundary.
 //!
 //! A [`Member`] owns one durable `Engine` for each configured
-//! database.  This module deliberately knows nothing about TBEP, membership,
-//! or replication: it reports storage health only.  A higher layer must add
-//! those authorities before advertising production readiness.
+//! database.  Membership and replication remain injected authorities: the
+//! catalog never implements either protocol, but can compose their health
+//! opinions before advertising production readiness.
 
 #![allow(clippy::all, reason = "member lifecycle is being integrated with production authorities")]
 #![allow(
@@ -12,7 +12,7 @@
 )]
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
     ops::Deref,
     path::{Component, Path, PathBuf},
@@ -42,6 +42,285 @@ pub const SQLITE_CONNECTIONS_PER_OPEN_DATABASE: usize = 5;
 pub const MAX_LOCATION_BYTES: usize = 4_096;
 /// The maximum admission capacity accepted by one Member.
 pub const MAX_ADMISSION_PERMITS: usize = 1_000_000;
+/// Absolute host clock offset at which new origin writes are refused (D-69).
+pub const CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS: f64 = 0.5;
+
+/// Health opinion supplied by a production authority.
+///
+/// Storage cannot infer membership or replication health.  These values are
+/// deliberately small and transport-independent so the server and control
+/// plane can adapt their own health registries without making the catalog
+/// depend on TBEP or a particular cluster implementation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthorityHealth {
+    /// No authoritative observation is available.
+    Unknown,
+    /// The authority has admitted this Member for serving.
+    Healthy,
+    /// The authority is serving but should not be used for readiness.
+    Degraded,
+    /// The authority has fenced this Member.
+    Unhealthy,
+}
+
+impl AuthorityHealth {
+    /// Returns whether this observation permits production readiness.
+    #[must_use]
+    pub const fn is_ready(self) -> bool {
+        matches!(self, Self::Healthy)
+    }
+}
+
+/// The membership authority owned by the cluster/control-plane layer.
+pub trait MembershipAuthority: Send + Sync {
+    /// Returns the latest authoritative membership opinion.
+    fn health(&self) -> AuthorityHealth;
+}
+
+/// Descriptive alias used by integrations that name the health dimension.
+pub use MembershipAuthority as MembershipHealthAuthority;
+
+/// The replication authority owned by the replication/data-plane layer.
+pub trait ReplicationHealthAuthority: Send + Sync {
+    /// Returns the latest authoritative replication opinion.
+    fn health(&self) -> AuthorityHealth;
+}
+
+/// Short alias for the replication health authority seam.
+pub use ReplicationHealthAuthority as ReplicationAuthority;
+
+/// A validated placement used by the pure routing decision helper.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DatabasePlacement {
+    regions: Vec<RegionCode>,
+    residency: Option<String>,
+}
+
+impl DatabasePlacement {
+    /// Creates a placement with one to twenty unique Regions.
+    ///
+    /// The placement table is supplied by the orchestrator.  This type does
+    /// not accept a request's region text and never contains a filesystem
+    /// path.
+    pub fn try_new(
+        regions: impl IntoIterator<Item = RegionCode>,
+        residency: Option<String>,
+    ) -> Result<Self, RoutingError> {
+        let mut selected = Vec::new();
+        for region in regions {
+            if selected.contains(&region) || selected.len() >= crate::regions::REGION_CEILING {
+                return Err(RoutingError::InvalidPlacement);
+            }
+            selected.push(region);
+        }
+        if selected.is_empty() {
+            return Err(RoutingError::InvalidPlacement);
+        }
+        if residency.as_ref().is_some_and(|value| value.is_empty()) {
+            return Err(RoutingError::InvalidPlacement);
+        }
+        Ok(Self { regions: selected, residency })
+    }
+
+    /// Returns Regions in orchestrator placement order.
+    #[must_use]
+    pub fn regions(&self) -> &[RegionCode] {
+        &self.regions
+    }
+
+    /// Returns the optional residency constraint.
+    #[must_use]
+    pub fn residency(&self) -> Option<&str> {
+        self.residency.as_deref()
+    }
+}
+
+/// Operation class used by [`decide_routing`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RoutingOperation {
+    /// A read may execute on any hosted healthy replica.
+    Read,
+    /// A write must execute at the authoritative in-Region writer.
+    Write,
+}
+
+/// A safe result of a placement lookup.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RoutingDecision {
+    /// The local member may serve this operation.
+    ServeLocally,
+    /// The request may be forwarded to this placement Region.
+    Forward { region: RegionCode },
+    /// The database exists, but this member's Region does not host it (421).
+    Misdirected { placement: DatabasePlacement },
+    /// The database is not in the authoritative placement table (404).
+    UnknownDatabase,
+    /// A hosted write has no authoritative writer and must not be forwarded.
+    WriterUnavailable,
+}
+
+/// Routing validation failures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RoutingError {
+    /// A placement was empty, duplicated a Region, exceeded the architecture
+    /// ceiling, or carried an empty residency value.
+    InvalidPlacement,
+}
+
+/// Computes a forwarding or `421 Misdirected Request` decision without
+/// opening a database file.  A non-hosting member always returns `421`; it
+/// never forwards blindly.  Writes are forwarded only to a writer that is
+/// present in the authoritative placement.
+#[must_use]
+pub fn decide_routing(
+    local_region: RegionCode,
+    hosted_here: bool,
+    writer_region: Option<RegionCode>,
+    placement: Option<&DatabasePlacement>,
+    operation: RoutingOperation,
+) -> RoutingDecision {
+    let Some(placement) = placement else {
+        return RoutingDecision::UnknownDatabase;
+    };
+    if !placement.regions.contains(&local_region) || !hosted_here {
+        return RoutingDecision::Misdirected { placement: placement.clone() };
+    }
+    match operation {
+        RoutingOperation::Read => RoutingDecision::ServeLocally,
+        RoutingOperation::Write => match writer_region {
+            Some(region) if placement.regions.contains(&region) && region == local_region => {
+                RoutingDecision::ServeLocally
+            }
+            Some(region) if placement.regions.contains(&region) => {
+                RoutingDecision::Forward { region }
+            }
+            _ => RoutingDecision::WriterUnavailable,
+        },
+    }
+}
+
+/// A bounded, generation-stamped cache for API-key → principal admissions.
+///
+/// The cache stores only a caller-provided digest, never credential bytes.
+/// Callers stamp entries with their durable revocation generation; a stale
+/// generation is a miss.  Shards have deterministic LRU order and their
+/// aggregate capacity never exceeds the configured bound.
+pub struct PrincipalCache<P> {
+    shards: Vec<Mutex<PrincipalCacheShard<P>>>,
+}
+
+struct PrincipalCacheShard<P> {
+    entries: BTreeMap<[u8; 32], (u64, P)>,
+    order: VecDeque<[u8; 32]>,
+    capacity: usize,
+}
+
+impl<P> PrincipalCache<P> {
+    /// Creates a cache with a finite, exact aggregate capacity.
+    pub fn try_new(capacity: usize) -> Result<Self, CacheError> {
+        if capacity == 0 {
+            return Err(CacheError::ZeroCapacity);
+        }
+        let shard_count = capacity.min(16);
+        let base = capacity / shard_count;
+        let remainder = capacity % shard_count;
+        let shards = (0..shard_count)
+            .map(|index| {
+                Mutex::new(PrincipalCacheShard {
+                    entries: BTreeMap::new(),
+                    order: VecDeque::new(),
+                    capacity: base + usize::from(index < remainder),
+                })
+            })
+            .collect();
+        Ok(Self { shards })
+    }
+
+    /// Creates a cache, panicking only for the programmer error of a zero
+    /// capacity. Production configuration should use [`Self::try_new`].
+    #[must_use]
+    pub fn new(capacity: usize) -> Self {
+        Self::try_new(capacity).expect("principal cache capacity must be non-zero")
+    }
+
+    fn shard(&self, digest: &[u8; 32]) -> &Mutex<PrincipalCacheShard<P>> {
+        &self.shards[usize::from(digest[0]) % self.shards.len()]
+    }
+
+    /// Looks up a principal at the required revocation generation.
+    pub fn get(&self, digest: &[u8; 32], generation: u64) -> Option<P>
+    where
+        P: Clone,
+    {
+        let mut shard = lock_unpoisoned(self.shard(digest));
+        let Some((seen_generation, principal)) = shard.entries.get(digest) else {
+            return None;
+        };
+        if *seen_generation != generation {
+            shard.remove(digest);
+            return None;
+        }
+        let principal = principal.clone();
+        shard.touch(digest);
+        Some(principal)
+    }
+
+    /// Inserts or replaces a principal at a revocation generation.
+    pub fn insert(&self, digest: [u8; 32], generation: u64, principal: P) {
+        let mut shard = lock_unpoisoned(self.shard(&digest));
+        shard.entries.insert(digest, (generation, principal));
+        shard.touch(&digest);
+        while shard.entries.len() > shard.capacity {
+            let Some(oldest) = shard.order.pop_front() else { break };
+            shard.entries.remove(&oldest);
+        }
+    }
+
+    /// Removes one digest after a registration or revocation update.
+    pub fn invalidate(&self, digest: &[u8; 32]) {
+        lock_unpoisoned(self.shard(digest)).remove(digest);
+    }
+
+    /// Removes every cached principal.
+    pub fn clear(&self) {
+        for shard in &self.shards {
+            let mut shard = lock_unpoisoned(shard);
+            shard.entries.clear();
+            shard.order.clear();
+        }
+    }
+
+    /// Returns the number of cached principals.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.shards.iter().map(|shard| lock_unpoisoned(shard).entries.len()).sum()
+    }
+
+    /// Returns whether the cache has no entries.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<P> PrincipalCacheShard<P> {
+    fn touch(&mut self, digest: &[u8; 32]) {
+        self.order.retain(|queued| queued != digest);
+        self.order.push_back(*digest);
+    }
+
+    fn remove(&mut self, digest: &[u8; 32]) {
+        self.entries.remove(digest);
+        self.order.retain(|queued| queued != digest);
+    }
+}
+
+/// Cache construction failures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CacheError {
+    /// A zero-sized cache would silently disable authentication caching.
+    ZeroCapacity,
+}
 
 /// A zero-cost catalog view over the canonical ADR 0027 database identity.
 ///
@@ -401,6 +680,8 @@ pub enum MemberError {
     },
     /// The bounded drain deadline elapsed while work remained active.
     DrainTimeout,
+    /// The host clock is unknown or outside the safe write bound.
+    ClockOffsetUnsafe,
     /// An engine failed its final durable flush.
     Shutdown {
         /// The database whose engine failed to close.
@@ -444,8 +725,8 @@ pub enum StorageHealth {
     Stopped,
 }
 
-/// A storage status snapshot.  `production_ready` is always false here:
-/// membership and replication health belong to the upper Member composition.
+/// A storage and authority status snapshot. `production_ready` is true only
+/// when storage, clock safety, membership, and replication all agree.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemberStatus {
     /// Current lifecycle state.
@@ -470,8 +751,14 @@ pub struct MemberStatus {
     pub database_closes: u64,
     /// Number of admitted operations currently holding permits.
     pub active_operations: usize,
-    /// Always false until an upper layer supplies membership and replication.
+    /// True only when all required authorities are attached and healthy.
     pub production_ready: bool,
+    /// Latest membership authority opinion, if attached.
+    pub membership_health: Option<AuthorityHealth>,
+    /// Latest replication authority opinion, if attached.
+    pub replication_health: Option<AuthorityHealth>,
+    /// Whether new origin writes are currently permitted.
+    pub writes_allowed: bool,
 }
 
 struct DatabaseEntry {
@@ -483,6 +770,8 @@ struct DatabaseEntry {
     last_used: Instant,
     access_stamp: u64,
     admissions: Arc<AdmissionCounter>,
+    /// Whether the backup stream was paused by a successful close.
+    backup_paused: bool,
 }
 
 enum ResidentEngine {
@@ -525,13 +814,37 @@ struct MemberInner {
     database_rss_bytes: usize,
     max_open_databases: usize,
     max_concurrent_opens: usize,
-    backup_pause: Mutex<Option<BackupPauseCallback>>,
+    backup_hooks: Mutex<Option<BackupHooks>>,
+    membership_authority: Mutex<Option<Arc<dyn MembershipAuthority>>>,
+    replication_authority: Mutex<Option<Arc<dyn ReplicationHealthAuthority>>>,
+    clock_offset_seconds: Mutex<Option<f64>>,
 }
 
 /// Callback invoked immediately before a resident database is closed. The
 /// backup owner should pause its per-file stream before dropping the SQLite
 /// file, then resume it after a later acquire reopens the database.
 pub type BackupPauseCallback = Arc<dyn Fn(&DatabaseId) + Send + Sync + 'static>;
+
+/// Callback invoked after a paused database is opened again.
+pub type BackupResumeCallback = Arc<dyn Fn(&DatabaseId) + Send + Sync + 'static>;
+
+/// Explicit lifecycle hooks for a per-file Litestream owner.
+#[derive(Clone)]
+pub struct BackupHooks {
+    pause: BackupPauseCallback,
+    resume: BackupResumeCallback,
+}
+
+impl BackupHooks {
+    /// Creates hooks called outside every catalog lock.
+    #[must_use]
+    pub fn new(
+        pause: impl Fn(&DatabaseId) + Send + Sync + 'static,
+        resume: impl Fn(&DatabaseId) + Send + Sync + 'static,
+    ) -> Self {
+        Self { pause: Arc::new(pause), resume: Arc::new(resume) }
+    }
+}
 
 /// One opened, isolated Member catalog.
 #[derive(Clone)]
@@ -600,6 +913,7 @@ impl Member {
                     last_used: Instant::now(),
                     access_stamp: 0,
                     admissions: Arc::new(AdmissionCounter::new(limits.per_database)),
+                    backup_paused: false,
                 };
                 (id, entry)
             })
@@ -622,7 +936,10 @@ impl Member {
                 database_rss_bytes: limits.database_rss_bytes,
                 max_open_databases: limits.max_open_databases,
                 max_concurrent_opens: limits.max_concurrent_opens,
-                backup_pause: Mutex::new(None),
+                backup_hooks: Mutex::new(None),
+                membership_authority: Mutex::new(None),
+                replication_authority: Mutex::new(None),
+                clock_offset_seconds: Mutex::new(Some(0.0)),
             }),
         })
     }
@@ -667,6 +984,16 @@ impl Member {
     pub fn status(&self) -> MemberStatus {
         let lifecycle = *lock_unpoisoned(&self.inner.lifecycle);
         let catalog = lock_unpoisoned(&self.inner.catalog);
+        let membership_health = lock_unpoisoned(&self.inner.membership_authority)
+            .as_ref()
+            .map(|authority| authority.health());
+        let replication_health = lock_unpoisoned(&self.inner.replication_authority)
+            .as_ref()
+            .map(|authority| authority.health());
+        let clock_offset_seconds = *lock_unpoisoned(&self.inner.clock_offset_seconds);
+        let writes_allowed = clock_offset_seconds.is_some_and(|offset| {
+            offset.is_finite() && offset.abs() <= CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS
+        });
         let storage = match lifecycle {
             LifecycleState::Serving => StorageHealth::Healthy,
             LifecycleState::Draining => StorageHealth::Draining,
@@ -684,7 +1011,14 @@ impl Member {
             database_evictions: catalog.metrics.evictions,
             database_closes: catalog.metrics.closes,
             active_operations: self.inner.global_admissions.active(),
-            production_ready: false,
+            production_ready: lifecycle == LifecycleState::Serving
+                && storage == StorageHealth::Healthy
+                && writes_allowed
+                && membership_health.is_some_and(AuthorityHealth::is_ready)
+                && replication_health.is_some_and(AuthorityHealth::is_ready),
+            membership_health,
+            replication_health,
+            writes_allowed,
         }
     }
 
@@ -716,6 +1050,13 @@ impl Member {
                     return Err(error);
                 }
             };
+            // `drain` may have started after the first lifecycle check but
+            // before permits were taken. Do not let that race admit new work.
+            if *lock_unpoisoned(&self.inner.lifecycle) != LifecycleState::Serving {
+                drop(local);
+                drop(global);
+                return Err(MemberError::Draining);
+            }
             (local, entry.location.clone())
         };
         let engine = match open_database_engine(&self.inner, database, &location) {
@@ -735,11 +1076,77 @@ impl Member {
         })
     }
 
-    /// Installs the callback used to pause a database's backup stream before
-    /// idle/LRU eviction. The callback is never called while the catalog lock
-    /// is held.
+    /// Acquires a lease for an origin write. The engine repeats this check at
+    /// commit time, so an offset update racing this call still fails closed.
+    pub fn acquire_write(&self, database: &DatabaseId) -> Result<DatabaseLease, MemberError> {
+        let offset = *lock_unpoisoned(&self.inner.clock_offset_seconds);
+        if !offset.is_some_and(|value| {
+            value.is_finite() && value.abs() <= CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS
+        }) {
+            return Err(MemberError::ClockOffsetUnsafe);
+        }
+        self.acquire(database)
+    }
+
+    /// Attaches the authoritative membership health source. Replacing an
+    /// existing source is allowed so control-plane epoch changes can swap a
+    /// snapshot without rebuilding the storage catalog.
+    pub fn set_membership_authority(&self, authority: Option<Arc<dyn MembershipAuthority>>) {
+        *lock_unpoisoned(&self.inner.membership_authority) = authority;
+    }
+
+    /// Attaches the authoritative replication health source.
+    pub fn set_replication_authority(
+        &self,
+        authority: Option<Arc<dyn ReplicationHealthAuthority>>,
+    ) {
+        *lock_unpoisoned(&self.inner.replication_authority) = authority;
+    }
+
+    /// Returns whether storage and both attached authorities permit serving.
+    #[must_use]
+    pub fn production_ready(&self) -> bool {
+        self.status().production_ready
+    }
+
+    /// Feeds the chrony/NTP observation to the Member and every resident
+    /// Engine. Future lazy opens receive the same observation before serving.
+    pub fn set_clock_offset_seconds(&self, offset_seconds: f64) {
+        let offset = offset_seconds.is_finite().then_some(offset_seconds);
+        *lock_unpoisoned(&self.inner.clock_offset_seconds) = offset;
+        let engines = lock_unpoisoned(&self.inner.catalog)
+            .databases
+            .values()
+            .filter_map(|entry| match &entry.engine {
+                ResidentEngine::Open(engine) => Some(Arc::clone(engine)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for engine in engines {
+            match offset {
+                Some(value) => engine.set_clock_offset_seconds(value),
+                None => engine.clear_clock_offset_seconds(),
+            }
+        }
+    }
+
+    /// Marks the host clock observation stale or unavailable. This refuses
+    /// new origin writes until a finite safe sample is supplied.
+    pub fn clear_clock_offset_seconds(&self) {
+        self.set_clock_offset_seconds(f64::NAN);
+    }
+
+    /// Returns the latest host clock observation.
+    #[must_use]
+    pub fn clock_offset_seconds(&self) -> Option<f64> {
+        *lock_unpoisoned(&self.inner.clock_offset_seconds)
+    }
+
+    /// Installs the legacy pause-only callback. Prefer
+    /// [`Self::set_backup_hooks`] so a stream can be resumed after reopen.
     pub fn set_backup_pause_callback(&self, callback: Option<BackupPauseCallback>) {
-        *lock_unpoisoned(&self.inner.backup_pause) = callback;
+        *lock_unpoisoned(&self.inner.backup_hooks) =
+            callback.map(|pause| BackupHooks { pause, resume: Arc::new(|_| {}) });
     }
 
     /// Convenience builder for wiring the per-file backup pause callback.
@@ -749,6 +1156,19 @@ impl Member {
         callback: impl Fn(&DatabaseId) + Send + Sync + 'static,
     ) -> Self {
         self.set_backup_pause_callback(Some(Arc::new(callback)));
+        self
+    }
+
+    /// Installs explicit pause and resume hooks for idle/LRU database close.
+    /// Hooks run outside catalog and lifecycle locks.
+    pub fn set_backup_hooks(&self, hooks: Option<BackupHooks>) {
+        *lock_unpoisoned(&self.inner.backup_hooks) = hooks;
+    }
+
+    /// Convenience builder for explicit backup lifecycle hooks.
+    #[must_use]
+    pub fn with_backup_hooks(self, hooks: BackupHooks) -> Self {
+        self.set_backup_hooks(Some(hooks));
         self
     }
 
@@ -1100,7 +1520,16 @@ fn take_close_work(
 }
 
 fn pause_backup(inner: &MemberInner, database: &DatabaseId) {
-    let callback = lock_unpoisoned(&inner.backup_pause).clone();
+    let callback =
+        lock_unpoisoned(&inner.backup_hooks).as_ref().map(|hooks| Arc::clone(&hooks.pause));
+    if let Some(callback) = callback {
+        callback(database);
+    }
+}
+
+fn resume_backup(inner: &MemberInner, database: &DatabaseId) {
+    let callback =
+        lock_unpoisoned(&inner.backup_hooks).as_ref().map(|hooks| Arc::clone(&hooks.resume));
     if let Some(callback) = callback {
         callback(database);
     }
@@ -1128,6 +1557,7 @@ fn perform_close(inner: &MemberInner, close: CloseWork) -> Result<(), MemberErro
         Ok(()) => {
             if let Some(entry) = catalog.databases.get_mut(&close.database) {
                 entry.engine = ResidentEngine::Closed;
+                entry.backup_paused = true;
             }
             catalog.open_databases = catalog.open_databases.saturating_sub(1);
             catalog.resident_rss_bytes =
@@ -1146,6 +1576,7 @@ fn perform_close(inner: &MemberInner, close: CloseWork) -> Result<(), MemberErro
             // request performs a normal validated reopen.
             if let Some(entry) = catalog.databases.get_mut(&close.database) {
                 entry.engine = ResidentEngine::Closed;
+                entry.backup_paused = false;
             }
             catalog.open_databases = catalog.open_databases.saturating_sub(1);
             catalog.resident_rss_bytes =
@@ -1260,6 +1691,10 @@ fn open_database_engine(
                 let engine = Engine::open(config).map(Arc::new).map_err(|error| {
                     MemberError::EngineOpen { database: database.clone(), error }
                 })?;
+                match *lock_unpoisoned(&inner.clock_offset_seconds) {
+                    Some(offset) => engine.set_clock_offset_seconds(offset),
+                    None => engine.clear_clock_offset_seconds(),
+                }
                 if let Err(validation) = revalidate_created_location(&inner.root, location) {
                     let shutdown =
                         Arc::try_unwrap(engine).ok().and_then(|engine| engine.shutdown().err());
@@ -1273,13 +1708,20 @@ fn open_database_engine(
         catalog.opening_databases = catalog.opening_databases.saturating_sub(1);
         match result {
             Ok(engine) => {
+                let resume =
+                    catalog.databases.get(database).is_some_and(|entry| entry.backup_paused);
                 if let Some(entry) = catalog.databases.get_mut(database) {
                     entry.engine = ResidentEngine::Open(Arc::clone(&engine));
                     entry.last_used = Instant::now();
                     entry.access_stamp = stamp;
+                    entry.backup_paused = false;
                 }
                 catalog.metrics.opens = catalog.metrics.opens.saturating_add(1);
                 inner.catalog_changed.notify_all();
+                drop(catalog);
+                if resume {
+                    resume_backup(inner, database);
+                }
                 return Ok(engine);
             }
             Err(error) => {
@@ -1378,6 +1820,20 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct TestAuthority(AuthorityHealth);
+
+    impl MembershipAuthority for TestAuthority {
+        fn health(&self) -> AuthorityHealth {
+            self.0
+        }
+    }
+
+    impl ReplicationHealthAuthority for TestAuthority {
+        fn health(&self) -> AuthorityHealth {
+            self.0
+        }
+    }
 
     fn root(label: &str) -> PathBuf {
         let path = std::env::temp_dir()
@@ -1544,5 +2000,102 @@ mod tests {
         drop(reopened);
         member.close(Duration::from_secs(5)).expect("close");
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn backup_hooks_pause_then_resume_only_after_reopen() {
+        let root = root("backup-hooks");
+        let member =
+            Member::open(&root, [DatabaseSpec::new("db", "db")], AdmissionLimits::new(4, 2))
+                .expect("member");
+        let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+        let pause_events = Arc::clone(&events);
+        let resume_events = Arc::clone(&events);
+        member.set_backup_hooks(Some(BackupHooks::new(
+            move |_| lock_unpoisoned(&pause_events).push("pause"),
+            move |_| lock_unpoisoned(&resume_events).push("resume"),
+        )));
+        let id = DatabaseId::try_new("db").expect("id");
+        drop(member.acquire(&id).expect("open"));
+        assert_eq!(
+            member.close_idle_at(Duration::ZERO, Instant::now() + Duration::from_secs(1)),
+            1
+        );
+        assert_eq!(*lock_unpoisoned(&events), ["pause"]);
+        drop(member.acquire(&id).expect("reopen"));
+        assert_eq!(*lock_unpoisoned(&events), ["pause", "resume"]);
+        member.close(Duration::from_secs(5)).expect("close");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn health_authorities_and_clock_gate_fail_closed() {
+        let root = root("authority-health");
+        let member =
+            Member::open(&root, [DatabaseSpec::new("db", "db")], AdmissionLimits::new(4, 2))
+                .expect("member");
+        assert!(!member.production_ready());
+        member.set_membership_authority(Some(Arc::new(TestAuthority(AuthorityHealth::Healthy))));
+        member.set_replication_authority(Some(Arc::new(TestAuthority(AuthorityHealth::Healthy))));
+        assert!(member.production_ready());
+        member.set_clock_offset_seconds(0.500_001);
+        assert!(!member.status().writes_allowed);
+        assert!(matches!(
+            member.acquire_write(&DatabaseId::try_new("db").expect("id")),
+            Err(MemberError::ClockOffsetUnsafe)
+        ));
+        member.set_clock_offset_seconds(-0.5);
+        assert!(member.status().writes_allowed);
+        member.close(Duration::from_secs(5)).expect("close");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn routing_never_forwards_non_hosted_databases() {
+        let placement =
+            DatabasePlacement::try_new(
+                [RegionCode::GRU, RegionCode::FRA],
+                Some("br-only".to_owned()),
+            )
+                .expect("placement");
+        assert_eq!(
+            decide_routing(
+                RegionCode::SFO,
+                false,
+                Some(RegionCode::GRU),
+                Some(&placement),
+                RoutingOperation::Write,
+            ),
+            RoutingDecision::Misdirected { placement: placement.clone() }
+        );
+        assert_eq!(
+            decide_routing(
+                RegionCode::GRU,
+                true,
+                Some(RegionCode::FRA),
+                Some(&placement),
+                RoutingOperation::Write,
+            ),
+            RoutingDecision::Forward { region: RegionCode::FRA }
+        );
+        assert_eq!(
+            decide_routing(RegionCode::GRU, true, None, None, RoutingOperation::Read),
+            RoutingDecision::UnknownDatabase
+        );
+    }
+
+    #[test]
+    fn principal_cache_is_generation_stamped_and_exactly_bounded() {
+        let cache = PrincipalCache::new(3);
+        cache.insert([1; 32], 4, "one");
+        cache.insert([2; 32], 4, "two");
+        cache.insert([3; 32], 4, "three");
+        assert_eq!(cache.get(&[1; 32], 4), Some("one"));
+        assert_eq!(cache.get(&[1; 32], 3), None);
+        cache.insert([4; 32], 4, "four");
+        assert!(cache.len() <= 3);
+        assert!(cache.get(&[1; 32], 4).is_none());
+        cache.clear();
+        assert!(cache.is_empty());
     }
 }

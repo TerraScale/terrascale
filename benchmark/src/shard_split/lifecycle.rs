@@ -1,7 +1,7 @@
 //! Split lifecycle and zero-loss cutover gate.
 
 use super::{
-    CutoverPermit,
+    CutoverPermit, WriterFence,
     state::{DurableSplitState, SplitStateError},
 };
 
@@ -53,6 +53,7 @@ pub struct ShardSplit {
     target_applied_through: u64,
     acked_through: u64,
     phase: SplitPhase,
+    context: Option<super::SplitContext>,
 }
 
 impl ShardSplit {
@@ -67,7 +68,19 @@ impl ShardSplit {
             target_applied_through: 0,
             acked_through: 0,
             phase: SplitPhase::Planned,
+            context: None,
         })
+    }
+
+    /// Plans a split with the identity and placement context required for a
+    /// restart-safe orchestration attempt.
+    pub fn plan_with_context(
+        split_key: Vec<u8>,
+        context: super::SplitContext,
+    ) -> Result<Self, SplitPlanError> {
+        let mut split = Self::plan(split_key)?;
+        split.context = Some(context);
+        Ok(split)
     }
 
     /// Restores a split from its durable state.
@@ -81,19 +94,21 @@ impl ShardSplit {
             target_applied_through: state.target_applied_through(),
             acked_through: state.acked_through(),
             phase: state.phase(),
+            context: state.context(),
         })
     }
 
     /// Returns a restart-safe state snapshot.
     #[must_use]
     pub fn durable_state(&self) -> DurableSplitState {
-        DurableSplitState::new(
+        let state = DurableSplitState::new(
             self.split_key.clone(),
             self.source_high_water,
             self.target_applied_through,
             self.acked_through,
             self.phase,
-        )
+        );
+        self.context.map_or(state, |context| state.with_context(context))
     }
 
     /// Returns the moved range's upper-exclusive bound.
@@ -124,6 +139,12 @@ impl ShardSplit {
     #[must_use]
     pub const fn acked_through(&self) -> u64 {
         self.acked_through
+    }
+
+    /// Returns the identity, session frontier, and placement context.
+    #[must_use]
+    pub const fn context(&self) -> Option<super::SplitContext> {
+        self.context
     }
 
     /// Marks the target shard file created and begins range backfill.
@@ -227,6 +248,24 @@ impl ShardSplit {
             });
         }
         self.cut_over()
+    }
+
+    /// Moves to cut-over only when the permit belongs to `fence`.
+    ///
+    /// A permit is intentionally opaque, but accepting a permit from an
+    /// unrelated fence would let a concurrent split move a route.  Callers
+    /// that have a writer fence should use this method; the permit-only
+    /// method remains for storage adapters that perform both checks in one
+    /// transaction.
+    pub fn cut_over_with_fence(
+        &mut self,
+        fence: &WriterFence,
+        permit: CutoverPermit,
+    ) -> Result<(), SplitCutoverError> {
+        if !fence.permits(permit) {
+            return Err(SplitCutoverError::InvalidFencePermit);
+        }
+        self.cut_over_with_permit(permit)
     }
 
     /// Marks the moved range verified and eligible for source cleanup.

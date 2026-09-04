@@ -51,7 +51,7 @@ pub const MAX_BULK_PAGE_DOCUMENTS: usize = 4096;
 ///
 /// Details are always counted exactly through the reconciling counters; the
 /// records ride a bounded drop-oldest window with the overflow counted and
-/// disclosed — the bounded-disclosure idiom GAP-D10 set for bulk receipts.
+/// disclosed — the bounded-disclosure rule for bulk receipts.
 pub const MAX_BULK_DETAILS: usize = 64;
 
 /// The maximum number of audit events the engine's bulk journal retains.
@@ -129,7 +129,7 @@ impl Default for BulkByQueryOptions {
 /// `IngestConflictMode::Overwrite` an explicit selection. A delete request
 /// without a token refuses before any data access with
 /// [`BulkRefusal::ConfirmationRequired`]. The interactive prompt a human
-/// caller sees belongs to the host/Studio surface; an agent caller passes
+/// caller sees belongs to the host operator surface; an agent caller passes
 /// the token directly (PD-2026-08-26-07).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeletionConfirmation {

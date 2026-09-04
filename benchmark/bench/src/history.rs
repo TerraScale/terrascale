@@ -1,7 +1,6 @@
-//! Strict, Rust-owned rendering of retained benchmark history.
+//! Strict, Rust-owned rendering of the benchmark table in `bench/RESULTS.md`.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,6 +11,8 @@ use crate::metrics;
 
 const WORKLOADS: [&str; 4] = ["read", "write", "query", "mixed"];
 const TARGETS: [&str; 4] = ["terrabase", "postgresql", "pg-fullstack", "ravendb"];
+const HISTORY_BEGIN: &str = "<!-- E-13 benchmark-history BEGIN -->";
+const HISTORY_END: &str = "<!-- E-13 benchmark-history END -->";
 
 #[derive(Clone, Debug)]
 struct Sample {
@@ -81,17 +82,17 @@ enum Loaded {
 
 pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
     let mut results = PathBuf::from("bench/results");
-    let mut history = PathBuf::from("docs/evidence/benchmarks/history");
+    let mut output_path = PathBuf::from("bench/RESULTS.md");
     let mut args = arguments.peekable();
     while let Some(argument) = args.next() {
         let value = match argument.as_str() {
             "--results" => args.next().ok_or("--results requires a directory")?,
-            "--history-dir" => args.next().ok_or("--history-dir requires a directory")?,
+            "--output" => args.next().ok_or("--output requires a file")?,
             other => return Err(format!("unknown --render-history argument {other:?}")),
         };
         match argument.as_str() {
             "--results" => results = PathBuf::from(value),
-            "--history-dir" => history = PathBuf::from(value),
+            "--output" => output_path = PathBuf::from(value),
             _ => unreachable!(),
         }
     }
@@ -204,7 +205,7 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
     }
 
     let mut output = String::new();
-    output.push_str("# Benchmark history\n\n");
+    output.push_str("### Benchmark history\n\n");
     output.push_str("Every row is derived from a lane results document under `bench/results/`\n");
     output
         .push_str("by `terrabase-bench-lane --render-history` — never hand-edited. Verdicts and\n");
@@ -241,12 +242,10 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
     }
     output.push('\n');
     if !diagnostic_rows.is_empty() {
-        output.push_str("## TerraBase diagnostic trajectory (not decision-grade evidence)\n\n");
+        output.push_str("## TerraBase diagnostic trajectory (not a comparison)\n\n");
         output
             .push_str("These rows come from the diagnostic single-member loopback mTLS boundary ");
-        output.push_str(
-            "(TB-17 campaign, `campaign-goal.md`). They carry no comparability contract, ",
-        );
+        output.push_str("(diagnostic qualification run). They carry no comparison contract, ");
         output.push_str(
             "never join the comparison table above, and are facts about this host at the ",
         );
@@ -262,7 +261,7 @@ pub fn run(arguments: impl Iterator<Item = String>) -> Result<PathBuf, String> {
         }
         output.push('\n');
     }
-    let path = write_retained(&history, &output)?;
+    let path = write_results(&output_path, &output)?;
     println!("wrote {} with {} rows", path.display(), WORKLOADS.len() * TARGETS.len());
     Ok(path)
 }
@@ -744,26 +743,31 @@ fn retained_failures(results: &Path) -> Vec<(String, String)> {
     failures
 }
 
-fn write_retained(directory: &Path, contents: &str) -> Result<PathBuf, String> {
-    fs::create_dir_all(directory).map_err(|error| format!("create history directory: {error}"))?;
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?;
-    for attempt in 0..100 {
-        let path = directory.join(format!(
-            "benchmark-{}{:09}Z{}.md",
-            now.as_secs(),
-            now.subsec_nanos(),
-            if attempt == 0 { String::new() } else { format!("-{attempt}") }
-        ));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                file.write_all(contents.as_bytes()).map_err(|error| error.to_string())?;
-                return Ok(path);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(format!("create retained history: {error}")),
-        }
-    }
-    Err("could not allocate a unique benchmark history filename".to_owned())
+fn write_results(path: &Path, section: &str) -> Result<PathBuf, String> {
+    let marked_section = format!("{HISTORY_BEGIN}\n\n{section}{HISTORY_END}\n");
+    let contents = match fs::read_to_string(path) {
+        Ok(existing) => replace_history_section(&existing, &marked_section),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => marked_section,
+        Err(error) => return Err(format!("read benchmark results: {error}")),
+    };
+    fs::write(path, contents).map_err(|error| format!("write benchmark results: {error}"))?;
+    Ok(path.to_path_buf())
+}
+
+fn replace_history_section(existing: &str, replacement: &str) -> String {
+    let Some(start) = existing.find(HISTORY_BEGIN) else {
+        return format!("{}\n\n{replacement}", existing.trim_end_matches('\n'));
+    };
+    let content_start = start + HISTORY_BEGIN.len();
+    let Some(end_offset) = existing[content_start..].find(HISTORY_END) else {
+        return format!("{}\n\n{replacement}", existing.trim_end_matches('\n'));
+    };
+    let end = content_start + end_offset + HISTORY_END.len();
+    let mut output = String::with_capacity(existing.len() + replacement.len());
+    output.push_str(&existing[..start]);
+    output.push_str(replacement);
+    output.push_str(&existing[end..]);
+    output
 }
 
 #[cfg(test)]
@@ -898,7 +902,8 @@ mod tests {
     #[test]
     fn side_identities_are_rendered_once_across_workloads() {
         let results = temporary_results();
-        let history = temporary_results();
+        let output_directory = temporary_results();
+        let output = output_directory.join("RESULTS.md");
         for workload in WORKLOADS {
             let mut document = valid();
             document["workload"] = serde_json::json!(workload);
@@ -911,15 +916,37 @@ mod tests {
         let output = run([
             "--results".to_owned(),
             results.display().to_string(),
-            "--history-dir".to_owned(),
-            history.display().to_string(),
+            "--output".to_owned(),
+            output.display().to_string(),
         ]
         .into_iter())
         .expect("history output");
-        let rendered = fs::read_to_string(output).expect("history document");
+        let rendered = fs::read_to_string(output).expect("results document");
         assert_eq!(rendered.matches("- **postgresql**:").count(), 1);
         fs::remove_dir_all(results).expect("remove results");
-        fs::remove_dir_all(history).expect("remove history");
+        fs::remove_dir_all(output_directory).expect("remove output");
+    }
+
+    #[test]
+    fn results_writer_preserves_other_family_tables_and_replaces_its_section() {
+        let directory = temporary_results();
+        let path = directory.join("RESULTS.md");
+        fs::write(
+            &path,
+            "# Benchmarks\n\n<!-- E-13 point-ops BEGIN -->\npoint rows\n<!-- E-13 point-ops END -->\n",
+        )
+        .expect("seed results document");
+
+        write_results(&path, "### Benchmark history\n\nfirst table\n").expect("first write");
+        write_results(&path, "### Benchmark history\n\nsecond table\n").expect("replacement write");
+
+        let rendered = fs::read_to_string(&path).expect("results document");
+        assert!(rendered.contains("point rows"));
+        assert!(!rendered.contains("first table"));
+        assert!(rendered.contains("second table"));
+        assert_eq!(rendered.matches(HISTORY_BEGIN).count(), 1);
+        assert_eq!(rendered.matches(HISTORY_END).count(), 1);
+        fs::remove_dir_all(directory).expect("remove output");
     }
 
     #[test]

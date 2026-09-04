@@ -33,8 +33,10 @@ One A1 per region is the development shape. Production needs, per region:
 
 Three hosts per region is therefore the floor. Nothing else needs its own
 machine at launch: the GRU global authority, Prometheus, Grafana, and
-Alertmanager run as containers under the orchestrator on the GRU hosts. The
-dashboard does **not** run on OCI at all: it is a Cloudflare Worker (GOAL
+Alertmanager run as orchestrator-managed systemd services on the control
+hosts. The orchestrator deploys native binaries and does not require a
+container runtime. The dashboard does **not** run on OCI at all: it is a
+Cloudflare Worker (GOAL
 D-59) whose only state is a TerraScale database placed in every region, so
 the member hosts carry nothing but terrabase.
 
@@ -48,9 +50,9 @@ the member hosts carry nothing but terrabase.
 Total at launch: 6 member hosts + 3 control hosts = **9 instances**. Scaling
 a region is "add a member host"; a fourth region is one `add-region` run on
 the same table. All instances are `aarch64-unknown-linux-gnu`; the build
-profile is ARM-first (D-43). OS: Oracle Linux 9 or Ubuntu 24.04 ARM, rootless
-podman under systemd user units, unattended security updates, `chrony`
-against OCI NTP (HLC skew guard), no password login, no public SSH.
+profile is ARM-first (D-43). OS: Oracle Linux 9 or Ubuntu 24.04 ARM, binaries
+supervised by systemd units, unattended security updates, `chrony` against
+OCI NTP (HLC skew guard), no password login, no public SSH.
 
 ## Managed OCI services (per region unless stated)
 
@@ -59,7 +61,6 @@ against OCI NTP (HLC skew guard), no password login, no public SSH.
 | Object Storage bucket | Litestream targets, analytics snapshots (D-53), Parquet export | One bucket per region, versioning on, retention rule on, lifecycle per D-29 (segments older than 24 h to Infrequent Access, older than 7 days to Archive), **never replicated across regions** (residency, D-52) |
 | Block Volume backup policy | Second layer under Litestream | Daily, 7-day retention, per member host |
 | Vault + Key | Per-database encryption keys (M2-1, ADR 0030) | One master key per region; keys never leave their region |
-| OCIR (tenancy-wide) | Image registry | Immutable tags by digest; the orchestrator deploys digests only |
 | IAM (tenancy-wide) | Least privilege | One compartment per region; **instance principals** for members and control hosts; no API keys on disk; CI gets a scoped user per secret (GOAL O-3) |
 | VCN + NSG | Network | Public ingress only on 443 (API) and the QUIC replication port (member ↔ member, source-restricted to the other regions' public IPs); everything else via Tailscale |
 | Budgets | Cost cap | Monthly budget with alert at 80 % and 100 %, alert routed to paging |

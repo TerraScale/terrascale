@@ -24,11 +24,11 @@ fn definition(kind: MeterKind) -> MeterDefinition {
 fn segment(id: &str, first: u64, last: u64, total: i128, correction: Option<&str>) -> UsageSegment {
     UsageSegment::try_new(
         SegmentId::try_new(id).expect("segment id"),
-        definition(MeterKind::AdmittedRequestUnits),
+        definition(MeterKind::StorageByteSeconds),
         scope(),
         1,
         SequenceInterval::try_new(first, last).expect("interval"),
-        MeasurementWindow::instant(42),
+        MeasurementWindow::interval(42, 43).expect("window"),
         total,
         correction.map(|value| SegmentId::try_new(value).expect("correction id")),
     )
@@ -38,7 +38,7 @@ fn segment(id: &str, first: u64, last: u64, total: i128, correction: Option<&str
 #[test]
 fn initial_catalog_contains_exactly_the_goal_meters() {
     let catalog = MeterCatalog::initial();
-    assert_eq!(catalog.definitions().count(), 6);
+    assert_eq!(catalog.definitions().count(), 2);
     for kind in MeterKind::all() {
         let definition = catalog.get(kind, 1).expect("version one");
         assert_eq!(definition.kind(), kind);
@@ -50,36 +50,36 @@ fn initial_catalog_contains_exactly_the_goal_meters() {
 fn catalog_rejects_wrong_typed_meter_contracts_and_duplicate_versions() {
     let mut catalog = MeterCatalog::initial();
     let invalid = MeterDefinition::try_new(
-        MeterKind::PublicEgressBytes,
+        MeterKind::DocumentWriteUnits,
         2,
         MeterUnit::RequestUnit,
-        ChargeScope::PublicEgress,
-        MintingRule::PublicResponseBytes,
+        ChargeScope::DocumentWrite,
+        MintingRule::DocumentWrite,
         MeasurementCadence::PerEvent,
         CorrectionProcedure::AppendOnlySegmentReference,
     );
     assert_eq!(invalid, Err(UsageError::InvalidMeterDefinition));
     let valid = MeterDefinition::try_new(
-        MeterKind::PublicEgressBytes,
+        MeterKind::DocumentWriteUnits,
         2,
-        MeterUnit::Byte,
-        ChargeScope::PublicEgress,
-        MintingRule::PublicResponseBytes,
+        MeterUnit::WriteUnit,
+        ChargeScope::DocumentWrite,
+        MintingRule::DocumentWrite,
         MeasurementCadence::PerEvent,
         CorrectionProcedure::AppendOnlySegmentReference,
     )
     .expect("new version");
     catalog.register(valid).expect("first version two");
     assert_eq!(catalog.register(valid), Err(UsageError::DuplicateMeterDefinition));
-    assert_eq!(catalog.definitions().count(), 7);
+    assert_eq!(catalog.definitions().count(), 3);
 }
 
 #[test]
 fn facts_are_integer_scoped_and_match_their_minting_rule() {
     let fact = UsageFact::try_new(
-        definition(MeterKind::AdmittedRequestUnits),
+        definition(MeterKind::DocumentWriteUnits),
         scope(),
-        MintingIdentity::StableAdmittedRequest(UsageFactId::try_new("request-1").expect("id")),
+        MintingIdentity::DocumentWrite(UsageFactId::try_new("request-1").expect("id")),
         MeasurementWindow::instant(10),
         3,
     )
@@ -88,9 +88,9 @@ fn facts_are_integer_scoped_and_match_their_minting_rule() {
     assert_eq!(fact.scope().region_id().as_str(), "GRU");
     assert_eq!(
         UsageFact::try_new(
-            definition(MeterKind::AdmittedRequestUnits),
+            definition(MeterKind::DocumentWriteUnits),
             scope(),
-            MintingIdentity::StableAdmittedRequest(UsageFactId::try_new("request-2").expect("id")),
+            MintingIdentity::DocumentWrite(UsageFactId::try_new("request-2").expect("id")),
             MeasurementWindow::instant(10),
             0,
         ),
@@ -98,9 +98,9 @@ fn facts_are_integer_scoped_and_match_their_minting_rule() {
     );
     assert_eq!(
         UsageFact::try_new(
-            definition(MeterKind::AdmittedRequestUnits),
+            definition(MeterKind::DocumentWriteUnits),
             scope(),
-            MintingIdentity::StableAdmittedRequest(UsageFactId::try_new("request-3").expect("id")),
+            MintingIdentity::DocumentWrite(UsageFactId::try_new("request-3").expect("id")),
             MeasurementWindow::interval(10, 11).expect("interval"),
             1,
         ),
@@ -111,9 +111,9 @@ fn facts_are_integer_scoped_and_match_their_minting_rule() {
 #[test]
 fn durable_fact_encoding_binds_sequence_epoch_and_scope() {
     let fact = UsageFact::try_new(
-        definition(MeterKind::StoredByteHours),
+        definition(MeterKind::StorageByteSeconds),
         scope(),
-        MintingIdentity::AcceptedOriginCommit(UsageFactId::try_new("commit-1").expect("id")),
+        MintingIdentity::LogicalStorage(UsageFactId::try_new("commit-1").expect("id")),
         MeasurementWindow::interval(7, 8).expect("interval"),
         9,
     )
@@ -138,9 +138,9 @@ fn durable_fact_encoding_binds_sequence_epoch_and_scope() {
 #[test]
 fn durable_fact_ledger_is_idempotent_and_fences_reuse() {
     let fact = UsageFact::try_new(
-        definition(MeterKind::StoredByteHours),
+        definition(MeterKind::StorageByteSeconds),
         scope(),
-        MintingIdentity::AcceptedOriginCommit(UsageFactId::try_new("commit-1").expect("id")),
+        MintingIdentity::LogicalStorage(UsageFactId::try_new("commit-1").expect("id")),
         MeasurementWindow::interval(7, 8).expect("interval"),
         9,
     )
@@ -151,9 +151,9 @@ fn durable_fact_ledger_is_idempotent_and_fences_reuse() {
     assert_eq!(ledger.insert(durable), Ok(false));
     let different = DurableUsageFact::try_new(
         UsageFact::try_new(
-            definition(MeterKind::StoredByteHours),
+            definition(MeterKind::StorageByteSeconds),
             scope(),
-            MintingIdentity::AcceptedOriginCommit(UsageFactId::try_new("commit-1").expect("id")),
+            MintingIdentity::LogicalStorage(UsageFactId::try_new("commit-1").expect("id")),
             MeasurementWindow::interval(7, 8).expect("interval"),
             10,
         )
@@ -168,10 +168,10 @@ fn durable_fact_ledger_is_idempotent_and_fences_reuse() {
 #[test]
 fn durable_fact_identities_are_scoped_and_do_not_collide_across_tenants() {
     let identity =
-        MintingIdentity::StableAdmittedRequest(UsageFactId::try_new("request-1").expect("id"));
+        MintingIdentity::DocumentWrite(UsageFactId::try_new("request-1").expect("id"));
     let fact_for = |tenant: &str| {
         UsageFact::try_new(
-            definition(MeterKind::AdmittedRequestUnits),
+            definition(MeterKind::DocumentWriteUnits),
             scope_for(tenant),
             identity.clone(),
             MeasurementWindow::instant(10),
@@ -193,14 +193,9 @@ fn durable_fact_identities_are_scoped_and_do_not_collide_across_tenants() {
 fn standalone_usage_record_is_closed_bounded_and_tenant_bound() {
     for (meter, expected_kind, expected_rule) in [
         (
-            UsageRecordMeter::AdmittedRequestUnits,
-            MeterKind::AdmittedRequestUnits,
-            MintingRule::StableAdmittedRequest,
-        ),
-        (
-            UsageRecordMeter::PublicEgressBytes,
-            MeterKind::PublicEgressBytes,
-            MintingRule::PublicResponseBytes,
+            UsageRecordMeter::DocumentWriteUnits,
+            MeterKind::DocumentWriteUnits,
+            MintingRule::DocumentWrite,
         ),
     ] {
         let request = UsageRecordRequest::try_new(
@@ -263,10 +258,10 @@ fn usage_page_shapes_enforce_their_public_bounds() {
 #[test]
 fn fact_aggregation_rejects_duplicate_identities_and_integer_overflow() {
     let first = UsageFact::try_new(
-        definition(MeterKind::AdmittedRequestUnits),
+        definition(MeterKind::StorageByteSeconds),
         scope(),
-        MintingIdentity::StableAdmittedRequest(UsageFactId::try_new("request-max").expect("id")),
-        MeasurementWindow::instant(10),
+        MintingIdentity::LogicalStorage(UsageFactId::try_new("request-max").expect("id")),
+        MeasurementWindow::interval(10, 11).expect("window"),
         i128::MAX,
     )
     .expect("fact");
@@ -274,7 +269,7 @@ fn fact_aggregation_rejects_duplicate_identities_and_integer_overflow() {
     assert_eq!(
         UsageSegment::from_facts(
             SegmentId::try_new("duplicate-facts").expect("id"),
-            definition(MeterKind::AdmittedRequestUnits),
+            definition(MeterKind::StorageByteSeconds),
             &[first.clone(), duplicate],
             1,
             SequenceInterval::try_new(1, 2).expect("interval"),
@@ -284,17 +279,17 @@ fn fact_aggregation_rejects_duplicate_identities_and_integer_overflow() {
     );
 
     let increment = UsageFact::try_new(
-        definition(MeterKind::AdmittedRequestUnits),
+        definition(MeterKind::StorageByteSeconds),
         scope(),
-        MintingIdentity::StableAdmittedRequest(UsageFactId::try_new("request-one").expect("id")),
-        MeasurementWindow::instant(10),
+        MintingIdentity::LogicalStorage(UsageFactId::try_new("request-one").expect("id")),
+        MeasurementWindow::interval(10, 11).expect("window"),
         1,
     )
     .expect("fact");
     assert_eq!(
         UsageSegment::from_facts(
             SegmentId::try_new("overflow-facts").expect("id"),
-            definition(MeterKind::AdmittedRequestUnits),
+            definition(MeterKind::StorageByteSeconds),
             &[first, increment],
             1,
             SequenceInterval::try_new(1, 2).expect("interval"),
@@ -389,6 +384,46 @@ fn storage_byte_seconds_include_current_and_history_and_are_ttl_bounded() {
 }
 
 #[test]
+fn storage_rollup_applies_ttl_history_and_regions_once_and_reconciles_retries() {
+    let current = StorageRevision::current(
+        UsageFactId::try_new("current").expect("id"),
+        10,
+        1,
+        Some(5_001),
+    )
+    .expect("current");
+    let history = StorageRevision::history(
+        UsageFactId::try_new("history").expect("id"),
+        5,
+        1_001,
+        9_001,
+        None,
+    )
+    .expect("history");
+    assert_eq!(
+        storage_byte_seconds_for_revisions(&[current.clone(), history.clone()], 2, 10_001),
+        Ok(180)
+    );
+    let expired = StorageRevision::current(
+        UsageFactId::try_new("expired").expect("id"),
+        100,
+        5_000,
+        Some(5_000),
+    )
+    .expect("expired");
+    assert_eq!(storage_byte_seconds_for_revisions(&[expired], 3, 10_000), Ok(0));
+
+    let row_a = JournalStorageFact::try_new("db-a", 7, current, 2).expect("row");
+    let row_b = JournalStorageFact::try_new("db-a", 8, history, 2).expect("row");
+    let result = reconcile_storage_journal(&[row_a.clone(), row_b.clone(), row_a], 10_001)
+        .expect("reconcile");
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].seq_hi(), 8);
+    assert_eq!(result[0].selected_regions(), 2);
+    assert_eq!(result[0].byte_seconds(), 180);
+}
+
+#[test]
 fn export_cursor_is_checksummed_and_monotonic_across_retries() {
     let mut cursor = UsageExportCursor::initial();
     let first = UsageExportCursor::try_new(3, "db-a").expect("cursor");
@@ -411,4 +446,41 @@ fn reads_and_queries_are_explicitly_unbilled() {
     assert!(UsageActivity::Read.is_unbilled());
     assert!(!UsageActivity::Query.is_billed());
     assert!(UsageActivity::Query.is_unbilled());
+}
+
+#[test]
+fn all_serving_and_maintenance_activity_is_unbilled() {
+    for activity in [
+        UsageActivity::Read,
+        UsageActivity::Query,
+        UsageActivity::Fanout,
+        UsageActivity::Subscriber,
+        UsageActivity::Webhook,
+        UsageActivity::Replay,
+        UsageActivity::CatchUp,
+        UsageActivity::TtlExpiry,
+        UsageActivity::Egress,
+        UsageActivity::Infrastructure,
+    ] {
+        assert!(activity.is_unbilled());
+        assert_eq!(activity.billable_meter(), None);
+    }
+}
+
+#[test]
+fn legacy_request_and_egress_meters_cannot_mint_charges() {
+    let request = UsageRecordRequest::try_new(
+        UsageRecordMeter::AdmittedRequestUnits,
+        "project-a",
+        "database-a",
+        "partition-a",
+        RegionCode::GRU,
+        UsageFactId::try_new("free-request").expect("id"),
+        42,
+        1,
+        1,
+    );
+    assert_eq!(request, Err(UsageError::NonBillableMeter));
+    assert_eq!(MeterKind::from_key("request_units"), Err(UsageError::UnknownMeterDefinition));
+    assert_eq!(MeterCatalog::initial().get_key("egress_bytes", 1), Err(UsageError::UnknownMeterDefinition));
 }

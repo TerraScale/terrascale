@@ -117,6 +117,8 @@ pub enum DeletionError {
     InvalidReceiptOutcome,
     /// A receipt's completion time precedes admission.
     InvalidReceiptTime,
+    /// A receipt claims completion in the future of the verification clock.
+    ReceiptInFuture,
     /// A hold's expiry does not postdate its recording.
     InvalidHoldWindow,
     /// A hold retains no fields or more fields than the bound allows.
@@ -167,6 +169,7 @@ impl fmt::Display for DeletionError {
             Self::CopyTargetNotPlanned => "deletion receipt names an unplanned copy",
             Self::InvalidReceiptOutcome => "deletion receipt outcome mismatches its copy class",
             Self::InvalidReceiptTime => "deletion receipt precedes admission",
+            Self::ReceiptInFuture => "deletion receipt is in the future",
             Self::InvalidHoldWindow => "hold expiry does not postdate its recording",
             Self::InvalidRetainedFields => "hold retained-field set is empty or unbounded",
             Self::InvalidHoldRecordingTime => "hold recording precedes the deletion request",
@@ -566,7 +569,7 @@ impl HoldRecord {
     /// Whether this hold still applies at `now_millis`.
     #[must_use]
     pub const fn is_active_at(&self, now_millis: u64) -> bool {
-        now_millis < self.expires_at_millis
+        now_millis >= self.recorded_at_millis && now_millis < self.expires_at_millis
     }
 }
 
@@ -869,7 +872,13 @@ impl DeletionWorkflow {
             DeletionState::Complete | DeletionState::Failed(_) => {
                 return Err(DeletionError::TerminalState);
             }
-            _ => return Err(DeletionError::InvalidTransition),
+            // A retried admission after a durable commit must be harmless.
+            // Conflicting facts still fail closed; the plan and Region set
+            // are immutable for the life of the workflow.
+            DeletionState::Admitted | DeletionState::Executing | DeletionState::Verified => {
+                let same = self.admission.as_ref() == Some(&admission) && self.plan == plan;
+                return if same { Ok(()) } else { Err(DeletionError::InvalidTransition) };
+            }
         }
         if admission.admitted_at_millis() < self.requested_at_millis {
             return Err(DeletionError::InvalidAdmissionTime);
@@ -1066,6 +1075,9 @@ impl DeletionWorkflow {
         }
         if self.missing_targets().next().is_some() {
             return Err(DeletionError::MissingReceipts);
+        }
+        if self.receipts.values().any(|receipt| receipt.completed_at_millis() > now_millis) {
+            return Err(DeletionError::ReceiptInFuture);
         }
         if !self.unexpired_holds(now_millis).is_empty() {
             return Err(DeletionError::HoldBlocksCompletion);
@@ -1449,6 +1461,74 @@ impl DeletionWorkflow {
         push_optional_time(&mut bytes, self.verified_at);
         push_optional_time(&mut bytes, self.completed_at);
         bytes
+    }
+}
+
+/// Durable engine hooks for the deletion workflow.
+///
+/// The domain can prove ordering and idempotency, but only the engine can
+/// make the request, tombstones, index/cache invalidations, and workflow
+/// receipt one durable transaction. Keeping this seam explicit prevents a
+/// caller from treating an in-memory receipt as proof of deletion.
+pub trait DeletionEngineAdapter {
+    /// Engine-specific error.
+    type Error;
+
+    /// Persists the canonical workflow bytes with the request/tombstone work.
+    /// Replaying identical bytes must be idempotent.
+    fn persist_workflow(&mut self, workflow: &DeletionWorkflow) -> Result<(), Self::Error>;
+
+    /// Executes one planned copy, retaining only fields named by active holds.
+    fn execute_copy(
+        &mut self,
+        target: &CopyTarget,
+        retained_fields: &BTreeSet<RetainedField>,
+    ) -> Result<CopyOutcome, Self::Error>;
+
+    /// Persists a receipt after the copy execution commits.
+    fn persist_receipt(&mut self, receipt: &CopyReceipt) -> Result<(), Self::Error>;
+}
+
+/// Orchestrator hooks for globally durable admission and hold propagation.
+pub trait DeletionOrchestratorAdapter {
+    /// Orchestrator-specific error.
+    type Error;
+
+    /// Durably records the request in every selected Region before execution.
+    fn admit_globally(
+        &mut self,
+        workflow: &DeletionWorkflow,
+    ) -> Result<GlobalDurableAdmission, Self::Error>;
+
+    /// Publishes hold state and ordinary-access blocking to every Region.
+    fn publish_hold(
+        &mut self,
+        workflow: &DeletionWorkflow,
+        hold: &HoldRecord,
+    ) -> Result<(), Self::Error>;
+}
+
+/// Integration checklist for deletion startup diagnostics.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DeletionWiringReport {
+    /// Request and workflow bytes share the engine transaction.
+    pub engine_workflow_transaction: bool,
+    /// Copy execution emits receipts only after durable removal.
+    pub durable_copy_receipts: bool,
+    /// Admission waits for every selected Region.
+    pub global_durable_admission: bool,
+    /// Hold state is propagated and access-blocking is enforced globally.
+    pub hold_propagation: bool,
+}
+
+impl DeletionWiringReport {
+    /// Returns whether every required production integration is present.
+    #[must_use]
+    pub const fn is_ready(self) -> bool {
+        self.engine_workflow_transaction
+            && self.durable_copy_receipts
+            && self.global_durable_admission
+            && self.hold_propagation
     }
 }
 

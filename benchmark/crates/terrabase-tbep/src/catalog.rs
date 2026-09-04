@@ -98,8 +98,12 @@ impl HostCatalog {
         std::fs::create_dir_all(root).map_err(|error| {
             CatalogError::OpenFailed(format!("the catalog root cannot be created: {error}"))
         })?;
+        reject_symlink(root)?;
+        let root = root.canonicalize().map_err(|error| {
+            CatalogError::OpenFailed(format!("the catalog root cannot be resolved: {error}"))
+        })?;
         Ok(Self {
-            root: root.to_path_buf(),
+            root,
             capacity: capacity.max(1),
             idle_after,
             next_instance: AtomicU64::new(1),
@@ -161,10 +165,12 @@ impl HostCatalog {
             let evicted = Self::remove_oldest(&mut entries).expect("the map is at capacity");
             Self::close(evicted);
         }
+        let location = self.root.join(tenant).join(project).join(database);
+        reject_symlink_components(&self.root, &[tenant, project, database])?;
         let instance = self.next_instance.fetch_add(1, Ordering::Relaxed);
         let host = Arc::new(
             MemberHost::open(
-                &self.root.join(tenant).join(project).join(database),
+                &location,
                 instance,
                 tenant,
                 project,
@@ -293,6 +299,38 @@ fn safe_component(name: &str, field: &'static str) -> Result<(), CatalogError> {
                 || is_separator(character)
         });
     if safe { Ok(()) } else { Err(CatalogError::InvalidName(field.into())) }
+}
+
+/// Refuses a symlink at a catalog root.  Placement is immutable once the
+/// catalog opens: following a mutable root symlink could silently move a
+/// database to another filesystem or residency domain between accesses.
+fn reject_symlink(path: &Path) -> Result<(), CatalogError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err(CatalogError::OpenFailed("the catalog root must not be a symlink".into()))
+        }
+        Ok(_) => Ok(()),
+        Err(error) => {
+            Err(CatalogError::OpenFailed(format!("the catalog root cannot be inspected: {error}")))
+        }
+    }
+}
+
+/// Refuses symlink components below the immutable catalog root. Missing
+/// components are allowed and are created by the engine's open path.
+fn reject_symlink_components(root: &Path, components: &[&str]) -> Result<(), CatalogError> {
+    let mut current = root.to_path_buf();
+    for component in components {
+        current.push(component);
+        if let Ok(metadata) = std::fs::symlink_metadata(&current) {
+            if metadata.file_type().is_symlink() {
+                return Err(CatalogError::OpenFailed(
+                    "the database placement contains a symlink".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

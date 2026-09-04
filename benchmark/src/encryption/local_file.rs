@@ -65,6 +65,16 @@ impl LocalFileKeyProvider {
         }
     }
 
+    /// Loads or creates the local key for an explicitly enabled CI fixture.
+    ///
+    /// This spelling is intentional: callers wiring a production member must
+    /// use the OCI provider seam and cannot accidentally treat this provider
+    /// as a production key source.  The implementation shares the hardened
+    /// owner-only file checks with [`Self::load_or_create`].
+    pub fn load_or_create_for_ci(&self) -> Result<DatabaseKey, EncryptionError> {
+        self.load_or_create()
+    }
+
     fn create(&self) -> Result<DatabaseKey, EncryptionError> {
         let mut bytes = [0u8; KEY_BYTES];
         rand::fill(&mut bytes).map_err(|_| EncryptionError::LocalKeyUnavailable)?;

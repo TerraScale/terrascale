@@ -85,7 +85,8 @@
 //! makes no recovery, durability, RPO/RTO, or performance claim: formal
 //! Recovery Receipts come exclusively from the exclusive recovery lane,
 //! which belongs to BK-02. Restore selection and execution
-//! ([`RestorePlan`], [`RestoreResult`]) stay declaration-only. The source
+//! ([`RestorePlan`], [`RestoreResult`]) are available through the native
+//! restore seam and are covered by round-trip tests. The source
 //! read path is the publication history only: a source whose history is
 //! absent or diverged from its published state fails closed or binds the
 //! smaller provable boundary — it never silently invents coverage. Backup
@@ -100,7 +101,9 @@ mod sha256;
 mod tests;
 
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
-pub use restore::{RecoveryReceipt, RestoreChainLink, RestoredTenant};
+pub use restore::{
+    RecoveryReceipt, RestoreChainLink, RestoredTenant, verify_latest_chain_encrypted,
+};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -120,6 +123,65 @@ use crate::identity::DatabaseUlid;
 use crate::regions::{RegionCatalog, RegionCode};
 use crate::storage::{PublishedCommit, PublishedWrite};
 use crate::types::{Cancellation, LocalDurability, StorageSequence, TenantId};
+
+/// An immutable database residency lock.
+///
+/// The lock is intentionally represented as the exact admitted Region set;
+/// provider names and geography aliases never enter a backup artifact.  A
+/// caller can narrow a request before construction, but there is no mutation
+/// operation that can widen an existing lock.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlacementLock {
+    regions: std::collections::BTreeSet<RegionCode>,
+}
+
+impl PlacementLock {
+    /// Creates an explicit lock over active Regions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BackupError::PlacementMismatch`] for an empty set or a
+    /// Region that is not in the active production catalog.
+    pub fn explicit(
+        regions: impl IntoIterator<Item = RegionCode>,
+    ) -> Result<Self, BackupError> {
+        let regions: std::collections::BTreeSet<_> = regions.into_iter().collect();
+        if regions.is_empty()
+            || regions.iter().any(|region| !RegionCatalog::production().is_registered(region))
+        {
+            return Err(BackupError::PlacementMismatch);
+        }
+        Ok(Self { regions })
+    }
+
+    /// Creates the Brazil residency lock (`GRU`).
+    pub fn br_only() -> Self {
+        Self { regions: std::collections::BTreeSet::from([RegionCode::GRU]) }
+    }
+
+    /// Creates the European residency lock (`FRA`).
+    pub fn eu_only() -> Self {
+        Self { regions: std::collections::BTreeSet::from([RegionCode::FRA]) }
+    }
+
+    /// Returns whether a Region is admitted by this lock.
+    #[must_use]
+    pub fn allows(&self, region: RegionCode) -> bool {
+        self.regions.contains(&region)
+    }
+
+    /// Returns the exact locked Region set in canonical order.
+    #[must_use]
+    pub fn regions(&self) -> impl Iterator<Item = RegionCode> + '_ {
+        self.regions.iter().copied()
+    }
+
+    /// Returns whether `candidate` is no wider than this lock.
+    #[must_use]
+    pub fn admits_lock(&self, candidate: &Self) -> bool {
+        candidate.regions.is_subset(&self.regions)
+    }
+}
 
 /// The reserved family collection, mirrored from the W3 family contract.
 ///
@@ -299,6 +361,7 @@ pub struct BackupPlan {
     progress: Option<Arc<dyn Fn(BackupProgress) + Send + Sync>>,
     cancellation: Option<Arc<Cancellation>>,
     encryption: BackupEncryptionMode,
+    placement: Option<PlacementLock>,
 }
 
 #[derive(Clone, Debug)]
@@ -324,6 +387,7 @@ impl BackupPlan {
             progress: None,
             cancellation: None,
             encryption: BackupEncryptionMode::Encrypted(encryption),
+            placement: None,
         }
     }
 
@@ -348,6 +412,7 @@ impl BackupPlan {
             progress: None,
             cancellation: None,
             encryption: BackupEncryptionMode::Plaintext,
+            placement: None,
         }
     }
 
@@ -363,6 +428,7 @@ impl BackupPlan {
             progress: None,
             cancellation: None,
             encryption: BackupEncryptionMode::Plaintext,
+            placement: None,
         }
     }
 
@@ -457,6 +523,18 @@ impl BackupPlan {
     #[must_use]
     pub fn with_cancellation(mut self, cancellation: Arc<Cancellation>) -> Self {
         self.cancellation = Some(cancellation);
+        self
+    }
+
+    /// Binds the run to an existing immutable residency lock.
+    ///
+    /// The lock is checked against the source owner and encryption wrapper
+    /// before the first source read.  The lock itself has no widening
+    /// operation; callers that need to change placement must create a new
+    /// database and key hierarchy.
+    #[must_use]
+    pub fn with_placement_lock(mut self, placement: PlacementLock) -> Self {
+        self.placement = Some(placement);
         self
     }
 }
@@ -732,6 +810,9 @@ pub enum BackupError {
     /// The encryption provider refused an operation, including an expired
     /// lease or an invalid ordinal reservation.
     EncryptionUnavailable,
+    /// The operation's Region is outside the database's immutable placement
+    /// lock or names an inactive Region.
+    PlacementMismatch,
 }
 
 /// The typed family-record input produced from the reserved collection
@@ -835,6 +916,7 @@ pub fn run_backup(
     if plan.read_ops_per_second == Some(0) {
         return Err(BackupError::Throttled);
     }
+    validate_placement(engine, &plan)?;
     let _admission = AdmissionGuard::acquire(engine)?;
     std::fs::create_dir_all(destination).map_err(|_| BackupError::DestinationUnavailable)?;
     let staging = StagingDir::create(destination)?;
@@ -844,6 +926,26 @@ pub fn run_backup(
     // way the staging tree goes away.
     staging.discard();
     result
+}
+
+/// Validates the immutable residency lock before creating any destination
+/// directory or reading source state.
+fn validate_placement(engine: &Engine, plan: &BackupPlan) -> Result<(), BackupError> {
+    let owner_region = engine.database_owner().region();
+    if !RegionCatalog::production().is_registered(&owner_region) {
+        return Err(BackupError::PlacementMismatch);
+    }
+    if let Some(lock) = &plan.placement {
+        if !lock.allows(owner_region) {
+            return Err(BackupError::PlacementMismatch);
+        }
+        if let BackupEncryptionMode::Encrypted(encryption) = &plan.encryption
+            && !lock.allows(encryption.region())
+        {
+            return Err(BackupError::PlacementMismatch);
+        }
+    }
+    Ok(())
 }
 
 /// The mutable state of one executing backup run.

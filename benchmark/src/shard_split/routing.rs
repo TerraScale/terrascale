@@ -67,12 +67,22 @@ pub enum RouteError {
     TargetExists,
     /// The cutover permit was not issued by a writer fence.
     InvalidPermit,
+    /// The caller's routing generation is stale.
+    GenerationMismatch {
+        /// Generation supplied by the caller.
+        expected: u64,
+        /// Generation currently installed.
+        actual: u64,
+    },
+    /// The routing generation cannot advance any further.
+    GenerationExhausted,
 }
 
 /// Immutable-style route table replaced as one value at cutover.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RouteTable {
     routes: Vec<ShardRoute>,
+    generation: u64,
 }
 
 impl RouteTable {
@@ -87,12 +97,12 @@ impl RouteTable {
         }) {
             return Err(RouteError::Overlap);
         }
-        Ok(Self { routes })
+        Ok(Self { routes, generation: 0 })
     }
 
     /// Creates a table with one shard owning the complete key space.
     pub fn single(shard_id: u64) -> Self {
-        Self { routes: vec![ShardRoute { shard_id, lower: None, upper: None }] }
+        Self { routes: vec![ShardRoute { shard_id, lower: None, upper: None }], generation: 0 }
     }
 
     /// Returns the shard for a key, or `None` for an intentional routing gap.
@@ -105,6 +115,22 @@ impl RouteTable {
     #[must_use]
     pub fn routes(&self) -> &[ShardRoute] {
         &self.routes
+    }
+
+    /// Returns the monotonically increasing routing generation.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn is_exact_split(&self, source: u64, target: u64, upper: &[u8]) -> bool {
+        let Some(target_route) = self.routes.iter().find(|route| route.shard_id == target) else {
+            return false;
+        };
+        let Some(source_route) = self.routes.iter().find(|route| route.shard_id == source) else {
+            return false;
+        };
+        target_route.upper() == Some(upper) && source_route.lower() == Some(upper)
     }
 
     /// Applies a split to `source` using a fenced cutover permit.
@@ -121,7 +147,7 @@ impl RouteTable {
         if upper.is_empty() {
             return Err(RouteError::EmptyBound);
         }
-        if target == source || self.routes.iter().any(|route| route.shard_id == target) {
+        if target == source {
             return Err(RouteError::TargetExists);
         }
         let index = self
@@ -130,13 +156,28 @@ impl RouteTable {
             .position(|route| route.shard_id == source && route.contains(&upper))
             .ok_or(RouteError::SourceMissing)?;
         let old = self.routes[index].clone();
+        // A crash after the route transaction commits but before the worker
+        // records its response is a normal retry.  Recognise the exact
+        // already-installed pair as success; a target with any other bounds
+        // remains a conflict and fails closed below.
+        if let Some(existing_target) = self.routes.iter().find(|route| route.shard_id == target) {
+            let expected_target = ShardRoute::new(target, old.lower.clone(), Some(upper.clone()))?;
+            let expected_source = ShardRoute::new(source, Some(upper.clone()), old.upper.clone())?;
+            let source_matches = self.routes.iter().any(|route| *route == expected_source);
+            if *existing_target == expected_target && source_matches {
+                return Ok(());
+            }
+            return Err(RouteError::TargetExists);
+        }
         let target_route = ShardRoute::new(target, old.lower.clone(), Some(upper.clone()))?;
         let source_route = ShardRoute::new(source, Some(upper), old.upper.clone())?;
         // Build first, then swap the vector, so readers see either complete
         // old routing or complete new routing when their owner installs it.
         let mut replacement = self.routes.clone();
         replacement.splice(index..=index, [target_route, source_route]);
-        *self = Self::new(replacement)?;
+        let mut next = Self::new(replacement)?;
+        next.generation = self.generation.checked_add(1).ok_or(RouteError::GenerationExhausted)?;
+        *self = next;
         Ok(())
     }
 }
@@ -181,6 +222,40 @@ impl ShardRouter {
         permit: CutoverPermit,
     ) -> Result<(), RouteError> {
         self.table.split(source, target, upper, permit)
+    }
+
+    /// Installs a route replacement against an expected generation.
+    ///
+    /// The generation check and immutable table replacement are the adapter
+    /// seam for a compare-and-swap transaction.  A stale orchestrator cannot
+    /// overwrite a route installed by another split.
+    pub fn cut_over_at(
+        &mut self,
+        expected_generation: u64,
+        source: u64,
+        target: u64,
+        upper: Vec<u8>,
+        fence: &WriterFence,
+        permit: CutoverPermit,
+    ) -> Result<u64, RouteError> {
+        if self.table.generation() != expected_generation {
+            // Exact replay remains idempotent even when the caller retained
+            // the pre-commit generation.  Do not run a new split under a
+            // stale generation: that would permit two concurrent workers to
+            // overwrite each other's routing decision.
+            if self.table.is_exact_split(source, target, &upper) && fence.permits(permit) {
+                return Ok(self.table.generation());
+            }
+            return Err(RouteError::GenerationMismatch {
+                expected: expected_generation,
+                actual: self.table.generation(),
+            });
+        }
+        if !fence.permits(permit) {
+            return Err(RouteError::InvalidPermit);
+        }
+        self.table.split(source, target, upper, permit)?;
+        Ok(self.table.generation())
     }
 
     /// Installs a split only when the permit belongs to the supplied fenced
