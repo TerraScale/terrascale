@@ -1,7 +1,7 @@
 //! Durable automatic-index coordinator (ADR 0045 / D-31).
 //!
 //! This module is the production boundary between the index advisor and the
-//! SQLite engine.  It deliberately contains no process-local authority: a
+//! `SQLite` engine.  It deliberately contains no process-local authority: a
 //! coordinator can only move an index through its lifecycle when the caller
 //! supplies all required durable hooks.  In particular, an absent journal,
 //! publication transaction, planner visibility hook, or logical-cost hook is
@@ -9,7 +9,7 @@
 //! refused.
 //!
 //! The query optimizer may use the value types in this module to derive a
-//! workload and recommendation.  The storage adapter owns bytes, SQLite
+//! workload and recommendation.  The storage adapter owns bytes, `SQLite`
 //! transactions, and physical indexes.  The adapter methods documented on
 //! [`StorageAdapter`] are the exact integration contract; they are kept
 //! small so a storage failure cannot be mistaken for a successful lifecycle
@@ -45,9 +45,9 @@ pub enum HookKind {
     Journal,
     /// Atomic write-transaction catch-up and extraction maintenance.
     PublicationTransaction,
-    /// SQLite planner visibility and plan-pin installation.
+    /// `SQLite` planner visibility and plan-pin installation.
     Planner,
-    /// SQLite logical pages/rows execution counters.
+    /// `SQLite` logical pages/rows execution counters.
     LogicalCost,
     /// Bounded sequence-ordered backfill.
     Backfill,
@@ -57,6 +57,10 @@ pub enum HookKind {
 /// a false bit is an explicit configuration error, never a permission to
 /// fall back to an in-memory coordinator.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "five explicit hook-presence bits; a bitmask struct keeps open-time validation total"
+)]
 pub struct HookAvailability {
     /// Lifecycle journal is durable and replayable.
     pub journal: bool,
@@ -72,6 +76,10 @@ pub struct HookAvailability {
 
 impl HookAvailability {
     /// Validates that all D-31 hooks are installed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::MissingHook`] for the first absent hook.
     pub fn validate(self) -> Result<(), CoordinatorError> {
         if !self.journal {
             return Err(CoordinatorError::MissingHook(HookKind::Journal));
@@ -128,21 +136,23 @@ impl From<HookError> for CoordinatorError {
     }
 }
 
-/// Logical work measured by SQLite's statement counters.
+/// Logical work measured by `SQLite`'s statement counters.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct LogicalCost {
-    /// SQLite pages read.
+    /// `SQLite` pages read.
     pub pages_read: u64,
-    /// SQLite rows examined.
+    /// `SQLite` rows examined.
     pub rows_examined: u64,
 }
 
 impl LogicalCost {
     /// Creates a logical-cost sample.
+    #[must_use]
     pub const fn new(pages_read: u64, rows_examined: u64) -> Self {
         Self { pages_read, rows_examined }
     }
     /// Returns pages plus rows, saturating on overflow.
+    #[must_use]
     pub const fn total(self) -> u64 {
         self.pages_read.saturating_add(self.rows_examined)
     }
@@ -164,7 +174,7 @@ pub enum PredicateKind {
     Equality,
     /// One range predicate (`<`, `<=`, `>`, `>=`, `BETWEEN`).
     Range,
-    /// SQLite FTS5 `MATCH`.
+    /// `SQLite` FTS5 `MATCH`.
     FullText,
 }
 
@@ -183,6 +193,7 @@ pub struct Template {
 
 impl Template {
     /// Returns whether the template includes FTS5 matching.
+    #[must_use]
     pub fn has_full_text(&self) -> bool {
         self.predicates.iter().any(|p| p.kind == PredicateKind::FullText)
     }
@@ -193,7 +204,7 @@ impl Template {
 pub struct Observation {
     /// Normalized SQL template.
     pub template: Template,
-    /// Logical SQLite work.
+    /// Logical `SQLite` work.
     pub cost: LogicalCost,
     /// Rows returned.
     pub rows_returned: u64,
@@ -224,6 +235,7 @@ impl Default for WorkloadSketch {
 
 impl WorkloadSketch {
     /// Creates a bounded observer, clamping capacity to the engine bound.
+    #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self { capacity: capacity.clamp(1, OBSERVATION_CAPACITY), ..Self::default() }
     }
@@ -243,10 +255,13 @@ impl WorkloadSketch {
         self.ring.iter()
     }
     /// Returns a column sketch, if one has observed values.
+    #[must_use]
     pub fn column(&self, collection: &str, field: &str) -> Option<&ColumnSketch> {
         self.columns.get(&(collection.to_owned(), field.to_owned()))
     }
     /// Compresses observations into the heaviest templates covering `share`.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss, reason = "compression weight; rounding is noise")]
     pub fn compress(
         &self,
         now_millis: u64,
@@ -267,7 +282,11 @@ impl WorkloadSketch {
         }
         let mut by_collection: BTreeMap<String, Vec<WeightedTemplate>> = BTreeMap::new();
         for (template, (frequency, work)) in weights {
-            let weight = (frequency as f64) * (work as f64 / frequency.max(1) as f64);
+            // Saturating: frequencies are bounded by `OBSERVATION_CAPACITY`;
+            // the fallback keeps the ranking weight total for oversized inputs.
+            let frequency_f = f64::from(u32::try_from(frequency).unwrap_or(u32::MAX));
+            let divisor = f64::from(u32::try_from(frequency.max(1)).unwrap_or(u32::MAX));
+            let weight = frequency_f * (work as f64 / divisor);
             by_collection.entry(template.collection.clone()).or_default().push(WeightedTemplate {
                 template,
                 frequency,
@@ -328,7 +347,9 @@ impl ColumnSketch {
     /// Observes a value without retaining it in the distinct sketch.
     pub fn observe(&mut self, value: &[u8]) {
         let hash = fnv(value);
-        let slot = (hash as usize) & 63;
+        // Saturating: the register table is masked below, so the fallback
+        // keeps index derivation total on targets with 32-bit pointers.
+        let slot = usize::try_from(hash).unwrap_or(usize::MAX) & 63;
         let rank = (hash >> 6).leading_zeros().saturating_sub(6).saturating_add(1).min(64) as u8;
         self.registers[slot] = self.registers[slot].max(rank.max(1));
         self.total = self.total.saturating_add(1);
@@ -347,8 +368,15 @@ impl ColumnSketch {
         }
     }
     /// Returns an approximate distinct count.
+    #[must_use]
     pub fn distinct(&self) -> f64 {
-        let zero = self.registers.iter().filter(|r| **r == 0).count() as f64;
+        // Saturating: the register table holds 64 entries; the fallback keeps
+        // the estimator total for oversized inputs.
+        let mut zero_count = 0_u32;
+        for register in self.registers {
+            zero_count += u32::from(register == 0);
+        }
+        let zero = f64::from(zero_count);
         let harmonic: f64 = self.registers.iter().map(|r| 2.0_f64.powi(-i32::from(*r))).sum();
         if harmonic == 0.0 {
             return f64::INFINITY;
@@ -357,15 +385,16 @@ impl ColumnSketch {
         if raw <= 160.0 && zero > 0.0 { 64.0 * (64.0 / zero).ln() } else { raw }
     }
     /// Number of values observed.
+    #[must_use]
     pub const fn total(&self) -> u64 {
         self.total
     }
 }
 
 fn fnv(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for byte in bytes {
-        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
+        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3);
     }
     hash
 }
@@ -373,9 +402,9 @@ fn fnv(bytes: &[u8]) -> u64 {
 /// Candidate index kind.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum CandidateKind {
-    /// SQLite B-tree index.
+    /// `SQLite` B-tree index.
     BTree,
-    /// SQLite FTS5 virtual table.
+    /// `SQLite` FTS5 virtual table.
     Fts,
 }
 
@@ -395,6 +424,7 @@ pub struct Candidate {
 }
 
 /// Derives equality → range → ordering → covering candidates, including FTS5.
+#[must_use]
 pub fn derive_candidates(template: &Template, extracted: &BTreeSet<String>) -> Vec<Candidate> {
     if template.has_full_text() {
         return template
@@ -490,6 +520,7 @@ pub struct WriteBudget {
 
 impl WriteBudget {
     /// Returns whether an index with `cost` may be activated.
+    #[must_use]
     pub fn allows(self, cost: f64) -> bool {
         self.base_cost.is_finite()
             && self.base_cost >= 0.0
@@ -499,6 +530,11 @@ impl WriteBudget {
             && self.maintenance_cost + cost <= self.base_cost * WRITE_BUDGET_MULTIPLE
     }
     /// Accounts one activated index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::WriteBudgetExceeded`] when `cost` does not
+    /// fit the collection budget or index cap.
     pub fn account(&mut self, cost: f64) -> Result<(), CoordinatorError> {
         if !self.allows(cost) {
             return Err(CoordinatorError::WriteBudgetExceeded);
@@ -510,6 +546,11 @@ impl WriteBudget {
 }
 
 /// Selects the highest uncertainty-weighted benefit candidate that fits.
+///
+/// # Errors
+///
+/// Returns [`CoordinatorError::InvalidTransition`] when `candidates` and
+/// `contexts` have different lengths.
 pub fn select_candidate<'a>(
     candidates: &'a [Candidate],
     contexts: &[CandidateContext],
@@ -522,7 +563,11 @@ pub fn select_candidate<'a>(
         .iter()
         .zip(contexts)
         .enumerate()
-        .filter(|(_, (candidate, _))| budget.allows(candidate.maintenance_cost as f64))
+        // Saturating: maintenance costs are bounded by the candidate field
+        // limit; the fallback keeps selection total for oversized inputs.
+        .filter(|(_, (candidate, _))| {
+            budget.allows(f64::from(u32::try_from(candidate.maintenance_cost).unwrap_or(u32::MAX)))
+        })
         .max_by(|(ia, (_, a)), (ib, (_, b))| {
             let sa = a.benefit + a.uncertainty * (1.0 + a.selectivity.max(0.0));
             let sb = b.benefit + b.uncertainty * (1.0 + b.selectivity.max(0.0));
@@ -587,6 +632,7 @@ pub struct IndexState {
 
 impl IndexState {
     /// Returns a hybrid plan when the uncovered tail fits the scan cap.
+    #[must_use]
     pub fn hybrid_plan(&self, scan_cap: u64) -> Option<HybridPlan> {
         if self.phase != Phase::Building || self.covered >= self.target {
             return None;
@@ -594,7 +640,7 @@ impl IndexState {
         let tail = self.target - self.covered;
         (tail <= scan_cap).then(|| HybridPlan {
             index_through: self.covered,
-            scan_from: self.covered.checked_add(1).unwrap_or(u64::MAX),
+            scan_from: self.covered.saturating_add(1),
             scan_through: self.target,
         })
     }
@@ -627,6 +673,16 @@ pub enum ShadowOutcome {
 }
 
 /// Evaluates bounded logical-cost samples using a conservative Welch gate.
+///
+/// # Errors
+///
+/// Returns [`CoordinatorError::InsufficientEvidence`] when either side has
+/// fewer than [`MIN_SHADOW_SAMPLES`] samples, when a mean is non-finite or
+/// non-positive, or when a zero-variance tie leaves no decision.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "bounded logical counters; precision is below measurement noise"
+)]
 pub fn verify_shadow(
     baseline: &[LogicalCost],
     candidate: &[LogicalCost],
@@ -635,7 +691,10 @@ pub fn verify_shadow(
         return Err(CoordinatorError::InsufficientEvidence);
     }
     let mean = |samples: &[LogicalCost]| {
-        samples.iter().map(|s| s.total() as f64).sum::<f64>() / samples.len() as f64
+        // Saturating: shadow samples are bounded; the fallback keeps the mean
+        // total for oversized inputs.
+        let count = f64::from(u32::try_from(samples.len()).unwrap_or(u32::MAX));
+        samples.iter().map(|s| s.total() as f64).sum::<f64>() / count
     };
     let bm = mean(baseline);
     let cm = mean(candidate);
@@ -643,6 +702,9 @@ pub fn verify_shadow(
         return Err(CoordinatorError::InsufficientEvidence);
     }
     let variance = |samples: &[LogicalCost], m: f64| {
+        // Saturating: shadow samples are bounded; the fallback keeps the
+        // variance total for oversized inputs.
+        let count = f64::from(u32::try_from(samples.len()).unwrap_or(u32::MAX));
         samples
             .iter()
             .map(|s| {
@@ -650,10 +712,13 @@ pub fn verify_shadow(
                 d * d
             })
             .sum::<f64>()
-            / (samples.len() - 1) as f64
+            / (count - 1.0)
     };
-    let se = variance(baseline, bm) / baseline.len() as f64
-        + variance(candidate, cm) / candidate.len() as f64;
+    // Saturating: shadow samples are bounded; the fallback keeps the
+    // standard-error total for oversized inputs.
+    let baseline_count = f64::from(u32::try_from(baseline.len()).unwrap_or(u32::MAX));
+    let candidate_count = f64::from(u32::try_from(candidate.len()).unwrap_or(u32::MAX));
+    let se = variance(baseline, bm) / baseline_count + variance(candidate, cm) / candidate_count;
     let statistic = if se == 0.0 {
         if (bm - cm).abs() < f64::EPSILON { 0.0 } else { f64::INFINITY }
     } else {
@@ -706,12 +771,32 @@ pub struct LifecycleEvent {
 /// Exact storage hooks required by the coordinator.
 pub trait StorageAdapter {
     /// Loads lifecycle events from the publication journal in sequence order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HookError`] when the journal is unavailable, refuses the
+    /// load, or reports a conflicting sequence.
     fn load_lifecycle(&mut self) -> Result<Vec<LifecycleEvent>, HookError>;
     /// Appends one event atomically with any descriptor/catalog mutation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HookError`] when the journal is unavailable or refuses the
+    /// append without changing durable state.
     fn append_lifecycle(&mut self, event: &LifecycleEvent) -> Result<(), HookError>;
     /// Applies a bounded contiguous batch to an invisible index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HookError`] when backfill is unavailable, refused, or
+    /// reports a sequence conflict.
     fn backfill_batch(&mut self, index: &str, first: u64, last: u64) -> Result<(), HookError>;
     /// Catches up and verifies the final tail in the same write transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HookError`] when the publication transaction is unavailable,
+    /// refused, or reports a sequence conflict.
     fn catch_up_and_verify(
         &mut self,
         index: &str,
@@ -719,18 +804,43 @@ pub trait StorageAdapter {
         target: u64,
     ) -> Result<u64, HookError>;
     /// Changes planner visibility in the same durable catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HookError`] when the planner hook is unavailable or refuses
+    /// the visibility change.
     fn set_visible(&mut self, index: &str, visible: bool) -> Result<(), HookError>;
     /// Drops physical pages after the invisible grace period.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HookError`] when the storage hook is unavailable or refuses
+    /// the physical drop.
     fn drop_physical(&mut self, index: &str) -> Result<(), HookError>;
     /// Installs/removes a template-specific baseline plan pin.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HookError`] when the planner hook is unavailable or refuses
+    /// the pin change.
     fn set_plan_pin(&mut self, template: &str, index: &str, pinned: bool) -> Result<(), HookError>;
     /// Records logical pages/rows for a normalized template.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HookError`] when the logical-cost hook is unavailable or
+    /// refuses the record.
     fn record_logical_cost(
         &mut self,
         template: &Template,
         cost: LogicalCost,
     ) -> Result<(), HookError>;
     /// Runs a hypothetical compile check without mutating the live schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HookError`] when the planner hook is unavailable or refuses
+    /// the hypothetical compile.
     fn compile_hypothetical(
         &mut self,
         template: &Template,
@@ -749,10 +859,22 @@ impl<A: StorageAdapter> Coordinator<A> {
     /// Refuses an unqualified recovery.  Callers must use
     /// [`Self::recover_with_hooks`] so a deployment cannot accidentally make
     /// an in-memory-only coordinator authoritative.
+    ///
+    /// # Errors
+    ///
+    /// Always returns [`CoordinatorError::MissingHook`] for
+    /// [`HookKind::Journal`].
     pub fn recover(_adapter: A) -> Result<Self, CoordinatorError> {
         Err(CoordinatorError::MissingHook(HookKind::Journal))
     }
     /// Recovers only when the member explicitly reports every required hook.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::MissingHook`] for an absent hook,
+    /// [`CoordinatorError::Hook`] when the journal load fails, and
+    /// [`CoordinatorError::JournalConflict`], [`CoordinatorError::InvalidTransition`],
+    /// or [`CoordinatorError::InvalidWatermark`] for a conflicting replay event.
     pub fn recover_with_hooks(
         adapter: A,
         hooks: HookAvailability,
@@ -762,7 +884,7 @@ impl<A: StorageAdapter> Coordinator<A> {
         let events = adapter.load_lifecycle().map_err(CoordinatorError::Hook)?;
         let mut coordinator = Self { adapter, states: BTreeMap::new(), next_sequence: 1 };
         for event in events {
-            coordinator.apply_event(event)?;
+            coordinator.apply_event(&event)?;
         }
         Ok(coordinator)
     }
@@ -776,6 +898,11 @@ impl<A: StorageAdapter> Coordinator<A> {
     }
     /// Records planner use.  The timestamp is durable when the next journal
     /// event is written, so restart cannot make a rare query look unused.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::InvalidTransition`] when the index is
+    /// unknown or is not a visible [`Phase::Active`] index.
     pub fn note_used(&mut self, index: &str, at_millis: u64) -> Result<(), CoordinatorError> {
         let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
         if state.phase != Phase::Active || !state.visible {
@@ -793,7 +920,7 @@ impl<A: StorageAdapter> Coordinator<A> {
         })
     }
     /// Applies an event to memory after journal replay validation.
-    fn apply_event(&mut self, event: LifecycleEvent) -> Result<(), CoordinatorError> {
+    fn apply_event(&mut self, event: &LifecycleEvent) -> Result<(), CoordinatorError> {
         if event.sequence != self.next_sequence {
             return Err(CoordinatorError::JournalConflict);
         }
@@ -814,11 +941,9 @@ impl<A: StorageAdapter> Coordinator<A> {
             (Phase::Observing, Phase::Selected)
             | (Phase::Selected, Phase::Building)
             | (Phase::Building, Phase::Shadowing)
-            | (Phase::Shadowing, Phase::Active)
-            | (Phase::Shadowing, Phase::Abandoned)
+            | (Phase::Shadowing, Phase::Active | Phase::Abandoned)
             | (Phase::Active, Phase::Invisible)
             | (Phase::Invisible, Phase::Abandoned) => true,
-            (Phase::Building, Phase::Building) => true,
             // A replay may contain an exact duplicate event; sequence
             // ordering still protects against a conflicting duplicate.
             (from, to) if from == to => true,
@@ -852,12 +977,23 @@ impl<A: StorageAdapter> Coordinator<A> {
         Ok(())
     }
     /// Appends an event, then applies it; a failed append leaves memory unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::Hook`] when the journal append fails, and
+    /// [`CoordinatorError::JournalConflict`], [`CoordinatorError::InvalidTransition`],
+    /// or [`CoordinatorError::InvalidWatermark`] when replay validation fails.
     pub fn append(&mut self, mut event: LifecycleEvent) -> Result<(), CoordinatorError> {
         event.sequence = self.next_sequence;
         self.adapter.append_lifecycle(&event).map_err(CoordinatorError::Hook)?;
-        self.apply_event(event)
+        self.apply_event(&event)
     }
     /// Starts an invisible build at a durable snapshot boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::InvalidTransition`] when `target` is zero
+    /// or the index is not in [`Phase::Selected`].
     pub fn start_build(
         &mut self,
         index: &str,
@@ -880,6 +1016,13 @@ impl<A: StorageAdapter> Coordinator<A> {
         })
     }
     /// Applies one contiguous backfill batch and journals its watermark.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::InvalidTransition`] for an unknown index,
+    /// [`CoordinatorError::InvalidWatermark`] when `last` is not past
+    /// coverage or exceeds the target, and [`CoordinatorError::Hook`] when
+    /// the backfill batch fails.
     pub fn advance_backfill(
         &mut self,
         index: &str,
@@ -904,6 +1047,11 @@ impl<A: StorageAdapter> Coordinator<A> {
         })
     }
     /// Moves a fully covered invisible build into shadow verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::InvalidTransition`] when the index is
+    /// unknown or is not a fully covered [`Phase::Building`] build.
     pub fn begin_shadow(
         &mut self,
         index: &str,
@@ -926,6 +1074,13 @@ impl<A: StorageAdapter> Coordinator<A> {
         })
     }
     /// Performs the final same-transaction catch-up and publishes visibility.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::InvalidTransition`] when the index is not
+    /// a fully covered [`Phase::Shadowing`] build,
+    /// [`CoordinatorError::Hook`] when catch-up or visibility fails, and
+    /// [`CoordinatorError::InvalidWatermark`] when catch-up falls short.
     pub fn activate(
         &mut self,
         index: &str,
@@ -957,6 +1112,12 @@ impl<A: StorageAdapter> Coordinator<A> {
     /// Installs a baseline pin for one exact normalized template.  Pins are
     /// planner state, never a global disable, and therefore cannot expose a
     /// regressed plan for an unrelated query.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::InvalidTransition`] when the index is not
+    /// a visible [`Phase::Active`] index, and [`CoordinatorError::Hook`]
+    /// when the planner refuses the pin.
     pub fn pin_template(&mut self, template: &str, index: &str) -> Result<(), CoordinatorError> {
         let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
         if state.phase != Phase::Active || !state.visible {
@@ -1003,6 +1164,12 @@ impl<A: StorageAdapter> Coordinator<A> {
     /// Retires the narrow side of a verified prefix merge.  The caller must
     /// supply evidence from shadow replay; refusing weak evidence prevents a
     /// catalog-count optimization from becoming a query regression.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::InvalidTransition`] for identical indexes,
+    /// non-finite or weak evidence, or non-visible [`Phase::Active`] inputs,
+    /// and [`CoordinatorError::Hook`] when hiding the narrow index fails.
     pub fn merge_prefix(
         &mut self,
         narrow: &str,
@@ -1042,6 +1209,11 @@ impl<A: StorageAdapter> Coordinator<A> {
         })
     }
     /// Makes an active index invisible immediately and journals the rollback.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::InvalidTransition`] when the index is not
+    /// [`Phase::Active`], and [`CoordinatorError::Hook`] when hiding fails.
     pub fn rollback(
         &mut self,
         index: &str,
@@ -1065,6 +1237,12 @@ impl<A: StorageAdapter> Coordinator<A> {
         })
     }
     /// Drops an invisible index only after the 24-hour grace period.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoordinatorError::InvalidTransition`] when the index was
+    /// never hidden or the grace period has not elapsed, and
+    /// [`CoordinatorError::Hook`] when the physical drop fails.
     pub fn retire(
         &mut self,
         index: &str,
