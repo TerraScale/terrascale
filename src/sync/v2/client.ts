@@ -94,7 +94,7 @@ export class TerraScaleSyncV2Client {
     }
   }
 
-  /** Opens one typed TQL view and returns the generated subscribe message to send. */
+  /** Opens one live SQL result view and returns the generated subscribe message to send. */
   public openSubscription(options: SyncV2OpenSubscriptionOptions): SyncV2OpenSubscription {
     if (this.#subscriptions.has(options.subscription)) {
       throw new TerraScaleSyncV2ClientError(

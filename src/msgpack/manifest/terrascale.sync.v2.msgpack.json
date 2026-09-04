@@ -186,7 +186,7 @@
       "name": "subscribe",
       "tag": 1,
       "direction": "client_to_server",
-      "doc": "Open one bounded typed TQL result view, optionally resuming from an opaque checkpoint.",
+      "doc": "Open one bounded live SQL result view, optionally resuming from an opaque checkpoint.",
       "fields": [
         { "name": "subscription", "type": { "kind": "text", "maxBytes": 128 } },
         { "name": "query", "type": { "kind": "text", "maxBytes": 262144 } },

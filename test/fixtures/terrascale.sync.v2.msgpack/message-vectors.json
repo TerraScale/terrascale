@@ -1,7 +1,7 @@
 {
   "protocol": "terrascale.sync.v2.msgpack",
   "version": "2.1",
-  "manifestSha256": "7ecc582d87d405baecf9ac801452f16d8feead7d43302d665fd150a4542087c4",
+  "manifestSha256": "90baa4a1f566fd3270ce29d11d103017e343ccfc68235c3f7f5ec29b0cce05ab",
   "vectors": [
     {
       "name": "subscribe",

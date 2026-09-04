@@ -62,7 +62,7 @@ in 2.1 are stable and future compatible changes must append new tags.
 The current client:
 
 - builds subscribe, unsubscribe, heartbeat, and checkpoint frames for bounded
-  typed TQL queries;
+  subscribable SELECT queries;
 - receives authorized result snapshots, insert, update, patch, remove, move, or
   reset operations;
 - keeps checkpoints opaque and view-scoped;

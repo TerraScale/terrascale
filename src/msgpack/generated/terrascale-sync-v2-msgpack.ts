@@ -6,7 +6,7 @@
 // checked-in versioned manifest; this TypeScript half provides codecs,
 // exact-shape validators, and public types for @terrascale/sdk).
 //
-// manifest sha256:   7ecc582d87d405baecf9ac801452f16d8feead7d43302d665fd150a4542087c4
+// manifest sha256:   90baa4a1f566fd3270ce29d11d103017e343ccfc68235c3f7f5ec29b0cce05ab
 // generator sha256:  9c0a2c65e331a1ca8a012b3394df927d3c807797fc4ed04d09a38996c1692ee0
 //
 // Regenerate: node scripts/generate-msgpack-protocol.mjs
@@ -55,7 +55,7 @@ export const terrascaleSyncV2MsgpackProtocol = "terrascale.sync.v2.msgpack" as c
 export const terrascaleSyncV2MsgpackManifestVersion = 1 as const;
 
 /** The SHA-256 of the manifest file this file was generated from. */
-export const terrascaleSyncV2MsgpackManifestSha256 = "7ecc582d87d405baecf9ac801452f16d8feead7d43302d665fd150a4542087c4" as const;
+export const terrascaleSyncV2MsgpackManifestSha256 = "90baa4a1f566fd3270ce29d11d103017e343ccfc68235c3f7f5ec29b0cce05ab" as const;
 
 /** The protocol major this build speaks; anything else fails closed. */
 export const terrascaleSyncV2MsgpackMajorVersion = 2 as const;
