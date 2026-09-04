@@ -111,6 +111,11 @@ pub(crate) const STARVATION_TICKS: u64 = 32;
 const SNAPSHOT_MAGIC: &[u8; 4] = b"TBAB";
 const SNAPSHOT_VERSION: u8 = 1;
 const COLD_START_COST: f64 = 1.0;
+/// Tie margin for bandit scores: score gaps below this count as ties so float
+/// noise cannot flip deterministic key-order replay. Existing margins (cold
+/// start at infinity, converged rewards near 1.0 and 100.0) exceed it by
+/// orders of magnitude.
+const SCORE_TIE_EPSILON: f64 = f64::EPSILON;
 const ARM_FIXED_BYTES: usize = 64;
 const MAX_SNAPSHOT_ARMS: usize = 65_536;
 const MAX_SNAPSHOT_STRING_BYTES: usize = 16 * 1024;
@@ -172,7 +177,12 @@ impl BanditSnapshot {
         out.push(SNAPSHOT_VERSION);
         put_u64(&mut out, self.tick);
         put_u64(&mut out, self.total_pulls);
-        put_u32(&mut out, self.arms.len().min(u32::MAX as usize) as u32);
+        // Saturating: the arm table is memory-bounded and the length is
+        // pre-clamped; the fallback keeps snapshot encoding total.
+        put_u32(
+            &mut out,
+            u32::try_from(self.arms.len().min(u32::MAX as usize)).unwrap_or(u32::MAX),
+        );
         for arm in self.arms.iter().take(u32::MAX as usize) {
             arm.key.encode_into(&mut out);
             put_u64(&mut out, arm.pulls);
@@ -254,7 +264,9 @@ impl CandidateKey {
 
     fn encode_into(&self, out: &mut Vec<u8>) {
         put_string(out, &self.collection);
-        put_u32(out, self.fields.len().min(u32::MAX as usize) as u32);
+        // Saturating: field lists are bounded by validation and pre-clamped;
+        // the fallback keeps snapshot encoding total.
+        put_u32(out, u32::try_from(self.fields.len().min(u32::MAX as usize)).unwrap_or(u32::MAX));
         for field in self.fields.iter().take(u32::MAX as usize) {
             put_string(out, field);
         }
@@ -329,7 +341,10 @@ impl ArmState {
         if self.pulls == 0 {
             return;
         }
-        let n = self.pulls as f64;
+        // Saturating: pull counts grow by one per observed window and stay
+        // far below u32 range in practice; the fallback keeps the running
+        // mean total.
+        let n = f64::from(u32::try_from(self.pulls).unwrap_or(u32::MAX));
         self.mean_reward += (reward.work_saved - self.mean_reward) / n;
         self.mean_uncertainty += (reward.uncertainty - self.mean_uncertainty) / n;
         self.mean_cost += (cost - self.mean_cost) / n;
@@ -508,8 +523,11 @@ impl C2UcbSelector {
         if arm.pulls == 0 {
             return f64::INFINITY;
         }
-        let trials = self.total_pulls.saturating_add(2) as f64;
-        let pulls = arm.pulls as f64;
+        // Saturating: pull counts grow by one per observed window and stay far
+        // below u32 range in practice; the fallback keeps confidence finite.
+        let trials =
+            f64::from(u32::try_from(self.total_pulls.saturating_add(2)).unwrap_or(u32::MAX));
+        let pulls = f64::from(u32::try_from(arm.pulls).unwrap_or(u32::MAX));
         let confidence = (trials.ln() / pulls).sqrt();
         arm.mean_reward + self.exploration * confidence + arm.mean_uncertainty
     }
@@ -552,7 +570,13 @@ impl BanditSelector for C2UcbSelector {
                     } else if score > *best_score {
                         true
                     } else {
-                        score == *best_score && key < *best_key
+                        // Epsilon tie-break: gaps within float noise count as ties so
+                        // replay stays on deterministic key order. Infinities tie by
+                        // bits so cold-start arms still rotate; NaN is excluded
+                        // upstream by finitized means and the cold-start infinity.
+                        (score.to_bits() == best_score.to_bits()
+                            || (score - *best_score).abs() < SCORE_TIE_EPSILON)
+                            && key < *best_key
                     }
                 }
             };
@@ -591,7 +615,8 @@ fn put_u64(out: &mut Vec<u8>, value: u64) {
 fn put_string(out: &mut Vec<u8>, value: &str) {
     let bytes = value.as_bytes();
     let length = bytes.len().min(u32::MAX as usize);
-    put_u32(out, length as u32);
+    // Saturating: pre-clamped above; the fallback keeps encoding total.
+    put_u32(out, u32::try_from(length).unwrap_or(u32::MAX));
     out.extend_from_slice(&bytes[..length]);
 }
 

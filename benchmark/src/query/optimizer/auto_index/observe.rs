@@ -27,7 +27,7 @@ pub(crate) struct ExecutionInput<'a> {
     pub(crate) observer: &'a mut WorkloadObserver,
     /// The normalized query, before literals are discarded.
     pub(crate) query: &'a NormalizedQuery,
-    /// Logical SQLite work counters.
+    /// Logical `SQLite` work counters.
     pub(crate) cost: LogicalCost,
     /// Rows returned by the execution.
     pub(crate) rows_returned: u64,
@@ -37,7 +37,7 @@ pub(crate) struct ExecutionInput<'a> {
     pub(crate) observed_at: Instant,
 }
 
-impl<'a> ExecutionInput<'a> {
+impl ExecutionInput<'_> {
     /// Records the input after deriving its literal-free template.
     pub(crate) fn observe(self) {
         let template = Template::of(self.query);
@@ -67,8 +67,8 @@ impl ObserverConfig {
         capacity: super::OBSERVE_RING_CAPACITY,
         max_columns: MAX_SKETCH_COLUMNS,
         histogram_buckets: 32,
-        window: Duration::from_secs(24 * 60 * 60),
-        half_life: Duration::from_secs(6 * 60 * 60),
+        window: Duration::from_hours(24),
+        half_life: Duration::from_hours(6),
     };
 
     /// Creates a bounded configuration.
@@ -139,7 +139,7 @@ pub enum ObservationConfigError {
     ZeroValue,
 }
 
-/// A fixed-register HyperLogLog sketch used by a bounded column sketch.
+/// A fixed-register `HyperLogLog` sketch used by a bounded column sketch.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BoundedDistinctSketch {
     registers: [u8; super::SKETCH_HLL_REGISTERS],
@@ -168,7 +168,9 @@ impl BoundedDistinctSketch {
     /// Adds bytes to the sketch.
     pub fn add_bytes(&mut self, bytes: &[u8]) {
         let hash = fnv1a64(bytes);
-        let index = (hash as usize) & (self.registers.len() - 1);
+        // Saturating: the register table is masked below, so the fallback
+        // keeps index derivation total on targets with 32-bit pointers.
+        let index = usize::try_from(hash).unwrap_or(usize::MAX) & (self.registers.len() - 1);
         let rest = hash >> 6;
         let rank = rest.leading_zeros().saturating_sub(6).saturating_add(1).min(64) as u8;
         self.registers[index] = self.registers[index].max(rank.max(1));
@@ -565,11 +567,16 @@ impl ObservationRecord {
         observation: &TimedObservation,
         flushed_at: Instant,
     ) -> Self {
-        let age_millis = flushed_at
-            .checked_duration_since(observation.observed_at())
-            .unwrap_or_default()
-            .as_millis()
-            .min(u128::from(u64::MAX)) as u64;
+        // Saturating: pre-clamped to the u64 range; the fallback keeps replay
+        // ages bounded and total.
+        let age_millis = u64::try_from(
+            flushed_at
+                .checked_duration_since(observation.observed_at())
+                .unwrap_or_default()
+                .as_millis()
+                .min(u128::from(u64::MAX)),
+        )
+        .unwrap_or(u64::MAX);
         Self {
             sequence,
             template: observation.template().clone(),
@@ -607,19 +614,23 @@ impl ObservationRecord {
         put_u64(&mut out, self.cost.rows_examined());
         put_u64(&mut out, self.rows_returned);
         put_string(&mut out, self.template.collection());
-        put_u32(&mut out, self.template.predicates().len() as u32);
+        // Saturating: canonical records are decoder-bounded (see
+        // `Reader::count`); the prefix stays total for oversized inputs.
+        put_u32(&mut out, u32::try_from(self.template.predicates().len()).unwrap_or(u32::MAX));
         for predicate in self.template.predicates() {
             put_string(&mut out, predicate.field());
             out.push(predicate_kind_byte(predicate.kind()));
         }
-        put_u32(&mut out, self.template.ordering().len() as u32);
+        put_u32(&mut out, u32::try_from(self.template.ordering().len()).unwrap_or(u32::MAX));
         for field in self.template.ordering() {
             put_string(&mut out, field);
         }
         match self.template.projection() {
             Some(fields) => {
                 out.push(1);
-                put_u32(&mut out, fields.len() as u32);
+                // Saturating: canonical records are decoder-bounded (see
+                // `Reader::count`); the prefix stays total for oversized inputs.
+                put_u32(&mut out, u32::try_from(fields.len()).unwrap_or(u32::MAX));
                 for field in fields {
                     put_string(&mut out, field);
                 }
@@ -717,7 +728,9 @@ fn put_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 fn put_string(out: &mut Vec<u8>, value: &str) {
-    put_u32(out, value.len() as u32);
+    // Saturating: canonical records are decoder-bounded (see
+    // `Reader::count`); the prefix stays total for oversized inputs.
+    put_u32(out, u32::try_from(value.len()).unwrap_or(u32::MAX));
     out.extend_from_slice(value.as_bytes());
 }
 fn predicate_kind_byte(kind: PredicateKind) -> u8 {

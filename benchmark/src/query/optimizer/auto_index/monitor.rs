@@ -254,7 +254,7 @@ impl MonitorConfig {
     /// ADR 0045 defaults: one-day evidence, seven-day block/retirement, and
     /// a one-day invisible grace period before physical deletion.
     pub(crate) const DEFAULT: Self = Self {
-        rolling_window: Duration::from_secs(24 * 60 * 60),
+        rolling_window: Duration::from_hours(24),
         max_samples: 4096,
         min_samples: later::SHADOW_MIN_EXECUTIONS,
         regression_fraction: 0.20,
@@ -634,24 +634,7 @@ impl<C: MonitorClock> RollingIndexMonitor<C> {
             }
         }
         if status == CandidateStatus::Invisible {
-            if let Some(invisible_at) = invisible_at {
-                if now.duration_since(invisible_at) >= self.config.drop_grace {
-                    if let Some(state) = self.states.get_mut(&identity) {
-                        state.status = CandidateStatus::Retired;
-                    }
-                    self.audit(
-                        identity,
-                        MonitorAction::Retire,
-                        MonitorReason::DropGraceElapsed,
-                        Some(now.duration_since(invisible_at).as_secs_f64()),
-                        Some(self.config.drop_grace.as_secs_f64()),
-                        sequence,
-                        now,
-                    );
-                    return MonitorDecision::Retire;
-                }
-            }
-            return MonitorDecision::Keep;
+            return self.inspect_invisible(identity, invisible_at, now, sequence);
         }
         if let Some((reason, measured, threshold, template_keys)) =
             self.regression_evidence(&identity)
@@ -709,6 +692,35 @@ impl<C: MonitorClock> RollingIndexMonitor<C> {
         self.inspect_now(candidate)
     }
 
+    /// Advances an invisible candidate to retired once its drop grace elapses,
+    /// auditing the transition. Otherwise the candidate stays invisible.
+    fn inspect_invisible(
+        &mut self,
+        identity: CandidateIdentity,
+        invisible_at: Option<Instant>,
+        now: Instant,
+        sequence: u64,
+    ) -> MonitorDecision {
+        if let Some(invisible_at) = invisible_at {
+            if now.duration_since(invisible_at) >= self.config.drop_grace {
+                if let Some(state) = self.states.get_mut(&identity) {
+                    state.status = CandidateStatus::Retired;
+                }
+                self.audit(
+                    identity,
+                    MonitorAction::Retire,
+                    MonitorReason::DropGraceElapsed,
+                    Some(now.duration_since(invisible_at).as_secs_f64()),
+                    Some(self.config.drop_grace.as_secs_f64()),
+                    sequence,
+                    now,
+                );
+                return MonitorDecision::Retire;
+            }
+        }
+        MonitorDecision::Keep
+    }
+
     /// Returns whether an index/candidate is currently blocked.
     #[must_use]
     pub(crate) fn is_blocklisted(&mut self, candidate: &Candidate) -> bool {
@@ -735,6 +747,56 @@ impl<C: MonitorClock> RollingIndexMonitor<C> {
             .is_some_and(|state| state.status != CandidateStatus::Active)
     }
 
+    /// Accumulates paired mean logical/write costs over the templates served by
+    /// the narrow candidate. Returns narrow/wide logical costs, narrow/wide
+    /// write costs, and the paired sample count.
+    fn paired_merge_costs(
+        &self,
+        narrow_id: &CandidateIdentity,
+        wide_id: &CandidateIdentity,
+    ) -> (f64, f64, f64, f64, usize) {
+        let templates: BTreeSet<Template> = self
+            .samples
+            .iter()
+            .filter(|sample| sample.candidate.as_ref() == Some(narrow_id) && sample.used)
+            .map(|sample| sample.template.clone())
+            .collect();
+        let mut narrow_cost = 0.0;
+        let mut wide_cost = 0.0;
+        let mut narrow_write = 0.0;
+        let mut wide_write = 0.0;
+        let mut paired = 0_usize;
+        for template in &templates {
+            let left: Vec<&MonitorSample> = self
+                .samples
+                .iter()
+                .filter(|sample| {
+                    sample.candidate.as_ref() == Some(narrow_id)
+                        && sample.used
+                        && sample.template == *template
+                })
+                .collect();
+            let right: Vec<&MonitorSample> = self
+                .samples
+                .iter()
+                .filter(|sample| {
+                    sample.candidate.as_ref() == Some(wide_id)
+                        && sample.used
+                        && sample.template == *template
+                })
+                .collect();
+            if left.len() < self.config.min_samples || right.len() < self.config.min_samples {
+                continue;
+            }
+            paired += left.len().min(right.len());
+            narrow_cost += mean_logical(&left);
+            wide_cost += mean_logical(&right);
+            narrow_write += mean_write(&left);
+            wide_write += mean_write(&right);
+        }
+        (narrow_cost, wide_cost, narrow_write, wide_write, paired)
+    }
+
     /// Returns a prefix merge decision based on this monitor's evidence.
     pub(crate) fn consider_merge(&mut self, narrow: &Candidate, wide: &Candidate) -> MergeDecision {
         let now = self.clock.now();
@@ -753,52 +815,18 @@ impl<C: MonitorClock> RollingIndexMonitor<C> {
             return MergeDecision::KeepSeparate(MonitorReason::IncompatiblePrefix);
         }
         let wide_id = CandidateIdentity::of(wide);
-        let templates: BTreeSet<Template> = self
-            .samples
-            .iter()
-            .filter(|sample| sample.candidate.as_ref() == Some(&narrow_id) && sample.used)
-            .map(|sample| sample.template.clone())
-            .collect();
-        let mut narrow_cost = 0.0;
-        let mut wide_cost = 0.0;
-        let mut narrow_write = 0.0;
-        let mut wide_write = 0.0;
-        let mut paired = 0_usize;
-        for template in templates {
-            let left: Vec<&MonitorSample> = self
-                .samples
-                .iter()
-                .filter(|sample| {
-                    sample.candidate.as_ref() == Some(&narrow_id)
-                        && sample.used
-                        && sample.template == template
-                })
-                .collect();
-            let right: Vec<&MonitorSample> = self
-                .samples
-                .iter()
-                .filter(|sample| {
-                    sample.candidate.as_ref() == Some(&wide_id)
-                        && sample.used
-                        && sample.template == template
-                })
-                .collect();
-            if left.len() < self.config.min_samples || right.len() < self.config.min_samples {
-                continue;
-            }
-            paired += left.len().min(right.len());
-            narrow_cost += mean_logical(&left);
-            wide_cost += mean_logical(&right);
-            narrow_write += mean_write(&left);
-            wide_write += mean_write(&right);
-        }
+        let (narrow_cost, wide_cost, narrow_write, wide_write, paired) =
+            self.paired_merge_costs(&narrow_id, &wide_id);
         if paired < self.config.min_samples {
+            // Saturating: the paired-sample floor fits u32; the fallback keeps
+            // the audit threshold total.
+            let threshold = f64::from(u32::try_from(self.config.min_samples).unwrap_or(u32::MAX));
             self.audit(
                 narrow_id,
                 MonitorAction::KeepSeparate,
                 MonitorReason::InsufficientEvidence,
                 None,
-                Some(self.config.min_samples as f64),
+                Some(threshold),
                 sequence,
                 now,
             );
@@ -981,7 +1009,10 @@ fn mean_write(samples: &[&MonitorSample]) -> f64 {
     if samples.is_empty() {
         return 0.0;
     }
-    samples.iter().map(|sample| sample.write_cost).sum::<f64>() / samples.len() as f64
+    // Saturating: rings are capped at `max_samples`; the fallback keeps the
+    // mean total for oversized inputs.
+    samples.iter().map(|sample| sample.write_cost).sum::<f64>()
+        / f64::from(u32::try_from(samples.len()).unwrap_or(u32::MAX))
 }
 
 #[cfg(test)]
