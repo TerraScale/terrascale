@@ -62,7 +62,7 @@ not charges.
 
 Plan quotas, overage rates ($1 per 1M writes, $0.20 per GB-month per
 region), and per-plan limits are published on the
-[Pricing & limits](/pricing) page.
+[Pricing & limits](/pricing/) page.
 
 ## Billing
 
