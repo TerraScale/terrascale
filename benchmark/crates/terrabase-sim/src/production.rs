@@ -435,6 +435,7 @@ impl ProductionWorld {
             hlc: row.hlc.value(),
             origin: format!("region-{}", row.origin.index()),
             origin_sequence: row.seq,
+            context: encode_frontier_context(&row.context),
         })
     }
 
@@ -633,6 +634,21 @@ impl ProductionWorld {
         let digest = fnv_bytes(0xcbf2_9ce4_8422_2325, &bytes);
         Some((digest, bytes))
     }
+
+    /// Whether a row has reached this Region's durable SQLite journal.  This
+    /// is the proof behind `RegionalDurable`; it is intentionally independent
+    /// of the cross-Region applied cache.
+    #[must_use]
+    pub fn regional_durable(&self, row: &JournalRow, region: RegionId) -> bool {
+        self.durable_contains(region, row).unwrap_or(false)
+    }
+
+    /// Whether a row satisfies the simulation's `GlobalDurable` contract for
+    /// the selected Regions, including causal dependencies.
+    #[must_use]
+    pub fn global_durable(&self, row: &JournalRow, selected: &[RegionId]) -> bool {
+        self.is_uniform(row, selected)
+    }
 }
 
 impl Drop for ProductionWorld {
@@ -776,7 +792,7 @@ impl ReplicationEngine for ProductionWorld {
                     let expected_body = (!row.tombstone).then(|| {
                         LaneValue::String(String::from_utf8_lossy(&row.value).into_owned())
                     });
-                    if record.commit_ulid != row_commit_string(row)
+                    if record.commit_ulid != row_commit_string(&row)
                         || record.hlc != row.hlc.value()
                         || record.origin != format!("region-{}", row.origin.index())
                         || record.origin_sequence != row.seq
@@ -864,6 +880,7 @@ impl ReplicationEngine for ProductionWorld {
             let Some(state) = state else { return table };
             let Some(engine) = state.engine.as_ref() else { return table };
             let scope = engine.scope_for(&self.tenant);
+            let mut durable = Vec::new();
             let mut cursor = 0;
             loop {
                 let Ok(page) = engine.journal_rows(&scope, cursor, MAX_JOURNAL_PAGE) else {
@@ -873,7 +890,9 @@ impl ReplicationEngine for ProductionWorld {
                     break;
                 }
                 cursor = page.iter().map(|row| row.commit_sequence).max().unwrap_or(cursor);
-                if page.len() < usize::try_from(MAX_JOURNAL_PAGE).unwrap_or(usize::MAX) {
+                let done = page.len() < usize::try_from(MAX_JOURNAL_PAGE).unwrap_or(usize::MAX);
+                durable.extend(page);
+                if done {
                     break;
                 }
             }
@@ -971,21 +990,6 @@ impl ReplicationEngine for ProductionWorld {
                     && self.durable_contains(*region, row).unwrap_or(false)
                     && self.applied_frontier(*region).covers(&row.context)
             })
-    }
-
-    /// Whether a row has reached this Region's durable SQLite journal.  This
-    /// is the proof behind `RegionalDurable`; it is intentionally independent
-    /// of the cross-Region applied cache.
-    #[must_use]
-    pub fn regional_durable(&self, row: &JournalRow, region: RegionId) -> bool {
-        self.durable_contains(region, row).unwrap_or(false)
-    }
-
-    /// Whether a row satisfies the simulation's `GlobalDurable` contract for
-    /// the selected Regions, including causal dependencies.
-    #[must_use]
-    pub fn global_durable(&self, row: &JournalRow, selected: &[RegionId]) -> bool {
-        self.is_uniform(row, selected)
     }
 
     fn read(&self, region: RegionId, token: &SessionToken, key: u64) -> Option<Option<u64>> {
@@ -1229,6 +1233,31 @@ fn row_commit(row: &JournalRow) -> Vec<u8> {
 
 fn row_commit_string(row: &JournalRow) -> String {
     String::from_utf8(row_commit(row)).expect("simulation operation ids are ASCII")
+}
+
+/// Encodes a simulation frontier in the engine's stable versioned dotted
+/// context format (`merge::DocumentContext::to_bytes`): version byte `1`,
+/// entry count, then `(origin_len, origin, sequence)` triples sorted by
+/// origin string. Empty frontiers use the legacy empty form.
+fn encode_frontier_context(frontier: &Frontier) -> Vec<u8> {
+    let mut entries: Vec<(String, u64)> = frontier
+        .entries()
+        .filter(|(_, sequence)| *sequence != 0)
+        .map(|(origin, sequence)| (format!("region-{}", origin.index()), sequence))
+        .collect();
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut bytes = Vec::with_capacity(5 + entries.len() * 20);
+    bytes.push(1);
+    bytes.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    for (origin, sequence) in &entries {
+        bytes.extend_from_slice(&(origin.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(origin.as_bytes());
+        bytes.extend_from_slice(&sequence.to_le_bytes());
+    }
+    bytes
 }
 
 /// Capability token used by the deterministic cache seam.
