@@ -1,7 +1,11 @@
 package sdk
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -27,7 +31,7 @@ func TestSchemaBuilderEmitsCanonicalD78JSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ToJSON: %v", err)
 	}
-	want := `{"collections":[{"name":"users","fields":[{"name":"name","type":"string","required":true,"indexed":true},{"name":"bio","type":"text","required":false,"indexed":false},{"name":"visits","type":"counter-pn","required":false,"indexed":false,"mergePolicy":"counter-pn"},{"name":"expires_at","type":"timestamp","required":false,"indexed":false}],"indexes":[{"name":"users_by_name","fields":["name"]},{"name":"bio_fts","fields":["bio"],"kind":"fts"}],"ttl":{"field":"expires_at"},"historyRetentionDays":30,"mergePolicy":"hlc-tiebreak"}]}`
+	want := `{"collections":[{"name":"users","fields":[{"name":"name","type":"string","required":true,"indexed":true},{"name":"bio","type":"text","required":false,"indexed":false},{"name":"visits","type":"counter-pn","required":false,"indexed":false,"mergePolicy":"counter-pn"},{"name":"expires_at","type":"timestamp","required":false,"indexed":false}],"indexes":[{"name":"users_by_name","fields":["name"],"kind":"btree"},{"name":"bio_fts","fields":["bio"],"kind":"fts"}],"ttl":{"field":"expires_at"},"historyRetentionDays":30,"mergePolicy":"hlc-tiebreak"}]}`
 	if got != want {
 		t.Fatalf("schema JSON differs\n got: %s\nwant: %s", got, want)
 	}
@@ -128,5 +132,63 @@ func TestSchemaBuilderSupportsDirectCollectionComposition(t *testing.T) {
 		Merge(MergeRemoveWins)
 	if err := collection.Validate(); err != nil {
 		t.Fatalf("direct schema composition: %v", err)
+	}
+}
+
+func TestSchemaJSONPreflightsInvalidDirectSchemas(t *testing.T) {
+	invalid := Schema{Collections: []CollectionSchema{{
+		Name:                 "events",
+		HistoryRetentionDays: DefaultHistoryRetentionDays,
+		MergePolicy:          MergeRemoveWins,
+		Fields:               []FieldDef{{Name: "title", Type: FieldString}},
+		Indexes:              []IndexDef{{Name: "search", Fields: []string{"title", "missing"}, Kind: IndexFTS}},
+	}}}
+	if _, err := json.Marshal(invalid); err == nil {
+		t.Fatal("expected direct schema marshaling to preflight validation")
+	}
+}
+
+func TestSchemaJSONCanonicalizesBTreeAndFTSIndexes(t *testing.T) {
+	collection := CollectionSchema{
+		Name:                 "docs",
+		Fields:               []FieldDef{{Name: "title", Type: FieldText}},
+		Indexes:              []IndexDef{{Name: "docs_by_title", Fields: []string{"title"}}, {Name: "docs_fts", Fields: []string{"title"}, Kind: IndexFTS}},
+		HistoryRetentionDays: DefaultHistoryRetentionDays,
+		MergePolicy:          MergeRemoveWins,
+	}
+	got, err := collection.ToJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"kind":"btree"`) || !strings.Contains(got, `"kind":"fts"`) {
+		t.Fatalf("index kinds were not canonicalized: %s", got)
+	}
+}
+
+func TestSchemaApplyFailsClosedWithoutRequest(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "unexpected schema request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	schema, err := NewCollection("users").Field("name", FieldString).Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	var gap *ContractGapError
+	_, err = Schema{Collections: []CollectionSchema{schema}}.Apply(context.Background(), client, "db1")
+	if !errors.As(err, &gap) {
+		t.Fatalf("Apply error = %T: %v, want ContractGapError", err, err)
+	}
+	if gap.Operation != "schema.apply" || gap.Method != http.MethodPut || gap.Path != "/api/v1/databases/{name}/schema" {
+		t.Fatalf("Apply gap metadata = %+v", gap)
+	}
+	if requests != 0 {
+		t.Fatalf("Apply issued %d request(s) for an unpublished operation", requests)
 	}
 }

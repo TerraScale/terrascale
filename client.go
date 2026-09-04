@@ -24,6 +24,17 @@ import (
 	"time"
 )
 
+// Public protocol limits (GOAL D-32). These limits are applied before a
+// request is sent and while a response is read, so a peer cannot make the
+// SDK allocate an unbounded buffer.
+const (
+	MaxRequestBodyBytes  int64 = 16 << 20
+	MaxResponseBodyBytes int64 = 16 << 20
+	MaxSessionTokenBytes int   = 16 << 10
+	MaxRequestTimeout          = 30 * time.Second
+	MaxRetryAfter              = 30 * time.Second
+)
+
 // RegionCode is a TerraScale region identifier.
 type RegionCode string
 
@@ -103,6 +114,9 @@ type Config struct {
 	MaxRetryAttempts int
 	// RetryDelay is the base retry backoff (default 250ms, max 30s).
 	RetryDelay time.Duration
+	// RequestTimeout bounds the complete request, including retries (default
+	// 30s, maximum 30s). A shorter context deadline still wins.
+	RequestTimeout time.Duration
 }
 
 // Client is the TerraScale SDK entry point.
@@ -112,6 +126,9 @@ type Client struct {
 
 	mu     sync.RWMutex
 	pinned RegionCode
+	// sessionToken is the canonical REST frontier. The legacy subscription
+	// implementation still has its own compatibility field in cfg.
+	sessionToken string
 
 	Documents        *DocumentsClient
 	Tenants          *TenantsClient
@@ -141,6 +158,12 @@ func NewClient(cfg Config) (*Client, error) {
 	u, err := url.Parse(base + "/")
 	if err != nil {
 		return nil, fmt.Errorf("sdk: invalid API base URL %q: %w", cfg.APIBaseURL, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, fmt.Errorf("sdk: API base URL must be an absolute http or https URL")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return nil, fmt.Errorf("sdk: API base URL must not contain a query or fragment")
 	}
 	lowerHost := strings.ToLower(u.Hostname())
 	if strings.Contains(lowerHost, "tbep") || strings.Contains(lowerHost, "terrabase") {
@@ -175,6 +198,18 @@ func NewClient(cfg Config) (*Client, error) {
 	if retryDelay < 0 || retryDelay > 30*time.Second {
 		return nil, fmt.Errorf("sdk: retry delay must be between 0 and 30s")
 	}
+	requestTimeout := cfg.RequestTimeout
+	if requestTimeout == 0 {
+		requestTimeout = MaxRequestTimeout
+	}
+	if requestTimeout < 0 || requestTimeout > MaxRequestTimeout {
+		return nil, fmt.Errorf("sdk: request timeout must be between 0 and 30s")
+	}
+	if cfg.SessionToken != "" {
+		if err := validateSessionToken(cfg.SessionToken); err != nil {
+			return nil, err
+		}
+	}
 
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
@@ -192,7 +227,8 @@ func NewClient(cfg Config) (*Client, error) {
 		HTTPClient:       httpClient,
 		MaxRetryAttempts: cfg.MaxRetryAttempts,
 		RetryDelay:       retryDelay,
-	}, http: httpClient}
+		RequestTimeout:   requestTimeout,
+	}, http: httpClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
 	c.Documents = &DocumentsClient{c: c}
 	c.Tenants = &TenantsClient{c: c}
 	c.Onboarding = &OnboardingClient{c: c}
@@ -248,6 +284,29 @@ func (c *Client) EffectiveRegion() RegionCode {
 // APIBaseURL returns the configured (unpinned) base URL.
 func (c *Client) APIBaseURL() string { return c.cfg.APIBaseURL }
 
+// SessionToken returns the latest causal frontier observed by this client.
+// The returned token is opaque and safe to pass to another client as its
+// initial SessionToken configuration.
+func (c *Client) SessionToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sessionToken
+}
+
+// SetSessionToken installs an opaque causal frontier for subsequent requests.
+func (c *Client) SetSessionToken(token string) error {
+	if token != "" {
+		if err := validateSessionToken(token); err != nil {
+			return err
+		}
+	}
+	c.mu.Lock()
+	c.cfg.SessionToken = strings.TrimSpace(token)
+	c.sessionToken = strings.TrimSpace(token)
+	c.mu.Unlock()
+	return nil
+}
+
 func (c *Client) setPinned(region RegionCode) {
 	c.mu.Lock()
 	c.pinned = region
@@ -261,6 +320,59 @@ func (c *Client) token() string {
 		}
 	}
 	return c.cfg.AccessToken
+}
+
+func validateSessionToken(token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	if len(token) > MaxSessionTokenBytes || strings.ContainsAny(token, "\r\n") {
+		return fmt.Errorf("sdk: session token must be at most %d bytes and contain no control characters", MaxSessionTokenBytes)
+	}
+	return nil
+}
+
+// observeSession records a server frontier. Session tokens are intentionally
+// opaque: the server contract guarantees that a response token dominates the
+// token carried by that request. Empty and malformed headers never clear an
+// already observed frontier, which keeps concurrent requests monotonic from
+// the client's perspective.
+func (c *Client) observeSession(headers http.Header) {
+	token := strings.TrimSpace(headers.Get("X-TerraScale-Session"))
+	if token == "" || validateSessionToken(token) != nil {
+		return
+	}
+	c.mu.Lock()
+	if c.sessionToken == "" {
+		c.sessionToken = token
+	} else if c.sessionToken != token && sessionTokenAdvances(c.sessionToken, token) {
+		// Tokens are opaque and cannot be safely compared or merged by an SDK.
+		// A successful response is therefore the authoritative next frontier;
+		// importantly, empty responses above cannot regress it.
+		c.sessionToken = token
+	}
+	c.mu.Unlock()
+}
+
+// sessionTokenAdvances compares only TerraBase's current numeric token form.
+// Other token forms are opaque by contract and are accepted as the server's
+// next frontier without attempting lexical or structural ordering.
+func sessionTokenAdvances(current, candidate string) bool {
+	if currentSeq, currentOK := numericToken(current); currentOK {
+		if candidateSeq, candidateOK := numericToken(candidate); candidateOK {
+			return candidateSeq >= currentSeq
+		}
+	}
+	return true
+}
+
+func numericToken(token string) (uint64, bool) {
+	if !isDecimal(token) {
+		return 0, false
+	}
+	sequence, err := strconv.ParseUint(token, 10, 64)
+	return sequence, err == nil
 }
 
 func (c *Client) currentBase() string {
@@ -367,6 +479,8 @@ type APIError struct {
 	Status    int
 	Code      string
 	Message   string
+	Fix       string
+	Placement string
 	RequestID string
 	Body      string
 }
@@ -396,18 +510,31 @@ var retryableStatuses = map[int]bool{
 
 // do performs one API call: path must stay under /api/v1.
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any, route string, opts ...RequestOption) error {
+	if ctx == nil {
+		return fmt.Errorf("sdk: request context cannot be nil")
+	}
 	if path != "/api/v1" && !strings.HasPrefix(path, "/api/v1/") {
 		return fmt.Errorf("sdk: path %q is outside the public /api/v1 contract", path)
 	}
 	rc := resolveRequestOptions(opts)
-	if rc.regionHint != "" && !IsRegionCode(string(rc.regionHint)) {
-		return fmt.Errorf("sdk: region hint must be exactly one of GRU, SFO, FRA")
+	if rc.regionHint != "" {
+		region, err := ParseRegionCode(string(rc.regionHint))
+		if err != nil {
+			return fmt.Errorf("sdk: invalid region hint: %w", err)
+		}
+		rc.regionHint = region
+	}
+	if rc.sessionToken != "" {
+		if err := validateSessionToken(rc.sessionToken); err != nil {
+			return err
+		}
+		rc.sessionToken = strings.TrimSpace(rc.sessionToken)
 	}
 	var idem string
 	if isMutation(method) && !rc.noIdempotency && rc.idempotencyKey != "" {
 		key := strings.TrimSpace(rc.idempotencyKey)
-		if key == "" || len(key) > 128 {
-			return fmt.Errorf("sdk: idempotency keys must be nonblank and at most 128 characters")
+		if key == "" || len(key) > 128 || strings.ContainsAny(key, "\r\n") {
+			return fmt.Errorf("sdk: idempotency keys must be nonblank, at most 128 bytes, and contain no control characters")
 		}
 		idem = key
 	}
@@ -418,16 +545,25 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		if err != nil {
 			return fmt.Errorf("sdk: marshal %s request body: %w", route, err)
 		}
+		if int64(len(payload)) > MaxRequestBodyBytes {
+			return fmt.Errorf("sdk: %s request body exceeds %d bytes", route, MaxRequestBodyBytes)
+		}
 	}
 
+	requestCtx := ctx
+	cancel := func() {}
+	if timeout := c.cfg.RequestTimeout; timeout > 0 {
+		requestCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	defer cancel()
 	attempt := 0
 	followed421 := false
 	for {
 		base := c.currentBase()
-		status, headers, respBody, transportErr := c.roundTrip(ctx, method, base, path, query, payload, rc, idem)
+		status, headers, respBody, transportErr := c.roundTrip(requestCtx, method, base, path, query, payload, rc, idem)
 		if transportErr != nil {
 			if idem != "" && attempt < c.cfg.MaxRetryAttempts {
-				if sleepErr := sleepContext(ctx, c.backoff(nil, attempt)); sleepErr != nil {
+				if sleepErr := sleepContext(requestCtx, c.backoff(nil, attempt)); sleepErr != nil {
 					return sleepErr
 				}
 				attempt++
@@ -436,8 +572,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			return fmt.Errorf("sdk: %s %s (%s): %w", method, path, route, transportErr)
 		}
 		if status == http.StatusMisdirectedRequest && !followed421 {
-			if placement := placementOf(headers); IsRegionCode(placement) {
-				code, _ := ParseRegionCode(placement)
+			if code, ok := placementRegionExcluding(headers, c.PinnedRegion()); ok {
 				c.setPinned(code)
 				// The placement in a 421 is authoritative for this retry,
 				// including when the original request supplied a hint.
@@ -447,11 +582,14 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			}
 		}
 		if status >= 200 && status < 300 {
+			// A successful response advances the causal frontier even when the
+			// caller requested no response body (for example DELETE/204).
+			c.observeSession(headers)
 			return decodeSuccess(out, respBody, headers.Get("Content-Type"))
 		}
 		apiErr := errorFromResponse(route, method, path, status, headers, respBody)
 		if idem != "" && attempt < c.cfg.MaxRetryAttempts && retryableStatuses[status] {
-			if sleepErr := sleepContext(ctx, c.retryDelayFor(headers, attempt)); sleepErr != nil {
+			if sleepErr := sleepContext(requestCtx, c.retryDelayFor(headers, attempt)); sleepErr != nil {
 				return sleepErr
 			}
 			attempt++
@@ -495,18 +633,18 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 		h.Set("X-TerraScale-Preferred-Region", string(hint))
 	}
 	if token := c.token(); token != "" {
-		if strings.HasPrefix(token, "Bearer ") {
-			h.Set("Authorization", token)
-		} else {
-			h.Set("Authorization", "Bearer "+token)
+		authorization, err := bearerAuthorization(token)
+		if err != nil {
+			return 0, nil, nil, err
 		}
+		h.Set("Authorization", authorization)
 	}
 	session := rc.sessionToken
 	if session == "" {
-		session = c.cfg.SessionToken
+		session = c.SessionToken()
 	}
 	if session != "" {
-		h.Set("X-TerraScale-Session-Token", session)
+		h.Set("X-TerraScale-Session", session)
 	}
 	if rc.consistency != "" && rc.consistency != ConsistencyDefault {
 		h.Set("X-TerraScale-Consistency", string(rc.consistency))
@@ -523,11 +661,35 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.ContentLength > MaxResponseBodyBytes {
+		return 0, nil, nil, fmt.Errorf("sdk: response body exceeds %d bytes", MaxResponseBodyBytes)
+	}
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseBodyBytes+1))
 	if err != nil {
 		return 0, nil, nil, err
 	}
+	if int64(len(respBody)) > MaxResponseBodyBytes {
+		return 0, nil, nil, fmt.Errorf("sdk: response body exceeds %d bytes", MaxResponseBodyBytes)
+	}
 	return resp.StatusCode, resp.Header, respBody, nil
+}
+
+func bearerAuthorization(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if strings.ContainsAny(value, "\r\n") {
+		return "", fmt.Errorf("sdk: access token contains invalid control characters")
+	}
+	if len(value) >= len("Bearer ") && strings.EqualFold(value[:len("Bearer ")], "Bearer ") {
+		credential := strings.TrimSpace(value[len("Bearer "):])
+		if credential == "" {
+			return "", fmt.Errorf("sdk: bearer token cannot be empty")
+		}
+		return "Bearer " + credential, nil
+	}
+	return "Bearer " + value, nil
 }
 
 func decodeSuccess(out any, body []byte, contentType string) error {
@@ -561,17 +723,30 @@ func errorFromResponse(route, method, path string, status int, headers http.Head
 		Code:   defaultErrorCode(status),
 		Body:   string(body),
 	}
-	var doc map[string]any
+	var doc errorDocument
 	if err := json.Unmarshal(body, &doc); err == nil {
-		if v := firstString(doc, "code", "errorCode", "error_code"); v != "" {
-			apiErr.Code = v
+		sourceCode, sourceMessage, sourceFix := doc.Code, doc.Message, doc.Fix
+		var nested errorDetail
+		nestedOK := len(doc.Error) > 0 && json.Unmarshal(doc.Error, &nested) == nil && (nested.Code != "" || nested.Message != "" || nested.Fix != "")
+		if nestedOK {
+			sourceCode, sourceMessage, sourceFix = nested.Code, nested.Message, nested.Fix
 		}
-		if v := firstString(doc, "message", "error", "detail", "title"); v != "" {
-			apiErr.Message = v
+		if sourceCode != "" {
+			apiErr.Code = sourceCode
+		} else if !nestedOK {
+			if v := firstString(doc.Code, doc.ErrorCode, doc.Error_Code); v != "" {
+				apiErr.Code = v
+			}
 		}
-		if v := firstString(doc, "requestId", "request_id"); v != "" {
-			apiErr.RequestID = v
+		if sourceMessage != "" {
+			apiErr.Message = sourceMessage
+		} else if !nestedOK {
+			var errorText string
+			_ = json.Unmarshal(doc.Error, &errorText)
+			apiErr.Message = firstString(doc.Message, errorText, doc.Detail, doc.Title)
 		}
+		apiErr.Fix = sourceFix
+		apiErr.RequestID = firstString(doc.RequestID, doc.Request_ID, doc.TraceID)
 	} else if strings.TrimSpace(string(body)) != "" {
 		apiErr.Message = strings.TrimSpace(string(body))
 	}
@@ -584,13 +759,39 @@ func errorFromResponse(route, method, path string, status int, headers http.Head
 	if v := headers.Get("X-Request-ID"); v != "" && apiErr.RequestID == "" {
 		apiErr.RequestID = v
 	}
+	if placement, ok := placementRegion(headers); ok {
+		apiErr.Placement = string(placement)
+	}
 	return apiErr
 }
 
-func firstString(doc map[string]any, keys ...string) string {
-	for _, k := range keys {
-		if v, ok := doc[k].(string); ok && v != "" {
-			return v
+// errorDocument deliberately models only bounded diagnostic fields. The
+// response itself has already been capped by roundTrip before this decoder is
+// called, and unknown fields are ignored for forward compatibility.
+type errorDocument struct {
+	Code       string          `json:"code"`
+	ErrorCode  string          `json:"errorCode"`
+	Error_Code string          `json:"error_code"`
+	Message    string          `json:"message"`
+	Detail     string          `json:"detail"`
+	Title      string          `json:"title"`
+	RequestID  string          `json:"requestId"`
+	Request_ID string          `json:"request_id"`
+	TraceID    string          `json:"traceId"`
+	Fix        string          `json:"fix"`
+	Error      json.RawMessage `json:"error"`
+}
+
+type errorDetail struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Fix     string `json:"fix"`
+}
+
+func firstString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
 		}
 	}
 	return ""
@@ -606,6 +807,8 @@ func defaultErrorCode(status int) string {
 		return "not_found"
 	case status == http.StatusConflict:
 		return "conflict"
+	case status == http.StatusMisdirectedRequest:
+		return "misdirected_region"
 	case status == http.StatusTooManyRequests:
 		return "rate_limited"
 	case status >= 500:
@@ -616,12 +819,34 @@ func defaultErrorCode(status int) string {
 }
 
 func placementOf(h http.Header) string {
+	region, ok := placementRegion(h)
+	if !ok {
+		return ""
+	}
+	return string(region)
+}
+
+// placementRegion accepts only a single known region from the authoritative
+// placement header. It never reflects arbitrary header text into a hostname
+// or a follow-up request.
+func placementRegion(h http.Header) (RegionCode, bool) {
+	return placementRegionExcluding(h, "")
+}
+
+func placementRegionExcluding(h http.Header, excluded RegionCode) (RegionCode, bool) {
 	for _, key := range []string{"X-TerraScale-Placement", "X-TerraScale-Region"} {
-		if v := strings.TrimSpace(h.Get(key)); v != "" {
-			return v
+		value := strings.TrimSpace(h.Get(key))
+		if value == "" {
+			continue
+		}
+		for _, candidate := range strings.Split(value, ",") {
+			region, err := ParseRegionCode(candidate)
+			if err == nil && region != excluded {
+				return region, true
+			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 func (c *Client) backoff(headers http.Header, attempt int) time.Duration {
@@ -638,8 +863,8 @@ func (c *Client) retryDelayFor(headers http.Header, attempt int) time.Duration {
 	if d <= 0 {
 		return c.cfg.RetryDelay
 	}
-	if d > 30*time.Second {
-		return 30 * time.Second
+	if d > MaxRetryAfter {
+		return MaxRetryAfter
 	}
 	return d
 }
@@ -649,24 +874,39 @@ func parseRetryAfter(value string) (time.Duration, bool) {
 	if v == "" {
 		return 0, false
 	}
-	if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
-		d := time.Duration(secs) * time.Second
-		if d > 30*time.Second {
-			d = 30 * time.Second
+	if secs, err := strconv.ParseUint(v, 10, 64); err == nil {
+		if secs >= uint64(MaxRetryAfter/time.Second) {
+			return MaxRetryAfter, true
 		}
-		return d, true
+		return time.Duration(secs) * time.Second, true
+	} else if isDecimal(v) {
+		// ParseUint reports ErrRange for a hostile but otherwise valid
+		// delta-seconds value. It is still a valid value to cap safely.
+		return MaxRetryAfter, true
 	}
 	if t, err := http.ParseTime(v); err == nil {
 		d := time.Until(t)
 		if d < 0 {
 			d = 0
 		}
-		if d > 30*time.Second {
-			d = 30 * time.Second
+		if d > MaxRetryAfter {
+			d = MaxRetryAfter
 		}
 		return d, true
 	}
 	return 0, false
+}
+
+func isDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {

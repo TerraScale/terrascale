@@ -1,16 +1,12 @@
 // Tenants: database-per-tenant is a first-class pattern (GOAL D-51).
 // Tenant = database; placement and key template inherit from a tenant
-// template. The routes below follow the current TerraBase tenant draft. The
-// published OpenAPI artifact does not include these routes yet; see
-// contract.go for the contract-generation gap.
+// template (GOAL D-51). TerraBase has not published tenant routes yet, so the
+// client retains the typed surface but fails closed with ContractGapError.
 package sdk
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"net/url"
-	"strconv"
 	"strings"
 )
 
@@ -53,21 +49,22 @@ func (t *Tenant) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// TenantTemplate describes the template whose placement and key policy a
-// tenant inherits.
+// TenantTemplate describes the planned template whose placement and key
+// policy a tenant inherits once the TerraBase tenant contract is published.
 type TenantTemplate struct {
 	Name    string       `json:"name"`
 	Regions []RegionCode `json:"regions,omitempty"`
 }
 
-// CreateTenantRequest creates a tenant database from a template.
+// CreateTenantRequest is the planned tenant-create request. The route is not
+// published, so Create returns ContractGapError without sending this body.
 type CreateTenantRequest struct {
 	Key      string       `json:"key"`
 	Template string       `json:"template,omitempty"`
 	Regions  []RegionCode `json:"regions,omitempty"`
 }
 
-// TenantKey is a tenant-scoped API key minted from the template.
+// TenantKey is the planned tenant-scoped API key response.
 type TenantKey struct {
 	KeyID     string `json:"keyId"`
 	Token     string `json:"token,omitempty"`
@@ -172,38 +169,50 @@ type TenantsClient struct {
 
 // Create provisions a tenant database.
 func (t *TenantsClient) Create(ctx context.Context, req CreateTenantRequest, opts ...RequestOption) (*Tenant, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
 	if err := validateCreateTenantRequest(&req); err != nil {
 		return nil, err
 	}
-	var out Tenant
-	if err := t.c.do(ctx, "POST", "/api/v1/tenants", nil, req, &out, "tenants.create", opts...); err != nil {
+	if err := managementMutation(opts); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return nil, contractGap(ctx, "tenants.create", "POST", "/api/v1/tenants",
+		"the TerraBase public contract does not publish tenant routes",
+		"create a database with Databases.CreateDatabase; tenant provisioning is pending D-51/E-8")
 }
 
 // Get fetches a tenant by key.
 func (t *TenantsClient) Get(ctx context.Context, key string, opts ...RequestOption) (*Tenant, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
 	if err := validateTenantKey(key); err != nil {
 		return nil, err
 	}
-	var out Tenant
-	if err := t.c.do(ctx, "GET", "/api/v1/tenants/"+url.PathEscape(key), nil, nil, &out, "tenants.get", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return nil, contractGap(ctx, "tenants.get", "GET", "/api/v1/tenants/{key}",
+		"the TerraBase public contract does not publish tenant routes",
+		"address the database directly with GetDatabase")
 }
 
 // Delete removes a tenant database.
 func (t *TenantsClient) Delete(ctx context.Context, key string, opts ...RequestOption) error {
+	if err := managementContext(ctx); err != nil {
+		return err
+	}
 	if err := validateTenantKey(key); err != nil {
 		return err
 	}
-	// The draft contract requires the tenant key as the destructive-action
-	// confirmation. A caller-supplied option may still override it, matching
-	// the other delete operations in this package.
-	opts = append([]RequestOption{WithDeleteConfirmation(key)}, opts...)
-	return t.c.do(ctx, "DELETE", "/api/v1/tenants/"+url.PathEscape(key), nil, nil, nil, "tenants.delete", opts...)
+	if err := managementMutation(opts); err != nil {
+		return err
+	}
+	if err := deleteConfirmation(opts, key); err != nil {
+		return err
+	}
+	return contractGap(ctx, "tenants.delete", "DELETE", "/api/v1/tenants/{key}",
+		"the TerraBase public contract does not publish tenant routes",
+		"address the tenant database directly with DeleteDatabase")
 }
 
 // List pages tenants.
@@ -217,33 +226,35 @@ func (t *TenantsClient) List(ctx context.Context, limit int, cursor string, opts
 
 // ListPage returns one page of tenants and its continuation cursor.
 func (t *TenantsClient) ListPage(ctx context.Context, limit int, cursor string, opts ...RequestOption) (*TenantPage, error) {
-	if limit < 0 {
-		return nil, fmt.Errorf("sdk: limit cannot be negative")
-	}
-	query := url.Values{}
-	if limit > 0 {
-		query.Set("limit", strconv.Itoa(limit))
-	}
-	if cursor != "" {
-		query.Set("cursor", cursor)
-	}
-	var out TenantPage
-	if err := t.c.do(ctx, "GET", "/api/v1/tenants", query, nil, &out, "tenants.list", opts...); err != nil {
+	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	if limit < 0 {
+		return nil, &PaginationError{Field: "limit", Value: limit}
+	}
+	if limit > 1000 {
+		return nil, &PaginationError{Field: "limit", Value: limit}
+	}
+	_ = cursor
+	return nil, contractGap(ctx, "tenants.list", "GET", "/api/v1/tenants",
+		"the TerraBase public contract does not publish tenant routes",
+		"list databases with ListDatabases")
 }
 
 // CreateKey mints a tenant-scoped API key from the template's key policy.
 func (t *TenantsClient) CreateKey(ctx context.Context, key string, opts ...RequestOption) (*TenantKey, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
 	if err := validateTenantKey(key); err != nil {
 		return nil, err
 	}
-	var out TenantKey
-	if err := t.c.do(ctx, "POST", "/api/v1/tenants/"+url.PathEscape(key)+"/keys", nil, map[string]any{}, &out, "tenants.keys.create", opts...); err != nil {
+	if err := managementMutation(opts); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return nil, contractGap(ctx, "tenants.keys.create", "POST", "/api/v1/tenants/{key}/keys",
+		"the TerraBase public contract does not publish tenant routes",
+		"use the control-plane key-management surface")
 }
 
 // MintKey is retained as an alias for CreateKey.
@@ -253,20 +264,36 @@ func (t *TenantsClient) MintKey(ctx context.Context, key string, opts ...Request
 
 // CreateBranch opens a per-tenant support branch.
 func (t *TenantsClient) CreateBranch(ctx context.Context, key string, opts ...RequestOption) (*TenantBranch, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
 	if err := validateTenantKey(key); err != nil {
 		return nil, err
 	}
-	var out TenantBranch
-	path := "/api/v1/tenants/" + url.PathEscape(key) + "/branches"
-	if err := t.c.do(ctx, "POST", path, nil, map[string]any{}, &out, "tenants.branches.create", opts...); err != nil {
+	if err := managementMutation(opts); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return nil, contractGap(ctx, "tenants.branches.create", "POST", "/api/v1/tenants/{key}/branches",
+		"the TerraBase public contract does not publish tenant routes",
+		"create a database branch with DatabaseBranches.CreateBranch")
 }
 
 func validateTenantKey(key string) error {
 	if strings.TrimSpace(key) == "" {
-		return fmt.Errorf("sdk: tenant key cannot be empty")
+		return &ValidationError{Field: "tenant key", Message: "cannot be empty"}
+	}
+	if len([]byte(key)) > 64 {
+		return &ValidationError{Field: "tenant key", Message: "must be at most 64 bytes"}
+	}
+	for index, char := range []byte(key) {
+		alpha := (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z')
+		digit := char >= '0' && char <= '9'
+		if !(alpha || digit || char == '.' || char == '_' || char == ':' || char == '-') {
+			return &ValidationError{Field: "tenant key", Message: "must use letters, digits, '.', '_', ':', or '-'"}
+		}
+		if index == 0 && !(alpha || digit) {
+			return &ValidationError{Field: "tenant key", Message: "must start with a letter or digit"}
+		}
 	}
 	return nil
 }
@@ -275,18 +302,16 @@ func validateCreateTenantRequest(req *CreateTenantRequest) error {
 	if err := validateTenantKey(req.Key); err != nil {
 		return err
 	}
-	regions := make([]RegionCode, 0, len(req.Regions))
-	for _, region := range req.Regions {
-		parsed, err := ParseRegionCode(string(region))
-		if err != nil {
-			return err
-		}
-		for _, existing := range regions {
-			if existing == parsed {
-				return fmt.Errorf("sdk: tenant placement contains duplicate region %q", parsed)
-			}
-		}
-		regions = append(regions, parsed)
+	if len(req.Regions) == 0 {
+		return nil
+	}
+	regions := make([]RegionCode, len(req.Regions))
+	copy(regions, req.Regions)
+	if err := validatePlacement(regions, ""); err != nil {
+		return err
+	}
+	for i := range regions {
+		regions[i], _ = ParseRegionCode(string(regions[i]))
 	}
 	if len(regions) > 0 {
 		req.Regions = regions

@@ -3,21 +3,35 @@
 // The query endpoint is POST /api/v1/databases/{id}/sql: read-only SQL over
 // extracted columns, `body` as JSON, and `_` metadata columns. Statements are
 // limited to select/with/explain; values always travel as parameters, never
-// interpolated into the statement text.
+// interpolated into the statement text. The request and response shapes are
+// the published SqlRequest/SqlResult contract.
 package sdk
 
 import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
 // SQLResult is the result of a read-only SQL execution.
 type SQLResult struct {
-	Columns []string         `json:"columns"`
-	Rows    []map[string]any `json:"rows"`
+	Matched int64    `json:"matched"`
+	Rows    []SQLRow `json:"rows"`
 }
+
+// SQLRow is one SQL result row. Value is the projected JSON object returned
+// by the server and id is its stable result identity.
+type SQLRow struct {
+	ID    string `json:"id"`
+	Value any    `json:"value"`
+}
+
+// SQLParameters is the canonical named/ordinal binding object sent to the
+// SQL endpoint. Ordinal keys are decimal strings such as "1" and named keys
+// are plain SQL identifiers.
+type SQLParameters = map[string]any
 
 // Len returns the number of result rows.
 func (r *SQLResult) Len() int {
@@ -27,30 +41,107 @@ func (r *SQLResult) Len() int {
 	return len(r.Rows)
 }
 
+// SQLExecuteOptions controls optional SQL request fields. Zero values omit
+// the corresponding optional wire member.
+type SQLExecuteOptions struct {
+	Explain   bool
+	TimeoutMs int
+	Cancelled bool
+}
+
+// SQLRequestOption customizes optional SQL request controls.
+type SQLRequestOption func(*SQLExecuteOptions)
+
+// WithSQLExplain requests an explain response.
+func WithSQLExplain() SQLRequestOption {
+	return func(options *SQLExecuteOptions) { options.Explain = true }
+}
+
+// WithSQLTimeout sets the server SQL timeout in milliseconds.
+func WithSQLTimeout(timeoutMs int) SQLRequestOption {
+	return func(options *SQLExecuteOptions) { options.TimeoutMs = timeoutMs }
+}
+
+// WithSQLCancelled marks the SQL request as cancelled before execution.
+func WithSQLCancelled() SQLRequestOption {
+	return func(options *SQLExecuteOptions) { options.Cancelled = true }
+}
+
 // ExecuteSQL runs a raw parameterized statement. Only one read-only
 // SELECT/WITH/EXPLAIN statement is accepted. The server applies the complete
 // SQL AST allow-list as well, but rejecting malformed or unsafe input here
-// avoids sending it over the network.
-func (c *Client) ExecuteSQL(ctx context.Context, databaseID, statement string, params []any, opts ...RequestOption) (*SQLResult, error) {
+// avoids sending it over the network. Optional SQLExecuteOptions values or
+// SQLRequestOption functions may follow params; ordinary RequestOptions
+// continue to control routing and authentication headers.
+func (c *Client) ExecuteSQL(ctx context.Context, databaseID, statement string, params any, opts ...any) (*SQLResult, error) {
 	if strings.TrimSpace(databaseID) == "" {
 		return nil, fmt.Errorf("sdk: database id cannot be empty")
 	}
-	if err := ValidateSQL(statement, params); err != nil {
+	bindings, err := canonicalSQLParameters(params)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateSQL(statement, bindings); err != nil {
+		return nil, err
+	}
+	sqlOptions, requestOpts, err := resolveSQLOptions(opts)
+	if err != nil {
 		return nil, err
 	}
 	var out SQLResult
 	path := "/api/v1/databases/" + url.PathEscape(databaseID) + "/sql"
-	body := map[string]any{"statement": statement, "params": params}
-	if err := c.do(ctx, "POST", path, nil, body, &out, "sql.execute", opts...); err != nil {
+	body := map[string]any{"sql": statement}
+	if len(bindings) > 0 {
+		body["parameters"] = bindings
+	}
+	if sqlOptions.Explain {
+		body["explain"] = true
+	}
+	if sqlOptions.TimeoutMs != 0 {
+		body["timeout_ms"] = sqlOptions.TimeoutMs
+	}
+	if sqlOptions.Cancelled {
+		body["cancelled"] = true
+	}
+	if err := c.do(ctx, "POST", path, nil, body, &out, "sql.execute", requestOpts...); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
+func resolveSQLOptions(opts []any) (SQLExecuteOptions, []RequestOption, error) {
+	var sqlOptions SQLExecuteOptions
+	var requestOpts []RequestOption
+	for _, option := range opts {
+		switch value := option.(type) {
+		case nil:
+			continue
+		case RequestOption:
+			requestOpts = append(requestOpts, value)
+		case SQLRequestOption:
+			value(&sqlOptions)
+		case SQLExecuteOptions:
+			sqlOptions = value
+		case *SQLExecuteOptions:
+			if value == nil {
+				continue
+			}
+			sqlOptions = *value
+		default:
+			return SQLExecuteOptions{}, nil, fmt.Errorf("sdk: invalid SQL request option %T", option)
+		}
+	}
+	if sqlOptions.TimeoutMs < 0 || sqlOptions.TimeoutMs > 30000 {
+		return SQLExecuteOptions{}, nil, fmt.Errorf("sdk: SQL timeout_ms must be between 1 and 30000")
+	}
+	return sqlOptions, requestOpts, nil
+}
+
 // ValidateSQL checks raw SQL before it is sent to the query endpoint. It
-// accepts positional ? and $n/?n bindings and requires their slots to match
-// params exactly. Values are never parsed as SQL.
-func ValidateSQL(statement string, params []any) error {
+// accepts positional (?/$n/?n) and named (:name/@name/$name) bindings and
+// requires the supplied object keys to match the statement. Values are never
+// parsed as SQL.
+func ValidateSQL(statement string, params any) error {
 	tokens, err := tokenizeSQL(statement)
 	if err != nil {
 		return err
@@ -64,9 +155,6 @@ func ValidateSQL(statement string, params []any) error {
 	switch first {
 	case "select":
 	case "with":
-		if len(tokens) > 1 && strings.EqualFold(tokens[1].text, "recursive") {
-			return sqlError("WITH RECURSIVE is not allowed by the read-only SQL contract")
-		}
 	case "explain":
 		if len(tokens) > 1 && strings.EqualFold(tokens[1].text, "query") {
 			if len(tokens) < 3 || !strings.EqualFold(tokens[2].text, "plan") {
@@ -96,11 +184,14 @@ func ValidateSQL(statement string, params []any) error {
 		if token.function && forbiddenSQLFunction(lowered) {
 			return sqlError("Non-deterministic or unsafe SQL functions are not allowed")
 		}
+		if lowered == "with" && i+1 < len(tokens) && strings.EqualFold(tokens[i+1].text, "recursive") && !tokens[i+1].quotedString {
+			return sqlError("WITH RECURSIVE is not allowed by the read-only SQL contract")
+		}
 		if (lowered == "current_date" || lowered == "current_time" || lowered == "current_timestamp") && !token.function {
 			return sqlError("Non-deterministic or unsafe SQL functions are not allowed")
 		}
 	}
-	return validateBindings(tokens, len(params))
+	return validateBindings(tokens, params)
 }
 
 // isReadOnlyStatement is retained for source compatibility with older SDK
@@ -131,6 +222,7 @@ type sqlToken struct {
 	text         string
 	quotedString bool
 	function     bool
+	parameter    bool
 }
 
 func tokenizeSQL(statement string) ([]sqlToken, error) {
@@ -193,13 +285,18 @@ func tokenizeSQL(statement string) ([]sqlToken, error) {
 		case '$':
 			start := i
 			i++
-			for i < len(b) && b[i] >= '0' && b[i] <= '9' {
-				i++
+			if i < len(b) && b[i] >= '0' && b[i] <= '9' {
+				for i < len(b) && b[i] >= '0' && b[i] <= '9' {
+					i++
+				}
+			} else if i < len(b) && isSQLIdentStartByte(b[i]) {
+				for i < len(b) && isSQLIdentByte(b[i]) {
+					i++
+				}
+			} else {
+				return nil, sqlError("Invalid named or numbered parameter")
 			}
-			if i == start+1 {
-				return nil, sqlError("Only numbered $n parameters are allowed")
-			}
-			tokens = append(tokens, sqlToken{text: string(b[start:i])})
+			tokens = append(tokens, sqlToken{text: string(b[start:i]), parameter: true})
 		case '?':
 			start := i
 			i++
@@ -209,9 +306,17 @@ func tokenizeSQL(statement string) ([]sqlToken, error) {
 			if i < len(b) && ((b[i] >= 'a' && b[i] <= 'z') || (b[i] >= 'A' && b[i] <= 'Z') || b[i] == '_') {
 				return nil, sqlError("Invalid positional parameter")
 			}
-			tokens = append(tokens, sqlToken{text: string(b[start:i])})
-		case ':':
-			return nil, sqlError("Only positional parameters are allowed")
+			tokens = append(tokens, sqlToken{text: string(b[start:i]), parameter: true})
+		case ':', '@':
+			start := i
+			i++
+			if i >= len(b) || !isSQLIdentStartByte(b[i]) {
+				return nil, sqlError("Invalid named parameter")
+			}
+			for i < len(b) && isSQLIdentByte(b[i]) {
+				i++
+			}
+			tokens = append(tokens, sqlToken{text: string(b[start:i]), parameter: true})
 		default:
 			if b[i] < 0x20 {
 				return nil, sqlError("SQL contains an invalid control character")
@@ -242,32 +347,96 @@ func isSQLIdentByte(value byte) bool {
 	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || value == '_'
 }
 
-func validateBindings(tokens []sqlToken, parameterCount int) error {
-	nextUnnumbered, highest := 1, 0
-	seen := map[int]bool{}
-	for _, token := range tokens {
-		number := 0
-		switch {
-		case token.text == "?":
-			number = nextUnnumbered
-			nextUnnumbered++
-		case strings.HasPrefix(token.text, "?") || strings.HasPrefix(token.text, "$"):
-			if _, err := fmt.Sscanf(token.text[1:], "%d", &number); err != nil {
-				return sqlError("Invalid positional parameter")
+func isSQLIdentStartByte(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value == '_'
+}
+
+// canonicalSQLParameters is the wire representation accepted by the public
+// SQL endpoint. A positional slice remains source-compatible for the typed
+// query builder, but is converted to the canonical ordinal object shape.
+func canonicalSQLParameters(params any) (map[string]any, error) {
+	bindings := make(map[string]any)
+	switch values := params.(type) {
+	case nil:
+		return bindings, nil
+	case []any:
+		for i, value := range values {
+			bindings[strconv.Itoa(i+1)] = value
+		}
+	case map[string]any:
+		for name, value := range values {
+			if !validSQLBindingName(name) {
+				return nil, sqlError(fmt.Sprintf("invalid parameter name %q", name))
 			}
-		default:
-			continue
+			bindings[name] = value
 		}
-		if number <= 0 {
-			return sqlError("Parameter numbering starts at 1")
+	default:
+		return nil, sqlError("parameters must be a positional []any or named map[string]any")
+	}
+	return bindings, nil
+}
+
+func validSQLBindingName(name string) bool {
+	if name == "" {
+		return false
+	}
+	if name[0] >= '0' && name[0] <= '9' {
+		for i := 1; i < len(name); i++ {
+			if name[i] < '0' || name[i] > '9' {
+				return false
+			}
 		}
-		seen[number] = true
-		if number > highest {
-			highest = number
+		return name != "0"
+	}
+	if !isSQLIdentStartByte(name[0]) {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		if !isSQLIdentByte(name[i]) {
+			return false
 		}
 	}
-	if highest != parameterCount || len(seen) != parameterCount {
-		return sqlError(fmt.Sprintf("SQL has %d positional parameter slots but %d values were supplied", highest, parameterCount))
+	return true
+}
+
+func validateBindings(tokens []sqlToken, params any) error {
+	bindings, err := canonicalSQLParameters(params)
+	if err != nil {
+		return err
+	}
+	nextUnnumbered := 1
+	seen := map[string]bool{}
+	for _, token := range tokens {
+		if !token.parameter {
+			continue
+		}
+		name := strings.TrimLeft(token.text, "?$:@")
+		if token.text == "?" {
+			name = strconv.Itoa(nextUnnumbered)
+			nextUnnumbered++
+		} else if name == "" || !validSQLBindingName(name) {
+			return sqlError("Invalid named or numbered parameter")
+		}
+		if name[0] >= '0' && name[0] <= '9' {
+			number, parseErr := strconv.Atoi(name)
+			if parseErr != nil || number <= 0 {
+				return sqlError("Parameter numbering starts at 1")
+			}
+			if number >= nextUnnumbered {
+				nextUnnumbered = number + 1
+			}
+		}
+		seen[name] = true
+	}
+	for name := range seen {
+		if _, ok := bindings[name]; !ok {
+			return sqlError(fmt.Sprintf("SQL parameter %q has no value", name))
+		}
+	}
+	for name := range bindings {
+		if !seen[name] {
+			return sqlError(fmt.Sprintf("SQL parameter %q is not referenced", name))
+		}
 	}
 	return nil
 }
@@ -840,7 +1009,11 @@ func (c *Client) ExecuteQuery(ctx context.Context, databaseID string, qb *QueryB
 	if err != nil {
 		return nil, err
 	}
-	return c.ExecuteSQL(ctx, databaseID, statement, params, opts...)
+	requestOpts := make([]any, len(opts))
+	for i, option := range opts {
+		requestOpts[i] = option
+	}
+	return c.ExecuteSQL(ctx, databaseID, statement, params, requestOpts...)
 }
 
 func validSQLIdentifier(value string) bool {

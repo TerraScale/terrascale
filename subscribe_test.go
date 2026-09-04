@@ -2,13 +2,55 @@ package sdk
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+func mustHex(value string) []byte {
+	body, err := hex.DecodeString(value)
+	if err != nil {
+		panic(err)
+	}
+	return body
+}
+
+func TestReactiveMessagePackRejectsMapsAndHostileBounds(t *testing.T) {
+	for name, wire := range map[string]string{
+		"map":              "81a16101",
+		"oversized binary": "c60100000000",
+		"trailing":         "9702010003000092a173960100009192a17390a0c401637f",
+	} {
+		t.Run(name, func(t *testing.T) {
+			body, err := hex.DecodeString(wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, _, err = decodeReactiveMessagePack(body, "v", 1); err == nil {
+				t.Fatal("hostile MessagePack was accepted")
+			}
+		})
+	}
+}
+
+func TestReactiveMessagePackDecodesIndexedSnapshot(t *testing.T) {
+	body, err := hex.DecodeString("9702010003000092a173960100009192a17390a0c40163")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates, checkpoint, offset, reset, err := decodeReactiveMessagePack(body, "v", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reset != nil || len(updates) != 1 || updates[0].ID != "s" || checkpoint != "c" || offset != "" {
+		t.Fatalf("decoded snapshot = updates=%+v checkpoint=%q offset=%q reset=%v", updates, checkpoint, offset, reset)
+	}
+}
 
 func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.T) {
 	var mu sync.Mutex
@@ -19,11 +61,11 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 		case r.URL.Path == "/api/v1/reactive/views" && r.Method == http.MethodPost:
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"view": "view-1", "generation": 7, "checkpoint": "opaque-0",
-				"log":    "http://" + r.Host + "/log?offset=0&ignored=must-drop",
-				"offset": 0, "capability": "cap-1", "capability_header": "X-TerraScale-Capability",
+				"log":    "http://" + r.Host + "/attacker-path?offset=0&ignored=must-drop",
+				"offset": 0, "capability": "cap-1", "capability_header": "X-TerraScale-View-Capability",
 				"snapshot": []map[string]any{{"id": "doc-1", "body": json.RawMessage(`{"a":1}`)}},
 			})
-		case r.URL.Path == "/log":
+		case strings.HasSuffix(r.URL.Path, "/api/v1/reactive/views/view-1/7/log"):
 			mu.Lock()
 			requests = append(requests, r.URL.RequestURI()+" "+r.Header.Get("X-TerraScale-Capability")+" "+r.Header.Get("X-TerraScale-View-Capability"))
 			n := len(requests)
@@ -34,14 +76,13 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 			if n == 1 {
 				w.Header().Set("ETag", `"rev-1"`)
 				w.Header().Set("Cache-Control", "private, max-age=0")
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"updates":    []map[string]any{{"kind": "insert", "checkpoint": "opaque-1", "id": "doc-2", "body": json.RawMessage(`{"b":2}`)}},
-					"checkpoint": "opaque-1", "offset": 1,
-				})
+				w.Header().Set("Content-Type", "application/msgpack")
+				_, _ = w.Write(mustHex("9702010004040497a173070304919401a165019192a178c40169a0c40169"))
 				return
 			}
 			w.Header().Set("Cache-Control", "no-store")
-			_ = json.NewEncoder(w).Encode(map[string]any{"updates": []any{}, "checkpoint": "opaque-1", "offset": 1})
+			w.Header().Set("Content-Type", "application/msgpack")
+			_, _ = w.Write(mustHex("9702010004040497a17307040490a0c40169"))
 		default:
 			http.NotFound(w, r)
 		}
@@ -63,10 +104,10 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 	}
 	first.Body[5] = '9'
 	second := <-sub.Events()
-	if second.Kind != UpdateInsert || second.Checkpoint != "opaque-1" {
+	if second.Kind != UpdateInsert || second.Checkpoint != "i" || second.ID != "e" {
 		t.Fatalf("delta = %+v", second)
 	}
-	if sub.Checkpoint() != "opaque-1" {
+	if sub.Checkpoint() != "i" {
 		t.Fatalf("checkpoint = %q", sub.Checkpoint())
 	}
 	select {
@@ -80,10 +121,10 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 	mu.Lock()
 	got := append([]string(nil), requests...)
 	mu.Unlock()
-	if len(got) == 0 || got[0] != "/log?offset=0 cap-1 " {
+	if len(got) == 0 || got[0] != "/api/v1/reactive/views/view-1/7/log?offset=0  cap-1" {
 		t.Fatalf("first log request = %q", got)
 	}
-	if len(got) < 2 || got[1] != "/log?offset=1 cap-1 " {
+	if len(got) < 2 || got[1] != "/api/v1/reactive/views/view-1/7/log?offset=4  cap-1" {
 		t.Fatalf("second log request = %q", got)
 	}
 }
@@ -126,7 +167,8 @@ func TestPollRevalidatesImmutableOffsetButDropsNoStoreETag(t *testing.T) {
 				t.Fatalf("first request sent an ETag: %q", got)
 			}
 			w.Header().Set("ETag", `"offset-7"`)
-			_ = json.NewEncoder(w).Encode(map[string]any{"updates": []any{}})
+			w.Header().Set("Content-Type", "application/msgpack")
+			_, _ = w.Write(mustHex("9702010006060590"))
 			return
 		}
 		if got := r.Header.Get("If-None-Match"); got != `"offset-7"` {

@@ -11,7 +11,9 @@ package sdk
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Checkpoint is an opaque authorized-view position (journal cut).
@@ -51,10 +54,12 @@ const (
 
 // ResetError is a typed reset: discard local view state and resubscribe.
 type ResetError struct {
-	Reason     ResetReason `json:"reason"`
-	Message    string      `json:"message,omitempty"`
-	ViewID     string      `json:"viewId,omitempty"`
-	Generation uint64      `json:"generation,omitempty"`
+	Reason          ResetReason `json:"reason"`
+	Message         string      `json:"message,omitempty"`
+	ViewID          string      `json:"viewId,omitempty"`
+	Generation      uint64      `json:"generation,omitempty"`
+	Snapshot        []Document  `json:"snapshot,omitempty"`
+	CheckpointBytes []byte      `json:"-"`
 }
 
 func (e *ResetError) UnmarshalJSON(data []byte) error {
@@ -100,7 +105,14 @@ type Update struct {
 	ID         string          `json:"id,omitempty"`
 	Collection string          `json:"collection,omitempty"`
 	Body       json.RawMessage `json:"body,omitempty"`
-	Reset      *ResetError     `json:"reset,omitempty"`
+	// Fields retains every projected field from the indexed wire item. Body is
+	// populated as a convenience when the projection contains the body path.
+	Fields          map[string]json.RawMessage `json:"fields,omitempty"`
+	CheckpointBytes []byte                     `json:"-"`
+	// Snapshot is populated on a replacement reset. Consumers should discard
+	// their old local view and install these documents atomically.
+	Snapshot []Document  `json:"snapshot,omitempty"`
+	Reset    *ResetError `json:"reset,omitempty"`
 }
 
 // Transport selects the reactive delivery transport.
@@ -119,6 +131,8 @@ type SubscriptionOptions struct {
 	Transport Transport
 	// ResumeFrom resumes a retained position; empty starts fresh.
 	ResumeFrom Checkpoint
+	// RegionHint requests a canonical launch region for the attach.
+	RegionHint RegionCode
 }
 
 // Snapshot is the result of Execute ("subscribe once").
@@ -130,11 +144,11 @@ type Snapshot struct {
 }
 
 type attachRequest struct {
-	DatabaseID string     `json:"databaseId"`
-	Statement  string     `json:"statement"`
-	Params     []any      `json:"params,omitempty"`
-	ResumeFrom Checkpoint `json:"resumeFrom,omitempty"`
-	Transport  Transport  `json:"transport,omitempty"`
+	DatabaseID string      `json:"databaseId"`
+	Statement  string      `json:"statement"`
+	Parameters []any       `json:"parameters"`
+	Checkpoint *Checkpoint `json:"checkpoint"`
+	Transport  Transport   `json:"transport,omitempty"`
 }
 
 type attachResponse struct {
@@ -146,14 +160,8 @@ type attachResponse struct {
 	Capability       string     `json:"capability,omitempty"`
 	CapabilityHeader string     `json:"capabilityHeader,omitempty"`
 	SnapshotChunks   []string   `json:"snapshotChunks,omitempty"`
+	Region           string     `json:"region,omitempty"`
 	Offset           string     `json:"-"`
-}
-
-type pollResponse struct {
-	Updates    []Update    `json:"updates,omitempty"`
-	Checkpoint Checkpoint  `json:"checkpoint,omitempty"`
-	Reset      *ResetError `json:"reset,omitempty"`
-	Offset     string      `json:"-"`
 }
 
 // UnmarshalJSON accepts both the hand-written SDK fixture shape and the
@@ -165,7 +173,6 @@ func (a *attachResponse) UnmarshalJSON(data []byte) error {
 		View            string          `json:"view"`
 		Generation      uint64          `json:"generation"`
 		Checkpoint      Checkpoint      `json:"checkpoint"`
-		Snapshot        []Document      `json:"snapshot"`
 		LogURL          string          `json:"logUrl"`
 		Log             string          `json:"log"`
 		Capability      string          `json:"capability"`
@@ -173,6 +180,8 @@ func (a *attachResponse) UnmarshalJSON(data []byte) error {
 		CapabilityCamel string          `json:"capabilityHeader"`
 		Chunks          []string        `json:"snapshot_chunks"`
 		ChunksCamel     []string        `json:"snapshotChunks"`
+		Region          string          `json:"region"`
+		SnapshotRaw     json.RawMessage `json:"snapshot"`
 		Offset          json.RawMessage `json:"offset"`
 	}
 	var v wire
@@ -183,7 +192,56 @@ func (a *attachResponse) UnmarshalJSON(data []byte) error {
 	if a.ViewID == "" {
 		a.ViewID = v.View
 	}
-	a.Generation, a.Checkpoint, a.Snapshot = v.Generation, v.Checkpoint, v.Snapshot
+	a.Generation, a.Checkpoint, a.Snapshot, a.Region = v.Generation, v.Checkpoint, nil, v.Region
+	if len(v.SnapshotRaw) != 0 && !bytes.Equal(v.SnapshotRaw, []byte("null")) {
+		var rawDocs []struct {
+			ID         string          `json:"id"`
+			Collection string          `json:"collection"`
+			Body       json.RawMessage `json:"body"`
+		}
+		if err := json.Unmarshal(v.SnapshotRaw, &rawDocs); err != nil {
+			var inline struct {
+				ViewGeneration      uint64 `json:"view_generation"`
+				ViewGenerationCamel uint64 `json:"viewGeneration"`
+				Revision            uint64 `json:"revision"`
+				Items               []struct {
+					Identity string `json:"identity"`
+					Fields   []struct {
+						Path  string          `json:"path"`
+						Value json.RawMessage `json:"value"`
+					} `json:"fields"`
+				} `json:"items"`
+				Checkpoint string `json:"checkpoint"`
+			}
+			if errInline := json.Unmarshal(v.SnapshotRaw, &inline); errInline != nil {
+				return fmt.Errorf("sdk: invalid inline reactive snapshot: %w", err)
+			}
+			for _, item := range inline.Items {
+				doc := Document{ID: item.Identity}
+				for _, field := range item.Fields {
+					if field.Path != "body" {
+						continue
+					}
+					var encoded string
+					if json.Unmarshal(field.Value, &encoded) == nil {
+						if decoded, errDecode := base64.StdEncoding.DecodeString(encoded); errDecode == nil {
+							doc.Body = cloneRaw(decoded)
+							continue
+						}
+					}
+					doc.Body = cloneRaw(field.Value)
+				}
+				a.Snapshot = append(a.Snapshot, doc)
+			}
+			if a.Checkpoint == "" && inline.Checkpoint != "" {
+				a.Checkpoint = Checkpoint(inline.Checkpoint)
+			}
+		} else {
+			for _, item := range rawDocs {
+				a.Snapshot = append(a.Snapshot, Document{ID: item.ID, Collection: item.Collection, Body: cloneRaw(item.Body)})
+			}
+		}
+	}
 	a.LogURL, a.Capability = v.LogURL, v.Capability
 	if a.LogURL == "" {
 		a.LogURL = v.Log
@@ -197,28 +255,6 @@ func (a *attachResponse) UnmarshalJSON(data []byte) error {
 		a.SnapshotChunks = v.ChunksCamel
 	}
 	a.Offset = rawOffset(v.Offset)
-	return nil
-}
-
-func (p *pollResponse) UnmarshalJSON(data []byte) error {
-	type wire struct {
-		Updates    []Update        `json:"updates"`
-		Checkpoint Checkpoint      `json:"checkpoint"`
-		Reset      *ResetError     `json:"reset"`
-		Offset     json.RawMessage `json:"offset"`
-		Revision   json.RawMessage `json:"revision"`
-		Error      json.RawMessage `json:"error"`
-	}
-	var v wire
-	if err := json.Unmarshal(data, &v); err != nil {
-		return err
-	}
-	p.Updates, p.Checkpoint, p.Reset = v.Updates, v.Checkpoint, v.Reset
-	p.Offset = rawOffset(v.Offset)
-	if p.Offset == "" {
-		p.Offset = rawOffset(v.Revision)
-	}
-	_ = v.Error // Retained for compatibility with {error, reset} responses.
 	return nil
 }
 
@@ -245,6 +281,8 @@ type Subscription struct {
 	logURL           string
 	capability       string
 	capabilityHeader string
+	region           string
+	sessionToken     string
 
 	mu         sync.RWMutex
 	checkpoint Checkpoint
@@ -373,6 +411,19 @@ func (c *Client) Execute(ctx context.Context, databaseID, statement string, para
 	if err != nil {
 		return nil, err
 	}
+	if err := validateCapability(attach.Capability); err != nil {
+		return nil, err
+	}
+	attach.CapabilityHeader, err = normalizeCapabilityHeader(attach.CapabilityHeader)
+	if err != nil {
+		return nil, err
+	}
+	if len(attach.Snapshot) == 0 && len(attach.SnapshotChunks) > 0 {
+		attach.Snapshot, attach.Checkpoint, err = c.fetchSnapshotChunks(ctx, attach)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &Snapshot{
 		ViewID:     attach.ViewID,
 		Generation: attach.Generation,
@@ -398,9 +449,23 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 	if strings.TrimSpace(attach.Capability) == "" {
 		return nil, fmt.Errorf("sdk: attach response missing view capability")
 	}
-	parsedLogURL, err := url.Parse(attach.LogURL)
-	if err != nil || (parsedLogURL.IsAbs() && parsedLogURL.Scheme != "http" && parsedLogURL.Scheme != "https") {
-		return nil, fmt.Errorf("sdk: attach response has invalid log URL")
+	capabilityHeader, err := normalizeCapabilityHeader(attach.CapabilityHeader)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCapability(attach.Capability); err != nil {
+		return nil, err
+	}
+	attach.LogURL, err = canonicalLogURL(c, attach.LogURL, attach.ViewID, attach.Generation)
+	if err != nil {
+		return nil, err
+	}
+	attach.CapabilityHeader = capabilityHeader
+	if len(attach.Snapshot) == 0 && len(attach.SnapshotChunks) > 0 {
+		attach.Snapshot, attach.Checkpoint, err = c.fetchSnapshotChunks(ctx, attach)
+		if err != nil {
+			return nil, err
+		}
 	}
 	pollCtx, cancel := context.WithCancel(context.Background())
 	s := &Subscription{
@@ -410,6 +475,8 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 		logURL:           attach.LogURL,
 		capability:       attach.Capability,
 		capabilityHeader: attach.CapabilityHeader,
+		region:           normalizeRegion(attach.Region),
+		sessionToken:     c.SessionToken(),
 		checkpoint:       attach.Checkpoint,
 		offset:           attachOffset(attach),
 		events:           make(chan Update, 128),
@@ -448,12 +515,24 @@ func (c *Client) attach(ctx context.Context, databaseID, statement string, param
 	if transport == "" {
 		transport = TransportHTTP
 	}
+	if sub.RegionHint != "" {
+		region, err := ParseRegionCode(string(sub.RegionHint))
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, WithRegionHint(region))
+	}
 	req := attachRequest{
 		DatabaseID: databaseID,
 		Statement:  statement,
-		Params:     params,
-		ResumeFrom: sub.ResumeFrom,
+		Parameters: append([]any(nil), params...),
 		Transport:  transport,
+	}
+	if req.Parameters == nil {
+		req.Parameters = []any{}
+	}
+	if sub.ResumeFrom != "" {
+		req.Checkpoint = &sub.ResumeFrom
 	}
 	var out attachResponse
 	if err := c.do(ctx, "POST", "/api/v1/reactive/views", nil, req, &out, "reactive.attach", opts...); err != nil {
@@ -491,7 +570,173 @@ func attachOffset(a *attachResponse) string {
 			return value
 		}
 	}
-	return string(a.Checkpoint)
+	// Checkpoints are opaque bytes and are never valid log offsets. A view
+	// without an explicit revision starts at the canonical zero offset.
+	return "0"
+}
+
+func normalizeCapabilityHeader(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultCapabilityHeader, nil
+	}
+	if strings.EqualFold(value, defaultCapabilityHeader) {
+		return defaultCapabilityHeader, nil
+	}
+	return "", fmt.Errorf("sdk: attach response has unsupported capability header %q", value)
+}
+
+func validateCapability(value string) error {
+	if strings.TrimSpace(value) == "" || len(value) > 4096 || strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("sdk: attach response has invalid view capability")
+	}
+	return nil
+}
+
+func normalizeRegion(value string) string {
+	code, err := ParseRegionCode(value)
+	if err != nil {
+		return ""
+	}
+	return string(code)
+}
+
+func reactiveOrigin(c *Client) (string, error) {
+	origin := c.APIBaseURL()
+	if origin == DefaultAPIBaseURL {
+		origin = DefaultSyncBaseURL
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+		return "", fmt.Errorf("sdk: invalid reactive origin")
+	}
+	u.Path, u.RawPath, u.RawQuery, u.Fragment = "", "", "", ""
+	return strings.TrimSuffix(u.String(), "/"), nil
+}
+
+func canonicalReactivePath(view string, generation uint64, leaf string) string {
+	return "/api/v1/reactive/views/" + url.PathEscape(view) + "/" + strconv.FormatUint(generation, 10) + "/" + leaf
+}
+
+func canonicalLogURL(c *Client, advertised, view string, generation uint64) (string, error) {
+	origin, err := reactiveOrigin(c)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(strings.TrimSpace(advertised))
+	if err != nil || u.IsAbs() && u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("sdk: attach response has invalid log URL")
+	}
+	if u.IsAbs() {
+		base, _ := url.Parse(origin)
+		if !strings.EqualFold(u.Host, base.Host) || !strings.EqualFold(u.Scheme, base.Scheme) {
+			return origin + canonicalReactivePath(view, generation, "log"), nil
+		}
+	}
+	// The origin only advertises capability-bearing URLs; the client derives
+	// the shared cache key and never trusts an origin-selected path/query.
+	return origin + canonicalReactivePath(view, generation, "log"), nil
+}
+
+func canonicalSnapshotURL(c *Client, advertised, view string, generation uint64, index int) (string, error) {
+	origin, err := reactiveOrigin(c)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(strings.TrimSpace(advertised))
+	if err != nil || u.IsAbs() && u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("sdk: invalid snapshot URL")
+	}
+	if u.IsAbs() {
+		base, _ := url.Parse(origin)
+		if !strings.EqualFold(u.Host, base.Host) || !strings.EqualFold(u.Scheme, base.Scheme) {
+			u = nil
+		}
+	}
+	if u != nil && (u.Path == "" || strings.HasSuffix(u.Path, "/snapshot/"+strconv.Itoa(index))) {
+		return origin + u.EscapedPath(), nil
+	}
+	return origin + canonicalReactivePath(view, generation, "snapshot/"+strconv.Itoa(index)), nil
+}
+
+func (c *Client) fetchSnapshotChunks(ctx context.Context, attach *attachResponse) ([]Document, Checkpoint, error) {
+	if len(attach.SnapshotChunks) > maxSnapshotChunks {
+		return nil, "", fmt.Errorf("sdk: reactive snapshot has too many chunks")
+	}
+	var docs []Document
+	checkpoint := attach.Checkpoint
+	totalBytes := 0
+	for i, advertised := range attach.SnapshotChunks {
+		chunkURL, err := canonicalSnapshotURL(c, advertised, attach.ViewID, attach.Generation, i)
+		if err != nil {
+			return nil, "", err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, chunkURL, nil)
+		if err != nil {
+			return nil, "", err
+		}
+		req.Header.Set("Accept", "application/msgpack")
+		capHeader, _ := normalizeCapabilityHeader(attach.CapabilityHeader)
+		req.Header.Set(capHeader, attach.Capability)
+		if token := c.token(); token != "" {
+			if strings.HasPrefix(token, "Bearer ") {
+				req.Header.Set("Authorization", token)
+			} else {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+		}
+		if causal := strings.TrimSpace(c.SessionToken()); causal != "" {
+			req.Header.Set("X-TerraScale-Session", causal)
+		}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, "", err
+		}
+		c.observeSession(resp.Header)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxReactiveBody+1))
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, "", readErr
+		}
+		if len(body) > maxReactiveBody {
+			return nil, "", fmt.Errorf("sdk: reactive snapshot chunk exceeds %d bytes", maxReactiveBody)
+		}
+		if resp.StatusCode >= 400 {
+			return nil, "", resetForStatusError(resp.StatusCode, chunkURL, body)
+		}
+		chunkDocs, cp, _, decodeErr := decodeReactiveSnapshotMessagePack(body, attach.ViewID, attach.Generation)
+		if decodeErr != nil {
+			return nil, "", decodeErr
+		}
+		docs = append(docs, chunkDocs...)
+		if len(docs) > maxSnapshotItems {
+			return nil, "", fmt.Errorf("sdk: reactive snapshot exceeds %d documents", maxSnapshotItems)
+		}
+		for _, doc := range chunkDocs {
+			totalBytes += len(doc.Body)
+			if totalBytes > maxSnapshotBytes {
+				return nil, "", fmt.Errorf("sdk: reactive snapshot exceeds %d bytes", maxSnapshotBytes)
+			}
+		}
+		if cp != "" {
+			checkpoint = cp
+		}
+	}
+	return docs, checkpoint, nil
+}
+
+func (c *Client) advanceSessionToken(token string) {
+	if strings.TrimSpace(token) == "" {
+		return
+	}
+	_ = c.SetSessionToken(token)
+}
+
+func resetForStatusError(status int, path string, body []byte) error {
+	if reset := resetForStatus(status); reset != nil {
+		return reset
+	}
+	return &APIError{Method: http.MethodGet, Path: path, Status: status, Message: string(body)}
 }
 
 func (s *Subscription) pollLoop(ctx context.Context) {
@@ -512,6 +757,9 @@ func (s *Subscription) pollLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				continue
+			}
 			failures++
 			if failures > pollRetryLimit {
 				reset := &ResetError{Reason: ResetReconnect, Message: "reactive log unavailable after bounded retries", ViewID: s.viewID, Generation: s.generation}
@@ -526,7 +774,10 @@ func (s *Subscription) pollLoop(ctx context.Context) {
 		failures = 0
 		if reset != nil {
 			cp := s.Checkpoint()
-			s.deliver(Update{Kind: UpdateReset, Checkpoint: cp, Reset: reset})
+			if prog != "" {
+				cp = prog
+			}
+			s.deliver(Update{Kind: UpdateReset, Checkpoint: cp, Snapshot: cloneDocuments(reset.Snapshot), Reset: reset})
 			return
 		}
 		if !s.acceptsOffset(offset) {
@@ -568,8 +819,10 @@ const pollBackoff = 100 * time.Millisecond
 const (
 	pollRetryLimit          = 5
 	maxReactiveBody         = 8 << 20
-	defaultCapabilityHeader = "X-TerraScale-Capability"
-	legacyCapabilityHeader  = "X-TerraScale-View-Capability"
+	maxSnapshotChunks       = 10000
+	maxSnapshotItems        = 10000
+	maxSnapshotBytes        = 8 << 20
+	defaultCapabilityHeader = "X-TerraScale-View-Capability"
 )
 
 func pollRetryDelay(attempt int) time.Duration {
@@ -597,6 +850,10 @@ func sleepOrDone(ctx context.Context, done <-chan struct{}, d time.Duration) boo
 }
 
 func (s *Subscription) pollOnce(ctx context.Context) ([]Update, Checkpoint, string, string, *ResetError, error) {
+	// The protocol's long-poll window is bounded at 25 seconds, regardless of
+	// the caller's (possibly much longer) HTTP client timeout.
+	pollCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	checkpoint, offset, etag := s.progress()
 	logURL := s.logURL
 	if strings.HasPrefix(logURL, "/") {
@@ -620,22 +877,17 @@ func (s *Subscription) pollOnce(ctx context.Context) ([]Update, Checkpoint, stri
 		q.Set("offset", string(checkpoint))
 	}
 	u.RawQuery = q.Encode()
-	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	req, err := http.NewRequestWithContext(pollCtx, "GET", u.String(), nil)
 	if err != nil {
 		return nil, "", "", "", nil, err
 	}
-	req.Header.Set("Accept", "application/msgpack, application/json")
+	req.Header.Set("Accept", "application/msgpack")
 	if s.capability != "" {
 		header := s.capabilityHeader
 		if header == "" {
 			header = defaultCapabilityHeader
 		}
 		req.Header.Set(header, s.capability)
-		// Older pre-contract fixtures used this name. Keep it only when the
-		// attach response did not identify the published header.
-		if s.capabilityHeader == "" {
-			req.Header.Set(legacyCapabilityHeader, s.capability)
-		}
 	}
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
@@ -647,11 +899,16 @@ func (s *Subscription) pollOnce(ctx context.Context) ([]Update, Checkpoint, stri
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 	}
+	if causal := strings.TrimSpace(s.sessionToken); causal != "" {
+		req.Header.Set("X-TerraScale-Session", causal)
+	}
 	resp, err := s.c.http.Do(req)
 	if err != nil {
 		return nil, "", "", "", nil, err
 	}
 	defer resp.Body.Close()
+	s.c.observeSession(resp.Header)
+	s.sessionToken = s.c.SessionToken()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxReactiveBody+1))
 	if err != nil {
 		return nil, "", "", "", nil, err
@@ -662,38 +919,52 @@ func (s *Subscription) pollOnce(ctx context.Context) ([]Update, Checkpoint, stri
 	if resp.StatusCode == http.StatusNotModified {
 		return nil, "", "", etag, nil, nil
 	}
-	var poll pollResponse
-	if len(bytes.TrimSpace(body)) == 0 && resp.StatusCode < 400 {
-		// Empty long-poll timeout carries no body; stay subscribed.
+	if resp.StatusCode == http.StatusNoContent || len(bytes.TrimSpace(body)) == 0 && resp.StatusCode < 400 {
+		// A long-poll timeout is deliberately empty and never carries an ETag.
 		return nil, "", "", "", nil, nil
 	}
-	if err := json.Unmarshal(body, &poll); err != nil {
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+	if contentType == "application/msgpack" {
 		if resp.StatusCode >= 400 {
+			if reset := resetForStatus(resp.StatusCode); reset != nil {
+				reset.ViewID, reset.Generation = s.viewID, s.generation
+				if resp.StatusCode == http.StatusMisdirectedRequest {
+					s.region = normalizeRegion(resp.Header.Get("X-TerraScale-Placement"))
+				}
+				return nil, "", "", "", reset, nil
+			}
 			return nil, "", "", "", nil, &APIError{Method: http.MethodGet, Path: u.Path, Status: resp.StatusCode, Message: string(body)}
 		}
-		return nil, "", "", "", nil, err
-	}
-	if poll.Reset != nil {
-		if poll.Reset.ViewID == "" {
-			poll.Reset.ViewID = s.viewID
+		updates, cp, nextOffset, reset, decodeErr := decodeReactiveMessagePack(body, s.viewID, s.generation)
+		if decodeErr != nil {
+			return nil, "", "", "", nil, decodeErr
 		}
-		if poll.Checkpoint != "" || poll.Offset != "" {
-			s.setProgress(poll.Checkpoint, poll.Offset, "")
+		if reset != nil {
+			if cp != "" {
+				s.setProgress(cp, nextOffset, "")
+			}
+			return nil, cp, nextOffset, "", reset, nil
 		}
-		return nil, "", "", "", normalizeReset(poll.Reset), nil
+		responseETag := resp.Header.Get("ETag")
+		if cacheNoStore(resp.Header.Get("Cache-Control")) || cacheNoStore(resp.Header.Get("Cloudflare-CDN-Cache-Control")) {
+			responseETag = ""
+		}
+		return updates, cp, nextOffset, responseETag, nil, nil
 	}
 	if resp.StatusCode >= 400 {
 		if reset := resetForStatus(resp.StatusCode); reset != nil {
 			reset.ViewID, reset.Generation = s.viewID, s.generation
+			if resp.StatusCode == http.StatusMisdirectedRequest {
+				if region := normalizeRegion(resp.Header.Get("X-TerraScale-Placement")); region != "" {
+					s.region = region
+					reset.Message = "reactive view moved to region " + region
+				}
+			}
 			return nil, "", "", "", reset, nil
 		}
 		return nil, "", "", "", nil, &APIError{Method: http.MethodGet, Path: u.Path, Status: resp.StatusCode, Message: string(body)}
 	}
-	responseETag := resp.Header.Get("ETag")
-	if cacheNoStore(resp.Header.Get("Cache-Control")) || cacheNoStore(resp.Header.Get("Cloudflare-CDN-Cache-Control")) {
-		responseETag = ""
-	}
-	return poll.Updates, poll.Checkpoint, poll.Offset, responseETag, nil, nil
+	return nil, "", "", "", nil, fmt.Errorf("sdk: reactive log returned unsupported content type %q", contentType)
 }
 
 const DefaultSyncBaseURL = "https://sync.api.terrascale.tech"
@@ -714,16 +985,30 @@ func normalizeReset(reset *ResetError) *ResetError {
 	switch strings.ToLower(strings.TrimSpace(string(reset.Reason))) {
 	case "retention":
 		reset.Reason = ResetHistoryExpired
-	case "retention_advanced":
+	case "retention_advanced", "retention-advanced":
 		reset.Reason = ResetRetentionAdvanced
-	case "checkpoint_not_current":
+	case "checkpoint_not_current", "checkpoint-not-current":
 		reset.Reason = ResetCheckpointCurrent
+	case "checkpoint-expired":
+		reset.Reason = ResetExpired
+	case "generation-changed", "generation_changed":
+		reset.Reason = ResetGeneration
+	case "schema_changed", "schema-changed":
+		reset.Reason = ResetSchemaChanged
+	case "region_moved", "region-moved":
+		reset.Reason = ResetRegionMoved
+	case "auth_changed", "authentication_expired", "permission_denied":
+		reset.Reason = ResetAuthChanged
+	case "backpressure", "slow_consumer":
+		reset.Reason = ResetBackpressure
 	}
 	return reset
 }
 
 func resetForStatus(status int) *ResetError {
 	switch status {
+	case http.StatusMisdirectedRequest:
+		return &ResetError{Reason: ResetRegionMoved, Message: "reactive view moved to another region"}
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return &ResetError{Reason: ResetAuthChanged, Message: "view capability is no longer authorized"}
 	case http.StatusNotFound:
@@ -732,7 +1017,997 @@ func resetForStatus(status int) *ResetError {
 		return &ResetError{Reason: ResetCheckpointCurrent, Message: "log offset is no longer current"}
 	case http.StatusGone:
 		return &ResetError{Reason: ResetHistoryExpired, Message: "log history is no longer retained"}
+	case http.StatusTooManyRequests:
+		return &ResetError{Reason: ResetBackpressure, Message: "reactive consumer is over the server backpressure limit"}
 	default:
 		return nil
 	}
+}
+
+// The sync-v2 codec is deliberately local and dependency-free. MessagePack
+// maps, extensions, floats, and non-indexed shapes are never accepted.
+type reactiveMPReader struct {
+	b []byte
+	i int
+}
+
+func (r *reactiveMPReader) take(n int) ([]byte, error) {
+	if n < 0 || r.i > len(r.b)-n {
+		return nil, fmt.Errorf("sdk: reactive MessagePack is truncated")
+	}
+	v := r.b[r.i : r.i+n]
+	r.i += n
+	return v, nil
+}
+func (r *reactiveMPReader) tag() (byte, error) {
+	v, err := r.take(1)
+	if err != nil {
+		return 0, err
+	}
+	return v[0], nil
+}
+func mpArrayCount(r *reactiveMPReader) (int, error) {
+	t, err := r.tag()
+	if err != nil {
+		return 0, err
+	}
+	switch {
+	case t >= 0x90 && t <= 0x9f:
+		return int(t - 0x90), nil
+	case t == 0xdc:
+		v, e := r.take(2)
+		if e != nil {
+			return 0, e
+		}
+		return int(v[0])<<8 | int(v[1]), nil
+	case t == 0xdd:
+		v, e := r.take(4)
+		if e != nil {
+			return 0, e
+		}
+		n := uint64(v[0])<<24 | uint64(v[1])<<16 | uint64(v[2])<<8 | uint64(v[3])
+		if n > uint64(^uint(0)>>1) {
+			return 0, fmt.Errorf("sdk: reactive array length overflows")
+		}
+		return int(n), nil
+	}
+	return 0, fmt.Errorf("sdk: reactive value is not an indexed array")
+}
+func (r *reactiveMPReader) exactArray(n int) error {
+	got, err := mpArrayCount(r)
+	if err != nil {
+		return err
+	}
+	if got != n {
+		return fmt.Errorf("sdk: reactive indexed array has %d fields, want %d", got, n)
+	}
+	return nil
+}
+func mpUint(r *reactiveMPReader, bits int) (uint64, error) {
+	t, err := r.tag()
+	if err != nil {
+		return 0, err
+	}
+	var v uint64
+	switch {
+	case t <= 0x7f:
+		v = uint64(t)
+	case t == 0xcc:
+		x, e := r.take(1)
+		if e != nil {
+			return 0, e
+		}
+		v = uint64(x[0])
+	case t == 0xcd:
+		x, e := r.take(2)
+		if e != nil {
+			return 0, e
+		}
+		v = uint64(x[0])<<8 | uint64(x[1])
+	case t == 0xce:
+		x, e := r.take(4)
+		if e != nil {
+			return 0, e
+		}
+		v = uint64(x[0])<<24 | uint64(x[1])<<16 | uint64(x[2])<<8 | uint64(x[3])
+	case t == 0xcf:
+		x, e := r.take(8)
+		if e != nil {
+			return 0, e
+		}
+		for _, b := range x {
+			v = v<<8 | uint64(b)
+		}
+	case t >= 0xe0 || (t >= 0xd0 && t <= 0xd3):
+		return 0, fmt.Errorf("sdk: reactive integer is negative")
+	default:
+		return 0, fmt.Errorf("sdk: reactive value is not an unsigned integer")
+	}
+	if bits < 64 && v >= uint64(1)<<bits {
+		return 0, fmt.Errorf("sdk: reactive integer exceeds u%d", bits)
+	}
+	return v, nil
+}
+func mpText(r *reactiveMPReader, min, max int) (string, error) {
+	t, err := r.tag()
+	if err != nil {
+		return "", err
+	}
+	var n int
+	switch {
+	case t >= 0xa0 && t <= 0xbf:
+		n = int(t - 0xa0)
+	case t == 0xd9:
+		x, e := r.take(1)
+		if e != nil {
+			return "", e
+		}
+		n = int(x[0])
+	case t == 0xda:
+		x, e := r.take(2)
+		if e != nil {
+			return "", e
+		}
+		n = int(x[0])<<8 | int(x[1])
+	case t == 0xdb:
+		x, e := r.take(4)
+		if e != nil {
+			return "", e
+		}
+		nn := uint64(x[0])<<24 | uint64(x[1])<<16 | uint64(x[2])<<8 | uint64(x[3])
+		if nn > uint64(max) {
+			return "", fmt.Errorf("sdk: reactive string exceeds bound")
+		}
+		n = int(nn)
+	default:
+		return "", fmt.Errorf("sdk: reactive value is not text")
+	}
+	if n < min || n > max {
+		return "", fmt.Errorf("sdk: reactive string exceeds bound")
+	}
+	b, e := r.take(n)
+	if e != nil {
+		return "", e
+	}
+	if !utf8.Valid(b) {
+		return "", fmt.Errorf("sdk: reactive text is not UTF-8")
+	}
+	return string(b), nil
+}
+func mpBinary(r *reactiveMPReader, min, max int) ([]byte, error) {
+	t, e := r.tag()
+	if e != nil {
+		return nil, e
+	}
+	var n int
+	switch {
+	case t == 0xc4:
+		x, e := r.take(1)
+		if e != nil {
+			return nil, e
+		}
+		n = int(x[0])
+	case t == 0xc5:
+		x, e := r.take(2)
+		if e != nil {
+			return nil, e
+		}
+		n = int(x[0])<<8 | int(x[1])
+	case t == 0xc6:
+		x, e := r.take(4)
+		if e != nil {
+			return nil, e
+		}
+		nn := uint64(x[0])<<24 | uint64(x[1])<<16 | uint64(x[2])<<8 | uint64(x[3])
+		if nn > uint64(max) {
+			return nil, fmt.Errorf("sdk: reactive binary exceeds bound")
+		}
+		n = int(nn)
+	default:
+		return nil, fmt.Errorf("sdk: reactive value is not binary")
+	}
+	if n < min || n > max {
+		return nil, fmt.Errorf("sdk: reactive binary exceeds bound")
+	}
+	b, e := r.take(n)
+	return append([]byte(nil), b...), e
+}
+func mpNil(r *reactiveMPReader) error {
+	t, e := r.tag()
+	if e != nil {
+		return e
+	}
+	if t != 0xc0 {
+		return fmt.Errorf("sdk: reactive optional value is not nil")
+	}
+	return nil
+}
+
+func scanReactiveMessagePack(b []byte) error {
+	if len(b) == 0 || len(b) > maxReactiveBody {
+		return fmt.Errorf("sdk: reactive MessagePack exceeds %d bytes", maxReactiveBody)
+	}
+	s := reactiveMPReader{b: b}
+	if err := scanMPValue(&s, 0); err != nil {
+		return err
+	}
+	if s.i != len(b) {
+		return fmt.Errorf("sdk: reactive MessagePack has trailing bytes")
+	}
+	return validateReactiveProtocol(b)
+}
+
+func validateReactiveProtocol(b []byte) error {
+	r := reactiveMPReader{b: b}
+	count, err := mpArrayCount(&r)
+	if err != nil {
+		return err
+	}
+	if count == 7 && looksLikeUint2(b[r.i:]) {
+		r = reactiveMPReader{b: b}
+		_, err = decodeMPEnvelope(&r, "", 0)
+		return err
+	}
+	if count > maxSnapshotItems {
+		return fmt.Errorf("sdk: reactive frame list array exceeds bound")
+	}
+	for i := 0; i < count; i++ {
+		if _, err = decodeMPEnvelope(&r, "", 0); err != nil {
+			return err
+		}
+	}
+	if r.i != len(b) {
+		return fmt.Errorf("sdk: reactive MessagePack has trailing bytes")
+	}
+	return nil
+}
+func scanMPValue(r *reactiveMPReader, depth int) error {
+	if depth > 64 {
+		return fmt.Errorf("sdk: reactive MessagePack nesting exceeds 64")
+	}
+	t, e := r.tag()
+	if e != nil {
+		return e
+	}
+	switch {
+	case t <= 0x7f || t >= 0xe0 || t == 0xc0 || t == 0xc2 || t == 0xc3:
+		return nil
+	case t >= 0x90 && t <= 0x9f:
+		n := int(t - 0x90)
+		if n > maxSnapshotItems {
+			return fmt.Errorf("sdk: reactive array exceeds bound")
+		}
+		for i := 0; i < n; i++ {
+			if e := scanMPValue(r, depth+1); e != nil {
+				return e
+			}
+		}
+		return nil
+	case t >= 0xa0 && t <= 0xbf:
+		return scanTakeBounded(r, int(t-0xa0), 262144)
+	case t >= 0x80 && t <= 0x8f || t == 0xde || t == 0xdf:
+		return fmt.Errorf("sdk: reactive MessagePack maps are forbidden")
+	case t >= 0xc4 && t <= 0xc6:
+		n, e := scanLength(r, []byte{1, 2, 4}[t-0xc4])
+		if e != nil {
+			return e
+		}
+		if n > 1<<20 {
+			return fmt.Errorf("sdk: reactive binary exceeds 1 MiB")
+		}
+		return scanTakeBounded(r, n, 1<<20)
+	case t >= 0xc7 && t <= 0xc9 || t >= 0xd4 && t <= 0xd8:
+		return fmt.Errorf("sdk: reactive MessagePack extensions are forbidden")
+	case t == 0xca || t == 0xcb:
+		return fmt.Errorf("sdk: reactive MessagePack floats are forbidden")
+	case t >= 0xcc && t <= 0xcf:
+		return scanTakeBounded(r, []int{1, 2, 4, 8}[t-0xcc], 8)
+	case t >= 0xd0 && t <= 0xd3:
+		return scanTakeBounded(r, []int{1, 2, 4, 8}[t-0xd0], 8)
+	case t >= 0xd9 && t <= 0xdb:
+		n, e := scanLength(r, []byte{1, 2, 4}[t-0xd9])
+		if e != nil {
+			return e
+		}
+		return scanTakeBounded(r, n, 262144)
+	case t == 0xdc || t == 0xdd:
+		n, e := scanLength(r, t-0xdc+2)
+		if e != nil {
+			return e
+		}
+		if n > maxSnapshotItems {
+			return fmt.Errorf("sdk: reactive array exceeds bound")
+		}
+		for i := 0; i < n; i++ {
+			if e := scanMPValue(r, depth+1); e != nil {
+				return e
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("sdk: reactive MessagePack tag 0x%x is invalid", t)
+	}
+}
+func scanLength(r *reactiveMPReader, width byte) (int, error) {
+	b, e := r.take(int(width))
+	if e != nil {
+		return 0, e
+	}
+	var n uint64
+	for _, v := range b {
+		n = n<<8 | uint64(v)
+	}
+	if n > uint64(^uint(0)>>1) {
+		return 0, fmt.Errorf("sdk: reactive length overflows")
+	}
+	return int(n), nil
+}
+func scanTakeBounded(r *reactiveMPReader, n, max int) error {
+	if n < 0 || n > max {
+		return fmt.Errorf("sdk: reactive value exceeds bound")
+	}
+	_, e := r.take(n)
+	return e
+}
+
+type reactiveMPMessage struct {
+	updates         []Update
+	checkpoint      Checkpoint
+	checkpointBytes []byte
+	offset          string
+	reset           *ResetError
+	snapshot        []Document
+	snapshotFields  []map[string]json.RawMessage
+}
+
+func decodeReactiveMessagePack(body []byte, view string, generation uint64) ([]Update, Checkpoint, string, *ResetError, error) {
+	if err := scanReactiveMessagePack(body); err != nil {
+		return nil, "", "", nil, err
+	}
+	r := reactiveMPReader{b: body}
+	count, err := mpArrayCount(&r)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
+	var messages []reactiveMPMessage
+	if count == 7 && looksLikeUint2(body[r.i:]) {
+		r = reactiveMPReader{b: body}
+		m, e := decodeMPEnvelope(&r, view, generation)
+		if e != nil {
+			return nil, "", "", nil, e
+		}
+		messages = []reactiveMPMessage{m}
+	} else {
+		if count > maxSnapshotItems {
+			return nil, "", "", nil, fmt.Errorf("sdk: reactive frame list exceeds bound")
+		}
+		for i := 0; i < count; i++ {
+			m, e := decodeMPEnvelope(&r, view, generation)
+			if e != nil {
+				return nil, "", "", nil, e
+			}
+			messages = append(messages, m)
+		}
+	}
+	var updates []Update
+	var cp Checkpoint
+	var offset string
+	var reset *ResetError
+	for _, m := range messages {
+		updates = append(updates, m.updates...)
+		if m.checkpoint != "" {
+			cp = m.checkpoint
+		}
+		if m.offset != "" {
+			offset = m.offset
+		}
+		if m.reset != nil {
+			reset = m.reset
+		}
+	}
+	return updates, cp, offset, reset, nil
+}
+
+func looksLikeUint2(b []byte) bool {
+	if len(b) == 0 {
+		return false
+	}
+	if b[0] == 2 {
+		return true
+	}
+	return len(b) >= 2 && b[0] == 0xcc && b[1] == 2
+}
+func decodeReactiveSnapshotMessagePack(body []byte, view string, generation uint64) ([]Document, Checkpoint, string, error) {
+	if err := scanReactiveMessagePack(body); err != nil {
+		return nil, "", "", err
+	}
+	r := reactiveMPReader{b: body}
+	count, err := mpArrayCount(&r)
+	if err != nil {
+		return nil, "", "", err
+	}
+	var messages []reactiveMPMessage
+	if count == 7 && looksLikeUint2(body[r.i:]) {
+		r = reactiveMPReader{b: body}
+		m, e := decodeMPEnvelope(&r, view, generation)
+		if e != nil {
+			return nil, "", "", e
+		}
+		messages = []reactiveMPMessage{m}
+	} else {
+		for i := 0; i < count; i++ {
+			m, e := decodeMPEnvelope(&r, view, generation)
+			if e != nil {
+				return nil, "", "", e
+			}
+			messages = append(messages, m)
+		}
+	}
+	var docs []Document
+	var cp Checkpoint
+	var off string
+	seenSnapshot := false
+	for _, m := range messages {
+		if m.snapshot != nil {
+			seenSnapshot = true
+		}
+		docs = append(docs, m.snapshot...)
+		if m.reset != nil {
+			seenSnapshot = true
+			docs = append(docs, m.reset.Snapshot...)
+		}
+		if m.checkpoint != "" {
+			cp = m.checkpoint
+		}
+		if m.offset != "" {
+			off = m.offset
+		}
+	}
+	if !seenSnapshot {
+		return nil, cp, off, fmt.Errorf("sdk: snapshot chunk has no snapshot frame")
+	}
+	return docs, cp, off, nil
+}
+func decodeMPEnvelope(r *reactiveMPReader, view string, generation uint64) (reactiveMPMessage, error) {
+	if err := r.exactArray(7); err != nil {
+		return reactiveMPMessage{}, err
+	}
+	major, e := mpUint(r, 32)
+	if e != nil {
+		return reactiveMPMessage{}, e
+	}
+	minor, e := mpUint(r, 32)
+	if e != nil {
+		return reactiveMPMessage{}, e
+	}
+	features, e := mpUint(r, 32)
+	if e != nil {
+		return reactiveMPMessage{}, e
+	}
+	tag, e := mpUint(r, 32)
+	if e != nil {
+		return reactiveMPMessage{}, e
+	}
+	if major != 2 || minor != 1 || features != 0 {
+		return reactiveMPMessage{}, fmt.Errorf("sdk: unsupported reactive MessagePack envelope")
+	}
+	if _, e = mpUint(r, 64); e != nil {
+		return reactiveMPMessage{}, e
+	}
+	if _, e = mpUint(r, 64); e != nil {
+		return reactiveMPMessage{}, e
+	}
+	return decodeMPBody(r, int(tag), view, generation)
+}
+
+func decodeMPSnapshot(r *reactiveMPReader, view string, generation uint64) ([]Document, []map[string]json.RawMessage, Checkpoint, error) {
+	if err := r.exactArray(6); err != nil {
+		return nil, nil, "", err
+	}
+	gotGeneration, e := mpUint(r, 64)
+	if e != nil {
+		return nil, nil, "", e
+	}
+	if generation != 0 && gotGeneration != generation {
+		return nil, nil, "", fmt.Errorf("sdk: reactive snapshot generation mismatch")
+	}
+	if _, e = mpUint(r, 64); e != nil {
+		return nil, nil, "", e
+	}
+	if _, e = mpUint(r, 64); e != nil {
+		return nil, nil, "", e
+	}
+	n, e := mpArrayCount(r)
+	if e != nil {
+		return nil, nil, "", e
+	}
+	if n > maxSnapshotItems {
+		return nil, nil, "", fmt.Errorf("sdk: reactive snapshot exceeds %d documents", maxSnapshotItems)
+	}
+	docs := make([]Document, 0, n)
+	allFields := make([]map[string]json.RawMessage, 0, n)
+	total := 0
+	for i := 0; i < n; i++ {
+		if err := r.exactArray(2); err != nil {
+			return nil, nil, "", err
+		}
+		id, e := mpText(r, 0, 256)
+		if e != nil {
+			return nil, nil, "", e
+		}
+		fields, e := mpArrayCount(r)
+		if e != nil {
+			return nil, nil, "", e
+		}
+		if fields > 1024 {
+			return nil, nil, "", fmt.Errorf("sdk: reactive projected fields exceed bound")
+		}
+		var body json.RawMessage
+		fieldValues := make(map[string]json.RawMessage, fields)
+		fieldBytes := 0
+		for j := 0; j < fields; j++ {
+			if err := r.exactArray(2); err != nil {
+				return nil, nil, "", err
+			}
+			path, e := mpText(r, 1, 256)
+			if e != nil {
+				return nil, nil, "", e
+			}
+			value, e := mpBinary(r, 0, 1<<20)
+			if e != nil {
+				return nil, nil, "", e
+			}
+			fieldBytes += len(value)
+			if fieldBytes > 1<<20 {
+				return nil, nil, "", fmt.Errorf("sdk: reactive document exceeds 1 MiB")
+			}
+			fieldValues[path] = cloneRaw(value)
+			if path == "body" {
+				body = cloneRaw(value)
+			}
+		}
+		total += len(body)
+		if total > maxSnapshotBytes {
+			return nil, nil, "", fmt.Errorf("sdk: reactive snapshot exceeds %d bytes", maxSnapshotBytes)
+		}
+		docs = append(docs, Document{ID: id, Body: body})
+		allFields = append(allFields, fieldValues)
+	}
+	if _, e = mpText(r, 0, 64); e != nil {
+		return nil, nil, "", e
+	}
+	cp, e := mpBinary(r, 1, 4096)
+	if e != nil {
+		return nil, nil, "", e
+	}
+	return docs, allFields, Checkpoint(string(cp)), nil
+}
+
+func decodeMPOperation(r *reactiveMPReader) (Update, error) {
+	n, e := mpArrayCount(r)
+	if e != nil {
+		return Update{}, e
+	}
+	if n < 1 || n > 4 {
+		return Update{}, fmt.Errorf("sdk: reactive operation has invalid shape")
+	}
+	kind, e := mpUint(r, 32)
+	if e != nil {
+		return Update{}, e
+	}
+	switch kind {
+	case 1:
+		if n != 4 {
+			return Update{}, fmt.Errorf("sdk: invalid insert operation")
+		}
+		id, e := mpText(r, 0, 256)
+		if e != nil {
+			return Update{}, e
+		}
+		if _, e = mpUint(r, 32); e != nil {
+			return Update{}, e
+		}
+		body, fields, e := decodeMPFields(r)
+		if e != nil {
+			return Update{}, e
+		}
+		return Update{Kind: UpdateInsert, ID: id, Body: body, Fields: fields}, nil
+	case 2:
+		if n != 3 {
+			return Update{}, fmt.Errorf("sdk: invalid update operation")
+		}
+		id, e := mpText(r, 0, 256)
+		if e != nil {
+			return Update{}, e
+		}
+		body, fields, e := decodeMPFields(r)
+		if e != nil {
+			return Update{}, e
+		}
+		return Update{Kind: UpdateUpdate, ID: id, Body: body, Fields: fields}, nil
+	case 3:
+		if n != 3 {
+			return Update{}, fmt.Errorf("sdk: invalid patch operation")
+		}
+		id, e := mpText(r, 0, 256)
+		if e != nil {
+			return Update{}, e
+		}
+		changes, e := mpArrayCount(r)
+		if e != nil {
+			return Update{}, e
+		}
+		if changes > 1024 {
+			return Update{}, fmt.Errorf("sdk: reactive patch exceeds field bound")
+		}
+		var body json.RawMessage
+		fieldsMap := make(map[string]json.RawMessage, changes)
+		total := 0
+		for i := 0; i < changes; i++ {
+			if err := r.exactArray(2); err != nil {
+				return Update{}, err
+			}
+			path, e := mpText(r, 1, 256)
+			if e != nil {
+				return Update{}, e
+			}
+			t, e := r.tag()
+			if e != nil {
+				return Update{}, e
+			}
+			if t == 0xc0 {
+				fieldsMap[path] = nil
+				continue
+			}
+			r.i--
+			value, e := mpBinary(r, 0, 1<<20)
+			if e != nil {
+				return Update{}, e
+			}
+			total += len(value)
+			if total > 1<<20 {
+				return Update{}, fmt.Errorf("sdk: reactive patch exceeds 1 MiB")
+			}
+			if path == "body" {
+				body = cloneRaw(value)
+			}
+			fieldsMap[path] = cloneRaw(value)
+		}
+		return Update{Kind: UpdatePatch, ID: id, Body: body, Fields: fieldsMap}, nil
+	case 4:
+		if n != 2 {
+			return Update{}, fmt.Errorf("sdk: invalid remove operation")
+		}
+		id, e := mpText(r, 0, 256)
+		if e != nil {
+			return Update{}, e
+		}
+		return Update{Kind: UpdateRemove, ID: id}, nil
+	case 5:
+		if n != 3 {
+			return Update{}, fmt.Errorf("sdk: invalid move operation")
+		}
+		id, e := mpText(r, 0, 256)
+		if e != nil {
+			return Update{}, e
+		}
+		if _, e = mpUint(r, 32); e != nil {
+			return Update{}, e
+		}
+		return Update{Kind: UpdateMove, ID: id}, nil
+	}
+	return Update{}, fmt.Errorf("sdk: unknown reactive operation %d", kind)
+}
+func decodeMPFields(r *reactiveMPReader) (json.RawMessage, map[string]json.RawMessage, error) {
+	n, e := mpArrayCount(r)
+	if e != nil {
+		return nil, nil, e
+	}
+	if n > 1024 {
+		return nil, nil, fmt.Errorf("sdk: reactive projected fields exceed bound")
+	}
+	var body json.RawMessage
+	fields := make(map[string]json.RawMessage, n)
+	total := 0
+	for i := 0; i < n; i++ {
+		if err := r.exactArray(2); err != nil {
+			return nil, nil, err
+		}
+		path, e := mpText(r, 1, 256)
+		if e != nil {
+			return nil, nil, e
+		}
+		value, e := mpBinary(r, 0, 1<<20)
+		if e != nil {
+			return nil, nil, e
+		}
+		total += len(value)
+		if total > 1<<20 {
+			return nil, nil, fmt.Errorf("sdk: reactive operation exceeds 1 MiB")
+		}
+		fields[path] = cloneRaw(value)
+		if path == "body" {
+			body = cloneRaw(value)
+		}
+	}
+	return body, fields, nil
+}
+
+func cloneProjectedFields(in map[string]json.RawMessage) map[string]json.RawMessage {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(in))
+	for key, value := range in {
+		out[key] = cloneRaw(value)
+	}
+	return out
+}
+
+func decodeMPBody(r *reactiveMPReader, tag int, view string, generation uint64) (reactiveMPMessage, error) {
+	switch tag {
+	case 1: // subscribe (accepted by the corpus validator; HTTP uses JSON attach)
+		if err := r.exactArray(4); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		if _, err := mpText(r, 0, 128); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		if _, err := mpText(r, 0, 262144); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		if _, err := mpBinary(r, 0, 1<<20); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		if r.i < len(r.b) && r.b[r.i] == 0xc0 {
+			_ = mpNil(r)
+		} else if _, err := mpBinary(r, 1, 4096); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		return reactiveMPMessage{}, nil
+	case 2:
+		if err := r.exactArray(1); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		if _, err := mpText(r, 0, 128); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		return reactiveMPMessage{}, nil
+	case 7:
+		if err := r.exactArray(2); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		if _, err := mpText(r, 0, 128); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		if _, err := mpBinary(r, 1, 4096); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		return reactiveMPMessage{}, nil
+	case 3: // snapshot
+		if err := r.exactArray(2); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		subscription, e := mpText(r, 0, 128)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		docs, snapshotFields, cp, e := decodeMPSnapshot(r, view, generation)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		u := make([]Update, 0, len(docs))
+		for _, d := range docs {
+			fields := map[string]json.RawMessage(nil)
+			if len(u) < len(snapshotFields) {
+				fields = cloneProjectedFields(snapshotFields[len(u)])
+			}
+			u = append(u, Update{Kind: UpdateSnapshot, Checkpoint: cp, CheckpointBytes: []byte(cp), ID: d.ID, Collection: d.Collection, Body: cloneRaw(d.Body), Fields: fields})
+		}
+		_ = subscription
+		return reactiveMPMessage{updates: u, checkpoint: cp, checkpointBytes: []byte(cp), snapshot: docs, snapshotFields: snapshotFields}, nil
+	case 4: // delta
+		if err := r.exactArray(7); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		subscription, e := mpText(r, 0, 128)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		viewGeneration, e := mpUint(r, 64)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		from, e := mpUint(r, 64)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		to, e := mpUint(r, 64)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		if to < from {
+			return reactiveMPMessage{}, fmt.Errorf("sdk: reactive delta revision regressed")
+		}
+		n, e := mpArrayCount(r)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		if n > 1024 {
+			return reactiveMPMessage{}, fmt.Errorf("sdk: reactive delta exceeds operation bound")
+		}
+		updates := make([]Update, 0, n)
+		for i := 0; i < n; i++ {
+			u, e := decodeMPOperation(r)
+			if e != nil {
+				return reactiveMPMessage{}, e
+			}
+			u.Checkpoint = ""
+			updates = append(updates, u)
+		}
+		if _, e = mpText(r, 0, 64); e != nil {
+			return reactiveMPMessage{}, e
+		}
+		cpBytes, e := mpBinary(r, 1, 4096)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		cp := Checkpoint(string(cpBytes))
+		for i := range updates {
+			updates[i].Checkpoint, updates[i].CheckpointBytes = cp, []byte(cp)
+		}
+		if generation != 0 && viewGeneration != generation {
+			return reactiveMPMessage{}, fmt.Errorf("sdk: reactive delta generation mismatch")
+		}
+		_ = subscription
+		return reactiveMPMessage{updates: updates, checkpoint: cp, checkpointBytes: []byte(cp), offset: strconv.FormatUint(to, 10)}, nil
+	case 5: // reset with replacement snapshot
+		if err := r.exactArray(3); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		subscription, e := mpText(r, 0, 128)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		reason, e := decodeMPResetReason(r)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		docs, _, cp, e := decodeMPSnapshot(r, view, 0)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		reset := &ResetError{Reason: reason, ViewID: view, Generation: generation, Message: "reactive view requires a replacement snapshot"}
+		reset.Snapshot = cloneDocuments(docs)
+		reset.CheckpointBytes = []byte(cp)
+		u := Update{Kind: UpdateReset, Checkpoint: cp, CheckpointBytes: []byte(cp), Snapshot: cloneDocuments(docs), Reset: reset}
+		_ = subscription
+		return reactiveMPMessage{updates: []Update{u}, checkpoint: cp, checkpointBytes: []byte(cp), reset: reset}, nil
+	case 6:
+		if err := r.exactArray(0); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		return reactiveMPMessage{}, nil
+	case 8: // authorization changed includes replacement snapshot
+		if err := r.exactArray(4); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		subscription, e := mpText(r, 0, 128)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		if _, e = mpUint(r, 64); e != nil {
+			return reactiveMPMessage{}, e
+		}
+		n, e := mpArrayCount(r)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		if n > maxSnapshotItems {
+			return reactiveMPMessage{}, fmt.Errorf("sdk: reactive removed list exceeds bound")
+		}
+		for i := 0; i < n; i++ {
+			if _, e = mpText(r, 0, 256); e != nil {
+				return reactiveMPMessage{}, e
+			}
+		}
+		docs, _, cp, e := decodeMPSnapshot(r, view, 0)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		reset := &ResetError{Reason: ResetAuthChanged, ViewID: view, Generation: generation, Message: "authorization changed; replacement snapshot supplied"}
+		reset.Snapshot = cloneDocuments(docs)
+		reset.CheckpointBytes = []byte(cp)
+		_ = subscription
+		return reactiveMPMessage{updates: []Update{{Kind: UpdateReset, Checkpoint: cp, CheckpointBytes: []byte(cp), Snapshot: cloneDocuments(docs), Reset: reset}}, checkpoint: cp, checkpointBytes: []byte(cp), reset: reset}, nil
+	case 9:
+		if err := r.exactArray(1); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		region, e := mpText(r, 1, 64)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		reset := &ResetError{Reason: ResetRegionMoved, ViewID: view, Generation: generation, Message: "reactive view moved to region " + normalizeRegion(region)}
+		return reactiveMPMessage{reset: reset}, nil
+	case 10:
+		if err := r.exactArray(2); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		code, e := mpUint(r, 32)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		if code < 1 || code > 8 {
+			return reactiveMPMessage{}, fmt.Errorf("sdk: unknown reactive error enum %d", code)
+		}
+		var detail string
+		if r.i < len(r.b) && r.b[r.i] == 0xc0 {
+			_ = mpNil(r)
+		} else {
+			detail, e = mpText(r, 0, 256)
+			if e != nil {
+				return reactiveMPMessage{}, e
+			}
+		}
+		reason := ResetGeneration
+		if code == 3 || code == 4 {
+			reason = ResetAuthChanged
+		}
+		if code == 5 {
+			reason = ResetCheckpointCurrent
+		}
+		if code == 6 {
+			reason = ResetBackpressure
+		}
+		if code == 7 || code == 8 {
+			return reactiveMPMessage{reset: &ResetError{Reason: ResetReconnect, ViewID: view, Generation: generation, Message: detail}}, nil
+		}
+		reset := &ResetError{Reason: reason, ViewID: view, Generation: generation, Message: detail}
+		return reactiveMPMessage{reset: reset}, nil
+	case 11:
+		if err := r.exactArray(1); err != nil {
+			return reactiveMPMessage{}, err
+		}
+		mode, e := mpUint(r, 32)
+		if e != nil {
+			return reactiveMPMessage{}, e
+		}
+		if mode == 1 {
+			return reactiveMPMessage{reset: &ResetError{Reason: ResetBackpressure, ViewID: view, Generation: generation, Message: "reactive server requested backpressure pause"}}, nil
+		}
+		if mode != 2 {
+			return reactiveMPMessage{}, fmt.Errorf("sdk: unknown reactive backpressure mode")
+		}
+		return reactiveMPMessage{}, nil
+	default:
+		return reactiveMPMessage{}, fmt.Errorf("sdk: unknown reactive MessagePack message tag %d", tag)
+	}
+}
+func decodeMPResetReason(r *reactiveMPReader) (ResetReason, error) {
+	v, e := mpUint(r, 32)
+	if e != nil {
+		return "", e
+	}
+	switch v {
+	case 1:
+		return ResetExpired, nil
+	case 2:
+		return ResetRetentionAdvanced, nil
+	case 3:
+		return ResetGeneration, nil
+	case 4:
+		return ResetCheckpointCurrent, nil
+	case 5:
+		return ResetViewDiverged, nil
+	case 6:
+		return ResetOversized, nil
+	case 7:
+		return ResetInvalidOperations, nil
+	case 8:
+		return ResetInvalidCheckpoint, nil
+	case 9:
+		return ResetBackpressure, nil
+	}
+	return "", fmt.Errorf("sdk: unknown reactive reset reason %d", v)
 }

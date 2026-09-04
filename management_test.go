@@ -23,6 +23,9 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "prod", Placement: "GRU"})
 		case "/api/v1/databases/prod":
+			if r.Method == http.MethodDelete && r.Header.Get("X-TerraScale-Delete-Confirmation") != "prod" {
+				t.Errorf("delete confirmation = %q", r.Header.Get("X-TerraScale-Delete-Confirmation"))
+			}
 			_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "prod", Placement: "GRU"})
 		case "/api/v1/databases/prod/restore":
 			_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "prod", Deleted: false})
@@ -73,7 +76,7 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 	if _, err = c.Databases.GetDatabase(context.Background(), "prod"); err != nil {
 		t.Fatalf("GetDatabase: %v", err)
 	}
-	if _, err = c.Databases.DeleteDatabase(context.Background(), "prod", opts...); err != nil {
+	if _, err = c.Databases.DeleteDatabase(context.Background(), "prod", append(opts, WithDeleteConfirmation("prod"))...); err != nil {
 		t.Fatalf("DeleteDatabase: %v", err)
 	}
 	if _, err = c.Databases.RestoreDatabase(context.Background(), "prod", opts...); err != nil {
@@ -83,11 +86,11 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(collections.Collections, []string{"users"}) {
 		t.Fatalf("ListCollections: result=%+v err=%v", collections, err)
 	}
-	if _, err = c.Databases.GetCollectionSchema(context.Background(), "prod", "users"); err != nil {
-		t.Fatalf("GetCollectionSchema: %v", err)
+	if _, err = c.Databases.GetCollectionSchema(context.Background(), "prod", "users"); err == nil {
+		t.Fatal("GetCollectionSchema unexpectedly succeeded")
 	}
-	if _, err = c.Databases.PutCollectionSchema(context.Background(), "prod", "users", CollectionSchema{Name: "users"}, opts...); err != nil {
-		t.Fatalf("PutCollectionSchema: %v", err)
+	if _, err = c.Databases.PutCollectionSchema(context.Background(), "prod", "users", CollectionSchema{Name: "users"}, opts...); err == nil {
+		t.Fatal("PutCollectionSchema unexpectedly succeeded")
 	}
 	if _, err = c.DatabaseBranches.ListBranches(context.Background(), "prod", PageRequest{}); err != nil {
 		t.Fatalf("ListBranches: %v", err)
@@ -101,26 +104,14 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 	if _, err = c.Backups.RestoreBackup(context.Background(), "prod", RestoreBackupRequest{Name: "restore"}, opts...); err != nil {
 		t.Fatalf("RestoreBackup: %v", err)
 	}
-	usage, err := c.Usage.GetDatabaseUsage(context.Background(), "prod")
-	if err != nil || usage.Writes != 3 || usage.StorageBytes != 42 {
-		t.Fatalf("GetDatabaseUsage: result=%+v err=%v", usage, err)
+	if usage, err := c.Usage.GetDatabaseUsage(context.Background(), "prod"); err == nil || usage != nil {
+		t.Fatalf("GetDatabaseUsage unexpectedly succeeded: result=%+v err=%v", usage, err)
 	}
-	keys, err := c.Access.ListAPIKeys(context.Background(), "p1", "cursor-1", 25)
-	if err != nil || len(keys.APIKeys) != 1 {
-		t.Fatalf("ListAPIKeys: result=%+v err=%v", keys, err)
-	}
-	createdKey, err := c.Access.CreateAPIKey(context.Background(), "p1", CreateAPIKeyRequest{Name: "deploy"}, opts...)
-	if err != nil || createdKey.Secret != "secret" {
-		t.Fatalf("CreateAPIKey: result=%+v err=%v", createdKey, err)
-	}
-	if _, err = c.Access.RotateAPIKey(context.Background(), "p1", "key-1", opts...); err != nil {
-		t.Fatalf("RotateAPIKey: %v", err)
-	}
-	if _, err = c.Access.RevokeAPIKey(context.Background(), "p1", "key-1", opts...); err != nil {
-		t.Fatalf("RevokeAPIKey: %v", err)
+	if _, err := c.Access.ListAPIKeys(context.Background(), "p1", "cursor-1", 25); err == nil {
+		t.Fatal("ListAPIKeys unexpectedly succeeded")
 	}
 
-	if !reflect.DeepEqual(got[0], "GET /api/v1/databases?skip=2&take=10") {
+	if !reflect.DeepEqual(got[0], "GET /api/v1/databases") {
 		t.Fatalf("pagination route = %q", got[0])
 	}
 }
@@ -138,6 +129,10 @@ func TestTerraBaseManagementValidationCancellationAndIdempotency(t *testing.T) {
 	if _, err := c.Databases.DeleteDatabase(context.Background(), "prod"); !errors.As(err, &idem) {
 		t.Fatalf("missing idempotency key should return IdempotencyError, got %T: %v", err, err)
 	}
+	var confirmation *DeleteConfirmationError
+	if _, err := c.Databases.DeleteDatabase(context.Background(), "prod", WithIdempotencyKey("delete-1")); !errors.As(err, &confirmation) {
+		t.Fatalf("missing delete confirmation should return DeleteConfirmationError, got %T: %v", err, err)
+	}
 	var pageErr *PaginationError
 	if _, err := c.Databases.ListDatabases(context.Background(), PageRequest{Take: -1}); !errors.As(err, &pageErr) {
 		t.Fatalf("invalid page should return PaginationError, got %T: %v", err, err)
@@ -149,5 +144,26 @@ func TestTerraBaseManagementValidationCancellationAndIdempotency(t *testing.T) {
 	}
 	if err := validatePlacement([]RegionCode{RegionGRU, RegionGRU}, ""); err == nil {
 		t.Fatal("duplicate placement should be rejected")
+	}
+	var gap *ContractGapError
+	if _, err := c.Organizations.List(context.Background(), 0, 10); !errors.As(err, &gap) || gap.Path != "/api/v1/organizations" {
+		t.Fatalf("unpublished organization route should return ContractGapError, got %T: %v", err, err)
+	}
+}
+
+func TestPlacementLockNormalizationAndBounds(t *testing.T) {
+	lock, err := normalizePlacementLock(PlacementLock(" gru, FRA,gru "))
+	if err != nil || lock != PlacementLock("GRU,FRA") {
+		t.Fatalf("normalized lock = %q, err=%v", lock, err)
+	}
+	if err := validatePlacement([]RegionCode{RegionFRA}, PlacementLockBROnly); err == nil {
+		t.Fatal("BR-only lock admitted FRA")
+	}
+	if err := validatePlacement([]RegionCode{RegionGRU}, PlacementLockEUOnly); err == nil {
+		t.Fatal("EU-only lock admitted GRU")
+	}
+	var validation *ValidationError
+	if err := validateDatabaseName("Upper"); !errors.As(err, &validation) {
+		t.Fatalf("uppercase database name error = %T: %v", err, err)
 	}
 }

@@ -1,14 +1,14 @@
-// Management clients mirroring ts-typescript src/client.ts path templates
-// (sdk-route-manifest.json, routeCount 60): onboarding, organizations,
-// regions, saved queries, databases, branches, backups, access, usage,
-// audit, notifications.
+// Management clients for the published TerraBase /api/v1 contract. The
+// direct database, region-status, backup, branch, and index routes below are
+// contract-backed. Compatibility clients for dashboard/project operations
+// remain typed but fail closed with ContractGapError until those routes are
+// published; they never send invented requests.
 package sdk
 
 import (
 	"context"
 	"fmt"
 	"net/url"
-	"strconv"
 	"strings"
 )
 
@@ -39,6 +39,7 @@ type Region struct {
 	Code        RegionCode `json:"code"`
 	DisplayName string     `json:"displayName,omitempty"`
 	Available   bool       `json:"available"`
+	Healthy     bool       `json:"healthy,omitempty"`
 }
 
 // SavedQuery is a named saved query.
@@ -102,9 +103,78 @@ func (e *IdempotencyError) Error() string {
 	return "sdk: management mutation idempotency key " + e.Reason
 }
 
-// PlacementLock is the residency constraint attached to a database.  It is
-// immutable for a database and is checked by TerraBase for every derived
-// artifact (branches, backups, restores, and exports).
+// DeleteConfirmationError reports a destructive operation that did not carry
+// the resource identity as an explicit confirmation.  The confirmation is a
+// separate option so a caller cannot accidentally turn a read into a delete
+// by reusing a generic request option set.
+type DeleteConfirmationError struct {
+	Resource string
+}
+
+func (e *DeleteConfirmationError) Error() string {
+	if e == nil || e.Resource == "" {
+		return "sdk: delete confirmation is required"
+	}
+	return fmt.Sprintf("sdk: delete confirmation is required for %q (use WithDeleteConfirmation)", e.Resource)
+}
+
+// Unwrap keeps generic validation handling useful while exposing the more
+// specific destructive-operation error through errors.As.
+func (e *DeleteConfirmationError) Unwrap() error {
+	return &ValidationError{Field: "delete confirmation", Message: "must match the resource identity"}
+}
+
+// ContractGapError identifies an SDK operation whose route is not usable in
+// the pinned TerraBase contract.  Method and Path are contract metadata, not
+// a best-effort URL: a gap is returned before any HTTP request is attempted.
+type ContractGapError struct {
+	Operation string
+	Method    string
+	Path      string
+	Code      string
+	Reason    string
+	Fix       string
+}
+
+func (e *ContractGapError) Error() string {
+	if e == nil {
+		return "sdk: contract gap"
+	}
+	route := e.Operation
+	if e.Method != "" || e.Path != "" {
+		route = fmt.Sprintf("%s %s", e.Method, e.Path)
+		if e.Operation != "" {
+			route += " (" + e.Operation + ")"
+		}
+	}
+	message := fmt.Sprintf("sdk: contract gap: %s", route)
+	if e.Reason != "" {
+		message += ": " + e.Reason
+	}
+	if e.Fix != "" {
+		message += "; fix: " + e.Fix
+	}
+	return message
+}
+
+func contractGap(ctx context.Context, operation, method, path, reason, fix string) error {
+	if err := managementContext(ctx); err != nil {
+		return err
+	}
+	return &ContractGapError{
+		Operation: operation,
+		Method:    method,
+		Path:      path,
+		Code:      "contract_gap",
+		Reason:    reason,
+		Fix:       fix,
+	}
+}
+
+// PlacementLock is the residency constraint attached to a database. It is
+// immutable for a database and is checked by TerraBase on the published
+// branch/restore paths. The export route is currently pending and is not
+// exposed as a working SDK operation.
 type PlacementLock string
 
 const (
@@ -119,7 +189,6 @@ type DatabaseRecord struct {
 	Residency PlacementLock `json:"residency"`
 	Deleted   bool          `json:"deleted"`
 	CreatedAt int64         `json:"created_at"`
-	DeletedAt *int64        `json:"deleted_at,omitempty"`
 	Parent    *string       `json:"parent,omitempty"`
 }
 
@@ -143,14 +212,10 @@ type CreateBranchRequest struct {
 	At   *int64 `json:"at,omitempty"`
 }
 
-// BranchRecord is a direct TerraBase branch record.
-type BranchRecord struct {
-	Name      string        `json:"name"`
-	Placement string        `json:"placement,omitempty"`
-	Residency PlacementLock `json:"residency,omitempty"`
-	Parent    *string       `json:"parent,omitempty"`
-	Deleted   bool          `json:"deleted"`
-}
+// BranchRecord is a direct TerraBase branch record. TerraBase returns the
+// same metadata shape for branches and databases, including creation time and
+// the immutable placement lock.
+type BranchRecord = DatabaseRecord
 
 // BranchPage is the direct branch-list response.
 type BranchPage struct {
@@ -303,17 +368,6 @@ type Notification struct {
 	Title string `json:"title,omitempty"`
 }
 
-func pageQuery(skip, take int) url.Values {
-	query := url.Values{}
-	if skip > 0 {
-		query.Set("skip", strconv.Itoa(skip))
-	}
-	if take > 0 {
-		query.Set("take", strconv.Itoa(take))
-	}
-	return query
-}
-
 func requireID(name, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return &ValidationError{Field: name, Message: "cannot be empty"}
@@ -338,8 +392,9 @@ func validatePage(page PageRequest) error {
 	return nil
 }
 
-// PageRequest is the bounded offset pagination used by the published
-// management contract. A zero Take means the server default.
+// PageRequest is retained for source compatibility with the pre-contract
+// SDK. The current TerraBase management responses do not publish pagination;
+// callers must use the complete bounded response.
 type PageRequest struct {
 	Skip int
 	Take int
@@ -351,8 +406,21 @@ func managementMutation(opts []RequestOption) error {
 	if rc.noIdempotency || key == "" {
 		return &IdempotencyError{Reason: "must be nonblank"}
 	}
-	if len(key) > 128 {
+	if len([]byte(key)) > 128 {
 		return &IdempotencyError{Reason: "must be at most 128 characters"}
+	}
+	for _, char := range []byte(key) {
+		if char < 0x20 || char == 0x7f {
+			return &IdempotencyError{Reason: "must not contain control characters"}
+		}
+	}
+	return nil
+}
+
+func deleteConfirmation(opts []RequestOption, resource string) error {
+	provided := strings.TrimSpace(resolveRequestOptions(opts).deleteConfirmation)
+	if provided == "" || provided != resource {
+		return &DeleteConfirmationError{Resource: resource}
 	}
 	return nil
 }
@@ -374,6 +442,9 @@ func validatePlacement(placement []RegionCode, lock PlacementLock) error {
 	}
 	if lock == "" {
 		return nil
+	}
+	if _, err := normalizePlacementLock(lock); err != nil {
+		return err
 	}
 	allowed := map[RegionCode]struct{}{}
 	switch lock {
@@ -398,11 +469,60 @@ func validatePlacement(placement []RegionCode, lock PlacementLock) error {
 	return nil
 }
 
+func normalizePlacementLock(lock PlacementLock) (PlacementLock, error) {
+	value := strings.TrimSpace(string(lock))
+	if value == "" {
+		return "", nil
+	}
+	if value == string(PlacementLockEUOnly) || value == string(PlacementLockBROnly) {
+		return PlacementLock(value), nil
+	}
+	seen := map[RegionCode]struct{}{}
+	regions := make([]string, 0, 3)
+	for _, item := range strings.Split(value, ",") {
+		region, err := ParseRegionCode(item)
+		if err != nil {
+			return "", &ValidationError{Field: "residency", Message: "must be eu-only, br-only, or a comma-separated region list"}
+		}
+		if _, ok := seen[region]; ok {
+			continue
+		}
+		seen[region] = struct{}{}
+		regions = append(regions, string(region))
+	}
+	if len(regions) == 0 {
+		return "", &ValidationError{Field: "residency", Message: "must name at least one region"}
+	}
+	return PlacementLock(strings.Join(regions, ",")), nil
+}
+
 func databasePath(name string) (string, error) {
-	if err := requireID("database name", name); err != nil {
+	if err := validateDatabaseName(name); err != nil {
 		return "", err
 	}
 	return "/api/v1/databases/" + url.PathEscape(name), nil
+}
+
+// validateDatabaseName mirrors the TerraBase control-plane identifier bound:
+// 1-63 lowercase ASCII letters, digits, or dashes, with an alphanumeric edge.
+func validateDatabaseName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return &ValidationError{Field: "database name", Message: "cannot be empty"}
+	}
+	if len([]byte(name)) > 63 {
+		return &ValidationError{Field: "database name", Message: "must be at most 63 bytes"}
+	}
+	for index, char := range []byte(name) {
+		letter := char >= 'a' && char <= 'z'
+		digit := char >= '0' && char <= '9'
+		if !(letter || digit || char == '-') {
+			return &ValidationError{Field: "database name", Message: "must use lowercase letters, digits, or dashes"}
+		}
+		if (index == 0 || index == len(name)-1) && char == '-' {
+			return &ValidationError{Field: "database name", Message: "must start and end with a letter or digit"}
+		}
+	}
+	return nil
 }
 
 func collectionPath(database, collection string) (string, error) {
@@ -421,36 +541,23 @@ type OnboardingClient struct{ c *Client }
 
 // GetState returns onboarding state.
 func (o *OnboardingClient) GetState(ctx context.Context, opts ...RequestOption) (map[string]any, error) {
-	var out map[string]any
-	if err := o.c.do(ctx, "GET", "/api/v1/onboarding", nil, nil, &out, "onboarding.getState", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return nil, contractGap(ctx, "onboarding.getState", "GET", "/api/v1/onboarding",
+		"the TerraBase public contract does not publish onboarding routes",
+		"create databases through the published /api/v1/databases route")
 }
 
 // CreateOrganization creates the onboarding organization.
 func (o *OnboardingClient) CreateOrganization(ctx context.Context, name string, opts ...RequestOption) (map[string]any, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("sdk: organization name cannot be empty")
-	}
-	var out map[string]any
-	if err := o.c.do(ctx, "POST", "/api/v1/onboarding/organization", nil, map[string]any{"name": name}, &out, "onboarding.organization.create", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	_ = name
+	return nil, contractGap(ctx, "onboarding.organization.create", "POST", "/api/v1/onboarding/organization",
+		"the TerraBase public contract does not publish onboarding routes", "use the dashboard control plane")
 }
 
 // CreateProject creates the onboarding project.
 func (o *OnboardingClient) CreateProject(ctx context.Context, name string, regions []RegionCode, backupRegion RegionCode, opts ...RequestOption) (map[string]any, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("sdk: project name cannot be empty")
-	}
-	var out map[string]any
-	body := map[string]any{"name": name, "regions": regions, "backupRegion": backupRegion}
-	if err := o.c.do(ctx, "POST", "/api/v1/onboarding/project", nil, body, &out, "onboarding.project.create", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	_, _, _ = name, regions, backupRegion
+	return nil, contractGap(ctx, "onboarding.project.create", "POST", "/api/v1/onboarding/project",
+		"the TerraBase public contract does not publish onboarding routes", "use the dashboard control plane")
 }
 
 // OrganizationsClient mirrors organizations.* routes.
@@ -458,71 +565,44 @@ type OrganizationsClient struct{ c *Client }
 
 // List pages organizations.
 func (o *OrganizationsClient) List(ctx context.Context, skip, take int, opts ...RequestOption) ([]Organization, error) {
-	var out []Organization
-	if err := o.c.do(ctx, "GET", "/api/v1/organizations", pageQuery(skip, take), nil, &out, "organizations.list", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	_, _ = skip, take
+	return nil, contractGap(ctx, "organizations.list", "GET", "/api/v1/organizations",
+		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
 }
 
 // Create creates an organization.
 func (o *OrganizationsClient) Create(ctx context.Context, name string, opts ...RequestOption) (*Organization, error) {
-	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("sdk: organization name cannot be empty")
-	}
-	var out Organization
-	if err := o.c.do(ctx, "POST", "/api/v1/organizations", nil, map[string]any{"name": name}, &out, "organizations.create", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_ = name
+	return nil, contractGap(ctx, "organizations.create", "POST", "/api/v1/organizations",
+		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
 }
 
 // Get fetches an organization.
 func (o *OrganizationsClient) Get(ctx context.Context, organizationID string, opts ...RequestOption) (*Organization, error) {
-	if err := requireID("organization id", organizationID); err != nil {
-		return nil, err
-	}
-	var out Organization
-	path := "/api/v1/organizations/" + url.PathEscape(organizationID)
-	if err := o.c.do(ctx, "GET", path, nil, nil, &out, "organizations.get", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_ = organizationID
+	return nil, contractGap(ctx, "organizations.get", "GET", "/api/v1/organizations/{organizationId}",
+		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
 }
 
 // Update renames an organization.
 func (o *OrganizationsClient) Update(ctx context.Context, organizationID, name string, opts ...RequestOption) (*Organization, error) {
-	if err := requireID("organization id", organizationID); err != nil {
-		return nil, err
-	}
-	var out Organization
-	path := "/api/v1/organizations/" + url.PathEscape(organizationID)
-	if err := o.c.do(ctx, "PATCH", path, nil, map[string]any{"name": name}, &out, "organizations.update", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _ = organizationID, name
+	return nil, contractGap(ctx, "organizations.update", "PATCH", "/api/v1/organizations/{organizationId}",
+		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
 }
 
 // Leave leaves an organization.
 func (o *OrganizationsClient) Leave(ctx context.Context, organizationID string, opts ...RequestOption) error {
-	if err := requireID("organization id", organizationID); err != nil {
-		return err
-	}
-	path := "/api/v1/organizations/" + url.PathEscape(organizationID) + ":leave"
-	return o.c.do(ctx, "POST", path, nil, nil, nil, "organizations.leave", opts...)
+	_ = organizationID
+	return contractGap(ctx, "organizations.leave", "POST", "/api/v1/organizations/{organizationId}:leave",
+		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
 }
 
 // ListProjects pages an organization's projects.
 func (o *OrganizationsClient) ListProjects(ctx context.Context, organizationID string, skip, take int, opts ...RequestOption) ([]Project, error) {
-	if err := requireID("organization id", organizationID); err != nil {
-		return nil, err
-	}
-	var out []Project
-	path := "/api/v1/organizations/" + url.PathEscape(organizationID) + "/projects"
-	if err := o.c.do(ctx, "GET", path, pageQuery(skip, take), nil, &out, "organizations.projects.list", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	_, _, _ = organizationID, skip, take
+	return nil, contractGap(ctx, "organizations.projects.list", "GET", "/api/v1/organizations/{organizationId}/projects",
+		"the TerraBase public contract does not publish organization routes", "use the dashboard control plane")
 }
 
 // RegionsClient mirrors regions.* routes.
@@ -531,10 +611,25 @@ type RegionsClient struct{ c *Client }
 // List returns serving regions.
 func (r *RegionsClient) List(ctx context.Context, opts ...RequestOption) ([]Region, error) {
 	var out struct {
-		Regions []Region `json:"regions"`
+		Regions []Region   `json:"regions"`
+		Region  RegionCode `json:"region"`
+		Healthy bool       `json:"healthy"`
 	}
 	if err := r.c.do(ctx, "GET", "/api/v1/regions", nil, nil, &out, "regions.list", opts...); err != nil {
 		return nil, err
+	}
+	// TerraBase publishes member status, not a region collection. Accept the
+	// old fixture envelope only as a compatibility decode; the contract shape
+	// is the single region/healthy object.
+	if len(out.Regions) == 0 && out.Region != "" {
+		code, err := ParseRegionCode(string(out.Region))
+		if err != nil {
+			return nil, err
+		}
+		return []Region{{Code: code, Available: out.Healthy, Healthy: out.Healthy}}, nil
+	}
+	if len(out.Regions) == 0 {
+		return nil, &ValidationError{Field: "region response", Message: "missing required region status"}
 	}
 	return out.Regions, nil
 }
@@ -545,11 +640,10 @@ func (r *RegionsClient) Get(ctx context.Context, code RegionCode, opts ...Reques
 	if err != nil {
 		return nil, err
 	}
-	var out Region
-	if err := r.c.do(ctx, "GET", "/api/v1/regions/"+url.PathEscape(string(parsed)), nil, nil, &out, "regions.get", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_ = parsed
+	return nil, contractGap(ctx, "regions.get", "GET", "/api/v1/regions/{code}",
+		"TerraBase publishes member region status only; it does not publish a per-region route",
+		"use Regions.List and inspect the returned member status")
 }
 
 // SavedQueriesClient mirrors savedQueries.* routes.
@@ -564,66 +658,37 @@ func savedQueryBase(projectID string) (string, error) {
 
 // List pages saved queries.
 func (s *SavedQueriesClient) List(ctx context.Context, projectID string, skip, take int, opts ...RequestOption) ([]SavedQuery, error) {
-	base, err := savedQueryBase(projectID)
-	if err != nil {
-		return nil, err
-	}
-	var out struct {
-		Queries []SavedQuery `json:"queries"`
-	}
-	if err := s.c.do(ctx, "GET", base, pageQuery(skip, take), nil, &out, "savedQueries.list", opts...); err != nil {
-		return nil, err
-	}
-	return out.Queries, nil
+	_, _, _ = projectID, skip, take
+	return nil, contractGap(ctx, "savedQueries.list", "GET", "/api/v1/projects/{projectId}/saved-queries",
+		"the TerraBase public contract does not publish saved-query routes", "execute SQL through the published database route")
 }
 
 // Create saves a query.
 func (s *SavedQueriesClient) Create(ctx context.Context, projectID, name, query string, opts ...RequestOption) (*SavedQuery, error) {
-	base, err := savedQueryBase(projectID)
-	if err != nil {
-		return nil, err
-	}
-	var out SavedQuery
-	if err := s.c.do(ctx, "POST", base, nil, map[string]any{"name": name, "query": query}, &out, "savedQueries.create", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _, _ = projectID, name, query
+	return nil, contractGap(ctx, "savedQueries.create", "POST", "/api/v1/projects/{projectId}/saved-queries",
+		"the TerraBase public contract does not publish saved-query routes", "execute SQL through the published database route")
 }
 
 // Get fetches a saved query.
 func (s *SavedQueriesClient) Get(ctx context.Context, projectID, queryID string, opts ...RequestOption) (*SavedQuery, error) {
-	base, err := savedQueryBase(projectID)
-	if err != nil {
-		return nil, err
-	}
-	var out SavedQuery
-	if err := s.c.do(ctx, "GET", base+"/"+url.PathEscape(queryID), nil, nil, &out, "savedQueries.get", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _ = projectID, queryID
+	return nil, contractGap(ctx, "savedQueries.get", "GET", "/api/v1/projects/{projectId}/saved-queries/{queryId}",
+		"the TerraBase public contract does not publish saved-query routes", "execute SQL through the published database route")
 }
 
 // Update replaces a saved query.
 func (s *SavedQueriesClient) Update(ctx context.Context, projectID, queryID, name, query, revision string, opts ...RequestOption) (*SavedQuery, error) {
-	base, err := savedQueryBase(projectID)
-	if err != nil {
-		return nil, err
-	}
-	var out SavedQuery
-	body := map[string]any{"name": name, "query": query, "revision": revision}
-	if err := s.c.do(ctx, "PUT", base+"/"+url.PathEscape(queryID), nil, body, &out, "savedQueries.update", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _, _, _, _ = projectID, queryID, name, query, revision
+	return nil, contractGap(ctx, "savedQueries.update", "PUT", "/api/v1/projects/{projectId}/saved-queries/{queryId}",
+		"the TerraBase public contract does not publish saved-query routes", "execute SQL through the published database route")
 }
 
 // Delete removes a saved query.
 func (s *SavedQueriesClient) Delete(ctx context.Context, projectID, queryID string, opts ...RequestOption) error {
-	base, err := savedQueryBase(projectID)
-	if err != nil {
-		return err
-	}
-	return s.c.do(ctx, "DELETE", base+"/"+url.PathEscape(queryID), nil, nil, nil, "savedQueries.delete", opts...)
+	_, _ = projectID, queryID
+	return contractGap(ctx, "savedQueries.delete", "DELETE", "/api/v1/projects/{projectId}/saved-queries/{queryId}",
+		"the TerraBase public contract does not publish saved-query routes", "execute SQL through the published database route")
 }
 
 // DatabasesClient mirrors databases.* routes.
@@ -638,59 +703,39 @@ func databaseBase(projectID string) (string, error) {
 
 // List pages databases.
 func (d *DatabasesClient) List(ctx context.Context, projectID string, skip, take int, opts ...RequestOption) ([]ManagedDatabase, error) {
-	base, err := databaseBase(projectID)
-	if err != nil {
-		return nil, err
-	}
-	var out []ManagedDatabase
-	if err := d.c.do(ctx, "GET", base, pageQuery(skip, take), nil, &out, "databases.list", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	_, _, _ = projectID, skip, take
+	return nil, contractGap(ctx, "databases.list", "GET", "/api/v1/projects/{projectId}/databases",
+		"the TerraBase public contract publishes databases by name, not project-management routes",
+		"use Databases.ListDatabases")
 }
 
 // Create creates a database.
 func (d *DatabasesClient) Create(ctx context.Context, projectID, name string, opts ...RequestOption) (*ManagedDatabase, error) {
-	base, err := databaseBase(projectID)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("sdk: database name cannot be empty")
-	}
-	var out ManagedDatabase
-	if err := d.c.do(ctx, "POST", base, nil, map[string]any{"name": name}, &out, "databases.create", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _ = projectID, name
+	return nil, contractGap(ctx, "databases.create", "POST", "/api/v1/projects/{projectId}/databases",
+		"the TerraBase public contract publishes databases by name, not project-management routes",
+		"use CreateDatabase with explicit placement")
 }
 
 // Get fetches a database.
 func (d *DatabasesClient) Get(ctx context.Context, projectID, databaseID string, opts ...RequestOption) (*ManagedDatabase, error) {
-	base, err := databaseBase(projectID)
-	if err != nil {
-		return nil, err
-	}
-	var out ManagedDatabase
-	if err := d.c.do(ctx, "GET", base+"/"+url.PathEscape(databaseID), nil, nil, &out, "databases.get", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _ = projectID, databaseID
+	return nil, contractGap(ctx, "databases.get", "GET", "/api/v1/projects/{projectId}/databases/{databaseId}",
+		"the TerraBase public contract publishes databases by name, not project-management routes",
+		"use GetDatabase")
 }
 
 // Delete removes a database; confirmation carries the delete identity header.
 func (d *DatabasesClient) Delete(ctx context.Context, projectID, databaseID, confirmation string, opts ...RequestOption) error {
-	base, err := databaseBase(projectID)
-	if err != nil {
-		return err
-	}
-	opts = append([]RequestOption{WithDeleteConfirmation(confirmation)}, opts...)
-	return d.c.do(ctx, "DELETE", base+"/"+url.PathEscape(databaseID), nil, nil, nil, "databases.delete", opts...)
+	_, _, _ = projectID, databaseID, confirmation
+	return contractGap(ctx, "databases.delete", "DELETE", "/api/v1/projects/{projectId}/databases/{databaseId}",
+		"the TerraBase public contract publishes databases by name, not project-management routes",
+		"use DeleteDatabase with explicit confirmation")
 }
 
 // ListDatabases lists direct TerraBase database records, including
-// soft-deleted records. The route has offset pagination even though older
-// members may ignore the optional query parameters.
+// soft-deleted records. The published route returns the complete bounded
+// response and does not define offset query parameters.
 func (d *DatabasesClient) ListDatabases(ctx context.Context, page PageRequest, opts ...RequestOption) (*DatabasePage, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
@@ -699,7 +744,7 @@ func (d *DatabasesClient) ListDatabases(ctx context.Context, page PageRequest, o
 		return nil, err
 	}
 	var out DatabasePage
-	if err := d.c.do(ctx, "GET", "/api/v1/databases", pageQuery(page.Skip, page.Take), nil, &out, "list_databases", opts...); err != nil {
+	if err := d.c.do(ctx, "GET", "/api/v1/databases", nil, nil, &out, "list_databases", opts...); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -711,8 +756,8 @@ func (d *DatabasesClient) CreateDatabase(ctx context.Context, request CreateData
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(request.Name) == "" {
-		return nil, &ValidationError{Field: "name", Message: "cannot be empty"}
+	if err := validateDatabaseName(request.Name); err != nil {
+		return nil, err
 	}
 	if err := validatePlacement(request.Placement, request.Residency); err != nil {
 		return nil, err
@@ -725,6 +770,9 @@ func (d *DatabasesClient) CreateDatabase(ctx context.Context, request CreateData
 		canonicalPlacement[i], _ = ParseRegionCode(string(request.Placement[i]))
 	}
 	request.Placement = canonicalPlacement
+	if request.Residency != "" {
+		request.Residency, _ = normalizePlacementLock(request.Residency)
+	}
 	var out DatabaseRecord
 	if err := d.c.do(ctx, "POST", "/api/v1/databases", nil, request, &out, "create_database", opts...); err != nil {
 		return nil, err
@@ -758,6 +806,9 @@ func (d *DatabasesClient) DeleteDatabase(ctx context.Context, name string, opts 
 		return nil, err
 	}
 	if err := managementMutation(opts); err != nil {
+		return nil, err
+	}
+	if err := deleteConfirmation(opts, name); err != nil {
 		return nil, err
 	}
 	var out DatabaseRecord
@@ -800,7 +851,7 @@ func (d *DatabasesClient) ListCollections(ctx context.Context, database string, 
 		return nil, err
 	}
 	var out CollectionPage
-	if err := d.c.do(ctx, "GET", path+"/collections", pageQuery(page.Skip, page.Take), nil, &out, "list_collections", opts...); err != nil {
+	if err := d.c.do(ctx, "GET", path+"/collections", nil, nil, &out, "list_collections", opts...); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -819,7 +870,7 @@ func (d *DatabasesClient) ListIndexes(ctx context.Context, database, collection 
 		return nil, err
 	}
 	var out IndexPage
-	if err := d.c.do(ctx, "GET", path+"/indexes", pageQuery(page.Skip, page.Take), nil, &out, "list_indexes", opts...); err != nil {
+	if err := d.c.do(ctx, "GET", path+"/indexes", nil, nil, &out, "list_indexes", opts...); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -863,7 +914,13 @@ func (d *DatabasesClient) DeleteIndex(ctx context.Context, database, collection,
 	if err := managementMutation(opts); err != nil {
 		return err
 	}
-	return d.c.do(ctx, "DELETE", path+"/indexes/"+url.PathEscape(field), nil, nil, nil, "delete_index", opts...)
+	if err := deleteConfirmation(opts, field); err != nil {
+		return err
+	}
+	_ = path
+	return contractGap(ctx, "delete_index", "DELETE", "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
+		"the TerraBase route is published but the index lifecycle is pending",
+		"wait for the D-31 index lifecycle implementation")
 }
 
 // GetCollectionSchema fetches the declared schema for one collection.
@@ -875,11 +932,10 @@ func (d *DatabasesClient) GetCollectionSchema(ctx context.Context, database, col
 	if err != nil {
 		return nil, err
 	}
-	var out CollectionSchema
-	if err := d.c.do(ctx, "GET", path+"/schema", nil, nil, &out, "get_schema", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_ = path
+	return nil, contractGap(ctx, "get_schema", "GET", "/api/v1/databases/{name}/collections/{collection}/schema",
+		"the TerraBase route is published but schema application is pending",
+		"apply schema through the published schema contract when S-09/S-10 lands")
 }
 
 // PutCollectionSchema replaces a collection schema.
@@ -900,11 +956,10 @@ func (d *DatabasesClient) PutCollectionSchema(ctx context.Context, database, col
 	if err := managementMutation(opts); err != nil {
 		return nil, err
 	}
-	var out CollectionSchema
-	if err := d.c.do(ctx, "PUT", path+"/schema", nil, schema, &out, "put_schema", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_ = path
+	return nil, contractGap(ctx, "put_schema", "PUT", "/api/v1/databases/{name}/collections/{collection}/schema",
+		"the TerraBase route is published but schema application is pending",
+		"apply schema through the published schema contract when S-09/S-10 lands")
 }
 
 // DatabaseBranchesClient mirrors databaseBranches.* routes.
@@ -912,24 +967,16 @@ type DatabaseBranchesClient struct{ c *Client }
 
 // GetCapability returns branch capability for a project.
 func (b *DatabaseBranchesClient) GetCapability(ctx context.Context, projectID string, opts ...RequestOption) (map[string]any, error) {
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	var out map[string]any
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/database-branches/capability"
-	if err := b.c.do(ctx, "GET", path, nil, nil, &out, "databaseBranches.getCapability", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	_ = projectID
+	return nil, contractGap(ctx, "databaseBranches.getCapability", "GET", "/api/v1/projects/{projectId}/database-branches/capability",
+		"the TerraBase public contract does not publish project branch routes", "use ListBranches and CreateBranch")
 }
 
 // RequestClone requests a branch clone of a database.
 func (b *DatabaseBranchesClient) RequestClone(ctx context.Context, projectID, sourceDatabaseID string, opts ...RequestOption) error {
-	if err := requireID("project id", projectID); err != nil {
-		return err
-	}
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/database-branches"
-	return b.c.do(ctx, "POST", path, nil, map[string]any{"sourceDatabaseId": sourceDatabaseID}, nil, "databaseBranches.requestClone", opts...)
+	_, _ = projectID, sourceDatabaseID
+	return contractGap(ctx, "databaseBranches.requestClone", "POST", "/api/v1/projects/{projectId}/database-branches",
+		"the TerraBase public contract does not publish project branch routes", "use CreateBranch")
 }
 
 // ListBranches lists the branch records whose parent is database.
@@ -945,7 +992,7 @@ func (b *DatabaseBranchesClient) ListBranches(ctx context.Context, database stri
 		return nil, err
 	}
 	var out BranchPage
-	if err := b.c.do(ctx, "GET", path+"/branches", pageQuery(page.Skip, page.Take), nil, &out, "list_branches", opts...); err != nil {
+	if err := b.c.do(ctx, "GET", path+"/branches", nil, nil, &out, "list_branches", opts...); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -958,8 +1005,8 @@ func (b *DatabaseBranchesClient) CreateBranch(ctx context.Context, database stri
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(request.Name) == "" {
-		return nil, &ValidationError{Field: "name", Message: "cannot be empty"}
+	if err := validateDatabaseName(request.Name); err != nil {
+		return nil, err
 	}
 	path, err := databasePath(database)
 	if err != nil {
@@ -990,56 +1037,31 @@ func backupBase(projectID, databaseID string) (string, error) {
 
 // ListBackups pages backup jobs.
 func (b *BackupsClient) ListBackups(ctx context.Context, projectID, databaseID string, skip, take int, opts ...RequestOption) ([]BackupJob, error) {
-	base, err := backupBase(projectID, databaseID)
-	if err != nil {
-		return nil, err
-	}
-	var out []BackupJob
-	if err := b.c.do(ctx, "GET", base+"/backups", pageQuery(skip, take), nil, &out, "backups.list", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	_, _, _ = projectID, databaseID, skip
+	_ = take
+	return nil, contractGap(ctx, "backups.list", "GET", "/api/v1/projects/{projectId}/databases/{databaseId}/backups",
+		"the TerraBase public contract exposes backup readiness by database name only", "use ListDatabaseBackups")
 }
 
 // GetBackup fetches one backup job.
 func (b *BackupsClient) GetBackup(ctx context.Context, projectID, databaseID, backupID string, opts ...RequestOption) (*BackupJob, error) {
-	base, err := backupBase(projectID, databaseID)
-	if err != nil {
-		return nil, err
-	}
-	var out BackupJob
-	if err := b.c.do(ctx, "GET", base+"/backups/"+url.PathEscape(backupID), nil, nil, &out, "backups.get", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _, _ = projectID, databaseID, backupID
+	return nil, contractGap(ctx, "backups.get", "GET", "/api/v1/projects/{projectId}/databases/{databaseId}/backups/{backupId}",
+		"the TerraBase public contract exposes backup readiness by database name only", "use ListDatabaseBackups")
 }
 
 // StartRestore starts a restore job.
 func (b *BackupsClient) StartRestore(ctx context.Context, projectID, databaseID, backupID, idempotencyKey string, opts ...RequestOption) (*BackupJob, error) {
-	base, err := backupBase(projectID, databaseID)
-	if err != nil {
-		return nil, err
-	}
-	var out BackupJob
-	body := map[string]any{"backupId": backupID}
-	opts = append([]RequestOption{WithIdempotencyKey(idempotencyKey)}, opts...)
-	if err := b.c.do(ctx, "POST", base+"/restores", nil, body, &out, "backups.restores.start", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _, _, _ = projectID, databaseID, backupID, idempotencyKey
+	return nil, contractGap(ctx, "backups.restores.start", "POST", "/api/v1/projects/{projectId}/databases/{databaseId}/restores",
+		"the TerraBase public contract exposes restore-to-new-database by database name only", "use RestoreBackup")
 }
 
 // ListRestorePoints returns restore points.
 func (b *BackupsClient) ListRestorePoints(ctx context.Context, projectID, databaseID string, opts ...RequestOption) ([]map[string]any, error) {
-	base, err := backupBase(projectID, databaseID)
-	if err != nil {
-		return nil, err
-	}
-	var out []map[string]any
-	if err := b.c.do(ctx, "GET", base+"/restore-points", nil, nil, &out, "backups.restorePoints.list", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	_, _ = projectID, databaseID
+	return nil, contractGap(ctx, "backups.restorePoints.list", "GET", "/api/v1/projects/{projectId}/databases/{databaseId}/restore-points",
+		"the TerraBase public contract does not publish project restore-point routes", "use RestoreBackup with an optional Unix-millisecond at value")
 }
 
 // ListDatabaseBackups returns the direct TerraBase backup readiness fact.
@@ -1064,8 +1086,8 @@ func (b *BackupsClient) RestoreBackup(ctx context.Context, database string, requ
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(request.Name) == "" {
-		return nil, &ValidationError{Field: "name", Message: "cannot be empty"}
+	if err := validateDatabaseName(request.Name); err != nil {
+		return nil, err
 	}
 	path, err := databasePath(database)
 	if err != nil {
@@ -1086,134 +1108,54 @@ type AccessClient struct{ c *Client }
 
 // ListTeamMembers pages project team members.
 func (a *AccessClient) ListTeamMembers(ctx context.Context, projectID string, skip, take int, opts ...RequestOption) ([]TeamMember, error) {
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	var out struct {
-		Members []TeamMember `json:"members"`
-	}
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/access/team-members"
-	if err := a.c.do(ctx, "GET", path, pageQuery(skip, take), nil, &out, "access.teamMembers.list", opts...); err != nil {
-		return nil, err
-	}
-	return out.Members, nil
+	_, _, _ = projectID, skip, take
+	return nil, contractGap(ctx, "access.teamMembers.list", "GET", "/api/v1/projects/{projectId}/access/team-members",
+		"the TerraBase public contract does not publish project access routes", "use the dashboard control plane")
 }
 
 // AddTeamMember adds a member.
 func (a *AccessClient) AddTeamMember(ctx context.Context, projectID, userID, role string, opts ...RequestOption) (*TeamMember, error) {
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	var out TeamMember
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/access/team-members"
-	if err := a.c.do(ctx, "POST", path, nil, map[string]any{"userId": userID, "role": role}, &out, "access.teamMembers.add", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _, _ = projectID, userID, role
+	return nil, contractGap(ctx, "access.teamMembers.add", "POST", "/api/v1/projects/{projectId}/access/team-members",
+		"the TerraBase public contract does not publish project access routes", "use the dashboard control plane")
 }
 
 // RemoveTeamMember removes a member.
 func (a *AccessClient) RemoveTeamMember(ctx context.Context, projectID, userID string, opts ...RequestOption) error {
-	if err := requireID("project id", projectID); err != nil {
-		return err
-	}
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/access/team-members/" + url.PathEscape(userID)
-	return a.c.do(ctx, "DELETE", path, nil, nil, nil, "access.teamMembers.remove", opts...)
+	_, _ = projectID, userID
+	return contractGap(ctx, "access.teamMembers.remove", "DELETE", "/api/v1/projects/{projectId}/access/team-members/{userId}",
+		"the TerraBase public contract does not publish project access routes", "use the dashboard control plane")
 }
 
 // ListAPIKeys lists project API-key metadata using cursor pagination. The
 // route's cursor is opaque and is therefore not decoded or synthesized by
 // the SDK.
 func (a *AccessClient) ListAPIKeys(ctx context.Context, projectID, cursor string, take int, opts ...RequestOption) (*APIKeyPage, error) {
-	if err := managementContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	if take < 0 || take > 1000 {
-		return nil, &PaginationError{Field: "take", Value: take}
-	}
-	query := url.Values{}
-	if strings.TrimSpace(cursor) != "" {
-		query.Set("cursor", cursor)
-	}
-	if take > 0 {
-		query.Set("limit", strconv.Itoa(take))
-	}
-	var out APIKeyPage
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/auth/api-keys"
-	if err := a.c.do(ctx, "GET", path, query, nil, &out, "apiKeys.list", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _, _ = projectID, cursor, take
+	return nil, contractGap(ctx, "apiKeys.list", "GET", "/api/v1/projects/{projectId}/auth/api-keys",
+		"the TerraBase public contract does not publish project API-key routes", "use a key issued by the control plane")
 }
 
 // CreateAPIKey creates a project API key. The secret is returned once.
 func (a *AccessClient) CreateAPIKey(ctx context.Context, projectID string, request CreateAPIKeyRequest, opts ...RequestOption) (*CreatedAPIKey, error) {
-	if err := managementContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(request.Name) == "" {
-		return nil, &ValidationError{Field: "name", Message: "cannot be empty"}
-	}
-	if err := managementMutation(opts); err != nil {
-		return nil, err
-	}
-	var out CreatedAPIKey
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/auth/api-keys"
-	if err := a.c.do(ctx, "POST", path, nil, request, &out, "apiKeys.create", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_ = projectID
+	return nil, contractGap(ctx, "apiKeys.create", "POST", "/api/v1/projects/{projectId}/auth/api-keys",
+		"the TerraBase public contract does not publish project API-key routes", "use a key issued by the control plane")
 }
 
 // RotateAPIKey rotates a project API key. The replacement secret is returned
 // once and the old key is invalidated by the service.
 func (a *AccessClient) RotateAPIKey(ctx context.Context, projectID, keyID string, opts ...RequestOption) (*RotatedAPIKey, error) {
-	if err := managementContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	if err := requireID("key id", keyID); err != nil {
-		return nil, err
-	}
-	if err := managementMutation(opts); err != nil {
-		return nil, err
-	}
-	var out RotatedAPIKey
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/auth/api-keys/" + url.PathEscape(keyID) + "/rotate"
-	if err := a.c.do(ctx, "POST", path, nil, nil, &out, "apiKeys.rotate", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _ = projectID, keyID
+	return nil, contractGap(ctx, "apiKeys.rotate", "POST", "/api/v1/projects/{projectId}/auth/api-keys/{keyId}/rotate",
+		"the TerraBase public contract does not publish project API-key routes", "use a key issued by the control plane")
 }
 
 // RevokeAPIKey revokes a project API key.
 func (a *AccessClient) RevokeAPIKey(ctx context.Context, projectID, keyID string, opts ...RequestOption) (*RevokedAPIKey, error) {
-	if err := managementContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	if err := requireID("key id", keyID); err != nil {
-		return nil, err
-	}
-	if err := managementMutation(opts); err != nil {
-		return nil, err
-	}
-	var out RevokedAPIKey
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/auth/api-keys/" + url.PathEscape(keyID)
-	if err := a.c.do(ctx, "DELETE", path, nil, nil, &out, "apiKeys.revoke", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _ = projectID, keyID
+	return nil, contractGap(ctx, "apiKeys.revoke", "DELETE", "/api/v1/projects/{projectId}/auth/api-keys/{keyId}",
+		"the TerraBase public contract does not publish project API-key routes", "use a key issued by the control plane")
 }
 
 // UsageClient mirrors usage.* routes.
@@ -1221,70 +1163,30 @@ type UsageClient struct{ c *Client }
 
 // GetProjectUsage returns project usage.
 func (u *UsageClient) GetProjectUsage(ctx context.Context, projectID string, opts ...RequestOption) (*UsageSummary, error) {
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	var out UsageSummary
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/usage"
-	if err := u.c.do(ctx, "GET", path, nil, nil, &out, "usage.project.get", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_ = projectID
+	return nil, contractGap(ctx, "usage.project.get", "GET", "/api/v1/projects/{projectId}/usage",
+		"the TerraBase public contract does not publish project usage routes", "retry after usage export is published")
 }
 
 // GetProjectUsageWorkload returns bounded workload buckets for a project.
 func (u *UsageClient) GetProjectUsageWorkload(ctx context.Context, projectID, period string, opts ...RequestOption) (*UsageWorkload, error) {
-	if err := managementContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	if period != "24h" && period != "7d" && period != "30d" {
-		return nil, &ValidationError{Field: "range", Message: "must be 24h, 7d, or 30d"}
-	}
-	var out UsageWorkload
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/usage/workload"
-	query := url.Values{"range": []string{period}}
-	if err := u.c.do(ctx, "GET", path, query, nil, &out, "usage.project.workload", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _ = projectID, period
+	return nil, contractGap(ctx, "usage.project.workload", "GET", "/api/v1/projects/{projectId}/usage/workload",
+		"the TerraBase public contract does not publish project usage routes", "retry after usage export is published")
 }
 
 // GetProjectUsageHistory returns retained usage history for a project.
 func (u *UsageClient) GetProjectUsageHistory(ctx context.Context, projectID, period string, opts ...RequestOption) (*UsageHistory, error) {
-	if err := managementContext(ctx); err != nil {
-		return nil, err
-	}
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	switch period {
-	case "24h", "7d", "30d", "90d", "365d":
-	default:
-		return nil, &ValidationError{Field: "range", Message: "must be 24h, 7d, 30d, 90d, or 365d"}
-	}
-	var out UsageHistory
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/usage/history"
-	query := url.Values{"range": []string{period}}
-	if err := u.c.do(ctx, "GET", path, query, nil, &out, "usage.project.history", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _ = projectID, period
+	return nil, contractGap(ctx, "usage.project.history", "GET", "/api/v1/projects/{projectId}/usage/history",
+		"the TerraBase public contract does not publish project usage routes", "retry after usage export is published")
 }
 
 // GetOrganizationUsage returns organization usage.
 func (u *UsageClient) GetOrganizationUsage(ctx context.Context, organizationID string, opts ...RequestOption) (map[string]any, error) {
-	if err := requireID("organization id", organizationID); err != nil {
-		return nil, err
-	}
-	var out map[string]any
-	path := "/api/v1/organizations/" + url.PathEscape(organizationID) + "/usage"
-	if err := u.c.do(ctx, "GET", path, nil, nil, &out, "usage.organization.get", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	_ = organizationID
+	return nil, contractGap(ctx, "usage.organization.get", "GET", "/api/v1/organizations/{organizationId}/usage",
+		"the TerraBase public contract does not publish organization usage routes", "retry after usage export is published")
 }
 
 // GetDatabaseUsage fetches usage for one direct TerraBase database.
@@ -1296,11 +1198,10 @@ func (u *UsageClient) GetDatabaseUsage(ctx context.Context, database string, opt
 	if err != nil {
 		return nil, err
 	}
-	var out DatabaseUsage
-	if err := u.c.do(ctx, "GET", path+"/usage", nil, nil, &out, "database_usage", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_ = path
+	return nil, contractGap(ctx, "database_usage", "GET", "/api/v1/databases/{name}/usage",
+		"the TerraBase route is published but op metering is pending",
+		"retry after the usage export contract lands")
 }
 
 // AuditClient mirrors audit.* routes.
@@ -1308,30 +1209,16 @@ type AuditClient struct{ c *Client }
 
 // List pages audit events.
 func (a *AuditClient) List(ctx context.Context, projectID string, skip, take int, opts ...RequestOption) ([]AuditEvent, error) {
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	var out struct {
-		Events []AuditEvent `json:"events"`
-	}
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/audit"
-	if err := a.c.do(ctx, "GET", path, pageQuery(skip, take), nil, &out, "audit.list", opts...); err != nil {
-		return nil, err
-	}
-	return out.Events, nil
+	_, _, _ = projectID, skip, take
+	return nil, contractGap(ctx, "audit.list", "GET", "/api/v1/projects/{projectId}/audit",
+		"the TerraBase public contract does not publish project audit routes", "use the control-plane audit surface")
 }
 
 // Get fetches one audit event.
 func (a *AuditClient) Get(ctx context.Context, projectID, eventID string, opts ...RequestOption) (*AuditEvent, error) {
-	if err := requireID("project id", projectID); err != nil {
-		return nil, err
-	}
-	var out AuditEvent
-	path := "/api/v1/projects/" + url.PathEscape(projectID) + "/audit/" + url.PathEscape(eventID)
-	if err := a.c.do(ctx, "GET", path, nil, nil, &out, "audit.get", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_, _ = projectID, eventID
+	return nil, contractGap(ctx, "audit.get", "GET", "/api/v1/projects/{projectId}/audit/{eventId}",
+		"the TerraBase public contract does not publish project audit routes", "use the control-plane audit surface")
 }
 
 // NotificationsClient mirrors notifications.* routes.
@@ -1339,22 +1226,13 @@ type NotificationsClient struct{ c *Client }
 
 // List pages notifications.
 func (n *NotificationsClient) List(ctx context.Context, opts ...RequestOption) ([]Notification, error) {
-	var out []Notification
-	if err := n.c.do(ctx, "GET", "/api/v1/users/me/notifications", nil, nil, &out, "notifications.list", opts...); err != nil {
-		return nil, err
-	}
-	return out, nil
+	return nil, contractGap(ctx, "notifications.list", "GET", "/api/v1/users/me/notifications",
+		"the TerraBase public contract does not publish notification routes", "use the dashboard control plane")
 }
 
 // MarkRead marks one notification read.
 func (n *NotificationsClient) MarkRead(ctx context.Context, notificationID string, opts ...RequestOption) (*Notification, error) {
-	if err := requireID("notification id", notificationID); err != nil {
-		return nil, err
-	}
-	var out Notification
-	path := "/api/v1/users/me/notifications/" + url.PathEscape(notificationID) + ":mark-read"
-	if err := n.c.do(ctx, "POST", path, nil, nil, &out, "notifications.markRead", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	_ = notificationID
+	return nil, contractGap(ctx, "notifications.markRead", "POST", "/api/v1/users/me/notifications/{notificationId}:mark-read",
+		"the TerraBase public contract does not publish notification routes", "use the dashboard control plane")
 }

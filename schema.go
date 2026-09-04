@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"sort"
 	"strings"
 )
@@ -149,7 +148,7 @@ func NewIndex(name string, fields ...any) IndexDef {
 			names = append(names, value...)
 		}
 	}
-	return IndexDef{Name: strings.TrimSpace(name), Fields: trimStrings(names)}
+	return IndexDef{Name: strings.TrimSpace(name), Fields: trimStrings(names), Kind: IndexBTree}
 }
 
 // NewFTSIndex declares a full-text index over one field.
@@ -160,7 +159,7 @@ func NewFTSIndex(name, field string) IndexDef {
 // On declares an index whose name is derived from its sole field.
 func (i IndexDef) On(field string) IndexDef {
 	field = strings.TrimSpace(field)
-	i.Name, i.Fields, i.Kind = field, []string{field}, ""
+	i.Name, i.Fields, i.Kind = field, []string{field}, IndexBTree
 	return i
 }
 
@@ -257,7 +256,7 @@ func (b *CollectionBuilder) Field(name string, typ FieldType, opts ...FieldOptio
 
 // Index adds an ordinary b-tree index. The index is transactional with writes.
 func (b *CollectionBuilder) Index(name string, fields ...string) *CollectionBuilder {
-	b.indexes = append(b.indexes, IndexDef{Name: strings.TrimSpace(name), Fields: trimStrings(fields)})
+	b.indexes = append(b.indexes, IndexDef{Name: strings.TrimSpace(name), Fields: trimStrings(fields), Kind: IndexBTree})
 	return b
 }
 
@@ -265,6 +264,9 @@ func (b *CollectionBuilder) Index(name string, fields ...string) *CollectionBuil
 func (b *CollectionBuilder) AddIndex(index IndexDef) *CollectionBuilder {
 	index.Name = strings.TrimSpace(index.Name)
 	index.Fields = trimStrings(index.Fields)
+	if index.Kind == "" {
+		index.Kind = IndexBTree
+	}
 	b.indexes = append(b.indexes, index)
 	return b
 }
@@ -286,6 +288,10 @@ func (b *CollectionBuilder) markLastIndexUnique() *CollectionBuilder {
 func (b *CollectionBuilder) FTS(args ...string) *CollectionBuilder {
 	if len(args) == 0 {
 		b.indexes = append(b.indexes, IndexDef{Kind: IndexFTS})
+		return b
+	}
+	if len(args) > 2 {
+		b.indexes = append(b.indexes, IndexDef{Kind: IndexFTS, Name: strings.TrimSpace(args[0]), Fields: trimStrings(args[1:])})
 		return b
 	}
 	name, field := args[0]+"_fts", args[0]
@@ -455,6 +461,33 @@ func (c CollectionSchema) ToJSON() (string, error) {
 	return string(b), err
 }
 
+// MarshalJSON emits the canonical index kind even when callers composed an
+// IndexDef as a struct literal and left Kind empty.
+func (i IndexDef) MarshalJSON() ([]byte, error) {
+	kind := i.Kind
+	if kind == "" {
+		kind = IndexBTree
+	}
+	type wireIndex struct {
+		Name   string    `json:"name"`
+		Fields []string  `json:"fields"`
+		Unique bool      `json:"unique,omitempty"`
+		Kind   IndexKind `json:"kind"`
+	}
+	return json.Marshal(wireIndex{Name: i.Name, Fields: i.Fields, Unique: i.Unique, Kind: kind})
+}
+
+// MarshalJSON preflights a collection before allowing it onto the wire. This
+// keeps direct json.Marshal calls subject to the same validation as ToJSON
+// and Apply.
+func (c CollectionSchema) MarshalJSON() ([]byte, error) {
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	type wireCollection CollectionSchema
+	return json.Marshal(wireCollection(c))
+}
+
 // JSON is an alias for ToJSON.
 func (c CollectionSchema) JSON() (string, error) { return c.ToJSON() }
 
@@ -490,6 +523,9 @@ type Schema struct {
 // MarshalJSON emits collections in canonical name order. This keeps direct
 // json.Marshal calls and request bodies identical to Schema.ToJSON.
 func (s Schema) MarshalJSON() ([]byte, error) {
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
 	collections := cloneCollections(s.Collections)
 	sort.SliceStable(collections, func(i, j int) bool { return collections[i].Name < collections[j].Name })
 	type wireSchema struct {
@@ -597,7 +633,10 @@ func (b *SchemaBuilder) Apply(ctx context.Context, c *Client, databaseID string,
 	return s.Apply(ctx, c, databaseID, opts...)
 }
 
-// Apply pushes schema s to a database branch.
+// Apply validates schema s but fails closed because TerraBase does not publish
+// a database-level schema operation. The published contract has only
+// collection-scoped GET/PUT schema routes, and those handlers are pending
+// until the schema-first push lane lands (D-48/S-09/S-10).
 func (s Schema) Apply(ctx context.Context, c *Client, databaseID string, opts ...RequestOption) (*Schema, error) {
 	if c == nil {
 		return nil, fmt.Errorf("sdk: client cannot be nil")
@@ -608,12 +647,9 @@ func (s Schema) Apply(ctx context.Context, c *Client, databaseID string, opts ..
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
-	var out Schema
-	path := "/api/v1/databases/" + url.PathEscape(databaseID) + "/schema"
-	if err := c.do(ctx, "PUT", path, nil, s, &out, "schema.apply", opts...); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return nil, contractGap(ctx, "schema.apply", "PUT", "/api/v1/databases/{name}/schema",
+		"TerraBase publishes only collection-scoped schema routes, and those routes are pending",
+		"wait for the schema-first push lane (S-09/S-10), then apply each collection through its published route")
 }
 
 const (
