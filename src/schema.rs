@@ -6,7 +6,10 @@
 
 pub use terrascale_derive::Schema;
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{
+    ser::{Error as SerializeError, SerializeStruct},
+    Deserialize, Deserializer, Serialize, Serializer,
+};
 use std::fmt;
 
 /// The supported extracted column types.
@@ -14,11 +17,11 @@ use std::fmt;
 pub enum FieldType {
     #[serde(rename = "string")]
     String,
-    #[serde(rename = "int", alias = "integer")]
+    #[serde(rename = "int")]
     Integer,
     #[serde(rename = "float")]
     Float,
-    #[serde(rename = "bool", alias = "boolean")]
+    #[serde(rename = "bool")]
     Boolean,
     #[serde(rename = "json")]
     Json,
@@ -29,16 +32,16 @@ pub enum FieldType {
     #[serde(rename = "text")]
     Text,
     /// A PN counter merge kernel (D-36).
-    #[serde(rename = "counter-pn", alias = "pn-counter")]
+    #[serde(rename = "counter-pn")]
     PnCounter,
     /// An add-wins set merge kernel (D-36).
-    #[serde(rename = "set-add-wins", alias = "add-wins-set")]
+    #[serde(rename = "set-add-wins")]
     AddWinsSet,
     /// A remove-wins set merge kernel (D-36).
-    #[serde(rename = "set-remove-wins", alias = "remove-wins-set")]
+    #[serde(rename = "set-remove-wins")]
     RemoveWinsSet,
     /// A multi-value register merge kernel (D-36).
-    #[serde(rename = "register-mv", alias = "mv-register")]
+    #[serde(rename = "register-mv")]
     MvRegister,
 }
 
@@ -58,13 +61,25 @@ pub enum MergePolicy {
     LastWriteWins,
 }
 
+/// The implementation of a declared index.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IndexKind {
+    /// An ordinary SQLite B-tree index.
+    #[default]
+    #[serde(rename = "btree")]
+    BTree,
+    /// An FTS5 full-text index.
+    #[serde(rename = "fts")]
+    Fts,
+}
+
 /// One declared field of a collection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FieldDef {
     /// Field name (a root JSON path segment).
     pub name: String,
     /// Stored type used for extraction and typed queries.
-    #[serde(rename = "type", alias = "field_type")]
+    #[serde(rename = "type")]
     pub field_type: FieldType,
     /// Whether the field may be absent or null.
     #[serde(rename = "required", serialize_with = "serialize_required")]
@@ -82,6 +97,9 @@ pub struct FieldDef {
         skip_serializing_if = "Option::is_none"
     )]
     pub merge_policy: Option<FieldType>,
+    /// Request a generated single-field FTS index for this field.
+    #[serde(skip_serializing)]
+    pub fts: bool,
 }
 
 const fn is_false(value: &bool) -> bool {
@@ -96,20 +114,21 @@ where
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FieldDefWire {
     name: String,
-    #[serde(rename = "type", alias = "field_type")]
+    #[serde(rename = "type")]
     field_type: FieldType,
     #[serde(default)]
     required: Option<bool>,
     #[serde(default)]
-    optional: Option<bool>,
-    #[serde(default)]
     indexed: bool,
     #[serde(default)]
     unique: bool,
-    #[serde(default, rename = "mergePolicy", alias = "merge_policy")]
+    #[serde(default, rename = "mergePolicy")]
     merge_policy: Option<FieldType>,
+    #[serde(default)]
+    fts: bool,
 }
 
 impl<'de> Deserialize<'de> for FieldDef {
@@ -118,16 +137,7 @@ impl<'de> Deserialize<'de> for FieldDef {
         D: Deserializer<'de>,
     {
         let wire = FieldDefWire::deserialize(deserializer)?;
-        let optional = match (wire.required, wire.optional) {
-            (Some(_), Some(_)) => {
-                return Err(serde::de::Error::custom(
-                    "field schema cannot contain both required and optional",
-                ));
-            }
-            (Some(required), None) => !required,
-            (None, Some(optional)) => optional,
-            (None, None) => false,
-        };
+        let optional = !wire.required.unwrap_or(false);
         Ok(Self {
             name: wire.name,
             field_type: wire.field_type,
@@ -135,6 +145,7 @@ impl<'de> Deserialize<'de> for FieldDef {
             indexed: wire.indexed,
             unique: wire.unique,
             merge_policy: wire.merge_policy,
+            fts: wire.fts,
         })
     }
 }
@@ -144,12 +155,13 @@ impl FieldDef {
     #[must_use]
     pub fn required(name: impl Into<String>, field_type: FieldType) -> Self {
         Self {
-            name: name.into(),
+            name: name.into().trim().to_owned(),
             field_type,
             optional: false,
             indexed: false,
             unique: false,
             merge_policy: None,
+            fts: false,
         }
     }
 
@@ -183,11 +195,63 @@ impl FieldDef {
         self.merge_policy = Some(policy);
         self
     }
+
+    /// Request a generated FTS index for this field.
+    #[must_use]
+    pub fn fts(mut self) -> Self {
+        self.fts = true;
+        self
+    }
+}
+
+/// A collection full-text declaration. Canonical JSON represents it as an
+/// `fts` index with exactly one string or text field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FtsDef {
+    pub fields: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum FtsDefWire {
+    Object { fields: Vec<String> },
+    Fields(Vec<String>),
+    Field(String),
+}
+
+impl<'de> Deserialize<'de> for FtsDef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = FtsDefWire::deserialize(deserializer)?;
+        let fields = match wire {
+            FtsDefWire::Object { fields } | FtsDefWire::Fields(fields) => fields,
+            FtsDefWire::Field(field) => vec![field],
+        };
+        Ok(Self {
+            fields: fields
+                .into_iter()
+                .map(|field| field.trim().to_owned())
+                .collect(),
+        })
+    }
+}
+
+impl FtsDef {
+    #[must_use]
+    pub fn new(field: impl Into<String>) -> Self {
+        Self {
+            fields: vec![field.into().trim().to_owned()],
+        }
+    }
 }
 
 /// A declared ordinary index. Indexes are maintained transactionally with
 /// writes, so a visible index can never produce a stale read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IndexDef {
     /// Stable name used in schema diffs and index plans.
     pub name: String,
@@ -196,6 +260,10 @@ pub struct IndexDef {
     /// Whether duplicate keys are rejected within a Region.
     #[serde(default, skip_serializing_if = "is_false")]
     pub unique: bool,
+    /// Index implementation. The wire form is always emitted, including for
+    /// ordinary B-tree indexes.
+    #[serde(default)]
+    pub kind: IndexKind,
 }
 
 impl IndexDef {
@@ -207,10 +275,48 @@ impl IndexDef {
         S: Into<String>,
     {
         Self {
-            name: name.into(),
-            fields: fields.into_iter().map(Into::into).collect(),
+            name: name.into().trim().to_owned(),
+            fields: fields
+                .into_iter()
+                .map(Into::into)
+                .map(|field: String| field.trim().to_owned())
+                .collect(),
             unique: false,
+            kind: IndexKind::BTree,
         }
+    }
+
+    /// Declare a full-text index over exactly one string or text field.
+    #[must_use]
+    pub fn fts(name: impl Into<String>, field: impl Into<String>) -> Self {
+        Self {
+            name: name.into().trim().to_owned(),
+            fields: vec![field.into().trim().to_owned()],
+            unique: false,
+            kind: IndexKind::Fts,
+        }
+    }
+
+    /// Alias for [`Self::fts`], matching the generated SDK naming.
+    #[must_use]
+    pub fn new_fts(name: impl Into<String>, field: impl Into<String>) -> Self {
+        Self::fts(name, field)
+    }
+
+    /// Declare a full-text index using the descriptive constructor spelling.
+    #[must_use]
+    pub fn full_text(name: impl Into<String>, field: impl Into<String>) -> Self {
+        Self::fts(name, field)
+    }
+
+    /// Select the index implementation for a declaration.
+    #[must_use]
+    pub fn kind(mut self, kind: IndexKind) -> Self {
+        self.kind = kind;
+        if kind == IndexKind::Fts {
+            self.unique = false;
+        }
+        self
     }
 
     /// Declare an index whose name is derived from its sole field.
@@ -230,6 +336,7 @@ impl IndexDef {
 
 /// A collection TTL declaration. The field must contain a timestamp value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TtlDef {
     /// Root field containing the expiry timestamp.
     pub field: String,
@@ -239,7 +346,7 @@ impl TtlDef {
     #[must_use]
     pub fn new(field: impl Into<String>) -> Self {
         Self {
-            field: field.into(),
+            field: field.into().trim().to_owned(),
         }
     }
 }
@@ -257,7 +364,8 @@ impl From<&str> for TtlDef {
 }
 
 /// The schema of one collection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CollectionSchema {
     /// Collection/table name.
     pub name: String,
@@ -266,19 +374,45 @@ pub struct CollectionSchema {
     /// Explicit indexes in addition to indexes requested on fields.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub indexes: Vec<IndexDef>,
+    /// Optional authoring shorthand for one full-text field. It is normalized
+    /// into an `fts` index before serialization.
+    #[serde(default, skip_serializing)]
+    pub fts: Option<FtsDef>,
     /// Optional expiry policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl: Option<TtlDef>,
     /// Retained document history window, in days (D-25).
     #[serde(
         default = "CollectionSchema::default_history_window_days",
-        rename = "historyRetentionDays",
-        alias = "historyWindowDays"
+        rename = "historyRetentionDays"
     )]
     pub history_window_days: u8,
     /// Default conflict policy for fields without a typed merge kernel.
     #[serde(rename = "mergePolicy", default)]
     pub merge_policy: MergePolicy,
+}
+
+impl Serialize for CollectionSchema {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.validate()
+            .map_err(|error| S::Error::custom(error.to_string()))?;
+        let canonical = self.canonicalized();
+        let mut output = serializer.serialize_struct("CollectionSchema", 6)?;
+        output.serialize_field("name", &canonical.name)?;
+        output.serialize_field("fields", &canonical.fields)?;
+        if !canonical.indexes.is_empty() {
+            output.serialize_field("indexes", &canonical.indexes)?;
+        }
+        if canonical.ttl.is_some() {
+            output.serialize_field("ttl", &canonical.ttl)?;
+        }
+        output.serialize_field("historyRetentionDays", &canonical.history_window_days)?;
+        output.serialize_field("mergePolicy", &canonical.merge_policy)?;
+        output.end()
+    }
 }
 
 impl CollectionSchema {
@@ -297,9 +431,10 @@ impl CollectionSchema {
     #[must_use]
     pub fn new(name: impl Into<String>) -> Self {
         Self {
-            name: name.into(),
+            name: name.into().trim().to_owned(),
             fields: Vec::new(),
             indexes: Vec::new(),
+            fts: None,
             ttl: None,
             history_window_days: Self::DEFAULT_HISTORY_WINDOW_DAYS,
             merge_policy: MergePolicy::default(),
@@ -318,6 +453,19 @@ impl CollectionSchema {
     pub fn index(mut self, index: IndexDef) -> Self {
         self.indexes.push(index);
         self
+    }
+
+    /// Configure one full-text field; canonical JSON emits an FTS index.
+    #[must_use]
+    pub fn full_text(mut self, field: impl Into<String>) -> Self {
+        self.fts = Some(FtsDef::new(field));
+        self
+    }
+
+    /// Alias for [`Self::full_text`].
+    #[must_use]
+    pub fn fts(self, field: impl Into<String>) -> Self {
+        self.full_text(field)
     }
 
     /// Configure the collection TTL field.
@@ -369,6 +517,15 @@ impl CollectionSchema {
 
     /// Validate names, references, and retention bounds before applying JSON.
     pub fn validate(&self) -> Result<(), SchemaError> {
+        if let Some(fts) = &self.fts {
+            if fts.fields.len() != 1 {
+                return Err(SchemaError::InvalidFtsDeclaration);
+            }
+        }
+        self.canonicalized().validate_raw()
+    }
+
+    fn validate_raw(&self) -> Result<(), SchemaError> {
         if self.name.trim().is_empty() {
             return Err(SchemaError::EmptyCollectionName);
         }
@@ -430,6 +587,9 @@ impl CollectionSchema {
             {
                 return Err(SchemaError::DuplicateIndex(index.name.clone()));
             }
+            if index.kind == IndexKind::Fts && (index.fields.len() != 1 || index.unique) {
+                return Err(SchemaError::InvalidFtsIndex(index.name.clone()));
+            }
             for field in &index.fields {
                 if !is_valid_identifier(field) {
                     return Err(SchemaError::InvalidIdentifier {
@@ -442,6 +602,16 @@ impl CollectionSchema {
                         index: index.name.clone(),
                         field: field.clone(),
                     });
+                }
+                if index.kind == IndexKind::Fts {
+                    let declared = self
+                        .fields
+                        .iter()
+                        .find(|declared| declared.name == *field)
+                        .expect("unknown FTS fields are rejected above");
+                    if !matches!(declared.field_type, FieldType::String | FieldType::Text) {
+                        return Err(SchemaError::FtsFieldNotText(field.clone()));
+                    }
                 }
             }
         }
@@ -465,7 +635,34 @@ impl CollectionSchema {
     /// Serialize this collection as schema JSON after validation.
     pub fn to_json(&self) -> Result<String, SchemaJsonError> {
         self.validate().map_err(SchemaJsonError::InvalidSchema)?;
-        serde_json::to_string(self).map_err(SchemaJsonError::Serialize)
+        serde_json::to_string(&self.canonicalized()).map_err(SchemaJsonError::Serialize)
+    }
+
+    fn canonicalized(&self) -> Self {
+        let mut canonical = self.clone();
+        let mut fts_fields = canonical.fts.take().map_or_else(Vec::new, |fts| fts.fields);
+        fts_fields.extend(
+            canonical
+                .fields
+                .iter()
+                .filter(|field| field.fts)
+                .map(|field| field.name.clone()),
+        );
+        let mut unique_fts_fields = Vec::with_capacity(fts_fields.len());
+        for field in fts_fields {
+            if !unique_fts_fields.iter().any(|seen| seen == &field) {
+                unique_fts_fields.push(field);
+            }
+        }
+        for field in unique_fts_fields {
+            canonical
+                .indexes
+                .push(IndexDef::fts(format!("{field}_fts"), field));
+        }
+        for field in &mut canonical.fields {
+            field.fts = false;
+        }
+        canonical
     }
 }
 
@@ -473,12 +670,16 @@ impl CollectionSchema {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaError {
     EmptyCollectionName,
+    DuplicateCollection(String),
     EmptyFieldName { position: usize },
     InvalidIdentifier { kind: &'static str, name: String },
     DuplicateField(String),
     HistoryWindowOutOfRange { days: u8 },
     InvalidIndex { position: usize },
     DuplicateIndex(String),
+    InvalidFtsIndex(String),
+    InvalidFtsDeclaration,
+    FtsFieldNotText(String),
     UnknownIndexField { index: String, field: String },
     UnknownTtlField(String),
     TtlFieldNotTimestamp(String),
@@ -489,6 +690,7 @@ impl fmt::Display for SchemaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyCollectionName => f.write_str("collection name cannot be empty"),
+            Self::DuplicateCollection(name) => write!(f, "duplicate collection {name:?}"),
             Self::EmptyFieldName { position } => {
                 write!(f, "field at position {position} has no name")
             }
@@ -506,6 +708,15 @@ impl fmt::Display for SchemaError {
                 write!(f, "index at position {position} has no name or fields")
             }
             Self::DuplicateIndex(name) => write!(f, "duplicate index {name:?}"),
+            Self::InvalidFtsIndex(name) => {
+                write!(f, "FTS index {name:?} must have one non-unique field")
+            }
+            Self::InvalidFtsDeclaration => {
+                f.write_str("FTS declaration must contain exactly one field")
+            }
+            Self::FtsFieldNotText(field) => {
+                write!(f, "FTS field {field:?} must have type string or text")
+            }
             Self::UnknownIndexField { index, field } => {
                 write!(f, "index {index:?} references unknown field {field:?}")
             }
@@ -580,10 +791,19 @@ impl SchemaBuilder {
 
     /// Validate and return the collection schemas.
     pub fn try_build(self) -> Result<Vec<CollectionSchema>, SchemaError> {
-        for collection in &self.collections {
+        let mut collections = self.collections;
+        let mut names = std::collections::HashSet::with_capacity(collections.len());
+        for collection in &collections {
+            if !names.insert(collection.name.clone()) {
+                return Err(SchemaError::DuplicateCollection(collection.name.clone()));
+            }
             collection.validate()?;
         }
-        Ok(self.collections)
+        collections.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(collections
+            .into_iter()
+            .map(|collection| collection.canonicalized())
+            .collect())
     }
 
     /// Serialize the complete schema document used by `terrascale push`.
@@ -594,9 +814,59 @@ impl SchemaBuilder {
 }
 
 /// The root `terrascale.schema.json` document.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SchemaDocument {
     pub collections: Vec<CollectionSchema>,
+}
+
+impl Serialize for SchemaDocument {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut collections = self.collections.clone();
+        let mut names = std::collections::HashSet::with_capacity(collections.len());
+        for collection in &collections {
+            if !names.insert(collection.name.clone()) {
+                return Err(S::Error::custom(
+                    SchemaError::DuplicateCollection(collection.name.clone()).to_string(),
+                ));
+            }
+            collection
+                .validate()
+                .map_err(|error| S::Error::custom(error.to_string()))?;
+        }
+        collections.sort_by(|left, right| left.name.cmp(&right.name));
+        let mut output = serializer.serialize_struct("SchemaDocument", 1)?;
+        output.serialize_field("collections", &collections)?;
+        output.end()
+    }
+}
+
+impl SchemaDocument {
+    /// Validate and serialize the complete schema document canonically.
+    pub fn to_json(&self) -> Result<String, SchemaJsonError> {
+        let mut collections = self.collections.clone();
+        let mut names = std::collections::HashSet::with_capacity(collections.len());
+        for collection in &collections {
+            if !names.insert(collection.name.clone()) {
+                return Err(SchemaJsonError::InvalidSchema(
+                    SchemaError::DuplicateCollection(collection.name.clone()),
+                ));
+            }
+            collection
+                .validate()
+                .map_err(SchemaJsonError::InvalidSchema)?;
+        }
+        collections.sort_by(|left, right| left.name.cmp(&right.name));
+        let document = Self {
+            collections: collections
+                .into_iter()
+                .map(|collection| collection.canonicalized())
+                .collect(),
+        };
+        serde_json::to_string(&document).map_err(SchemaJsonError::Serialize)
+    }
 }
 
 /// A document type bound to one collection.

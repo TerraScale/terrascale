@@ -92,6 +92,28 @@ impl Response {
 
     /// Decode a JSON body against the pinned contract.
     pub fn json_body<T: DeserializeOwned>(&self) -> Result<T> {
+        if self.header("content-type").is_some_and(|value| {
+            value
+                .split(';')
+                .next()
+                .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/msgpack"))
+        }) {
+            let value = crate::reactive::decode_reactive_msgpack_json(&self.body)?;
+            return serde_json::from_value(value).map_err(|e| {
+                Error::invalid_response(format!(
+                    "MessagePack response does not match the contract: {e}"
+                ))
+            });
+        }
+
+        // A 204/304 long-poll response (and a successful empty timeout body)
+        // is the contract's empty response. Decode it as JSON null so the
+        // reactive response's custom deserializer can turn it into `default`.
+        if self.body.is_empty() {
+            return serde_json::from_value(serde_json::Value::Null).map_err(|e| {
+                Error::invalid_response(format!("empty response does not match the contract: {e}"))
+            });
+        }
         serde_json::from_slice(&self.body).map_err(|e| {
             Error::invalid_response(format!("response body does not match the contract: {e}"))
         })

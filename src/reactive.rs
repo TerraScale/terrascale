@@ -1,6 +1,8 @@
 //! Reactive live queries: `subscribe` / `execute`, checkpoints, typed resets.
 //!
-//! `.subscribe()` uses bounded HTTP long-polling on `sync.api.` by default.
+//! `.subscribe()` uses bounded HTTP long-polling on `sync.api.` by default;
+//! snapshot and log bodies are strict indexed `terrascale.sync.v2.msgpack`
+//! envelopes with the manifest's allocation bounds.
 //! [`Transport::WebSocket`] remains an explicit boundary and fails closed in
 //! this HTTP-only crate until a WebSocket transport is published. `.execute()`
 //! is "subscribe once". A checkpoint is an opaque authorized-view position;
@@ -11,6 +13,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use base64::engine::{general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -45,6 +48,10 @@ pub struct Checkpoint {
     bytes: Vec<u8>,
 }
 
+const MAX_CHECKPOINT_BYTES: usize = 4096;
+const MAX_POLL_WINDOW: Duration = Duration::from_secs(25);
+const SYNC_ORIGIN: &str = "https://sync.api.terrascale.tech";
+
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum CheckpointWire {
@@ -58,12 +65,18 @@ impl<'de> Deserialize<'de> for Checkpoint {
         D: serde::Deserializer<'de>,
     {
         let wire = CheckpointWire::deserialize(deserializer)?;
-        Ok(Self::new(match wire {
+        let bytes = match wire {
             CheckpointWire::Bytes(bytes) => bytes,
-            CheckpointWire::Text(text) => {
-                BASE64.decode(&text).unwrap_or_else(|_| text.into_bytes())
-            }
-        }))
+            CheckpointWire::Text(text) => BASE64.decode(&text).map_err(|error| {
+                serde::de::Error::custom(format!("invalid checkpoint base64: {error}"))
+            })?,
+        };
+        if !(1..=MAX_CHECKPOINT_BYTES).contains(&bytes.len()) {
+            return Err(serde::de::Error::custom(
+                "checkpoint must contain between 1 and 4096 bytes",
+            ));
+        }
+        Ok(Self::new(bytes))
     }
 }
 
@@ -72,6 +85,18 @@ impl Checkpoint {
     #[must_use]
     pub fn new(bytes: Vec<u8>) -> Self {
         Self { bytes }
+    }
+
+    /// Construct a checkpoint while enforcing the published wire bound.
+    pub fn try_new(bytes: Vec<u8>) -> Result<Self> {
+        if !(1..=MAX_CHECKPOINT_BYTES).contains(&bytes.len()) {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_checkpoint",
+                "Checkpoint must contain between 1 and 4096 bytes.",
+            ));
+        }
+        Ok(Self::new(bytes))
     }
 
     /// Raw bytes for the attach request.
@@ -101,11 +126,11 @@ impl Checkpoint {
                 format!("Checkpoint is not valid base64: {e}. Resume with a fresh snapshot."),
             )
         })?;
-        if bytes.is_empty() {
+        if !(1..=MAX_CHECKPOINT_BYTES).contains(&bytes.len()) {
             return Err(Error::new(
                 ErrorKind::Validation,
                 "invalid_checkpoint",
-                "Checkpoint cannot be empty. Resume with a fresh snapshot.",
+                "Checkpoint must contain between 1 and 4096 bytes. Resume with a fresh snapshot.",
             ));
         }
         Ok(Self::new(bytes))
@@ -179,6 +204,8 @@ pub struct SubscribeOptions {
     pub region_hint: Option<RegionCode>,
     /// Resume position; absent means bootstrap from a fresh snapshot.
     pub checkpoint: Option<Checkpoint>,
+    /// Client-local subscription identity carried in the MessagePack contract.
+    pub subscription: Option<String>,
 }
 
 impl SubscribeOptions {
@@ -208,6 +235,13 @@ impl SubscribeOptions {
         self.region_hint = Some(region);
         self
     }
+
+    /// Set the client-local subscription identity.
+    #[must_use]
+    pub fn with_subscription(mut self, subscription: impl Into<String>) -> Self {
+        self.subscription = Some(subscription.into());
+        self
+    }
 }
 
 /// A bounded retry budget for CDN log reads. A poll is one request; retries
@@ -216,6 +250,8 @@ impl SubscribeOptions {
 pub struct PollOptions {
     /// Maximum number of requests, including the first attempt.
     pub max_attempts: usize,
+    /// Maximum duration of each bounded long-poll request (at most 25 s).
+    pub deadline: Duration,
 }
 
 impl PollOptions {
@@ -224,7 +260,15 @@ impl PollOptions {
     pub fn new(max_attempts: usize) -> Self {
         Self {
             max_attempts: max_attempts.max(1),
+            deadline: MAX_POLL_WINDOW,
         }
+    }
+
+    /// Set a request deadline, capped at the protocol's 25-second window.
+    #[must_use]
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = deadline.min(MAX_POLL_WINDOW);
+        self
     }
 }
 
@@ -283,7 +327,7 @@ pub struct ResetFrame {
 }
 
 /// One immutable CDN log response.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct PollResponse {
     /// Ordered deltas beginning at the requested offset.
     #[serde(default, alias = "updates")]
@@ -294,6 +338,32 @@ pub struct PollResponse {
     /// A typed replacement of the view.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset: Option<ResetFrame>,
+}
+
+impl<'de> Deserialize<'de> for PollResponse {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default, alias = "updates")]
+            deltas: Vec<ViewDelta>,
+            #[serde(default)]
+            checkpoint: Option<Checkpoint>,
+            #[serde(default)]
+            reset: Option<ResetFrame>,
+        }
+
+        // HTTP 204/304 and an empty long-poll timeout have no body. The
+        // transport presents those as JSON null, which is an empty response.
+        let value = Option::<Wire>::deserialize(deserializer)?;
+        Ok(value.map_or_else(Self::default, |wire| Self {
+            deltas: wire.deltas,
+            checkpoint: wire.checkpoint,
+            reset: wire.reset,
+        }))
+    }
 }
 
 /// Result of consuming one immutable log response.
@@ -465,9 +535,15 @@ impl Subscription {
             (Some(generation), Some(revision))
                 if *generation == delta.view_generation && *revision == delta.from_revision =>
             {
+                // Apply against a candidate so an invalid operation can never
+                // partially mutate an otherwise authoritative revision.
+                let mut candidate = self.items.clone();
                 for operation in &delta.operations {
-                    apply_operation(&mut self.items, operation);
+                    if !apply_operation(&mut candidate, operation) {
+                        return ApplyOutcome::ResetRequired(ResetReason::InvalidOperations);
+                    }
                 }
+                self.items = candidate;
                 self.revision = Some(delta.to_revision.clone());
                 self.checkpoint = Some(delta.checkpoint.clone());
                 ApplyOutcome::Applied
@@ -479,13 +555,16 @@ impl Subscription {
     }
 }
 
-fn apply_operation(items: &mut Vec<ResultItem>, operation: &ViewOperation) {
+fn apply_operation(items: &mut Vec<ResultItem>, operation: &ViewOperation) -> bool {
     match operation {
         ViewOperation::Insert {
             identity,
             position,
             value,
         } => {
+            if items.iter().any(|item| &item.identity == identity) {
+                return false;
+            }
             let index = (*position as usize).min(items.len());
             items.insert(
                 index,
@@ -494,25 +573,37 @@ fn apply_operation(items: &mut Vec<ResultItem>, operation: &ViewOperation) {
                     value: value.clone(),
                 },
             );
+            true
         }
         ViewOperation::Update { identity, value } => {
             if let Some(item) = items.iter_mut().find(|item| &item.identity == identity) {
                 item.value = value.clone();
+                true
+            } else {
+                false
             }
         }
         ViewOperation::Patch { identity, changes } => {
             if let Some(item) = items.iter_mut().find(|item| &item.identity == identity) {
                 merge_patch(&mut item.value, changes);
+                true
+            } else {
+                false
             }
         }
         ViewOperation::Remove { identity } => {
+            let before = items.len();
             items.retain(|item| &item.identity != identity);
+            items.len() != before
         }
         ViewOperation::Move { identity, position } => {
             if let Some(index) = items.iter().position(|item| &item.identity == identity) {
                 let item = items.remove(index);
                 let target = (*position as usize).min(items.len());
                 items.insert(target, item);
+                true
+            } else {
+                false
             }
         }
     }
@@ -563,20 +654,47 @@ impl ReactiveClient {
                 "WebSocket delivery is an explicit opt-in boundary; this HTTP transport does not open WebSocket connections.",
             ));
         }
+        if let Some(checkpoint) = options.checkpoint.as_ref() {
+            Checkpoint::try_new(checkpoint.to_bytes())?;
+        }
+        // Attach is authenticated member traffic. A hint may select a member
+        // host, but the route itself is always the canonical API path (there
+        // is no project/database reactive route).
         let url = format!(
             "{}/reactive/views",
-            self.shared.database_root_in(scope, options.region_hint)?
+            self.shared.pinned_base_url(options.region_hint)?
         );
+        let subscription = options
+            .subscription
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("rust-subscription");
+        if subscription.len() > 128 {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_subscription",
+                "Reactive subscription identities are limited to 128 bytes.",
+            ));
+        }
+        let parameters = serde_json::to_vec(query.params()).map_err(|error| {
+            Error::new(
+                ErrorKind::Validation,
+                "invalid_parameters",
+                format!("Reactive parameters are not serializable: {error}"),
+            )
+        })?;
         let body = serde_json::json!({
+            "databaseId": scope.database_id,
+            "subscription": subscription,
             "statement": query.sql(),
-            "parameters": query.params(),
-            "transport": options.transport,
+            "parameters": BASE64.encode(parameters),
             "checkpoint": options.checkpoint.as_ref().map(Checkpoint::to_base64),
+            "transport": "http",
         });
         let mut request = Request::json("reactive.subscribe", Method::Post, url, &body)?;
         if let Some(hint) = options.region_hint {
             request.headers.push((
-                "x-terrascale-region-hint".to_owned(),
+                "X-TerraScale-Region-Hint".to_owned(),
                 hint.as_str().to_owned(),
             ));
         }
@@ -617,14 +735,6 @@ impl ReactiveClient {
         if cancellation.is_cancelled() {
             return Err(cancelled_error());
         }
-        let log_url = view.log_url.trim();
-        if log_url.is_empty() {
-            return Err(Error::new(
-                ErrorKind::InvalidResponse,
-                "missing_log_url",
-                "The reactive attach response did not include its immutable log URL.",
-            ));
-        }
         if view.capability.as_deref().is_none_or(str::is_empty) {
             return Err(Error::new(
                 ErrorKind::InvalidResponse,
@@ -641,8 +751,10 @@ impl ReactiveClient {
         }
 
         let attempts = options.max_attempts.max(1);
-        let url = append_offset(log_url, offset);
+        let url = append_offset(&canonical_log_url(&view.view_id, view.generation), offset);
         let mut last_error = None;
+        let deadline = options.deadline.min(MAX_POLL_WINDOW);
+        let started = Instant::now();
         for attempt in 0..attempts {
             if cancellation.is_cancelled() {
                 return Err(cancelled_error());
@@ -660,10 +772,21 @@ impl ReactiveClient {
             ));
             request
                 .headers
-                .push(("accept".to_owned(), "application/json".to_owned()));
+                .push(("accept".to_owned(), "application/msgpack".to_owned()));
+            let remaining = deadline.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(Error::transport(
+                    "reactive poll exceeded its 25-second deadline",
+                ));
+            }
             let result = tokio::select! {
                 _ = cancellation.cancelled() => return Err(cancelled_error()),
-                result = self.shared.send_typed::<PollResponse>(request) => result,
+                result = tokio::time::timeout(remaining, self.shared.send_typed::<PollResponse>(request)) => {
+                    match result {
+                        Ok(result) => result,
+                        Err(_) => Err(Error::transport("reactive poll exceeded its 25-second deadline")),
+                    }
+                },
             };
             match result {
                 Ok(response) => return Ok(response),
@@ -693,7 +816,22 @@ impl ReactiveClient {
             ));
         }
         let mut state = Subscription::new(view.view_id.clone());
-        state.apply_snapshot(view.snapshot.clone());
+        if view.snapshot_urls.is_empty() {
+            if view.snapshot.revision == "0" {
+                return Err(Error::new(
+                    ErrorKind::InvalidResponse,
+                    "missing_snapshot",
+                    "The reactive attach response did not include a complete snapshot.",
+                ));
+            }
+            state.apply_snapshot(view.snapshot.clone());
+        } else {
+            // A chunk URL is an immutable, authorized MessagePack snapshot
+            // envelope. Fetch every advertised URL before exposing the live
+            // state; an attach must never seed a fabricated revision zero.
+            let snapshot = self.load_snapshot_chunks(&view).await?;
+            state.apply_snapshot(snapshot);
+        }
         Ok(LiveSubscription {
             client: self.clone(),
             view,
@@ -703,13 +841,104 @@ impl ReactiveClient {
         })
     }
 
+    async fn load_snapshot_chunks(&self, view: &AttachedView) -> Result<ViewSnapshot> {
+        if view.snapshot_urls.is_empty() || view.snapshot_urls.len() > 1024 {
+            return Err(Error::new(
+                ErrorKind::InvalidResponse,
+                "invalid_snapshot_chunks",
+                "A reactive view must advertise between 1 and 1024 snapshot chunks.",
+            ));
+        }
+        let mut assembled: Option<ViewSnapshot> = None;
+        for url in &view.snapshot_urls {
+            let mut request = Request {
+                route_name: "reactive.snapshot".to_owned(),
+                method: Method::Get,
+                url: url.clone(),
+                headers: vec![("accept".to_owned(), "application/msgpack".to_owned())],
+                body: None,
+            };
+            request.headers.push((
+                VIEW_CAPABILITY_HEADER.to_owned(),
+                view.capability.clone().ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::InvalidResponse,
+                        "missing_view_capability",
+                        "The reactive attach response did not include a view capability.",
+                    )
+                })?,
+            ));
+            let response = self.shared.send_typed::<PollResponse>(request).await?;
+            let chunk = response
+                .reset
+                .and_then(|reset| reset.snapshot)
+                .ok_or_else(|| {
+                    Error::new(
+                        ErrorKind::InvalidResponse,
+                        "invalid_snapshot_chunk",
+                        "A reactive snapshot URL did not return a complete snapshot frame.",
+                    )
+                })?;
+            Checkpoint::try_new(chunk.checkpoint.to_bytes())?;
+            if chunk.revision == "0" {
+                return Err(Error::new(
+                    ErrorKind::InvalidResponse,
+                    "invalid_snapshot_chunk",
+                    "A reactive snapshot chunk cannot use revision zero.",
+                ));
+            }
+            if let Some(current) = &mut assembled {
+                if current.view_generation != chunk.view_generation
+                    || current.revision != chunk.revision
+                    || current.checkpoint != chunk.checkpoint
+                {
+                    return Err(Error::new(
+                        ErrorKind::InvalidResponse,
+                        "inconsistent_snapshot_chunks",
+                        "Reactive snapshot chunks disagree on generation, revision, or checkpoint.",
+                    ));
+                }
+                for item in chunk.items {
+                    if current
+                        .items
+                        .iter()
+                        .any(|existing| existing.identity == item.identity)
+                    {
+                        return Err(Error::new(
+                            ErrorKind::InvalidResponse,
+                            "duplicate_snapshot_identity",
+                            "Reactive snapshot chunks contain a duplicate identity.",
+                        ));
+                    }
+                    current.items.push(item);
+                }
+                if current.items.len() > 10_000 {
+                    return Err(Error::new(
+                        ErrorKind::InvalidResponse,
+                        "oversized_snapshot",
+                        "Reactive snapshot chunks exceed the 10000-item bound.",
+                    ));
+                }
+            } else {
+                assembled = Some(chunk);
+            }
+        }
+        assembled.ok_or_else(|| Error::invalid_response("reactive snapshot chunks were empty"))
+    }
+
     /// Execute a live query once and return its rows ("subscribe once").
     pub async fn execute(&self, scope: &DatabaseScope, query: &Query) -> Result<SqlRows> {
         query.validate()?;
         let url = format!("{}/sql", self.shared.database_root(scope)?);
+        let parameters = query
+            .params()
+            .iter()
+            .enumerate()
+            .map(|(index, value)| (index.to_string(), value.clone()))
+            .collect::<serde_json::Map<_, _>>();
         let body = serde_json::json!({
-            "statement": query.sql(),
-            "parameters": query.params(),
+            "sql": query.sql(),
+            "parameters": parameters,
         });
         let request = Request::json("reactive.execute", Method::Post, url, &body)?;
         self.shared.send_typed(request).await
@@ -717,7 +946,7 @@ impl ReactiveClient {
 }
 
 /// View attachment returned by [`ReactiveClient::subscribe`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct AttachedView {
     /// Opaque view id.
     #[serde(alias = "viewId")]
@@ -737,6 +966,230 @@ pub struct AttachedView {
     /// Capability header value for `sync.api.` reads (never in URLs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for AttachedView {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        decode_attached_view(value).map_err(serde::de::Error::custom)
+    }
+}
+
+fn decode_attached_view(value: serde_json::Value) -> std::result::Result<AttachedView, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "reactive attach response is not an object".to_owned())?;
+    let view_id = string_field(object, &["viewId", "view_id", "view"])
+        .ok_or_else(|| "reactive attach response has no view id".to_owned())?;
+    if view_id.is_empty() || view_id.len() > 128 {
+        return Err("reactive attach response has an invalid view id".to_owned());
+    }
+    let generation = u64_field(object, &["generation", "view_generation", "viewGeneration"])
+        .ok_or_else(|| "reactive attach response has no valid generation".to_owned())?;
+    let capability = string_field(object, &["capability", "viewCapability", "view_capability"])
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "reactive attach response has no view capability".to_owned())?;
+    let checkpoint = object
+        .get("checkpoint")
+        .map(|value| decode_checkpoint_value(value, "checkpoint"))
+        .transpose()?;
+
+    let raw_urls = object
+        .get("snapshotUrls")
+        .or_else(|| object.get("snapshot_urls"))
+        .or_else(|| object.get("snapshotChunkUrls"))
+        .or_else(|| object.get("snapshot_chunk_urls"));
+    let snapshot_urls = match raw_urls {
+        None => Vec::new(),
+        Some(value) => {
+            let values = value
+                .as_array()
+                .ok_or_else(|| "reactive snapshot URLs are not an array".to_owned())?;
+            if values.len() > 1024 {
+                return Err("reactive snapshot URL count exceeds 1024".to_owned());
+            }
+            values
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    if !value.is_string() {
+                        return Err(format!("reactive snapshot URL {index} is not a string"));
+                    }
+                    Ok(canonical_snapshot_url(&view_id, generation, index))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        }
+    };
+    let snapshot = object
+        .get("snapshot")
+        .map(|value| decode_snapshot_value(value, checkpoint.as_ref(), generation))
+        .transpose()?
+        .unwrap_or_else(|| empty_snapshot(generation, checkpoint.clone()));
+    if object.get("snapshot").is_none() && snapshot_urls.is_empty() {
+        return Err("reactive attach response has no snapshot or snapshot URLs".to_owned());
+    }
+    let checkpoint = checkpoint.unwrap_or_else(|| snapshot.checkpoint.clone());
+    Ok(AttachedView {
+        view_id: view_id.clone(),
+        generation,
+        snapshot,
+        checkpoint,
+        snapshot_urls,
+        log_url: canonical_log_url(&view_id, generation),
+        capability: Some(capability),
+    })
+}
+
+fn string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    names: &[&str],
+) -> Option<String> {
+    names
+        .iter()
+        .find_map(|name| object.get(*name)?.as_str().map(str::to_owned))
+}
+
+fn u64_field(object: &serde_json::Map<String, serde_json::Value>, names: &[&str]) -> Option<u64> {
+    names.iter().find_map(|name| match object.get(*name)? {
+        serde_json::Value::Number(value) => value.as_u64(),
+        serde_json::Value::String(value) => value.parse().ok(),
+        _ => None,
+    })
+}
+
+fn decode_checkpoint_value(
+    value: &serde_json::Value,
+    field: &str,
+) -> std::result::Result<Checkpoint, String> {
+    let bytes = match value {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|byte| *byte <= 255)
+                    .map(|byte| byte as u8)
+            })
+            .collect::<Option<Vec<_>>>(),
+        serde_json::Value::String(encoded) => BASE64.decode(encoded).ok(),
+        _ => None,
+    }
+    .ok_or_else(|| format!("attach response field '{field}' is not bytes"))?;
+    Checkpoint::try_new(bytes).map_err(|error| error.message)
+}
+
+fn empty_snapshot(generation: u64, checkpoint: Option<Checkpoint>) -> ViewSnapshot {
+    ViewSnapshot {
+        view_generation: generation,
+        revision: "0".to_owned(),
+        items: Vec::new(),
+        checkpoint: checkpoint.unwrap_or_else(|| Checkpoint::new(vec![0])),
+    }
+}
+
+fn decode_snapshot_value(
+    value: &serde_json::Value,
+    outer_checkpoint: Option<&Checkpoint>,
+    generation: u64,
+) -> std::result::Result<ViewSnapshot, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "reactive inline snapshot is not an object".to_owned())?;
+    let view_generation =
+        u64_field(object, &["view_generation", "viewGeneration"]).unwrap_or(generation);
+    let revision = match object.get("revision") {
+        Some(serde_json::Value::String(value)) => value.clone(),
+        Some(serde_json::Value::Number(value)) => value.to_string(),
+        _ => "0".to_owned(),
+    };
+    let checkpoint = outer_checkpoint
+        .cloned()
+        .or_else(|| {
+            object
+                .get("checkpoint")
+                .and_then(|value| decode_checkpoint_value(value, "snapshot.checkpoint").ok())
+        })
+        .ok_or_else(|| "reactive snapshot has no checkpoint".to_owned())?;
+    let items = object
+        .get("items")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "reactive snapshot items are not an array".to_owned())?
+        .iter()
+        .map(decode_result_item)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(ViewSnapshot {
+        view_generation,
+        revision,
+        items,
+        checkpoint,
+    })
+}
+
+fn decode_result_item(value: &serde_json::Value) -> std::result::Result<ResultItem, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "reactive result item is not an object".to_owned())?;
+    let identity = object
+        .get("identity")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "reactive result item has no identity".to_owned())?
+        .to_owned();
+    if let Some(value) = object.get("value") {
+        return Ok(ResultItem {
+            identity,
+            value: value.clone(),
+        });
+    }
+    let fields = object
+        .get("fields")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "reactive result item fields are not an array".to_owned())?;
+    let mut result = serde_json::Map::new();
+    for field in fields {
+        let field = field
+            .as_object()
+            .ok_or_else(|| "reactive projected field is not an object".to_owned())?;
+        let path = field
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "reactive projected field has no path".to_owned())?;
+        let bytes = decode_bytes_value(
+            field
+                .get("value")
+                .ok_or_else(|| "reactive projected field has no value".to_owned())?,
+        )?;
+        let parsed = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("reactive projected value is not canonical JSON: {error}"))?;
+        if result.insert(path.to_owned(), parsed).is_some() {
+            return Err("reactive result item contains duplicate fields".to_owned());
+        }
+    }
+    Ok(ResultItem {
+        identity,
+        value: serde_json::Value::Object(result),
+    })
+}
+
+fn decode_bytes_value(value: &serde_json::Value) -> std::result::Result<Vec<u8>, String> {
+    match value {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|byte| *byte <= 255)
+                    .map(|byte| byte as u8)
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| "reactive bytes contain a non-byte".to_owned()),
+        serde_json::Value::String(value) => BASE64
+            .decode(value)
+            .map_err(|error| format!("reactive bytes are not base64: {error}")),
+        _ => Err("reactive bytes are not an array or base64 string".to_owned()),
+    }
 }
 
 impl AttachedView {
@@ -868,11 +1321,524 @@ impl LiveSubscription {
 }
 
 /// Header carrying the short-lived authorization-equivalent view capability.
-pub const VIEW_CAPABILITY_HEADER: &str = "x-terrascale-view-capability";
+pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-View-Capability";
+
+const MSGPACK_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+const MSGPACK_MAX_STRING_BYTES: usize = 262_144;
+const MSGPACK_MAX_BINARY_BYTES: usize = 1_048_576;
+const MSGPACK_MAX_ARRAY_ITEMS: usize = 10_000;
+const MSGPACK_MAX_DEPTH: usize = 64;
+
+/// Decode one strict manifest envelope to the legacy-compatible poll shape.
+/// The MessagePack bytes are scanned and bounds-checked before any public
+/// values are allocated. This function is public only for the transport seam.
+pub(crate) fn decode_reactive_msgpack_json(bytes: &[u8]) -> Result<serde_json::Value> {
+    if bytes.len() > MSGPACK_MAX_MESSAGE_BYTES {
+        return Err(Error::invalid_response(
+            "reactive MessagePack frame exceeds 8 MiB",
+        ));
+    }
+    let mut cursor = 0;
+    scan_msgpack(bytes, &mut cursor, 0)?;
+    if cursor != bytes.len() {
+        return Err(Error::invalid_response(
+            "reactive MessagePack frame has trailing bytes",
+        ));
+    }
+    let mut reader = MsgpackReader { bytes, cursor: 0 };
+    reader.array(7)?;
+    if reader.u32()? != 2 || reader.u32()? != 1 {
+        return Err(Error::invalid_response(
+            "unsupported reactive MessagePack protocol version",
+        ));
+    }
+    if reader.u32()? != 0 {
+        return Err(Error::invalid_response(
+            "reactive MessagePack frame requires unsupported features",
+        ));
+    }
+    let tag = reader.u32()?;
+    let _correlation = reader.u64()?;
+    let _causation = reader.u64()?;
+    let value = decode_msgpack_message(&mut reader, tag)?;
+    if reader.cursor != bytes.len() {
+        return Err(Error::invalid_response(
+            "reactive MessagePack frame has trailing bytes",
+        ));
+    }
+    Ok(value)
+}
+
+fn msgpack_error(message: impl Into<String>) -> Error {
+    Error::invalid_response(format!(
+        "malformed reactive MessagePack frame: {}",
+        message.into()
+    ))
+}
+
+fn scan_msgpack(bytes: &[u8], cursor: &mut usize, depth: usize) -> Result<()> {
+    if depth > MSGPACK_MAX_DEPTH {
+        return Err(msgpack_error("maximum nesting depth exceeded"));
+    }
+    let tag = *bytes
+        .get(*cursor)
+        .ok_or_else(|| msgpack_error("truncated value"))?;
+    *cursor += 1;
+    let take = |cursor: &mut usize, count: usize| -> Result<()> {
+        let end = cursor
+            .checked_add(count)
+            .ok_or_else(|| msgpack_error("length overflow"))?;
+        if end > bytes.len() {
+            return Err(msgpack_error("truncated value"));
+        }
+        *cursor = end;
+        Ok(())
+    };
+    match tag {
+        0x00..=0x7f | 0xc0 | 0xc2 | 0xc3 | 0xe0..=0xff => Ok(()),
+        0xca => Err(msgpack_error("float32 is forbidden")),
+        0xcb => take(cursor, 8),
+        0xcc => take(cursor, 1),
+        0xcd => take(cursor, 2),
+        0xce => take(cursor, 4),
+        0xcf => take(cursor, 8),
+        0xd0 => take(cursor, 1),
+        0xd1 => take(cursor, 2),
+        0xd2 => take(cursor, 4),
+        0xd3 => take(cursor, 8),
+        0xc4..=0xc6 => {
+            let width = match tag {
+                0xc4 => 1,
+                0xc5 => 2,
+                _ => 4,
+            };
+            let len = read_length(bytes, cursor, width)?;
+            if len > MSGPACK_MAX_BINARY_BYTES {
+                return Err(msgpack_error("binary field exceeds its bound"));
+            }
+            take(cursor, len)
+        }
+        0xa0..=0xbf => {
+            let len = usize::from(tag - 0xa0);
+            if len > MSGPACK_MAX_STRING_BYTES {
+                return Err(msgpack_error("string exceeds its bound"));
+            }
+            take(cursor, len)
+        }
+        0xd9..=0xdb => {
+            let width = match tag {
+                0xd9 => 1,
+                0xda => 2,
+                _ => 4,
+            };
+            let len = read_length(bytes, cursor, width)?;
+            if len > MSGPACK_MAX_STRING_BYTES {
+                return Err(msgpack_error("string exceeds its bound"));
+            }
+            take(cursor, len)
+        }
+        0x90..=0x9f => {
+            let count = usize::from(tag - 0x90);
+            for _ in 0..count {
+                scan_msgpack(bytes, cursor, depth + 1)?;
+            }
+            Ok(())
+        }
+        0xdc | 0xdd => {
+            let width = if tag == 0xdc { 2 } else { 4 };
+            let count = read_length(bytes, cursor, width)?;
+            if count > MSGPACK_MAX_ARRAY_ITEMS {
+                return Err(msgpack_error("array exceeds its bound"));
+            }
+            for _ in 0..count {
+                scan_msgpack(bytes, cursor, depth + 1)?;
+            }
+            Ok(())
+        }
+        0x80..=0x8f | 0xde | 0xdf => {
+            Err(msgpack_error("maps are forbidden by the indexed contract"))
+        }
+        0xc1 => Err(msgpack_error("reserved MessagePack type")),
+        0xc7..=0xc9 | 0xd4..=0xd8 => Err(msgpack_error("extension types are forbidden")),
+    }
+}
+
+fn read_length(bytes: &[u8], cursor: &mut usize, width: usize) -> Result<usize> {
+    let end = cursor
+        .checked_add(width)
+        .ok_or_else(|| msgpack_error("length overflow"))?;
+    if end > bytes.len() {
+        return Err(msgpack_error("truncated length"));
+    }
+    let mut value = 0usize;
+    for byte in &bytes[*cursor..end] {
+        value = value
+            .checked_mul(256)
+            .and_then(|v| v.checked_add(usize::from(*byte)))
+            .ok_or_else(|| msgpack_error("length overflow"))?;
+    }
+    *cursor = end;
+    Ok(value)
+}
+
+struct MsgpackReader<'a> {
+    bytes: &'a [u8],
+    cursor: usize,
+}
+
+impl<'a> MsgpackReader<'a> {
+    fn byte(&mut self) -> Result<u8> {
+        let byte = *self
+            .bytes
+            .get(self.cursor)
+            .ok_or_else(|| msgpack_error("truncated value"))?;
+        self.cursor += 1;
+        Ok(byte)
+    }
+    fn take(&mut self, count: usize) -> Result<&'a [u8]> {
+        let end = self
+            .cursor
+            .checked_add(count)
+            .ok_or_else(|| msgpack_error("length overflow"))?;
+        if end > self.bytes.len() {
+            return Err(msgpack_error("truncated value"));
+        }
+        let result = &self.bytes[self.cursor..end];
+        self.cursor = end;
+        Ok(result)
+    }
+    fn array(&mut self, expected: usize) -> Result<()> {
+        let tag = self.byte()?;
+        let count = match tag {
+            0x90..=0x9f => usize::from(tag - 0x90),
+            0xdc => usize::from(u16::from_be_bytes(self.take(2)?.try_into().unwrap())),
+            0xdd => usize::try_from(u32::from_be_bytes(self.take(4)?.try_into().unwrap()))
+                .map_err(|_| msgpack_error("array length overflow"))?,
+            _ => return Err(msgpack_error("expected indexed array")),
+        };
+        if count != expected || count > MSGPACK_MAX_ARRAY_ITEMS {
+            return Err(msgpack_error("indexed array has the wrong length"));
+        }
+        Ok(())
+    }
+    fn u64(&mut self) -> Result<u64> {
+        let tag = self.byte()?;
+        match tag {
+            0..=0x7f => Ok(u64::from(tag)),
+            0xcc => Ok(u64::from(self.byte()?)),
+            0xcd => Ok(u64::from(u16::from_be_bytes(
+                self.take(2)?.try_into().unwrap(),
+            ))),
+            0xce => Ok(u64::from(u32::from_be_bytes(
+                self.take(4)?.try_into().unwrap(),
+            ))),
+            0xcf => Ok(u64::from_be_bytes(self.take(8)?.try_into().unwrap())),
+            _ => Err(msgpack_error("expected unsigned integer")),
+        }
+    }
+    fn u32(&mut self) -> Result<u32> {
+        let value = self.u64()?;
+        u32::try_from(value).map_err(|_| msgpack_error("integer exceeds u32"))
+    }
+    fn text(&mut self, max: usize) -> Result<String> {
+        let tag = self.byte()?;
+        let len = match tag {
+            0xa0..=0xbf => usize::from(tag - 0xa0),
+            0xd9 => usize::from(self.byte()?),
+            0xda => usize::from(u16::from_be_bytes(self.take(2)?.try_into().unwrap())),
+            0xdb => usize::try_from(u32::from_be_bytes(self.take(4)?.try_into().unwrap()))
+                .map_err(|_| msgpack_error("string length overflow"))?,
+            _ => return Err(msgpack_error("expected text")),
+        };
+        if len > max || len > MSGPACK_MAX_STRING_BYTES {
+            return Err(msgpack_error("string exceeds its bound"));
+        }
+        String::from_utf8(self.take(len)?.to_vec()).map_err(|_| msgpack_error("invalid UTF-8"))
+    }
+    fn binary(&mut self, min: usize, max: usize) -> Result<Vec<u8>> {
+        let tag = self.byte()?;
+        let width = match tag {
+            0xc4 => 1,
+            0xc5 => 2,
+            0xc6 => 4,
+            _ => return Err(msgpack_error("expected binary")),
+        };
+        let len = read_length(self.bytes, &mut self.cursor, width)?;
+        if len < min || len > max || len > MSGPACK_MAX_BINARY_BYTES {
+            return Err(msgpack_error("binary exceeds its bound"));
+        }
+        Ok(self.take(len)?.to_vec())
+    }
+    fn nil(&mut self) -> Result<()> {
+        if self.byte()? == 0xc0 {
+            Ok(())
+        } else {
+            Err(msgpack_error("expected nil"))
+        }
+    }
+}
+
+fn decode_msgpack_message(reader: &mut MsgpackReader<'_>, tag: u32) -> Result<serde_json::Value> {
+    match tag {
+        3 => {
+            // snapshot
+            reader.array(2)?;
+            let _subscription = reader.text(128)?;
+            let snapshot = decode_msgpack_snapshot(reader)?;
+            Ok(serde_json::json!({"reset": {"reason": "reconnect", "snapshot": snapshot}}))
+        }
+        4 => {
+            // delta
+            reader.array(7)?;
+            let _subscription = reader.text(128)?;
+            let generation = reader.u64()?;
+            let from = reader.u64()?;
+            let to = reader.u64()?;
+            let operations = decode_msgpack_operations(reader)?;
+            let _digest = reader.text(64)?;
+            let checkpoint = BASE64.encode(reader.binary(1, MAX_CHECKPOINT_BYTES)?);
+            Ok(
+                serde_json::json!({"deltas": [{"view_generation": generation, "from_revision": from.to_string(), "to_revision": to.to_string(), "operations": operations, "checkpoint": checkpoint}]}),
+            )
+        }
+        5 => {
+            // reset
+            reader.array(3)?;
+            let _subscription = reader.text(128)?;
+            let reason = decode_reset_reason(reader.u32()?)?;
+            let snapshot = decode_msgpack_snapshot(reader)?;
+            Ok(serde_json::json!({"reset": {"reason": reason, "snapshot": snapshot}}))
+        }
+        6 => {
+            reader.array(0)?;
+            Ok(serde_json::json!({}))
+        }
+        8 => {
+            // authorization changed is a typed permission reset
+            reader.array(4)?;
+            let _subscription = reader.text(128)?;
+            let _generation = reader.u64()?;
+            let count = reader.array_count(10_000)?;
+            for _ in 0..count {
+                let _ = reader.text(256)?;
+            }
+            let snapshot = decode_msgpack_snapshot(reader)?;
+            Ok(serde_json::json!({"reset": {"reason": "permission_changed", "snapshot": snapshot}}))
+        }
+        9 => {
+            reader.array(1)?;
+            let region = reader.text(64)?;
+            Ok(serde_json::json!({"reset": {"reason": "region_moved", "region": region}}))
+        }
+        10 => {
+            // errors are intentionally typed, never silently retried
+            reader.array(2)?;
+            let code = reader.u32()?;
+            let detail = if reader.bytes.get(reader.cursor).copied() == Some(0xc0) {
+                reader.nil()?;
+                None
+            } else {
+                Some(reader.text(256)?)
+            };
+            let message = detail.unwrap_or_else(|| "reactive server error".to_owned());
+            let (kind, name) = match code {
+                3 => (ErrorKind::Authentication, "auth_expired"),
+                4 => (ErrorKind::Authorization, "permission_changed"),
+                5 => (ErrorKind::Validation, "checkpoint_refused"),
+                6 => (ErrorKind::Unavailable, "slow_consumer"),
+                7 | 8 => (ErrorKind::Unavailable, "reactive_unavailable"),
+                _ => return Err(msgpack_error("unknown reactive error code")),
+            };
+            Err(Error::new(kind, name, message))
+        }
+        11 => {
+            reader.array(1)?;
+            let mode = reader.u32()?;
+            if mode != 1 && mode != 2 {
+                return Err(msgpack_error("unknown backpressure mode"));
+            }
+            Err(Error::new(
+                ErrorKind::Unavailable,
+                "slow_consumer",
+                "Reactive server applied backpressure.",
+            ))
+        }
+        _ => Err(msgpack_error(
+            "message is not a server-to-client reactive frame",
+        )),
+    }
+}
+
+impl<'a> MsgpackReader<'a> {
+    fn array_count(&mut self, max: usize) -> Result<usize> {
+        let tag = self.byte()?;
+        let count = match tag {
+            0x90..=0x9f => usize::from(tag - 0x90),
+            0xdc => usize::from(u16::from_be_bytes(self.take(2)?.try_into().unwrap())),
+            0xdd => usize::try_from(u32::from_be_bytes(self.take(4)?.try_into().unwrap()))
+                .map_err(|_| msgpack_error("array length overflow"))?,
+            _ => return Err(msgpack_error("expected indexed array")),
+        };
+        if count > max || count > MSGPACK_MAX_ARRAY_ITEMS {
+            return Err(msgpack_error("array exceeds its bound"));
+        }
+        Ok(count)
+    }
+}
+
+fn decode_msgpack_snapshot(reader: &mut MsgpackReader<'_>) -> Result<serde_json::Value> {
+    reader.array(6)?;
+    let generation = reader.u64()?;
+    let _authorization_generation = reader.u64()?;
+    let revision = reader.u64()?;
+    let count = reader.array_count(10_000)?;
+    let mut items = Vec::with_capacity(count);
+    for _ in 0..count {
+        reader.array(2)?;
+        let identity = reader.text(256)?;
+        let fields = decode_msgpack_fields(reader)?;
+        items.push(serde_json::json!({"identity": identity, "value": fields}));
+    }
+    let _digest = reader.text(64)?;
+    let checkpoint = BASE64.encode(reader.binary(1, MAX_CHECKPOINT_BYTES)?);
+    Ok(
+        serde_json::json!({"view_generation": generation, "revision": revision.to_string(), "items": items, "checkpoint": checkpoint}),
+    )
+}
+
+fn decode_msgpack_fields(reader: &mut MsgpackReader<'_>) -> Result<serde_json::Value> {
+    let count = reader.array_count(1024)?;
+    let mut fields = serde_json::Map::new();
+    let mut aggregate_bytes = 0usize;
+    for _ in 0..count {
+        reader.array(2)?;
+        let path = reader.text(256)?;
+        if path.is_empty() {
+            return Err(msgpack_error("projected field path is empty"));
+        }
+        let bytes = reader.binary(0, MSGPACK_MAX_BINARY_BYTES)?;
+        aggregate_bytes = aggregate_bytes
+            .checked_add(bytes.len())
+            .ok_or_else(|| msgpack_error("projected fields exceed their aggregate bound"))?;
+        if aggregate_bytes > MSGPACK_MAX_BINARY_BYTES {
+            return Err(msgpack_error(
+                "projected fields exceed their aggregate bound",
+            ));
+        }
+        let value: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|_| msgpack_error("projected value is not canonical JSON"))?;
+        if fields.insert(path, value).is_some() {
+            return Err(msgpack_error("duplicate projected field"));
+        }
+    }
+    Ok(serde_json::Value::Object(fields))
+}
+
+fn decode_msgpack_operations(reader: &mut MsgpackReader<'_>) -> Result<Vec<serde_json::Value>> {
+    let count = reader.array_count(1024)?;
+    let mut operations = Vec::with_capacity(count);
+    for _ in 0..count {
+        let variant_count = reader.array_count(4)?;
+        let variant = reader.u32()?;
+        let identity = reader.text(256)?;
+        let operation = match variant {
+            1 => {
+                if variant_count != 4 {
+                    return Err(msgpack_error("invalid insert shape"));
+                }
+                let position = reader.u32()?;
+                let fields = decode_msgpack_fields(reader)?;
+                serde_json::json!({"kind":"insert","identity":identity,"position":position,"value":fields})
+            }
+            2 => {
+                if variant_count != 3 {
+                    return Err(msgpack_error("invalid update shape"));
+                }
+                let fields = decode_msgpack_fields(reader)?;
+                serde_json::json!({"kind":"update","identity":identity,"value":fields})
+            }
+            3 => {
+                if variant_count != 3 {
+                    return Err(msgpack_error("invalid patch shape"));
+                }
+                let count = reader.array_count(1024)?;
+                let mut changes = serde_json::Map::new();
+                let mut aggregate_bytes = 0usize;
+                for _ in 0..count {
+                    reader.array(2)?;
+                    let path = reader.text(256)?;
+                    let value = if reader.bytes.get(reader.cursor).copied() == Some(0xc0) {
+                        reader.nil()?;
+                        serde_json::Value::Null
+                    } else {
+                        let bytes = reader.binary(0, MSGPACK_MAX_BINARY_BYTES)?;
+                        aggregate_bytes = aggregate_bytes
+                            .checked_add(bytes.len())
+                            .ok_or_else(|| msgpack_error("patch exceeds its aggregate bound"))?;
+                        if aggregate_bytes > MSGPACK_MAX_BINARY_BYTES {
+                            return Err(msgpack_error("patch exceeds its aggregate bound"));
+                        }
+                        serde_json::from_slice(&bytes)
+                            .map_err(|_| msgpack_error("patch value is not canonical JSON"))?
+                    };
+                    if changes.insert(path, value).is_some() {
+                        return Err(msgpack_error("duplicate patch field"));
+                    }
+                }
+                serde_json::json!({"kind":"patch","identity":identity,"changes":changes})
+            }
+            4 => {
+                if variant_count != 2 {
+                    return Err(msgpack_error("invalid remove shape"));
+                }
+                serde_json::json!({"kind":"remove","identity":identity})
+            }
+            5 => {
+                if variant_count != 3 {
+                    return Err(msgpack_error("invalid move shape"));
+                }
+                let position = reader.u32()?;
+                serde_json::json!({"kind":"move","identity":identity,"position":position})
+            }
+            _ => return Err(msgpack_error("unknown operation variant")),
+        };
+        operations.push(operation);
+    }
+    Ok(operations)
+}
+
+fn decode_reset_reason(value: u32) -> Result<&'static str> {
+    match value {
+        1 => Ok("checkpoint_expired"),
+        2 => Ok("retention_advanced"),
+        3 => Ok("generation_changed"),
+        4 => Ok("checkpoint_not_current"),
+        5 => Ok("view_diverged"),
+        6 => Ok("oversized"),
+        7 => Ok("invalid_operations"),
+        8 => Ok("invalid_checkpoint"),
+        9 => Ok("backpressure"),
+        _ => Err(msgpack_error("unknown reset reason")),
+    }
+}
 
 fn append_offset(base: &str, offset: &str) -> String {
     let separator = if base.contains('?') { '&' } else { '?' };
     format!("{base}{separator}offset={}", percent_encode(offset))
+}
+
+fn canonical_log_url(view: &str, generation: u64) -> String {
+    format!(
+        "{SYNC_ORIGIN}/api/v1/reactive/views/{}/{generation}/log",
+        percent_encode(view)
+    )
+}
+
+fn canonical_snapshot_url(view: &str, generation: u64, index: usize) -> String {
+    format!(
+        "{SYNC_ORIGIN}/api/v1/reactive/views/{}/{generation}/snapshot/{index}",
+        percent_encode(view)
+    )
 }
 
 fn percent_encode(value: &str) -> String {
@@ -890,6 +1856,12 @@ fn percent_encode(value: &str) -> String {
 }
 
 fn is_retryable(error: &Error) -> bool {
+    if matches!(
+        error.code.as_str(),
+        "slow_consumer" | "auth_expired" | "permission_changed" | "checkpoint_refused"
+    ) {
+        return false;
+    }
     matches!(
         error.kind,
         ErrorKind::Transport | ErrorKind::Unavailable | ErrorKind::Server

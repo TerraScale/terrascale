@@ -1,30 +1,113 @@
 //! Database-per-tenant (GOAL D-51): thousands of small databases as a
-//! first-class pattern. `tenants.create(key)` provisions a database with
-//! placement and key template inherited from a tenant template; tenant-scoped
-//! API keys come from the template.
+//! first-class pattern.
+//!
+//! Tenant routes are not part of the pinned TerraBase contract yet. The
+//! typed surface remains available so callers can validate requests and
+//! compile against the planned API, but valid operations fail closed with a
+//! `contract_gap` error instead of sending a request to an invented route.
 
-use serde::{Deserialize, Serialize};
+use serde::de::Error as DeError;
+use serde::ser::Error as SerError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::client::SharedClient;
-use crate::error::Result;
+use crate::error::{Error, ErrorKind, Result};
 use crate::regions::RegionCode;
-use crate::transport::{Method, Request};
+
+const MAX_TENANT_KEY_BYTES: usize = 64;
+const MAX_PLACEMENT_REGIONS: usize = 20;
+
+/// An immutable residency constraint inherited by a tenant database.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TenantPlacementLock {
+    /// Keep every copy in the European launch region.
+    EuOnly,
+    /// Keep every copy in the Brazilian launch region.
+    BrOnly,
+    /// Keep every copy in this explicit set of regions.
+    Regions(Vec<RegionCode>),
+}
+
+impl TenantPlacementLock {
+    /// Construct an explicit region placement lock, rejecting an empty or
+    /// duplicate region list.
+    pub fn regions(regions: Vec<RegionCode>) -> Result<Self> {
+        validate_regions(&regions)?;
+        Ok(Self::Regions(regions))
+    }
+
+    fn validate(&self) -> Result<()> {
+        if let Self::Regions(regions) = self {
+            validate_regions(regions)?;
+        }
+        Ok(())
+    }
+}
+
+impl Serialize for TenantPlacementLock {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::EuOnly => serializer.serialize_str("eu-only"),
+            Self::BrOnly => serializer.serialize_str("br-only"),
+            Self::Regions(regions) => {
+                validate_regions(regions).map_err(|error| S::Error::custom(error.to_string()))?;
+                regions.serialize(serializer)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TenantPlacementLock {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Policy(String),
+            Regions(Vec<RegionCode>),
+        }
+
+        match Wire::deserialize(deserializer)? {
+            Wire::Policy(value) => match value.as_str() {
+                "eu-only" => Ok(Self::EuOnly),
+                "br-only" => Ok(Self::BrOnly),
+                _ => Err(D::Error::custom(
+                    "placement lock must be eu-only, br-only, or a region list",
+                )),
+            },
+            Wire::Regions(regions) => {
+                validate_regions(&regions).map_err(|error| D::Error::custom(error.to_string()))?;
+                Ok(Self::Regions(regions))
+            }
+        }
+    }
+}
 
 /// Template a tenant database inherits placement and key policy from.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TenantTemplate {
     /// Template name.
+    #[serde(deserialize_with = "deserialize_non_blank")]
     pub name: String,
-    /// Regions the tenant database lives in.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub regions: Vec<RegionCode>,
+    /// Residency constraint inherited by tenants using this template.
+    #[serde(rename = "placementLock", alias = "placement_lock")]
+    pub placement_lock: TenantPlacementLock,
+    /// Optional key naming template.
+    #[serde(
+        default,
+        rename = "keyTemplate",
+        alias = "key_template",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub key_template: Option<String>,
 }
 
 /// Cursor and page-size options for [`TenantsClient::list_page`].
-///
-/// Tenant listing is deliberately cursor based: a project may contain
-/// millions of tenant databases and the server must not materialize the
-/// complete catalog for one request.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TenantListOptions {
     /// Continuation cursor returned by the preceding page.
@@ -56,6 +139,26 @@ impl TenantListOptions {
         self.limit = Some(limit);
         self
     }
+
+    fn validate(&self) -> Result<()> {
+        if self.limit == Some(0) {
+            return Err(validation(
+                "invalid_page_size",
+                "tenant page limit must be positive.",
+            ));
+        }
+        if self
+            .cursor
+            .as_deref()
+            .is_some_and(|cursor| cursor.trim().is_empty())
+        {
+            return Err(validation(
+                "invalid_cursor",
+                "tenant page cursor cannot be blank.",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// One cursor page of tenants.
@@ -73,13 +176,19 @@ pub struct TenantPage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CreateTenant {
     /// Tenant key; selects the database for tenant-scoped keys.
+    #[serde(deserialize_with = "deserialize_non_blank")]
     pub key: String,
     /// Template to inherit placement and key policy from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
-    /// Explicit region list (cannot widen a placement lock).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub regions: Option<Vec<RegionCode>>,
+    /// Immutable placement lock. It cannot be widened after creation.
+    #[serde(
+        default,
+        rename = "placementLock",
+        alias = "placement_lock",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub placement_lock: Option<TenantPlacementLock>,
 }
 
 impl CreateTenant {
@@ -89,27 +198,67 @@ impl CreateTenant {
         Self {
             key: key.into(),
             template: Some(template.into()),
-            regions: None,
+            placement_lock: None,
         }
+    }
+
+    /// Set an explicit immutable placement lock.
+    #[must_use]
+    pub fn placement_lock(mut self, lock: TenantPlacementLock) -> Self {
+        self.placement_lock = Some(lock);
+        self
+    }
+
+    fn validate(&self) -> Result<()> {
+        validate_key(&self.key)?;
+        if let Some(template) = &self.template {
+            validate_non_blank(template, "template")?;
+        }
+        if let Some(lock) = &self.placement_lock {
+            lock.validate()?;
+        }
+        Ok(())
     }
 }
 
 /// A provisioned tenant.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tenant {
-    /// Tenant key.
+    /// Optional service-assigned tenant identity.
+    #[serde(
+        default,
+        rename = "tenantId",
+        alias = "tenant_id",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tenant_id: Option<String>,
+    /// Stable tenant key.
+    #[serde(deserialize_with = "deserialize_non_blank")]
     pub key: String,
     /// Underlying database id.
-    #[serde(alias = "databaseId")]
+    #[serde(alias = "databaseId", deserialize_with = "deserialize_non_blank")]
     pub database_id: String,
-    /// Regions hosting the tenant database.
+    /// Regions currently hosting the tenant database.
     #[serde(default)]
     pub regions: Vec<RegionCode>,
     /// Name of the template from which placement and key policy were derived.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
+    /// Immutable placement constraint, when returned by the service.
+    #[serde(
+        default,
+        rename = "placementLock",
+        alias = "placement_lock",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub placement_lock: Option<TenantPlacementLock>,
     /// Creation timestamp.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "createdAt",
+        alias = "created_at",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub created_at: Option<String>,
 }
 
@@ -117,24 +266,64 @@ pub struct Tenant {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TenantApiKey {
     /// Key id.
-    #[serde(alias = "keyId")]
+    #[serde(alias = "keyId", deserialize_with = "deserialize_non_blank")]
     pub key_id: String,
     /// Secret token (shown once at creation).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
     /// Tenant this key is scoped to.
-    #[serde(alias = "tenantKey")]
+    #[serde(alias = "tenantKey", deserialize_with = "deserialize_non_blank")]
     pub tenant_key: String,
+}
+
+/// Optional metadata for a tenant-scoped key.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CreateTenantKey {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+}
+
+/// Optional metadata for a per-tenant support branch.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CreateTenantBranch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Explicit options used when deleting a tenant.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TenantOperationOptions {
+    /// Stable key used to replay a mutation safely.
+    pub idempotency_key: Option<String>,
+}
+
+impl TenantOperationOptions {
+    fn validate(&self) -> Result<()> {
+        if let Some(key) = &self.idempotency_key {
+            validate_non_blank(key, "idempotency_key")?;
+            if key.len() > 128 {
+                return Err(validation(
+                    "invalid_idempotency_key",
+                    "idempotency_key cannot exceed 128 characters.",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Tenant branch for support/debugging (per-tenant branching).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TenantBranch {
     /// Branch id.
-    #[serde(alias = "branchId")]
+    #[serde(alias = "branchId", deserialize_with = "deserialize_non_blank")]
     pub branch_id: String,
     /// Tenant this branch belongs to.
-    #[serde(alias = "tenantKey")]
+    #[serde(alias = "tenantKey", deserialize_with = "deserialize_non_blank")]
     pub tenant_key: String,
     /// Branch status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -144,43 +333,31 @@ pub struct TenantBranch {
 /// Tenant client. Obtain from [`crate::TerraScaleClient::tenants`].
 #[derive(Debug, Clone)]
 pub struct TenantsClient {
-    shared: SharedClient,
+    // Kept for parity with the other clients and for the published route's
+    // eventual implementation. It is intentionally not used while routes
+    // are absent from the pinned contract.
+    _shared: SharedClient,
 }
 
 impl TenantsClient {
     pub(crate) fn new(shared: SharedClient) -> Self {
-        Self { shared }
-    }
-
-    fn root(&self, project_id: Option<&str>) -> Result<String> {
-        Ok(format!("{}/tenants", self.shared.project_root(project_id)?))
+        Self { _shared: shared }
     }
 
     /// Provision a tenant database from a template.
-    pub async fn create(&self, request: CreateTenant, project_id: Option<&str>) -> Result<Tenant> {
-        validate_key(&request.key)?;
-        let request = Request::json(
-            "tenants.create",
-            Method::Post,
-            self.root(project_id)?,
-            &request,
-        )?;
-        self.shared.send_typed(request).await
+    pub async fn create(&self, request: CreateTenant, _project_id: Option<&str>) -> Result<Tenant> {
+        request.validate()?;
+        Err(contract_gap("tenants.create"))
     }
 
     /// Fetch one tenant by key.
-    pub async fn get(&self, key: &str, project_id: Option<&str>) -> Result<Tenant> {
-        let request = Request {
-            route_name: "tenants.get".to_owned(),
-            method: Method::Get,
-            url: format!("{}/{}", self.root(project_id)?, encode_key(key)?),
-            headers: Vec::new(),
-            body: None,
-        };
-        self.shared.send_typed(request).await
+    pub async fn get(&self, key: &str, _project_id: Option<&str>) -> Result<Tenant> {
+        validate_key(key)?;
+        Err(contract_gap("tenants.get"))
     }
 
-    /// List tenants in the project.
+    /// List tenants. This operation is unavailable until the tenant route is
+    /// published by TerraBase.
     pub async fn list(&self, project_id: Option<&str>) -> Result<Vec<Tenant>> {
         Ok(self
             .list_page(TenantListOptions::default(), project_id)
@@ -188,141 +365,169 @@ impl TenantsClient {
             .tenants)
     }
 
-    /// List one cursor page of tenants in the project.
+    /// List one cursor page of tenants.
     pub async fn list_page(
         &self,
         options: TenantListOptions,
-        project_id: Option<&str>,
+        _project_id: Option<&str>,
     ) -> Result<TenantPage> {
-        let mut url = self.root(project_id)?;
-        let mut query = Vec::new();
-        if let Some(cursor) = options.cursor {
-            query.push(format!("cursor={}", encode_segment(&cursor)?));
-        }
-        if let Some(limit) = options.limit {
-            query.push(format!("limit={limit}"));
-        }
-        if !query.is_empty() {
-            url.push('?');
-            url.push_str(&query.join("&"));
-        }
-        let request = Request {
-            route_name: "tenants.list".to_owned(),
-            method: Method::Get,
-            url,
-            headers: Vec::new(),
-            body: None,
-        };
-        let response: TenantListResponse = self.shared.send_typed(request).await?;
-        Ok(response.into_page())
+        options.validate()?;
+        Err(contract_gap("tenants.list"))
     }
 
     /// Delete a tenant database after explicit confirmation.
     pub async fn delete(&self, key: &str, confirm: bool, project_id: Option<&str>) -> Result<()> {
+        let idempotency_key = format!("ts_tenant_delete_{}", key.trim());
+        self.delete_with_options(
+            key,
+            confirm,
+            TenantOperationOptions {
+                idempotency_key: Some(idempotency_key),
+            },
+            project_id,
+        )
+        .await
+    }
+
+    /// Delete with an explicit idempotency key, once the route is published.
+    pub async fn delete_with_options(
+        &self,
+        key: &str,
+        confirm: bool,
+        options: TenantOperationOptions,
+        _project_id: Option<&str>,
+    ) -> Result<()> {
+        validate_key(key)?;
         if !confirm {
-            return Err(crate::error::Error::new(
-                crate::error::ErrorKind::Validation,
+            return Err(validation(
                 "confirm_required",
                 "Tenant deletion requires confirm to be true.",
             ));
         }
-        let mut request = Request {
-            route_name: "tenants.delete".to_owned(),
-            method: Method::Delete,
-            url: format!("{}/{}", self.root(project_id)?, encode_key(key)?),
-            headers: Vec::new(),
-            body: None,
-        };
-        request.headers.push((
-            "x-terrascale-delete-confirmation".to_owned(),
-            key.to_owned(),
-        ));
-        // Shared's automatic idempotency decoration covers POST/PUT. DELETE
-        // is also a mutation, so carry a stable key here for safe retries.
-        request.headers.push((
-            "idempotency-key".to_owned(),
-            format!("ts_tenant_delete_{}", encode_key(key)?),
-        ));
-        self.shared.send_empty(request).await
+        options.validate()?;
+        Err(contract_gap("tenants.delete"))
     }
 
     /// Mint a tenant-scoped API key from the template's key policy.
     pub async fn create_key(&self, key: &str, project_id: Option<&str>) -> Result<TenantApiKey> {
-        let url = format!("{}/{}/keys", self.root(project_id)?, encode_key(key)?);
-        let request = Request::json(
-            "tenants.keys.create",
-            Method::Post,
-            url,
-            &serde_json::json!({}),
-        )?;
-        self.shared.send_typed(request).await
+        self.create_key_with_request(key, CreateTenantKey::default(), project_id)
+            .await
+    }
+
+    /// Mint a tenant-scoped API key with optional metadata.
+    pub async fn create_key_with_request(
+        &self,
+        key: &str,
+        request: CreateTenantKey,
+        _project_id: Option<&str>,
+    ) -> Result<TenantApiKey> {
+        validate_key(key)?;
+        validate_optional_metadata(&request.name, "name")?;
+        validate_scopes(request.scopes.as_deref())?;
+        Err(contract_gap("tenants.keys.create"))
     }
 
     /// Open a per-tenant support branch.
     pub async fn create_branch(&self, key: &str, project_id: Option<&str>) -> Result<TenantBranch> {
-        let url = format!("{}/{}/branches", self.root(project_id)?, encode_key(key)?);
-        let request = Request::json(
-            "tenants.branches.create",
-            Method::Post,
-            url,
-            &serde_json::json!({}),
-        )?;
-        self.shared.send_typed(request).await
+        self.create_branch_with_request(key, CreateTenantBranch::default(), project_id)
+            .await
+    }
+
+    /// Open a support branch with optional metadata.
+    pub async fn create_branch_with_request(
+        &self,
+        key: &str,
+        request: CreateTenantBranch,
+        _project_id: Option<&str>,
+    ) -> Result<TenantBranch> {
+        validate_key(key)?;
+        validate_optional_metadata(&request.name, "name")?;
+        validate_optional_metadata(&request.reason, "reason")?;
+        Err(contract_gap("tenants.branches.create"))
     }
 }
 
-fn encode_key(key: &str) -> Result<String> {
-    validate_key(key)?;
-    encode_segment(key)
+fn contract_gap(operation: &str) -> Error {
+    Error::new(
+        ErrorKind::Domain,
+        "contract_gap",
+        format!(
+            "The TerraBase contract does not publish the {operation} tenant operation yet; no HTTP request was sent."
+        ),
+    )
+}
+
+fn validation(code: &str, message: &str) -> Error {
+    Error::new(ErrorKind::Validation, code, message)
+}
+
+fn deserialize_non_blank<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if value.trim().is_empty() {
+        return Err(D::Error::custom("value cannot be blank."));
+    }
+    Ok(value)
 }
 
 fn validate_key(key: &str) -> Result<()> {
-    if key.trim().is_empty() {
-        return Err(crate::error::Error::new(
-            crate::error::ErrorKind::Validation,
+    validate_non_blank(key, "tenant key")?;
+    let trimmed = key.trim();
+    if trimmed.chars().any(char::is_control) || trimmed.len() > MAX_TENANT_KEY_BYTES {
+        return Err(validation(
             "invalid_tenant_key",
-            "Tenant keys cannot be empty.",
+            "tenant key must be printable and at most 64 UTF-8 bytes.",
         ));
     }
     Ok(())
 }
 
-/// Accept the two response shapes used by the SDK contract fixtures while the
-/// tenant operations are being added to the published OpenAPI document.
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum TenantListResponse {
-    Page(TenantPage),
-    Items(Vec<Tenant>),
-}
-
-impl TenantListResponse {
-    fn into_page(self) -> TenantPage {
-        match self {
-            Self::Page(page) => page,
-            Self::Items(tenants) => TenantPage {
-                tenants,
-                next_cursor: None,
+fn validate_non_blank(value: &str, field: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(validation(
+            if field == "tenant key" {
+                "invalid_tenant_key"
+            } else {
+                "invalid_required_field"
             },
-        }
-    }
-}
-
-fn encode_segment(segment: &str) -> Result<String> {
-    if segment.is_empty() {
-        return Err(crate::error::Error::new(
-            crate::error::ErrorKind::Validation,
-            "invalid_tenant_key",
-            "Tenant keys cannot be empty.",
+            &format!("{field} cannot be blank."),
         ));
     }
-    let mut encoded = String::with_capacity(segment.len());
-    for byte in segment.as_bytes() {
-        if byte.is_ascii_alphanumeric() || b"-_.~".contains(byte) {
-            encoded.push(*byte as char);
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
+    Ok(())
+}
+
+fn validate_optional_metadata(value: &Option<String>, field: &str) -> Result<()> {
+    if let Some(value) = value {
+        validate_non_blank(value, field)?;
+    }
+    Ok(())
+}
+
+fn validate_scopes(scopes: Option<&[String]>) -> Result<()> {
+    if let Some(scopes) = scopes {
+        for scope in scopes {
+            validate_non_blank(scope, "scope")?;
         }
     }
-    Ok(encoded)
+    Ok(())
+}
+
+fn validate_regions(regions: &[RegionCode]) -> Result<()> {
+    if regions.is_empty() || regions.len() > MAX_PLACEMENT_REGIONS {
+        return Err(validation(
+            "invalid_placement_lock",
+            "placement lock region list must contain between 1 and 20 regions.",
+        ));
+    }
+    for (index, region) in regions.iter().enumerate() {
+        if regions[..index].contains(region) {
+            return Err(validation(
+                "invalid_placement_lock",
+                "placement lock region list cannot contain duplicates.",
+            ));
+        }
+    }
+    Ok(())
 }

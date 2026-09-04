@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde_json::json;
 use terrascale::reactive::{
-    CancellationToken, PollOptions, PollOutcome, PollResponse, ResetFrame, ResetReason, ViewDelta,
-    ViewOperation, ViewSnapshot, VIEW_CAPABILITY_HEADER,
+    ApplyOutcome, CancellationToken, PollOptions, PollOutcome, PollResponse, ResetFrame,
+    ResetReason, ViewDelta, ViewOperation, ViewSnapshot, VIEW_CAPABILITY_HEADER,
 };
 use terrascale::{
     AttachedView, ClientConfig, DatabaseScope, Error, HttpTransport, Query, RegionCode, Request,
@@ -85,6 +85,14 @@ fn delta() -> ViewDelta {
     }
 }
 
+fn msgpack_response(bytes: Vec<u8>) -> Response {
+    Response {
+        status: 200,
+        headers: vec![("content-type".to_owned(), "application/msgpack".to_owned())],
+        body: bytes,
+    }
+}
+
 #[tokio::test]
 async fn poll_sends_capability_header_and_keeps_canonical_log_url_immutable() {
     let mock = Mock::new([Ok(Response::json(
@@ -106,7 +114,7 @@ async fn poll_sends_capability_header_and_keeps_canonical_log_url_immutable() {
     assert_eq!(requests[0].route_name, "reactive.poll");
     assert_eq!(
         requests[0].url,
-        "https://sync.api.terrascale.tech/log?view=view-1&offset=r%202"
+        "https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/4/log?offset=r%202"
     );
     assert_eq!(
         requests[0]
@@ -120,6 +128,45 @@ async fn poll_sends_capability_header_and_keeps_canonical_log_url_immutable() {
         view.log_url,
         "https://sync.api.terrascale.tech/log?view=view-1"
     );
+}
+
+#[tokio::test]
+async fn attach_uses_canonical_route_and_base64_wire_fields() {
+    let mock = Mock::new([Ok(Response::json(
+        200,
+        &json!({
+            "viewId": "view/unsafe",
+            "generation": 8,
+            "checkpoint": "Y3Ax",
+            "snapshotUrls": ["https://evil.example/snapshot"],
+            "capability": "cap"
+        }),
+    ))]);
+    client(Arc::clone(&mock))
+        .reactive()
+        .subscribe(
+            &DatabaseScope::new("database"),
+            &Query::raw(
+                "SELECT * FROM users WHERE id = ?".to_owned(),
+                vec![json!(7)],
+            ),
+            SubscribeOptions::new()
+                .with_subscription("sub-1")
+                .with_region_hint(RegionCode::Fra),
+        )
+        .await
+        .expect("attach");
+    let request = &mock.requests.lock().expect("request mutex")[0];
+    assert_eq!(
+        request.url,
+        "https://fra.api.terrascale.tech/api/v1/reactive/views"
+    );
+    let body: serde_json::Value =
+        serde_json::from_slice(request.body.as_ref().expect("body")).expect("JSON attach body");
+    assert_eq!(body["databaseId"], "database");
+    assert_eq!(body["subscription"], "sub-1");
+    assert_eq!(body["parameters"], "Wzdd");
+    assert_eq!(body["checkpoint"], serde_json::Value::Null);
 }
 
 #[tokio::test]
@@ -150,6 +197,90 @@ async fn poll_retries_only_within_the_explicit_bounded_budget() {
 }
 
 #[tokio::test]
+async fn poll_decodes_strict_indexed_msgpack_and_empty_statuses() {
+    // [2,1,0,delta,0,0,[subscription,generation,from,to,[],digest,checkpoint]]
+    let frame = vec![
+        0x97, 2, 1, 0, 4, 0, 0, 0x97, 0xa1, b's', 1, 1, 2, 0x90, 0xa0, 0xc4, 1, b'x',
+    ];
+    let mock = Mock::new([Ok(msgpack_response(frame))]);
+    let response = client(Arc::clone(&mock))
+        .reactive()
+        .poll_from(&attached(), "r1")
+        .await
+        .expect("MessagePack delta");
+    assert_eq!(response.deltas.len(), 1);
+    assert_eq!(response.deltas[0].to_revision, "2");
+    assert_eq!(response.deltas[0].checkpoint.to_bytes(), b"x");
+
+    for status in [204, 304] {
+        let mock = Mock::new([Ok(Response {
+            status,
+            headers: vec![("cache-control".to_owned(), "no-store".to_owned())],
+            body: Vec::new(),
+        })]);
+        let empty = client(Arc::clone(&mock))
+            .reactive()
+            .poll_from(&attached(), "r1")
+            .await
+            .expect("empty timeout");
+        assert!(empty.deltas.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn malformed_msgpack_fails_closed_before_json_fallback() {
+    let mock = Mock::new([Ok(msgpack_response(vec![0x81, 0xa1, b'x', 1]))]);
+    let error = client(Arc::clone(&mock))
+        .reactive()
+        .poll_from(&attached(), "r1")
+        .await
+        .expect_err("maps are not indexed frames");
+    assert_eq!(error.kind, terrascale::ErrorKind::InvalidResponse);
+}
+
+#[test]
+fn checkpoint_bound_is_one_to_4096_bytes() {
+    assert!(terrascale::Checkpoint::try_new(Vec::new()).is_err());
+    assert!(terrascale::Checkpoint::try_new(vec![1; 4096]).is_ok());
+    assert!(terrascale::Checkpoint::try_new(vec![1; 4097]).is_err());
+}
+
+#[test]
+fn invalid_operations_reset_atomically() {
+    let mut subscription = terrascale::Subscription::new("sub");
+    subscription.apply_snapshot(ViewSnapshot {
+        view_generation: 1,
+        revision: "1".to_owned(),
+        items: vec![terrascale::ResultItem {
+            identity: "known".to_owned(),
+            value: json!({"ok": true}),
+        }],
+        checkpoint: terrascale::Checkpoint::new(vec![1]),
+    });
+    let outcome = subscription.apply_delta(ViewDelta {
+        view_generation: 1,
+        from_revision: "1".to_owned(),
+        to_revision: "2".to_owned(),
+        operations: vec![
+            ViewOperation::Update {
+                identity: "missing".to_owned(),
+                value: json!({}),
+            },
+            ViewOperation::Remove {
+                identity: "known".to_owned(),
+            },
+        ],
+        checkpoint: terrascale::Checkpoint::new(vec![2]),
+    });
+    assert_eq!(
+        outcome,
+        ApplyOutcome::ResetRequired(ResetReason::InvalidOperations)
+    );
+    assert_eq!(subscription.revision(), Some("1"));
+    assert_eq!(subscription.items().len(), 1);
+}
+
+#[tokio::test]
 async fn live_subscription_applies_deltas_and_surfaces_region_resets() {
     let mock = Mock::new([
         Ok(Response::json(
@@ -163,6 +294,20 @@ async fn live_subscription_applies_deltas_and_surfaces_region_resets() {
                 "log_url": "https://sync.api.terrascale.tech/log",
                 "capability": "capability"
             }),
+        )),
+        Ok(Response::json(
+            200,
+            &PollResponse {
+                deltas: vec![],
+                checkpoint: None,
+                reset: Some(ResetFrame {
+                    reason: ResetReason::Reconnect,
+                    snapshot: Some(snapshot()),
+                    checkpoint: None,
+                    region: None,
+                    detail: None,
+                }),
+            },
         )),
         Ok(Response::json(
             200,
@@ -211,6 +356,32 @@ async fn live_subscription_applies_deltas_and_surfaces_region_resets() {
             ..
         })
     ));
+}
+
+#[tokio::test]
+async fn execute_uses_canonical_sql_parameter_object() {
+    let mock = Mock::new([Ok(Response::json(200, &json!({"matched": 0, "rows": []})))]);
+    client(Arc::clone(&mock))
+        .reactive()
+        .execute(
+            &DatabaseScope::new("db"),
+            &Query::raw(
+                "SELECT * FROM users WHERE id = ? AND state = ?".to_owned(),
+                vec![json!(7), json!("open")],
+            ),
+        )
+        .await
+        .expect("execute");
+    let request = &mock.requests.lock().expect("request mutex")[0];
+    let body: serde_json::Value =
+        serde_json::from_slice(request.body.as_ref().expect("body")).expect("JSON SQL body");
+    assert_eq!(
+        body["sql"],
+        "SELECT * FROM users WHERE id = ? AND state = ?"
+    );
+    assert_eq!(body["parameters"]["0"], 7);
+    assert_eq!(body["parameters"]["1"], "open");
+    assert!(body.get("statement").is_none());
 }
 
 #[tokio::test]

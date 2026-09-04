@@ -1,0 +1,361 @@
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use serde_json::json;
+use terrascale::{
+    ClientConfig, HttpTransport, Method, Request, Response, Result, TerraScaleClient,
+};
+
+#[derive(Debug)]
+struct Mock {
+    requests: Mutex<Vec<Request>>,
+    responses: Mutex<VecDeque<Response>>,
+}
+
+impl Mock {
+    fn new(responses: impl IntoIterator<Item = Response>) -> Arc<Self> {
+        Arc::new(Self {
+            requests: Mutex::new(Vec::new()),
+            responses: Mutex::new(responses.into_iter().collect()),
+        })
+    }
+}
+
+#[async_trait]
+impl HttpTransport for Mock {
+    async fn send(&self, request: Request) -> Result<Response> {
+        self.requests.lock().expect("request mutex").push(request);
+        self.responses
+            .lock()
+            .expect("response mutex")
+            .pop_front()
+            .ok_or_else(|| terrascale::Error::transport("mock ran out of responses"))
+    }
+}
+
+fn document_response() -> Response {
+    Response::json(200, &json!({"revision": "rev_1"}))
+}
+
+#[tokio::test]
+async fn caller_idempotency_key_is_reused_by_every_shared_client_handle() {
+    let mock = Mock::new([document_response(), document_response()]);
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .project_id("project")
+            .build()
+            .expect("config"),
+        Arc::clone(&mock) as Arc<dyn HttpTransport>,
+    )
+    .with_idempotency_key("logical-write-1")
+    .expect("idempotency key");
+
+    let scope = terrascale::DatabaseScope::new("database");
+    sdk.documents()
+        .put(&scope, "users", "doc_1", json!({"name": "Ada"}))
+        .await
+        .expect("put");
+    sdk.documents()
+        .put(&scope, "users", "doc_1", json!({"name": "Ada"}))
+        .await
+        .expect("put");
+
+    let requests = mock.requests.lock().expect("request mutex");
+    assert_eq!(requests.len(), 2);
+    for request in requests.iter() {
+        assert_eq!(request.method, Method::Put);
+        assert_eq!(
+            request
+                .headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
+                .map(|(_, value)| value.as_str()),
+            Some("logical-write-1")
+        );
+    }
+    assert_eq!(sdk.idempotency_key().as_deref(), Some("logical-write-1"));
+}
+
+#[tokio::test]
+async fn database_routes_are_direct_and_session_header_is_canonical() {
+    let first = {
+        let mut response = document_response();
+        response
+            .headers
+            .push(("X-TerraScale-Session".to_owned(), "frontier-1".to_owned()));
+        response
+    };
+    let mock = Mock::new([first, document_response()]);
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .project_id("ignored-project")
+            .build()
+            .expect("config"),
+        Arc::clone(&mock) as Arc<dyn HttpTransport>,
+    );
+    let scope = terrascale::DatabaseScope::new("database/name");
+    sdk.documents()
+        .get(&scope, "users", "doc_1")
+        .await
+        .expect("first get");
+    sdk.documents()
+        .get(&scope, "users", "doc_1")
+        .await
+        .expect("second get");
+
+    let requests = mock.requests.lock().expect("request mutex");
+    assert!(requests[0]
+        .url
+        .contains("/api/v1/databases/database%2Fname/collections/users/documents/doc_1"));
+    assert_eq!(
+        requests[1]
+            .headers
+            .iter()
+            .find(|(name, _)| name == terrascale::SESSION_HEADER)
+            .map(|(_, value)| value.as_str()),
+        Some("frontier-1")
+    );
+}
+
+#[tokio::test]
+async fn retries_are_bounded_and_mutations_need_a_stable_key() {
+    let read_mock = Mock::new([
+        Response::json(503, &json!({"code": "busy"})),
+        document_response(),
+    ]);
+    let read_sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .max_retry_attempts(1)
+            .retry_delay_ms(0)
+            .build()
+            .expect("config"),
+        Arc::clone(&read_mock) as Arc<dyn HttpTransport>,
+    );
+    read_sdk
+        .documents()
+        .get(
+            &terrascale::DatabaseScope::new("database"),
+            "users",
+            "doc_1",
+        )
+        .await
+        .expect("read retry");
+    assert_eq!(read_mock.requests.lock().expect("request mutex").len(), 2);
+
+    let mutation_mock = Mock::new([
+        Response::json(503, &json!({"code": "busy"})),
+        document_response(),
+    ]);
+    let mutation_sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .max_retry_attempts(1)
+            .retry_delay_ms(0)
+            .build()
+            .expect("config"),
+        Arc::clone(&mutation_mock) as Arc<dyn HttpTransport>,
+    );
+    assert!(mutation_sdk
+        .documents()
+        .put(
+            &terrascale::DatabaseScope::new("database"),
+            "users",
+            "doc_1",
+            json!({"name": "Ada"}),
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        mutation_mock.requests.lock().expect("request mutex").len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn nested_error_envelope_preserves_code_message_and_fix() {
+    let mock = Mock::new([Response::json(
+        422,
+        &json!({
+            "error": {
+                "code": "invalid_query",
+                "message": "The query is not subscribable.",
+                "fix": "Use execute() for joins."
+            }
+        }),
+    )]);
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder().build().expect("config"),
+        Arc::clone(&mock) as Arc<dyn HttpTransport>,
+    );
+    let error = sdk
+        .documents()
+        .get(
+            &terrascale::DatabaseScope::new("database"),
+            "users",
+            "doc_1",
+        )
+        .await
+        .expect_err("nested error");
+    assert_eq!(error.code, "invalid_query");
+    assert_eq!(
+        error.message,
+        "The query is not subscribable. Fix: Use execute() for joins."
+    );
+}
+
+#[tokio::test]
+async fn not_modified_is_an_empty_reactive_poll_only() {
+    let mock = Mock::new([Response {
+        status: 304,
+        headers: vec![("cache-control".to_owned(), "no-store".to_owned())],
+        body: Vec::new(),
+    }]);
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder().build().expect("config"),
+        Arc::clone(&mock) as Arc<dyn HttpTransport>,
+    );
+    let view = terrascale::AttachedView {
+        view_id: "view-1".to_owned(),
+        generation: 1,
+        snapshot: terrascale::ViewSnapshot {
+            view_generation: 1,
+            revision: "r1".to_owned(),
+            items: Vec::new(),
+            checkpoint: terrascale::Checkpoint::new(vec![1]),
+        },
+        checkpoint: terrascale::Checkpoint::new(vec![1]),
+        snapshot_urls: Vec::new(),
+        log_url: String::new(),
+        capability: Some("capability".to_owned()),
+    };
+    let response = sdk
+        .reactive()
+        .poll_from(&view, "r1")
+        .await
+        .expect("304 is an empty poll");
+    assert!(response.deltas.is_empty());
+
+    let ordinary = Mock::new([Response {
+        status: 304,
+        headers: Vec::new(),
+        body: Vec::new(),
+    }]);
+    let ordinary_sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder().build().expect("config"),
+        Arc::clone(&ordinary) as Arc<dyn HttpTransport>,
+    );
+    let error = ordinary_sdk
+        .documents()
+        .get(
+            &terrascale::DatabaseScope::new("database"),
+            "users",
+            "doc_1",
+        )
+        .await
+        .expect_err("304 is not ordinary success");
+    assert_eq!(error.status, Some(304));
+}
+
+#[test]
+fn idempotency_key_validation_is_fail_closed() {
+    let mock = Mock::new([]);
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder().build().expect("config"),
+        Arc::clone(&mock) as Arc<dyn HttpTransport>,
+    );
+
+    assert!(sdk.clone().with_idempotency_key("   ").is_err());
+    assert!(sdk
+        .clone()
+        .with_idempotency_key("x".repeat(terrascale::MAX_IDEMPOTENCY_KEY_LENGTH + 1))
+        .is_err());
+    assert_eq!(sdk.idempotency_key(), None);
+}
+
+#[test]
+fn root_reexports_all_published_client_types() {
+    use terrascale::{
+        ApiKey, ApiKeyPage, ApiKeys, Backup, BackupPlan, BackupPolicy, Backups, Branches,
+        CancellationToken, Collections, CollectionsResponse, CreateApiKey, CreateBranch,
+        CreateDatabase, CreateDatabaseRequest, CreateDatabaseWithPlacement, CreateExport,
+        CreateIndexRequest, CreateTenant, DatabaseBranch, DatabaseListResponse, DatabaseRecord,
+        DatabaseSchema, Databases, DeletedDatabase, ExecuteBackupRequest, ExportJob, Exports,
+        HealthResponse, IndexCreatedResponse, IndexDescriptor, IndexListResponse, LiveSubscription,
+        ManagementCancellationToken, OperationOptions, PageOptions, PlacementLock,
+        PlanBackupRequest, PollOptions, PollOutcome, PollResponse, ProjectDatabase, RegionSummary,
+        ResetFrame, RestoreAt, RestoreJob, RestorePoint, RestoreRequest, Schemas, SqlParameters,
+        StartRestore, Tenant, TenantApiKey, TenantBranch, TenantListOptions,
+        TenantOperationOptions, TenantPage, TenantPlacementLock, TenantTemplate, TenantsClient,
+        TransferFormat, Usage, UsageClient, UsagePoint, UsageRange, UsageSummary, UsageWorkload,
+    };
+
+    let _: Option<(
+        CancellationToken,
+        ApiKey,
+        ApiKeyPage,
+        ApiKeys,
+        Backup,
+        BackupPlan,
+        BackupPolicy,
+        Backups,
+        Branches,
+        Collections,
+        CollectionsResponse,
+        CreateApiKey,
+        CreateBranch,
+        CreateDatabase,
+        CreateDatabaseRequest,
+        CreateDatabaseWithPlacement,
+        CreateExport,
+        CreateIndexRequest,
+        DatabaseBranch,
+        DatabaseListResponse,
+        DatabaseRecord,
+        DatabaseSchema,
+        Databases,
+        DeletedDatabase,
+        ExecuteBackupRequest,
+        ExportJob,
+        Exports,
+        HealthResponse,
+        IndexCreatedResponse,
+        IndexDescriptor,
+        IndexListResponse,
+        Tenant,
+        TenantApiKey,
+        TenantBranch,
+        LiveSubscription,
+        ManagementCancellationToken,
+        OperationOptions,
+        PageOptions,
+        PlacementLock,
+        PlanBackupRequest,
+        PollOptions,
+        PollOutcome,
+        PollResponse,
+        ProjectDatabase,
+        RegionSummary,
+        ResetFrame,
+        RestoreAt,
+        RestoreJob,
+        RestorePoint,
+        RestoreRequest,
+        Schemas,
+        SqlParameters,
+        StartRestore,
+        CreateTenant,
+        TenantListOptions,
+        TenantOperationOptions,
+        TenantPage,
+        TenantPlacementLock,
+        TenantTemplate,
+        TenantsClient,
+        TransferFormat,
+        Usage,
+        UsageClient,
+        UsagePoint,
+        UsageRange,
+        UsageSummary,
+        UsageWorkload,
+    )> = None;
+}

@@ -1,6 +1,6 @@
 .PHONY: check fmt clippy test contracts
 
-check: fmt clippy test
+check: contracts fmt clippy test
 
 fmt:
 	cargo fmt --all --check
@@ -12,5 +12,6 @@ test:
 	cargo test
 
 contracts:
-	@echo "pinned contract: $$(cat CONTRACT_VERSION)"
-	@echo "terrabase contract artifacts not yet published; run 'make contracts' after pinning CONTRACT_VERSION."
+	@echo "contracts unavailable: terrabase has not published the pinned contract artifact ($$(cat CONTRACT_VERSION))" >&2
+	@echo "refusing to synthesize or fetch an unpublished contract; publish the version first, then regenerate." >&2
+	@false

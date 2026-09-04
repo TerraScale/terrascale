@@ -11,12 +11,15 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::json;
+use terrascale::documents::{
+    BatchOperation, ListOptions, MAX_BATCH_OPERATIONS, MAX_DOCUMENT_BYTES,
+};
 use terrascale::DocumentSchema;
 use terrascale::{
     ApplyOutcome, AttachedView, Checkpoint, ClientConfig, CreateTenant, DatabaseScope, Direction,
-    Document, ErrorKind, FieldDef, FieldType, HttpTransport, Query, RegionAffinity, RegionCode,
-    Request, ResetReason, Response, Result, SubscribeOptions, Subscription, TerraScaleClient,
-    Transport, ViewDelta, ViewOperation, ViewSnapshot,
+    ErrorKind, FieldDef, FieldType, HttpTransport, Query, RegionAffinity, RegionCode, Request,
+    ResetReason, Response, Result, SubscribeOptions, Subscription, TerraScaleClient, Transport,
+    ViewDelta, ViewOperation, ViewSnapshot,
 };
 
 #[derive(Debug)]
@@ -68,15 +71,7 @@ fn client(mock: Arc<Mock>) -> TerraScaleClient {
 }
 
 fn doc_response() -> Response {
-    Response::json(
-        200,
-        &json!({
-            "id": "doc_1",
-            "collection": "users",
-            "revision": "rev_1",
-            "body": {"name": " Ada "},
-        }),
-    )
+    Response::json(200, &json!({"name": " Ada "}))
 }
 
 fn scope() -> DatabaseScope {
@@ -87,9 +82,8 @@ fn scope() -> DatabaseScope {
 async fn document_crud_request_shapes() {
     let mock = Mock::new(vec![
         doc_response(),
-        doc_response(),
-        doc_response(),
-        doc_response(),
+        Response::json(200, &json!({"revision": "rev_put"})),
+        Response::json(200, &json!({"revision": "rev_patch"})),
         Response {
             status: 204,
             headers: Vec::new(),
@@ -98,17 +92,13 @@ async fn document_crud_request_shapes() {
     ]);
     let sdk = client(Arc::clone(&mock));
 
-    let created: Document = sdk
+    let create_error = sdk
         .documents()
         .create(&scope(), "users", json!({"name": "Ada"}))
         .await
-        .expect("create");
-    assert_eq!(created.revision, "rev_1");
-    let request = mock.last_request();
-    assert_eq!(request.route_name, "documents.create");
-    assert!(request
-        .url
-        .ends_with("/api/v1/projects/proj_test/databases/db_1/collections/users/documents"));
+        .expect_err("unsupported create");
+    assert_eq!(create_error.code, "unsupported_operation");
+    assert!(mock.recorded.lock().expect("mock mutex").is_empty());
 
     let fetched = sdk
         .documents()
@@ -116,19 +106,30 @@ async fn document_crud_request_shapes() {
         .await
         .expect("get");
     assert_eq!(fetched.id, "doc_1");
-    assert!(mock.last_request().url.ends_with("/documents/doc_1"));
+    assert_eq!(fetched.body, json!({"name": " Ada "}));
+    assert_eq!(fetched.revision, "");
+    assert!(mock
+        .last_request()
+        .url
+        .ends_with("/api/v1/databases/db_1/collections/users/documents/doc_1"));
 
-    sdk.documents()
+    let put = sdk
+        .documents()
         .put(&scope(), "users", "doc_1", json!({"name": "B"}))
         .await
         .expect("put");
+    assert_eq!(put.revision, "rev_put");
     assert_eq!(mock.last_request().route_name, "documents.put");
+    assert_eq!(mock.last_request().body, Some(br#"{"name":"B"}"#.to_vec()));
 
-    sdk.documents()
+    let patch = sdk
+        .documents()
         .patch(&scope(), "users", "doc_1", json!({"name": "C"}))
         .await
         .expect("patch");
+    assert_eq!(patch.revision, "rev_patch");
     assert_eq!(mock.last_request().route_name, "documents.patch");
+    assert_eq!(mock.last_request().body, Some(br#"{"name":"C"}"#.to_vec()));
 
     sdk.documents()
         .delete(&scope(), "users", "doc_1")
@@ -141,7 +142,10 @@ async fn document_crud_request_shapes() {
 #[tokio::test]
 async fn document_history_and_errors() {
     let mock = Mock::new(vec![
-        Response::json(200, &json!([{"revision": "rev_0", "body": {}}])),
+        Response::json(
+            200,
+            &json!({"history": [{"revision": "rev_0", "deleted": false}]}),
+        ),
         Response::json(
             404,
             &json!({"code": "not_found", "message": "No such document. Check the id."}),
@@ -155,6 +159,8 @@ async fn document_history_and_errors() {
         .await
         .expect("history");
     assert_eq!(history.len(), 1);
+    assert_eq!(history[0].revision, "rev_0");
+    assert!(!history[0].deleted);
     assert!(mock
         .last_request()
         .url
@@ -167,6 +173,95 @@ async fn document_history_and_errors() {
         .expect_err("404");
     assert_eq!(error.kind, ErrorKind::NotFound);
     assert_eq!(error.status, Some(404));
+}
+
+#[tokio::test]
+async fn document_list_batch_and_unicode_shapes() {
+    let mock = Mock::new(vec![
+        Response::json(
+            200,
+            &json!({
+                "documents": [{"id": "✓/one", "version": 7, "value": {"ok": true}}]
+            }),
+        ),
+        Response::json(200, &json!({"committed": 9, "count": 2})),
+    ]);
+    let sdk = client(Arc::clone(&mock));
+    let page = sdk
+        .documents()
+        .list(
+            &DatabaseScope::new("db ✓"),
+            "users/名",
+            ListOptions::new().with_after("✓/last").with_limit(50),
+        )
+        .await
+        .expect("list");
+    assert_eq!(page.documents[0].id, "✓/one");
+    assert_eq!(page.documents[0].version, 7);
+    assert_eq!(page.documents[0].value, json!({"ok": true}));
+    assert_eq!(
+        mock.last_request().url,
+        "https://api.terrascale.tech/api/v1/databases/db%20%E2%9C%93/collections/users%2F%E5%90%8D/documents?limit=50&after=%E2%9C%93%2Flast"
+    );
+
+    let receipt = sdk
+        .documents()
+        .batch(
+            &DatabaseScope::new("db ✓"),
+            "users/名",
+            vec![
+                BatchOperation::put("✓/one", json!({"ok": true})),
+                BatchOperation::delete("✓/old"),
+            ],
+        )
+        .await
+        .expect("batch");
+    assert_eq!(receipt.committed, 9);
+    assert_eq!(receipt.count, 2);
+    assert_eq!(mock.last_request().method, terrascale::Method::Post);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&mock.last_request().body.expect("body"))
+            .expect("json"),
+        json!({
+            "operations": [
+                {"op": "put", "id": "✓/one", "value": {"ok": true}},
+                {"op": "delete", "id": "✓/old"}
+            ]
+        })
+    );
+}
+
+#[tokio::test]
+async fn document_bounds_fail_before_transport() {
+    let mock = Mock::new(vec![]);
+    let sdk = client(Arc::clone(&mock));
+    let oversized = serde_json::Value::String("x".repeat(MAX_DOCUMENT_BYTES));
+    let error = sdk
+        .documents()
+        .put(&scope(), "users", "doc_1", oversized)
+        .await
+        .expect_err("oversized document");
+    assert_eq!(error.code, "document_too_large");
+    assert!(mock.recorded.lock().expect("mock mutex").is_empty());
+
+    let operations = (0..=MAX_BATCH_OPERATIONS)
+        .map(|index| BatchOperation::delete(format!("doc-{index}")))
+        .collect();
+    let error = sdk
+        .documents()
+        .batch(&scope(), "users", operations)
+        .await
+        .expect_err("oversized batch");
+    assert_eq!(error.code, "invalid_batch");
+    assert!(mock.recorded.lock().expect("mock mutex").is_empty());
+
+    let error = sdk
+        .documents()
+        .list(&scope(), "users", ListOptions::new().with_limit(1001))
+        .await
+        .expect_err("oversized page");
+    assert_eq!(error.code, "invalid_limit");
+    assert!(mock.recorded.lock().expect("mock mutex").is_empty());
 }
 
 #[test]

@@ -7,6 +7,8 @@
 //! `select`/`with`/`explain` only, parameters bound separately, never
 //! interpolated.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde::{Deserialize, Serialize};
 
 use crate::client::SharedClient;
@@ -22,17 +24,147 @@ pub enum Direction {
     Desc,
 }
 
+/// Metadata columns exposed on every collection table (D-78).
+pub const METADATA_FIELDS: [&str; 5] = ["_id", "_rev", "_hlc", "_created", "_updated"];
+
+/// Returns a schema descriptor for one immutable metadata column.
+pub fn metadata_field(name: &str) -> Result<FieldDef> {
+    let field_type = match name {
+        "_id" | "_rev" | "_hlc" => FieldType::String,
+        "_created" | "_updated" => FieldType::Timestamp,
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "unknown_metadata_field",
+                "Metadata fields are _id, _rev, _hlc, _created, and _updated.",
+            ))
+        }
+    };
+    Ok(FieldDef::required(name, field_type).indexed())
+}
+
+/// Returns descriptors for all immutable metadata columns.
+pub fn metadata_fields() -> Result<[FieldDef; 5]> {
+    Ok([
+        metadata_field("_id")?,
+        metadata_field("_rev")?,
+        metadata_field("_hlc")?,
+        metadata_field("_created")?,
+        metadata_field("_updated")?,
+    ])
+}
+
+fn is_metadata_field(name: &str) -> bool {
+    METADATA_FIELDS.contains(&name)
+}
+
 /// Start a schema-bound typed `SELECT` query.
 pub fn select(schema: &CollectionSchema) -> Result<SelectBuilder> {
     SelectBuilder::from_schema(schema)
 }
 
-/// A parameterized statement: SQL text with `$1`-style placeholders plus
-/// separately bound parameters.
+/// The canonical out-of-band SQL bindings.
+///
+/// Keys are plain names (`:customer_id`, `$customer_id`, and
+/// `@customer_id`) or one-based ordinal strings (`$1`, `?1`, and `?`). The
+/// map is serialized as an object by the HTTP SQL endpoint; values are never
+/// interpolated into SQL text.
+pub type SqlParameters = BTreeMap<String, serde_json::Value>;
+
+/// Bounds shared with the HTTP SQL contract.
+pub const MAX_SQL_TEXT_BYTES: usize = 1024 * 1024;
+pub const MAX_SQL_TIMEOUT_MS: u64 = 30_000;
+pub const MAX_SQL_PAGE_LIMIT: u64 = 1024;
+
+/// Optional controls carried by an SQL execute request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SqlExecuteOptions {
+    /// Request the query plan instead of rows.
+    pub explain: bool,
+    /// Bounded server deadline, in milliseconds.
+    pub timeout_ms: Option<u64>,
+    /// Mark the operation cancelled before execution.
+    pub cancelled: bool,
+}
+
+impl SqlExecuteOptions {
+    /// Validate controls against the HTTP contract.
+    pub fn validate(self) -> Result<()> {
+        if self
+            .timeout_ms
+            .is_some_and(|value| value == 0 || value > MAX_SQL_TIMEOUT_MS)
+        {
+            return Err(sql_error("timeout_ms must be between 1 and 30000."));
+        }
+        Ok(())
+    }
+}
+
+/// Input accepted by [`Query::raw`] and [`Query::try_raw`]. Positional
+/// vectors remain supported for source compatibility and are normalized to
+/// ordinal object keys before validation and transport.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QueryParameters {
+    Positional(Vec<serde_json::Value>),
+    Named(SqlParameters),
+    Invalid(String),
+}
+
+impl From<Vec<serde_json::Value>> for QueryParameters {
+    fn from(values: Vec<serde_json::Value>) -> Self {
+        Self::Positional(values)
+    }
+}
+
+impl From<&[serde_json::Value]> for QueryParameters {
+    fn from(values: &[serde_json::Value]) -> Self {
+        Self::Positional(values.to_vec())
+    }
+}
+
+impl From<SqlParameters> for QueryParameters {
+    fn from(values: SqlParameters) -> Self {
+        Self::Named(values)
+    }
+}
+
+impl From<serde_json::Map<String, serde_json::Value>> for QueryParameters {
+    fn from(values: serde_json::Map<String, serde_json::Value>) -> Self {
+        Self::Named(values.into_iter().collect())
+    }
+}
+
+impl From<serde_json::Value> for QueryParameters {
+    fn from(value: serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Array(values) => Self::Positional(values),
+            serde_json::Value::Object(values) => Self::Named(values.into_iter().collect()),
+            _ => Self::Invalid("SQL parameters must be an array or object.".to_owned()),
+        }
+    }
+}
+
+impl From<&serde_json::Value> for QueryParameters {
+    fn from(value: &serde_json::Value) -> Self {
+        value.clone().into()
+    }
+}
+
+impl From<&SqlParameters> for QueryParameters {
+    fn from(values: &SqlParameters) -> Self {
+        Self::Named(values.clone())
+    }
+}
+
+/// A parameterized statement with canonical named/ordinal object bindings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Query {
     sql: String,
+    /// Positional values retained for the original `params()` accessor.
+    /// Requests use `parameters`, never this compatibility view.
     params: Vec<serde_json::Value>,
+    parameters: SqlParameters,
+    options: SqlExecuteOptions,
     validation_error: Option<String>,
 }
 
@@ -43,13 +175,16 @@ impl Query {
     /// original infallible SDK surface, but an invalid query is marked and
     /// will be rejected before the SDK sends a request.
     #[must_use]
-    pub fn raw(sql: impl Into<String>, params: Vec<serde_json::Value>) -> Self {
+    pub fn raw<P: Into<QueryParameters>>(sql: impl Into<String>, params: P) -> Self {
         let sql = sql.into();
+        let params = params.into();
         match Self::try_raw(sql.clone(), params.clone()) {
             Ok(query) => query,
             Err(error) => Self {
                 sql,
-                params,
+                params: compatibility_params(&params),
+                parameters: canonical_parameters(&params),
+                options: SqlExecuteOptions::default(),
                 validation_error: Some(error.message),
             },
         }
@@ -59,12 +194,16 @@ impl Query {
     ///
     /// Only one read-only `SELECT`, `WITH`, or `EXPLAIN` statement is
     /// accepted. SQL values remain in `params`; they are never interpolated.
-    pub fn try_raw(sql: impl Into<String>, params: Vec<serde_json::Value>) -> Result<Self> {
+    pub fn try_raw<P: Into<QueryParameters>>(sql: impl Into<String>, params: P) -> Result<Self> {
         let sql = sql.into();
-        validate_sql(&sql, &params)?;
+        let params = params.into();
+        let parameters = normalize_parameters(params.clone())?;
+        validate_parameters(&sql, &parameters)?;
         Ok(Self {
             sql,
-            params,
+            params: compatibility_params(&params),
+            parameters,
+            options: SqlExecuteOptions::default(),
             validation_error: None,
         })
     }
@@ -99,12 +238,58 @@ impl Query {
         &self.params
     }
 
+    /// Canonical named/ordinal object bindings in wire order.
+    #[must_use]
+    pub fn parameters(&self) -> &SqlParameters {
+        &self.parameters
+    }
+
+    /// Alias for [`Query::parameters`].
+    #[must_use]
+    pub fn bindings(&self) -> &SqlParameters {
+        self.parameters()
+    }
+
+    /// Set request controls for a subsequent SQL execute.
+    pub fn with_options(mut self, options: SqlExecuteOptions) -> Result<Self> {
+        options.validate()?;
+        self.options = options;
+        Ok(self)
+    }
+
+    /// Request an execution plan rather than result rows.
+    pub fn explain(mut self) -> Self {
+        self.options.explain = true;
+        self
+    }
+
+    /// Set the bounded server deadline in milliseconds.
+    pub fn timeout_ms(mut self, timeout_ms: u64) -> Result<Self> {
+        if timeout_ms == 0 || timeout_ms > MAX_SQL_TIMEOUT_MS {
+            return Err(sql_error("timeout_ms must be between 1 and 30000."));
+        }
+        self.options.timeout_ms = Some(timeout_ms);
+        Ok(self)
+    }
+
+    /// Mark a query as cancelled before it reaches the server.
+    pub fn cancelled(mut self) -> Self {
+        self.options.cancelled = true;
+        self
+    }
+
+    /// Return the execute controls associated with this query.
+    #[must_use]
+    pub fn options(&self) -> SqlExecuteOptions {
+        self.options
+    }
+
     /// Validate a query before handing it to a transport.
     pub fn validate(&self) -> Result<()> {
         if let Some(message) = &self.validation_error {
             return Err(Error::new(ErrorKind::Validation, "invalid_sql", message));
         }
-        validate_sql(&self.sql, &self.params)
+        validate_parameters(&self.sql, &self.parameters)
     }
 
     /// Whether this query was rejected by the compatibility constructor.
@@ -112,6 +297,39 @@ impl Query {
     #[must_use]
     pub fn is_err(&self) -> bool {
         self.validation_error.is_some()
+    }
+}
+
+fn normalize_parameters(input: QueryParameters) -> Result<SqlParameters> {
+    match input {
+        QueryParameters::Positional(values) => Ok(values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| ((index + 1).to_string(), value))
+            .collect()),
+        QueryParameters::Named(values) => Ok(values),
+        QueryParameters::Invalid(message) => Err(sql_error(message)),
+    }
+}
+
+fn canonical_parameters(input: &QueryParameters) -> SqlParameters {
+    match input {
+        QueryParameters::Positional(values) => values
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(index, value)| ((index + 1).to_string(), value))
+            .collect(),
+        QueryParameters::Named(values) => values.clone(),
+        QueryParameters::Invalid(_) => SqlParameters::new(),
+    }
+}
+
+fn compatibility_params(input: &QueryParameters) -> Vec<serde_json::Value> {
+    match input {
+        QueryParameters::Positional(values) => values.clone(),
+        QueryParameters::Named(values) => values.values().cloned().collect(),
+        QueryParameters::Invalid(_) => Vec::new(),
     }
 }
 
@@ -127,6 +345,7 @@ pub struct SelectBuilder {
     limit: Option<u64>,
     offset: Option<u64>,
     params: Vec<serde_json::Value>,
+    named_params: SqlParameters,
 }
 
 impl SelectBuilder {
@@ -141,6 +360,7 @@ impl SelectBuilder {
             limit: None,
             offset: None,
             params: Vec::new(),
+            named_params: SqlParameters::new(),
         }
     }
 
@@ -148,14 +368,16 @@ impl SelectBuilder {
     /// declared schema.
     pub fn from_schema(schema: &CollectionSchema) -> Result<Self> {
         let collection = validate_identifier(&schema.name, "collection")?;
-        if schema.fields.iter().any(|field| {
-            field.name.is_empty() || validate_identifier(&field.name, "field").is_err()
-        }) {
-            return Err(Error::new(
-                ErrorKind::Validation,
-                "invalid_schema_field",
-                "Schema field names must match [A-Za-z_][A-Za-z0-9_]*.",
-            ));
+        let mut names = BTreeSet::new();
+        for field in &schema.fields {
+            validate_identifier(&field.name, "field")?;
+            if is_metadata_field(&field.name) || !names.insert(field.name.as_str()) {
+                return Err(Error::new(
+                    ErrorKind::Validation,
+                    "invalid_schema_field",
+                    "Schema fields must be unique plain identifiers and cannot replace metadata fields.",
+                ));
+            }
         }
         Ok(Self {
             columns: vec!["*".to_owned()],
@@ -167,6 +389,7 @@ impl SelectBuilder {
             limit: None,
             offset: None,
             params: Vec::new(),
+            named_params: SqlParameters::new(),
         })
     }
 
@@ -249,6 +472,39 @@ impl SelectBuilder {
         self.where_match(field, query)
     }
 
+    /// Filter the JSON document body using SQLite's `->>` operator.
+    pub fn where_json(mut self, path: &str, operator: &str, value: impl Serialize) -> Result<Self> {
+        if !is_safe_json_path(path)
+            || !matches!(operator, "=" | "<>" | "!=" | ">" | ">=" | "<" | "<=")
+        {
+            return Err(sql_error(
+                "JSON paths or comparison operators are not allowed.",
+            ));
+        }
+        let value = serialize_param(value)?;
+        self.predicates.push(format!(
+            "body ->> '{path}' {operator} ${}",
+            self.params.len() + 1
+        ));
+        self.params.push(value);
+        Ok(self)
+    }
+
+    /// Equality convenience for a JSON document path.
+    pub fn where_json_eq(self, path: &str, value: impl Serialize) -> Result<Self> {
+        self.where_json(path, "=", value)
+    }
+
+    /// Alias using the explicit path spelling used by other SDKs.
+    pub fn where_json_path(
+        self,
+        path: &str,
+        operator: &str,
+        value: impl Serialize,
+    ) -> Result<Self> {
+        self.where_json(path, operator, value)
+    }
+
     /// Append an `ORDER BY` key from a declared field.
     pub fn order_by_field(self, field: &FieldDef, direction: Direction) -> Result<Self> {
         let name = self.checked_field(field, "order_by")?;
@@ -257,6 +513,17 @@ impl SelectBuilder {
 
     fn checked_field(&self, field: &FieldDef, context: &str) -> Result<String> {
         let name = validate_identifier(&field.name, context)?;
+        if is_metadata_field(&name) {
+            let expected = metadata_field(&name)?;
+            if field.field_type != expected.field_type {
+                return Err(Error::new(
+                    ErrorKind::Validation,
+                    "invalid_metadata_field",
+                    format!("{context} metadata field has the wrong type."),
+                ));
+            }
+            return Ok(name);
+        }
         match &self.schema_fields {
             Some(fields) if fields.iter().any(|declared| declared == field) => Ok(name),
             Some(_) => Err(Error::new(
@@ -295,9 +562,28 @@ impl SelectBuilder {
 
     /// Append an `ORDER BY` key.
     pub fn order_by(mut self, column: &str, direction: Direction) -> Result<Self> {
-        self.order
-            .push((validate_identifier(column, "order_by")?, direction));
+        let column = validate_identifier(column, "order_by")?;
+        if self.schema_fields.is_some() {
+            self.checked_field_name(&column, "order_by")?;
+        }
+        self.order.push((column, direction));
         Ok(self)
+    }
+
+    fn checked_field_name(&self, name: &str, context: &str) -> Result<String> {
+        let name = validate_identifier(name, context)?;
+        if is_metadata_field(&name) {
+            return Ok(name);
+        }
+        match &self.schema_fields {
+            Some(fields) if fields.iter().any(|field| field.name == name) => Ok(name),
+            Some(_) => Err(Error::new(
+                ErrorKind::Validation,
+                "unknown_schema_field",
+                format!("{context} field is not declared by this collection."),
+            )),
+            None => Ok(name),
+        }
     }
 
     /// Append `LIMIT`.
@@ -321,9 +607,18 @@ impl SelectBuilder {
         self
     }
 
+    /// Bind a named SQL parameter for a compatibility `where_` predicate.
+    pub fn bind(mut self, name: &str, value: serde_json::Value) -> Result<Self> {
+        if !is_valid_parameter_name(name) {
+            return Err(sql_error("Named SQL parameters must be plain identifiers."));
+        }
+        self.named_params.insert(name.to_owned(), value);
+        Ok(self)
+    }
+
     /// Render the parameterized statement.
     pub fn build(self) -> Result<Query> {
-        let from = self.from.ok_or_else(|| {
+        let from = self.from.as_ref().ok_or_else(|| {
             Error::new(
                 ErrorKind::Validation,
                 "missing_from",
@@ -343,6 +638,19 @@ impl SelectBuilder {
         }
         for predicate in &self.predicates {
             validate_compatibility_predicate(predicate)?;
+            if self.schema_fields.is_some() && !predicate.trim_start().starts_with("body ->> '") {
+                let field = tokenize_sql(predicate)?
+                    .first()
+                    .cloned()
+                    .unwrap_or_default();
+                self.checked_field_name(&field, "predicate")?;
+            }
+        }
+        if self
+            .limit
+            .is_some_and(|limit| limit == 0 || limit > MAX_SQL_PAGE_LIMIT)
+        {
+            return Err(sql_error("LIMIT must be between 1 and 1024."));
         }
         let mut sql = format!("SELECT {} FROM {from}", columns.join(", "));
         if !self.predicates.is_empty() {
@@ -381,7 +689,17 @@ impl SelectBuilder {
                 sql.push_str(&format!(" OFFSET {offset}"));
             }
         }
-        Query::try_raw(sql, params)
+        if self.named_params.is_empty() {
+            Query::try_raw(sql, params)
+        } else {
+            let mut bindings: SqlParameters = params
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| ((index + 1).to_string(), value))
+                .collect();
+            bindings.extend(self.named_params);
+            Query::try_raw(sql, bindings)
+        }
     }
 }
 
@@ -404,24 +722,74 @@ fn validate_projection(value: &str) -> Result<String> {
 }
 
 fn validate_compatibility_predicate(value: &str) -> Result<()> {
+    if let Some(rest) = value.trim().strip_prefix("body ->> '") {
+        if let Some((path, rest)) = rest.split_once("' ") {
+            let mut parts = rest.split_whitespace();
+            if is_safe_json_path(path)
+                && matches!(
+                    parts.next(),
+                    Some("=" | "<>" | "!=" | ">" | ">=" | "<" | "<=")
+                )
+                && parts.next().is_some_and(|part| part.starts_with('$'))
+                && parts.next().is_none()
+            {
+                return Ok(());
+            }
+        }
+    }
     let tokens = tokenize_sql(value)?;
     if tokens.len() != 3 {
         return Err(sql_error(
             "Use a schema field predicate method instead of a free-form SQL fragment.",
         ));
     }
-    if !validate_identifier(&tokens[0], "predicate field").is_ok()
+    if validate_identifier(&tokens[0], "predicate field").is_err()
         || !matches!(
             tokens[1].to_ascii_uppercase().as_str(),
             "=" | "<>" | "!=" | ">" | ">=" | "<" | "<=" | "MATCH" | "LIKE"
         )
-        || !tokens[2].starts_with('$')
+        || !matches!(placeholder_name(&tokens[2], &mut 1usize), Ok(Some(_)))
     {
         return Err(sql_error(
             "Use a schema field predicate method instead of a free-form SQL fragment.",
         ));
     }
     Ok(())
+}
+
+fn is_safe_json_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    if bytes.first() != Some(&b'$') {
+        return false;
+    }
+    let mut index = 1;
+    while index < bytes.len() {
+        if bytes[index] == b'.' {
+            index += 1;
+            let start = index;
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+            {
+                index += 1;
+            }
+            if start == index || !bytes[start].is_ascii_alphabetic() && bytes[start] != b'_' {
+                return false;
+            }
+        } else if bytes[index] == b'[' {
+            index += 1;
+            let start = index;
+            while index < bytes.len() && bytes[index].is_ascii_digit() {
+                index += 1;
+            }
+            if start == index || bytes.get(index) != Some(&b']') {
+                return false;
+            }
+            index += 1;
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 /// Validate the client-side portion of the D-54 SQL contract.
@@ -431,7 +799,18 @@ fn validate_compatibility_predicate(value: &str) -> Result<()> {
 /// multiple statements, write/DDL keywords, dangerous functions, and
 /// malformed positional bindings.
 pub fn validate_sql(text: &str, params: &[serde_json::Value]) -> Result<()> {
-    if text.len() > 1_048_576 {
+    let parameters: SqlParameters = params
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, value)| ((index + 1).to_string(), value))
+        .collect();
+    validate_parameters(text, &parameters)
+}
+
+/// Validate SQL against canonical named/ordinal bindings.
+pub fn validate_parameters(text: &str, parameters: &SqlParameters) -> Result<()> {
+    if text.len() > MAX_SQL_TEXT_BYTES {
         return Err(sql_error("SQL exceeds the 1 MiB query text limit."));
     }
     let tokens = tokenize_sql(text)?;
@@ -510,6 +889,16 @@ pub fn validate_sql(text: &str, params: &[serde_json::Value]) -> Result<()> {
     ];
     for (position, token) in tokens.iter().enumerate().skip(body_start) {
         let lowered = token.to_ascii_lowercase();
+        if token == "."
+            && position > 0
+            && position + 1 < tokens.len()
+            && is_sql_name(&tokens[position - 1])
+            && is_sql_name(&tokens[position + 1])
+        {
+            return Err(sql_error(
+                "Qualified SQL relations are not allowed; query one collection at a time.",
+            ));
+        }
         if FORBIDDEN.iter().any(|forbidden| lowered == *forbidden) {
             return Err(sql_error(
                 "SQL contains a DDL, DML, or transaction keyword.",
@@ -553,7 +942,13 @@ pub fn validate_sql(text: &str, params: &[serde_json::Value]) -> Result<()> {
         }
     }
 
-    validate_bindings(&tokens, params.len())
+    validate_bindings(&tokens, parameters)
+}
+
+fn is_sql_name(token: &str) -> bool {
+    let mut chars = token.chars();
+    matches!(chars.next(), Some(ch) if ch.is_ascii_alphabetic() || ch == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn sql_error(message: impl Into<String>) -> Error {
@@ -620,11 +1015,26 @@ fn tokenize_sql(text: &str) -> Result<Vec<String>> {
             b'$' => {
                 let start = index;
                 index += 1;
-                while index < bytes.len() && bytes[index].is_ascii_digit() {
+                while index < bytes.len()
+                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+                {
                     index += 1;
                 }
                 if index == start + 1 {
-                    return Err(sql_error("Only numbered $n parameters are allowed."));
+                    return Err(sql_error("SQL parameter names cannot be empty."));
+                }
+                tokens.push(text[start..index].to_owned());
+            }
+            b':' | b'@' => {
+                let start = index;
+                index += 1;
+                while index < bytes.len()
+                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+                {
+                    index += 1;
+                }
+                if index == start + 1 {
+                    return Err(sql_error("Named SQL parameters must have a name."));
                 }
                 tokens.push(text[start..index].to_owned());
             }
@@ -655,48 +1065,127 @@ fn tokenize_sql(text: &str) -> Result<Vec<String>> {
     Ok(tokens)
 }
 
-fn validate_bindings(tokens: &[String], parameter_count: usize) -> Result<()> {
+fn validate_bindings(tokens: &[String], parameters: &SqlParameters) -> Result<()> {
     let mut next_unnumbered = 1usize;
-    let mut highest = 0usize;
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = BTreeSet::new();
     for token in tokens {
-        let number = if let Some(number) = token.strip_prefix('$') {
-            number
-                .parse::<usize>()
-                .map_err(|_| sql_error("Invalid $n parameter."))?
-        } else if token == "?" {
-            let number = next_unnumbered;
-            next_unnumbered += 1;
-            number
-        } else if let Some(number) = token.strip_prefix('?') {
-            number
-                .parse::<usize>()
-                .map_err(|_| sql_error("Invalid ?n parameter."))?
-        } else {
+        let Some(binding) = placeholder_name(token, &mut next_unnumbered)? else {
             continue;
         };
+        seen.insert(binding);
+    }
+    if seen.len() != parameters.len() || seen.iter().any(|name| !parameters.contains_key(name)) {
+        let missing = seen.iter().find(|name| !parameters.contains_key(*name));
+        if let Some(name) = missing {
+            return Err(sql_error(format!(
+                "SQL parameter '{name}' has no bound value."
+            )));
+        }
+        let unexpected = parameters.keys().find(|name| !seen.contains(name.as_str()));
+        if let Some(name) = unexpected {
+            return Err(sql_error(format!(
+                "SQL parameter '{name}' is not used by the statement."
+            )));
+        }
+        return Err(sql_error(format!(
+            "SQL has {} parameter slots but {} values were supplied.",
+            seen.len(),
+            parameters.len()
+        )));
+    }
+    validate_parameter_bounds(tokens, parameters)?;
+    Ok(())
+}
+
+fn placeholder_name(token: &str, next_unnumbered: &mut usize) -> Result<Option<String>> {
+    let (prefix, name) = if token == "?" {
+        let name = next_unnumbered.to_string();
+        *next_unnumbered = next_unnumbered.saturating_add(1);
+        return Ok(Some(name));
+    } else {
+        let Some(prefix) = token.chars().next() else {
+            return Ok(None);
+        };
+        if !matches!(prefix, '$' | ':' | '@' | '?') {
+            return Ok(None);
+        }
+        (prefix, &token[prefix.len_utf8()..])
+    };
+    if name.is_empty() {
+        return Err(sql_error("SQL parameter names cannot be empty."));
+    }
+    if name.chars().all(|ch| ch.is_ascii_digit()) {
+        let number = name
+            .parse::<usize>()
+            .map_err(|_| sql_error("Invalid ordinal SQL parameter."))?;
         if number == 0 {
             return Err(sql_error("Parameter numbering starts at 1."));
         }
-        seen.insert(number);
-        highest = highest.max(number);
+        *next_unnumbered = (*next_unnumbered).max(number.saturating_add(1));
+        return Ok(Some(number.to_string()));
     }
-    if highest != parameter_count || seen.len() != parameter_count {
-        return Err(sql_error(format!(
-            "SQL has {highest} positional parameter slots but {} values were supplied.",
-            parameter_count
-        )));
+    if prefix == '?' || !is_valid_parameter_name(name) {
+        return Err(sql_error("Named SQL parameters must be plain identifiers."));
+    }
+    Ok(Some(name.to_owned()))
+}
+
+fn is_valid_parameter_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    matches!(bytes.next(), Some(byte) if byte.is_ascii_alphabetic() || byte == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn validate_parameter_bounds(tokens: &[String], parameters: &SqlParameters) -> Result<()> {
+    for (index, token) in tokens.iter().enumerate() {
+        if !token.eq_ignore_ascii_case("limit") && !token.eq_ignore_ascii_case("offset") {
+            continue;
+        }
+        let Some(value) = tokens.get(index + 1) else {
+            continue;
+        };
+        let number = if let Some(name) = placeholder_name(value, &mut 1usize)? {
+            parameters
+                .get(&name)
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| {
+                    sql_error("LIMIT and OFFSET parameters must be non-negative integers.")
+                })?
+        } else {
+            value
+                .parse::<u64>()
+                .map_err(|_| sql_error("LIMIT and OFFSET must be non-negative integers."))?
+        };
+        if token.eq_ignore_ascii_case("limit") {
+            if number == 0 || number > MAX_SQL_PAGE_LIMIT {
+                return Err(sql_error("LIMIT must be between 1 and 1024."));
+            }
+        }
     }
     Ok(())
+}
+
+/// One row returned by [`SqlClient::execute`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SqlRow {
+    /// Stable document id.
+    pub id: String,
+    /// Either the complete document or the selected projection object.
+    #[serde(default)]
+    pub value: serde_json::Value,
 }
 
 /// Rows returned by [`SqlClient::execute`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SqlRows {
-    /// Column names in row order.
+    /// Number of rows matched before the page is applied.
+    #[serde(default)]
+    pub matched: u64,
+    /// Canonical result rows (`{id, value}`).
+    pub rows: Vec<SqlRow>,
+    /// Legacy compatibility field; canonical responses do not send columns.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<String>,
-    /// One JSON value per row.
-    pub rows: Vec<serde_json::Value>,
 }
 
 /// Read-only SQL client. Obtain from [`crate::TerraScaleClient::sql`].
@@ -713,12 +1202,33 @@ impl SqlClient {
     /// Execute a typed-builder or raw query once ("subscribe once").
     pub async fn execute(&self, scope: &DatabaseScope, query: &Query) -> Result<SqlRows> {
         query.validate()?;
+        query.options.validate()?;
         let url = format!("{}/sql", self.shared.database_root(scope)?);
-        let body = serde_json::json!({
-            "statement": query.sql(),
-            "parameters": query.params(),
+        let mut body = serde_json::json!({
+            "sql": query.sql(),
+            "parameters": query.parameters(),
         });
+        if query.options.explain {
+            body["explain"] = serde_json::Value::Bool(true);
+        }
+        if let Some(timeout_ms) = query.options.timeout_ms {
+            body["timeout_ms"] = serde_json::json!(timeout_ms);
+        }
+        if query.options.cancelled {
+            body["cancelled"] = serde_json::Value::Bool(true);
+        }
         let request = Request::json("sql.execute", Method::Post, url, &body)?;
         self.shared.send_typed(request).await
+    }
+
+    /// Execute a query with one-off HTTP controls.
+    pub async fn execute_with_options(
+        &self,
+        scope: &DatabaseScope,
+        query: &Query,
+        options: SqlExecuteOptions,
+    ) -> Result<SqlRows> {
+        let query = query.clone().with_options(options)?;
+        self.execute(scope, &query).await
     }
 }

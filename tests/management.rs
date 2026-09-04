@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde_json::json;
 use terrascale::management::{
-    CancellationToken, CreateApiKey, CreateDatabaseWithPlacement, CreateExport, OperationOptions,
-    PageOptions, TransferFormat,
+    CancellationToken, CreateDatabaseRequest, CreateIndexRequest, OperationOptions, PageOptions,
+    PlacementLock, RestoreRequest,
 };
 use terrascale::{
-    ClientConfig, ErrorKind, HttpTransport, RegionCode, Request, Response, Result, TerraScaleClient,
+    ClientConfig, HttpTransport, Method, RegionCode, Request, Response, Result, TerraScaleClient,
 };
 
 #[derive(Debug)]
@@ -24,7 +24,6 @@ impl Mock {
             responses: Mutex::new(responses.into()),
         })
     }
-
     fn last(&self) -> Request {
         self.requests
             .lock()
@@ -48,91 +47,147 @@ impl HttpTransport for Mock {
 }
 
 fn client(mock: Arc<Mock>) -> TerraScaleClient {
-    let transport: Arc<dyn HttpTransport> = mock;
     TerraScaleClient::with_transport(
         ClientConfig::builder()
             .api_key("test")
-            .project_id("project")
+            .project_id("ignored")
             .build()
             .expect("config"),
-        transport,
+        mock,
     )
 }
 
 #[tokio::test]
-async fn pagination_and_ids_are_validated_before_transport() {
+async fn databases_use_direct_contract_routes_and_metadata() {
+    let mock = Mock::new(vec![
+        Response::json(200, &json!({"databases": []})),
+        Response::json(
+            201,
+            &json!({"name":"orders","placement":"GRU","residency":"br-only","deleted":false,"created_at":1,"parent":null}),
+        ),
+        Response::json(
+            200,
+            &json!({"name":"orders","placement":"GRU","residency":"br-only","deleted":false,"created_at":1,"parent":null}),
+        ),
+    ]);
+    let sdk = client(Arc::clone(&mock));
+    sdk.management().databases().list(None).await.expect("list");
     assert_eq!(
-        PageOptions::new(0, 0).expect_err("zero page").kind,
-        ErrorKind::Validation
+        mock.last().url,
+        "https://api.terrascale.tech/api/v1/databases"
     );
-    let mock = Mock::new(vec![]);
-    let sdk = client(Arc::clone(&mock));
-    let error = sdk
-        .management()
-        .databases()
-        .list_page(None, PageOptions { skip: 0, take: 0 })
-        .await
-        .expect_err("invalid page");
-    assert_eq!(error.code, "invalid_page_size");
-    assert!(mock.requests.lock().expect("requests mutex").is_empty());
-}
 
-#[tokio::test]
-async fn placement_lock_and_idempotency_are_wire_typed() {
-    let mock = Mock::new(vec![Response::json(
-        201,
-        &json!({
-            "database_id": "db-1", "project_id": "project", "name": "orders", "regions": ["GRU"], "version": 1
-        }),
-    )]);
-    let sdk = client(Arc::clone(&mock));
+    let request = CreateDatabaseRequest::new("orders", vec![RegionCode::Gru])
+        .expect("placement")
+        .residency("br-only")
+        .expect("residency");
     sdk.management()
         .databases()
         .create_with_placement(
-            CreateDatabaseWithPlacement::new("orders", vec![RegionCode::Gru])
-                .expect("placement")
-                .residency("br-only")
-                .expect("residency"),
+            request,
             None,
             OperationOptions {
-                idempotency_key: Some("create-once".into()),
+                idempotency_key: Some("once".into()),
                 cancellation: None,
             },
         )
         .await
         .expect("create");
     let request = mock.last();
+    assert_eq!(request.method, Method::Post);
+    assert_eq!(request.url, "https://api.terrascale.tech/api/v1/databases");
+    assert!(request
+        .headers
+        .iter()
+        .any(|(name, value)| name == "idempotency-key" && value == "once"));
     assert_eq!(
-        request
-            .headers
-            .iter()
-            .find(|(name, _)| name == "idempotency-key")
-            .map(|(_, value)| value.as_str()),
-        Some("create-once")
+        serde_json::from_slice::<serde_json::Value>(&request.body.expect("body")).expect("json")
+            ["placement"],
+        json!(["GRU"])
     );
-    assert!(String::from_utf8(request.body.expect("body"))
-        .expect("utf8")
-        .contains("br-only"));
+
+    sdk.management()
+        .databases()
+        .get("orders", None)
+        .await
+        .expect("get");
+    assert_eq!(
+        mock.last().url,
+        "https://api.terrascale.tech/api/v1/databases/orders"
+    );
+}
+
+#[test]
+fn placement_and_residency_fail_closed_before_transport() {
+    assert!(CreateDatabaseRequest::new("orders", vec![]).is_err());
+    assert!(CreateDatabaseRequest::new("orders", vec![RegionCode::Gru])
+        .expect("placement")
+        .placement_lock(PlacementLock::EuOnly)
+        .is_err());
+    assert!(CreateDatabaseRequest::new("orders", vec![RegionCode::Gru, RegionCode::Gru]).is_err());
 }
 
 #[tokio::test]
-async fn cancellation_does_not_admit_a_management_request() {
+async fn schema_is_one_collection_schema_and_direct_path() {
+    let mock = Mock::new(vec![Response::json(
+        200,
+        &json!({"name":"orders","fields":[]}),
+    )]);
+    let sdk = client(Arc::clone(&mock));
+    let schema = terrascale::CollectionSchema::new("orders");
+    sdk.management()
+        .schemas()
+        .put("db 1", "orders", schema, None, OperationOptions::default())
+        .await
+        .expect("schema");
+    let request = mock.last();
+    assert_eq!(request.method, Method::Put);
+    assert_eq!(
+        request.url,
+        "https://api.terrascale.tech/api/v1/databases/db%201/collections/orders/schema"
+    );
+    assert!(
+        serde_json::from_slice::<serde_json::Value>(&request.body.expect("body"))
+            .expect("json")
+            .get("collections")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn pending_routes_return_typed_501_and_do_not_invent_results() {
+    let mock = Mock::new(vec![Response {
+        status: 501,
+        headers: Vec::new(),
+        body: b"{\"code\":\"pending\",\"message\":\"not ready\"}".to_vec(),
+    }]);
+    let sdk = client(Arc::clone(&mock));
+    let error = sdk
+        .management()
+        .collections()
+        .index_recommendations("db", "orders", None)
+        .await
+        .expect_err("pending");
+    assert_eq!(error.status, Some(501));
+    assert_eq!(mock.last().url, "https://api.terrascale.tech/api/v1/databases/db/collections/orders/indexes/recommendations");
+}
+
+#[tokio::test]
+async fn cancellation_does_not_admit_mutations() {
     let mock = Mock::new(vec![]);
     let sdk = client(Arc::clone(&mock));
     let token = CancellationToken::new();
     token.cancel();
     let error = sdk
         .management()
-        .exports()
-        .create(
-            "db-1",
-            CreateExport {
-                format: TransferFormat::Jsonl,
-                include_history: false,
-            },
+        .collections()
+        .create_index(
+            "db",
+            "orders",
+            CreateIndexRequest { field: "id".into() },
             None,
             OperationOptions {
-                idempotency_key: Some("export-once".into()),
+                idempotency_key: None,
                 cancellation: Some(token),
             },
         )
@@ -143,33 +198,42 @@ async fn cancellation_does_not_admit_a_management_request() {
 }
 
 #[tokio::test]
-async fn api_key_cursor_pagination_and_secret_response_are_typed() {
-    let mock = Mock::new(vec![Response::json(
-        200,
-        &json!({
-            "apiKeys": [{"keyId": "key-1", "projectId": "project", "name": "worker", "prefix": "ts_", "isActive": true}],
-            "nextCursor": "cursor-2"
-        }),
-    )]);
+async fn branch_and_backup_restore_use_restore_request() {
+    let record = json!({"name":"copy","placement":"GRU","residency":"br-only","deleted":false,"created_at":1,"parent":"db"});
+    let mock = Mock::new(vec![
+        Response::json(201, &record),
+        Response::json(201, &record),
+    ]);
     let sdk = client(Arc::clone(&mock));
-    let page = sdk
-        .management()
-        .api_keys()
-        .list(None, Some("cursor 1"), 25)
-        .await
-        .expect("keys");
-    assert_eq!(page.api_keys[0].key_id, "key-1");
-    assert_eq!(page.next_cursor.as_deref(), Some("cursor-2"));
-    assert!(mock
-        .last()
-        .url
-        .ends_with("/auth/api-keys?limit=25&cursor=cursor%201"));
-
-    let _ = CreateApiKey {
-        name: "worker".into(),
-        scopes: vec!["documents:read".into()],
-        database_id: None,
-        environment_id: None,
-        expires_at: None,
+    let body = RestoreRequest {
+        name: "copy".into(),
+        at: Some(10),
     };
+    sdk.management()
+        .branches()
+        .create("db", body.clone(), None, OperationOptions::default())
+        .await
+        .expect("branch");
+    assert_eq!(
+        mock.last().url,
+        "https://api.terrascale.tech/api/v1/databases/db/branches"
+    );
+    sdk.management()
+        .backups()
+        .restore("db", body, None, OperationOptions::default())
+        .await
+        .expect("restore");
+    assert_eq!(
+        mock.last().url,
+        "https://api.terrascale.tech/api/v1/databases/db/backups/restore"
+    );
+}
+
+#[test]
+fn page_options_are_bounded() {
+    assert_eq!(
+        PageOptions::new(0, 0).expect_err("zero page").code,
+        "invalid_page_size"
+    );
+    assert!(PageOptions::new(0, 1001).is_err());
 }

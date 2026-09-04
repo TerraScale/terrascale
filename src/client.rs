@@ -6,6 +6,7 @@
 //! `421` placement repair shared by every sub-client.
 
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 
@@ -25,6 +26,12 @@ pub const API_ROOT: &str = "/api/v1";
 /// Placement header returned with a 421 (GOAL D-58).
 pub const PLACEMENT_HEADER: &str = "x-terrascale-placement";
 
+/// Canonical session-frontier header used on public API requests.
+pub const SESSION_HEADER: &str = "X-TerraScale-Session";
+
+/// Maximum length accepted for a caller-provided idempotency key.
+pub const MAX_IDEMPOTENCY_KEY_LENGTH: usize = 128;
+
 /// Shareable pipeline state behind every sub-client.
 #[derive(Debug)]
 pub(crate) struct Shared {
@@ -32,6 +39,13 @@ pub(crate) struct Shared {
     config: ClientConfig,
     placement: RwLock<Option<RegionCode>>,
     session_token: RwLock<Option<String>>,
+    /// Optional key used by all mutation requests made through this client.
+    ///
+    /// Keeping this on the shared pipeline means handles returned by
+    /// `documents()`, `tenants()`, and `management()` all observe the same
+    /// caller-selected identity. Explicit request headers (management's
+    /// `OperationOptions`, for example) take precedence.
+    idempotency_key: RwLock<Option<String>>,
 }
 
 /// Shareable handle to the pipeline.
@@ -44,6 +58,7 @@ impl Shared {
             config,
             placement: RwLock::new(None),
             session_token: RwLock::new(None),
+            idempotency_key: RwLock::new(None),
         }
     }
 
@@ -74,35 +89,6 @@ impl Shared {
         Ok(format!("{base}{API_ROOT}"))
     }
 
-    /// Project-scoped root, e.g. `{base}/api/v1/projects/{id}`.
-    pub fn project_root(&self, project_id: Option<&str>) -> Result<String> {
-        self.project_root_in(project_id, None)
-    }
-
-    /// Project-scoped root pinned to one region for this request.
-    pub fn project_root_in(
-        &self,
-        project_id: Option<&str>,
-        region_hint: Option<RegionCode>,
-    ) -> Result<String> {
-        let selected = project_id
-            .map(str::to_owned)
-            .or_else(|| self.config.project_id().map(str::to_owned));
-        selected
-            .map(|id| {
-                self.pinned_base_url(region_hint)
-                    .map(|base| format!("{base}/projects/{id}"))
-            })
-            .transpose()?
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorKind::Validation,
-                    "project_required",
-                    "A projectId must be supplied either per request or in the client config.",
-                )
-            })
-    }
-
     /// Database-scoped root for document, SQL, and reactive routes.
     pub fn database_root(&self, scope: &DatabaseScope) -> Result<String> {
         self.database_root_in(scope, None)
@@ -114,10 +100,17 @@ impl Shared {
         scope: &DatabaseScope,
         region_hint: Option<RegionCode>,
     ) -> Result<String> {
+        if scope.database_id.trim().is_empty() {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_database_id",
+                "Database ids cannot be blank.",
+            ));
+        }
+        let id = encode_path_segment(&scope.database_id);
         Ok(format!(
-            "{}/databases/{}",
-            self.project_root_in(scope.project_id.as_deref(), region_hint)?,
-            scope.database_id
+            "{}/databases/{id}",
+            self.pinned_base_url(region_hint)?
         ))
     }
 
@@ -176,9 +169,7 @@ impl Shared {
                 .push(("accept".to_owned(), "application/json".to_owned()));
         }
         if let Some(token) = self.session_token() {
-            request
-                .headers
-                .push(("x-terrascale-session".to_owned(), token));
+            request.headers.push((SESSION_HEADER.to_owned(), token));
         }
         if self.config.preferred_region().is_some() || self.pinned_region().is_some() {
             if let Some(region) = self.pinned_region() {
@@ -188,18 +179,45 @@ impl Shared {
                 ));
             }
         }
-        let idempotency = format!("ts_{}", simple_id());
-        if matches!(
-            request.method,
-            crate::transport::Method::Post | crate::transport::Method::Put
-        ) && !request
-            .headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("idempotency-key"))
-        {
-            request
+        if is_mutation(request)
+            && !request
                 .headers
-                .push(("idempotency-key".to_owned(), idempotency));
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("idempotency-key"))
+        {
+            if let Some(idempotency) = self.idempotency_key() {
+                request
+                    .headers
+                    .push(("idempotency-key".to_owned(), idempotency));
+            }
+        }
+    }
+
+    /// Current caller-selected idempotency key, if configured.
+    #[must_use]
+    pub fn idempotency_key(&self) -> Option<String> {
+        self.idempotency_key
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+    }
+
+    /// Install a caller-selected idempotency key for subsequent mutations.
+    pub fn set_idempotency_key(&self, key: impl Into<String>) -> Result<()> {
+        let key = key.into();
+        validate_idempotency_key(&key)?;
+        if let Ok(mut guard) = self.idempotency_key.write() {
+            *guard = Some(key.trim().to_owned());
+        }
+        Ok(())
+    }
+
+    /// Clear the caller-selected key. Subsequent mutations carry no
+    /// idempotency identity unless the operation supplies an explicit header.
+    /// Explicit request headers remain unaffected.
+    pub fn clear_idempotency_key(&self) {
+        if let Ok(mut guard) = self.idempotency_key.write() {
+            *guard = None;
         }
     }
 
@@ -217,7 +235,9 @@ impl Shared {
     }
 
     fn check(&self, route_name: &str, response: &Response) -> Result<()> {
-        if (200..300).contains(&response.status) {
+        if (200..300).contains(&response.status)
+            || (response.status == 304 && route_name == "reactive.poll")
+        {
             return Ok(());
         }
         if response.status == 421 {
@@ -240,25 +260,86 @@ impl Shared {
         Err(decode_error(route_name, response))
     }
 
-    /// Send a request and decode a JSON body.
+    /// Send a request and decode a JSON body. Read requests may retry bounded
+    /// transient failures; mutations retry only when a stable idempotency key
+    /// is present on the request.
     pub async fn send_typed<T: DeserializeOwned>(&self, mut request: Request) -> Result<T> {
         self.decorate(&mut request);
         let route = request.route_name.clone();
-        let response = self.transport.send(request).await?;
-        self.observe(&response);
-        self.check(&route, &response)?;
-        response.json_body().map_err(|mut e: Error| {
-            e.code = format!("{}.invalid_response", route_to_code(&route));
-            e
-        })
+        let mut retries = 0;
+        loop {
+            match self.transport.send(request.clone()).await {
+                Ok(response) => {
+                    self.observe(&response);
+                    match self.check(&route, &response) {
+                        Ok(()) => {
+                            return response.json_body().map_err(|mut e: Error| {
+                                e.code = format!("{}.invalid_response", route_to_code(&route));
+                                e
+                            });
+                        }
+                        Err(error) if self.can_retry(&request, &error, retries) => {
+                            retries += 1;
+                            self.wait_before_retry(retries).await;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                Err(error) if self.can_retry(&request, &error, retries) => {
+                    retries += 1;
+                    self.wait_before_retry(retries).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
     }
 
-    /// Send a request and expect an empty success body.
+    /// Send a request and expect an empty success body, with the same bounded
+    /// retry policy as [`Shared::send_typed`].
     pub async fn send_empty(&self, mut request: Request) -> Result<()> {
         self.decorate(&mut request);
-        let response = self.transport.send(request).await?;
-        self.observe(&response);
-        self.check("request", &response)
+        let mut retries = 0;
+        loop {
+            match self.transport.send(request.clone()).await {
+                Ok(response) => {
+                    self.observe(&response);
+                    match self.check("request", &response) {
+                        Ok(()) => return Ok(()),
+                        Err(error) if self.can_retry(&request, &error, retries) => {
+                            retries += 1;
+                            self.wait_before_retry(retries).await;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                Err(error) if self.can_retry(&request, &error, retries) => {
+                    retries += 1;
+                    self.wait_before_retry(retries).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn can_retry(&self, request: &Request, error: &Error, retries: u8) -> bool {
+        // Reactive polling owns its own attempt budget and deadline; applying
+        // the general client retry budget here would multiply those bounds.
+        if request.route_name == "reactive.poll" {
+            return false;
+        }
+        if retries >= self.config.max_retry_attempts() || !is_retryable(error) {
+            return false;
+        }
+        !is_mutation(request)
+            || request
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
+    }
+
+    async fn wait_before_retry(&self, retries: u8) {
+        let delay = u64::from(self.config.retry_delay_ms()) * u64::from(retries);
+        tokio::time::sleep(Duration::from_millis(delay)).await;
     }
 }
 
@@ -266,21 +347,74 @@ fn route_to_code(route: &str) -> String {
     route.replace('.', "_")
 }
 
-#[derive(Debug, serde::Deserialize)]
+fn is_mutation(request: &Request) -> bool {
+    // POST is also used for read-only SQL and reactive view attachment. Those
+    // requests must not claim a durable mutation identity. All document,
+    // tenant, and management POSTs are durable mutations; PUT/PATCH/DELETE
+    // are mutation methods by definition.
+    if matches!(
+        request.method,
+        crate::transport::Method::Put
+            | crate::transport::Method::Patch
+            | crate::transport::Method::Delete
+    ) {
+        return true;
+    }
+    matches!(request.method, crate::transport::Method::Post)
+        && !request.route_name.starts_with("sql.")
+        && !request.route_name.starts_with("reactive.")
+}
+
+fn validate_idempotency_key(key: &str) -> Result<()> {
+    if key.trim().is_empty() {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_idempotency_key",
+            "Idempotency keys cannot be blank.",
+        ));
+    }
+    if key.trim().len() > MAX_IDEMPOTENCY_KEY_LENGTH {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_idempotency_key",
+            format!("Idempotency keys must not exceed {MAX_IDEMPOTENCY_KEY_LENGTH} characters."),
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
 struct ErrorBody {
     #[serde(default)]
     code: Option<String>,
     #[serde(default)]
     message: Option<String>,
+    #[serde(default)]
+    fix: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct ErrorResponse {
+    #[serde(default)]
+    error: Option<ErrorBody>,
+    #[serde(flatten)]
+    body: ErrorBody,
 }
 
 fn decode_error(route_name: &str, response: &Response) -> Error {
-    let body: Option<ErrorBody> = serde_json::from_slice(&response.body).unwrap_or(None);
-    let code = body
+    const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+    let body = (response.body.len() <= MAX_ERROR_BODY_BYTES)
+        .then(|| serde_json::from_slice::<ErrorResponse>(&response.body).ok())
+        .flatten();
+    let details = body
+        .as_ref()
+        .and_then(|body| body.error.as_ref())
+        .or_else(|| body.as_ref().map(|body| &body.body));
+    let code = details
         .as_ref()
         .and_then(|b| b.code.clone())
         .unwrap_or_else(|| route_to_code(route_name));
-    let message = body
+    let mut message = details
         .as_ref()
         .and_then(|b| b.message.clone())
         .unwrap_or_else(|| {
@@ -289,17 +423,31 @@ fn decode_error(route_name: &str, response: &Response) -> Error {
                 response.status
             )
         });
+    if let Some(fix) = details.as_ref().and_then(|body| body.fix.as_deref()) {
+        if !fix.trim().is_empty() {
+            message.push_str(" Fix: ");
+            message.push_str(fix.trim());
+        }
+    }
     let mut error = Error::for_status(response.status, code, message);
     error.request_id = response.header("x-request-id").map(str::to_owned);
     error
 }
 
-fn simple_id() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64 ^ (d.as_secs() << 32))
-        .unwrap_or(0)
+fn is_retryable(error: &Error) -> bool {
+    error.kind == ErrorKind::Transport || matches!(error.status, Some(502..=504))
+}
+
+fn encode_path_segment(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.~".contains(byte) {
+            encoded.push(char::from(*byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 /// Root client. Build with [`ClientConfig::builder`] then branch into
@@ -367,6 +515,30 @@ impl TerraScaleClient {
     pub fn set_session_token(&self, token: Option<String>) {
         self.shared.set_session_token(token);
     }
+
+    /// Build a client whose mutation requests use the caller-provided stable
+    /// idempotency key. Reuse this client only for one logical mutation (or
+    /// clear/change the key before starting another one).
+    pub fn with_idempotency_key(self, key: impl Into<String>) -> Result<Self> {
+        self.shared.set_idempotency_key(key)?;
+        Ok(self)
+    }
+
+    /// Current caller-selected mutation identity, if configured.
+    #[must_use]
+    pub fn idempotency_key(&self) -> Option<String> {
+        self.shared.idempotency_key()
+    }
+
+    /// Set a stable mutation identity on this shared client pipeline.
+    pub fn set_idempotency_key(&self, key: impl Into<String>) -> Result<()> {
+        self.shared.set_idempotency_key(key)
+    }
+
+    /// Clear the caller-selected mutation identity.
+    pub fn clear_idempotency_key(&self) {
+        self.shared.clear_idempotency_key();
+    }
     /// Document CRUD.
     #[must_use]
     pub fn documents(&self) -> DocumentsClient {
@@ -391,7 +563,7 @@ impl TerraScaleClient {
         TenantsClient::new(self.shared.clone())
     }
 
-    /// Databases, branches, backups, usage, regions.
+    /// Database, schema, backup, export, usage, and region management.
     #[must_use]
     pub fn management(&self) -> ManagementClient {
         ManagementClient::new(self.shared.clone())
