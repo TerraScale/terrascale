@@ -6,26 +6,10 @@
 
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.56.18" />
-    <PackageReference Include="YamlDotNet" Version="16.3.0" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TerraScale.DotNet\TerraScale.DotNet.csproj" />
-    <ProjectReference Include="..\..\samples\TerraScale.Samples.Quickstart\TerraScale.Samples.Quickstart.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Include="vectors\terrascale.sync.v2\*.json"
-          Exclude="vectors\terrascale.sync.v2\manifest.json"
-          CopyToOutputDirectory="PreserveNewest"
-          Visible="false" />
-    <None Include="vectors\terrascale.sync.v2-adr0024\*.json"
-          Exclude="vectors\terrascale.sync.v2-adr0024\manifest.json"
-          CopyToOutputDirectory="PreserveNewest"
-          Visible="false" />
-    <None Include="vectors\terrascale.sync.v2-adr0024\manifest.json"
-          CopyToOutputDirectory="PreserveNewest"
-          TargetPath="vectors\manifest.json"
-          Visible="false" />
-  </ItemGroup>
 </Project>

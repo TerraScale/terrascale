@@ -11,7 +11,6 @@ internal readonly record struct TerraScaleBoundRoute(string RequestUri)
 
 internal static class TerraScaleApiRoutes
 {
-    public const string Sync = "/api/v1/sync";
 
     public static TerraScaleBoundRoute OnboardingGetState() =>
         new TerraScaleBoundRoute("/api/v1/onboarding");
