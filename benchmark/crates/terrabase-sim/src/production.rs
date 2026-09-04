@@ -452,6 +452,7 @@ impl ProductionWorld {
             hlc: record.hlc,
             origin: record.origin,
             origin_sequence: record.origin_sequence,
+            context: encode_frontier_context(&row.context),
         })
     }
 
