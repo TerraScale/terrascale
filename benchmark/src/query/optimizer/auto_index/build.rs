@@ -463,14 +463,17 @@ impl InvisibleBuild {
         if self.phase != BuildPhase::Building {
             return Err(BuildError::InvalidPhase);
         }
+        // Fail closed on replay: a batch at or behind the durable position is
+        // stale whatever its size, so report the watermark violation first and
+        // never mask it as a budget or shape error.
+        if batch.first() <= self.covered {
+            return Err(BuildError::StaleWatermark);
+        }
         if batch.items() > self.batch_limit {
             return Err(BuildError::BudgetExceeded);
         }
         let expected = self.covered.checked_next()?;
         if batch.first() != expected {
-            if batch.first() <= self.covered {
-                return Err(BuildError::StaleWatermark);
-            }
             return Err(BuildError::SequenceGap {
                 expected: expected.seq(),
                 received: batch.first().seq(),
@@ -492,6 +495,12 @@ impl InvisibleBuild {
         last: BuildWatermark,
         items: u64,
     ) -> Result<(), BuildError> {
+        // Monotonic advance: a target at or behind the durable position is a
+        // stale replay. Reject it here so it reports StaleWatermark instead of
+        // falling into BuildBatch::new's InvalidBatch (first > last).
+        if last <= self.covered {
+            return Err(BuildError::StaleWatermark);
+        }
         let first = self.covered.checked_next()?;
         self.apply_batch(BuildBatch::new(first, last, items)?)
     }
@@ -686,7 +695,9 @@ mod tests {
             state.mark_verified(BuildWatermark::new(12)),
             Err(BuildError::VerificationFailed)
         );
-        state.advance_to(BuildWatermark::new(15), 3).expect("backfill");
+        // batch_limit=2: cover 13-14 then 15 instead of one 3-item advance.
+        state.advance_to(BuildWatermark::new(14), 2).expect("backfill");
+        state.advance_to(BuildWatermark::new(15), 1).expect("backfill");
         assert_eq!(state.availability(), BuildAvailability::IndexBuilding);
         state.mark_verified(BuildWatermark::new(15)).expect("verify");
         assert!(!state.is_visible());
@@ -695,7 +706,10 @@ mod tests {
     #[test]
     fn same_transaction_catch_up_publishes_atomically() {
         let mut state = build();
-        state.advance_to(BuildWatermark::new(15), 5).expect("backfill");
+        // batch_limit=2: backfill 11-12, 13-14, 15 in three bounded steps.
+        state.advance_to(BuildWatermark::new(12), 2).expect("backfill");
+        state.advance_to(BuildWatermark::new(14), 2).expect("backfill");
+        state.advance_to(BuildWatermark::new(15), 1).expect("backfill");
         state.mark_verified(BuildWatermark::new(15)).expect("verify");
         let mut transaction = Transaction::default();
         state.activate_in_transaction(&mut transaction).expect("activate");
@@ -708,7 +722,10 @@ mod tests {
     #[test]
     fn failed_transaction_leaves_prior_visibility_unchanged() {
         let mut state = build();
-        state.advance_to(BuildWatermark::new(15), 5).expect("backfill");
+        // batch_limit=2: backfill 11-12, 13-14, 15 in three bounded steps.
+        state.advance_to(BuildWatermark::new(12), 2).expect("backfill");
+        state.advance_to(BuildWatermark::new(14), 2).expect("backfill");
+        state.advance_to(BuildWatermark::new(15), 1).expect("backfill");
         state.mark_verified(BuildWatermark::new(15)).expect("verify");
         let mut transaction = Transaction { fail: true, calls: 0 };
         assert_eq!(
