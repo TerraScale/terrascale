@@ -6,13 +6,12 @@
 > permission-driven removals, Region movement, bounded backpressure, and one
 > new semantic corpus shared with Rust and TypeScript.
 
-Status: implementation record for the SE-10 packet
-(TerraScale/TerraScale.DotNet#9), 2026-08-27, updated by repair loop 1
+Status: implementation record for the SE-10 packet,
+2026-08-27, updated by repair loop 1
 (same day: typed decode bounds, live-loop resilience, and host-surface
 bounds from the packet review) and by the follow-ups record below
-(same day: the then-named historical TerraBaseV2#89 warden MINORs and
-TerraBaseV2#93 SDK half; both identifiers preserve their original issue-tracker
-identity). Authority: workspace
+(same day: the historical warden MINORs and SDK-half follow-ups).
+Authority: workspace
 charter PD-2026-08-26-12 (native-language SDK clients, no wasm/C-ABI
 embeddings, server-ack-only mutations), PD-2026-08-26-13 D3
 (trigger-driven delta pulls), PD-2026-08-26-11 D1 (the API host's local
@@ -22,7 +21,7 @@ kit contract (`TerraBase/docs/sync/terrascale-sync-v2-conformance.md`),
 and the SE-08 API host (`TerraBase/host/TerraBase.Api`). Worktree
 `tbv2-se10`, branch `fleet/se10-2`.
 
-Note on ticket history: the tracker body predates charter decision
+Note on history: the original request predates charter decision
 PD-2026-08-26-12 and describes a C-ABI/RID-native embedding. The spec
 section for SE-10 and the charter supersede it: this client is a
 **native managed implementation**. There is no native asset, no interop
