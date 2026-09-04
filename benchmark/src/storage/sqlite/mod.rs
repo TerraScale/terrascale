@@ -3098,10 +3098,16 @@ fn append_json_value(output: &mut Vec<u8>, value: &DocumentValue) {
         DocumentValue::Number(value) if value.is_finite() => {
             output.extend_from_slice(value.to_string().as_bytes());
         }
-        // JSON has no non-finite number representation.  Such values are
-        // outside the public document contract; null keeps migration and
-        // reads fail-closed rather than emitting invalid JSON.
-        DocumentValue::Number(_) => output.extend_from_slice(b"null"),
+        // JSON has no non-finite number representation. Keep the body valid
+        // JSON while retaining the exact IEEE-754 bits in a reserved scalar
+        // envelope. The parser recognizes this shape only when it is the
+        // object's sole member, so regular objects remain unaffected by the
+        // extension and SQLite's JSON functions continue to accept the body.
+        DocumentValue::Number(value) => {
+            output.extend_from_slice(br#"{"__terrascale_nonfinite__":"#);
+            append_json_string(output, &format!("{:016x}", value.to_bits()));
+            output.push(b'}');
+        }
         DocumentValue::String(value) => append_json_string(output, value),
         DocumentValue::Array(items) => {
             output.push(b'[');
@@ -3283,6 +3289,21 @@ impl<'a> JsonParser<'a> {
                             break;
                         }
                         _ => return None,
+                    }
+                }
+                if fields.len() == 1 {
+                    if let Some(DocumentValue::String(bits)) =
+                        fields.get("__terrascale_nonfinite__")
+                    {
+                        if bits.len() == 16
+                            && bits.bytes().all(|byte| byte.is_ascii_hexdigit())
+                            && let Ok(bits) = u64::from_str_radix(bits, 16)
+                        {
+                            let value = f64::from_bits(bits);
+                            if !value.is_finite() {
+                                return Some(DocumentValue::Number(value));
+                            }
+                        }
                     }
                 }
                 Some(DocumentValue::Object(fields))

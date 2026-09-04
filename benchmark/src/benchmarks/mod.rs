@@ -72,10 +72,6 @@
 //! objective status is still fail-closed to `inconclusive`.
 
 #![allow(clippy::doc_markdown)] // dense with the proper nouns PostgreSQL and TerraBase
-#![cfg_attr(
-    feature = "bench-tools",
-    allow(dead_code, reason = "bench-tools exposes only the served-boundary entry point")
-)]
 
 mod driver;
 mod gates;
@@ -87,11 +83,11 @@ mod record;
 mod reference;
 mod vocabulary;
 
-/// Runs one served-boundary benchmark selected by the benchmark CLI.
+/// Compatibility entry point for the retired served benchmark binary.
 ///
-/// This narrow entry point keeps process orchestration and admission policy in
-/// the audited engine-side modules while allowing the opt-in benchmark binary
-/// to remain a separate executable.
+/// The old Go gateway/qualification lifecycle was removed. Direct public
+/// boundary families own their adapters under `bench/`; this function remains
+/// only so an old binary fails closed instead of launching deleted code.
 #[doc(hidden)]
 pub fn run_served_boundary_cli(workload: &str) -> Result<std::path::PathBuf, String> {
     Err(format!(

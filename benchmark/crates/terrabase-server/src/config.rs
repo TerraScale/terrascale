@@ -17,7 +17,7 @@ use terrabase::regions::RegionCode;
 
 const MAX_CONFIG_BYTES: u64 = 64 * 1024;
 const MAX_CONFIG_BYTES_USIZE: usize = 64 * 1024;
-const MAX_GATEWAY_PRINCIPALS: usize = 32;
+const MAX_MEMBER_PRINCIPALS: usize = 32;
 const MAX_DATABASES: usize = 1_024;
 const MAX_PEERS: usize = 64;
 const MAX_CAPABILITIES: usize = 32;
@@ -117,8 +117,8 @@ pub struct ProductionTransport {
     pub server_private_key: PathBuf,
     /// TLS client/member CA bundle path.
     pub client_ca: PathBuf,
-    /// Exact TBEP gateway principals admitted by the certificate policy.
-    pub gateway_principals: BTreeSet<String>,
+    /// Exact private-member principals admitted by the TBEP certificate policy.
+    pub member_principals: BTreeSet<String>,
     /// Exact remote peer endpoint and identity set.
     pub peers: Vec<ProductionPeer>,
 }
@@ -216,8 +216,9 @@ pub struct ServerConfig {
     pub server_private_key: PathBuf,
     /// Client trust bundle file. Client certificates are mandatory.
     pub client_ca: PathBuf,
-    /// Exact SPIFFE URI SANs admitted from verified client certificates.
-    pub gateway_principals: BTreeSet<String>,
+    /// Exact SPIFFE URI SANs admitted from verified private-member
+    /// certificates.
+    pub member_principals: BTreeSet<String>,
     /// Optional local UDS configuration.
     pub uds: Option<UdsConfig>,
     /// Public `/api/v1` listener and its data root; `None` leaves the
@@ -310,7 +311,7 @@ struct FileTbep {
     server_certificate: PathBuf,
     server_private_key: PathBuf,
     client_ca: PathBuf,
-    gateway_principals: Vec<String>,
+    member_principals: Vec<String>,
     uds: Option<FileUds>,
     max_message_bytes: usize,
     max_inflight: usize,
@@ -439,7 +440,6 @@ struct FileProductionTransport {
     server_certificate: PathBuf,
     server_private_key: PathBuf,
     client_ca: PathBuf,
-    gateway_principals: Vec<String>,
     peers: Vec<FileProductionPeer>,
     uds: Option<FileUds>,
     max_message_bytes: usize,
@@ -598,20 +598,20 @@ impl ServerConfig {
         let tls_handshake_timeout =
             bounded_duration(file.tbep.tls_handshake_timeout_millis, 100, 30_000)?;
         let shutdown_grace = bounded_duration(file.tbep.shutdown_grace_millis, 100, 300_000)?;
-        if file.tbep.gateway_principals.is_empty()
-            || file.tbep.gateway_principals.len() > MAX_GATEWAY_PRINCIPALS
+        if file.tbep.member_principals.is_empty()
+            || file.tbep.member_principals.len() > MAX_MEMBER_PRINCIPALS
         {
-            return Err(ConfigError::InvalidGatewayPrincipal);
+            return Err(ConfigError::InvalidMemberPrincipal);
         }
-        let mut gateway_principals = BTreeSet::new();
-        for principal in file.tbep.gateway_principals {
+        let mut member_principals = BTreeSet::new();
+        for principal in file.tbep.member_principals {
             if principal.is_empty()
                 || principal.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
                 || principal != principal.trim()
                 || principal.chars().any(char::is_control)
-                || !gateway_principals.insert(principal)
+                || !member_principals.insert(principal)
             {
-                return Err(ConfigError::InvalidGatewayPrincipal);
+                return Err(ConfigError::InvalidMemberPrincipal);
             }
         }
         let uds = file
@@ -639,7 +639,7 @@ impl ServerConfig {
             server_certificate: file.tbep.server_certificate,
             server_private_key: file.tbep.server_private_key,
             client_ca: file.tbep.client_ca,
-            gateway_principals,
+            member_principals,
             uds,
             public_api,
             replication_peers,
@@ -781,7 +781,7 @@ impl ServerConfig {
             server_certificate: production.transport.server_certificate.clone(),
             server_private_key: production.transport.server_private_key.clone(),
             client_ca: production.transport.client_ca.clone(),
-            gateway_principals: production.transport.gateway_principals.clone(),
+            member_principals: BTreeSet::new(),
             uds,
             public_api: None,
             replication_peers: Vec::new(),
@@ -914,7 +914,6 @@ fn parse_transport(
     let server_certificate = production_path(&file.server_certificate)?;
     let server_private_key = production_path(&file.server_private_key)?;
     let client_ca = production_path(&file.client_ca)?;
-    validate_gateway_principals(&file.gateway_principals, environment.name.as_str())?;
     if file.peers.is_empty() || file.peers.len() > MAX_PEERS {
         return Err(ConfigError::InvalidTransportBinding);
     }
@@ -967,7 +966,6 @@ fn parse_transport(
         server_certificate,
         server_private_key,
         client_ca,
-        gateway_principals: file.gateway_principals.iter().cloned().collect(),
         peers,
     })
 }
@@ -985,26 +983,6 @@ fn production_socket(value: &str, allow_wildcard: bool) -> Result<SocketAddr, Co
         return Err(ConfigError::InvalidListenAddress);
     }
     Ok(address)
-}
-
-fn validate_gateway_principals(values: &[String], environment: &str) -> Result<(), ConfigError> {
-    if values.is_empty() || values.len() > MAX_GATEWAY_PRINCIPALS {
-        return Err(ConfigError::InvalidGatewayPrincipal);
-    }
-    let mut unique = BTreeSet::new();
-    let expected_prefix = format!("spiffe://terrascale.tech/{environment}/database-gateway/");
-    for value in values {
-        if value.is_empty()
-            || value.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
-            || value != value.trim()
-            || value.chars().any(char::is_control)
-            || !value.starts_with(&expected_prefix)
-            || !unique.insert(value)
-        {
-            return Err(ConfigError::InvalidGatewayPrincipal);
-        }
-    }
-    Ok(())
 }
 
 fn parse_release(file: &FileReleaseBinding) -> Result<ReleaseBinding, ConfigError> {
@@ -1228,8 +1206,8 @@ pub enum ConfigError {
     InvalidRegion,
     /// A configured numeric bound was zero or outside its production range.
     InvalidBound,
-    /// The admitted gateway principal set was empty, duplicated, or invalid.
-    InvalidGatewayPrincipal,
+    /// The admitted private-member principal set was empty, duplicated, or invalid.
+    InvalidMemberPrincipal,
     /// The UDS mode was broader than 0770 or omitted owner read/write.
     InvalidUdsMode,
     /// The mode selector was absent or not one of the named modes.
@@ -1268,7 +1246,7 @@ impl std::fmt::Display for ConfigError {
             Self::InvalidListenAddress => "configured listener addresses are invalid",
             Self::InvalidRegion => "engine.region must be GRU, SFO, or FRA",
             Self::InvalidBound => "a production server bound is outside its accepted range",
-            Self::InvalidGatewayPrincipal => "gateway_principals is invalid",
+            Self::InvalidMemberPrincipal => "member_principals is invalid",
             Self::InvalidUdsMode => "the local UDS mode is unsafe",
             Self::InvalidMode => "the server mode is invalid",
             Self::InvalidProductionBoundary => "the production configuration is invalid",
@@ -1328,8 +1306,8 @@ listen = "0.0.0.0:8421"
 allow_wildcard = true
 server_certificate = "/run/secrets/terrabase.crt"
 server_private_key = "/run/secrets/terrabase.key"
-client_ca = "/run/secrets/gateway-ca.crt"
-gateway_principals = ["spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV"]
+client_ca = "/run/secrets/member-ca.crt"
+member_principals = ["spiffe://local/stack-member"]
 max_message_bytes = 16777216
 max_inflight = 128
 request_timeout_millis = 30000
@@ -1380,7 +1358,6 @@ metrics_listen = "127.0.0.1:9464"
 server_certificate = "/run/secrets/terrabase.crt"
 server_private_key = "/run/secrets/terrabase.key"
 client_ca = "/run/secrets/member-ca.crt"
-gateway_principals = ["spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV"]
 peers = [
   { member = "01ARZ3NDEKTSV4RRFFQ69G5FB1", endpoint = "127.0.0.1:7422", spiffe_identity = "spiffe://terrascale.tech/prod/terrabase-member/01ARZ3NDEKTSV4RRFFQ69G5FAV/01ARZ3NDEKTSV4RRFFQ69G5FB1" },
   { member = "01ARZ3NDEKTSV4RRFFQ69G5FB2", endpoint = "127.0.0.1:7423", spiffe_identity = "spiffe://terrascale.tech/prod/terrabase-member/01ARZ3NDEKTSV4RRFFQ69G5FAV/01ARZ3NDEKTSV4RRFFQ69G5FB2" },
@@ -1494,15 +1471,7 @@ address = "0.0.0.0:7202"
     }
 
     #[test]
-    fn production_binds_gateway_environment_and_peer_endpoints_exactly() {
-        let wrong_environment = production_valid().replace(
-            "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
-            "spiffe://terrascale.tech/staging/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        );
-        assert!(matches!(
-            ServerConfig::parse(&wrong_environment),
-            Err(ConfigError::InvalidGatewayPrincipal)
-        ));
+    fn production_binds_peer_endpoints_exactly() {
         let duplicate_endpoint = production_valid()
             .replace("endpoint = \"127.0.0.1:7423\"", "endpoint = \"127.0.0.1:7422\"");
         assert!(matches!(
@@ -1523,9 +1492,7 @@ address = "0.0.0.0:7202"
         assert_eq!(config.region, Region::Gru);
         assert_eq!(config.max_inflight, 128);
         assert!(
-            config.gateway_principals.contains(
-                "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV"
-            )
+            config.member_principals.contains("spiffe://local/stack-member")
         );
     }
 
@@ -1570,7 +1537,7 @@ address = "0.0.0.0:7202"
     }
 
     #[test]
-    fn gateway_principals_are_bounded_trimmed_and_unique() {
+    fn member_principals_are_bounded_trimmed_and_unique() {
         for principal in [
             "spiffe://\u{0001}",
             " gateway",
@@ -1578,13 +1545,13 @@ address = "0.0.0.0:7202"
             &"g".repeat(terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES + 1),
         ] {
             let text = valid().replace(
-                "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "spiffe://local/stack-member",
                 principal,
             );
             assert!(
                 matches!(
                     ServerConfig::parse(&text),
-                    Err(ConfigError::InvalidGatewayPrincipal | ConfigError::ParseConfiguration(_))
+                    Err(ConfigError::InvalidMemberPrincipal | ConfigError::ParseConfiguration(_))
                 ),
                 "principal {principal:?}: {:?}",
                 ServerConfig::parse(&text)

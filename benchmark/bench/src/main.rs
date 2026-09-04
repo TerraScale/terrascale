@@ -16,12 +16,12 @@
 //!   --target pg --workload read --out bench/results
 //! ```
 //!
-//! A served TerraBase run requires `TERRABASE_BENCH_SERVED_RUNNER` to name a
-//! prebuilt Rust runner executable and an explicit boundary contract:
+//! The retired legacy served target is retained only as a fail-closed command;
+//! direct public-boundary families are invoked explicitly:
 //!
 //! ```text
 //! cargo run --release --manifest-path bench/Cargo.toml -- \
-//!   --target terrabase --boundary-class diagnostic-qualification \
+//!   --family indexed-query \
 //!   --workload read --out bench/results
 //! ```
 //!

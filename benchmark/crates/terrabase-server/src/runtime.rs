@@ -43,7 +43,7 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
         config.request_timeout,
         config.tls_handshake_timeout,
         config.shutdown_grace,
-        config.gateway_principals.clone(),
+        config.member_principals.clone(),
     )?;
     let certificate = read_pem(&config.server_certificate, false)?;
     let private_key = read_pem(&config.server_private_key, true)?;
@@ -728,7 +728,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn configured_gateway_identity_reaches_secret_validation() {
+    async fn configured_member_identity_reaches_secret_validation() {
         let config = ServerConfig {
             mode: crate::config::ServerMode::LocalDevelopment,
             production: None,
@@ -742,10 +742,7 @@ mod tests {
             server_certificate: "/missing/server.crt".into(),
             server_private_key: "/missing/server.key".into(),
             client_ca: "/missing/client-ca.crt".into(),
-            gateway_principals: BTreeSet::from([
-                "spiffe://terrascale.tech/prod/database-gateway/01ARZ3NDEKTSV4RRFFQ69G5FAV"
-                    .to_owned(),
-            ]),
+            member_principals: BTreeSet::from(["spiffe://local/stack-member".to_owned()]),
             uds: None,
             public_api: None,
             replication_peers: Vec::new(),
@@ -776,7 +773,7 @@ mod tests {
             server_certificate: "/missing/server.crt".into(),
             server_private_key: "/missing/server.key".into(),
             client_ca: "/missing/client-ca.crt".into(),
-            gateway_principals: BTreeSet::new(),
+            member_principals: BTreeSet::new(),
             uds: None,
             public_api: None,
             replication_peers: Vec::new(),

@@ -316,9 +316,6 @@ fn execute_with_index(
     if query.search_rank().is_none() {
         ordered.sort_by(|left, right| model::compare_documents(query.ordering(), left, right));
     }
-    if query.ordering().keys().iter().any(|key| key.field() == "score") {
-        eprintln!("DEBUG ORDER {:?}", ordered.iter().map(|d| model::field_of(d, "score")).collect::<Vec<_>>());
-    }
     let page_documents = page_documents(query, &ordered);
     let resolved_documents = resolve_references(engine, snapshot, query, &page_documents)?;
     let mut by_id: BTreeMap<&str, &Document> = BTreeMap::new();

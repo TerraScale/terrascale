@@ -139,7 +139,7 @@ impl Workload {
 /// A lane target this driver can drive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Target {
-    /// The served TerraBase boundary runner.
+    /// The legacy TerraBase target (retained only to fail closed).
     TerraBase,
     /// The pinned PostgreSQL 18 reference.
     PostgreSql,

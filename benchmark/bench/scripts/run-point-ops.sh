@@ -11,8 +11,8 @@
 # exits 0 when the render succeeds, so CI can run it without databases.
 #
 # --live additionally drives the lane binary for the read and write
-# workloads of every reachable target (pg, raven, pg-fullstack, terrabase
-# via its served runner) with the lane's RECORD_MINIMUM configuration, then
+# workloads of every reachable reference target (pg, raven, pg-fullstack)
+# with the lane's RECORD_MINIMUM configuration, then
 # renders. Unreachable targets are reported and skipped, never faked: their
 # rows stay missing/failed in RESULTS.md.
 #

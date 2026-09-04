@@ -866,7 +866,7 @@ pub(crate) mod json {
         {
             return Err(Error("config counts must be greater than zero".to_owned()));
         }
-        // The Go adapter distributes both warm-up and measured operations
+        // A served adapter distributes both warm-up and measured operations
         // across slots with remainder handling, so only the measured count
         // is pinned to whole slots per sample.
         if !config_operations.is_multiple_of(config_concurrency) {
