@@ -643,3 +643,1022 @@ fn parse_property(
     }
     Ok(rules)
 }
+
+// ---------------------------------------------------------------------------
+// Canonical terrascale.schema.json contract (D-48/D-78)
+// ---------------------------------------------------------------------------
+
+/// The field type vocabulary emitted by every SDK's schema builder.
+///
+/// This is intentionally separate from [`SchemaFieldType`].  The latter is
+/// the small validation-rule vocabulary used by the legacy family record;
+/// this enum is the complete public schema contract, including extracted
+/// document and CRDT field types.  Keeping the two types distinct prevents a
+/// JSON schema import from silently dropping metadata that the engine cannot
+/// enforce yet.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum CanonicalFieldType {
+    /// UTF-8 scalar text.
+    String,
+    /// Signed integer.
+    Int,
+    /// IEEE-754 number.
+    Float,
+    /// Boolean.
+    Bool,
+    /// Opaque bytes.
+    Bytes,
+    /// Arbitrary JSON value.
+    Json,
+    /// Epoch-millisecond timestamp.
+    Timestamp,
+    /// Full-text searchable text.
+    Text,
+    /// PN-counter CRDT field.
+    CounterPn,
+    /// Add-wins set CRDT field.
+    SetAddWins,
+    /// Remove-wins set CRDT field.
+    SetRemoveWins,
+    /// Multi-value register CRDT field.
+    RegisterMv,
+}
+
+impl CanonicalFieldType {
+    /// Returns the canonical JSON spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::String => "string",
+            Self::Int => "int",
+            Self::Float => "float",
+            Self::Bool => "bool",
+            Self::Bytes => "bytes",
+            Self::Json => "json",
+            Self::Timestamp => "timestamp",
+            Self::Text => "text",
+            Self::CounterPn => "counter-pn",
+            Self::SetAddWins => "set-add-wins",
+            Self::SetRemoveWins => "set-remove-wins",
+            Self::RegisterMv => "register-mv",
+        }
+    }
+
+    /// Parses one canonical field type spelling; aliases are not accepted.
+    pub fn from_str(value: &str) -> Option<Self> {
+        Some(match value {
+            "string" => Self::String,
+            "int" => Self::Int,
+            "float" => Self::Float,
+            "bool" => Self::Bool,
+            "bytes" => Self::Bytes,
+            "json" => Self::Json,
+            "timestamp" => Self::Timestamp,
+            "text" => Self::Text,
+            "counter-pn" => Self::CounterPn,
+            "set-add-wins" => Self::SetAddWins,
+            "set-remove-wins" => Self::SetRemoveWins,
+            "register-mv" => Self::RegisterMv,
+            _ => return None,
+        })
+    }
+
+    fn is_crdt(self) -> bool {
+        matches!(self, Self::CounterPn | Self::SetAddWins | Self::SetRemoveWins | Self::RegisterMv)
+    }
+}
+
+/// The collection-level conflict policy in the canonical schema contract.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum SchemaMergePolicy {
+    /// Removes win over concurrent updates.
+    RemoveWins,
+    /// HLC is used as the deterministic concurrent tiebreak.
+    HlcTiebreak,
+    /// Last write wins according to the declared write clock.
+    LastWriteWins,
+}
+
+impl SchemaMergePolicy {
+    /// Returns the canonical JSON spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RemoveWins => "remove-wins",
+            Self::HlcTiebreak => "hlc-tiebreak",
+            Self::LastWriteWins => "last-write-wins",
+        }
+    }
+
+    /// Parses one canonical merge-policy spelling.
+    pub fn from_str(value: &str) -> Option<Self> {
+        Some(match value {
+            "remove-wins" => Self::RemoveWins,
+            "hlc-tiebreak" => Self::HlcTiebreak,
+            "last-write-wins" => Self::LastWriteWins,
+            _ => return None,
+        })
+    }
+}
+
+/// The physical kind of one declared index.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum CanonicalIndexKind {
+    /// A SQLite B-tree over extracted columns.
+    BTree,
+    /// An SQLite FTS5 index over one text field.
+    Fts,
+}
+
+impl CanonicalIndexKind {
+    /// The canonical B-tree index kind.
+    pub const BTREE: Self = Self::BTree;
+    /// The canonical full-text index kind.
+    pub const FTS: Self = Self::Fts;
+
+    /// Returns the canonical JSON spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BTree => "btree",
+            Self::Fts => "fts",
+        }
+    }
+
+    /// Parses one canonical index-kind spelling.
+    pub fn from_str(value: &str) -> Option<Self> {
+        Some(match value {
+            "btree" => Self::BTree,
+            "fts" => Self::Fts,
+            _ => return None,
+        })
+    }
+}
+
+/// An explicit field rename in a schema evolution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaFieldRename {
+    from: String,
+    to: String,
+}
+
+impl SchemaFieldRename {
+    /// Creates a validated rename.  A rename is never inferred from a diff.
+    pub fn try_new(
+        from: impl Into<String>,
+        to: impl Into<String>,
+    ) -> Result<Self, SchemaFormatError> {
+        let value = Self { from: from.into(), to: to.into() };
+        validate_canonical_identifier(&value.from)?;
+        validate_canonical_identifier(&value.to)?;
+        if value.from == value.to {
+            return Err(SchemaFormatError::MalformedValue);
+        }
+        Ok(value)
+    }
+
+    /// Returns the source field name.
+    #[must_use]
+    pub fn from(&self) -> &str {
+        &self.from
+    }
+
+    /// Returns the destination field name.
+    #[must_use]
+    pub fn to(&self) -> &str {
+        &self.to
+    }
+}
+
+/// One extracted field in a canonical collection schema.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalField {
+    name: String,
+    kind: CanonicalFieldType,
+    required: bool,
+    indexed: bool,
+    unique: bool,
+    merge_policy: Option<CanonicalFieldType>,
+}
+
+impl CanonicalField {
+    /// Creates one validated field definition.
+    pub fn try_new(
+        name: impl Into<String>,
+        kind: CanonicalFieldType,
+        required: bool,
+        indexed: bool,
+        unique: bool,
+        merge_policy: Option<CanonicalFieldType>,
+    ) -> Result<Self, SchemaFormatError> {
+        let value = Self {
+            name: name.into(),
+            kind,
+            required,
+            indexed: indexed || unique,
+            unique,
+            merge_policy,
+        };
+        validate_canonical_identifier(&value.name)?;
+        if merge_policy.is_some_and(|policy| !policy.is_crdt()) {
+            return Err(SchemaFormatError::MalformedValue);
+        }
+        Ok(value)
+    }
+
+    /// Returns the field name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// Returns the field type.
+    #[must_use]
+    pub const fn kind(&self) -> CanonicalFieldType {
+        self.kind
+    }
+    /// Returns whether the field is required.
+    #[must_use]
+    pub const fn required(&self) -> bool {
+        self.required
+    }
+    /// Returns whether the field has a value index.
+    #[must_use]
+    pub const fn indexed(&self) -> bool {
+        self.indexed
+    }
+    /// Returns whether the field's index is unique.
+    #[must_use]
+    pub const fn unique(&self) -> bool {
+        self.unique
+    }
+    /// Returns the optional typed CRDT field policy.
+    #[must_use]
+    pub const fn merge_policy(&self) -> Option<CanonicalFieldType> {
+        self.merge_policy
+    }
+}
+
+/// One named index in a canonical collection schema.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalIndex {
+    name: String,
+    fields: Vec<String>,
+    unique: bool,
+    kind: CanonicalIndexKind,
+}
+
+impl CanonicalIndex {
+    /// Creates a non-unique B-tree index.
+    pub fn btree(name: impl Into<String>, fields: Vec<String>) -> Result<Self, SchemaFormatError> {
+        Self::try_new(name, fields, false, CanonicalIndexKind::BTree)
+    }
+
+    /// Creates a single-field FTS5 index.
+    pub fn fts(
+        name: impl Into<String>,
+        field: impl Into<String>,
+    ) -> Result<Self, SchemaFormatError> {
+        Self::try_new(name, vec![field.into()], false, CanonicalIndexKind::Fts)
+    }
+
+    /// Creates one validated index.  The kind is always explicit at this seam.
+    pub fn try_new(
+        name: impl Into<String>,
+        fields: Vec<String>,
+        unique: bool,
+        kind: CanonicalIndexKind,
+    ) -> Result<Self, SchemaFormatError> {
+        let value = Self { name: name.into(), fields, unique, kind };
+        validate_canonical_identifier(&value.name)?;
+        if value.fields.is_empty() || (kind == CanonicalIndexKind::Fts && value.fields.len() != 1) {
+            return Err(SchemaFormatError::MalformedValue);
+        }
+        for field in &value.fields {
+            validate_canonical_identifier(field)?;
+        }
+        Ok(value)
+    }
+
+    /// Returns the index name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// Returns indexed field names.
+    #[must_use]
+    pub fn fields(&self) -> &[String] {
+        &self.fields
+    }
+    /// Returns whether this is unique.
+    #[must_use]
+    pub const fn unique(&self) -> bool {
+        self.unique
+    }
+    /// Returns the physical index kind.
+    #[must_use]
+    pub const fn kind(&self) -> CanonicalIndexKind {
+        self.kind
+    }
+}
+
+/// Optional collection TTL declaration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SchemaTtl {
+    field: String,
+}
+
+impl SchemaTtl {
+    /// Creates a TTL declaration for one timestamp field.
+    pub fn try_new(field: impl Into<String>) -> Result<Self, SchemaFormatError> {
+        let value = Self { field: field.into() };
+        validate_canonical_identifier(&value.field)?;
+        Ok(value)
+    }
+    /// Returns the expiration field.
+    #[must_use]
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+}
+
+/// One collection's canonical schema contract.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalCollectionSchema {
+    name: String,
+    fields: Vec<CanonicalField>,
+    indexes: Vec<CanonicalIndex>,
+    ttl: Option<SchemaTtl>,
+    renames: Vec<SchemaFieldRename>,
+    version: Option<SchemaVersion>,
+    history_retention_days: u32,
+    merge_policy: SchemaMergePolicy,
+}
+
+impl CanonicalCollectionSchema {
+    /// Creates and validates one canonical collection schema.
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_new(
+        name: impl Into<String>,
+        fields: Vec<CanonicalField>,
+        indexes: Vec<CanonicalIndex>,
+        ttl: Option<SchemaTtl>,
+        renames: Vec<SchemaFieldRename>,
+        version: Option<SchemaVersion>,
+        history_retention_days: u32,
+        merge_policy: SchemaMergePolicy,
+    ) -> Result<Self, SchemaFormatError> {
+        let value = Self {
+            name: name.into(),
+            fields,
+            indexes,
+            ttl,
+            renames,
+            version,
+            history_retention_days,
+            merge_policy,
+        };
+        value.validate()?;
+        Ok(value.canonicalized())
+    }
+
+    fn canonicalized(mut self) -> Self {
+        self.fields.sort_by(|left, right| left.name.cmp(&right.name));
+        self.indexes.sort_by(|left, right| left.name.cmp(&right.name));
+        self.renames.sort_by(|left, right| left.from.cmp(&right.from).then(left.to.cmp(&right.to)));
+        self
+    }
+
+    /// Validates references and the bounded retention policy.
+    pub fn validate(&self) -> Result<(), SchemaFormatError> {
+        validate_canonical_identifier(&self.name)?;
+        if !(1..=30).contains(&self.history_retention_days) {
+            return Err(SchemaFormatError::MalformedValue);
+        }
+        let mut fields = BTreeSet::new();
+        for field in &self.fields {
+            if !fields.insert(field.name.as_str()) {
+                return Err(SchemaFormatError::MalformedValue);
+            }
+        }
+        let mut indexes = BTreeSet::new();
+        for index in &self.indexes {
+            if !indexes.insert(index.name.as_str()) {
+                return Err(SchemaFormatError::MalformedValue);
+            }
+            for field in &index.fields {
+                if !fields.contains(field.as_str()) {
+                    return Err(SchemaFormatError::MalformedValue);
+                }
+                if index.kind == CanonicalIndexKind::Fts
+                    && !matches!(
+                        self.fields
+                            .iter()
+                            .find(|candidate| candidate.name == *field)
+                            .map(CanonicalField::kind),
+                        Some(CanonicalFieldType::Text | CanonicalFieldType::String)
+                    )
+                {
+                    return Err(SchemaFormatError::MalformedValue);
+                }
+            }
+        }
+        if let Some(ttl) = &self.ttl {
+            if !fields.contains(ttl.field.as_str())
+                || self
+                    .fields
+                    .iter()
+                    .find(|field| field.name == ttl.field)
+                    .map(CanonicalField::kind)
+                    != Some(CanonicalFieldType::Timestamp)
+            {
+                return Err(SchemaFormatError::MalformedValue);
+            }
+        }
+        let mut sources = BTreeSet::new();
+        let mut targets = BTreeSet::new();
+        for rename in &self.renames {
+            if !sources.insert(rename.from.as_str())
+                || !targets.insert(rename.to.as_str())
+                || fields.contains(rename.from.as_str())
+                || !fields.contains(rename.to.as_str())
+            {
+                return Err(SchemaFormatError::MalformedValue);
+            }
+        }
+        Ok(())
+    }
+
+    /// Returns the collection name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    /// Returns canonical fields.
+    #[must_use]
+    pub fn fields(&self) -> &[CanonicalField] {
+        &self.fields
+    }
+    /// Returns canonical indexes.
+    #[must_use]
+    pub fn indexes(&self) -> &[CanonicalIndex] {
+        &self.indexes
+    }
+    /// Returns the optional TTL declaration.
+    #[must_use]
+    pub fn ttl(&self) -> Option<&SchemaTtl> {
+        self.ttl.as_ref()
+    }
+    /// Returns explicit field renames.
+    #[must_use]
+    pub fn renames(&self) -> &[SchemaFieldRename] {
+        &self.renames
+    }
+    /// Returns the optional collection schema version.
+    #[must_use]
+    pub const fn version(&self) -> Option<SchemaVersion> {
+        self.version
+    }
+    /// Returns the history retention window in days.
+    #[must_use]
+    pub const fn history_retention_days(&self) -> u32 {
+        self.history_retention_days
+    }
+    /// Returns the collection merge policy.
+    #[must_use]
+    pub const fn merge_policy(&self) -> SchemaMergePolicy {
+        self.merge_policy
+    }
+}
+
+/// The complete canonical `terrascale.schema.json` document.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalSchemaDocument {
+    collections: Vec<CanonicalCollectionSchema>,
+    version: Option<SchemaVersion>,
+}
+
+impl CanonicalSchemaDocument {
+    /// Creates one canonical document and sorts collections by name.
+    pub fn try_new(
+        collections: Vec<CanonicalCollectionSchema>,
+        version: Option<SchemaVersion>,
+    ) -> Result<Self, SchemaFormatError> {
+        let mut names = BTreeSet::new();
+        for collection in &collections {
+            collection.validate()?;
+            if !names.insert(collection.name.as_str()) {
+                return Err(SchemaFormatError::MalformedValue);
+            }
+        }
+        let mut value = Self { collections, version };
+        value.collections.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(value)
+    }
+
+    /// Returns collections in canonical name order.
+    #[must_use]
+    pub fn collections(&self) -> &[CanonicalCollectionSchema] {
+        &self.collections
+    }
+    /// Returns the optional document format version.
+    #[must_use]
+    pub const fn version(&self) -> Option<SchemaVersion> {
+        self.version
+    }
+
+    /// Converts this contract to a deterministic JSON-shaped value.
+    #[must_use]
+    pub fn to_value(&self) -> DocumentValue {
+        let collections = self.collections.iter().map(collection_to_value).collect();
+        let mut root = vec![("collections", DocumentValue::Array(collections))];
+        if let Some(version) = self.version {
+            root.push(("version", DocumentValue::Integer(interchange_integer(version.get()))));
+        }
+        object(root)
+    }
+
+    /// Alias with an explicit name for callers crossing the JSON contract
+    /// boundary.  The returned value remains the engine's typed JSON value;
+    /// no second byte representation is introduced here.
+    #[must_use]
+    pub fn to_json_value(&self) -> DocumentValue {
+        self.to_value()
+    }
+
+    /// Serializes the canonical contract as stable UTF-8 JSON.
+    ///
+    /// This small serializer is kept at the family boundary so SDK and host
+    /// adapters do not each invent a schema encoding.  It accepts only values
+    /// produced by [`to_value`], and rejects non-finite numbers if this method
+    /// is ever reused with a future value extension.
+    pub fn to_json(&self) -> String {
+        let mut output = String::new();
+        // A canonical schema contains only finite integers, booleans, text,
+        // arrays, and objects.  Keep the defensive serializer error internal
+        // so the SDK-facing operation is as direct as the other builders.
+        if append_canonical_json(&self.to_value(), &mut output).is_err() {
+            return String::new();
+        }
+        output
+    }
+
+    /// Fallible form of [`Self::to_json`] for generic adapter code.
+    pub fn try_to_json(&self) -> Result<String, SchemaFormatError> {
+        let mut output = String::new();
+        append_canonical_json(&self.to_value(), &mut output)?;
+        Ok(output)
+    }
+
+    /// Parses exactly the canonical JSON-shaped value. Unknown keys and all
+    /// former aliases (`merge`, `history`, `field_type`, and so on) fail closed.
+    pub fn from_value(value: &DocumentValue) -> Result<Self, SchemaFormatError> {
+        let DocumentValue::Object(root) = value else {
+            return Err(SchemaFormatError::NotAnObject);
+        };
+        reject_unknown(root, &["collections", "version"])?;
+        let collections = match root.get("collections") {
+            Some(DocumentValue::Array(values)) => {
+                values.iter().map(collection_from_value).collect::<Result<Vec<_>, _>>()?
+            }
+            _ => return Err(SchemaFormatError::MalformedValue),
+        };
+        let version = parse_optional_version(root.get("version"))?;
+        Self::try_new(collections, version)
+    }
+
+    /// Parses one canonical JSON-shaped engine value.
+    pub fn from_json_value(value: &DocumentValue) -> Result<Self, SchemaFormatError> {
+        Self::from_value(value)
+    }
+}
+
+fn validate_canonical_identifier(value: &str) -> Result<(), SchemaFormatError> {
+    if value.is_empty()
+        || value.len() > 255
+        || !value.bytes().enumerate().all(|(position, byte)| {
+            if position == 0 {
+                byte == b'_' || byte.is_ascii_alphabetic()
+            } else {
+                byte == b'_' || byte.is_ascii_alphanumeric()
+            }
+        })
+    {
+        Err(SchemaFormatError::MalformedValue)
+    } else {
+        Ok(())
+    }
+}
+
+fn append_canonical_json(
+    value: &DocumentValue,
+    output: &mut String,
+) -> Result<(), SchemaFormatError> {
+    match value {
+        DocumentValue::Null => output.push_str("null"),
+        DocumentValue::Boolean(value) => output.push_str(if *value { "true" } else { "false" }),
+        DocumentValue::Integer(value) => output.push_str(&value.to_string()),
+        DocumentValue::Number(value) if value.is_finite() => output.push_str(&value.to_string()),
+        DocumentValue::Number(_) => return Err(SchemaFormatError::MalformedValue),
+        DocumentValue::String(value) => append_json_string(value, output),
+        DocumentValue::Array(values) => {
+            output.push('[');
+            for (position, value) in values.iter().enumerate() {
+                if position != 0 {
+                    output.push(',');
+                }
+                append_canonical_json(value, output)?;
+            }
+            output.push(']');
+        }
+        DocumentValue::Object(values) => {
+            output.push('{');
+            for (position, (key, value)) in values.iter().enumerate() {
+                if position != 0 {
+                    output.push(',');
+                }
+                append_json_string(key, output);
+                output.push(':');
+                append_canonical_json(value, output)?;
+            }
+            output.push('}');
+        }
+    }
+    Ok(())
+}
+
+fn append_json_string(value: &str, output: &mut String) {
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            character if character.is_control() => {
+                use std::fmt::Write;
+                let _ = write!(output, "\\u{:04x}", character as u32);
+            }
+            character => output.push(character),
+        }
+    }
+    output.push('"');
+}
+
+fn reject_unknown(
+    fields: &BTreeMap<String, DocumentValue>,
+    allowed: &[&str],
+) -> Result<(), SchemaFormatError> {
+    if fields.keys().all(|key| allowed.contains(&key.as_str())) {
+        Ok(())
+    } else {
+        Err(SchemaFormatError::UnsupportedKeyword)
+    }
+}
+
+fn parse_optional_version(
+    value: Option<&DocumentValue>,
+) -> Result<Option<SchemaVersion>, SchemaFormatError> {
+    match value {
+        None => Ok(None),
+        Some(DocumentValue::Integer(value)) if *value > 0 => SchemaVersion::try_new(
+            u64::try_from(*value).map_err(|_| SchemaFormatError::MalformedValue)?,
+        )
+        .map(Some)
+        .map_err(|_| SchemaFormatError::MalformedValue),
+        _ => Err(SchemaFormatError::MalformedValue),
+    }
+}
+
+fn field_to_value(field: &CanonicalField) -> DocumentValue {
+    let mut result = vec![
+        ("name", DocumentValue::String(field.name.clone())),
+        ("type", DocumentValue::String(field.kind.as_str().to_owned())),
+        ("required", DocumentValue::Boolean(field.required)),
+        ("indexed", DocumentValue::Boolean(field.indexed)),
+    ];
+    if field.unique {
+        result.push(("unique", DocumentValue::Boolean(true)));
+    }
+    if let Some(policy) = field.merge_policy {
+        result.push(("mergePolicy", DocumentValue::String(policy.as_str().to_owned())));
+    }
+    object(result)
+}
+
+fn index_to_value(index: &CanonicalIndex) -> DocumentValue {
+    let mut result = vec![
+        ("name", DocumentValue::String(index.name.clone())),
+        (
+            "fields",
+            DocumentValue::Array(index.fields.iter().cloned().map(DocumentValue::String).collect()),
+        ),
+        ("kind", DocumentValue::String(index.kind.as_str().to_owned())),
+    ];
+    if index.unique {
+        result.push(("unique", DocumentValue::Boolean(true)));
+    }
+    object(result)
+}
+
+fn collection_to_value(collection: &CanonicalCollectionSchema) -> DocumentValue {
+    let mut result = vec![
+        ("name", DocumentValue::String(collection.name.clone())),
+        ("fields", DocumentValue::Array(collection.fields.iter().map(field_to_value).collect())),
+        (
+            "historyRetentionDays",
+            DocumentValue::Integer(i64::from(collection.history_retention_days)),
+        ),
+        ("mergePolicy", DocumentValue::String(collection.merge_policy.as_str().to_owned())),
+    ];
+    if !collection.indexes.is_empty() {
+        result.insert(
+            2,
+            (
+                "indexes",
+                DocumentValue::Array(collection.indexes.iter().map(index_to_value).collect()),
+            ),
+        );
+    }
+    if let Some(ttl) = &collection.ttl {
+        result.push(("ttl", object(vec![("field", DocumentValue::String(ttl.field.clone()))])));
+    }
+    if !collection.renames.is_empty() {
+        result.push((
+            "renames",
+            DocumentValue::Array(
+                collection
+                    .renames
+                    .iter()
+                    .map(|rename| {
+                        object(vec![
+                            ("from", DocumentValue::String(rename.from.clone())),
+                            ("to", DocumentValue::String(rename.to.clone())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    if let Some(version) = collection.version {
+        result.push(("version", DocumentValue::Integer(interchange_integer(version.get()))));
+    }
+    object(result)
+}
+
+fn string_field(
+    fields: &BTreeMap<String, DocumentValue>,
+    key: &str,
+) -> Result<String, SchemaFormatError> {
+    match fields.get(key) {
+        Some(DocumentValue::String(value)) => Ok(value.clone()),
+        _ => Err(SchemaFormatError::MalformedValue),
+    }
+}
+
+fn bool_field(
+    fields: &BTreeMap<String, DocumentValue>,
+    key: &str,
+    default: bool,
+) -> Result<bool, SchemaFormatError> {
+    match fields.get(key) {
+        None => Ok(default),
+        Some(DocumentValue::Boolean(value)) => Ok(*value),
+        _ => Err(SchemaFormatError::MalformedValue),
+    }
+}
+
+fn collection_from_value(
+    value: &DocumentValue,
+) -> Result<CanonicalCollectionSchema, SchemaFormatError> {
+    let DocumentValue::Object(fields) = value else {
+        return Err(SchemaFormatError::NotAnObject);
+    };
+    reject_unknown(
+        fields,
+        &[
+            "name",
+            "fields",
+            "indexes",
+            "ttl",
+            "renames",
+            "version",
+            "historyRetentionDays",
+            "mergePolicy",
+        ],
+    )?;
+    let name = string_field(fields, "name")?;
+    let field_values = match fields.get("fields") {
+        Some(DocumentValue::Array(values)) => values,
+        _ => return Err(SchemaFormatError::MalformedValue),
+    };
+    let mut definitions = Vec::new();
+    for value in field_values {
+        let DocumentValue::Object(fields) = value else {
+            return Err(SchemaFormatError::NotAnObject);
+        };
+        reject_unknown(fields, &["name", "type", "required", "indexed", "unique", "mergePolicy"])?;
+        let kind = CanonicalFieldType::from_str(&string_field(fields, "type")?)
+            .ok_or(SchemaFormatError::MalformedValue)?;
+        let merge_policy = match fields.get("mergePolicy") {
+            None => None,
+            Some(DocumentValue::String(value)) => {
+                Some(CanonicalFieldType::from_str(value).ok_or(SchemaFormatError::MalformedValue)?)
+            }
+            _ => return Err(SchemaFormatError::MalformedValue),
+        };
+        definitions.push(CanonicalField::try_new(
+            string_field(fields, "name")?,
+            kind,
+            bool_field(fields, "required", true)?,
+            bool_field(fields, "indexed", false)?,
+            bool_field(fields, "unique", false)?,
+            merge_policy,
+        )?);
+    }
+    let mut indexes = Vec::new();
+    if let Some(DocumentValue::Array(values)) = fields.get("indexes") {
+        for value in values {
+            let DocumentValue::Object(fields) = value else {
+                return Err(SchemaFormatError::NotAnObject);
+            };
+            reject_unknown(fields, &["name", "fields", "unique", "kind"])?;
+            let names = match fields.get("fields") {
+                Some(DocumentValue::Array(values)) => values
+                    .iter()
+                    .map(|value| match value {
+                        DocumentValue::String(value) => Ok(value.clone()),
+                        _ => Err(SchemaFormatError::MalformedValue),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                _ => return Err(SchemaFormatError::MalformedValue),
+            };
+            let kind = CanonicalIndexKind::from_str(&string_field(fields, "kind")?)
+                .ok_or(SchemaFormatError::MalformedValue)?;
+            indexes.push(CanonicalIndex::try_new(
+                string_field(fields, "name")?,
+                names,
+                bool_field(fields, "unique", false)?,
+                kind,
+            )?);
+        }
+    } else if fields.contains_key("indexes") {
+        return Err(SchemaFormatError::MalformedValue);
+    }
+    let ttl = match fields.get("ttl") {
+        None => None,
+        Some(DocumentValue::Object(value)) => {
+            Some(SchemaTtl::try_new(string_field(value, "field")?)?)
+        }
+        _ => return Err(SchemaFormatError::MalformedValue),
+    };
+    let renames = match fields.get("renames") {
+        None => Vec::new(),
+        Some(DocumentValue::Array(values)) => values
+            .iter()
+            .map(|value| {
+                let DocumentValue::Object(fields) = value else {
+                    return Err(SchemaFormatError::NotAnObject);
+                };
+                reject_unknown(fields, &["from", "to"])?;
+                SchemaFieldRename::try_new(
+                    string_field(fields, "from")?,
+                    string_field(fields, "to")?,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(SchemaFormatError::MalformedValue),
+    };
+    let retention = match fields.get("historyRetentionDays") {
+        Some(DocumentValue::Integer(value)) if *value >= 1 => {
+            u32::try_from(*value).map_err(|_| SchemaFormatError::MalformedValue)?
+        }
+        _ => return Err(SchemaFormatError::MalformedValue),
+    };
+    let merge_policy = SchemaMergePolicy::from_str(&string_field(fields, "mergePolicy")?)
+        .ok_or(SchemaFormatError::MalformedValue)?;
+    CanonicalCollectionSchema::try_new(
+        name,
+        definitions,
+        indexes,
+        ttl,
+        renames,
+        parse_optional_version(fields.get("version"))?,
+        retention,
+        merge_policy,
+    )
+}
+
+#[cfg(test)]
+mod canonical_tests {
+    use super::*;
+
+    fn field(name: &str, kind: CanonicalFieldType) -> CanonicalField {
+        CanonicalField::try_new(name, kind, true, false, false, None).expect("valid field")
+    }
+
+    #[test]
+    fn canonical_contract_roundtrips_and_sorts() {
+        let collection = CanonicalCollectionSchema::try_new(
+            "events",
+            vec![
+                field("title", CanonicalFieldType::Text),
+                field("expiresAt", CanonicalFieldType::Timestamp),
+            ],
+            vec![
+                CanonicalIndex::try_new(
+                    "title_search",
+                    vec!["title".into()],
+                    false,
+                    CanonicalIndexKind::Fts,
+                )
+                .expect("valid fts"),
+            ],
+            Some(SchemaTtl::try_new("expiresAt").expect("valid ttl")),
+            vec![],
+            Some(SchemaVersion::try_new(2).expect("valid version")),
+            7,
+            SchemaMergePolicy::RemoveWins,
+        )
+        .expect("valid collection");
+        let document =
+            CanonicalSchemaDocument::try_new(vec![collection], None).expect("valid document");
+        let encoded = document.to_json_value();
+        assert_eq!(
+            CanonicalSchemaDocument::from_json_value(&encoded).expect("roundtrip"),
+            document
+        );
+    }
+
+    #[test]
+    fn canonical_contract_rejects_aliases_and_invalid_references() {
+        let value = object(vec![(
+            "collections",
+            DocumentValue::Array(vec![object(vec![
+                ("name", DocumentValue::String("events".into())),
+                ("fields", DocumentValue::Array(vec![])),
+                ("history", DocumentValue::Integer(7)),
+                ("historyRetentionDays", DocumentValue::Integer(7)),
+                ("mergePolicy", DocumentValue::String("remove-wins".into())),
+            ])]),
+        )]);
+        assert_eq!(
+            CanonicalSchemaDocument::from_json_value(&value),
+            Err(SchemaFormatError::UnsupportedKeyword)
+        );
+        assert_eq!(
+            CanonicalIndex::try_new(
+                "bad",
+                vec!["missing".into()],
+                false,
+                CanonicalIndexKind::BTree
+            ),
+            Ok(CanonicalIndex {
+                name: "bad".into(),
+                fields: vec!["missing".into()],
+                unique: false,
+                kind: CanonicalIndexKind::BTree
+            })
+        );
+    }
+
+    #[test]
+    fn canonical_contract_rejects_rename_collisions() {
+        let collection = CanonicalCollectionSchema::try_new(
+            "events",
+            vec![field("new_name", CanonicalFieldType::String)],
+            vec![],
+            None,
+            vec![
+                SchemaFieldRename::try_new("old_name", "new_name").expect("valid rename"),
+                SchemaFieldRename::try_new("other", "new_name").expect("valid rename"),
+            ],
+            None,
+            7,
+            SchemaMergePolicy::RemoveWins,
+        );
+        assert_eq!(collection, Err(SchemaFormatError::MalformedValue));
+    }
+}
+
+// These are the names used in the published SDK contract.  They are aliases
+// for the deliberately verbose Rust implementation names above, not extra
+// wire spellings or a second schema model.
+/// Published SDK alias for the canonical schema document.
+pub type SchemaDocument = CanonicalSchemaDocument;
+/// Published SDK alias for one collection's canonical schema.
+pub type CollectionSchema = CanonicalCollectionSchema;
+/// Published SDK alias for one extracted field.
+pub type FieldDef = CanonicalField;
+/// Published SDK alias for the canonical field type vocabulary.
+pub type FieldType = CanonicalFieldType;
+/// Published SDK alias for one named index.
+pub type IndexDef = CanonicalIndex;
+/// Published SDK alias for the physical index kind.
+pub type IndexKind = CanonicalIndexKind;
+/// Published SDK alias for an explicit field rename.
+pub type FieldRename = SchemaFieldRename;
+/// Published SDK alias for the optional collection TTL declaration.
+pub type TtlDef = SchemaTtl;
+/// Published SDK alias for the collection-level conflict policy.
+pub type MergePolicy = SchemaMergePolicy;
