@@ -81,6 +81,9 @@ path).
 
 ### D-31 — Auto-indexing (non-negotiable; RavenDB-class or better)
 
+> Superseded in detail by ADR 0045 (lifecycle, selection, verification,
+> revert). The paragraphs below remain correct as the outline.
+
 The query optimizer derives indexes from live query shapes. Covered
 queries run on extracted columns. Uncovered queries register an auto-index
 descriptor — future writes extract the field inside the single D-30 write
