@@ -16,8 +16,9 @@ terrascale dev <database> --watch=false --no-log-tail
 ```
 
 The CRUD, SQL, and reactive snippets run against a real sandbox branch
-pre-filled with the reader's key (D-56). Tenant provisioning is shown as a
-pending stub because its public route is not published. Try CRUD:
+pre-filled with the reader's key (D-56). Tenant, branch, backup, and export
+fixtures remain source-only and are skipped until their producer contracts are
+published. Try CRUD:
 
 <<< @/snippets/crud.ts
 

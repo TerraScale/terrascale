@@ -10,7 +10,7 @@
   maintained incrementally; collection sync keeps an authorized outer subset
   that a local store (e.g. TanStack DB) narrows client-side.
 - **Branches.** Database branching incl. `terrascale dev` cloud dev branches —
-  no local engine, no emulator.
+  no customer-run emulator or local database process.
 - **Tenants.** Database-per-tenant is first-class: `ts.tenants.create(key)`
   mints a database from a tenant template (D-51).
 - **Placement.** A database's bytes at rest exist only in its selected Regions;

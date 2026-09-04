@@ -26,11 +26,13 @@ const results = await runAll(stub ? "stub" : "remote");
 const heartbeat = Uint8Array.from([0x97, 0x02, 0x01, 0x00, 0x06, 0x00, 0x00, 0x90]);
 assert.equal(canonicalEnvelope(heartbeat).kind, "heartbeat", "canonical indexed heartbeat decodes");
 assert.throws(() => canonicalEnvelope(Uint8Array.from([0x81, 0xa1, 0x74, 0xa5, 0xa5, 0x64, 0x65, 0x6c, 0x74, 0x61])), /indexed envelope|trailing bytes/u, "legacy map frames fail closed");
-assert.ok(results.length >= 3, "expected three runnable snippets (crud/sql/subscribe)");
+assert.ok(results.length >= 3, "expected runnable CRUD, SQL, and subscribe snippets");
 for (const name of ["crud.ts", "sql.ts", "subscribe.ts"]) {
   assert.ok(results.some(({ file }) => file === name), `${name} ran`);
 }
-assert.ok(!results.some(({ file }) => file === "tenants.ts"), "tenant snippet is pending and never runs remotely");
+for (const name of ["tenants.ts", "branches.ts", "backups.ts", "exports.ts"]) {
+  assert.ok(!results.some(({ file }) => file === name), `${name} remains pending until its producer contract is published`);
+}
 
 // P-8: create-terrascale-app Next starter stub exists with its README,
 // bin, template, and starter-owned AGENTS.md (D-74).
@@ -56,7 +58,8 @@ assert.ok(!starterPage.includes("new TerraScale("), "starter does not use remove
 assert.ok(!starterPage.includes(".from("), "starter does not use removed collection facade");
 assert.ok(read("create-terrascale-app/template/package.json").includes('"@terrascale/sdk": "0.3.0"'), "starter pins the current SDK version");
 assert.ok(read("create-terrascale-app/template/terrascale.schema.json").includes('"historyRetentionDays": 7'), "starter schema uses canonical JSON shape");
-assert.ok(!read("scripts/run-snippets.mjs").includes("/api/v1/tenants"), "remote runner never calls unpublished tenant route");
+assert.ok(read("scripts/run-snippets.mjs").includes("TERRASCALE_API_KEY"), "remote runner is credential-gated");
+assert.ok(read("scripts/run-snippets.mjs").includes("x-terrascale-view-capability"), "reactive requests carry the view capability");
 assert.ok(!read("scripts/run-snippets.mjs").includes("frame.t"), "remote runner does not decode legacy JSON frame fields");
 
 for (const [page, needles] of [
@@ -69,6 +72,8 @@ for (const [page, needles] of [
 }
 
 const llms = read("docs/public/llms.txt");
+assert.ok(llms.includes("tenant, branch, backup, and export fixtures are retained but skipped"), "llms marks unpublished management fixtures as non-runnable");
+assert.ok(!llms.includes("live subscriptions, and tenants run"), "llms does not claim unpublished tenant snippets run");
 for (const route of [
   "/", "/getting-started", "/getting-started/", "/concepts", "/concepts/engines",
   "/concepts/replication", "/concepts/sync", "/concepts/sql", "/concepts/pricing-philosophy",

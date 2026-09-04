@@ -5,9 +5,10 @@
 
 # Quickstart
 
-TerraScale is a cloud database. There is nothing to install locally and no
-emulator: `terrascale dev` gives you a personal cloud branch of your project's
-database, and dev and prod run the same engine in the same regions.
+TerraScale is a cloud database. There is nothing to install locally: no
+customer-run emulator or local database process. `terrascale dev` gives you a
+personal cloud branch of your project's database, and dev and prod run the same
+engine in the same regions.
 
 ::: warning Pre-launch
 TerraScale is in waitlist beta. Billing is real from day one, with $50 of
@@ -69,15 +70,14 @@ terrascale dev <database> --watch=false --no-log-tail
 
 This creates or reuses a cloud branch of the named database. The current CLI
 does not claim seed execution, log tailing, codegen watch, or fault injection;
-those flags fail closed until their public routes exist. There is no local
-emulator.
+those flags fail closed until their public routes exist. The branch runs in the
+cloud service, not in a local database process or customer-run emulator.
 
 ## 4. Attach a live query
 
-The current SDK exposes named management clients and a reactive
-`TerraScaleSyncV2Client`; its typed document CRUD family is not yet published.
-Do not copy the removed legacy constructor or collection-facade examples. A
-live query uses the exact current SDK call below and must include `databaseId`:
+The current SDK exposes typed document operations, schema/SQL builders, named
+management clients, and a reactive `TerraScaleSyncV2Client`. A live query uses
+the exact current SDK call below and must include `databaseId`:
 
 ```ts
 import { TerraScaleSyncV2Client } from '@terrascale/sdk'
@@ -103,14 +103,14 @@ const stop = live.view.subscribe(() => {
 ```
 
 `Query.raw(sql, parameters).execute()` and `.subscribe()` create validated
-descriptors for the same read-only SQL contract. Optimistic updates and the
-TanStack adapter remain separate SDK surfaces; writes should wait for the
-published typed document contract.
+descriptors for the same read-only SQL contract. The starter's schema-bound
+builder follows the same pattern and its document write uses
+`client.documents.put`.
 
 ## 5. Verify it is live
 
-Open the app to attach the live result view. Document writes are not shown in
-this starter until the typed Database API contract is published.
+Open the app in two tabs. Add a post in one tab; the document write is served by
+the regional API and both tabs update from the same CDN-backed live result view.
 
 ## Where to go next
 
@@ -119,4 +119,5 @@ this starter until the typed Database API contract is published.
 - [Sync model](/es/concepts/sync) — shared views, the immutable delta log, the CDN
 - [SQL](/es/concepts/sql) — the live subset, `execute`-only queries, codegen
 - [Pricing philosophy](/es/concepts/pricing-philosophy) — why only writes and storage are billed
-- [Runnable snippets](/es/snippets) — CRUD, SQL, live subscriptions, and tenants
+- [Runnable snippets](/es/snippets) — CRUD, SQL, and live subscriptions; pending
+  tenant, branch, backup, and export fixtures are marked as non-runnable

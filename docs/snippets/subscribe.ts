@@ -1,44 +1,34 @@
-// Runnable snippet: live query subscribe (D-14/D-38).
-// Real transport: CDN-backed HTTP long-polling on sync.api. by default,
-// WebSocket opt-in. The explicit local stub mirrors this result-view contract.
-// Exact SDK call: `new TerraScaleSyncV2Client().subscribe({ databaseId, ... })`.
+// Runnable snippet: live SQL result view with the pinned @terrascale/sdk
+// 0.3.0 Sync v2 client. HTTP long-polling is the default reactive transport.
 import { strict as assert } from "node:assert";
+import type { TerraScaleSyncV2Client } from "@terrascale/sdk";
 
 type Sandbox = {
   readonly databaseId: string;
-  put(input: { databaseId: string; collection: string; doc: Record<string, unknown> }): Promise<Record<string, unknown>>;
-  subscribe(input: {
-    databaseId: string;
-    subscription: string;
-    query: string;
-    parameters: Uint8Array;
-  }): Promise<{
-    view: { subscribe(listener: () => void): () => void; getVisibleItems(): readonly { identity: string }[] };
-    close(): void;
-  }>;
+  // In an application this is `new TerraScaleSyncV2Client({ accessToken })`.
+  readonly sync: Pick<TerraScaleSyncV2Client, "subscribe">;
+  readonly client: { documents: { put(database: string, collection: string, id: string, value: Record<string, unknown>): Promise<{ ok: boolean }> } };
 };
 
 export const title = "Live subscription";
 
 export async function run(sandbox: Sandbox): Promise<void> {
-  const seen: string[] = [];
-  const live = await sandbox.subscribe({
+  const live = await sandbox.sync.subscribe({
     databaseId: sandbox.databaseId,
     subscription: "events",
     query: "SELECT * FROM events ORDER BY _updated DESC LIMIT 20",
     parameters: new Uint8Array(),
   });
+  const seen: string[] = [];
   const unsub = live.view.subscribe(() => {
-    for (const item of live.view.getVisibleItems()) {
-      if (!seen.includes(item.identity)) seen.push(item.identity);
-    }
+    for (const item of live.view.getVisibleItems()) if (!seen.includes(item.identity)) seen.push(item.identity);
   });
 
-  await sandbox.put({ databaseId: sandbox.databaseId, collection: "events", doc: { id: "e-1", kind: "click" } });
-  await sandbox.put({ databaseId: sandbox.databaseId, collection: "events", doc: { id: "e-2", kind: "purchase" } });
+  assert.equal((await sandbox.client.documents.put(sandbox.databaseId, "events", "e-1", { kind: "click" })).ok, true);
+  assert.equal((await sandbox.client.documents.put(sandbox.databaseId, "events", "e-2", { kind: "purchase" })).ok, true);
   unsub();
   live.close();
 
-  await sandbox.put({ databaseId: sandbox.databaseId, collection: "events", doc: { id: "e-3", kind: "click" } });
+  await sandbox.client.documents.put(sandbox.databaseId, "events", "e-3", { kind: "click" });
   assert.deepEqual(seen, ["e-1", "e-2"]);
 }

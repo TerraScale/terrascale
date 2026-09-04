@@ -1,19 +1,30 @@
-// Runnable snippet: database-per-tenant (D-51).
-// Tenant creation will use the named SDK tenant client once published.
-// This remains a credential-free stub only. The tenant route is not published,
-// so remote mode must never call it.
+// Runnable snippet: database-per-tenant with @terrascale/sdk 0.3.0.
+// A tenant is a database, so tenant data uses the ordinary database client
+// after provisioning and carries the tenant's placement lock.
 import { strict as assert } from "node:assert";
-
-export const runnable = false;
+import type { TerraScaleClient } from "@terrascale/sdk";
 
 type Sandbox = {
-  createTenant(key: string): Promise<{ databaseId: string; key: string }>;
+  readonly client: Pick<TerraScaleClient, "tenants">;
 };
 
 export const title = "Database per tenant";
+// The tenant provisioning producer route is not published yet. Keep this
+// fixture beside the docs, but never call an invented endpoint in qualification.
+export const runnable = false;
 
 export async function run(sandbox: Sandbox): Promise<void> {
-  const tenant = await sandbox.createTenant("acme");
-  assert.ok(tenant.databaseId.length > 0, "tenant gets its own database");
-  assert.equal(tenant.key, "acme");
+  const created = await sandbox.client.tenants.create("docs-acme", {
+    idempotencyKey: "docs-snippet-tenant-acme",
+  });
+  assert.equal(created.ok, true);
+  if (!created.ok) throw new Error("tenant creation failed");
+  assert.equal(created.value.key, "docs-acme");
+  assert.ok(created.value.databaseId, "tenant gets its own database");
+
+  const fetched = await sandbox.client.tenants.get("docs-acme");
+  assert.equal(fetched.ok, true);
+  const listed = await sandbox.client.tenants.list();
+  assert.equal(listed.ok, true);
+  if (listed.ok) assert.ok(listed.value.some((tenant) => tenant.key === "docs-acme"));
 }

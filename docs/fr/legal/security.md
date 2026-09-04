@@ -10,11 +10,15 @@ description: TerraScale security practices, vulnerability disclosure, and securi
 
 ::: danger
 DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).
+
+[PLACEHOLDER — the security inbox, PGP key, and provider confirmations for
+OCI and Cloudflare terms are not verified for publication. Do not publish
+until O-4/O-5 review is complete.]
 :::
 
 ## security.txt
 
-We publish a `security.txt` at
+At launch, we intend to publish a `security.txt` at
 [`/.well-known/security.txt`](https://docs.terrascale.tech/.well-known/security.txt):
 
 ```text
@@ -28,15 +32,19 @@ Policy: https://docs.terrascale.tech/legal/security
 
 ## Vulnerability disclosure
 
-Report vulnerabilities to **security@terrascale.tech** (encrypted with the
-PGP key above once published — [PLACEHOLDER — key pending]). Include: the
-affected endpoint or component, reproduction steps, and impact. We do not
-offer phone support for reports or otherwise ([support policy](./support.md)).
+Report vulnerabilities to **security@terrascale.tech** (draft address;
+encrypted with the PGP key above once published — [PLACEHOLDER — key and
+inbox monitoring pending]). Include the affected endpoint or component,
+reproduction steps, and impact, while omitting credentials and customer
+data. We do not offer phone support for reports or otherwise ([support
+policy](./support.md)).
 
-We ask for reasonable time to remediate before public disclosure, and we
-commit to acknowledging reports within [PLACEHOLDER — acknowledgement
-timeframe]. [PLACEHOLDER — safe-harbor wording: good-faith testing against
-your own resources, no bounty program at launch.]
+We ask for reasonable time to remediate before public disclosure. We do not
+promise an acknowledgement or remediation deadline until the owner approves
+one: [PLACEHOLDER — acknowledgement and remediation timeframes pending].
+[PLACEHOLDER — safe-harbor wording requires legal approval; any permitted
+good-faith testing is limited to resources you own or are authorized to test;
+no bounty program is approved for the beta.]
 
 ## Key hierarchy
 

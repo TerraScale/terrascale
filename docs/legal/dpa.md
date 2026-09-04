@@ -7,6 +7,11 @@ description: TerraScale Data Processing Addendum (draft).
 
 ::: danger
 DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).
+
+[PLACEHOLDER — OCI and Cloudflare written provider confirmations (including
+processing terms, locations, and CDN/cache terms) and the Stripe Tax
+configuration confirmation are not on file (O-4). Do not publish until these
+items and the controller's legal review are complete.]
 :::
 
 This Data Processing Addendum ("DPA") is between [LEGAL ENTITY NAME — O-5],
@@ -17,19 +22,30 @@ Effective [EFFECTIVE DATE].
 
 Customers store application data in TerraScale databases. For that content,
 we act as processor; the customer is the controller. Account and billing
-data (processed via Stripe, with Stripe Tax on from day one) are processed
-under our [Privacy Policy](./privacy.md).
+data are processed under our [Privacy Policy](./privacy.md). Stripe Tax is
+intended to be enabled from day one for tax calculation; [PLACEHOLDER —
+Stripe Tax account/configuration and provider confirmation pending O-4.]
 
 ## Sub-processors
 
 | Sub-processor | Processing | Locations |
 | --- | --- | --- |
-| Oracle Cloud Infrastructure | Compute hosts, block storage, object storage (backups), email delivery | Tenancy in [JURISDICTION(S)] with GRU home region |
-| Cloudflare | Edge network: DNS, TLS termination, WAF, CDN cache and delivery of authorized reactive data; edge decryption at the PoP nearest the reader worldwide | Global edge network |
+| Oracle Cloud Infrastructure | Compute hosts, block storage, object storage (backups), and email delivery | Tenancy in [JURISDICTION(S)] with GRU home region; [written residency/processing confirmation pending O-4] |
+| Cloudflare | Edge network: DNS, TLS termination, WAF, CDN cache and delivery of authorized reactive data; edge decryption at the PoP nearest the reader worldwide | Global edge network; [written CDN/cache terms and processing confirmation pending O-4] |
+| Stripe | Billing, invoicing, and intended Stripe Tax processing; no customer database content | [PLACEHOLDER — Stripe account/configuration and processing locations pending confirmation] |
+| [IDENTITY PROVIDER — placeholder] | Account authentication and identity data | [PLACEHOLDER — provider, role, locations, and written terms pending confirmation] |
 
-We do not transfer customer data to any other provider. The reactive
-delivery contract is plain HTTP caching semantics, so the CDN is replaceable
-(a Bunny.net fallback is documented) without changing the security posture.
+This is the intended launch list. [PLACEHOLDER — the identity-provider name,
+role, locations, and written terms must be confirmed or removed before
+publication.] No other customer-data subprocessor is approved for this draft.
+The reactive delivery contract is plain HTTP caching semantics, so the CDN is
+replaceable without changing the intended security posture; no replacement
+provider is authorized by this draft.
+
+We will use each subprocessor only on documented instructions and will bind it
+to confidentiality and appropriate security obligations. [PLACEHOLDER —
+subprocessor notice, objection, and replacement terms pending O-5 legal
+review.]
 
 ## Security measures
 
@@ -44,6 +60,13 @@ delivery contract is plain HTTP caching semantics, so the CDN is replaceable
 - Members refuse new writes when a host's clock offset exceeds 500 ms.
 - Daily automated restore drills verify backups; failures page an engineer.
 - On-call paging fires on customer-visible SLO burn.
+
+On account deletion, we revoke access, stop new writes, request purge of
+Cloudflare cache entries carrying the database's cache tags, and then
+destroy the database DEKs (crypto-shred). Revocation makes capabilities
+invalid while the CDN processes the purge. [PLACEHOLDER — exact purge
+completion and OCI backup-retention windows pending written provider
+confirmation (O-4).]
 
 ## Single-provider risk
 

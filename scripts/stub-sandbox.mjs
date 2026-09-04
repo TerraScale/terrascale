@@ -11,6 +11,9 @@ export function createStubSandbox() {
   const journal = [];
   /** @type {Map<string, Array<(delta: any) => void>>} */
   const watchers = new Map();
+  const tenants = new Map();
+  const branches = [];
+  const backups = [];
 
   function col(name) {
     let c = collections.get(name);
@@ -25,7 +28,7 @@ export function createStubSandbox() {
     for (const cb of watchers.get(collection) ?? []) cb(delta);
   }
 
-  return {
+  const sandbox = {
     mode: "stub",
     databaseId,
     async put({ databaseId: requestedDatabaseId, collection, doc }) {
@@ -88,4 +91,75 @@ export function createStubSandbox() {
       };
     },
   };
+
+  // Keep the fixture's transport deterministic while presenting the same
+  // operation names and result wrappers as @terrascale/sdk 0.3.0.
+  sandbox.client = {
+    documents: {
+      async put(database, collection, id, value) {
+        const result = await sandbox.put({ databaseId: database, collection, doc: { ...(value ?? {}), id } });
+        return { ok: true, value: { revision: result._rev }, status: 200 };
+      },
+      async get(database, collection, id) {
+        const value = await sandbox.get({ databaseId: database, collection, id });
+        return { ok: true, value, status: value === null ? 404 : 200 };
+      },
+      async patch(database, collection, id, patch) {
+        const current = await sandbox.get({ databaseId: database, collection, id });
+        if (current === null) return { ok: false, error: { code: "not_found" }, status: 404 };
+        const result = await sandbox.put({ databaseId: database, collection, doc: { ...current, ...(patch ?? {}), id } });
+        return { ok: true, value: { revision: result._rev }, status: 200 };
+      },
+      async delete(database, collection, id) {
+        const deleted = await sandbox.remove({ databaseId: database, collection, id });
+        return deleted ? { ok: true, value: undefined, status: 204 } : { ok: false, error: { code: "not_found" }, status: 404 };
+      },
+    },
+    sql: {
+      async execute(database, request) {
+        const match = request.sql.match(/FROM\s+["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?\s+WHERE\s+["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?\s*=\s*:(\w+)/iu);
+        if (!match) return { ok: false, error: { code: "invalid_sql" }, status: 400 };
+        const rows = await sandbox.query({ databaseId: database, collection: match[1], query: { field: match[2], op: "=", value: request.parameters?.[match[3]] } });
+        return { ok: true, value: { matched: rows.length, rows: rows.map((value) => ({ id: value.id, value })) }, status: 200 };
+      },
+    },
+    tenants: {
+      async create(key) {
+        const tenant = { key, databaseId: `stub-tenant-${key}` };
+        tenants.set(key, tenant);
+        return { ok: true, value: tenant, status: 201 };
+      },
+      async get(key) {
+        const value = tenants.get(key);
+        return value ? { ok: true, value, status: 200 } : { ok: false, error: { code: "not_found" }, status: 404 };
+      },
+      async list() { return { ok: true, value: [...tenants.values()], status: 200 }; },
+    },
+    databaseBranches: {
+      async requestClone(request = {}) {
+        const branch = { branchId: `stub-branch-${branches.length + 1}`, sourceDatabaseId: request.sourceDatabaseId ?? databaseId };
+        branches.push(branch);
+        return { ok: true, value: branch, status: 202 };
+      },
+    },
+    backups: {
+      async configurePolicy(database, request) {
+        const policy = { databaseId: database, ...request, status: "active" };
+        return { ok: true, value: policy, status: 200 };
+      },
+      async planBackup(database, request) {
+        return { ok: true, value: { databaseId: database, ...request, confirmationToken: "stub-confirmation" }, status: 200 };
+      },
+      async executeBackup(database, request) {
+        const backup = { backupId: `stub-backup-${backups.length + 1}`, databaseId: database, ...request, status: "complete" };
+        backups.push(backup);
+        return { ok: true, value: backup, status: 202 };
+      },
+      async listBackups(database) { return { ok: true, value: backups.filter((backup) => backup.databaseId === database), status: 200 }; },
+    },
+  };
+  sandbox.sync = {
+    subscribe: (input) => sandbox.subscribe(input),
+  };
+  return sandbox;
 }

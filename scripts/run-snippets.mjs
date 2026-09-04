@@ -279,7 +279,9 @@ function createRemoteSandbox() {
     while (!state.closed && Date.now() < deadline) {
       const url = new URL(state.logUrl);
       url.searchParams.set("offset", String(state.revision));
-      const response = await fetch(url, { headers: { ...headers, accept: "application/msgpack", [VIEW_CAPABILITY_HEADER]: state.capability } });
+      // Reactive delivery is a capability-gated CDN request. Do not forward
+      // the API bearer, session, or JSON headers to the sync origin.
+      const response = await fetch(url, { headers: { accept: "application/msgpack", [VIEW_CAPABILITY_HEADER]: state.capability } });
       if (!response.ok) throw new Error(`remote GET ${url.pathname} failed: ${response.status}`);
       if (response.status !== 204 && response.status !== 304) {
         if (consume(state, new Uint8Array(await response.arrayBuffer()))) return;
@@ -289,7 +291,7 @@ function createRemoteSandbox() {
     throw new Error("remote reactive log produced no delta within 10 seconds");
   };
 
-  return {
+  const sandbox = {
     mode: "remote",
     databaseId: database,
     async put({ databaseId: requestedDatabaseId, collection, doc }) {
@@ -348,7 +350,9 @@ function createRemoteSandbox() {
       const state = { collection: query.match(/FROM\s+([A-Za-z_][A-Za-z0-9_]*)/iu)?.[1], subscription, capability, logUrl, revision: 0, items: [], listeners: new Set(), closed: false };
       subscriptions.add(state);
       for (const snapshotUrl of snapshotUrls) {
-        const response = await fetch(snapshotUrl, { headers: { ...headers, accept: "application/msgpack", [VIEW_CAPABILITY_HEADER]: capability } });
+        // The capability is the only credential accepted by the reactive
+        // cache path; API credentials never cross this boundary.
+        const response = await fetch(snapshotUrl, { headers: { accept: "application/msgpack", [VIEW_CAPABILITY_HEADER]: capability } });
         if (!response.ok) throw new Error(`remote snapshot failed: ${response.status}`);
         consume(state, new Uint8Array(await response.arrayBuffer()));
       }
@@ -361,6 +365,43 @@ function createRemoteSandbox() {
       };
     },
   };
+
+  const result = (value, status = 200) => ({ ok: true, value, status });
+  sandbox.client = {
+    documents: {
+      async put(databaseId, collection, id, value, options = {}) {
+        const body = await sandbox.put({ databaseId, collection, doc: { ...(value ?? {}), id } });
+        return result({ revision: body._rev }, 200);
+      },
+      async get(databaseId, collection, id) {
+        const value = await sandbox.get({ databaseId, collection, id });
+        return result(value, value === null ? 404 : 200);
+      },
+      async patch(databaseId, collection, id, patch) {
+        const current = await sandbox.get({ databaseId, collection, id });
+        if (current === null) return { ok: false, error: { code: "not_found" }, status: 404 };
+        const body = await sandbox.put({ databaseId, collection, doc: { ...current, ...(patch ?? {}), id } });
+        return result({ revision: body._rev }, 200);
+      },
+      async delete(databaseId, collection, id) {
+        const deleted = await sandbox.remove({ databaseId, collection, id });
+        return deleted ? result(undefined, 204) : { ok: false, error: { code: "not_found" }, status: 404 };
+      },
+    },
+    sql: {
+      async execute(databaseId, requestBody) {
+        const escaped = requestBody.sql;
+        const { body } = await request(`/api/v1/databases/${encodeURIComponent(databaseId)}/sql`, {
+          method: "POST",
+          body: JSON.stringify({ sql: escaped, parameters: requestBody.parameters }),
+        });
+        return result(body, 200);
+      },
+    },
+    sync: { subscribe: (input) => sandbox.subscribe(input) },
+  };
+  sandbox.sync = sandbox.client.sync;
+  return sandbox;
 }
 
 export async function runAll(mode = requestedMode()) {
@@ -372,7 +413,11 @@ export async function runAll(mode = requestedMode()) {
   for (const file of files) {
     const mod = await import(pathToFileURL(join(snippetsDir, file)).href);
     if (mod.runnable === false) {
-      console.log(`skip - ${file} (pending published tenant contract; remote route is never called)`);
+      console.log(`skip - ${file} (the owning public contract is not published)`);
+      continue;
+    }
+    if (mode === "remote" && Array.isArray(mod.requires) && mod.requires.includes("project") && process.env.TERRASCALE_PROJECT_ID === undefined) {
+      console.log(`skip - ${file} (set TERRASCALE_PROJECT_ID to qualify this management flow)`);
       continue;
     }
     if (typeof mod.run !== "function") throw new Error(`${file} must export run(sandbox)`);

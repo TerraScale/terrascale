@@ -1,8 +1,9 @@
 # Guides
 
 Task-focused guides. During pre-launch this section is an index of what ships
-with the beta; each guide lands with the runnable-snippet sandbox (every
-snippet on this site runs against a real branch pre-filled with your key).
+with the beta; published runnable snippets run against a real branch
+pre-filled with your key. Management fixtures whose producer contracts are not
+published are retained as non-runnable references.
 
 ## Data
 

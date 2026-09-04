@@ -18,11 +18,16 @@ npm test
 npm run test:stub
 ```
 
+The runnable examples target the published `@terrascale/sdk` 0.3.0 surface.
+Tenant, branch, backup, and export fixtures are retained below but skipped
+until their producer contracts are published. The stub mode is deterministic
+and never counts as remote qualification.
+
 ## Document CRUD
 
 <<< @/snippets/crud.ts
 
-## SQL query
+## SQL execute
 
 <<< @/snippets/sql.ts
 
@@ -32,8 +37,28 @@ npm run test:stub
 
 ## Database per tenant
 
-Tenant = database (D-51), but the tenant provisioning route is not published
-yet. The snippet is retained as a deterministic stub fixture and is skipped in
-both qualification modes; no remote runner calls `/api/v1/tenants`.
+Tenant = database (D-51). The producer route is not published yet, so this
+fixture is intentionally skipped in both modes.
 
 <<< @/snippets/tenants.ts
+
+## Cloud branch
+
+The project-scoped branch producer route is not published yet, so this fixture
+is intentionally skipped in both modes.
+
+<<< @/snippets/branches.ts
+
+## Backups
+
+The project-scoped backup producer routes are not published yet, so this
+fixture is intentionally skipped in both modes.
+
+<<< @/snippets/backups.ts
+
+## Logical export
+
+The typed export operation is not in the pinned SDK yet. Its fixture remains in
+the source tree but is intentionally skipped by both runner modes.
+
+<<< @/snippets/exports.ts

@@ -13,5 +13,11 @@
     "next": "15",
     "react": "19",
     "react-dom": "19"
+  },
+  "devDependencies": {
+    "@types/node": "22",
+    "@types/react": "19",
+    "@types/react-dom": "19",
+    "typescript": "5"
   }
 }

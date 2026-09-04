@@ -24,7 +24,7 @@ const routes = [
   ["/pricing", "Pricing (L-1 draft, generated from D-16/D-17/D-21/D-25/D-64): writes + storage billed, everything else free."],
   ["/pricing/", "Pricing & limits: plans, quotas, guards, branch allowance."],
   ["/limits", "Limits and unbilled abuse guards (D-25/D-64), generated from the same source as pricing."],
-  ["/snippets", "Runnable snippets: CRUD, SQL, live subscriptions, and tenants run against a real sandbox branch pre-filled with the reader's key (D-56)."],
+  ["/snippets", "Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key (D-56); tenant, branch, backup, and export fixtures are retained but skipped until their producer contracts are published."],
   ["/blog/why-sqlite", "Launch post draft (L-5): Why TerraScale runs on SQLite."],
   ["/blog/reads-are-free", "Launch post draft (L-5): Reads are free — how."],
   ["/blog/benchmarks", "Launch post draft (L-5): benchmarks."],
