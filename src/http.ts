@@ -565,6 +565,7 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
     stringProperty(source, "errorCode") ??
     defaultCode(response.status);
   const validation = validationIssues(source);
+  const fix = stringProperty(source, "fix");
 
   return {
     kind: kindFromStatus(response.status, validation, code),
@@ -575,6 +576,7 @@ function errorFromResponse(response: Response, body: unknown): TerraScaleError {
       stringProperty(source, "detail") ??
       stringProperty(source, "title") ??
       (response.statusText || "The TerraScale API request failed."),
+    ...(fix === undefined ? {} : { fix }),
     status: response.status,
     target: stringProperty(source, "target"),
     requestId:

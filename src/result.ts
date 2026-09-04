@@ -37,6 +37,8 @@ export type TerraScaleError = {
   readonly kind: TerraScaleErrorKind;
   readonly code: string;
   readonly message: string;
+  /** Optional producer-provided remediation from the published error body. */
+  readonly fix?: string | undefined;
   readonly status?: number | undefined;
   readonly target?: string | undefined;
   readonly requestId?: string | undefined;
