@@ -12,7 +12,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde_json::json;
 use terrascale::documents::{
-    BatchOperation, ListOptions, MAX_BATCH_OPERATIONS, MAX_DOCUMENT_BYTES,
+    BatchOperation, Consistency, DocumentOperationOptions, DocumentReadOptions, Durability,
+    ListOptions, MAX_BATCH_OPERATIONS, MAX_DOCUMENT_BYTES,
 };
 use terrascale::DocumentSchema;
 use terrascale::{
@@ -262,6 +263,39 @@ async fn document_bounds_fail_before_transport() {
         .expect_err("oversized page");
     assert_eq!(error.code, "invalid_limit");
     assert!(mock.recorded.lock().expect("mock mutex").is_empty());
+
+    let error = sdk
+        .documents()
+        .list(&scope(), "users", ListOptions::new().with_limit(0))
+        .await
+        .expect_err("zero page");
+    assert_eq!(error.code, "invalid_limit");
+
+    let error = sdk
+        .documents()
+        .get_with_options(
+            &scope(),
+            "users",
+            "doc_1",
+            DocumentReadOptions::new().with_at(u64::MAX),
+        )
+        .await
+        .expect_err("out-of-range point-in-time read");
+    assert_eq!(error.code, "invalid_at");
+    assert!(mock.recorded.lock().expect("mock mutex").is_empty());
+
+    let error = sdk
+        .documents()
+        .get_with_options(
+            &scope(),
+            "users",
+            "doc_1",
+            DocumentReadOptions::new().with_session("not a token"),
+        )
+        .await
+        .expect_err("invalid session token");
+    assert_eq!(error.code, "invalid_session");
+    assert!(mock.recorded.lock().expect("mock mutex").is_empty());
 }
 
 #[test]
@@ -469,6 +503,14 @@ async fn subscribe_attaches_with_checkpoint_and_hint() {
     assert_eq!(request.route_name, "reactive.subscribe");
     assert!(request.url.starts_with("https://sfo.api.terrascale.tech"));
     assert!(request.url.contains("/reactive/views"));
+    assert_eq!(
+        request
+            .headers
+            .iter()
+            .find(|(name, _)| name == "x-terrascale-preferred-region")
+            .map(|(_, value)| value.as_str()),
+        Some("SFO")
+    );
 }
 
 #[tokio::test]
@@ -589,4 +631,134 @@ fn config_validation() {
         .build()
         .is_err());
     assert!(ClientConfig::builder().api_base_url("   ").build().is_err());
+    for unsafe_url in [
+        "http://example.com",
+        "https://user:pass@example.com",
+        "https://example.com/api?token=secret",
+        "https://example.com/api#fragment",
+        "https://terrabase.internal",
+        "https://api.example.test/tbep",
+    ] {
+        assert!(ClientConfig::builder()
+            .api_base_url(unsafe_url)
+            .build()
+            .is_err());
+    }
+    assert!(ClientConfig::builder()
+        .api_base_url("http://127.0.0.1:8787")
+        .build()
+        .is_ok());
+    assert!(ClientConfig::builder()
+        .api_base_url("http://sdk.test")
+        .build()
+        .is_ok());
+}
+
+#[tokio::test]
+async fn document_request_options_match_published_headers_and_queries() {
+    let mock = Mock::new(vec![
+        Response::json(200, &json!({"revision": "rev_1"})),
+        Response::json(200, &json!({"name": "Ada"})),
+        Response::json(200, &json!({"documents": []})),
+        Response::json(200, &json!({"history": []})),
+    ]);
+    let sdk = client(Arc::clone(&mock));
+    sdk.documents()
+        .put_with_options(
+            &scope(),
+            "users",
+            "ada",
+            json!({"name": "Ada"}),
+            DocumentOperationOptions::new()
+                .with_idempotency_key("write-1")
+                .with_durability(Durability::Global)
+                .with_if_match("\"old\"")
+                .with_session("session-12")
+                .with_consistency(Consistency::WritesFollowReads)
+                .with_region_hint(RegionCode::Sfo),
+        )
+        .await
+        .expect("put");
+    let put = mock.last_request();
+    assert!(put.url.starts_with("https://sfo.api.terrascale.tech"));
+    assert!(put
+        .headers
+        .iter()
+        .any(|(name, value)| name == "x-terrascale-preferred-region" && value == "SFO"));
+    assert!(put
+        .headers
+        .iter()
+        .any(|(name, value)| name == "idempotency-key" && value == "write-1"));
+    assert!(put
+        .headers
+        .iter()
+        .any(|(name, value)| name == "x-terrascale-durability" && value == "global"));
+    assert!(put
+        .headers
+        .iter()
+        .any(|(name, value)| name == "if-match" && value == "\"old\""));
+    assert!(put
+        .headers
+        .iter()
+        .any(|(name, value)| name == "x-terrascale-session" && value == "session-12"));
+    // Consistency is represented by the causal session header; the public
+    // document contract does not publish an x-terrascale-consistency header.
+    assert!(!put
+        .headers
+        .iter()
+        .any(|(name, _)| name == "x-terrascale-consistency"));
+
+    sdk.documents()
+        .get_with_options(
+            &scope(),
+            "users",
+            "ada",
+            DocumentReadOptions::new()
+                .with_at(42)
+                .with_if_none_match("\"rev_1\"")
+                .with_session("session-22")
+                .with_consistency(Consistency::Eventual)
+                .with_region_hint(RegionCode::Fra),
+        )
+        .await
+        .expect("get");
+    let get = mock.last_request();
+    assert!(get.url.starts_with("https://fra.api.terrascale.tech"));
+    assert!(get.url.ends_with("?at=42"));
+    assert!(get
+        .headers
+        .iter()
+        .any(|(name, value)| name == "if-none-match" && value == "\"rev_1\""));
+    assert!(get
+        .headers
+        .iter()
+        .any(|(name, value)| name == "x-terrascale-session" && value == "session-22"));
+
+    sdk.documents()
+        .list(
+            &scope(),
+            "users",
+            ListOptions::new()
+                .with_limit(10)
+                .with_after("rev_1")
+                .with_session("session-33")
+                .with_region_hint(RegionCode::Gru),
+        )
+        .await
+        .expect("list");
+    assert!(mock.last_request().url.ends_with("?limit=10&after=rev_1"));
+
+    sdk.documents()
+        .history_with_options(
+            &scope(),
+            "users",
+            "ada",
+            ListOptions::new().with_limit(5).with_after("rev_0"),
+        )
+        .await
+        .expect("history");
+    assert!(mock
+        .last_request()
+        .url
+        .ends_with("/history?limit=5&after=rev_0"));
 }

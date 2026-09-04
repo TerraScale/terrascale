@@ -6,6 +6,7 @@
 //! repairs a stale pin.
 
 use std::fmt;
+use std::net::IpAddr;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -29,6 +30,16 @@ impl RegionCode {
             Self::Gru => "gru",
             Self::Sfo => "sfo",
             Self::Fra => "fra",
+        }
+    }
+
+    /// Canonical uppercase wire form used by region request headers.
+    #[must_use]
+    pub fn as_header_str(self) -> &'static str {
+        match self {
+            Self::Gru => "GRU",
+            Self::Sfo => "SFO",
+            Self::Fra => "FRA",
         }
     }
 
@@ -111,7 +122,12 @@ pub fn pin_base_url(
     }
 }
 
-/// Normalize a base URL (no trailing slash, non-empty).
+/// Normalize and validate a base URL (no trailing slash).
+///
+/// API traffic carries bearer credentials, so non-loopback endpoints must use
+/// HTTPS. Plain HTTP is intentionally limited to local development and the
+/// reserved test domains. URL userinfo, query strings, and fragments are
+/// rejected so credentials and routing cannot be smuggled through a base URL.
 pub fn normalize_base_url(base_url: &str) -> Result<String> {
     let trimmed = base_url.trim().trim_end_matches('/').to_owned();
     if trimmed.is_empty() {
@@ -121,21 +137,105 @@ pub fn normalize_base_url(base_url: &str) -> Result<String> {
             "API base URL cannot be empty.",
         ));
     }
+    let url = reqwest::Url::parse(&trimmed).map_err(|error| {
+        Error::new(
+            crate::error::ErrorKind::Validation,
+            "invalid_base_url",
+            format!("API base URL must be an absolute HTTP(S) URL: {error}."),
+        )
+    })?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(Error::new(
+            crate::error::ErrorKind::Validation,
+            "invalid_base_url",
+            "API base URL must be an absolute HTTP(S) URL.",
+        ));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(Error::new(
+            crate::error::ErrorKind::Validation,
+            "unsafe_base_url",
+            "API base URL cannot contain userinfo.",
+        ));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(Error::new(
+            crate::error::ErrorKind::Validation,
+            "unsafe_base_url",
+            "API base URL cannot contain a query or fragment.",
+        ));
+    }
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    if has_private_component(&host) || has_private_component(url.path()) {
+        return Err(Error::new(
+            crate::error::ErrorKind::Validation,
+            "unsafe_base_url",
+            "TerraScale SDK clients may target only the public API, not TBEP or TerraBase.",
+        ));
+    }
+    if url.scheme() == "http" {
+        let host_without_brackets = host.trim_start_matches('[').trim_end_matches(']');
+        let loopback = host_without_brackets.eq_ignore_ascii_case("localhost")
+            || host_without_brackets
+                .parse::<IpAddr>()
+                .is_ok_and(|address| address.is_loopback());
+        let test_host = host_without_brackets.eq_ignore_ascii_case("test")
+            || host_without_brackets.ends_with(".test");
+        if !loopback && !test_host {
+            return Err(Error::new(
+                crate::error::ErrorKind::Validation,
+                "insecure_base_url",
+                "API endpoints must use HTTPS, except explicit loopback/test HTTP endpoints.",
+            ));
+        }
+    }
     Ok(trimmed)
 }
 
+/// Return whether a host/path contains a complete private-protocol component.
+///
+/// Matching complete components keeps legitimate custom origins such as
+/// `https://notterrabase.example` usable while still rejecting obvious
+/// TBEP/TerraBase endpoints (including hyphenated and path-separated forms).
+fn has_private_component(value: &str) -> bool {
+    value
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|component| matches!(component, "tbep" | "terrabase"))
+}
+
 fn apply_region_pin(base: &str, region: RegionCode) -> Result<String> {
-    let global = normalize_base_url(GLOBAL_API_BASE_URL)?;
-    if base == global {
-        return Ok(format!("https://{}", regional_host(region)));
+    let mut url = reqwest::Url::parse(base).map_err(|error| {
+        Error::new(
+            crate::error::ErrorKind::Validation,
+            "invalid_base_url",
+            format!("API base URL must be an absolute HTTP(S) URL: {error}."),
+        )
+    })?;
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    if host == "api.terrascale.tech" {
+        url.set_host(Some(&regional_host(region))).map_err(|_| {
+            Error::new(
+                crate::error::ErrorKind::Validation,
+                "invalid_base_url",
+                "Unable to construct the regional TerraScale API URL.",
+            )
+        })?;
+        return Ok(url.to_string().trim_end_matches('/').to_owned());
     }
-    let expected = format!("https://{}", regional_host(region));
-    if base == expected {
-        return Ok(base.to_owned());
+    if let Some(selected) = [RegionCode::Gru, RegionCode::Sfo, RegionCode::Fra]
+        .into_iter()
+        .find(|candidate| host == regional_host(*candidate))
+    {
+        if selected == region {
+            return Ok(base.to_owned());
+        }
+        return Err(Error::new(
+            crate::error::ErrorKind::Validation,
+            "region_pin_mismatch",
+            "The API base URL is pinned to a different TerraScale region.",
+        ));
     }
-    Err(Error::new(
-        crate::error::ErrorKind::Validation,
-        "region_pin_mismatch",
-        "Strict regional affinity requires the global TerraScale API URL or the selected regional URL.",
-    ))
+    // Custom origins (proxies and local test servers) remain unchanged; the
+    // selected region is carried by X-TerraScale-Preferred-Region.
+    Ok(base.to_owned())
 }

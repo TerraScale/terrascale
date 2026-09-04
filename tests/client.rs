@@ -119,6 +119,31 @@ async fn database_routes_are_direct_and_session_header_is_canonical() {
 }
 
 #[tokio::test]
+async fn first_contact_serving_region_is_learned_for_followup_requests() {
+    let mut first = document_response();
+    first
+        .headers
+        .push(("X-TerraScale-Region".to_owned(), "FRA".to_owned()));
+    let mock = Mock::new([first, document_response()]);
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder().build().expect("config"),
+        Arc::clone(&mock) as Arc<dyn HttpTransport>,
+    );
+    let scope = terrascale::DatabaseScope::new("database");
+    sdk.documents()
+        .get(&scope, "users", "doc_1")
+        .await
+        .expect("first get");
+    sdk.documents()
+        .get(&scope, "users", "doc_1")
+        .await
+        .expect("second get");
+    assert!(mock.requests.lock().expect("request mutex")[1]
+        .url
+        .starts_with("https://fra.api.terrascale.tech"));
+}
+
+#[tokio::test]
 async fn retries_are_bounded_and_mutations_need_a_stable_key() {
     let read_mock = Mock::new([
         Response::json(503, &json!({"code": "busy"})),
@@ -172,6 +197,39 @@ async fn retries_are_bounded_and_mutations_need_a_stable_key() {
 }
 
 #[tokio::test]
+async fn strict_custom_proxy_keeps_region_hint_on_one_wire_header() {
+    let mock = Mock::new([document_response()]);
+    let transport: Arc<dyn HttpTransport> = mock.clone();
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_base_url("https://proxy.example.test")
+            .preferred_region(terrascale::RegionCode::Sfo)
+            .region_affinity(terrascale::RegionAffinity::Strict)
+            .build()
+            .expect("config"),
+        transport,
+    );
+    sdk.documents()
+        .get(
+            &terrascale::DatabaseScope::new("database"),
+            "users",
+            "doc_1",
+        )
+        .await
+        .expect("get");
+    let request = mock.requests.lock().expect("request mutex")[0].clone();
+    assert!(request.url.starts_with("https://proxy.example.test"));
+    assert_eq!(
+        request
+            .headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("x-terrascale-preferred-region"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn nested_error_envelope_preserves_code_message_and_fix() {
     let mock = Mock::new([Response::json(
         422,
@@ -201,6 +259,7 @@ async fn nested_error_envelope_preserves_code_message_and_fix() {
         error.message,
         "The query is not subscribable. Fix: Use execute() for joins."
     );
+    assert_eq!(error.fix.as_deref(), Some("Use execute() for joins."));
 }
 
 #[tokio::test]

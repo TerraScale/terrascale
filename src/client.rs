@@ -32,6 +32,11 @@ pub const SESSION_HEADER: &str = "X-TerraScale-Session";
 /// Maximum length accepted for a caller-provided idempotency key.
 pub const MAX_IDEMPOTENCY_KEY_LENGTH: usize = 128;
 
+/// Internal marker removed by [`Shared::decorate`] before transport. It lets
+/// a per-request eventual-consistency option suppress the shared causal
+/// session header without exposing an unsupported wire header.
+pub(crate) const SKIP_SESSION_MARKER: &str = "x-terrascale-sdk-skip-session";
+
 /// Shareable pipeline state behind every sub-client.
 #[derive(Debug)]
 pub(crate) struct Shared {
@@ -149,11 +154,25 @@ impl Shared {
     /// refreshed from server responses.
     pub fn set_session_token(&self, token: Option<String>) {
         if let Ok(mut guard) = self.session_token.write() {
-            *guard = token;
+            match token {
+                None => *guard = None,
+                Some(token) => {
+                    if let Some(token) = normalize_session_token(&token) {
+                        *guard = Some(token);
+                    }
+                }
+            }
         }
     }
 
     fn decorate(&self, request: &mut Request) {
+        let skip_session = request
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case(SKIP_SESSION_MARKER));
+        request
+            .headers
+            .retain(|(name, _)| !name.eq_ignore_ascii_case(SKIP_SESSION_MARKER));
         if let Some(api_key) = self.config.api_key() {
             request
                 .headers
@@ -168,14 +187,27 @@ impl Shared {
                 .headers
                 .push(("accept".to_owned(), "application/json".to_owned()));
         }
-        if let Some(token) = self.session_token() {
-            request.headers.push((SESSION_HEADER.to_owned(), token));
+        if !skip_session
+            && !request
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case(SESSION_HEADER))
+        {
+            if let Some(token) = self.session_token() {
+                request.headers.push((SESSION_HEADER.to_owned(), token));
+            }
         }
-        if self.config.preferred_region().is_some() || self.pinned_region().is_some() {
+        if (self.config.preferred_region().is_some() || self.pinned_region().is_some())
+            && !request
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("x-terrascale-preferred-region"))
+            && self.should_advertise_region_hint(request)
+        {
             if let Some(region) = self.pinned_region() {
                 request.headers.push((
-                    "x-terrascale-region-hint".to_owned(),
-                    region.as_str().to_owned(),
+                    "x-terrascale-preferred-region".to_owned(),
+                    region.as_header_str().to_owned(),
                 ));
             }
         }
@@ -223,15 +255,56 @@ impl Shared {
 
     fn observe(&self, response: &Response) {
         if let Some(token) = response.header("x-terrascale-session") {
-            self.set_session_token(Some(token.to_owned()));
+            if let Some(token) = normalize_session_token(token) {
+                self.set_session_token(Some(token));
+            }
         }
-        if let Some(placement) = response.header(PLACEMENT_HEADER) {
-            if let Ok(region) = placement.parse() {
+        // First-contact responses identify the member that served the
+        // request. Learn that region only when no configured preference or
+        // repaired placement exists; a strict/preferred pin must not be
+        // silently replaced by an informational response header.
+        if (200..300).contains(&response.status)
+            && self.config.preferred_region().is_none()
+            && self.pinned_region().is_none()
+        {
+            let region = response
+                .header("x-terrascale-serving-region")
+                .or_else(|| response.header("x-terrascale-region"))
+                .and_then(|value| value.trim().parse().ok());
+            if let Some(region) = region {
                 if let Ok(mut guard) = self.placement.write() {
                     *guard = Some(region);
                 }
             }
         }
+        if let Some(placement) = response.header(PLACEMENT_HEADER) {
+            if let Some(region) = parse_region_header(placement) {
+                if let Ok(mut guard) = self.placement.write() {
+                    *guard = Some(region);
+                }
+            }
+        }
+    }
+
+    fn should_advertise_region_hint(&self, request: &Request) -> bool {
+        if self.config.region_affinity() != RegionAffinity::Strict {
+            return true;
+        }
+        // A strict request to a first-party regional host is already routed
+        // directly. Custom proxies still need the typed hint header.
+        let Some(host) = reqwest::Url::parse(&request.url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+        else {
+            return true;
+        };
+        !matches!(
+            host.as_str(),
+            "api.terrascale.tech"
+                | "gru.api.terrascale.tech"
+                | "sfo.api.terrascale.tech"
+                | "fra.api.terrascale.tech"
+        )
     }
 
     fn check(&self, route_name: &str, response: &Response) -> Result<()> {
@@ -243,7 +316,7 @@ impl Shared {
         if response.status == 421 {
             let placement = response.header(PLACEMENT_HEADER).map(str::to_owned);
             if let Some(ref placement) = placement {
-                if let Ok(region) = placement.parse() {
+                if let Some(region) = parse_region_header(placement) {
                     if let Ok(mut guard) = self.placement.write() {
                         *guard = Some(region);
                     }
@@ -298,12 +371,13 @@ impl Shared {
     /// retry policy as [`Shared::send_typed`].
     pub async fn send_empty(&self, mut request: Request) -> Result<()> {
         self.decorate(&mut request);
+        let route = request.route_name.clone();
         let mut retries = 0;
         loop {
             match self.transport.send(request.clone()).await {
                 Ok(response) => {
                     self.observe(&response);
-                    match self.check("request", &response) {
+                    match self.check(&route, &response) {
                         Ok(()) => return Ok(()),
                         Err(error) if self.can_retry(&request, &error, retries) => {
                             retries += 1;
@@ -383,6 +457,26 @@ fn validate_idempotency_key(key: &str) -> Result<()> {
     Ok(())
 }
 
+fn normalize_session_token(value: &str) -> Option<String> {
+    let token = value.trim();
+    if token.is_empty()
+        || token.len() > 16_384
+        || token.len() % 4 == 1
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return None;
+    }
+    Some(token.to_owned())
+}
+
+fn parse_region_header(value: &str) -> Option<RegionCode> {
+    value
+        .split(',')
+        .find_map(|candidate| candidate.trim().parse().ok())
+}
+
 #[derive(Debug, Default, serde::Deserialize)]
 struct ErrorBody {
     #[serde(default)]
@@ -423,19 +517,25 @@ fn decode_error(route_name: &str, response: &Response) -> Error {
                 response.status
             )
         });
-    if let Some(fix) = details.as_ref().and_then(|body| body.fix.as_deref()) {
+    let fix = details
+        .as_ref()
+        .and_then(|body| body.fix.clone())
+        .filter(|fix| !fix.trim().is_empty())
+        .map(|fix| fix.trim().to_owned());
+    if let Some(fix) = fix.as_deref() {
         if !fix.trim().is_empty() {
             message.push_str(" Fix: ");
             message.push_str(fix.trim());
         }
     }
     let mut error = Error::for_status(response.status, code, message);
+    error.fix = fix.map(String::into_boxed_str);
     error.request_id = response.header("x-request-id").map(str::to_owned);
     error
 }
 
 fn is_retryable(error: &Error) -> bool {
-    error.kind == ErrorKind::Transport || matches!(error.status, Some(502..=504))
+    error.kind == ErrorKind::Transport || matches!(error.status, Some(408 | 429 | 500..=504))
 }
 
 fn encode_path_segment(value: &str) -> String {

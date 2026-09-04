@@ -26,9 +26,10 @@ pub use client::{
 };
 pub use config::{ClientConfig, ClientConfigBuilder};
 pub use documents::{
-    BatchOperation, BatchResponse, DatabaseScope, Document, DocumentPage, DocumentRow,
-    DocumentVersion, DocumentWriteResponse, DocumentsClient, ListOptions, MAX_BATCH_OPERATIONS,
-    MAX_DOCUMENT_BYTES, MAX_DOCUMENT_PAGE_SIZE,
+    BatchOperation, BatchResponse, Consistency, DatabaseScope, Document, DocumentOperationOptions,
+    DocumentPage, DocumentReadOptions, DocumentRow, DocumentVersion, DocumentWriteResponse,
+    DocumentsClient, Durability, ListOptions, MAX_BATCH_OPERATIONS, MAX_DOCUMENT_BYTES,
+    MAX_DOCUMENT_PAGE_SIZE,
 };
 pub use error::{Error, ErrorKind, Result};
 pub use management::{

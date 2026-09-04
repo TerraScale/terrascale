@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::client::SharedClient;
 use crate::error::{Error, ErrorKind, Result};
+use crate::regions::RegionCode;
 use crate::transport::{Method, Request};
 
 /// Maximum encoded size of one document value (D-25).
@@ -18,6 +19,121 @@ pub const MAX_BATCH_OPERATIONS: usize = 1_000;
 
 /// Largest collection page accepted by the public API.
 pub const MAX_DOCUMENT_PAGE_SIZE: u32 = 1_000;
+
+const MAX_DOCUMENT_AT: u64 = i64::MAX as u64;
+
+/// Acknowledgement class requested for a document mutation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Durability {
+    Regional,
+    Global,
+}
+
+impl Durability {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Regional => "regional",
+            Self::Global => "global",
+        }
+    }
+}
+
+/// Read consistency requested for one REST operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Consistency {
+    Eventual,
+    WritesFollowReads,
+}
+
+/// Per-request controls for document mutations and batch writes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocumentOperationOptions {
+    pub idempotency_key: Option<String>,
+    pub durability: Option<Durability>,
+    pub if_match: Option<String>,
+    pub session: Option<String>,
+    pub consistency: Option<Consistency>,
+    pub region_hint: Option<RegionCode>,
+}
+
+impl DocumentOperationOptions {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    #[must_use]
+    pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(key.into());
+        self
+    }
+    #[must_use]
+    pub fn with_durability(mut self, durability: Durability) -> Self {
+        self.durability = Some(durability);
+        self
+    }
+    #[must_use]
+    pub fn with_if_match(mut self, etag: impl Into<String>) -> Self {
+        self.if_match = Some(etag.into());
+        self
+    }
+    #[must_use]
+    pub fn with_session(mut self, session: impl Into<String>) -> Self {
+        self.session = Some(session.into());
+        self
+    }
+    #[must_use]
+    pub fn with_consistency(mut self, consistency: Consistency) -> Self {
+        self.consistency = Some(consistency);
+        self
+    }
+    #[must_use]
+    pub fn with_region_hint(mut self, region: RegionCode) -> Self {
+        self.region_hint = Some(region);
+        self
+    }
+}
+
+/// Per-request controls for a point read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocumentReadOptions {
+    pub at: Option<u64>,
+    pub if_none_match: Option<String>,
+    pub session: Option<String>,
+    pub consistency: Option<Consistency>,
+    pub region_hint: Option<RegionCode>,
+}
+
+impl DocumentReadOptions {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    #[must_use]
+    pub fn with_at(mut self, at: u64) -> Self {
+        self.at = Some(at);
+        self
+    }
+    #[must_use]
+    pub fn with_if_none_match(mut self, etag: impl Into<String>) -> Self {
+        self.if_none_match = Some(etag.into());
+        self
+    }
+    #[must_use]
+    pub fn with_session(mut self, session: impl Into<String>) -> Self {
+        self.session = Some(session.into());
+        self
+    }
+    #[must_use]
+    pub fn with_consistency(mut self, consistency: Consistency) -> Self {
+        self.consistency = Some(consistency);
+        self
+    }
+    #[must_use]
+    pub fn with_region_hint(mut self, region: RegionCode) -> Self {
+        self.region_hint = Some(region);
+        self
+    }
+}
 
 /// Database scope for a document operation.
 #[derive(Debug, Clone)]
@@ -119,6 +235,12 @@ pub struct ListOptions {
     pub after: Option<String>,
     /// Requested page size. Zero omits the query and uses the server default.
     pub limit: Option<u32>,
+    /// Optional causal session frontier for this read.
+    pub session: Option<String>,
+    /// Optional read consistency override.
+    pub consistency: Option<Consistency>,
+    /// Optional serving-region hint.
+    pub region_hint: Option<RegionCode>,
 }
 
 impl ListOptions {
@@ -139,6 +261,24 @@ impl ListOptions {
     #[must_use]
     pub fn with_limit(mut self, limit: u32) -> Self {
         self.limit = Some(limit);
+        self
+    }
+
+    #[must_use]
+    pub fn with_session(mut self, session: impl Into<String>) -> Self {
+        self.session = Some(session.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_consistency(mut self, consistency: Consistency) -> Self {
+        self.consistency = Some(consistency);
+        self
+    }
+
+    #[must_use]
+    pub fn with_region_hint(mut self, region: RegionCode) -> Self {
+        self.region_hint = Some(region);
         self
     }
 }
@@ -217,19 +357,30 @@ impl DocumentsClient {
         Self { shared }
     }
 
-    fn collection_root(&self, scope: &DatabaseScope, collection: &str) -> Result<String> {
+    fn collection_root_in(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        region_hint: Option<RegionCode>,
+    ) -> Result<String> {
         let name = self.shared.require_collection(collection)?;
         Ok(format!(
             "{}/collections/{}/documents",
-            self.shared.database_root(scope)?,
+            self.shared.database_root_in(scope, region_hint)?,
             encode_segment(&name)?
         ))
     }
 
-    fn document_url(&self, scope: &DatabaseScope, collection: &str, id: &str) -> Result<String> {
+    fn document_url_in(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        id: &str,
+        region_hint: Option<RegionCode>,
+    ) -> Result<String> {
         Ok(format!(
             "{}/{}",
-            self.collection_root(scope, collection)?,
+            self.collection_root_in(scope, collection, region_hint)?,
             encode_segment(id)?
         ))
     }
@@ -267,15 +418,46 @@ impl DocumentsClient {
         self.put(scope, collection, id, body).await
     }
 
+    /// Create at an application-owned id with per-request mutation controls.
+    pub async fn create_with_id_with_options(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        id: &str,
+        body: serde_json::Value,
+        options: DocumentOperationOptions,
+    ) -> Result<DocumentWriteResponse> {
+        self.put_with_options(scope, collection, id, body, options)
+            .await
+    }
+
     /// Read one document. The response body is the bare canonical JSON value.
     pub async fn get(&self, scope: &DatabaseScope, collection: &str, id: &str) -> Result<Document> {
+        self.get_with_options(scope, collection, id, DocumentReadOptions::default())
+            .await
+    }
+
+    /// Read one document with conditional, causal, consistency, and routing controls.
+    pub async fn get_with_options(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        id: &str,
+        options: DocumentReadOptions,
+    ) -> Result<Document> {
+        validate_read_options(&options)?;
+        let mut url = self.document_url_in(scope, collection, id, options.region_hint)?;
+        if let Some(at) = options.at {
+            url.push_str(&format!("?at={at}"));
+        }
         let request = Request {
             route_name: "documents.get".to_owned(),
             method: Method::Get,
-            url: self.document_url(scope, collection, id)?,
+            url,
             headers: Vec::new(),
             body: None,
         };
+        let request = apply_read_headers(request, &options);
         let body: serde_json::Value = self.shared.send_typed(request).await?;
         Ok(Document {
             id: id.to_owned(),
@@ -297,8 +479,35 @@ impl DocumentsClient {
         id: &str,
         body: serde_json::Value,
     ) -> Result<DocumentWriteResponse> {
-        self.write("documents.put", Method::Put, scope, collection, id, body)
-            .await
+        self.put_with_options(
+            scope,
+            collection,
+            id,
+            body,
+            DocumentOperationOptions::default(),
+        )
+        .await
+    }
+
+    /// Replace a document with per-request mutation controls.
+    pub async fn put_with_options(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        id: &str,
+        body: serde_json::Value,
+        options: DocumentOperationOptions,
+    ) -> Result<DocumentWriteResponse> {
+        self.write(
+            "documents.put",
+            Method::Put,
+            scope,
+            collection,
+            id,
+            body,
+            &options,
+        )
+        .await
     }
 
     /// Explicit alias for [`Self::put`], whose operation is an upsert.
@@ -312,6 +521,19 @@ impl DocumentsClient {
         self.put(scope, collection, id, body).await
     }
 
+    /// Explicit upsert alias with per-request mutation controls.
+    pub async fn upsert_with_options(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        id: &str,
+        body: serde_json::Value,
+        options: DocumentOperationOptions,
+    ) -> Result<DocumentWriteResponse> {
+        self.put_with_options(scope, collection, id, body, options)
+            .await
+    }
+
     /// Compatibility alias for [`Self::put`].
     pub async fn update(
         &self,
@@ -323,6 +545,19 @@ impl DocumentsClient {
         self.put(scope, collection, id, body).await
     }
 
+    /// Compatibility update alias with per-request mutation controls.
+    pub async fn update_with_options(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        id: &str,
+        body: serde_json::Value,
+        options: DocumentOperationOptions,
+    ) -> Result<DocumentWriteResponse> {
+        self.put_with_options(scope, collection, id, body, options)
+            .await
+    }
+
     /// Merge `patch` into a document using RFC 7386 semantics.
     pub async fn patch(
         &self,
@@ -331,6 +566,25 @@ impl DocumentsClient {
         id: &str,
         patch: serde_json::Value,
     ) -> Result<DocumentWriteResponse> {
+        self.patch_with_options(
+            scope,
+            collection,
+            id,
+            patch,
+            DocumentOperationOptions::default(),
+        )
+        .await
+    }
+
+    /// Merge a patch with per-request mutation controls.
+    pub async fn patch_with_options(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        id: &str,
+        patch: serde_json::Value,
+        options: DocumentOperationOptions,
+    ) -> Result<DocumentWriteResponse> {
         self.write(
             "documents.patch",
             Method::Patch,
@@ -338,10 +592,12 @@ impl DocumentsClient {
             collection,
             id,
             patch,
+            &options,
         )
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn write(
         &self,
         route_name: &str,
@@ -350,8 +606,10 @@ impl DocumentsClient {
         collection: &str,
         id: &str,
         value: serde_json::Value,
+        options: &DocumentOperationOptions,
     ) -> Result<DocumentWriteResponse> {
-        let url = self.document_url(scope, collection, id)?;
+        validate_operation_options(options)?;
+        let url = self.document_url_in(scope, collection, id, options.region_hint)?;
         let encoded = encode_document(&value)?;
         let request = Request {
             route_name: route_name.to_owned(),
@@ -360,6 +618,7 @@ impl DocumentsClient {
             headers: vec![("content-type".to_owned(), "application/json".to_owned())],
             body: Some(encoded),
         };
+        let request = apply_operation_headers(request, options);
         let mut response: DocumentWriteResponse = self.shared.send_typed(request).await?;
         response.etag = Some(format!("\"{}\"", response.revision));
         response.session = self.shared.session_token();
@@ -368,14 +627,29 @@ impl DocumentsClient {
 
     /// Delete one document (the server writes a tombstone).
     pub async fn delete(&self, scope: &DatabaseScope, collection: &str, id: &str) -> Result<()> {
+        self.delete_with_options(scope, collection, id, DocumentOperationOptions::default())
+            .await
+    }
+
+    /// Delete a document with per-request mutation controls.
+    pub async fn delete_with_options(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        id: &str,
+        options: DocumentOperationOptions,
+    ) -> Result<()> {
+        validate_operation_options(&options)?;
         let request = Request {
             route_name: "documents.delete".to_owned(),
             method: Method::Delete,
-            url: self.document_url(scope, collection, id)?,
+            url: self.document_url_in(scope, collection, id, options.region_hint)?,
             headers: Vec::new(),
             body: None,
         };
-        self.shared.send_empty(request).await
+        self.shared
+            .send_empty(apply_operation_headers(request, &options))
+            .await
     }
 
     /// List documents in canonical identifier order.
@@ -385,27 +659,9 @@ impl DocumentsClient {
         collection: &str,
         options: ListOptions,
     ) -> Result<DocumentPage> {
-        let mut url = self.collection_root(scope, collection)?;
-        if let Some(limit) = options.limit {
-            if limit > MAX_DOCUMENT_PAGE_SIZE {
-                return Err(Error::new(
-                    ErrorKind::Validation,
-                    "invalid_limit",
-                    format!("Document list limit must not exceed {MAX_DOCUMENT_PAGE_SIZE}."),
-                ));
-            }
-            if limit > 0 {
-                url.push_str(&format!("?limit={limit}"));
-            }
-        }
-        if let Some(after) = options.after {
-            if !after.trim().is_empty() {
-                let separator = if url.contains('?') { '&' } else { '?' };
-                url.push(separator);
-                url.push_str("after=");
-                url.push_str(&encode_segment(after.trim())?);
-            }
-        }
+        validate_list_options(&options)?;
+        let mut url = self.collection_root_in(scope, collection, options.region_hint)?;
+        append_list_query(&mut url, &options)?;
         let request = Request {
             route_name: "documents.list".to_owned(),
             method: Method::Get,
@@ -413,7 +669,9 @@ impl DocumentsClient {
             headers: Vec::new(),
             body: None,
         };
-        self.shared.send_typed(request).await
+        self.shared
+            .send_typed(apply_list_headers(request, &options))
+            .await
     }
 
     /// Execute one atomic batch of put, patch, and delete operations.
@@ -423,6 +681,24 @@ impl DocumentsClient {
         collection: &str,
         operations: Vec<BatchOperation>,
     ) -> Result<BatchResponse> {
+        self.batch_with_options(
+            scope,
+            collection,
+            operations,
+            DocumentOperationOptions::default(),
+        )
+        .await
+    }
+
+    /// Execute an atomic batch with per-request mutation controls.
+    pub async fn batch_with_options(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        operations: Vec<BatchOperation>,
+        options: DocumentOperationOptions,
+    ) -> Result<BatchResponse> {
+        validate_operation_options(&options)?;
         if operations.is_empty() || operations.len() > MAX_BATCH_OPERATIONS {
             return Err(Error::new(
                 ErrorKind::Validation,
@@ -475,10 +751,16 @@ impl DocumentsClient {
         let request = Request::json(
             "documents.batch",
             Method::Post,
-            format!("{}/batch", self.collection_root(scope, collection)?),
+            format!(
+                "{}/batch",
+                self.collection_root_in(scope, collection, options.region_hint)?
+            ),
             &BatchRequest { operations },
         )?;
-        let mut response: BatchResponse = self.shared.send_typed(request).await?;
+        let mut response: BatchResponse = self
+            .shared
+            .send_typed(apply_operation_headers(request, &options))
+            .await?;
         response.session = self.shared.session_token();
         Ok(response)
     }
@@ -491,17 +773,36 @@ impl DocumentsClient {
         collection: &str,
         id: &str,
     ) -> Result<Vec<DocumentVersion>> {
+        self.history_with_options(scope, collection, id, ListOptions::default())
+            .await
+    }
+
+    /// Return retained versions with bounded pagination and read controls.
+    pub async fn history_with_options(
+        &self,
+        scope: &DatabaseScope,
+        collection: &str,
+        id: &str,
+        options: ListOptions,
+    ) -> Result<Vec<DocumentVersion>> {
+        validate_list_options(&options)?;
         #[derive(Deserialize)]
         struct HistoryResponse {
             history: Vec<DocumentVersion>,
         }
+        let mut url = format!(
+            "{}/history",
+            self.document_url_in(scope, collection, id, options.region_hint)?
+        );
+        append_list_query(&mut url, &options)?;
         let request = Request {
             route_name: "documents.history".to_owned(),
             method: Method::Get,
-            url: format!("{}/history", self.document_url(scope, collection, id)?),
+            url,
             headers: Vec::new(),
             body: None,
         };
+        let request = apply_list_headers(request, &options);
         Ok(self
             .shared
             .send_typed::<HistoryResponse>(request)
@@ -526,6 +827,190 @@ fn encode_document(value: &serde_json::Value) -> Result<Vec<u8>> {
         ));
     }
     Ok(encoded)
+}
+
+fn validate_header_value(value: &str, field: &str, max: usize) -> Result<()> {
+    if value.trim().is_empty() || value.len() > max || value.chars().any(char::is_control) {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            format!("invalid_{field}"),
+            format!("{field} must be nonblank, at most {max} characters, and contain no control characters."),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_session(value: &str) -> Result<()> {
+    if value != value.trim() || normalize_session_token(value).is_none() {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_session",
+            "session must be a canonical unpadded base64url token of at most 16384 characters.",
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_session_token(value: &str) -> Option<&str> {
+    if value.is_empty()
+        || value.len() > 16_384
+        || value.len() % 4 == 1
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return None;
+    }
+    Some(value)
+}
+
+fn validate_operation_options(options: &DocumentOperationOptions) -> Result<()> {
+    if let Some(key) = options.idempotency_key.as_deref() {
+        validate_header_value(
+            key,
+            "idempotency_key",
+            crate::client::MAX_IDEMPOTENCY_KEY_LENGTH,
+        )?;
+    }
+    if let Some(etag) = options.if_match.as_deref() {
+        validate_header_value(etag, "if_match", 1_024)?;
+    }
+    if let Some(session) = options.session.as_deref() {
+        validate_session(session)?;
+    }
+    Ok(())
+}
+
+fn validate_read_options(options: &DocumentReadOptions) -> Result<()> {
+    if options.at.is_some_and(|at| at > MAX_DOCUMENT_AT) {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_at",
+            "Point-in-time read positions must fit a signed 64-bit integer.",
+        ));
+    }
+    if let Some(etag) = options.if_none_match.as_deref() {
+        validate_header_value(etag, "if_none_match", 1_024)?;
+    }
+    if let Some(session) = options.session.as_deref() {
+        validate_session(session)?;
+    }
+    Ok(())
+}
+
+fn validate_list_options(options: &ListOptions) -> Result<()> {
+    if options
+        .limit
+        .is_some_and(|limit| !(1..=MAX_DOCUMENT_PAGE_SIZE).contains(&limit))
+    {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_limit",
+            format!("Document list limit must be between 1 and {MAX_DOCUMENT_PAGE_SIZE}."),
+        ));
+    }
+    if let Some(session) = options.session.as_deref() {
+        validate_session(session)?;
+    }
+    Ok(())
+}
+
+fn append_list_query(url: &mut String, options: &ListOptions) -> Result<()> {
+    if let Some(limit) = options.limit {
+        url.push_str(&format!("?limit={limit}"));
+    }
+    if let Some(after) = options
+        .after
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        let separator = if url.contains('?') { '&' } else { '?' };
+        url.push(separator);
+        url.push_str("after=");
+        url.push_str(&encode_segment(after.trim())?);
+    }
+    Ok(())
+}
+
+fn apply_operation_headers(mut request: Request, options: &DocumentOperationOptions) -> Request {
+    if let Some(region) = options.region_hint {
+        request.headers.push((
+            "x-terrascale-preferred-region".to_owned(),
+            region.as_header_str().to_owned(),
+        ));
+    }
+    if let Some(key) = options.idempotency_key.as_deref() {
+        request
+            .headers
+            .push(("idempotency-key".to_owned(), key.trim().to_owned()));
+    }
+    if let Some(etag) = options.if_match.as_deref() {
+        request
+            .headers
+            .push(("if-match".to_owned(), etag.trim().to_owned()));
+    }
+    if let Some(durability) = options.durability {
+        request.headers.push((
+            "x-terrascale-durability".to_owned(),
+            durability.as_str().to_owned(),
+        ));
+    }
+    if let Some(session) = options.session.as_deref() {
+        request
+            .headers
+            .push(("x-terrascale-session".to_owned(), session.trim().to_owned()));
+    }
+    if options.consistency == Some(Consistency::Eventual) && options.session.is_none() {
+        request
+            .headers
+            .push((crate::client::SKIP_SESSION_MARKER.to_owned(), String::new()));
+    }
+    request
+}
+
+fn apply_read_headers(mut request: Request, options: &DocumentReadOptions) -> Request {
+    if let Some(region) = options.region_hint {
+        request.headers.push((
+            "x-terrascale-preferred-region".to_owned(),
+            region.as_header_str().to_owned(),
+        ));
+    }
+    if let Some(etag) = options.if_none_match.as_deref() {
+        request
+            .headers
+            .push(("if-none-match".to_owned(), etag.trim().to_owned()));
+    }
+    if let Some(session) = options.session.as_deref() {
+        request
+            .headers
+            .push(("x-terrascale-session".to_owned(), session.trim().to_owned()));
+    }
+    if options.consistency == Some(Consistency::Eventual) && options.session.is_none() {
+        request
+            .headers
+            .push((crate::client::SKIP_SESSION_MARKER.to_owned(), String::new()));
+    }
+    request
+}
+
+fn apply_list_headers(mut request: Request, options: &ListOptions) -> Request {
+    if let Some(region) = options.region_hint {
+        request.headers.push((
+            "x-terrascale-preferred-region".to_owned(),
+            region.as_header_str().to_owned(),
+        ));
+    }
+    if let Some(session) = options.session.as_deref() {
+        request
+            .headers
+            .push(("x-terrascale-session".to_owned(), session.trim().to_owned()));
+    }
+    if options.consistency == Some(Consistency::Eventual) && options.session.is_none() {
+        request
+            .headers
+            .push((crate::client::SKIP_SESSION_MARKER.to_owned(), String::new()));
+    }
+    request
 }
 
 fn contract_gap(operation: &str, fix: &str) -> Error {

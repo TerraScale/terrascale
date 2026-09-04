@@ -32,6 +32,8 @@ pub struct Error {
     pub code: String,
     /// Human-readable message carrying the fix, never just the status.
     pub message: String,
+    /// Optional server-provided remediation, kept separately from `message`.
+    pub fix: Option<Box<str>>,
     /// HTTP status when the error came from a response.
     pub status: Option<u16>,
     /// Server request id for support correlation.
@@ -47,6 +49,7 @@ impl Error {
             kind,
             code: code.into(),
             message: message.into(),
+            fix: None,
             status: None,
             request_id: None,
             placement: None,
@@ -81,6 +84,7 @@ impl Error {
             kind,
             code,
             message,
+            fix: None,
             status: Some(status),
             request_id: None,
             placement: None,

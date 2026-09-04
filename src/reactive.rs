@@ -739,8 +739,8 @@ impl ReactiveClient {
         let mut request = Request::json("reactive.subscribe", Method::Post, url, &body)?;
         if let Some(hint) = options.region_hint {
             request.headers.push((
-                "X-TerraScale-Region-Hint".to_owned(),
-                hint.as_str().to_owned(),
+                "x-terrascale-preferred-region".to_owned(),
+                hint.as_header_str().to_owned(),
             ));
         }
         self.shared.send_typed(request).await
