@@ -48,6 +48,9 @@ pub const MAX_ADMITTED_REQUEST_UNITS_PER_FACT: i128 = 1_000_000;
 /// Larger streams must record independently idempotent bounded chunks.
 pub const MAX_PUBLIC_EGRESS_BYTES_PER_FACT: i128 = 1_099_511_627_776;
 
+/// The number of logical bytes in one billed write unit (D-16).
+pub const WRITE_UNIT_BYTES: u64 = 4 * 1024;
+
 /// Typed failures in the usage domain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UsageError {
@@ -109,6 +112,12 @@ pub enum UsageError {
     InvalidUsageRegion,
     /// A usage command exceeded its selected meter's per-fact unit bound.
     UsageUnitsExceeded,
+    /// A write or storage observation named no selected Region copies.
+    InvalidRegionCount,
+    /// A journal entry or group-commit fact named the zero sequence.
+    InvalidCommitSequence,
+    /// An export cursor moved backwards.
+    CursorRegression,
 }
 
 impl fmt::Display for UsageError {
@@ -143,6 +152,9 @@ impl fmt::Display for UsageError {
             Self::InvalidContinuation => "usage continuation is outside its byte bound",
             Self::InvalidUsageRegion => "usage Region is outside the production set",
             Self::UsageUnitsExceeded => "usage integer units exceed the meter bound",
+            Self::InvalidRegionCount => "usage Region count must be positive",
+            Self::InvalidCommitSequence => "usage commit sequence must be nonzero",
+            Self::CursorRegression => "usage export cursor moved backwards",
         })
     }
 }
@@ -1757,6 +1769,449 @@ impl UsageSegmentLedger {
     /// Returns accepted segments in stable identity order.
     pub fn segments(&self) -> impl Iterator<Item = &UsageSegment> {
         self.segments.values()
+    }
+}
+
+// ---- D-16/D-42 write and storage facts ---------------------------------
+
+/// Returns the write units for one logical document body.
+///
+/// The operation floor is one: an empty body is still a delete/write
+/// operation. This is deliberately separate from storage bytes, which may be
+/// zero for a tombstone. Region replication is applied by
+/// [`write_units_for_regions`], exactly once at the origin group commit.
+#[must_use]
+pub const fn write_units_for_bytes(logical_bytes: u64) -> u64 {
+    let units = logical_bytes.div_ceil(WRITE_UNIT_BYTES);
+    if units < 1 {
+        1
+    } else {
+        units
+    }
+}
+
+/// Returns the billed write units for one operation replicated to the selected
+/// Region copies. A retry or replica must reuse the same operation identity;
+/// this function only performs the deterministic unit calculation.
+pub fn write_units_for_regions(
+    logical_bytes: u64,
+    selected_regions: u32,
+) -> Result<u64, UsageError> {
+    if selected_regions == 0 {
+        return Err(UsageError::InvalidRegionCount);
+    }
+    write_units_for_bytes(logical_bytes)
+        .checked_mul(u64::from(selected_regions))
+        .ok_or(UsageError::IntegerOverflow)
+}
+
+/// Alias using the billing language from D-16.
+pub fn billed_write_units(logical_bytes: u64, selected_regions: u32) -> Result<u64, UsageError> {
+    write_units_for_regions(logical_bytes, selected_regions)
+}
+
+/// Computes exact whole byte-seconds for one retained logical revision.
+///
+/// The multiplication is performed before converting milliseconds to seconds
+/// so callers can add several current/history observations without losing
+/// sub-second fractions at each row. The returned value rounds down only once
+/// at the end of this observation.
+pub fn storage_byte_seconds(
+    logical_bytes: u64,
+    selected_regions: u32,
+    start_millis: u64,
+    end_millis: u64,
+) -> Result<u128, UsageError> {
+    if selected_regions == 0 {
+        return Err(UsageError::InvalidRegionCount);
+    }
+    if end_millis <= start_millis {
+        return Err(UsageError::InvalidMeasurementWindow);
+    }
+    let millis = u128::from(end_millis - start_millis);
+    let bytes = u128::from(logical_bytes)
+        .checked_mul(u128::from(selected_regions))
+        .and_then(|value| value.checked_mul(millis))
+        .ok_or(UsageError::IntegerOverflow)?;
+    Ok(bytes / 1_000)
+}
+
+/// Computes storage byte-seconds for current rows and retained history rows.
+///
+/// D-16 charges both sets of logical bytes. TTL-aware callers pass the TTL (or
+/// history-retention) boundary as each row's `end_millis`; expired bytes are
+/// therefore absent from the measured interval immediately, before a cleanup
+/// tombstone is written. Each tuple is `(logical_bytes, start_millis,
+/// end_millis)` and all rows are multiplied by the selected Region count.
+pub fn storage_byte_seconds_current_and_history(
+    current: &[(u64, u64, u64)],
+    history: &[(u64, u64, u64)],
+    selected_regions: u32,
+) -> Result<u128, UsageError> {
+    if selected_regions == 0 {
+        return Err(UsageError::InvalidRegionCount);
+    }
+    let mut byte_millis = 0_u128;
+    for &(bytes, start, end) in current.iter().chain(history) {
+        if end <= start {
+            return Err(UsageError::InvalidMeasurementWindow);
+        }
+        byte_millis = byte_millis
+            .checked_add(
+                u128::from(bytes)
+                    .checked_mul(u128::from(selected_regions))
+                    .and_then(|value| value.checked_mul(u128::from(end - start)))
+                    .ok_or(UsageError::IntegerOverflow)?,
+            )
+            .ok_or(UsageError::IntegerOverflow)?;
+    }
+    Ok(byte_millis / 1_000)
+}
+
+/// A group-commit metering fact: `(db, seq_hi, writes, logical bytes)`.
+///
+/// `writes` already includes the selected Region multiplier. `logical_bytes`
+/// is the sum of canonical document body bytes in the wave (tombstones add a
+/// write unit but zero bytes). Facts are cumulative for a database, allowing
+/// a restart to rebuild them from the retained journal without double billing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupCommitFact {
+    db: UsageScopeId,
+    seq_hi: u64,
+    writes: u64,
+    logical_bytes: u64,
+}
+
+impl GroupCommitFact {
+    /// Creates one validated cumulative database fact.
+    pub fn try_new(
+        db: &str,
+        seq_hi: u64,
+        writes: u64,
+        logical_bytes: u64,
+    ) -> Result<Self, UsageError> {
+        if seq_hi == 0 {
+            return Err(UsageError::InvalidCommitSequence);
+        }
+        if writes == 0 && logical_bytes != 0 {
+            return Err(UsageError::InvalidIntegerUnits);
+        }
+        Ok(Self { db: UsageScopeId::try_new(db)?, seq_hi, writes, logical_bytes })
+    }
+
+    /// Creates one fact, panicking only when called with invalid internal data.
+    #[must_use]
+    pub fn new(db: String, seq_hi: u64, writes: u64, logical_bytes: u64) -> Self {
+        Self::try_new(&db, seq_hi, writes, logical_bytes)
+            .expect("group-commit facts must carry validated values")
+    }
+
+    /// Returns the billed database identity.
+    #[must_use]
+    pub fn db(&self) -> &str {
+        self.db.as_str()
+    }
+
+    /// Returns the highest journal sequence covered by this fact.
+    #[must_use]
+    pub const fn seq_hi(&self) -> u64 {
+        self.seq_hi
+    }
+
+    /// Returns billed write units, including Region copies.
+    #[must_use]
+    pub const fn writes(&self) -> u64 {
+        self.writes
+    }
+
+    /// Returns logical canonical body bytes, excluding storage overhead.
+    #[must_use]
+    pub const fn logical_bytes(&self) -> u64 {
+        self.logical_bytes
+    }
+
+    /// Compatibility spelling used by the storage export surface.
+    #[must_use]
+    pub const fn bytes(&self) -> u64 {
+        self.logical_bytes
+    }
+}
+
+/// A retry-safe wave accumulator. Operation identities make replay and
+/// delivery of a split wave idempotent; only the first admission contributes
+/// to the resulting fact.
+#[derive(Clone, Debug)]
+pub struct GroupCommitAccumulator {
+    db: UsageScopeId,
+    seq_hi: u64,
+    selected_regions: u32,
+    operations: BTreeMap<UsageFactId, u64>,
+    writes: u64,
+    logical_bytes: u64,
+}
+
+impl GroupCommitAccumulator {
+    /// Starts a metering wave for one database and its selected copies.
+    pub fn try_new(db: &str, seq_hi: u64, selected_regions: u32) -> Result<Self, UsageError> {
+        if seq_hi == 0 {
+            return Err(UsageError::InvalidCommitSequence);
+        }
+        if selected_regions == 0 {
+            return Err(UsageError::InvalidRegionCount);
+        }
+        Ok(Self {
+            db: UsageScopeId::try_new(db)?,
+            seq_hi,
+            selected_regions,
+            operations: BTreeMap::new(),
+            writes: 0,
+            logical_bytes: 0,
+        })
+    }
+
+    /// Adds one operation. Re-adding the same identity and bytes is a no-op;
+    /// reusing it for different bytes is rejected as an identity conflict.
+    pub fn add(&mut self, operation: UsageFactId, logical_bytes: u64) -> Result<bool, UsageError> {
+        if let Some(previous) = self.operations.get(&operation) {
+            return if *previous == logical_bytes {
+                Ok(false)
+            } else {
+                Err(UsageError::FactIdentityConflict)
+            };
+        }
+        let units = write_units_for_regions(logical_bytes, self.selected_regions)?;
+        self.writes = self.writes.checked_add(units).ok_or(UsageError::IntegerOverflow)?;
+        self.logical_bytes =
+            self.logical_bytes.checked_add(logical_bytes).ok_or(UsageError::IntegerOverflow)?;
+        self.operations.insert(operation, logical_bytes);
+        Ok(true)
+    }
+
+    /// Finishes the wave as one cumulative database fact.
+    pub fn finish(self) -> Result<GroupCommitFact, UsageError> {
+        GroupCommitFact::try_new(self.db.as_str(), self.seq_hi, self.writes, self.logical_bytes)
+    }
+}
+
+/// One journal write fact used to reconstruct metering after a restart.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JournalWriteFact {
+    db: UsageScopeId,
+    sequence: u64,
+    operation: UsageFactId,
+    logical_bytes: u64,
+    selected_regions: u32,
+}
+
+impl JournalWriteFact {
+    /// Creates one validated journal-derived write fact.
+    pub fn try_new(
+        db: &str,
+        sequence: u64,
+        operation: UsageFactId,
+        logical_bytes: u64,
+        selected_regions: u32,
+    ) -> Result<Self, UsageError> {
+        if sequence == 0 {
+            return Err(UsageError::InvalidCommitSequence);
+        }
+        if selected_regions == 0 {
+            return Err(UsageError::InvalidRegionCount);
+        }
+        UsageScopeId::try_new(db)?;
+        Ok(Self {
+            db: UsageScopeId::try_new(db)?,
+            sequence,
+            operation,
+            logical_bytes,
+            selected_regions,
+        })
+    }
+
+    /// Returns the database identity.
+    #[must_use]
+    pub fn db(&self) -> &str {
+        self.db.as_str()
+    }
+
+    /// Returns the journal sequence.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Returns the idempotent operation identity.
+    #[must_use]
+    pub fn operation(&self) -> &UsageFactId {
+        &self.operation
+    }
+
+    /// Returns canonical body bytes.
+    #[must_use]
+    pub const fn logical_bytes(&self) -> u64 {
+        self.logical_bytes
+    }
+
+    /// Returns this operation's billed write units.
+    pub fn writes(&self) -> Result<u64, UsageError> {
+        write_units_for_regions(self.logical_bytes, self.selected_regions)
+    }
+}
+
+/// Rebuilds cumulative per-database metering facts from journal rows.
+///
+/// Rows are deduplicated by `(db, operation)`, so replaying a transaction or
+/// splitting a previously committed wave cannot mint another charge. The
+/// returned facts are sorted by database identity for cursor export.
+pub fn reconcile_journal(journal: &[JournalWriteFact]) -> Result<Vec<GroupCommitFact>, UsageError> {
+    let mut unique: BTreeMap<(UsageScopeId, UsageFactId), &JournalWriteFact> = BTreeMap::new();
+    for row in journal {
+        let key = (row.db.clone(), row.operation.clone());
+        if let Some(previous) = unique.get(&key) {
+            if *previous != row {
+                return Err(UsageError::FactIdentityConflict);
+            }
+        } else {
+            unique.insert(key, row);
+        }
+    }
+    let mut totals: BTreeMap<UsageScopeId, (u64, u64, u64)> = BTreeMap::new();
+    for row in unique.values() {
+        let writes = row.writes()?;
+        let entry = totals.entry(row.db.clone()).or_default();
+        entry.0 = entry.0.max(row.sequence);
+        entry.1 = entry.1.checked_add(writes).ok_or(UsageError::IntegerOverflow)?;
+        entry.2 = entry.2.checked_add(row.logical_bytes).ok_or(UsageError::IntegerOverflow)?;
+    }
+    totals
+        .into_iter()
+        .map(|(db, (seq_hi, writes, bytes))| {
+            GroupCommitFact::try_new(db.as_str(), seq_hi, writes, bytes)
+        })
+        .collect()
+}
+
+/// A monotonic, checksummed cursor for idempotent usage export.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct UsageExportCursor {
+    sequence: u64,
+    db: UsageScopeId,
+}
+
+const USAGE_EXPORT_CURSOR_MAGIC: &[u8; 8] = b"TBUEX001";
+const USAGE_EXPORT_CURSOR_DOMAIN: &[u8] = b"terrascale.usage.export-cursor.v1\0";
+
+impl UsageExportCursor {
+    /// Returns the beginning of the export stream.
+    #[must_use]
+    pub fn initial() -> Self {
+        Self { sequence: 0, db: UsageScopeId(String::new()) }
+    }
+
+    /// Creates a cursor after one committed fact.
+    pub fn try_new(sequence: u64, db: &str) -> Result<Self, UsageError> {
+        if sequence == 0 {
+            return Err(UsageError::InvalidCommitSequence);
+        }
+        Ok(Self { sequence, db: UsageScopeId::try_new(db)? })
+    }
+
+    /// Returns the sequence frontier.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Returns the last exported database key.
+    #[must_use]
+    pub fn db(&self) -> &str {
+        self.db.as_str()
+    }
+
+    /// Advances the cursor monotonically. Equal acknowledgements are safe on
+    /// retry; an older acknowledgement is rejected and must not rewind export.
+    pub fn advance(&mut self, next: &Self) -> Result<bool, UsageError> {
+        if next < self {
+            return Err(UsageError::CursorRegression);
+        }
+        if next == self {
+            return Ok(false);
+        }
+        *self = next.clone();
+        Ok(true)
+    }
+
+    /// Encodes the cursor as bounded opaque bytes with a domain-separated
+    /// checksum. Export consumers must persist and replay these bytes as-is.
+    #[must_use]
+    pub fn encoded(&self) -> Vec<u8> {
+        let mut body = Vec::with_capacity(32);
+        body.extend_from_slice(USAGE_EXPORT_CURSOR_MAGIC);
+        body.extend_from_slice(&self.sequence.to_le_bytes());
+        push_string(&mut body, self.db.as_str());
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(USAGE_EXPORT_CURSOR_DOMAIN);
+        hasher.update(&body);
+        body.extend_from_slice(hasher.finalize().as_bytes());
+        body
+    }
+
+    /// Decodes and verifies an opaque export cursor.
+    pub fn decode(bytes: &[u8]) -> Result<Self, UsageError> {
+        if bytes.len() < USAGE_EXPORT_CURSOR_MAGIC.len() + 8 + 2 + 32 {
+            return Err(UsageError::InvalidContinuation);
+        }
+        let (body, checksum_bytes) = bytes.split_at(bytes.len() - 32);
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(USAGE_EXPORT_CURSOR_DOMAIN);
+        hasher.update(body);
+        if hasher.finalize().as_bytes() != checksum_bytes {
+            return Err(UsageError::ChecksumMismatch);
+        }
+        let mut reader = Reader::new(body);
+        if reader.take(8)? != USAGE_EXPORT_CURSOR_MAGIC {
+            return Err(UsageError::MalformedEncoding);
+        }
+        let sequence = reader.u64()?;
+        let db_text = reader.string()?;
+        if reader.remaining() != 0 {
+            return Err(UsageError::NonCanonicalEncoding);
+        }
+        let cursor = if sequence == 0 && db_text.is_empty() {
+            Self::initial()
+        } else {
+            Self::try_new(sequence, &db_text)?
+        };
+        if cursor.encoded() != bytes {
+            return Err(UsageError::NonCanonicalEncoding);
+        }
+        Ok(cursor)
+    }
+}
+
+/// A billable/unbilled activity classification. Reads and queries are
+/// intentionally explicit so they cannot accidentally enter write metering.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum UsageActivity {
+    /// A document create/update/patch/delete.
+    Write,
+    /// A direct document read, including a cache miss at the member.
+    Read,
+    /// A SQL query or query subscription evaluation.
+    Query,
+}
+
+impl UsageActivity {
+    /// Returns whether this activity contributes to a billed usage fact.
+    #[must_use]
+    pub const fn is_billed(self) -> bool {
+        matches!(self, Self::Write)
+    }
+
+    /// Returns whether this activity is explicitly unbilled by D-16.
+    #[must_use]
+    pub const fn is_unbilled(self) -> bool {
+        !self.is_billed()
     }
 }
 
