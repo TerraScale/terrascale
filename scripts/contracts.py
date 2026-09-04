@@ -28,7 +28,7 @@ from pathlib import Path
 REQUIRED = (
     "manifest.json",
     "openapi.json",
-    "msgpack/terrascale.sync.v2.msgpack.json",
+    "msgpack/terrascale.sync.v1.msgpack.json",
 )
 CONFORMANCE = (
     "conformance/http.json",
@@ -455,7 +455,7 @@ def render_contract_go(openapi: dict, msgpack: dict, version: str, digests: dict
         "", "const (",
         f"\tContractVersion = {go_string(version)}",
         f"\tContractOpenAPIBLAKE3 = {go_string(digests['openapi.json'])}",
-        f"\tContractMessagePackBLAKE3 = {go_string(digests['msgpack/terrascale.sync.v2.msgpack.json'])}",
+        f"\tContractMessagePackBLAKE3 = {go_string(digests['msgpack/terrascale.sync.v1.msgpack.json'])}",
         ")", "",
         "var ContractOperations = []ContractMetadata{",
     ]
@@ -491,7 +491,7 @@ package sdk
 const (
 	pinnedContractVersion     = {json.dumps(manifest["contractVersion"])}
 	pinnedOpenAPIBLAKE3       = {json.dumps(digests["openapi.json"])}
-	pinnedMessagePackBLAKE3   = {json.dumps(digests["msgpack/terrascale.sync.v2.msgpack.json"])}
+	pinnedMessagePackBLAKE3   = {json.dumps(digests["msgpack/terrascale.sync.v1.msgpack.json"])}
 	pinnedMessageVectorSHA256 = {json.dumps(corpus_sha)}
 	pinnedHostileVectorSHA256 = {json.dumps(hostile_sha)}
 )
@@ -593,12 +593,12 @@ def main() -> None:
             # The corpus is tied to the exact MessagePack manifest, not merely
             # its protocol name. This catches a stale fixture from another v1.
             vectors = load_json(staging / "msgpack" / "message-vectors.json")
-            expected_sha = hashlib.sha256((staging / "msgpack" / "terrascale.sync.v2.msgpack.json").read_bytes()).hexdigest()
+            expected_sha = hashlib.sha256((staging / "msgpack" / "terrascale.sync.v1.msgpack.json").read_bytes()).hexdigest()
             if vectors.get("manifestSha256") != expected_sha:
                 die("MessagePack corpus pins a different manifest SHA-256")
             manifest, digests = validate_bundle(staging, args.version)
             openapi = load_json(staging / "openapi.json")
-            msgpack = load_json(staging / "msgpack/terrascale.sync.v2.msgpack.json")
+            msgpack = load_json(staging / "msgpack/terrascale.sync.v1.msgpack.json")
             generated_staging.write_text(render_generated(staging, manifest, digests), encoding="utf-8")
             contract_staging.write_text(render_contract_go(openapi, msgpack, args.version, digests), encoding="utf-8")
             if generated_target.exists():

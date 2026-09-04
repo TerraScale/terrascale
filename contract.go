@@ -34,8 +34,8 @@ type ContractFrame struct {
 
 const (
 	ContractVersion           = "v1"
-	ContractOpenAPIBLAKE3     = "c2bf884c9522a9f8412e6f237460e5b725d77f5c7f7fdf445057c3492e26d0ef"
-	ContractMessagePackBLAKE3 = "f3ed2d9998698d3ff2587aaf59039ad6557dedb07ffbfe2669194b4ecc213542"
+	ContractOpenAPIBLAKE3     = "f51146b13ae8a7217342d0d4c9e7d14c645f56c07c9f3365d9b2a3895d58e7a9"
+	ContractMessagePackBLAKE3 = "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27"
 )
 
 var ContractOperations = []ContractMetadata{

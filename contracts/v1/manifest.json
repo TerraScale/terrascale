@@ -5,42 +5,42 @@
     {
       "path": "conformance/http.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "962bf76933f863c32f7a432f71f352d591972621411c90afb49a90c142b9e47e"
+      "blake3": "361dc79166e8edc64f14c8ade08f8224da9af94a34932f185d6cb7501fc9e7bf"
     },
     {
       "path": "conformance/msgpack/hostile-vectors.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "56cc57c450fa1c6340f60392c1550a0c6a5dda56b1bfa3c0cec187e1a86cd799"
+      "blake3": "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3"
     },
     {
       "path": "conformance/msgpack/message-vectors.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "bb6b684d3c828b3338f190332292607c6c42ddc32c91f8f9c713ebe5dee646b4"
+      "blake3": "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c"
     },
     {
       "path": "conformance/reactive.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "2aafa58d745ac592c3a7810f51c36123909277e70fac7625509f293a712a1573"
+      "blake3": "a6e2a9016aa78863dc88daa1660062ed4a169b77890bf5c3c279c6f8df78ade4"
     },
     {
       "path": "msgpack/hostile-vectors.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "56cc57c450fa1c6340f60392c1550a0c6a5dda56b1bfa3c0cec187e1a86cd799"
+      "blake3": "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3"
     },
     {
       "path": "msgpack/message-vectors.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "bb6b684d3c828b3338f190332292607c6c42ddc32c91f8f9c713ebe5dee646b4"
+      "blake3": "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c"
     },
     {
-      "path": "msgpack/terrascale.sync.v2.msgpack.json",
-      "mediaType": "application/vnd.terrascale.msgpack-manifest.v2+json",
-      "blake3": "f3ed2d9998698d3ff2587aaf59039ad6557dedb07ffbfe2669194b4ecc213542"
+      "path": "msgpack/terrascale.sync.v1.msgpack.json",
+      "mediaType": "application/vnd.terrascale.msgpack-manifest.v1+json",
+      "blake3": "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27"
     },
     {
       "path": "openapi.json",
       "mediaType": "application/vnd.oai.openapi+json;version=3.1",
-      "blake3": "c2bf884c9522a9f8412e6f237460e5b725d77f5c7f7fdf445057c3492e26d0ef"
+      "blake3": "f51146b13ae8a7217342d0d4c9e7d14c645f56c07c9f3365d9b2a3895d58e7a9"
     },
     {
       "path": "proto/terrabase/v1/engine.proto",

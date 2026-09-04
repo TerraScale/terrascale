@@ -76,7 +76,7 @@ func TestGeneratedContractProvenance(t *testing.T) {
 	if seen["openapi.json"] != pinnedOpenAPIBLAKE3 {
 		t.Fatal("generated OpenAPI provenance does not match the pinned manifest")
 	}
-	if seen["msgpack/terrascale.sync.v2.msgpack.json"] != pinnedMessagePackBLAKE3 {
+	if seen["msgpack/terrascale.sync.v1.msgpack.json"] != pinnedMessagePackBLAKE3 {
 		t.Fatal("generated MessagePack provenance does not match the pinned manifest")
 	}
 	if ContractVersion != pinnedContractVersion {
@@ -192,11 +192,11 @@ func TestP2BConformanceCanonicalHTTPParity(t *testing.T) {
 }
 
 func TestP2BConformanceMessagePackCorpus(t *testing.T) {
-	manifestRaw := readPinnedJSON(t, "msgpack/terrascale.sync.v2.msgpack.json", &struct{}{})
+	manifestRaw := readPinnedJSON(t, "msgpack/terrascale.sync.v1.msgpack.json", &struct{}{})
 	manifestDigest := sha256.Sum256(manifestRaw)
 	var corpus pinnedCorpus
 	corpusRaw := readPinnedJSON(t, "msgpack/message-vectors.json", &corpus)
-	if corpus.Protocol != "terrascale.sync.v2.msgpack" || corpus.Version != "2.1" {
+	if corpus.Protocol != "terrascale.sync.v1.msgpack" || corpus.Version != "1.0" {
 		t.Fatalf("corpus identity = %s %s", corpus.Protocol, corpus.Version)
 	}
 	if corpus.ManifestSHA256 != hex.EncodeToString(manifestDigest[:]) {

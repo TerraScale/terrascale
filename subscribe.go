@@ -41,7 +41,7 @@ const (
 	ResetSlowConsumer   ResetReason = "slow_consumer"
 	ResetReconnect      ResetReason = "reconnect"
 
-	// Reset reasons from the terrascale.sync.v2 contract.
+	// Reset reasons from the terrascale.sync.v1 contract.
 	ResetRetentionAdvanced    ResetReason = "retention_advanced"
 	ResetCheckpointCurrent    ResetReason = "checkpoint_not_current"
 	ResetCheckpointNotCurrent ResetReason = ResetCheckpointCurrent
@@ -1065,7 +1065,7 @@ func resetForStatus(status int) *ResetError {
 	}
 }
 
-// The sync-v2 codec is deliberately local and dependency-free. MessagePack
+// The sync-v1 codec is deliberately local and dependency-free. MessagePack
 // maps, extensions, floats, and non-indexed shapes are never accepted.
 type reactiveMPReader struct {
 	b []byte
@@ -1284,7 +1284,7 @@ func validateReactiveProtocol(b []byte) error {
 	if err != nil {
 		return err
 	}
-	if count == 7 && looksLikeUint2(b[r.i:]) {
+	if count == 7 && looksLikeProtocolMajor(b[r.i:]) {
 		r = reactiveMPReader{b: b}
 		_, err = decodeMPEnvelope(&r, "", 0)
 		return err
@@ -1416,7 +1416,7 @@ func decodeReactiveMessagePack(body []byte, view string, generation uint64) ([]U
 	if err != nil {
 		return nil, "", "", nil, err
 	}
-	if count != 7 || !looksLikeUint2(body[r.i:]) {
+	if count != 7 || !looksLikeProtocolMajor(body[r.i:]) {
 		return nil, "", "", nil, fmt.Errorf("sdk: reactive response must contain one indexed envelope")
 	}
 	r = reactiveMPReader{b: body}
@@ -1444,14 +1444,14 @@ func decodeReactiveMessagePack(body []byte, view string, generation uint64) ([]U
 	return updates, cp, offset, reset, nil
 }
 
-func looksLikeUint2(b []byte) bool {
+func looksLikeProtocolMajor(b []byte) bool {
 	if len(b) == 0 {
 		return false
 	}
-	if b[0] == 2 {
+	if b[0] == 1 {
 		return true
 	}
-	return len(b) >= 2 && b[0] == 0xcc && b[1] == 2
+	return len(b) >= 2 && b[0] == 0xcc && b[1] == 1
 }
 func decodeReactiveSnapshotMessagePack(body []byte, view string, generation uint64) ([]Document, Checkpoint, string, error) {
 	if err := scanReactiveMessagePack(body); err != nil {
@@ -1462,7 +1462,7 @@ func decodeReactiveSnapshotMessagePack(body []byte, view string, generation uint
 	if err != nil {
 		return nil, "", "", err
 	}
-	if count != 7 || !looksLikeUint2(body[r.i:]) {
+	if count != 7 || !looksLikeProtocolMajor(body[r.i:]) {
 		return nil, "", "", fmt.Errorf("sdk: snapshot response must contain one indexed envelope")
 	}
 	r = reactiveMPReader{b: body}
@@ -1516,7 +1516,7 @@ func decodeMPEnvelope(r *reactiveMPReader, view string, generation uint64) (reac
 	if e != nil {
 		return reactiveMPMessage{}, e
 	}
-	if major != 2 || minor != 1 || features != 0 {
+	if major != 1 || minor != 0 || features != 0 {
 		return reactiveMPMessage{}, fmt.Errorf("sdk: unsupported reactive MessagePack envelope")
 	}
 	if _, e = mpUint(r, 64); e != nil {

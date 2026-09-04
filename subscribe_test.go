@@ -24,7 +24,7 @@ func TestReactiveMessagePackRejectsMapsAndHostileBounds(t *testing.T) {
 	for name, wire := range map[string]string{
 		"map":              "81a16101",
 		"oversized binary": "c60100000000",
-		"trailing":         "9702010003000092a173960100009192a17390a0c401637f",
+		"trailing":         "9701000003000092a173960100009192a17390a0c401637f",
 	} {
 		t.Run(name, func(t *testing.T) {
 			body, err := hex.DecodeString(wire)
@@ -39,22 +39,22 @@ func TestReactiveMessagePackRejectsMapsAndHostileBounds(t *testing.T) {
 }
 
 func TestReactiveMessagePackRejectsClientFramesBatchesAndDuplicateFields(t *testing.T) {
-	if _, _, _, _, err := decodeReactiveMessagePack(mustHex("9702010001010094a173a171c4020102c0"), "v", 1); err == nil {
+	if _, _, _, _, err := decodeReactiveMessagePack(mustHex("9701000001010094a173a171c4020102c0"), "v", 1); err == nil {
 		t.Fatal("client-to-server subscribe frame was accepted as a response")
 	}
-	single := mustHex("9702010006060590")
+	single := mustHex("9701000006060590")
 	batch := append([]byte{0x92}, append(append([]byte(nil), single...), single...)...)
 	if _, _, _, _, err := decodeReactiveMessagePack(batch, "v", 1); err == nil {
 		t.Fatal("batched response envelopes were accepted")
 	}
-	duplicate := mustHex("9702010003000092a173960100009192a17392a173c40161a173c40162a0c40163")
+	duplicate := mustHex("9701000003000092a173960100009192a17392a173c40161a173c40162a0c40163")
 	if _, _, _, _, err := decodeReactiveMessagePack(duplicate, "v", 1); err == nil {
 		t.Fatal("duplicate projected fields were accepted")
 	}
 }
 
 func TestReactiveMessagePackDecodesIndexedSnapshot(t *testing.T) {
-	body, err := hex.DecodeString("9702010003000092a173960100009192a17390a0c40163")
+	body, err := hex.DecodeString("9701000003000092a173960100009192a17390a0c40163")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,12 +102,12 @@ func TestSubscribeUsesCanonicalOffsetCapabilityAndCopiesSnapshotBody(t *testing.
 				w.Header().Set("ETag", `"rev-1"`)
 				w.Header().Set("Cache-Control", "private, max-age=0")
 				w.Header().Set("Content-Type", "application/msgpack")
-				_, _ = w.Write(mustHex("9702010004040497a173070304919401a165019192a178c40169a0c40169"))
+				_, _ = w.Write(mustHex("9701000004040497a173070304919401a165019192a178c40169a0c40169"))
 				return
 			}
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Content-Type", "application/msgpack")
-			_, _ = w.Write(mustHex("9702010004040497a17307040490a0c40169"))
+			_, _ = w.Write(mustHex("9701000004040497a17307040490a0c40169"))
 		default:
 			http.NotFound(w, r)
 		}
@@ -193,7 +193,7 @@ func TestPollRevalidatesImmutableOffsetButDropsNoStoreETag(t *testing.T) {
 			}
 			w.Header().Set("ETag", `"offset-7"`)
 			w.Header().Set("Content-Type", "application/msgpack")
-			_, _ = w.Write(mustHex("9702010006060590"))
+			_, _ = w.Write(mustHex("9701000006060590"))
 			return
 		}
 		if got := r.Header.Get("If-None-Match"); got != `"offset-7"` {

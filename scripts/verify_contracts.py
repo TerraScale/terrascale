@@ -22,7 +22,7 @@ vectors_path = bundle / "msgpack" / "message-vectors.json"
 hostile_path = bundle / "msgpack" / "hostile-vectors.json"
 vectors = load_json(vectors_path)
 manifest_sha = hashlib.sha256(
-    (bundle / "msgpack" / "terrascale.sync.v2.msgpack.json").read_bytes()
+    (bundle / "msgpack" / "terrascale.sync.v1.msgpack.json").read_bytes()
 ).hexdigest()
 if vectors.get("manifestSha256") != manifest_sha:
     raise SystemExit("contracts: MessagePack corpus pins a different manifest SHA-256")
