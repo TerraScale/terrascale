@@ -217,6 +217,7 @@ def validate_bundle(root: Path, version: str) -> tuple[dict, dict[str, str]]:
             or len(expected) != 64
         ):
             die(f"manifest artifact has an invalid path or digest: {entry!r}")
+        relative = safe_relative(relative, "manifest artifact path")
         if relative in digests:
             die(f"manifest repeats artifact path: {relative}")
         path = root / relative
