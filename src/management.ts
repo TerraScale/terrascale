@@ -1,292 +1,105 @@
 import type { TerraScaleRuntimeConfig } from "./config.js";
-import { TerraScaleHttp, type TerraScaleRouteName } from "./http.js";
+import { TerraScaleHttp } from "./http.js";
 import { normalizeRegionCodes, type TerraScaleRegionCode } from "./regions.js";
+import type * as Models from "./models.js";
 import type { TerraScaleResult } from "./result.js";
 
 export type { TerraScaleRuntimeConfig } from "./config.js";
 
 const apiRoot = "/api/v1";
 
-export type ManagementPageRequest = {
-  readonly skip?: number;
-  readonly take?: number;
-  readonly cursor?: string;
-  readonly limit?: number;
-};
+/** The bounded page shape used by management list operations. */
+export type ManagementPageRequest = Models.PageRequest;
 
 export type ManagementOperationOptions = {
-  /** Stable identity for a retryable mutation. `false` opts out only where the contract permits it. */
+  /** Stable identity for a retryable mutation. */
   readonly idempotencyKey?: string | false;
-  /** Project scope for project-owned routes; otherwise the runtime config is used. */
+  /** Project scope; the runtime project is used when omitted. */
   readonly projectId?: string;
 };
 
+/** A residency constraint. Region lists are normalized and bounded. */
 export type PlacementLock =
   | "eu-only"
   | "br-only"
   | readonly TerraScaleRegionCode[];
 
-export type CreateDatabaseRequest = {
-  readonly name: string;
-  readonly placement: readonly TerraScaleRegionCode[];
+/** A typed signal for an operation whose owning service has not published its contract. */
+export class ManagementContractGapError extends Error {
+  readonly code = "contract_gap" as const;
+  readonly operation: string;
+
+  constructor(operation: string) {
+    super(`The published management contract is missing ${operation}.`);
+    this.name = "ManagementContractGapError";
+    this.operation = operation;
+  }
+}
+
+/**
+ * Database creation currently publishes only `name`. The optional residency
+ * fields are accepted for validation at the boundary, then fail closed until
+ * the owner publishes their request shape; they are never silently dropped.
+ */
+export type CreateDatabaseRequest = Models.CreateDatabaseRequest & {
+  readonly placement?: readonly TerraScaleRegionCode[];
   readonly residency?: Exclude<PlacementLock, readonly TerraScaleRegionCode[]>;
 };
-
-export type Database = {
-  readonly databaseId: string;
-  readonly name: string;
-  readonly placement: readonly TerraScaleRegionCode[];
-  readonly residency?: string | null;
-  readonly deleted?: boolean;
-  readonly createdAt?: string;
-  readonly [key: string]: unknown;
-};
-
-export type DatabaseListResponse = {
-  readonly databases: readonly Database[];
-};
-
-export type DeleteDatabaseOptions = ManagementOperationOptions & {
-  readonly confirm?: true;
-};
-
-export type DatabaseBranch = {
-  readonly branchId: string;
-  readonly sourceDatabaseId: string;
-  readonly name?: string;
-  readonly placement?: readonly TerraScaleRegionCode[];
-  readonly status?: string;
-  readonly createdAt?: string;
-  readonly [key: string]: unknown;
-};
-
-export type BranchListResponse = {
-  readonly branches: readonly DatabaseBranch[];
-};
-
-export type CreateBranchRequest = {
-  readonly name: string;
-  readonly at?: number;
-  readonly placement?: PlacementLock;
-};
-
-export type Collection = {
-  readonly name: string;
-  readonly [key: string]: unknown;
-};
-
-export type CollectionListResponse = {
-  readonly collections: readonly string[];
-};
-
-export type CollectionIndex = {
-  readonly field: string;
-  readonly state?: string;
-  readonly backfillRemaining?: number;
-  readonly [key: string]: unknown;
-};
-
-export type CreateIndexRequest = {
-  readonly field: string;
-};
-
-export type CollectionSchema = {
-  readonly name?: string;
-  readonly fields?: Readonly<Record<string, string | Readonly<Record<string, unknown>>>>;
-  readonly indexes?: readonly CreateIndexRequest[];
-  readonly ttl?: Readonly<Record<string, unknown>> | null;
-  readonly historyRetentionDays?: number;
-  readonly merge?: Readonly<Record<string, unknown>> | null;
-  readonly [key: string]: unknown;
-};
-
-export type Backup = {
-  readonly backupId?: string;
-  readonly databaseId: string;
-  readonly status?: string;
-  readonly ready?: boolean;
-  readonly streaming?: boolean;
-  readonly createdAt?: string;
-  readonly [key: string]: unknown;
-};
-
-export type BackupStatus = {
-  readonly ready: boolean;
-  readonly streaming: boolean;
-};
-
-export type BackupListRequest = ManagementPageRequest;
-
-export type RestoreRequest = {
-  readonly name: string;
-  readonly at?: number;
-  readonly placement?: PlacementLock;
-};
-
-export type RestorePoint = {
-  readonly name: string;
-  readonly createdAt?: string;
-  readonly backupId?: string | null;
-  readonly [key: string]: unknown;
-};
-
-export type ExportFormat = "bundle" | "jsonl";
-
-export type CreateExportRequest = {
-  readonly format?: ExportFormat;
-  readonly includeHistory?: boolean;
-};
-
-export type ExportJob = {
-  readonly exportId: string;
-  readonly databaseId: string;
-  readonly format?: ExportFormat;
-  readonly status?: string;
-  readonly progress?: number;
-  readonly downloadUrl?: string | null;
-  readonly [key: string]: unknown;
-};
-
-export type ImportFormat = "jsonl" | "csv" | "mongo" | "cosmos" | "dynamodb";
-
-export type CreateImportRequest = {
-  readonly format: ImportFormat;
-  readonly source: string;
-  readonly name?: string;
-  readonly placement?: PlacementLock;
-};
-
-export type ImportJob = {
-  readonly importId: string;
-  readonly databaseId?: string;
-  readonly status?: string;
-  readonly progress?: number;
-  readonly [key: string]: unknown;
-};
-
-export type ApiKey = {
-  readonly keyId: string;
-  readonly name: string;
-  readonly prefix?: string;
-  readonly scopes?: readonly string[];
-  readonly createdAt?: string;
-  readonly revokedAt?: string | null;
-  readonly [key: string]: unknown;
-};
-
-export type CreateApiKeyRequest = {
-  readonly name: string;
-  readonly scopes?: readonly string[];
-  readonly expiresAt?: string | null;
-};
-
-export type CreatedApiKey = ApiKey & { readonly secret: string };
-export type RotatedApiKey = ApiKey & { readonly secret: string };
-
-export type Usage = {
-  readonly databaseId?: string;
-  readonly projectId?: string;
-  readonly writes?: number | string;
-  readonly storageBytes?: number | string;
-  readonly periodStart?: string;
-  readonly periodEnd?: string;
-  readonly [key: string]: unknown;
-};
-
-export type ManagementRouteName =
-  | "databases.list"
-  | "databases.create"
-  | "databases.get"
-  | "databases.delete"
-  | "databases.restore"
-  | "branches.list"
-  | "branches.create"
-  | "collections.list"
-  | "collections.indexes.list"
-  | "collections.indexes.create"
-  | "collections.indexes.delete"
-  | "collections.indexes.recommendations"
-  | "schemas.get"
-  | "schemas.put"
-  | "backups.list"
-  | "backups.restore"
-  | "exports.create"
-  | "imports.create"
-  | "apiKeys.list"
-  | "apiKeys.create"
-  | "apiKeys.rotate"
-  | "apiKeys.revoke"
-  | "usage.database.get"
-  | "usage.project.get"
-  | "usage.organization.get";
-
-type RequestRouteName = TerraScaleRouteName & ManagementRouteName;
+export type Database = Models.ProjectDatabase;
+export type DatabaseListResponse = readonly Models.ProjectDatabase[];
+export type DeleteDatabaseOptions = Models.DeleteProjectDatabaseOptions;
+export type DatabaseBranchCapabilityResponse = Models.DatabaseBranchCapabilityResponse;
+export type CreateDatabaseBranchRequest = Models.CreateDatabaseBranchRequest;
+export type ConfigureBackupPolicyRequest = Models.ConfigureBackupPolicyRequest;
+export type BackupPolicyResponse = Models.BackupPolicyResponse;
+export type DatabaseBackupConfirmationPlanRequest = Models.DatabaseBackupConfirmationPlanRequest;
+export type DatabaseBackupConfirmationPlanResponse = Models.DatabaseBackupConfirmationPlanResponse;
+export type DatabaseBackupConfirmationExecuteRequest = Models.DatabaseBackupConfirmationExecuteRequest;
+export type BackupJobResponse = Models.BackupJobResponse;
+export type RestorePointResponse = Models.RestorePointResponse;
+export type StartRestoreRequest = Models.StartRestoreRequest;
+export type RestoreJobResponse = Models.RestoreJobResponse;
+export type UsageSummary = Models.UsageSummary;
+export type OrganizationUsage = Models.OrganizationUsage;
 
 export class ManagementDatabasesClient {
   readonly #http: TerraScaleHttp;
 
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
+  constructor(http: TerraScaleHttp) { this.#http = http; }
 
-  list(): Promise<TerraScaleResult<DatabaseListResponse>> {
+  list(projectId?: string, query?: ManagementPageRequest): Promise<TerraScaleResult<DatabaseListResponse>> {
     return this.#http.request({
       method: "GET",
-      path: `${apiRoot}/databases`,
-      routeName: route("databases.list"),
+      path: `${projectPath(this.#http, projectId)}/databases`,
+      routeName: "databases.list",
+      query: pageQuery(query),
     });
   }
 
-  create(
-    request: CreateDatabaseRequest,
-    options?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<Database>> {
-    const body = validateCreateDatabase(request);
+  create(request: CreateDatabaseRequest, projectId?: string): Promise<TerraScaleResult<Database>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/databases`,
-      routeName: route("databases.create"),
-      body,
-      idempotencyKey: options?.idempotencyKey,
+      path: `${projectPath(this.#http, projectId)}/databases`,
+      routeName: "databases.create",
+      body: validateCreateDatabase(request),
     });
   }
 
-  get(databaseId: string): Promise<TerraScaleResult<Database>> {
-    const id = idSegment(databaseId, "databaseId");
+  get(databaseId: string, projectId?: string): Promise<TerraScaleResult<Database>> {
     return this.#http.request({
       method: "GET",
-      path: `${apiRoot}/databases/${id}`,
-      routeName: route("databases.get"),
+      path: databasePath(this.#http, databaseId, projectId),
+      routeName: "databases.get",
     });
   }
 
-  delete(
-    databaseId: string,
-    options: DeleteDatabaseOptions = {},
-  ): Promise<TerraScaleResult<Database>> {
-    const id = idSegment(databaseId, "databaseId");
-    if (options.confirm !== undefined && options.confirm !== true) {
-      throw new TypeError("Database deletion requires options.confirm to be true.");
-    }
+  delete(databaseId: string, options: DeleteDatabaseOptions): Promise<TerraScaleResult<Models.DeletedProjectDatabaseResponse>> {
+    if (options?.confirm !== true) throw new TypeError("Database deletion requires options.confirm to be true.");
     return this.#http.request({
       method: "DELETE",
-      path: `${apiRoot}/databases/${id}`,
-      routeName: route("databases.delete"),
-      headers: options.confirm === true ? { "x-terrascale-delete-confirmation": databaseId } : undefined,
-      idempotencyKey: options.idempotencyKey,
-    });
-  }
-
-  restore(
-    databaseId: string,
-    options?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<Database>> {
-    const id = idSegment(databaseId, "databaseId");
-    return this.#http.request({
-      method: "POST",
-      path: `${apiRoot}/databases/${id}/restore`,
-      routeName: route("databases.restore"),
-      idempotencyKey: options?.idempotencyKey,
+      path: databasePath(this.#http, databaseId, options.projectId),
+      routeName: "databases.delete",
+      headers: { "x-terrascale-delete-confirmation": databaseId },
     });
   }
 }
@@ -294,346 +107,242 @@ export class ManagementDatabasesClient {
 export class ManagementBranchesClient {
   readonly #http: TerraScaleHttp;
 
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
+  constructor(http: TerraScaleHttp) { this.#http = http; }
 
-  list(databaseId: string): Promise<TerraScaleResult<BranchListResponse>> {
-    const id = idSegment(databaseId, "databaseId");
+  getCapability(projectId?: string): Promise<TerraScaleResult<DatabaseBranchCapabilityResponse>> {
     return this.#http.request({
       method: "GET",
-      path: `${apiRoot}/databases/${id}/branches`,
-      routeName: route("branches.list"),
+      path: `${projectPath(this.#http, projectId)}/database-branches/capability`,
+      routeName: "databaseBranches.getCapability",
     });
   }
 
-  create(
-    databaseId: string,
-    request: CreateBranchRequest,
-    options?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<DatabaseBranch>> {
-    const id = idSegment(databaseId, "databaseId");
-    const body = validateBranch(request);
+  requestClone(request: CreateDatabaseBranchRequest = {}, projectId?: string): Promise<TerraScaleResult<never>> {
     return this.#http.request({
       method: "POST",
-      path: `${apiRoot}/databases/${id}/branches`,
-      routeName: route("branches.create"),
-      body,
-      idempotencyKey: options?.idempotencyKey,
+      path: `${projectPath(this.#http, projectId)}/database-branches`,
+      routeName: "databaseBranches.requestClone",
+      body: validateBranchRequest(request),
+      idempotencyKey: false,
     });
-  }
-}
-
-export class ManagementCollectionsClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  list(databaseId: string): Promise<TerraScaleResult<CollectionListResponse>> {
-    const id = idSegment(databaseId, "databaseId");
-    return this.#http.request({
-      method: "GET",
-      path: `${apiRoot}/databases/${id}/collections`,
-      routeName: route("collections.list"),
-    });
-  }
-
-  listIndexes(databaseId: string, collection: string): Promise<TerraScaleResult<readonly CollectionIndex[]>> {
-    const base = collectionPath(databaseId, collection);
-    return this.#http.request({ method: "GET", path: `${base}/indexes`, routeName: route("collections.indexes.list") });
-  }
-
-  createIndex(
-    databaseId: string,
-    collection: string,
-    request: CreateIndexRequest,
-    options?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<CollectionIndex>> {
-    const base = collectionPath(databaseId, collection);
-    const body = validateIndex(request);
-    return this.#http.request({ method: "POST", path: `${base}/indexes`, routeName: route("collections.indexes.create"), body, idempotencyKey: options?.idempotencyKey });
-  }
-
-  deleteIndex(
-    databaseId: string,
-    collection: string,
-    field: string,
-    options?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<void>> {
-    const base = collectionPath(databaseId, collection);
-    const index = idSegment(field, "field");
-    return this.#http.request({ method: "DELETE", path: `${base}/indexes/${index}`, routeName: route("collections.indexes.delete"), idempotencyKey: options?.idempotencyKey });
-  }
-
-  listIndexRecommendations(databaseId: string, collection: string): Promise<TerraScaleResult<readonly CollectionIndex[]>> {
-    const base = collectionPath(databaseId, collection);
-    return this.#http.request({ method: "GET", path: `${base}/indexes/recommendations`, routeName: route("collections.indexes.recommendations") });
-  }
-}
-
-export class ManagementSchemasClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
-  }
-
-  get(databaseId: string, collection: string): Promise<TerraScaleResult<CollectionSchema>> {
-    const base = collectionPath(databaseId, collection);
-    return this.#http.request({ method: "GET", path: `${base}/schema`, routeName: route("schemas.get") });
-  }
-
-  put(
-    databaseId: string,
-    collection: string,
-    schema: CollectionSchema,
-    options?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<CollectionSchema>> {
-    const base = collectionPath(databaseId, collection);
-    return this.#http.request({ method: "PUT", path: `${base}/schema`, routeName: route("schemas.put"), body: schema, idempotencyKey: options?.idempotencyKey });
-  }
-
-  update(
-    databaseId: string,
-    collection: string,
-    schema: CollectionSchema,
-    options?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<CollectionSchema>> {
-    return this.put(databaseId, collection, schema, options);
   }
 }
 
 export class ManagementBackupsClient {
   readonly #http: TerraScaleHttp;
 
-  constructor(http: TerraScaleHttp) {
-    this.#http = http;
+  constructor(http: TerraScaleHttp) { this.#http = http; }
+
+  configurePolicy(databaseId: string, request: ConfigureBackupPolicyRequest, projectId?: string): Promise<TerraScaleResult<BackupPolicyResponse>> {
+    return this.#http.request({
+      method: "PUT",
+      path: `${databasePath(this.#http, databaseId, projectId)}/backups/policy`,
+      routeName: "backups.policy.configure",
+      body: validateBackupPolicy(request),
+    });
   }
 
-  list(databaseId: string): Promise<TerraScaleResult<BackupStatus>> {
-    const id = idSegment(databaseId, "databaseId");
-    return this.#http.request({ method: "GET", path: `${apiRoot}/databases/${id}/backups`, routeName: route("backups.list") });
+  planBackup(databaseId: string, request: DatabaseBackupConfirmationPlanRequest, projectId?: string): Promise<TerraScaleResult<DatabaseBackupConfirmationPlanResponse>> {
+    validateBoundedText(request?.operationSessionId, "operationSessionId", 128);
+    return this.#http.request({
+      method: "POST",
+      path: `${databasePath(this.#http, databaseId, projectId)}/backups:plan`,
+      routeName: "backups.plan",
+      body: request,
+    });
   }
 
-  restore(
-    databaseId: string,
-    request: RestoreRequest,
-    options?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<Database>> {
-    const id = idSegment(databaseId, "databaseId");
-    const body = validateRestore(request);
-    return this.#http.request({ method: "POST", path: `${apiRoot}/databases/${id}/backups/restore`, routeName: route("backups.restore"), body, idempotencyKey: options?.idempotencyKey });
+  executeBackup(databaseId: string, request: DatabaseBackupConfirmationExecuteRequest, idempotencyKey: string, projectId?: string): Promise<TerraScaleResult<BackupJobResponse>> {
+    validateBoundedText(request?.operationSessionId, "operationSessionId", 128);
+    validateBoundedText(request?.confirmationToken, "confirmationToken", 8192);
+    validateBoundedText(idempotencyKey, "idempotencyKey", 128);
+    return this.#http.request({
+      method: "POST",
+      path: `${databasePath(this.#http, databaseId, projectId)}/backups:execute`,
+      routeName: "backups.execute",
+      body: request,
+      idempotencyKey,
+    });
   }
 
+  listBackups(databaseId: string, query?: ManagementPageRequest, projectId?: string): Promise<TerraScaleResult<readonly BackupJobResponse[]>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${databasePath(this.#http, databaseId, projectId)}/backups`,
+      routeName: "backups.list",
+      query: pageQuery(query),
+    });
+  }
+
+  getBackup(databaseId: string, backupId: string, projectId?: string): Promise<TerraScaleResult<BackupJobResponse>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${databasePath(this.#http, databaseId, projectId)}/backups/${idSegment(backupId, "backupId")}`,
+      routeName: "backups.get",
+    });
+  }
+
+  listRestorePoints(databaseId: string, projectId?: string): Promise<TerraScaleResult<readonly RestorePointResponse[]>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${databasePath(this.#http, databaseId, projectId)}/restore-points`,
+      routeName: "backups.restorePoints.list",
+    });
+  }
+
+  startRestore(databaseId: string, request: StartRestoreRequest, projectId?: string): Promise<TerraScaleResult<RestoreJobResponse>> {
+    validateBoundedText(request?.backupId, "backupId", 128);
+    if (request.idempotencyKey !== undefined && request.idempotencyKey !== null) validateBoundedText(request.idempotencyKey, "idempotencyKey", 128);
+    return this.#http.request({
+      method: "POST",
+      path: `${databasePath(this.#http, databaseId, projectId)}/restores`,
+      routeName: "backups.restores.start",
+      body: request,
+      idempotencyKey: request.idempotencyKey ?? undefined,
+    });
+  }
+
+  getRestore(databaseId: string, restoreId: string, projectId?: string): Promise<TerraScaleResult<RestoreJobResponse>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${databasePath(this.#http, databaseId, projectId)}/restores/${idSegment(restoreId, "restoreId")}`,
+      routeName: "backups.restores.get",
+    });
+  }
+
+  listRestores(databaseId: string, query?: ManagementPageRequest, projectId?: string): Promise<TerraScaleResult<readonly RestoreJobResponse[]>> {
+    return this.#http.request({
+      method: "GET",
+      path: `${databasePath(this.#http, databaseId, projectId)}/restores`,
+      routeName: "backups.restores.list",
+      query: pageQuery(query),
+    });
+  }
+}
+
+/** Pending domains fail before transport until their owning contract is published. */
+export class ManagementSchemasClient {
+  get(_databaseId: string, _collection: string): Promise<never> { return contractGap("schemas.get"); }
+  put(_databaseId: string, _collection: string, _schema: unknown, _options?: ManagementOperationOptions): Promise<never> { return contractGap("schemas.put"); }
+}
+
+export class ManagementCollectionsClient {
+  list(_databaseId: string): Promise<never> { return contractGap("collections.list"); }
+  listIndexes(_databaseId: string, _collection: string): Promise<never> { return contractGap("collections.indexes.list"); }
+  createIndex(_databaseId: string, _collection: string, _request: unknown, _options?: ManagementOperationOptions): Promise<never> { return contractGap("collections.indexes.create"); }
 }
 
 export class ManagementExportsClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) { this.#http = http; }
-
-  create(databaseId: string, request: CreateExportRequest = {}, options?: ManagementOperationOptions): Promise<TerraScaleResult<ExportJob>> {
-    const id = idSegment(databaseId, "databaseId");
-    return this.#http.request({ method: "POST", path: `${apiRoot}/databases/${id}/exports`, routeName: route("exports.create"), body: request, idempotencyKey: options?.idempotencyKey });
-  }
+  create(_databaseId: string, _request: unknown = {}, _options?: ManagementOperationOptions): Promise<never> { return contractGap("exports.create"); }
 }
 
 export class ManagementImportsClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) { this.#http = http; }
-
-  create(databaseId: string, request: CreateImportRequest, options?: ManagementOperationOptions): Promise<TerraScaleResult<ImportJob>> {
-    const id = idSegment(databaseId, "databaseId");
-    const body = validateImport(request);
-    return this.#http.request({ method: "POST", path: `${apiRoot}/databases/${id}/imports`, routeName: route("imports.create"), body, idempotencyKey: options?.idempotencyKey });
-  }
-}
-
-export class ManagementApiKeysClient {
-  readonly #http: TerraScaleHttp;
-
-  constructor(http: TerraScaleHttp) { this.#http = http; }
-
-  list(query?: ManagementPageRequest, options?: ManagementOperationOptions): Promise<TerraScaleResult<readonly ApiKey[]>>;
-  list(projectId: string | undefined, query?: ManagementPageRequest, options?: ManagementOperationOptions): Promise<TerraScaleResult<readonly ApiKey[]>>;
-  list(
-    projectIdOrQuery?: string | ManagementPageRequest,
-    queryOrOptions?: ManagementPageRequest | ManagementOperationOptions,
-    explicitOptions?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<readonly ApiKey[]>> {
-    const hasProject = typeof projectIdOrQuery === "string" || projectIdOrQuery === undefined;
-    const projectId = hasProject ? projectIdOrQuery : undefined;
-    const query = (hasProject ? queryOrOptions : projectIdOrQuery) as ManagementPageRequest | undefined;
-    const options = (hasProject ? explicitOptions : queryOrOptions) as ManagementOperationOptions | undefined;
-    return this.#http.request({ method: "GET", path: `${projectPath(this.#http, projectId ?? options?.projectId)}/auth/api-keys`, routeName: route("apiKeys.list"), query });
-  }
-
-  create(request: CreateApiKeyRequest, options?: ManagementOperationOptions): Promise<TerraScaleResult<CreatedApiKey>>;
-  create(projectId: string | undefined, request: CreateApiKeyRequest, options?: ManagementOperationOptions): Promise<TerraScaleResult<CreatedApiKey>>;
-  create(
-    projectIdOrRequest: string | undefined | CreateApiKeyRequest,
-    requestOrOptions?: CreateApiKeyRequest | ManagementOperationOptions,
-    explicitOptions?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<CreatedApiKey>> {
-    const hasProject = typeof projectIdOrRequest === "string" || projectIdOrRequest === undefined;
-    const projectId = hasProject ? projectIdOrRequest : undefined;
-    const request = (hasProject ? requestOrOptions : projectIdOrRequest) as CreateApiKeyRequest;
-    const options = (hasProject ? explicitOptions : requestOrOptions) as ManagementOperationOptions | undefined;
-    const body = validateApiKey(request);
-    return this.#http.request({ method: "POST", path: `${projectPath(this.#http, projectId ?? options?.projectId)}/auth/api-keys`, routeName: route("apiKeys.create"), body, idempotencyKey: options?.idempotencyKey });
-  }
-
-  rotate(keyId: string, options?: ManagementOperationOptions): Promise<TerraScaleResult<RotatedApiKey>>;
-  rotate(projectId: string | undefined, keyId: string, options?: ManagementOperationOptions): Promise<TerraScaleResult<RotatedApiKey>>;
-  rotate(
-    projectIdOrKeyId: string | undefined,
-    keyIdOrOptions: string | ManagementOperationOptions | undefined,
-    explicitOptions?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<RotatedApiKey>> {
-    const hasProject = typeof keyIdOrOptions === "string";
-    const projectId = hasProject ? projectIdOrKeyId : undefined;
-    const keyId = (hasProject ? keyIdOrOptions : projectIdOrKeyId) as string;
-    const options = (hasProject ? explicitOptions : keyIdOrOptions) as ManagementOperationOptions | undefined;
-    const path = `${projectPath(this.#http, projectId ?? options?.projectId)}/auth/api-keys/${idSegment(keyId, "keyId")}/rotate`;
-    return this.#http.request({ method: "POST", path, routeName: route("apiKeys.rotate"), idempotencyKey: options?.idempotencyKey });
-  }
-
-  revoke(keyId: string, options?: ManagementOperationOptions): Promise<TerraScaleResult<void>>;
-  revoke(projectId: string | undefined, keyId: string, options?: ManagementOperationOptions): Promise<TerraScaleResult<void>>;
-  revoke(
-    projectIdOrKeyId: string | undefined,
-    keyIdOrOptions: string | ManagementOperationOptions | undefined,
-    explicitOptions?: ManagementOperationOptions,
-  ): Promise<TerraScaleResult<void>> {
-    const hasProject = typeof keyIdOrOptions === "string";
-    const projectId = hasProject ? projectIdOrKeyId : undefined;
-    const keyId = (hasProject ? keyIdOrOptions : projectIdOrKeyId) as string;
-    const options = (hasProject ? explicitOptions : keyIdOrOptions) as ManagementOperationOptions | undefined;
-    const path = `${projectPath(this.#http, projectId ?? options?.projectId)}/auth/api-keys/${idSegment(keyId, "keyId")}`;
-    return this.#http.request({ method: "DELETE", path, routeName: route("apiKeys.revoke"), idempotencyKey: options?.idempotencyKey });
-  }
+  create(_databaseId: string, _request: unknown, _options?: ManagementOperationOptions): Promise<never> { return contractGap("imports.create"); }
 }
 
 export class ManagementUsageClient {
   readonly #http: TerraScaleHttp;
-
   constructor(http: TerraScaleHttp) { this.#http = http; }
 
-  getDatabase(databaseId: string): Promise<TerraScaleResult<Usage>> {
-    return this.#http.request({ method: "GET", path: `${apiRoot}/databases/${idSegment(databaseId, "databaseId")}/usage`, routeName: route("usage.database.get") });
+  getProject(projectId?: string): Promise<TerraScaleResult<UsageSummary>> {
+    return this.#http.request({ method: "GET", path: `${projectPath(this.#http, projectId)}/usage`, routeName: "usage.project.get" });
   }
 
-  getProject(projectId?: string, options?: ManagementOperationOptions): Promise<TerraScaleResult<Usage>> {
-    return this.#http.request({ method: "GET", path: `${projectPath(this.#http, projectId ?? options?.projectId)}/usage`, routeName: route("usage.project.get") });
+  getOrganization(organizationId: string): Promise<TerraScaleResult<OrganizationUsage>> {
+    return this.#http.request({ method: "GET", path: `${apiRoot}/organizations/${idSegment(organizationId, "organizationId")}/usage`, routeName: "usage.organization.get" });
   }
-
-  getOrganization(organizationId: string): Promise<TerraScaleResult<Usage>> {
-    const id = idSegment(organizationId, "organizationId");
-    return this.#http.request({ method: "GET", path: `${apiRoot}/organizations/${id}/usage`, routeName: route("usage.organization.get") });
-  }
-
-  getProjectUsage(projectId?: string, options?: ManagementOperationOptions): Promise<TerraScaleResult<Usage>> { return this.getProject(projectId, options); }
 }
 
 export class TerraScaleManagementClient {
   readonly #http: TerraScaleHttp;
   readonly databases: ManagementDatabasesClient;
   readonly branches: ManagementBranchesClient;
-  readonly collections: ManagementCollectionsClient;
-  readonly schemas: ManagementSchemasClient;
   readonly backups: ManagementBackupsClient;
+  readonly schemas: ManagementSchemasClient;
+  readonly collections: ManagementCollectionsClient;
   readonly exports: ManagementExportsClient;
   readonly imports: ManagementImportsClient;
-  readonly apiKeys: ManagementApiKeysClient;
   readonly usage: ManagementUsageClient;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.#http = new TerraScaleHttp(config);
     this.databases = new ManagementDatabasesClient(this.#http);
     this.branches = new ManagementBranchesClient(this.#http);
-    this.collections = new ManagementCollectionsClient(this.#http);
-    this.schemas = new ManagementSchemasClient(this.#http);
     this.backups = new ManagementBackupsClient(this.#http);
-    this.exports = new ManagementExportsClient(this.#http);
-    this.imports = new ManagementImportsClient(this.#http);
-    this.apiKeys = new ManagementApiKeysClient(this.#http);
+    this.schemas = new ManagementSchemasClient();
+    this.collections = new ManagementCollectionsClient();
+    this.exports = new ManagementExportsClient();
+    this.imports = new ManagementImportsClient();
     this.usage = new ManagementUsageClient(this.#http);
   }
 
   get config() { return this.#http.config; }
 }
 
-/** Short name used by consumers that construct the management client directly. */
 export { TerraScaleManagementClient as ManagementClient };
 
 export function createTerraScaleManagementClient(config: TerraScaleRuntimeConfig): TerraScaleManagementClient {
   return new TerraScaleManagementClient(config);
 }
 
-function route(name: ManagementRouteName): RequestRouteName {
-  return name as RequestRouteName;
+/** Validate and normalize an explicit residency lock without making a request. */
+export function validatePlacementLock(lock: PlacementLock): PlacementLock {
+  if (typeof lock === "string") {
+    if (lock !== "eu-only" && lock !== "br-only") throw new TypeError("placement must be eu-only, br-only, or a region list.");
+    return lock;
+  }
+  return normalizeRegionCodes(lock);
+}
+
+function contractGap(operation: string): never { throw new ManagementContractGapError(operation); }
+
+function projectPath(http: TerraScaleHttp, projectId: string | undefined): string {
+  return `${apiRoot}/projects/${idSegment(projectId ?? http.config.projectId ?? "", "projectId")}`;
+}
+
+function databasePath(http: TerraScaleHttp, databaseId: string, projectId: string | undefined): string {
+  return `${projectPath(http, projectId)}/databases/${idSegment(databaseId, "databaseId")}`;
 }
 
 function idSegment(value: string, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) throw new TypeError(`${name} must be nonblank.`);
+  validateBoundedText(value, name, 256);
   return encodeURIComponent(value);
 }
 
-function projectPath(http: TerraScaleHttp, projectId: string | undefined): string {
-  const selected = projectId ?? http.config.projectId;
-  return `${apiRoot}/projects/${idSegment(selected ?? "", "projectId")}`;
+function validateBoundedText(value: unknown, name: string, maxLength: number): asserts value is string {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > maxLength || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new TypeError(`${name} must be 1-${maxLength} printable characters.`);
+  }
 }
 
-function collectionPath(databaseId: string, collection: string): string {
-  return `${apiRoot}/databases/${idSegment(databaseId, "databaseId")}/collections/${idSegment(collection, "collection")}`;
+function pageQuery(query: ManagementPageRequest | undefined): ManagementPageRequest | undefined {
+  if (query === undefined) return undefined;
+  if (query.skip !== undefined && (!Number.isSafeInteger(query.skip) || query.skip < 0)) throw new TypeError("skip must be a non-negative safe integer.");
+  if (query.take !== undefined && (!Number.isSafeInteger(query.take) || query.take < 1 || query.take > 200)) throw new TypeError("take must be between 1 and 200.");
+  return { ...query };
 }
 
 function validateCreateDatabase(request: CreateDatabaseRequest): CreateDatabaseRequest {
-  if (typeof request?.name !== "string" || request.name.trim().length === 0) throw new TypeError("name must be nonblank.");
-  const placement = normalizeRegionCodes(request.placement);
+  validateBoundedText(request?.name, "name", 256);
   if (request.residency !== undefined && request.residency !== "eu-only" && request.residency !== "br-only") throw new TypeError("residency must be eu-only or br-only.");
-  if (request.residency === "eu-only" && placement.some((region) => region !== "FRA")) {
-    throw new TypeError("eu-only residency cannot be widened beyond FRA.");
+  if (request.placement !== undefined) {
+    const placement = normalizeRegionCodes(request.placement);
+    if (request.residency === "eu-only" && placement.some((region) => region !== "FRA")) throw new TypeError("eu-only residency cannot be widened beyond FRA.");
+    if (request.residency === "br-only" && placement.some((region) => region !== "GRU")) throw new TypeError("br-only residency cannot be widened beyond GRU.");
+    throw new ManagementContractGapError("databases.create placement/residency");
   }
-  if (request.residency === "br-only" && placement.some((region) => region !== "GRU")) {
-    throw new TypeError("br-only residency cannot be widened beyond GRU.");
-  }
-  return { ...request, placement };
+  if (request.residency !== undefined) throw new ManagementContractGapError("databases.create placement/residency");
+  return { name: request.name };
 }
 
-function validateBranch(request: CreateBranchRequest): CreateBranchRequest {
-  if (typeof request?.name !== "string" || request.name.trim().length === 0) throw new TypeError("name must be nonblank.");
-  return { ...request, ...(request.placement === undefined ? {} : { placement: validatePlacement(request.placement) }) };
-}
-
-function validateRestore(request: RestoreRequest): RestoreRequest {
-  if (typeof request?.name !== "string" || request.name.trim().length === 0) throw new TypeError("name must be nonblank.");
-  return { ...request, ...(request.placement === undefined ? {} : { placement: validatePlacement(request.placement) }) };
-}
-
-function validatePlacement(placement: PlacementLock): PlacementLock {
-  if (typeof placement === "string") {
-    if (placement !== "eu-only" && placement !== "br-only") throw new TypeError("placement must be eu-only, br-only, or a region list.");
-    return placement;
-  }
-  return normalizeRegionCodes(placement);
-}
-
-function validateIndex(request: CreateIndexRequest): CreateIndexRequest {
-  if (typeof request?.field !== "string" || request.field.trim().length === 0) throw new TypeError("field must be nonblank.");
+function validateBranchRequest(request: CreateDatabaseBranchRequest): CreateDatabaseBranchRequest {
+  if (request?.sourceDatabaseId !== undefined) validateBoundedText(request.sourceDatabaseId, "sourceDatabaseId", 256);
   return request;
 }
 
-function validateImport(request: CreateImportRequest): CreateImportRequest {
-  if (!(["jsonl", "csv", "mongo", "cosmos", "dynamodb"] as readonly string[]).includes(request?.format)) throw new TypeError("format is not a supported import format.");
-  if (typeof request?.source !== "string" || request.source.trim().length === 0) throw new TypeError("source must be nonblank.");
-  return { ...request, ...(request.placement === undefined ? {} : { placement: validatePlacement(request.placement) }) };
-}
-
-function validateApiKey(request: CreateApiKeyRequest): CreateApiKeyRequest {
-  if (typeof request?.name !== "string" || request.name.trim().length === 0) throw new TypeError("name must be nonblank.");
+function validateBackupPolicy(request: ConfigureBackupPolicyRequest): ConfigureBackupPolicyRequest {
+  validateBoundedText(request?.fullBackupCron, "fullBackupCron", 128);
+  if (request.incrementalBackupCron !== undefined && request.incrementalBackupCron !== null) validateBoundedText(request.incrementalBackupCron, "incrementalBackupCron", 128);
+  if (request.retentionDays !== undefined && (!Number.isSafeInteger(request.retentionDays) || request.retentionDays < 1 || request.retentionDays > 365)) throw new TypeError("retentionDays must be between 1 and 365.");
   return request;
 }

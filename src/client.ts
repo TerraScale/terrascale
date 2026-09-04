@@ -1,12 +1,14 @@
 import type { ResolvedTerraScaleRuntimeConfig, TerraScaleRuntimeConfig } from "./config.js";
-import { TerraScaleHttp } from "./http.js";
+import { TerraScaleHttp, type TerraScaleRouteName } from "./http.js";
+import { TerraScaleManagementClient } from "./management.js";
 import type * as Models from "./models.js";
 import {
   normalizeRegionCodes,
   parseRegionCode,
   type TerraScaleRegionCode,
 } from "./regions.js";
-import type { TerraScaleResult, TerraScaleSuccess } from "./result.js";
+import { err, type TerraScaleFailure, type TerraScaleResult, type TerraScaleSuccess } from "./result.js";
+import { TenantsClient } from "./tenants.js";
 
 const apiRoot = "/api/v1";
 
@@ -32,6 +34,16 @@ export class TerraScaleClient {
   readonly usage: UsageClient;
   readonly audit: AuditClient;
   readonly notifications: NotificationsClient;
+  /** The separately named, contract-bound management surface. */
+  readonly management: TerraScaleManagementClient;
+  /** Database-per-tenant operations, scoped to this runtime configuration. */
+  readonly tenants: TenantsClient;
+  /** Direct document CRUD against the public database API. */
+  readonly documents: DocumentsClient;
+  /** Read-only parameterized SQL against a named database. */
+  readonly sql: SqlClient;
+  /** The reactive producer is not yet published on the canonical E-5 route. */
+  readonly reactive: ReactiveClient;
 
   constructor(config: TerraScaleRuntimeConfig) {
     this.#http = new TerraScaleHttp(config);
@@ -46,12 +58,333 @@ export class TerraScaleClient {
     this.usage = new UsageClient(this.#http);
     this.audit = new AuditClient(this.#http);
     this.notifications = new NotificationsClient(this.#http);
+    this.documents = new DocumentsClient(this.#http);
+    this.sql = new SqlClient(this.#http);
+    this.reactive = new ReactiveClient();
+
+    // Keep these additional public surfaces out of the ordinary client route
+    // enumeration. Their operation families have their own named manifests
+    // and must not be presented as part of the dashboard product routes.
+    this.management = new TerraScaleManagementClient(config);
+    this.tenants = new TenantsClient(new TerraScaleHttp(config));
+    Object.defineProperties(this, {
+      management: { enumerable: false },
+      tenants: { enumerable: false },
+      documents: { enumerable: false },
+      sql: { enumerable: false },
+      reactive: { enumerable: false },
+    });
   }
 
   get config(): ResolvedTerraScaleRuntimeConfig {
     return this.#http.config;
   }
 
+}
+
+/** One row returned by the collection document listing route. */
+export type DocumentRow = {
+  readonly id: string;
+  readonly version: number;
+  readonly value: Models.JsonValue;
+};
+
+export type DocumentsResponse = {
+  readonly documents: readonly DocumentRow[];
+};
+
+export type DocumentWriteResponse = {
+  readonly revision: string;
+};
+
+export type DocumentOperationOptions = {
+  /** Stable identity used to safely replay a mutation. */
+  readonly idempotencyKey?: string | false | undefined;
+  /** Abort before or while waiting for the operation. */
+  readonly signal?: AbortSignal | undefined;
+  /** Optimistic concurrency precondition, sent as `If-Match`. */
+  readonly ifMatch?: string | undefined;
+  /** Requested acknowledgement class for a write. */
+  readonly durability?: "regional" | "global" | undefined;
+};
+
+export type DocumentListOptions = {
+  readonly signal?: AbortSignal | undefined;
+  readonly limit?: number | undefined;
+  readonly after?: string | undefined;
+};
+
+export type DocumentReadOptions = {
+  /** Abort before or while waiting for the operation. */
+  readonly signal?: AbortSignal | undefined;
+  /** Unix epoch milliseconds for a point-in-time read. */
+  readonly at?: number | undefined;
+  /** Conditional read precondition, sent as `If-None-Match`. */
+  readonly ifNoneMatch?: string | undefined;
+  /** Read-your-writes sequence, sent as `X-TerraScale-Session`. */
+  readonly session?: number | string | undefined;
+};
+
+/**
+ * Typed access to the public collection document routes. Values are sent as
+ * the JSON value itself; this client never introduces a `{ body: ... }`
+ * wrapper around a document or patch.
+ */
+export class DocumentsClient {
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
+
+  list(
+    database: string,
+    collection: string,
+    options: DocumentListOptions = {},
+  ): Promise<TerraScaleResult<DocumentsResponse>> {
+    const path = documentsPath(database, collection);
+    validateDocumentListOptions(options);
+    return directRequest(this.#http, "documents.list", {
+      method: "GET",
+      path,
+      query: {
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+        ...(options.after === undefined ? {} : { after: options.after }),
+      },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  }
+
+  get<TValue extends Models.JsonValue = Models.JsonValue>(
+    database: string,
+    collection: string,
+    id: string,
+    options: DocumentReadOptions = {},
+  ): Promise<TerraScaleResult<TValue>> {
+    const path = documentPath(database, collection, id);
+    validateDocumentReadOptions(options);
+    return directRequest(this.#http, "documents.get", {
+      method: "GET",
+      path,
+      query: options.at === undefined ? undefined : { at: options.at },
+      ...documentReadRequestOptions(options),
+    });
+  }
+
+  put<TValue extends Models.JsonValue>(
+    database: string,
+    collection: string,
+    id: string,
+    value: TValue,
+    options: DocumentOperationOptions = {},
+  ): Promise<TerraScaleResult<DocumentWriteResponse>> {
+    const path = documentPath(database, collection, id);
+    validateDocumentOperationOptions(options);
+    validateJsonPayload(value, "document value");
+    return directRequest(this.#http, "documents.put", {
+      method: "PUT",
+      path,
+      body: value,
+      ...documentRequestOptions(options),
+    });
+  }
+
+  /** Alias for the create-or-replace PUT operation. */
+  create<TValue extends Models.JsonValue>(
+    database: string,
+    collection: string,
+    id: string,
+    value: TValue,
+    options: DocumentOperationOptions = {},
+  ): Promise<TerraScaleResult<DocumentWriteResponse>> {
+    return this.put(database, collection, id, value, options);
+  }
+
+  /** Alias making the PUT operation's upsert semantics explicit. */
+  upsert<TValue extends Models.JsonValue>(
+    database: string,
+    collection: string,
+    id: string,
+    value: TValue,
+    options: DocumentOperationOptions = {},
+  ): Promise<TerraScaleResult<DocumentWriteResponse>> {
+    return this.put(database, collection, id, value, options);
+  }
+
+  patch<TPatch extends Models.JsonValue>(
+    database: string,
+    collection: string,
+    id: string,
+    patch: TPatch,
+    options: DocumentOperationOptions = {},
+  ): Promise<TerraScaleResult<DocumentWriteResponse>> {
+    const path = documentPath(database, collection, id);
+    validateDocumentOperationOptions(options);
+    validateJsonPayload(patch, "merge patch");
+    return directRequest(this.#http, "documents.patch", {
+      method: "PATCH",
+      path,
+      body: patch,
+      ...documentRequestOptions(options),
+    });
+  }
+
+  /** Alias for PATCH, retained for callers that name the operation update. */
+  update<TPatch extends Models.JsonValue>(
+    database: string,
+    collection: string,
+    id: string,
+    patch: TPatch,
+    options: DocumentOperationOptions = {},
+  ): Promise<TerraScaleResult<DocumentWriteResponse>> {
+    return this.patch(database, collection, id, patch, options);
+  }
+
+  delete(
+    database: string,
+    collection: string,
+    id: string,
+    options: DocumentOperationOptions = {},
+  ): Promise<TerraScaleResult<void>> {
+    const path = documentPath(database, collection, id);
+    validateDocumentOperationOptions(options);
+    return directRequest(this.#http, "documents.delete", {
+      method: "DELETE",
+      path,
+      ...documentRequestOptions(options),
+    });
+  }
+}
+
+export type SqlParameters = { readonly [name: string]: Models.JsonValue };
+
+export type SqlExecuteRequest = {
+  readonly sql: string;
+  readonly parameters?: SqlParameters | undefined;
+  readonly explain?: boolean | undefined;
+  readonly timeout_ms?: number | undefined;
+  /** JavaScript spelling accepted as a convenience; the wire key is `timeout_ms`. */
+  readonly timeoutMs?: number | undefined;
+  readonly cancelled?: boolean | undefined;
+};
+
+export type SqlExecuteOptions = {
+  readonly signal?: AbortSignal | undefined;
+  readonly explain?: boolean | undefined;
+  readonly timeout_ms?: number | undefined;
+  readonly timeoutMs?: number | undefined;
+  readonly cancelled?: boolean | undefined;
+};
+
+export type SqlRow = {
+  readonly id: string;
+  readonly value: Models.JsonValue;
+};
+
+export type SqlResult = {
+  readonly matched: number;
+  readonly rows: readonly SqlRow[];
+};
+
+export type SqlExplainResult = {
+  readonly dialect: "sql/sqlite-readonly";
+  readonly collection: string | null;
+  readonly order: readonly {
+    readonly field: string;
+    readonly direction: "asc" | "desc";
+  }[];
+  readonly access: "scan";
+};
+
+export type SqlResponse = SqlResult | SqlExplainResult;
+
+/** Read-only, parameterized SQL access to a named database. */
+export class SqlClient {
+  readonly #http: TerraScaleHttp;
+
+  constructor(http: TerraScaleHttp) {
+    this.#http = http;
+  }
+
+  execute(
+    database: string,
+    request: SqlExecuteRequest,
+    options?: SqlExecuteOptions,
+  ): Promise<TerraScaleResult<SqlResponse>>;
+  execute(
+    database: string,
+    sql: string,
+    parameters?: SqlParameters,
+    options?: SqlExecuteOptions,
+  ): Promise<TerraScaleResult<SqlResponse>>;
+  execute(
+    database: string,
+    requestOrSql: SqlExecuteRequest | string,
+    parametersOrOptions?: SqlParameters | SqlExecuteOptions,
+    maybeOptions: SqlExecuteOptions = {},
+  ): Promise<TerraScaleResult<SqlResponse>> {
+    requireDatabaseIdentifier(database);
+    const third = parametersOrOptions ?? {};
+    // The string overload's third argument is unambiguously the parameter
+    // object; options belong in the fourth argument. Treating parameter names
+    // such as `signal` or `explain` as option markers silently drops valid SQL
+    // bindings. The request-object overload remains intentionally convenient.
+    const optionValues = typeof requestOrSql === "string"
+      ? maybeOptions
+      : isSqlOptions(third) ? third : maybeOptions;
+    const request: SqlExecuteRequest = typeof requestOrSql === "string"
+      ? {
+          sql: requestOrSql,
+          ...(parametersOrOptions === undefined ? {} : { parameters: third as SqlParameters }),
+          ...optionValues,
+        }
+      : { ...requestOrSql, ...third as SqlExecuteOptions };
+    validateSqlRequest(request);
+    const signal = typeof requestOrSql === "string"
+      ? maybeOptions.signal
+      : isSqlOptions(third) ? third.signal : maybeOptions.signal;
+    return directRequest(this.#http, "sql.execute", {
+      method: "POST",
+      path: `${apiRoot}/databases/${idPathSegment(database)}/sql`,
+      body: {
+        sql: request.sql,
+        ...(request.parameters === undefined ? {} : { parameters: request.parameters }),
+        ...(request.explain === undefined ? {} : { explain: request.explain }),
+        ...(request.timeout_ms === undefined && request.timeoutMs === undefined
+          ? {}
+          : { timeout_ms: request.timeout_ms ?? request.timeoutMs }),
+        ...(request.cancelled === undefined ? {} : { cancelled: request.cancelled }),
+      },
+      signal,
+    });
+  }
+}
+
+/** Explicitly identifies the unpublished direct reactive producer. */
+export class ReactiveContractGapError extends Error {
+  readonly code = "contract_gap" as const;
+  readonly operation: string;
+
+  constructor(operation = "reactive.subscribe") {
+    super(`The published reactive contract is missing ${operation}.`);
+    this.name = "ReactiveContractGapError";
+    this.operation = operation;
+  }
+}
+
+export type ReactiveSubscribeOptions = {
+  readonly database?: string;
+  readonly collection?: string;
+  readonly query?: string;
+  readonly parameters?: SqlParameters;
+  readonly signal?: AbortSignal;
+};
+
+/** Fail-closed placeholder until the canonical E-5 producer is published. */
+export class ReactiveClient {
+  subscribe(_options?: ReactiveSubscribeOptions): Promise<never> {
+    return Promise.reject(new ReactiveContractGapError());
+  }
 }
 
 export class OnboardingClient {
@@ -978,6 +1311,260 @@ function validateBackupConfirmationValue(
   if (typeof value !== "string" || value.trim().length === 0 || value.length > maximumLength) {
     throw new TypeError(`${name} must be nonblank and contain at most ${maximumLength} characters.`);
   }
+}
+
+type DirectRequestOptions = {
+  readonly method: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
+  readonly path: string;
+  readonly query?: object | undefined;
+  readonly body?: unknown;
+  readonly headers?: HeadersInit;
+  readonly idempotencyKey?: string | false | undefined;
+  readonly signal?: AbortSignal | undefined;
+};
+
+function documentsPath(database: string, collection: string): string {
+  requireDatabaseIdentifier(database);
+  requireDocumentIdentifier(collection, "collection");
+  return `${apiRoot}/databases/${idPathSegment(database)}/collections/${idPathSegment(collection)}/documents`;
+}
+
+function documentPath(database: string, collection: string, id: string): string {
+  return `${documentsPath(database, collection)}/${idPathSegment(requireDocumentIdentifier(id, "document identifier"))}`;
+}
+
+function requireDatabaseIdentifier(value: string): string {
+  return requireDocumentIdentifier(value, "database");
+}
+
+function requireDocumentIdentifier(value: string, name: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new TypeError(`${name} cannot be blank.`);
+  }
+  if (value !== value.trim()) {
+    throw new TypeError(`${name} cannot have leading or trailing whitespace.`);
+  }
+  if ([...value].some((character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f)) {
+    throw new TypeError(`${name} cannot contain control characters.`);
+  }
+  if (new TextEncoder().encode(value).byteLength > 255) {
+    throw new TypeError(`${name} cannot exceed 255 UTF-8 bytes.`);
+  }
+  return value;
+}
+
+function validateDocumentListOptions(options: DocumentListOptions): void {
+  if (options === null || typeof options !== "object") throw new TypeError("operation options must be an object.");
+  if (options.limit !== undefined &&
+    (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 1_000)) {
+    throw new TypeError("limit must be an integer between 1 and 1000.");
+  }
+  if (options.after !== undefined) requireDocumentIdentifier(options.after, "after");
+}
+
+function validateDocumentReadOptions(options: DocumentReadOptions): void {
+  if (options === null || typeof options !== "object") throw new TypeError("operation options must be an object.");
+  if (options.at !== undefined &&
+    (!Number.isSafeInteger(options.at) || options.at < 0)) {
+    throw new TypeError("at must be a non-negative safe integer of Unix epoch milliseconds.");
+  }
+  if (options.ifNoneMatch !== undefined &&
+    (typeof options.ifNoneMatch !== "string" || options.ifNoneMatch.trim().length === 0 || options.ifNoneMatch.length > 1024)) {
+    throw new TypeError("ifNoneMatch must be a nonblank string of at most 1024 characters.");
+  }
+  if (options.session !== undefined &&
+    ((typeof options.session === "number" && (!Number.isSafeInteger(options.session) || options.session < 0)) ||
+      (typeof options.session === "string" && !/^\\d+$/u.test(options.session)))) {
+    throw new TypeError("session must be a non-negative integer.");
+  }
+}
+
+function validateDocumentOperationOptions(options: DocumentOperationOptions): void {
+  if (options === null || typeof options !== "object") {
+    throw new TypeError("operation options must be an object.");
+  }
+  if (options.ifMatch !== undefined &&
+    (typeof options.ifMatch !== "string" || options.ifMatch.trim().length === 0 || options.ifMatch.length > 1024)) {
+    throw new TypeError("ifMatch must be a nonblank string of at most 1024 characters.");
+  }
+  if (options.durability !== undefined &&
+    options.durability !== "regional" && options.durability !== "global") {
+    throw new TypeError('durability must be either "regional" or "global".');
+  }
+}
+
+function documentRequestOptions(options: DocumentOperationOptions): {
+  readonly headers?: HeadersInit;
+  readonly idempotencyKey?: string | false | undefined;
+  readonly signal?: AbortSignal | undefined;
+} {
+  return {
+    ...(options.ifMatch === undefined && options.durability === undefined ? {} : {
+      headers: {
+        ...(options.ifMatch === undefined ? {} : { "if-match": options.ifMatch }),
+        ...(options.durability === undefined ? {} : { "x-terrascale-durability": options.durability }),
+      },
+    }),
+    ...(options.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  };
+}
+
+function documentReadRequestOptions(options: DocumentReadOptions): {
+  readonly headers?: HeadersInit;
+  readonly signal?: AbortSignal | undefined;
+} {
+  return {
+    ...(options.ifNoneMatch === undefined && options.session === undefined ? {} : {
+      headers: {
+        ...(options.ifNoneMatch === undefined ? {} : { "if-none-match": options.ifNoneMatch }),
+        ...(options.session === undefined ? {} : { "x-terrascale-session": String(options.session) }),
+      },
+    }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  };
+}
+
+function validateJsonPayload(value: unknown, name: string): void {
+  validateJsonValue(value, name, new WeakSet<object>());
+  let encoded: string | undefined;
+  try {
+    encoded = JSON.stringify(value) as string | undefined;
+  } catch (error) {
+    throw new TypeError(
+      `${name} must be JSON serializable${error instanceof Error ? `: ${error.message}` : "."}`,
+    );
+  }
+  if (encoded === undefined) throw new TypeError(`${name} must be a JSON value.`);
+  if (new TextEncoder().encode(encoded).byteLength > 1_048_576) {
+    throw new TypeError(`${name} exceeds the 1 MiB document limit.`);
+  }
+}
+
+function validateJsonValue(value: unknown, path: string, seen: WeakSet<object>): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (Number.isFinite(value)) return;
+    throw new TypeError(`${path} must contain only finite numbers.`);
+  }
+  if (typeof value !== "object") throw new TypeError(`${path} must be a JSON value.`);
+  if (seen.has(value)) throw new TypeError(`${path} must not contain cyclic references.`);
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index++) {
+      if (!Object.hasOwn(value, index)) throw new TypeError(`${path}[${index}] must be defined.`);
+      validateJsonValue(value[index], `${path}[${index}]`, seen);
+    }
+  } else {
+    if (typeof (value as { readonly toJSON?: unknown }).toJSON === "function") {
+      throw new TypeError(`${path} must not define toJSON.`);
+    }
+    for (const [key, item] of Object.entries(value)) {
+      validateJsonValue(item, `${path}.${key}`, seen);
+    }
+  }
+  seen.delete(value);
+}
+
+function validateSqlRequest(request: SqlExecuteRequest): void {
+  if (typeof request.sql !== "string" || request.sql.trim().length === 0) {
+    throw new TypeError("sql must be a nonblank string.");
+  }
+  if (new TextEncoder().encode(request.sql).byteLength > 1_048_576) {
+    throw new TypeError("sql exceeds the 1 MiB query limit.");
+  }
+  if (request.parameters !== undefined) {
+    if (typeof request.parameters !== "object" || request.parameters === null || Array.isArray(request.parameters)) {
+      throw new TypeError("parameters must be an object.");
+    }
+    validateJsonPayload(request.parameters, "parameters");
+  }
+  if (request.explain !== undefined && typeof request.explain !== "boolean") {
+    throw new TypeError("explain must be a boolean.");
+  }
+  if (request.cancelled !== undefined && typeof request.cancelled !== "boolean") {
+    throw new TypeError("cancelled must be a boolean.");
+  }
+  const timeout = request.timeout_ms ?? request.timeoutMs;
+  if (timeout !== undefined &&
+    (!Number.isInteger(timeout) || timeout < 1 || timeout > 30_000)) {
+    throw new TypeError("timeout_ms must be an integer between 1 and 30000.");
+  }
+}
+
+function isSqlOptions(value: SqlParameters | SqlExecuteOptions): value is SqlExecuteOptions {
+  return typeof value === "object" && value !== null && (
+          Object.hasOwn(value, "signal") ||
+          Object.hasOwn(value, "explain") ||
+          Object.hasOwn(value, "timeout_ms") ||
+          Object.hasOwn(value, "timeoutMs") ||
+          Object.hasOwn(value, "cancelled")
+  );
+}
+
+async function directRequest<TResponse>(
+  http: TerraScaleHttp,
+  routeName: string,
+  options: DirectRequestOptions,
+): Promise<TerraScaleResult<TResponse>> {
+  const signal = options.signal;
+  if (signal?.aborted === true) return cancelledResult(routeName);
+  const request = {
+    method: options.method,
+    path: options.path,
+    routeName: routeName as TerraScaleRouteName,
+    query: options.query,
+    body: options.body,
+    headers: options.headers,
+    idempotencyKey: options.idempotencyKey,
+    // TerraScaleHttp predates the signal field; retain it at this boundary
+    // so cancellation remains observable without widening its route API.
+    signal,
+  } as Parameters<TerraScaleHttp["request"]>[0] & { readonly signal?: AbortSignal };
+  const pending = http.request<TResponse>(request);
+  if (signal === undefined) return pending;
+  return new Promise<TerraScaleResult<TResponse>>((resolve, reject) => {
+    const onAbort = (): void => {
+      cleanup();
+      resolve(cancelledResult(routeName));
+    };
+    const cleanup = (): void => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    pending.then(
+      (result) => {
+        cleanup();
+        resolve(isCancelledResult(result) && signal.aborted ? cancelledResult(routeName) : result);
+      },
+      (error: unknown) => {
+        cleanup();
+        if (signal.aborted && isAbortError(error)) {
+          resolve(cancelledResult(routeName));
+        } else {
+          reject(error);
+        }
+      },
+    );
+  });
+}
+
+function cancelledResult(routeName: string): TerraScaleFailure {
+  return err(routeName, {
+    kind: "transport",
+    code: "request_cancelled",
+    message: "The TerraScale request was cancelled.",
+  });
+}
+
+function isCancelledResult<T>(result: TerraScaleResult<T>): boolean {
+  return !result.ok && (
+    result.error.code === "request_cancelled" ||
+    result.error.code === "aborted" ||
+    isAbortError(result.error.details)
+  );
+}
+
+function isAbortError(value: unknown): boolean {
+  return value instanceof Error && value.name === "AbortError";
 }
 
 function projectRootId(http: TerraScaleHttp, projectId: string | undefined): string {

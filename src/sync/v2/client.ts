@@ -15,12 +15,15 @@ import {
 import {
   SyncV2ResultViewStore,
   SyncV2ViewCheckpoint,
+  syncV2ResultDigest,
   type SyncV2ResultDelta,
   type SyncV2ResultItem,
   type SyncV2ResultOperation,
   type SyncV2ResultSnapshot,
   type SyncV2ResultResetReason,
 } from "./result-view.js";
+
+const MAX_U64 = 0xffff_ffff_ffff_ffffn;
 
 export { SyncV2ViewCheckpoint };
 export type { SyncV2ResultDelta, SyncV2ResultItem, SyncV2ResultOperation, SyncV2ResultSnapshot };
@@ -172,6 +175,9 @@ export class TerraScaleSyncV2Client {
 
   /** Opens one live SQL result view and returns the generated subscribe message to send. */
   public openSubscription(options: SyncV2OpenSubscriptionOptions): SyncV2OpenSubscription {
+    if (typeof options.subscription !== "string" || options.subscription.trim().length === 0) {
+      throw new TerraScaleSyncV2ClientError("invalid_state", "subscription must be a non-empty string");
+    }
     if (this.#subscriptions.has(options.subscription)) {
       throw new TerraScaleSyncV2ClientError(
         "invalid_state",
@@ -201,10 +207,14 @@ export class TerraScaleSyncV2Client {
   public closeSubscription(subscription: string): Extract<SyncV2Message, { readonly kind: "unsubscribe" }> {
     const current = this.#requireSubscription(subscription);
     const live = this.#live.get(subscription);
-    if (live !== undefined) live.closed = true;
+    if (live !== undefined) {
+      live.closed = true;
+      live.abortController.abort();
+    }
     this.#live.delete(subscription);
     current.view.setOnline(false);
     this.#subscriptions.delete(subscription);
+    if (this.#subscriptions.size === 0) this.#online = false;
     return Object.freeze({ kind: "unsubscribe", subscription });
   }
 
@@ -215,6 +225,9 @@ export class TerraScaleSyncV2Client {
    */
   public async subscribe(options: SyncV2SubscribeOptions): Promise<SyncV2LiveSubscription> {
     const transport = options.transport ?? "http";
+    if (transport !== "http" && transport !== "websocket") {
+      throw new TerraScaleSyncV2ClientError("invalid_state", `unsupported reactive transport '${String(transport)}'`);
+    }
     if (transport === "websocket") {
       throw new TerraScaleSyncV2ClientError(
         "invalid_state",
@@ -229,23 +242,40 @@ export class TerraScaleSyncV2Client {
       throw new TerraScaleSyncV2ClientError("invalid_state", "databaseId is required for a reactive view attach");
     }
     const opened = this.openSubscription(options);
+    const previousOnline = this.#online;
     let attached: AttachedView;
+    let initialReset: SyncV2Reset | undefined;
     try {
       attached = await this.#attach(databaseId, options, opened.message, options.signal);
     } catch (error) {
-      this.#subscriptions.delete(options.subscription);
-      throw error;
+      if (error instanceof TerraScaleSyncV2ClientError && error.code === "reset_required" && options.checkpoint !== undefined) {
+        // The supplied checkpoint is stale. Retry attach exactly once without
+        // it; the new authorized snapshot becomes the reset cut.
+        initialReset = error.reset;
+        try {
+          attached = await this.#attach(databaseId, options, { ...opened.message, checkpoint: null }, options.signal);
+        } catch (retryError) {
+          this.#subscriptions.delete(options.subscription);
+          throw retryError;
+        }
+      } else {
+        this.#subscriptions.delete(options.subscription);
+        throw error;
+      }
     }
     const state: LiveSubscriptionState = {
       opened,
       databaseId,
       generation: attached.generation,
       capability: attached.capability,
+      capabilityHeader: attached.capabilityHeader,
       logUrl: attached.logUrl,
       snapshotUrls: attached.snapshotUrls,
       closed: false,
+      abortController: new AbortController(),
+      freshRequired: false,
       loop: undefined,
-      reset: undefined,
+      reset: initialReset,
     };
     this.#live.set(options.subscription, state);
     this.setOnline(true);
@@ -261,8 +291,14 @@ export class TerraScaleSyncV2Client {
         }
       }
     } catch (error) {
+      state.closed = true;
+      state.abortController.abort();
       this.#live.delete(options.subscription);
       this.#subscriptions.delete(options.subscription);
+      opened.subscription.view.setOnline(false);
+      // setOnline(true) above also touched any pre-existing subscriptions.
+      // Restore the transport state that existed before this attach attempt.
+      this.setOnline(previousOnline);
       throw error;
     }
 
@@ -380,13 +416,13 @@ export class TerraScaleSyncV2Client {
         }
         if (envelope.message.code === "authentication_expired") {
           throw new TerraScaleSyncV2ClientError(
-            "remote_error",
+            "authentication_expired",
             envelope.message.detail ?? "the reactive session expired",
           );
         }
         if (envelope.message.code === "permission_denied") {
           throw new TerraScaleSyncV2ClientError(
-            "remote_error",
+            "permission_denied",
             envelope.message.detail ?? "the reactive view is no longer authorized",
           );
         }
@@ -453,31 +489,38 @@ export class TerraScaleSyncV2Client {
   }
 
   async #getBytes(url: string, state: LiveSubscriptionState, signal?: AbortSignal): Promise<Uint8Array | undefined> {
-    const response = await this.#request(
-      url,
-      {
-        method: "GET",
-        headers: await this.#headers("application/msgpack", state.capability),
-        ...(signal === undefined ? {} : { signal }),
-      },
-      "reactive snapshot/log",
-    );
-    if (response.status === 204 || response.status === 304) return undefined;
-    if (!response.ok) throw await this.#httpError(response, "reactive snapshot/log");
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    return bytes.length === 0 ? undefined : bytes;
+    const linked = linkAbortSignals(state.abortController.signal, signal);
+    try {
+      const response = await this.#request(
+        url,
+        {
+          method: "GET",
+          headers: await this.#headers("application/msgpack", state.capability, state.capabilityHeader),
+          signal: linked.signal,
+        },
+        "reactive snapshot/log",
+      );
+      if (state.closed) return undefined;
+      if (response.status === 204 || response.status === 304) return undefined;
+      if (!response.ok) throw await this.#httpError(response, "reactive snapshot/log");
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      return bytes.length === 0 ? undefined : bytes;
+    } finally {
+      linked.dispose();
+    }
   }
 
   async #pollOnce(state: LiveSubscriptionState, signal?: AbortSignal): Promise<SyncV2Envelope | undefined> {
-    while (this.#paused && !state.closed) await delay(this.#reconnectDelayMs, signal);
+    while (this.#paused && !state.closed) await delay(this.#reconnectDelayMs, signal ?? state.abortController.signal);
     if (state.closed) return undefined;
     const revision = state.opened.subscription.view.getRevision();
     const url = new URL(state.logUrl);
     url.searchParams.set("offset", revision.toString(10));
     const timeout = new AbortController();
-    const abort = () => timeout.abort(signal?.reason);
+    if (signal?.aborted) throw signal.reason;
+    const abort = () => timeout.abort(state.abortController.signal.reason ?? signal?.reason);
+    state.abortController.signal.addEventListener("abort", abort, { once: true });
     if (signal !== undefined) {
-      if (signal.aborted) throw signal.reason;
       signal.addEventListener("abort", abort, { once: true });
     }
     const timer = globalThis.setTimeout(() => timeout.abort(), this.#pollWindowMs);
@@ -488,7 +531,7 @@ export class TerraScaleSyncV2Client {
           url,
           {
             method: "GET",
-            headers: await this.#headers("application/msgpack", state.capability),
+            headers: await this.#headers("application/msgpack", state.capability, state.capabilityHeader),
             signal: timeout.signal,
           },
           "reactive log poll",
@@ -501,9 +544,11 @@ export class TerraScaleSyncV2Client {
           !signal?.aborted) return undefined;
         throw error;
       }
+      if (state.closed) return undefined;
       if (response.status === 204 || response.status === 304) return undefined;
       if (!response.ok) throw await this.#httpError(response, "reactive log poll");
       const bytes = new Uint8Array(await response.arrayBuffer());
+      if (state.closed) return undefined;
       if (bytes.length === 0) return undefined;
       let envelope: SyncV2Envelope;
       try {
@@ -516,9 +561,23 @@ export class TerraScaleSyncV2Client {
         state.reset = { reason: normalizeResetReason(envelope.message.reason), subscription: state.opened.subscription.id };
       }
       return envelope;
+    } catch (error) {
+      if (error instanceof TerraScaleSyncV2ClientError && error.code === "reset_required") {
+        if (state.freshRequired) throw error;
+        state.reset = error.reset;
+        state.freshRequired = true;
+        // A refused/expired checkpoint is not a transport failure. Reattach
+        // once without it so the server can issue a fresh authorized cut.
+        // The resulting snapshot is installed before this method returns,
+        // notifying view observers atomically.
+        await this.#reconnect(state, signal);
+        return undefined;
+      }
+      throw error;
     } finally {
       globalThis.clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
+      state.abortController.signal.removeEventListener("abort", abort);
     }
   }
 
@@ -544,6 +603,7 @@ export class TerraScaleSyncV2Client {
           if (error.reset !== undefined) state.reset = error.reset;
           return;
         }
+        if (error instanceof TerraScaleSyncV2ClientError && error.code === "reset_required" && state.freshRequired) return;
         this.setOnline(false);
         await delay(this.#reconnectDelayMs, signal);
         if (!state.closed && !signal?.aborted) {
@@ -559,7 +619,7 @@ export class TerraScaleSyncV2Client {
 
   async #reconnect(state: LiveSubscriptionState, signal?: AbortSignal): Promise<void> {
     if (state.closed || this.#fetch === undefined) return;
-    const current = state.opened.subscription.view.getCheckpoint();
+    const current = state.freshRequired ? undefined : state.opened.subscription.view.getCheckpoint();
     const message = state.opened.message;
     const options: SyncV2SubscribeOptions = {
       subscription: message.subscription,
@@ -567,14 +627,33 @@ export class TerraScaleSyncV2Client {
       parameters: new Uint8Array(message.parameters),
       checkpoint: current,
       databaseId: state.databaseId,
+      ...(this.#region === null ? {} : { regionHint: this.#region }),
       autoStart: false,
     };
-    const attached = await this.#attach(state.databaseId, options, {
-      ...message,
-      checkpoint: current?.toBytes() ?? null,
-    }, signal);
+    const linked = linkAbortSignals(state.abortController.signal, signal);
+    let attached: AttachedView;
+    try {
+      try {
+        attached = await this.#attach(state.databaseId, options, {
+          ...message,
+          checkpoint: current?.toBytes() ?? null,
+        }, linked.signal);
+      } catch (error) {
+        if (error instanceof TerraScaleSyncV2ClientError && error.code === "reset_required" && !state.freshRequired) {
+          state.reset = error.reset;
+          state.freshRequired = true;
+          attached = await this.#attach(state.databaseId, options, { ...message, checkpoint: null }, linked.signal);
+        } else {
+          throw error;
+        }
+      }
+    } finally {
+      linked.dispose();
+    }
+    if (state.closed) return;
     state.generation = attached.generation;
     state.capability = attached.capability;
+    state.capabilityHeader = attached.capabilityHeader;
     state.logUrl = attached.logUrl;
     state.snapshotUrls = attached.snapshotUrls;
     if (attached.snapshot !== undefined) {
@@ -585,6 +664,8 @@ export class TerraScaleSyncV2Client {
         if (bytes !== undefined) this.receive(bytes);
       }
     }
+    state.freshRequired = false;
+    state.regionMoved = false;
     this.setOnline(true);
   }
 
@@ -602,16 +683,29 @@ export class TerraScaleSyncV2Client {
       poll: signal => this.#pollOnce(state, signal),
       reconnect: () => this.#reconnect(state),
       close: () => {
+        if (state.closed) return;
         state.closed = true;
+        state.abortController.abort();
         this.#live.delete(state.opened.subscription.id);
-        this.setOnline(false);
+        this.#subscriptions.delete(state.opened.subscription.id);
+        state.opened.subscription.view.setOnline(false);
+        if (this.#subscriptions.size === 0) this.#online = false;
       },
     };
   }
 
-  async #headers(accept: string, capability: string | undefined): Promise<Headers> {
+  async #headers(accept: string, capability: string | undefined, capabilityHeader = "x-terrascale-view-capability"): Promise<Headers> {
     const headers = new Headers({ accept });
-    if (capability !== undefined) headers.set("X-TerraScale-View-Capability", capability);
+    if (capability !== undefined) {
+      headers.set(capabilityHeader, capability);
+      // Keep compatibility with early E-5 members while the declared
+      // response header is being rolled out. The server verifies the
+      // canonical view header; the alias is harmless and can be removed once
+      // old members are no longer supported.
+      if (capabilityHeader !== "x-terrascale-capability") {
+        headers.set("x-terrascale-capability", capability);
+      }
+    }
     const token = await resolveToken(this.#accessToken);
     if (token !== undefined && token.length > 0) headers.set("Authorization", token.startsWith("Bearer ") ? token : `Bearer ${token}`);
     return headers;
@@ -646,6 +740,14 @@ export class TerraScaleSyncV2Client {
       reset = { reason: "retention-advanced", message: detail };
     }
     if (reset !== undefined) return new TerraScaleSyncV2ClientError("reset_required", detail, undefined, reset);
+    try {
+      const body: unknown = await response.clone().json();
+      const error = isRecord(body) && isRecord(body.error) ? body.error : isRecord(body) ? body : undefined;
+      if (error?.code === "authentication_expired") return new TerraScaleSyncV2ClientError("authentication_expired", detail);
+      if (error?.code === "permission_denied") return new TerraScaleSyncV2ClientError("permission_denied", detail);
+    } catch {
+      // Fall through to the HTTP status mapping below.
+    }
     if (response.status === 401) return new TerraScaleSyncV2ClientError("authentication_expired", detail);
     if (response.status === 403) return new TerraScaleSyncV2ClientError("permission_denied", detail);
     return new TerraScaleSyncV2ClientError("transport", detail);
@@ -656,6 +758,7 @@ type AttachedView = {
   readonly generation: bigint;
   readonly checkpoint: Uint8Array | undefined;
   readonly capability: string;
+  readonly capabilityHeader: string;
   readonly snapshotUrls: readonly string[];
   readonly logUrl: string;
   readonly snapshot: TerrascaleSyncV2MsgpackSnapshot | undefined;
@@ -666,9 +769,12 @@ type LiveSubscriptionState = {
   readonly databaseId: string;
   generation: bigint;
   capability: string;
+  capabilityHeader: string;
   snapshotUrls: readonly string[];
   logUrl: string;
   closed: boolean;
+  readonly abortController: AbortController;
+  freshRequired: boolean;
   regionMoved?: boolean;
   reset: SyncV2Reset | undefined;
   loop: Promise<void> | undefined;
@@ -784,7 +890,9 @@ function normalizeOrigin(origin: string): string {
   } catch {
     throw new TypeError("reactive origins must be absolute URLs");
   }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new TypeError("reactive origins must use HTTP or HTTPS");
   if (url.username !== "" || url.password !== "") throw new TypeError("reactive origins cannot contain credentials");
+  if (url.pathname !== "/" || url.search !== "" || url.hash !== "") throw new TypeError("reactive origins must not contain a path or query");
   return url.toString().replace(/\/$/u, "");
 }
 
@@ -828,10 +936,10 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function bytesFromUnknown(value: unknown, field: string): Uint8Array {
   if (value instanceof Uint8Array) return new Uint8Array(value);
-  if (Array.isArray(value) && value.every(item => typeof item === "number" && Number.isInteger(item) && item >= 0 && item <= 255)) {
+  if (Array.isArray(value) && value.length <= 4096 && value.every(item => typeof item === "number" && Number.isInteger(item) && item >= 0 && item <= 255)) {
     return Uint8Array.from(value as number[]);
   }
-  if (typeof value === "string") {
+  if (typeof value === "string" && value.length <= 8192) {
     // Attach responses use base64 for bytes. Plain strings remain accepted for
     // local fixtures and are encoded as UTF-8, without ever parsing JSON data.
     try {
@@ -848,9 +956,14 @@ function bytesFromUnknown(value: unknown, field: string): Uint8Array {
 
 function bigintFromUnknown(value: unknown, field: string): bigint {
   try {
-    if (typeof value === "bigint") return value;
-    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
-    if (typeof value === "string" && /^\d+$/u.test(value)) return BigInt(value);
+    const parsed = typeof value === "bigint"
+      ? value
+      : typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+        ? BigInt(value)
+        : typeof value === "string" && /^\d+$/u.test(value)
+          ? BigInt(value)
+          : undefined;
+    if (parsed !== undefined && parsed >= 0n && parsed <= MAX_U64) return parsed;
   } catch {
     // Fall through to the typed protocol error below.
   }
@@ -871,42 +984,133 @@ function canonicalUrl(syncOrigin: string, path: string): string {
 
 function decodeAttachedView(value: unknown, syncOrigin: string, subscription: string): AttachedView {
   if (!isRecord(value)) throw new TerraScaleSyncV2ClientError("protocol_error", "reactive attach response is not an object");
-  const view = typeof value.viewId === "string" ? value.viewId : typeof value.view_id === "string" ? value.view_id : subscription;
-  if (view.length === 0) throw new TerraScaleSyncV2ClientError("protocol_error", "reactive attach response has no view id");
+  const view = typeof value.viewId === "string"
+    ? value.viewId
+    : typeof value.view_id === "string"
+      ? value.view_id
+      : typeof value.view === "string"
+        ? value.view
+        : subscription;
+  if (!/^[A-Za-z0-9_-]{1,128}$/u.test(view)) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "reactive attach response has an invalid view id");
+  }
   const generation = bigintFromUnknown(value.generation ?? value.view_generation ?? value.viewGeneration, "generation");
   const capabilityValue = value.capability ?? value.viewCapability ?? value.view_capability;
-  if (typeof capabilityValue !== "string" || capabilityValue.length === 0) {
+  if (typeof capabilityValue !== "string" || capabilityValue.trim().length === 0 || capabilityValue.length > 4096 || capabilityValue.includes(",")) {
     throw new TerraScaleSyncV2ClientError("protocol_error", "reactive attach response has no view capability");
   }
-  const logUrl = canonicalUrl(syncOrigin, canonicalViewPath(view, generation, "log"));
-  const rawSnapshotUrls = value.snapshotUrls ?? value.snapshot_urls ?? value.snapshotChunkUrls ?? value.snapshot_chunk_urls;
+  const capabilityHeader = value.capability_header ?? value.capabilityHeader;
+  if (capabilityHeader !== undefined && (typeof capabilityHeader !== "string" ||
+    !new Set(["x-terrascale-view-capability", "x-terrascale-capability"]).has(capabilityHeader.toLowerCase()))) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "reactive attach response has an unsupported capability header");
+  }
+  const normalizedCapabilityHeader = typeof capabilityHeader === "string"
+    ? capabilityHeader.toLowerCase()
+    : "x-terrascale-view-capability";
+  const expectedLogPath = canonicalViewPath(view, generation, "log");
+  const rawLogUrl = value.logUrl ?? value.log_url ?? value.log;
+  const logUrl = rawLogUrl === undefined
+    ? canonicalUrl(syncOrigin, expectedLogPath)
+    : canonicalAttachedUrl(rawLogUrl, syncOrigin, expectedLogPath, "log");
+  const rawSnapshotUrls = value.snapshotUrls ?? value.snapshot_urls ?? value.snapshotChunkUrls ?? value.snapshot_chunk_urls ?? value.snapshot_chunks;
   const snapshotUrls: string[] = [];
   if (Array.isArray(rawSnapshotUrls)) {
+    if (rawSnapshotUrls.length > 1024) throw new TerraScaleSyncV2ClientError("protocol_error", "reactive attach response has too many snapshot URLs");
     for (const [index, raw] of rawSnapshotUrls.entries()) {
       if (typeof raw !== "string") throw new TerraScaleSyncV2ClientError("protocol_error", `snapshot URL ${index} is not a string`);
-      const parsed = new URL(raw, syncOrigin);
-      const prefix = canonicalViewPath(view, generation, "snapshot/");
-      if (parsed.pathname.startsWith(prefix)) snapshotUrls.push(canonicalUrl(syncOrigin, parsed.pathname));
-      else snapshotUrls.push(canonicalUrl(syncOrigin, canonicalViewPath(view, generation, `snapshot/${index}`)));
+      const path = canonicalViewPath(view, generation, `snapshot/${index}`);
+      snapshotUrls.push(canonicalAttachedUrl(raw, syncOrigin, path, "snapshot"));
     }
+  } else if (rawSnapshotUrls !== undefined) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "reactive attach response snapshot URLs are not an array");
   }
   const checkpointValue = value.checkpoint;
   const checkpoint = checkpointValue === undefined || checkpointValue === null ? undefined : bytesFromUnknown(checkpointValue, "checkpoint");
   const snapshot = decodeInlineSnapshot(value.snapshot, checkpoint);
+  if (snapshot !== undefined && snapshot.view_generation !== generation) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "inline snapshot generation does not match the attached view");
+  }
   if (snapshot === undefined && snapshotUrls.length === 0 && checkpoint === undefined) {
     throw new TerraScaleSyncV2ClientError("protocol_error", "reactive attach response has no snapshot or snapshot URLs");
   }
-  return { generation, checkpoint, capability: capabilityValue, snapshotUrls, logUrl, snapshot };
+  // A checkpoint-only attach is a valid resume bootstrap. The opaque token is
+  // installed at revision zero; subsequent deltas advance from that cut.
+  if (snapshot === undefined && snapshotUrls.length === 0 && checkpoint !== undefined) {
+    return {
+      generation,
+      checkpoint,
+      capability: capabilityValue,
+      capabilityHeader: normalizedCapabilityHeader,
+      snapshotUrls,
+      logUrl,
+      snapshot: {
+        view_generation: generation,
+        authorization_generation: 0n,
+        revision: 0n,
+        items: [],
+        digest: syncV2ResultDigest([]),
+        checkpoint,
+      },
+    };
+  }
+  return { generation, checkpoint, capability: capabilityValue, capabilityHeader: normalizedCapabilityHeader, snapshotUrls, logUrl, snapshot };
+}
+
+function canonicalAttachedUrl(raw: unknown, syncOrigin: string, expectedPath: string, kind: "log" | "snapshot"): string {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > 4096) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", `${kind} URL is outside its bound`);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw, syncOrigin);
+  } catch (error) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", `${kind} URL is invalid`, { cause: error });
+  }
+  const origin = new URL(syncOrigin).origin;
+  if (parsed.origin !== origin || parsed.username !== "" || parsed.password !== "" || parsed.hash !== "" || parsed.pathname !== expectedPath) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", `${kind} URL is not the canonical sync URL`);
+  }
+  const allowed = kind === "snapshot" ? "cut" : "offset";
+  const keys = [...new Set([...parsed.searchParams.keys()])];
+  if (keys.some(key => key !== allowed) || parsed.searchParams.getAll(allowed).length > 1) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", `${kind} URL has unsupported query parameters`);
+  }
+  const value = parsed.searchParams.get(allowed);
+  if (kind === "snapshot" && (value === null || value.length === 0)) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "snapshot URL is missing its immutable cut");
+  }
+  if (kind === "snapshot" && value !== null) {
+    try {
+      if (!/^\d+$/u.test(value) || BigInt(value) > MAX_U64) throw new Error("invalid cut");
+    } catch (error) {
+      throw new TerraScaleSyncV2ClientError("protocol_error", "snapshot URL has an invalid immutable cut", { cause: error });
+    }
+  }
+  if (kind === "log" && value !== null) {
+    try {
+      if (!/^\d+$/u.test(value) || BigInt(value) > MAX_U64) throw new Error("invalid offset");
+    } catch (error) {
+      throw new TerraScaleSyncV2ClientError("protocol_error", "log URL has an invalid offset", { cause: error });
+    }
+  }
+  const canonical = new URL(expectedPath, syncOrigin);
+  // The attach-time log offset is only a hint; polling always uses the
+  // installed revision. Snapshot cuts, however, are immutable identity and
+  // must remain part of the public URL.
+  if (kind === "snapshot" && value !== null) canonical.searchParams.set(allowed, value);
+  return canonical.toString();
 }
 
 function decodeInlineSnapshot(value: unknown, checkpoint: Uint8Array | undefined): TerrascaleSyncV2MsgpackSnapshot | undefined {
   if (!isRecord(value)) return undefined;
   const itemsValue = value.items;
   if (!Array.isArray(itemsValue)) throw new TerraScaleSyncV2ClientError("protocol_error", "inline snapshot items are not an array");
+  if (itemsValue.length > 10_000) throw new TerraScaleSyncV2ClientError("protocol_error", "inline snapshot has too many items");
   const items = itemsValue.map((raw, index) => {
     if (!isRecord(raw) || typeof raw.identity !== "string" || !Array.isArray(raw.fields)) {
       throw new TerraScaleSyncV2ClientError("protocol_error", `inline snapshot item ${index} is malformed`);
     }
+    if (raw.fields.length > 1_024) throw new TerraScaleSyncV2ClientError("protocol_error", `inline snapshot item ${index} has too many fields`);
     return {
       identity: raw.identity,
       fields: raw.fields.map((field, fieldIndex) => {
@@ -916,14 +1120,22 @@ function decodeInlineSnapshot(value: unknown, checkpoint: Uint8Array | undefined
     };
   });
   if (typeof value.digest !== "string") throw new TerraScaleSyncV2ClientError("protocol_error", "inline snapshot digest is missing");
+  const inlineCheckpoint = bytesFromUnknown(value.checkpoint, "snapshot.checkpoint");
+  if (checkpoint !== undefined && !bytesEqual(checkpoint, inlineCheckpoint)) {
+    throw new TerraScaleSyncV2ClientError("protocol_error", "attach checkpoint does not match inline snapshot checkpoint");
+  }
   return {
     view_generation: bigintFromUnknown(value.view_generation ?? value.viewGeneration, "snapshot.view_generation"),
     authorization_generation: bigintFromUnknown(value.authorization_generation ?? value.authorizationGeneration ?? 0, "snapshot.authorization_generation"),
     revision: bigintFromUnknown(value.revision, "snapshot.revision"),
     items,
     digest: value.digest,
-    checkpoint: checkpoint ?? bytesFromUnknown(value.checkpoint, "snapshot.checkpoint"),
+    checkpoint: checkpoint ?? inlineCheckpoint,
   };
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((byte, index) => byte === right[index]);
 }
 
 function normalizeResetReason(value: string): SyncV2ResultResetReason {
@@ -937,4 +1149,30 @@ function normalizeResetReason(value: string): SyncV2ResultResetReason {
 
 function isAbortError(value: unknown): boolean {
   return isRecord(value) && value.name === "AbortError";
+}
+
+function linkAbortSignals(...signals: (AbortSignal | undefined)[]): {
+  readonly signal: AbortSignal;
+  readonly dispose: () => void;
+} {
+  const controller = new AbortController();
+  const listeners: Array<() => void> = [];
+  const abort = (signal: AbortSignal): void => {
+    if (!controller.signal.aborted) controller.abort(signal.reason);
+  };
+  for (const signal of signals) {
+    if (signal === undefined) continue;
+    const listener = () => abort(signal);
+    if (signal.aborted) abort(signal);
+    else {
+      signal.addEventListener("abort", listener, { once: true });
+      listeners.push(() => signal.removeEventListener("abort", listener));
+    }
+  }
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      for (const remove of listeners) remove();
+    },
+  };
 }

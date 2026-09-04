@@ -21,6 +21,30 @@
       "types": "./dist/admin.d.ts",
       "import": "./dist/admin.js"
     },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    },
+    "./sql": {
+      "types": "./dist/sql.d.ts",
+      "import": "./dist/sql.js"
+    },
+    "./management": {
+      "types": "./dist/management.d.ts",
+      "import": "./dist/management.js"
+    },
+    "./tenants": {
+      "types": "./dist/tenants.d.ts",
+      "import": "./dist/tenants.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    },
+    "./tanstack": {
+      "types": "./dist/tanstack/index.d.ts",
+      "import": "./dist/tanstack/index.js"
+    },
     "./better-auth": {
       "types": "./dist/better-auth.d.ts",
       "node": "./dist/better-auth.js"
@@ -45,6 +69,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:browser": "playwright test"
+  },
+  "peerDependencies": {
+    "react": ">=18.2.0 <20.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

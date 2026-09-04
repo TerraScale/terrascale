@@ -232,7 +232,11 @@ export class TenantsClient {
   ): Promise<TerraScaleResult<TResponse>> {
     if (options.signal?.aborted === true) return cancelled(routeName);
 
-    const pending = this.#http.request<TResponse>({
+    // `signal` is part of the shared HTTP request options in the published
+    // transport. Keep this boundary typed locally while older generated
+    // declarations are refreshed; dropping it here would leave cancellation
+    // as a response race and would not stop the underlying fetch.
+    const request = {
       method: options.method,
       path: options.path,
       routeName,
@@ -240,25 +244,37 @@ export class TenantsClient {
       body: options.body,
       headers: options.headers,
       idempotencyKey: options.idempotencyKey,
-    });
+      signal: options.signal,
+    } as Parameters<TerraScaleHttp["request"]>[0] & { readonly signal?: AbortSignal };
+    const pending = this.#http.request<TResponse>(request);
     const signal = options.signal;
     if (signal === undefined) return pending;
 
-    return new Promise<TerraScaleResult<TResponse>>((resolve) => {
+    return new Promise<TerraScaleResult<TResponse>>((resolve, reject) => {
       const onAbort = (): void => {
         cleanup();
         resolve(cancelled(routeName));
       };
       const cleanup = (): void => signal.removeEventListener("abort", onAbort);
       signal.addEventListener("abort", onAbort, { once: true });
+      // The signal may have been aborted between the initial check and listener
+      // registration (for example, while the transport built its headers).
+      if (signal.aborted) onAbort();
       pending.then(
         (result) => {
           cleanup();
-          resolve(result);
+          resolve(isAbortedResult(result) && signal.aborted ? cancelled(routeName) : result);
         },
-        () => {
+        (error: unknown) => {
           cleanup();
-          resolve(cancelled(routeName));
+          if (signal.aborted && isAbortError(error)) {
+            resolve(cancelled(routeName));
+            return;
+          }
+          // TerraScaleHttp normally converts transport failures to a typed
+          // result. If an injected/future transport rejects for another
+          // reason, preserve that failure instead of calling it cancellation.
+          reject(error);
         },
       );
     });
@@ -300,4 +316,16 @@ function cancelled(routeName: string): TerraScaleFailure {
     code: "request_cancelled",
     message: "The TerraScale request was cancelled.",
   });
+}
+
+function isAbortedResult<T>(result: TerraScaleResult<T>): boolean {
+  return !result.ok && (
+    result.error.code === "request_cancelled" ||
+    result.error.code === "aborted" ||
+    isAbortError(result.error.details)
+  );
+}
+
+function isAbortError(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "name" in value && value.name === "AbortError";
 }

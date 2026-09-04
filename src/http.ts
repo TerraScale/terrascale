@@ -41,6 +41,8 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly body?: TBody | undefined;
   readonly headers?: HeadersInit | undefined;
   readonly idempotencyKey?: string | false | undefined;
+  /** Abort the underlying fetch, including while a retry is pending. */
+  readonly signal?: AbortSignal | undefined;
 };
 
 export type TerraScaleRequestMetric = {
@@ -90,6 +92,7 @@ export class TerraScaleHttp {
           const requestInit: RequestInit = {
             method: options.method,
             headers,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
           };
           if (options.body !== undefined) {
             headers.set("content-type", headers.get("content-type") ?? "application/json");
@@ -102,6 +105,13 @@ export class TerraScaleHttp {
           responseReceived = true;
           const body = await readResponseBody(response);
           this.recordRequestMetric(base, options.routeName, response.status, performance.now() - startedAt);
+
+          // Conditional reads use 304 as a successful cache hit. There is no
+          // representation body, so callers receive `undefined` and can use
+          // the status/headers to distinguish it from a normal 200 response.
+          if (response.status === 304) {
+            return ok(options.routeName, response.status, response.headers, undefined as TResponse);
+          }
 
           if (response.ok) {
             if (!body.ok) {
@@ -125,7 +135,7 @@ export class TerraScaleHttp {
 
           const error = errorFromResponse(response, body.ok ? body.value : body.raw);
           if (this.canRetry(idempotencyKey, attempt, response.status)) {
-            await delayForRetry(retryDelay(response, this.config.retryDelayMs, attempt));
+            await delayForRetry(retryDelay(response, this.config.retryDelayMs, attempt), options.signal);
             attempt++;
             continue;
           }
@@ -138,8 +148,8 @@ export class TerraScaleHttp {
             body.ok ? body.value : body.raw,
           );
         } catch (error) {
-          if (fetchStarted && !responseReceived && this.canRetry(idempotencyKey, attempt)) {
-            await delayForRetry(retryDelay(undefined, this.config.retryDelayMs, attempt));
+          if (fetchStarted && !responseReceived && !options.signal?.aborted && this.canRetry(idempotencyKey, attempt)) {
+            await delayForRetry(retryDelay(undefined, this.config.retryDelayMs, attempt), options.signal);
             attempt++;
             continue;
           }
@@ -253,6 +263,9 @@ export class TerraScaleHttp {
 
 const internalHeaderNames = new Set([
   "if-match",
+  "if-none-match",
+  "x-terrascale-durability",
+  "x-terrascale-session",
   "x-terrascale-allow-stale",
   "x-terrascale-delete-confirmation",
   "x-terrascale-preferred-region",
@@ -295,13 +308,23 @@ function retryDelay(response: Response | undefined, baseDelayMs: number, attempt
   return Math.min(baseDelayMs * (2 ** attempt), 30_000);
 }
 
-function delayForRetry(delayMs: number): Promise<void> {
+function delayForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
   if (delayMs === 0) {
     return Promise.resolve();
   }
 
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, delayMs);
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 

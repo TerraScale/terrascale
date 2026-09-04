@@ -110,6 +110,14 @@ export type TerraScaleTanStackSyncMeta = {
   readonly subscription: string;
 };
 
+type TerraScaleTanStackPublication<T extends object> = {
+  readonly values: Map<string, T>;
+  readonly order: string[];
+  readonly generation: bigint;
+  readonly checkpoint: SyncV2ViewCheckpoint;
+  readonly forceReset: boolean;
+};
+
 /**
  * An official TanStack DB collection-sync adapter over the public sync-v2
  * client. It owns no local durable writes. Incoming snapshots and deltas are
@@ -122,6 +130,8 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   readonly #abort = new AbortController();
   readonly #mutationPromises = new Map<string, Promise<unknown>>();
   readonly #mutationIdentities = new Map<string, string>();
+  /** Authoritative writes are sent and acknowledged in transaction order. */
+  #mutationTail: Promise<void> = Promise.resolve();
   #session: { readonly id: string; readonly view: SyncV2ResultViewStore } | undefined;
   #removeViewListener: (() => void) | undefined;
   #syncParams: TerraScaleTanStackSyncParams<T, TKey> | undefined;
@@ -132,6 +142,9 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   #correlation = 1n;
   #checkpoint: SyncV2ViewCheckpoint | undefined;
   #forceReset = false;
+  /** Latest view cut waiting for the TanStack commit currently in flight. */
+  #pendingPublication: TerraScaleTanStackPublication<T> | undefined;
+  #publicationRunning = false;
 
   public constructor(options: TerraScaleTanStackAdapterOptions<T, TKey>) {
     validateOptions(options);
@@ -175,7 +188,6 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
     this.#forceReset = messageKind === "snapshot" || messageKind === "reset" || messageKind === "authorization_changed";
     try {
       const envelope = this.#options.client.receive(frame);
-      this.#saveCheckpoint();
       return envelope;
     } finally {
       this.#forceReset = false;
@@ -207,7 +219,7 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   /** Propagates connection state to the existing public reactive client. */
   public setOnline(online: boolean): void {
     this.#assertActive();
-    this.#options.client.setOnline(online);
+    this.#session?.view.setOnline(online);
   }
 
   /** Returns the latest opaque checkpoint as a defensive copy. */
@@ -236,17 +248,19 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
   public dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
-    this.#abort.abort();
-    this.#removeViewListener?.();
-    this.#removeViewListener = undefined;
     const session = this.#session;
     const view = session?.view;
-    this.#session = undefined;
     if (session !== undefined) {
       try {
-        const unsubscribe = this.#options.client.closeSubscription(session.id);
-        if (this.#options.client.getSnapshot().online) {
-          const frame = this.#options.client.encode(unsubscribe, this.#nextCorrelation());
+        // Encode while the shared client is still online: closing the final
+        // subscription may transition that client offline before we dispatch.
+        const frame = this.#options.client.getSnapshot().online
+          ? this.#options.client.encode({ kind: "unsubscribe", subscription: session.id }, this.#nextCorrelation())
+          : undefined;
+        this.#options.client.closeSubscription(session.id);
+        if (frame !== undefined) {
+          // Dispatch before aborting local ownership so the transport sees a
+          // live signal. The adapter remains disposed while the send drains.
           void Promise.resolve(this.#options.transport.send(frame, this.#abort.signal)).catch(() => undefined);
         }
       } catch {
@@ -254,6 +268,10 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
         // still complete and the server's session retention handles recovery.
       }
     }
+    this.#abort.abort();
+    this.#removeViewListener?.();
+    this.#removeViewListener = undefined;
+    this.#session = undefined;
     for (const transactionId of this.#mutationPromises.keys()) {
       const identity = this.#mutationIdentities.get(transactionId) ?? transactionId;
       try { view?.rejectMutation(identity); } catch { /* already settled */ }
@@ -284,9 +302,8 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
       const frame = this.#options.client.encode(opened.message, this.#nextCorrelation());
       const sent = this.#options.transport.send(frame, this.#abort.signal);
       if (sent !== undefined) {
-        this.#options.client.setOnline(false);
         void Promise.resolve(sent)
-          .then(() => { if (!this.#disposed) this.#options.client.setOnline(true); })
+          .then(() => { if (!this.#disposed) opened.subscription.view.setOnline(true); })
           .catch((error: unknown) => this.#transportFailed(error));
       }
     } catch (error) {
@@ -298,7 +315,8 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
     const params = this.#syncParams;
     const session = this.#session;
     if (this.#disposed || params === undefined || session === undefined) return;
-    if (session.view.getCheckpoint() === undefined) return;
+    const checkpoint = session.view.getCheckpoint();
+    if (checkpoint === undefined) return;
     const visible = session.view.getVisibleItems();
     const next = new Map<string, T>();
     try {
@@ -308,39 +326,14 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
       return;
     }
 
-    try {
-      params.begin();
-      if (!this.#ready || this.#forceReset || session.view.getViewGeneration() !== this.#publishedGeneration) {
-        params.truncate();
-        for (const value of next.values()) params.write({ type: "insert", value });
-      } else {
-        for (const identity of this.#publishedOrder) {
-          if (!next.has(identity)) params.write({ type: "delete", key: this.#key(identity) });
-        }
-        for (const [identity, value] of next) {
-          const previous = this.#published.get(identity);
-          if (previous !== undefined && sameValue(previous, value)) continue;
-          params.write(previous === undefined
-            ? { type: "insert", value }
-            : { type: "update", value });
-        }
-      }
-      const receipt = params.commit(this.#abort.signal);
-      this.#published = next;
-      this.#publishedOrder = [...next.keys()];
-      this.#publishedGeneration = session.view.getViewGeneration();
-      this.#checkpoint = session.view.getCheckpoint();
-      const markReady = !this.#ready;
-      this.#ready = true;
-      if (markReady) {
-        if (receipt === true) params.markReady();
-        else void receipt.then(() => { if (!this.#disposed) params.markReady(); }).catch(error => { if (!this.#disposed) params.markError(error); });
-      } else if (receipt !== true) {
-        void receipt.catch((error: unknown) => { if (!this.#disposed) params.markError(error); });
-      }
-    } catch (error) {
-      params.markError(error);
-    }
+    this.#pendingPublication = {
+      values: next,
+      order: [...next.keys()],
+      generation: session.view.getViewGeneration(),
+      checkpoint,
+      forceReset: this.#forceReset,
+    };
+    this.#drainPublication();
   }
 
   #publishedGeneration = 0n;
@@ -382,27 +375,33 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
     this.#mutationIdentities.set(transactionId, identity);
     const operations = this.#optimisticOperations(operation, transaction.mutations);
     session.view.beginMutation(identity, operations);
-    try {
-      const response = await this.#options.mutate({
-        operation,
-        idempotencyKey: identity,
-        transactionId,
-        mutations: transaction.mutations,
-        signal: this.#abort.signal,
-        keyOf: this.#options.getKey,
-      });
-      if (isRejected(response)) {
-        session.view.rejectMutation(identity);
-        throw response.error ?? new Error("the TerraScale mutation was rejected");
+    const previous = this.#mutationTail;
+    const run = previous.then(async () => {
+      this.#assertActive();
+      try {
+        const response = await this.#options.mutate({
+          operation,
+          idempotencyKey: identity,
+          transactionId,
+          mutations: transaction.mutations,
+          signal: this.#abort.signal,
+          keyOf: this.#options.getKey,
+        });
+        if (isRejected(response)) {
+          session.view.rejectMutation(identity);
+          throw response.error ?? new Error("the TerraScale mutation was rejected");
+        }
+        const delta = isDelta(response) ? response : "delta" in response ? response.delta : undefined;
+        if (delta === undefined) throw new Error("the mutation must return its authoritative reactive delta");
+        session.view.acceptMutation(identity, delta);
+        return response;
+      } catch (error) {
+        try { session.view.rejectMutation(identity); } catch { /* accepted or reset during the request */ }
+        throw error;
       }
-      const delta = isDelta(response) ? response : "delta" in response ? response.delta : undefined;
-      if (delta === undefined) throw new Error("the mutation must return its authoritative reactive delta");
-      session.view.acceptMutation(identity, delta);
-      return response;
-    } catch (error) {
-      try { session.view.rejectMutation(identity); } catch { /* accepted or reset during the request */ }
-      throw error;
-    }
+    });
+    this.#mutationTail = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   #optimisticOperations(
@@ -426,13 +425,75 @@ export class TerraScaleTanStackCollectionSync<T extends object, TKey extends str
     return operations;
   }
 
-  #saveCheckpoint(): void {
-    this.#checkpoint = this.#session?.view.getCheckpoint() ?? this.#checkpoint;
+  #drainPublication(): void {
+    if (this.#publicationRunning || this.#disposed) return;
+    const params = this.#syncParams;
+    const publication = this.#pendingPublication;
+    if (params === undefined || publication === undefined) return;
+    this.#pendingPublication = undefined;
+    this.#publicationRunning = true;
+
+    let receipt: true | Promise<void>;
+    try {
+      params.begin();
+      if (!this.#ready || publication.forceReset || publication.generation !== this.#publishedGeneration) {
+        params.truncate();
+        for (const value of publication.values.values()) params.write({ type: "insert", value });
+      } else {
+        for (const identity of this.#publishedOrder) {
+          if (!publication.values.has(identity)) params.write({ type: "delete", key: this.#key(identity) });
+        }
+        for (const [identity, value] of publication.values) {
+          const previous = this.#published.get(identity);
+          if (previous !== undefined && sameValue(previous, value)) continue;
+          params.write(previous === undefined
+            ? { type: "insert", value }
+            : { type: "update", value });
+        }
+      }
+      receipt = params.commit(this.#abort.signal);
+    } catch (error) {
+      this.#publicationRunning = false;
+      this.#reportPublicationError(params, error);
+      this.#drainPublication();
+      return;
+    }
+
+    if (receipt === true) {
+      this.#completePublication(publication, params);
+      this.#publicationRunning = false;
+      this.#drainPublication();
+      return;
+    }
+    void Promise.resolve(receipt).then(() => {
+      if (this.#disposed) return;
+      this.#completePublication(publication, params);
+      this.#publicationRunning = false;
+      this.#drainPublication();
+    }, error => {
+      this.#publicationRunning = false;
+      if (!this.#disposed) this.#reportPublicationError(params, error);
+      this.#drainPublication();
+    });
+  }
+
+  #completePublication(publication: TerraScaleTanStackPublication<T>, params: TerraScaleTanStackSyncParams<T, TKey>): void {
+    const markReady = !this.#ready;
+    this.#published = publication.values;
+    this.#publishedOrder = publication.order;
+    this.#publishedGeneration = publication.generation;
+    this.#checkpoint = publication.checkpoint;
+    this.#ready = true;
+    if (markReady) params.markReady();
+  }
+
+  #reportPublicationError(params: TerraScaleTanStackSyncParams<T, TKey>, error: unknown): void {
+    try { params.markError(error); } catch { /* callback errors must not corrupt the publication queue */ }
   }
 
   #transportFailed(error: unknown): void {
     if (this.#disposed) return;
-    this.#options.client.setOnline(false);
+    this.#session?.view.setOnline(false);
     if (!this.#ready) this.#syncParams?.markError(error);
   }
 

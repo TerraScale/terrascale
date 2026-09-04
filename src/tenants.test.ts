@@ -112,4 +112,75 @@ describe("TenantsClient", () => {
     if (!result.ok) assert.equal(result.error.code, "request_cancelled");
     assert.equal(fetches, 0);
   });
+
+  test("cancels an in-flight request without waiting for its response", async () => {
+    let fetchStarted = false;
+    const controller = new AbortController();
+    const client = new TenantsClient(new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async () => {
+        fetchStarted = true;
+        await new Promise<never>(() => undefined);
+        throw new Error("unreachable");
+      },
+    }));
+
+    const pending = client.get("acme", { signal: controller.signal });
+    await new Promise<void>(resolve => queueMicrotask(resolve));
+    assert.equal(fetchStarted, true);
+    controller.abort();
+    const result = await pending;
+
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.code, "request_cancelled");
+  });
+
+  test("preserves a transport failure when no caller abort occurred", async () => {
+    const client = new TenantsClient(new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async () => { throw new TypeError("socket closed"); },
+    }));
+
+    const result = await client.get("acme", { signal: new AbortController().signal });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.kind, "transport");
+      assert.equal(result.error.code, "transport_error");
+      assert.match(result.error.message, /socket closed/u);
+    }
+  });
+
+  test("does not turn a transport AbortError into cancellation unless the caller aborted", async () => {
+    const client = new TenantsClient(new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async () => { throw new DOMException("origin timeout", "AbortError"); },
+    }));
+
+    const result = await client.get("acme", { signal: new AbortController().signal });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.kind, "transport");
+      assert.equal(result.error.code, "transport_error");
+      assert.notEqual(result.error.code, "request_cancelled");
+    }
+  });
+
+  test("keeps nested typed service errors intact", async () => {
+    const client = new TenantsClient(new TerraScaleHttp({
+      apiBaseUrl: "https://api.terrascale.test",
+      fetch: async () => Response.json({
+        error: { code: "tenant_denied", message: "tenant is not accessible", details: { region: "FRA" } },
+      }, { status: 403 }),
+    }));
+
+    const result = await client.get("acme", { signal: new AbortController().signal });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.error.kind, "authorization");
+      assert.equal(result.error.code, "tenant_denied");
+      assert.deepEqual(result.error.details, {
+        error: { code: "tenant_denied", message: "tenant is not accessible", details: { region: "FRA" } },
+      });
+    }
+  });
 });

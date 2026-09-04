@@ -3,6 +3,8 @@ export * from "./factory.js";
 export * from "./models.js";
 export * from "./regions.js";
 export * from "./result.js";
+export * from "./schema.js";
+export * from "./sql.js";
 export type { Brand, Ulid } from "./ids.js";
 export { isUlid, toUlid, tryUlid } from "./ids.js";
 export * from "./sync/v2/client.js";
@@ -21,3 +23,18 @@ export type {
   SavedQueriesClient,
   UsageClient,
 } from "./client.js";
+export type { TerraScaleManagementClient } from "./management.js";
+export type {
+  CreateTenantBranchRequest,
+  CreateTenantKeyRequest,
+  CreateTenantRequest,
+  DeleteTenantOptions,
+  Tenant,
+  TenantApiKey,
+  TenantBranch,
+  TenantListQuery,
+  TenantOperationOptions,
+  TenantPlacementLock,
+  TenantTemplate,
+  TenantsClient,
+} from "./tenants.js";

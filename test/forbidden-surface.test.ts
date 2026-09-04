@@ -1,10 +1,8 @@
 // Forbidden SDK surface gate (Vitest port of
 // the retired check-forbidden-surface gate, D-47). Scans the SDK source (plus
 // the README and the committed route manifest) for retired auth, payment,
-// billing, pricing, and security surface. API keys are launch scope
-// (GOAL section 4 dashboard API keys + spend caps, D-44 API-key principal,
-// D-51 tenant-scoped keys, P-5) and are intentionally allowed. Test files
-// and the capture harness that pins the public client shape are exempt.
+// billing, pricing, security, and retired management route surface. Test
+// files and the capture harness that pins the public client shape are exempt.
 
 import assert from "node:assert/strict";
 import { readFile, readdir, stat } from "node:fs/promises";
@@ -46,6 +44,14 @@ const forbidden = [
   {
     name: "project authentication/security surface",
     pattern: /\/api\/v\d+\/projects\/\{[^}]+\}\/(?:auth|security)(?:[\/"'`:]|$)|\b(?:SecurityClient|SecuritySettings\w*)\b|\bsecurity\.(?:\w+)/u,
+  },
+  {
+    name: "retired management route",
+    pattern: /\/api\/v\d+\/(?:[^\/"'`]+\/)*(?:auth\/api-keys|queues?|repositories?|environments?)(?:[\/"'`: ]|$)/iu,
+  },
+  {
+    name: "retired management symbol",
+    pattern: /\b(?:Management)?(?:Queue|Repository|Environment)(?:Client|Request|Response|Job|Config|State)s?\b/u,
   },
 ];
 

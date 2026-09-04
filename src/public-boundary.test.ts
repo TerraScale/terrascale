@@ -27,6 +27,10 @@ test("built package keeps all public clients on typed operations without a runti
   assert.equal(typeof client.savedQueries.update, "function");
   assert.equal(typeof client.databaseBranches.getCapability, "function");
   assert.equal(typeof client.databaseBranches.requestClone, "function");
+  assert.equal(typeof client.management.databases.list, "function");
+  assert.equal(typeof client.tenants.list, "function");
+  assert.equal(Object.getOwnPropertyNames(client).includes("management"), true);
+  assert.equal(Object.getOwnPropertyNames(client).includes("tenants"), true);
   assert.equal(Object.values(client).length, 11);
   for (const removedClient of ["auth", "apiKeys", "m2m", "billing", "pricing", "security"]) {
     assert.equal(removedClient in client, false);
@@ -63,7 +67,17 @@ test("built package keeps all public clients on typed operations without a runti
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   ) as { readonly exports: Record<string, unknown> };
   assert.equal("http" in packageManifest.exports, false);
-  assert.deepEqual(Object.keys(packageManifest.exports), [".", "./admin", "./better-auth"]);
+  assert.deepEqual(Object.keys(packageManifest.exports), [
+    ".",
+    "./admin",
+    "./schema",
+    "./sql",
+    "./management",
+    "./tenants",
+    "./react",
+    "./tanstack",
+    "./better-auth",
+  ]);
 });
 
 test("root clients reject private service origins and arbitrary default headers", () => {
