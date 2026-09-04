@@ -168,6 +168,25 @@ async fn poll_sends_capability_header_and_keeps_canonical_log_url_immutable() {
 }
 
 #[tokio::test]
+async fn poll_rejects_non_https_or_userinfo_log_endpoints() {
+    for log_url in [
+        "http://sync.api.terrascale.tech/api/v1/reactive/views/view-1/4/log",
+        "https://user:secret@sync.api.terrascale.tech/api/v1/reactive/views/view-1/4/log",
+    ] {
+        let mock = Mock::new(std::iter::empty::<Result<Response>>());
+        let mut view = attached();
+        view.log_url = log_url.to_owned();
+        let error = client(Arc::clone(&mock))
+            .reactive()
+            .poll_from(&view, "r1")
+            .await
+            .expect_err("unsafe endpoint");
+        assert_eq!(error.code, "invalid_reactive_endpoint");
+        assert!(mock.requests.lock().expect("request mutex").is_empty());
+    }
+}
+
+#[tokio::test]
 async fn attach_uses_canonical_route_and_base64_wire_fields() {
     let mock = Mock::new([Ok(Response::json(
         200,
