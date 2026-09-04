@@ -442,6 +442,12 @@ impl AdHocLane {
         self.selections().pop()
     }
 
+    /// The lane's durable extracted-column descriptors, through the typed
+    /// read: the D-31 registration state the first-query policy converges.
+    pub(crate) fn descriptors(&self) -> Vec<crate::storage::DescriptorListing> {
+        self.lane.engine().index_descriptors().expect("descriptors list")
+    }
+
     /// Shuts the engine down and removes its location.
     pub(crate) fn remove(self) {
         self.lane.remove();

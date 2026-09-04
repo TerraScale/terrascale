@@ -83,12 +83,12 @@ second string copy. Comparisons use unsigned lexicographic byte order, which is
 the ULID chronological order, and may use fixed-width or vectorized comparison
 where benchmarks justify it.
 
-ULID time locality is useful inside ordered segments but must not create a hot
-Partition. Bucket placement hashes the domain-separated 16-byte identity and
-then maps the hash to a stable bucket. Range movement changes bucket ownership,
-not the entity identity. Queries that request chronological creation order use
-an explicit indexed time field or the validated ULID timestamp projection; they
-do not scan one hot timestamp-prefix shard.
+ULID time locality is useful for ordered key-range shards, but the timestamp
+prefix alone must not dictate a shard boundary or create a hot Partition.
+Under D-28, explicit key ranges split and move ownership without changing the
+entity identity. Queries that request chronological creation order use an
+explicit indexed time field or the validated ULID timestamp projection; they
+do not assume that one timestamp-prefix range is the only shard.
 
 Content-derived objects have both identities and digests. For example, an
 Auto-Index instance has an `AutoIndexUlid`, while its canonical definition has
@@ -108,9 +108,9 @@ Application code cannot select alternate formats or random sources.
 One cross-language corpus covers the ULID specification vectors, minimum and
 maximum values, same-millisecond monotonic generation, entropy overflow,
 invalid and ambiguous text, binary/text round trips, byte ordering, protobuf
-representation, storage-key ordering, hash-to-bucket placement, and concurrent
-generation in every supported runtime. Dependency upgrades must pass this
-corpus and the identity lookup, insert, index, WAL, and protocol benchmarks.
+representation, storage-key ordering, and concurrent generation in every
+supported runtime. Dependency upgrades must pass this corpus and the identity
+lookup, insert, index, WAL, and protocol benchmarks.
 
 A separate Region boundary corpus accepts only registered uppercase airport
 `RegionCode` values. It proves that engine state, TBEP, public APIs, SDKs,

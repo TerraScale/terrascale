@@ -10,5 +10,3 @@ mod includes_contract;
 mod query_public_construction;
 mod result_statistics;
 mod sql_conformance;
-mod vector_conformance_vectors;
-mod vector_search;

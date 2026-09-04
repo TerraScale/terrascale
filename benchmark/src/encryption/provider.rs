@@ -278,15 +278,11 @@ pub enum ProviderCapability {
 
 /// The honest production capability of this process.
 ///
-/// This is runtime status only. It cannot represent external OCI, FIPS,
+/// This is runtime status only. It cannot represent external OCI,
 /// architecture, or release qualification.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProductionCapabilityStatus {
-    /// The binary selected the non-FIPS local development feature.
-    LocalCryptoSelected,
-    /// The selected AWS-LC FIPS module did not report operational mode.
-    FipsModuleUnavailable,
-    /// The FIPS module is operational, but OCI Vault is not configured.
+    /// OCI Vault is not configured.
     OciVaultUnconfigured,
     /// OCI is configured, but candidate-bound qualification is still absent.
     ConfiguredUnqualified,
@@ -308,23 +304,12 @@ impl ProductionCapabilityStatus {
 pub fn production_capability_status(
     provider: &dyn KeyWrappingProvider,
 ) -> ProductionCapabilityStatus {
-    #[cfg(feature = "local-crypto")]
-    {
-        let _ = provider;
-        ProductionCapabilityStatus::LocalCryptoSelected
-    }
-    #[cfg(feature = "production-fips")]
-    {
-        if aws_lc_rs::try_fips_mode().is_err() {
-            return ProductionCapabilityStatus::FipsModuleUnavailable;
+    match provider.capability() {
+        ProviderCapability::Unconfigured | ProviderCapability::LocalDevelopmentOnly => {
+            ProductionCapabilityStatus::OciVaultUnconfigured
         }
-        match provider.capability() {
-            ProviderCapability::Unconfigured | ProviderCapability::LocalDevelopmentOnly => {
-                ProductionCapabilityStatus::OciVaultUnconfigured
-            }
-            ProviderCapability::ConfiguredUnqualified => {
-                ProductionCapabilityStatus::ConfiguredUnqualified
-            }
+        ProviderCapability::ConfiguredUnqualified => {
+            ProductionCapabilityStatus::ConfiguredUnqualified
         }
     }
 }

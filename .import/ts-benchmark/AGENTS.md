@@ -8,6 +8,9 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 - We need to expose metrics to prometheus compatible
 - We should use crates that are tested and popular whenever possible instead of creating our own solutions
 - When the human asks for a commit, commit and push exactly as asked — do not run tests, checks, or builds first
+- When building rust always
+  - Lower priority (recommended, yields to other work)
+  - When running make and using the Makefile always use the lowest cpu priority
 
 
 - Rust. SQLite is the only storage; the member serves the public API itself.

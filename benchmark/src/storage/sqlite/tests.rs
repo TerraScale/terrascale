@@ -407,6 +407,45 @@ fn idempotent_replay_and_digest_conflict() {
 }
 
 #[test]
+fn no_row_operation_replays_exactly_after_restart_and_later_writes() {
+    let (dir, mut storage) = sqlite_store("operation-facts-restart");
+    let request = intent(
+        "delete-missing",
+        vec![delete(None, "never-present", ExpectedVersion::Any)],
+        LocalDurability::Synced,
+    );
+    let first = storage.commit(request.clone());
+    assert_eq!(stored_sequence(&first), 1);
+    {
+        let connection = storage.raw_writer_connection();
+        let fact: (i64, i64, i64, String) = connection
+            .query_row(
+                "SELECT sequence, writes, bytes, client_request_ulid
+                 FROM operation_facts WHERE tenant = 'tenant-a' AND client_request_ulid = 'delete-missing'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("operation fact persists");
+        assert_eq!(fact.0, 1);
+        assert_eq!(fact.1, 1, "a no-row delete is one billed write");
+        assert_eq!(fact.2, 0, "a no-row delete has no body bytes");
+        assert_eq!(fact.3, "delete-missing");
+    }
+    drop(storage);
+    let mut reopened = SqliteStorage::open(&dir).expect("reopens");
+    let next = commit(
+        &mut reopened,
+        "after-delete",
+        vec![put(document("present", "users", "value"), ExpectedVersion::New)],
+    );
+    assert_eq!(stored_sequence(&next), 2);
+    let replay = reopened.commit(request);
+    assert_eq!(replay, first, "restart and later writes do not alter the receipt");
+    drop(reopened);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn sequence_only_delete_is_durable_across_reopen() {
     let (dir, engine) = open_sqlite_engine("sequence-only-delete");
     let first = committed_sequence(commit_delete(
@@ -770,6 +809,39 @@ fn fresh_rows_survive_the_sweep_regardless_of_frontiers() {
     let pruned = storage.prune_below_consumer_frontiers().expect("prune runs");
     assert_eq!(pruned, 3, "only the backdated rows leave the journal");
     assert_eq!(storage.journal_records(), 2, "the rows inside the floor stay");
+}
+
+#[test]
+fn collection_history_windows_are_evaluated_independently() {
+    let (_dir, mut storage) = sqlite_store("collection-history-windows");
+    commit(
+        &mut storage,
+        "short-window-op",
+        vec![put(document("short", "short-lived", "one"), ExpectedVersion::New)],
+    );
+    commit(
+        &mut storage,
+        "long-window-op",
+        vec![put(document("long", "long-lived", "two"), ExpectedVersion::New)],
+    );
+    storage.advance_consumer_frontier("solo", 2).expect("frontier advances");
+    {
+        let connection = storage.raw_writer_connection();
+        connection
+            .execute(
+                "INSERT INTO collection_history (collection, days) VALUES ('short-lived', 1)",
+                [],
+            )
+            .expect("short history declaration");
+        connection
+            .execute(
+                "UPDATE documents SET committed_at = ?1",
+                [super::unix_millis() - 2 * 24 * 60 * 60 * 1000],
+            )
+            .expect("rows backdate");
+    }
+    assert_eq!(storage.prune_below_consumer_frontiers().expect("prune runs"), 1);
+    assert_eq!(storage.journal_records(), 1, "the long-window row remains");
 }
 
 #[test]

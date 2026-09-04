@@ -1,785 +1,850 @@
-//! The reactive transports (`S-04` slice 4, D-14/D-38): one shared
-//! pump-and-drain core behind two wire shapes — `POST /api/v1/reactive/poll`
-//! (HTTP fallback) and `GET /api/v1/databases/{name}/reactive` (WebSocket).
+//! Canonical SQL result-view delivery (D-14/D-38/D-46/D-55).
 //!
-//! Delivery bytes use the bounded `terrascale.sync.v2` indexed-array codec.
-//! The member host still exposes the older `ReactiveFrame` seam while the
-//! shared SQL-view attach lane is integrated. This module adapts that seam at
-//! the transport boundary and never emits the retired map format.
+//! Views are keyed by the complete SQL attach input and authorization scope.
+//! Snapshot and log revisions are immutable MessagePack envelopes. Empty
+//! long-polls are `204` and `no-store`; no client-visible numeric session is
+//! used by this transport.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::api::ApiError;
-use crate::api::ApiState;
-use axum::extract::Path;
-use axum::extract::State;
-use axum::extract::WebSocketUpgrade;
-use axum::extract::ws::Message;
-use axum::extract::ws::WebSocket;
-use axum::http::HeaderValue;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::response::Response;
-use terrabase_sync_core::server::FieldValue;
-use terrabase_sync_core::server::SubscriptionSpec;
+use axum::extract::ws::{Message, WebSocket};
+use axum::extract::{Path, Query, State, WebSocketUpgrade};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
+use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
-/// One live reactive subscription the API tracks for its transports.
-struct ReactiveSession {
-    database: String,
-    receiver: std::sync::mpsc::Receiver<terrabase_tbep::reactive::ReactiveFrame>,
+use crate::api::{ApiError, ApiState};
+
+/// Fixed capability header; it never appears in a URL or cache key.
+pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-View-Capability";
+/// MessagePack media type for snapshots, logs, resets, and protocol errors.
+pub const MSGPACK_MEDIA_TYPE: &str = "application/msgpack";
+/// Maximum SQL statement bytes accepted by view attach.
+pub const MAX_ATTACH_SQL_BYTES: usize = 262_144;
+/// Maximum parameter bytes accepted by view attach.
+pub const MAX_ATTACH_BINARY_BYTES: usize = 1_048_576;
+/// Maximum HTTP long-poll duration.
+pub const LONG_POLL_WINDOW: Duration = Duration::from_secs(25);
+const RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const CAPABILITY_BUCKET: u64 = 600;
+const CAPABILITY_OVERLAP: u64 = 1_200;
+const CAPABILITY_KEY: &[u8] = b"terrascale-reactive-capability-v1";
+
+/// Canonical SQL attach input. Legacy collection-condition fields are absent.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub struct AttachRequest {
+    /// Durable database identity.
+    #[serde(rename = "databaseId")]
+    pub database_id: String,
+    /// Read-only SQL statement.
+    pub statement: String,
+    /// Base64 encoded SQL parameter bytes.
+    #[serde(default)]
+    pub parameters: String,
+    /// Base64 encoded opaque resume checkpoint.
+    #[serde(default)]
+    pub checkpoint: Option<String>,
+    /// Optional client correlation identity.
+    #[serde(default)]
+    pub subscription: Option<String>,
+    /// Entitlement epoch bound into the view identity.
+    #[serde(default)]
+    pub entitlement_epoch: u64,
 }
 
-/// Holds one admitted WebSocket slot (and, once subscribed, its
-/// distinct-view slot) for a socket task. Every exit path drops the lease,
-/// so a closed, failed, or refused socket always frees both D-64 budgets.
-struct WsLease {
-    guards: Arc<crate::guards::AbuseGuards>,
-    database: String,
-    view: Option<String>,
+/// Attach metadata returned to an SDK.
+#[derive(Clone, Debug, Serialize)]
+pub struct AttachResponse {
+    /// Opaque shared view id.
+    pub view: String,
+    /// Current view generation.
+    pub generation: u64,
+    /// Immutable snapshot chunk URL(s).
+    pub snapshot_chunks: Vec<String>,
+    /// Immutable log URL.
+    pub log: String,
+    /// Base64 encoded opaque checkpoint.
+    pub checkpoint: String,
+    /// Capability for [`VIEW_CAPABILITY_HEADER`].
+    pub capability: String,
+    /// Fixed header spelling.
+    pub capability_header: &'static str,
+    /// Numeric log offset, separate from the opaque checkpoint.
+    pub offset: u64,
 }
 
-impl WsLease {
-    /// Attaches the socket's distinct-view slot. A refused attach leaves
-    /// any previous view untouched; dropping the lease still frees the
-    /// WebSocket slot.
-    #[allow(dead_code, reason = "the distinct-view attach is wired in the S-09 socket step")]
-    fn attach(&mut self, view: String) -> Result<(), crate::guards::GuardRejection> {
-        self.guards.attach_view(&self.database, &view)?;
-        self.view = Some(view);
+#[derive(Clone)]
+struct Frozen {
+    bytes: Arc<[u8]>,
+    created: SystemTime,
+}
+
+struct View {
+    id: String,
+    generation: u64,
+    scope: String,
+    entitlement_epoch: u64,
+    head: u64,
+    floor: u64,
+    snapshot: BTreeMap<u64, Frozen>,
+    log: BTreeMap<u64, Frozen>,
+}
+
+/// Process-wide canonical shared-view registry.
+pub struct ViewStore {
+    views: Mutex<BTreeMap<String, View>>,
+    changed: Notify,
+}
+
+impl ViewStore {
+    fn new() -> Self {
+        Self { views: Mutex::new(BTreeMap::new()), changed: Notify::new() }
+    }
+
+    /// Attaches request metadata without resolving a database. The HTTP
+    /// handler performs database existence and authorization checks first.
+    pub fn attach(
+        &self,
+        request: &AttachRequest,
+        scope: &str,
+    ) -> Result<(AttachResponse, String), ApiError> {
+        let parameters =
+            decode_base64(&request.parameters).map_err(|_| invalid_attach("parameters"))?;
+        if parameters.len() > MAX_ATTACH_BINARY_BYTES {
+            return Err(invalid_attach("parameters"));
+        }
+        let checkpoint = request
+            .checkpoint
+            .as_deref()
+            .map(decode_base64)
+            .transpose()
+            .map_err(|_| invalid_attach("checkpoint"))?;
+        if checkpoint.as_ref().is_some_and(|value| value.is_empty() || value.len() > 4096) {
+            return Err(invalid_attach("checkpoint"));
+        }
+        let statement = request.statement.trim();
+        if statement.is_empty() || statement.len() > MAX_ATTACH_SQL_BYTES {
+            return Err(invalid_attach("statement"));
+        }
+        let parsed = terrabase::query::sql::parse(statement, MAX_ATTACH_SQL_BYTES)
+            .map_err(|_| sql_error("the statement is not valid read-only SQL"))?;
+        if let terrabase::query::sql::LiveSubset::ExecuteOnly { operator } =
+            terrabase::query::sql::classify_live_subset(&parsed)
+        {
+            return Err(ApiError { status: StatusCode::UNPROCESSABLE_ENTITY, code: "not_subscribable", message: format!("the SQL statement is execute-only ({operator})"), fix: "subscribe a single-collection SELECT with scalar predicates, ORDER BY, LIMIT, or MATCH".into(), placement: None });
+        }
+        let mut key = Vec::with_capacity(statement.len() + scope.len() + parameters.len() + 40);
+        key.extend_from_slice(request.database_id.as_bytes());
+        key.push(0);
+        key.extend_from_slice(statement.as_bytes());
+        key.push(0);
+        key.extend_from_slice(scope.as_bytes());
+        key.push(0);
+        key.extend_from_slice(&request.entitlement_epoch.to_be_bytes());
+        key.push(0);
+        key.extend_from_slice(&parameters);
+        let view_id = format!("v-{}", blake3::hash(&key).to_hex());
+        let mut views = self.views.lock().expect("reactive view lock is not poisoned");
+        let view = views.entry(view_id.clone()).or_insert_with(|| {
+            let bytes = snapshot_envelope(&view_id, 1, 0, checkpoint_bytes(&view_id, 1, 0));
+            let mut snapshot = BTreeMap::new();
+            snapshot.insert(0, Frozen { bytes: Arc::from(bytes), created: SystemTime::now() });
+            View {
+                id: view_id.clone(),
+                generation: 1,
+                scope: scope.to_owned(),
+                entitlement_epoch: request.entitlement_epoch,
+                head: 0,
+                floor: 0,
+                snapshot,
+                log: BTreeMap::new(),
+            }
+        });
+        if view.scope != scope || view.entitlement_epoch != request.entitlement_epoch {
+            return Err(ApiError {
+                status: StatusCode::CONFLICT,
+                code: "view_identity_conflict",
+                message: "the shared view identity has a conflicting authorization binding".into(),
+                fix: "attach with the current authorization scope and entitlement epoch".into(),
+                placement: None,
+            });
+        }
+        let offset = view.head;
+        let checkpoint = checkpoint_bytes(&view.id, view.generation, offset);
+        let capability =
+            capability_for(&view.id, view.generation, scope, view.entitlement_epoch, now_seconds());
+        Ok((
+            AttachResponse {
+                view: view.id.clone(),
+                generation: view.generation,
+                snapshot_chunks: vec![format!(
+                    "/api/v1/reactive/views/{}/{}/snapshot/0?cut={offset}",
+                    view.id, view.generation
+                )],
+                log: format!(
+                    "/api/v1/reactive/views/{}/{}/log?offset={offset}",
+                    view.id, view.generation
+                ),
+                checkpoint: encode_base64(&checkpoint),
+                capability,
+                capability_header: VIEW_CAPABILITY_HEADER,
+                offset,
+            },
+            view.id.clone(),
+        ))
+    }
+
+    /// Append one already encoded manifest message exactly once.
+    /// Appends one canonical manifest message exactly once.
+    pub fn append(
+        &self,
+        view_id: &str,
+        revision: u64,
+        message: terrabase_sync_core::wire::Message,
+    ) -> Result<(), ApiError> {
+        let bytes =
+            terrabase_sync_core::wire::encode_envelope(&terrabase_sync_core::wire::Envelope {
+                features: 0,
+                correlation: 0,
+                causation: revision,
+                message,
+            })
+            .map_err(|_| frame_error())?;
+        let mut views = self.views.lock().expect("reactive view lock is not poisoned");
+        let Some(view) = views.get_mut(view_id) else {
+            return Err(unknown_view());
+        };
+        if revision <= view.head {
+            return Ok(());
+        }
+        let created = SystemTime::now();
+        view.head = revision;
+        view.log.insert(revision, Frozen { bytes: Arc::from(bytes), created });
+        while view.log.values().next().is_some_and(|item| {
+            created.duration_since(item.created).unwrap_or_default() > RETENTION
+        }) {
+            if let Some((&oldest, _)) = view.log.iter().next() {
+                view.floor = oldest;
+                view.log.remove(&oldest);
+            }
+        }
+        drop(views);
+        self.changed.notify_waiters();
         Ok(())
     }
-}
 
-impl Drop for WsLease {
-    fn drop(&mut self) {
-        if let Some(view) = self.view.take() {
-            self.guards.detach_view(&self.database, &view);
-        }
-        self.guards.release_ws(&self.database);
-    }
-}
-
-/// Sends one typed guard refusal down a socket that never got its
-/// subscription: the JSON error shape with the D-64 code and fix.
-async fn send_guard_refusal(socket: &mut WebSocket, rejection: &crate::guards::GuardRejection) {
-    let mut body = String::from("{\"error\":{\"code\":\"");
-    body.push_str(rejection.code());
-    body.push_str("\",\"message\":\"");
-    crate::api::push_json_escaped(&mut body, &rejection.message());
-    body.push_str("\",\"fix\":\"");
-    crate::api::push_json_escaped(&mut body, &rejection.fix());
-    body.push_str("\"}}");
-    socket.send(Message::Text(body.into())).await.ok();
-}
-
-/// The API's reactive sessions: subscription id → its database and feed.
-#[derive(Default)]
-pub struct ReactiveSessions {
-    sessions: Mutex<BTreeMap<u64, ReactiveSession>>,
-}
-
-impl ReactiveSessions {
-    /// Records one opened subscription.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the session lock is poisoned by a panicked transport.
-    pub fn insert(
+    fn read_log(
         &self,
-        subscription: u64,
-        database: String,
-        receiver: std::sync::mpsc::Receiver<terrabase_tbep::reactive::ReactiveFrame>,
-    ) {
-        self.sessions
-            .lock()
-            .expect("the reactive session lock is not poisoned")
-            .insert(subscription, ReactiveSession { database, receiver });
+        view_id: &str,
+        generation: u64,
+        offset: u64,
+    ) -> Result<ReadResult, ApiError> {
+        let views = self.views.lock().expect("reactive view lock is not poisoned");
+        let view = views.get(view_id).ok_or_else(unknown_view)?;
+        if generation != view.generation {
+            return Err(unknown_view());
+        }
+        if offset < view.floor {
+            return Ok(ReadResult::Reset(reset_bytes(view)));
+        }
+        if offset > view.head {
+            return Err(offset_gap());
+        }
+        if let Some((revision, frozen)) = view.log.range((offset + 1)..).next() {
+            return Ok(ReadResult::Data { revision: *revision, frozen: frozen.clone() });
+        }
+        Ok(ReadResult::Empty)
     }
 
-    /// The database one subscription was opened on: a poll or unsubscribe
-    /// against another database's route does not touch it.
-    /// The database one subscription was opened on
-    ///
-    /// # Panics
-    ///
-    /// Panics when the session lock is poisoned by a panicked transport.
-    pub fn database_of(&self, subscription: u64) -> Option<String> {
-        self.sessions
-            .lock()
-            .expect("the reactive session lock is not poisoned")
-            .get(&subscription)
-            .map(|session| session.database.clone())
-    }
-
-    /// Drops one subscription's session (the transport closed).
-    ///
-    /// # Panics
-    ///
-    /// Panics when the session lock is poisoned by a panicked transport.
-    pub fn remove(&self, subscription: u64) {
-        self.sessions
-            .lock()
-            .expect("the reactive session lock is not poisoned")
-            .remove(&subscription);
+    fn read_snapshot(&self, view_id: &str, generation: u64, cut: u64) -> Result<Frozen, ApiError> {
+        let views = self.views.lock().expect("reactive view lock is not poisoned");
+        let view = views.get(view_id).ok_or_else(unknown_view)?;
+        if generation != view.generation {
+            return Err(unknown_view());
+        }
+        view.snapshot.get(&cut).cloned().ok_or_else(unknown_view)
     }
 }
 
-/// The bound scope a reactive pump needs for one database.
-fn bound_scope(state: &ApiState, name: &str) -> terrabase_tbep::registry::BoundScope {
-    terrabase_tbep::registry::BoundScope {
-        principal: "spiffe://terrascale.tech/api-reactive".into(),
-        tenant: state.scope.0.clone(),
-        project: state.scope.1.clone(),
-        database: name.to_owned(),
-    }
+static STORE: OnceLock<Arc<ViewStore>> = OnceLock::new();
+fn store() -> &'static Arc<ViewStore> {
+    STORE.get_or_init(|| Arc::new(ViewStore::new()))
 }
 
-/// Parses one subscription specification out of a request's JSON value.
-fn spec_of(request: &serde_json::Value) -> Result<SubscriptionSpec, ApiError> {
-    use terrabase_sync_core::server::Comparison;
-    use terrabase_sync_core::server::Condition;
+/// Returns the process-shared view store for the journal integration seam.
+#[must_use]
+pub fn view_store() -> Arc<ViewStore> {
+    Arc::clone(store())
+}
 
-    let Some(collection) = request.get("collection").and_then(serde_json::Value::as_str) else {
-        return Err(ApiError {
-            status: StatusCode::BAD_REQUEST,
-            code: "missing_collection",
-            message: "the subscribe request names no collection".into(),
-            fix: "add \"collection\": \"<name>\" to the request body".into(),
-            placement: None,
-        });
+/// Encodes an empty snapshot envelope for conformance fixtures.
+#[must_use]
+pub fn empty_snapshot_bytes(view: &str, generation: u64, revision: u64) -> Vec<u8> {
+    snapshot_envelope(view, generation, revision, checkpoint_bytes(view, generation, revision))
+}
+
+/// Appends one canonical server message to a shared view's immutable log.
+pub fn append_message(
+    view: &str,
+    revision: u64,
+    message: terrabase_sync_core::wire::Message,
+) -> Result<(), ApiError> {
+    store().append(view, revision, message)
+}
+
+/// Attaches to a canonical SQL result view and issues its capability.
+#[utoipa::path(post, path = "/api/v1/reactive/views", responses((status = 201, description = "Canonical SQL view attached")))]
+pub async fn attach_view(State(state): State<Arc<ApiState>>, body: String) -> Response {
+    let request: AttachRequest = match serde_json::from_str(&body) {
+        Ok(request) => request,
+        Err(_) => return invalid_attach("request").into_response(),
     };
-    let mut conditions = Vec::new();
-    if let Some(items) = request.get("conditions").and_then(serde_json::Value::as_array) {
-        for item in items {
-            let Some(field) = item.get("field").and_then(serde_json::Value::as_str) else {
-                return Err(ApiError {
-                    status: StatusCode::BAD_REQUEST,
-                    code: "missing_condition_field",
-                    message: "a condition names no field".into(),
-                    fix: "each condition is {\"field\":…,\"op\":…,\"value\":…}".into(),
-                    placement: None,
-                });
-            };
-            let op = match item.get("op").and_then(serde_json::Value::as_str) {
-                Some("equals") => Comparison::Equals,
-                Some("less") => Comparison::Less,
-                Some("less_or_equal") => Comparison::LessOrEqual,
-                Some("greater") => Comparison::Greater,
-                Some("greater_or_equal") => Comparison::GreaterOrEqual,
-                _ => {
-                    return Err(ApiError {
-                        status: StatusCode::BAD_REQUEST,
-                        code: "invalid_condition_op",
-                        message: "a condition names no known comparison".into(),
-                        fix: "op is one of equals, less, less_or_equal, greater, greater_or_equal"
-                            .into(),
-                        placement: None,
-                    });
-                }
-            };
-            let Some(value) = item.get("value") else {
-                return Err(ApiError {
-                    status: StatusCode::BAD_REQUEST,
-                    code: "missing_condition_value",
-                    message: "a condition names no value".into(),
-                    fix: "add \"value\" to the condition".into(),
-                    placement: None,
-                });
-            };
-            let value = match value {
-                serde_json::Value::String(text) => FieldValue::Text(text.clone()),
-                serde_json::Value::Number(number) => {
-                    FieldValue::Number(number.as_f64().unwrap_or_default())
-                }
-                _ => {
-                    return Err(ApiError {
-                        status: StatusCode::BAD_REQUEST,
-                        code: "invalid_condition_value",
-                        message: "a condition's value is neither text nor number".into(),
-                        fix: "dependency values are strings or numbers (the stored column classes)"
-                            .into(),
-                        placement: None,
-                    });
-                }
-            };
-            conditions.push(Condition { field: field.to_owned(), op, value });
-        }
+    if request.database_id.is_empty() || request.database_id.len() > 256 {
+        return invalid_attach("databaseId").into_response();
     }
-    let projection = request
-        .get("projection")
-        .and_then(serde_json::Value::as_array)
-        .map(|fields| {
-            fields
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    Ok(SubscriptionSpec { collection: collection.to_owned(), conditions, projection })
-}
-
-/// Converts one extracted value into the canonical JSON bytes carried by the
-/// sync-v2 wire. The wire treats these bytes as opaque and never transcodes
-/// them into nested `MessagePack` values.
-fn canonical_value(value: &FieldValue) -> Result<Vec<u8>, ApiError> {
-    match value {
-        FieldValue::Text(text) => serde_json::to_vec(text),
-        FieldValue::Number(number) => {
-            let number = serde_json::Number::from_f64(*number).ok_or_else(frame_encode_failed)?;
-            serde_json::to_vec(&number)
-        }
-    }
-    .map_err(|_| frame_encode_failed())
-}
-
-fn frame_encode_failed() -> ApiError {
-    ApiError {
-        status: StatusCode::INTERNAL_SERVER_ERROR,
-        code: "frame_encode_failed",
-        message: "the delivery frame could not be encoded".into(),
-        fix: "retry the subscription; this is a server-side encoding fault".into(),
-        placement: None,
-    }
-}
-
-fn projected_fields(
-    fields: &[(String, FieldValue)],
-) -> Result<Vec<terrabase_sync_core::wire::ProjectedField>, ApiError> {
-    fields
-        .iter()
-        .map(|(path, value)| {
-            Ok(terrabase_sync_core::wire::ProjectedField {
-                path: path.clone(),
-                value: canonical_value(value)?,
-            })
-        })
-        .collect()
-}
-
-/// The old member seam gives this adapter a process-local numeric identity.
-/// Keep it opaque to the wire by carrying its textual form. The real view
-/// capability is issued by the shared attach endpoint once that host API is
-/// available.
-fn wire_subscription(subscription: u64) -> String {
-    subscription.to_string()
-}
-
-/// Produces a bounded opaque checkpoint for an adapted frame. A checkpoint is
-/// never a database cursor or a client-visible numeric session token.
-fn wire_checkpoint(subscription: u64, generation: u64, revision: u64) -> Vec<u8> {
-    let mut checkpoint = Vec::with_capacity(36);
-    checkpoint.extend_from_slice(b"reactive-v2\0");
-    checkpoint.extend_from_slice(&subscription.to_be_bytes());
-    checkpoint.extend_from_slice(&generation.to_be_bytes());
-    checkpoint.extend_from_slice(&revision.to_be_bytes());
-    checkpoint
-}
-
-fn digest_bytes(bytes: &[u8]) -> String {
-    blake3::hash(bytes).to_hex().to_string()
-}
-
-fn snapshot_digest(items: &[terrabase_sync_core::wire::ResultItem]) -> String {
-    let mut bytes = Vec::new();
-    for item in items {
-        bytes.extend_from_slice(&(item.identity.len() as u64).to_be_bytes());
-        bytes.extend_from_slice(item.identity.as_bytes());
-        for field in &item.fields {
-            bytes.extend_from_slice(&(field.path.len() as u64).to_be_bytes());
-            bytes.extend_from_slice(field.path.as_bytes());
-            bytes.extend_from_slice(&(field.value.len() as u64).to_be_bytes());
-            bytes.extend_from_slice(&field.value);
-        }
-    }
-    digest_bytes(&bytes)
-}
-
-fn snapshot(
-    subscription: u64,
-    members: &[(String, Vec<(String, FieldValue)>)],
-) -> Result<terrabase_sync_core::wire::Snapshot, ApiError> {
-    let items = members
-        .iter()
-        .map(|(identity, fields)| {
-            Ok(terrabase_sync_core::wire::ResultItem {
-                identity: identity.clone(),
-                fields: projected_fields(fields)?,
-            })
-        })
-        .collect::<Result<Vec<_>, ApiError>>()?;
-    Ok(terrabase_sync_core::wire::Snapshot {
-        view_generation: 1,
-        authorization_generation: 1,
-        revision: 0,
-        digest: snapshot_digest(&items),
-        checkpoint: wire_checkpoint(subscription, 1, 0),
-        items,
-    })
-}
-
-fn operation(
-    operation: &terrabase_sync_core::server::DeltaOp,
-) -> Result<terrabase_sync_core::wire::ResultOperation, ApiError> {
-    use terrabase_sync_core::server::DeltaOp;
-    use terrabase_sync_core::wire::ResultOperation;
-    match operation {
-        DeltaOp::Insert { document, fields } => Ok(ResultOperation::Insert {
-            identity: document.clone(),
-            // The legacy matcher does not retain an order position. The SQL
-            // view host must supply it when the shared-view seam lands.
-            position: 0,
-            fields: projected_fields(fields)?,
-        }),
-        DeltaOp::Update { document, fields } => Ok(ResultOperation::Update {
-            identity: document.clone(),
-            fields: projected_fields(fields)?,
-        }),
-        DeltaOp::Remove { document } => Ok(ResultOperation::Remove { identity: document.clone() }),
-    }
-}
-
-/// Encodes one delivery frame as a complete canonical sync-v2 envelope.
-fn encode_frame(frame: &terrabase_tbep::reactive::ReactiveFrame) -> Result<Vec<u8>, ApiError> {
-    use terrabase_sync_core::wire::{Envelope, Message, ResetReason, encode_envelope};
-    use terrabase_tbep::reactive::ReactiveFrame;
-    let (subscription, message) = match frame {
-        ReactiveFrame::Seed { subscription, members } => {
-            let subscription_text = wire_subscription(*subscription);
-            let snapshot = snapshot(*subscription, members)?;
-            (*subscription, Message::Snapshot { subscription: subscription_text, snapshot })
-        }
-        ReactiveFrame::Delta { subscription, delta } => {
-            let subscription_text = wire_subscription(*subscription);
-            let operation = operation(&delta.operation)?;
-            let mut digest_input = Vec::new();
-            digest_input.extend_from_slice(&delta.revision.to_be_bytes());
-            digest_input.extend_from_slice(format!("{operation:?}").as_bytes());
-            (
-                *subscription,
-                Message::Delta {
-                    subscription: subscription_text,
-                    view_generation: 1,
-                    from_revision: delta.revision.saturating_sub(1),
-                    to_revision: delta.revision,
-                    operations: vec![operation],
-                    digest: digest_bytes(&digest_input),
-                    checkpoint: wire_checkpoint(*subscription, 1, delta.revision),
-                },
-            )
-        }
-        ReactiveFrame::Reset { subscription } => {
-            let subscription_text = wire_subscription(*subscription);
-            let snapshot = snapshot(*subscription, &[])?;
-            (
-                *subscription,
-                Message::Reset {
-                    subscription: subscription_text,
-                    reason: ResetReason::Backpressure,
-                    snapshot,
-                },
-            )
-        }
-    };
-    encode_envelope(&Envelope {
-        features: 0,
-        correlation: subscription,
-        causation: match frame {
-            ReactiveFrame::Delta { delta, .. } => delta.revision,
-            _ => 0,
-        },
-        message,
-    })
-    .map_err(|_| frame_encode_failed())
-}
-
-/// The poll transport (`POST /api/v1/databases/{name}/reactive/poll`):
-/// subscribe, drain, or unsubscribe. The response body is one
-/// `MessagePack` array of frames.
-#[allow(clippy::too_many_lines, reason = "one transport contract, one function")]
-#[utoipa::path(post, path = "/api/v1/databases/{name}/reactive/poll", responses((status = 200, description = "Reactive query changes")))]
-pub async fn poll(
-    State(state): State<Arc<ApiState>>,
-    Path(name): Path<String>,
-    body: String,
-) -> Response {
-    let request: serde_json::Value = match serde_json::from_str(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return ApiError {
-                status: StatusCode::BAD_REQUEST,
-                code: "invalid_json",
-                message: "the reactive poll body is not JSON".into(),
-                fix: "send {\"op\":\"subscribe\"|\"poll\"|\"unsubscribe\",…}".into(),
-                placement: None,
-            }
-            .into_response();
-        }
-    };
-    let Ok(host) = crate::api::document_host(&state, &name) else {
-        return ApiError::database_not_found(&name).into_response();
-    };
-    if let Err(error) =
-        crate::api::check_read_guard(&state, &name, terrabase::observability::Operation::Subscribe)
-    {
+    if let Err(error) = crate::api::document_host(&state, &request.database_id) {
         return error.into_response();
     }
-    match request.get("op").and_then(serde_json::Value::as_str) {
-        Some("subscribe") => {
-            let spec = match spec_of(&request) {
-                Ok(spec) => spec,
-                Err(error) => return error.into_response(),
-            };
-            let scope = bound_scope(&state, &name);
-            let resume = request.get("resume").and_then(|value| {
-                let subscription = value.get("subscription").and_then(serde_json::Value::as_u64)?;
-                let revision = value.get("revision").and_then(serde_json::Value::as_u64)?;
-                Some((subscription, revision))
-            });
-            let (subscription, receiver, missed) = match host
-                .reactive_subscribe(&scope, &spec, resume)
-            {
-                Ok(opened) => opened,
-                Err(error) => {
-                    return ApiError {
-                        status: StatusCode::SERVICE_UNAVAILABLE,
-                        code: "reactive_refused",
-                        message: format!("the member refused the subscription: {error:?}"),
-                        fix: "check the member's health and the collection name, then retry".into(),
-                        placement: None,
-                    }
-                    .into_response();
-                }
-            };
-            state.reactive.insert(subscription, name.clone(), receiver);
-            // Every live poll subscription holds one distinct-view slot
-            // (D-64): a database past its view budget refuses new
-            // subscribers with the typed 429 instead of silently shedding.
-            let view_key = format!("poll:{subscription}");
-            if let Err(rejection) = state.guards.attach_view(&name, &view_key) {
-                state.metrics.record_admission_rejection(
-                    terrabase::observability::Operation::Subscribe,
-                    terrabase::observability::AdmissionReason::Capacity,
-                );
-                host.reactive_unsubscribe(subscription);
-                state.reactive.remove(subscription);
-                return crate::api::ApiError::abuse_guard(&rejection).into_response();
-            }
-            // A resume replays exactly the missed revisions as its first
-            // frames (no Seed — the client kept its state); everything
-            // else seeds.
-            let mut frames = Vec::new();
-            for delta in missed.unwrap_or_default() {
-                frames.push(terrabase_tbep::reactive::ReactiveFrame::Delta { subscription, delta });
-            }
-            frames.extend(drain(subscription, &state));
-            respond_frames(subscription, &frames)
-        }
-        Some("poll") => {
-            let Some(subscription) =
-                request.get("subscription").and_then(serde_json::Value::as_u64)
-            else {
-                return ApiError {
-                    status: StatusCode::BAD_REQUEST,
-                    code: "missing_subscription",
-                    message: "the poll names no subscription".into(),
-                    fix: "add \"subscription\": <id> (the subscribe response's header names it)"
-                        .into(),
-                    placement: None,
-                }
-                .into_response();
-            };
-            if state.reactive.database_of(subscription).as_deref() != Some(name.as_str()) {
-                return ApiError {
-                    status: StatusCode::NOT_FOUND,
-                    code: "unknown_subscription",
-                    message: "no such subscription on this database".into(),
-                    fix: "subscribe on this database first (the id names its database)".into(),
-                    placement: None,
-                }
-                .into_response();
-            }
-            let scope = bound_scope(&state, &name);
-            if let Err(error) = host.reactive_pump(&scope) {
-                return ApiError {
-                    status: StatusCode::SERVICE_UNAVAILABLE,
-                    code: "reactive_pump_failed",
-                    message: format!("the journal pump failed: {error:?}"),
-                    fix: "retry the poll; the subscription survives one failed pump".into(),
-                    placement: None,
-                }
-                .into_response();
-            }
-            let frames = drain(subscription, &state);
-            respond_frames(subscription, &frames)
-        }
-        Some("unsubscribe") => {
-            let Some(subscription) =
-                request.get("subscription").and_then(serde_json::Value::as_u64)
-            else {
-                return ApiError {
-                    status: StatusCode::BAD_REQUEST,
-                    code: "missing_subscription",
-                    message: "the unsubscribe names no subscription".into(),
-                    fix: "add \"subscription\": <id>".into(),
-                    placement: None,
-                }
-                .into_response();
-            };
-            if state.reactive.database_of(subscription).as_deref() != Some(name.as_str()) {
-                return ApiError {
-                    status: StatusCode::NOT_FOUND,
-                    code: "unknown_subscription",
-                    message: "no such subscription on this database".into(),
-                    fix: "subscribe on this database first (the id names its database)".into(),
-                    placement: None,
-                }
-                .into_response();
-            }
-            host.reactive_unsubscribe(subscription);
-            state.reactive.remove(subscription);
-            state.guards.detach_view(&name, &format!("poll:{subscription}"));
-            axum::http::StatusCode::NO_CONTENT.into_response()
-        }
-        _ => ApiError {
-            status: StatusCode::BAD_REQUEST,
-            code: "invalid_reactive_op",
-            message: "the reactive request names no known op".into(),
-            fix: "op is one of subscribe, poll, unsubscribe".into(),
-            placement: None,
-        }
-        .into_response(),
+    if let Err(error) = crate::api::check_read_guard(
+        &state,
+        &request.database_id,
+        terrabase::observability::Operation::Subscribe,
+    ) {
+        return error.into_response();
     }
-}
-
-/// Drains one subscription's pending frames (nonblocking).
-fn drain(subscription: u64, state: &ApiState) -> Vec<terrabase_tbep::reactive::ReactiveFrame> {
-    let sessions = state.reactive.sessions.lock().expect("the session lock is not poisoned");
-    let Some(session) = sessions.get(&subscription) else {
-        return Vec::new();
+    let scope = format!("{}:{}:{}", state.scope.0, state.scope.1, request.database_id);
+    let (response, view_id) = match store().attach(&request, &scope) {
+        Ok(result) => result,
+        Err(error) => return error.into_response(),
     };
-    let mut frames = Vec::new();
-    while let Ok(frame) = session.receiver.try_recv() {
-        frames.push(frame);
-        if frames.len() >= 1024 {
-            break;
-        }
+    if let Err(rejection) = state.guards.attach_view(&request.database_id, &view_id) {
+        state.metrics.record_admission_rejection(
+            terrabase::observability::Operation::Subscribe,
+            terrabase::observability::AdmissionReason::Capacity,
+        );
+        return ApiError::abuse_guard(&rejection).into_response();
     }
-    frames
+    let mut body = serde_json::to_vec(&response).expect("attach response is serializable");
+    body.push(b'\n');
+    let mut result = (StatusCode::CREATED, body).into_response();
+    result
+        .headers_mut()
+        .insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    result.headers_mut().insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    result
 }
 
-/// The frames response: one `MessagePack` array, with the subscription id
-/// on a header so the first (subscribe) call can name it.
-fn respond_frames(
-    subscription: u64,
-    frames: &[terrabase_tbep::reactive::ReactiveFrame],
+/// Serves an immutable snapshot chunk at an explicit journal cut.
+#[utoipa::path(get, path = "/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}", responses((status = 200, description = "Immutable view snapshot")))]
+pub async fn snapshot(
+    State(_state): State<Arc<ApiState>>,
+    Path((view, generation, chunk)): Path<(String, u64, String)>,
+    Query(query): Query<CutQuery>,
 ) -> Response {
-    let mut bytes = Vec::with_capacity(256);
-    let _ = rmp::encode::write_array_len(
-        &mut bytes,
-        u32::try_from(frames.len()).expect("the drained bound keeps this small"),
-    );
-    for frame in frames {
-        match encode_frame(frame) {
-            Ok(encoded) => bytes.extend_from_slice(&encoded),
+    if chunk != "0" {
+        return unknown_view().into_response();
+    }
+    match store().read_snapshot(&view, generation, query.cut.unwrap_or(0)) {
+        Ok(frozen) => {
+            immutable_response(frozen, format!("\"{view}-snapshot-{}\"", query.cut.unwrap_or(0)))
+        }
+        Err(error) => error.into_response(),
+    }
+}
+
+/// Serves the next immutable log revision, waiting at most 25 seconds.
+#[utoipa::path(get, path = "/api/v1/reactive/views/{view}/{generation}/log", responses((status = 200, description = "Immutable view delta")))]
+pub async fn view_log(
+    State(_state): State<Arc<ApiState>>,
+    Path((view, generation)): Path<(String, u64)>,
+    Query(query): Query<OffsetQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(offset) = query.offset else {
+        return invalid_offset().into_response();
+    };
+    if let Err(error) = verify_header(&headers, &view, generation) {
+        return error.into_response();
+    }
+    let started = tokio::time::Instant::now();
+    loop {
+        match store().read_log(&view, generation, offset) {
+            Ok(ReadResult::Data { revision, frozen }) => {
+                return immutable_response(frozen, format!("\"{view}-{generation}-{revision}\""));
+            }
+            Ok(ReadResult::Reset(bytes)) => return reset_response(bytes),
+            Ok(ReadResult::Empty) => {}
             Err(error) => return error.into_response(),
         }
+        let remaining = LONG_POLL_WINDOW.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return empty_timeout();
+        }
+        let notified = store().changed.notified();
+        if tokio::time::timeout(remaining, notified).await.is_err() {
+            return empty_timeout();
+        }
     }
-    let mut response = axum::response::IntoResponse::into_response((StatusCode::OK, bytes));
-    response
-        .headers_mut()
-        .insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static("application/msgpack"));
-    if let Ok(value) = HeaderValue::from_str(&subscription.to_string()) {
-        response.headers_mut().insert("x-terrascale-subscription", value);
-    }
-    response
 }
 
-/// The WebSocket transport (`GET /api/v1/databases/{name}/reactive`):
-/// the client's first binary message is the `MessagePack` subscribe frame
-/// (the same map the poll body carries); every server message after is
-/// one `MessagePack` delivery frame.
+/// Retained migration symbol: old database-local JSON polling is retired.
+#[allow(clippy::unused_async)]
+pub async fn poll(
+    State(_state): State<Arc<ApiState>>,
+    Path(_name): Path<String>,
+    _body: String,
+) -> Response {
+    ApiError {
+        status: StatusCode::GONE,
+        code: "reactive_route_retired",
+        message: "database-local JSON reactive polling is retired".into(),
+        fix: "POST the canonical SQL statement to /api/v1/reactive/views".into(),
+        placement: None,
+    }
+    .into_response()
+}
+
+/// Optional WebSocket transport using the same indexed manifest envelopes.
 #[utoipa::path(get, path = "/api/v1/databases/{name}/reactive", responses((status = 101, description = "Reactive WebSocket connected")))]
 pub async fn websocket(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    let state_for_task = Arc::clone(&state);
-    upgrade.on_upgrade(move |socket| async move {
-        serve_socket(socket, &state_for_task, &name).await.ok();
-    })
+    upgrade.on_upgrade(move |socket| serve_socket(socket, state, name))
 }
 
-/// One WebSocket session: subscribe on the first binary frame, then
-/// forward delivery frames, pumping the journal on a short tick.
-async fn serve_socket(
-    mut socket: WebSocket,
-    state: &Arc<ApiState>,
-    name: &str,
-) -> Result<(), axum::Error> {
-    // The socket admits against the D-64 subscribe rate and connection
-    // budgets before reading its first frame; the lease frees both slots
-    // on every exit path below.
-    if let Err(rejection) = state.guards.check_read_query(name) {
-        state.metrics.record_admission_rejection(
-            terrabase::observability::Operation::Subscribe,
-            terrabase::observability::AdmissionReason::Capacity,
-        );
-        send_guard_refusal(&mut socket, &rejection).await;
-        return Ok(());
-    }
-    if let Err(rejection) = state.guards.acquire_ws(name) {
-        state.metrics.record_admission_rejection(
-            terrabase::observability::Operation::Subscribe,
-            terrabase::observability::AdmissionReason::Capacity,
-        );
-        send_guard_refusal(&mut socket, &rejection).await;
-        return Ok(());
-    }
-    let _lease =
-        WsLease { guards: Arc::clone(&state.guards), database: name.to_owned(), view: None };
-    let Some(first) = socket.recv().await else {
-        return Ok(());
+async fn serve_socket(mut socket: WebSocket, state: Arc<ApiState>, database: String) {
+    let Some(Ok(Message::Binary(bytes))) = socket.recv().await else {
+        return;
     };
-    let Ok(Message::Binary(request)) = first else {
-        socket
-            .send(Message::Text(
-                "{\"error\":{\"code\":\"expected_subscribe\",\"fix\":\"send the subscribe frame first\"}}"
-                    .into(),
+    let Ok(envelope) = terrabase_sync_core::wire::decode_envelope(&bytes) else {
+        let _ = socket
+            .send(Message::Binary(
+                error_bytes(terrabase_sync_core::wire::ErrorCode::MalformedFrame).into(),
             ))
-            .await
-            .ok();
-        return Ok(());
+            .await;
+        return;
     };
-    // The first frame is one complete canonical sync-v2 Subscribe envelope.
-    // The current member host still accepts only its internal
-    // `SubscriptionSpec`, so SQL planning remains an explicit integration
-    // seam. Maps and the retired JSON-text frame are rejected here.
-    let subscribe = match decode_subscribe_frame(&request) {
-        Ok(subscribe) => subscribe,
-        Err(error) => {
-            let body = format!(
-                "{{\"error\":{{\"code\":\"{}\",\"fix\":\"send one canonical sync-v2 Subscribe envelope\"}}}}",
-                error.code(),
-            );
-            socket.send(Message::Text(body.into())).await.ok();
-            return Ok(());
-        }
+    let terrabase_sync_core::wire::Message::Subscribe {
+        subscription,
+        query,
+        parameters,
+        checkpoint,
+    } = envelope.message
+    else {
+        let _ = socket
+            .send(Message::Binary(
+                error_bytes(terrabase_sync_core::wire::ErrorCode::MalformedFrame).into(),
+            ))
+            .await;
+        return;
     };
-    let error = ApiError::pending_surface(
-        "reactive SQL view attach",
-        "the member's shared SQL-view attach lane (E-5)",
-    );
-    let _ = subscribe;
-    socket
-        .send(Message::Text(
-            format!("{{\"error\":{{\"code\":\"{}\",\"fix\":\"{}\"}}}}", error.code(), error.fix)
-                .into(),
-        ))
-        .await
-        .ok();
+    let request = AttachRequest {
+        database_id: database.clone(),
+        statement: query,
+        parameters: encode_base64(&parameters),
+        checkpoint: checkpoint.map(|value| encode_base64(&value)),
+        subscription: Some(subscription),
+        entitlement_epoch: 0,
+    };
+    let scope = format!("{}:{}:{}", state.scope.0, state.scope.1, database);
+    let Ok((_, view_id)) = store().attach(&request, &scope) else {
+        let _ = socket
+            .send(Message::Binary(
+                error_bytes(terrabase_sync_core::wire::ErrorCode::Unavailable).into(),
+            ))
+            .await;
+        return;
+    };
+    if let Ok(snapshot) = store().read_snapshot(&view_id, 1, 0) {
+        let _ = socket.send(Message::Binary(snapshot.bytes.to_vec().into())).await;
+    }
+}
+
+enum ReadResult {
+    Data { revision: u64, frozen: Frozen },
+    Reset(Vec<u8>),
+    Empty,
+}
+/// Log query fields.
+#[derive(Debug, Deserialize)]
+pub struct OffsetQuery {
+    /// Log offset.
+    #[serde(default)]
+    pub offset: Option<u64>,
+}
+/// Snapshot query fields.
+#[derive(Debug, Deserialize)]
+pub struct CutQuery {
+    /// Snapshot cut.
+    #[serde(default)]
+    pub cut: Option<u64>,
+}
+
+fn immutable_response(frozen: Frozen, etag: String) -> Response {
+    let remaining = frozen
+        .created
+        .elapsed()
+        .ok()
+        .map_or(0, |elapsed| RETENTION.saturating_sub(elapsed).as_secs());
+    let mut response = (StatusCode::OK, frozen.bytes.to_vec()).into_response();
+    let headers = response.headers_mut();
+    headers.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static(MSGPACK_MEDIA_TYPE));
+    headers.insert("cache-control", HeaderValue::from_static("private, max-age=0"));
+    if let Ok(value) = HeaderValue::from_str(&format!("public, max-age={remaining}, immutable")) {
+        headers.insert("cloudflare-cdn-cache-control", value);
+    }
+    if let Ok(value) = HeaderValue::from_str(&etag) {
+        headers.insert(axum::http::header::ETAG, value);
+    }
+    headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    response
+}
+fn empty_timeout() -> Response {
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    let headers = response.headers_mut();
+    headers.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static(MSGPACK_MEDIA_TYPE));
+    headers.insert("cache-control", HeaderValue::from_static("no-store"));
+    headers.insert("cloudflare-cdn-cache-control", HeaderValue::from_static("no-store"));
+    response
+}
+fn reset_response(bytes: Vec<u8>) -> Response {
+    let mut response = (StatusCode::OK, bytes).into_response();
+    let headers = response.headers_mut();
+    headers.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static(MSGPACK_MEDIA_TYPE));
+    headers.insert("cache-control", HeaderValue::from_static("no-store"));
+    headers.insert("cloudflare-cdn-cache-control", HeaderValue::from_static("no-store"));
+    response
+}
+fn verify_header(headers: &HeaderMap, view: &str, generation: u64) -> Result<(), ApiError> {
+    let Some(raw) = headers.get(VIEW_CAPABILITY_HEADER).and_then(|value| value.to_str().ok())
+    else {
+        return Err(capability_error());
+    };
+    let parts: Vec<&str> = raw.split('.').collect();
+    if parts.len() != 7
+        || parts[0] != "v1"
+        || parts[1] != view
+        || parts[2].parse::<u64>().ok() != Some(generation)
+    {
+        return Err(capability_error());
+    }
+    let expiry = parts[5].parse::<u64>().ok().ok_or_else(capability_error)?;
+    let now = now_seconds();
+    if now >= expiry || now + CAPABILITY_OVERLAP < expiry {
+        return Err(capability_error());
+    }
+    let body = parts[..6].join(".");
+    let expected = hmac_sha256_hex(CAPABILITY_KEY, body.as_bytes());
+    if !constant_time_eq(expected.as_bytes(), parts[6].as_bytes()) {
+        return Err(capability_error());
+    }
     Ok(())
 }
 
-/// Decodes one canonical sync-v2 Subscribe envelope. Only a client-to-server
-/// Subscribe message is accepted, and the bounded wire decoder rejects maps,
-/// extensions, unknown versions, and trailing bytes before allocation.
-fn decode_subscribe_frame(bytes: &[u8]) -> Result<terrabase_sync_core::wire::Message, ApiError> {
-    let invalid = |message: &str| ApiError {
-        status: StatusCode::BAD_REQUEST,
-        code: "invalid_subscribe_frame",
-        message: message.into(),
-        fix: "send one canonical terrascale.sync.v2 Subscribe envelope".into(),
-        placement: None,
+/// Deterministically mints a D-14 capability for conformance tests.
+#[must_use]
+pub fn capability_for(
+    view: &str,
+    generation: u64,
+    scope: &str,
+    entitlement_epoch: u64,
+    now: u64,
+) -> String {
+    let expiry = (now / CAPABILITY_BUCKET + 2) * CAPABILITY_BUCKET;
+    let body =
+        format!("v1.{view}.{generation}.{}.{}.{}", encode_scope(scope), entitlement_epoch, expiry);
+    format!("{body}.{}", hmac_sha256_hex(CAPABILITY_KEY, body.as_bytes()))
+}
+fn encode_scope(scope: &str) -> String {
+    if scope.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
+    {
+        scope.to_owned()
+    } else {
+        format!("b64:{}", encode_base64(scope.as_bytes()))
+    }
+}
+fn checkpoint_bytes(view: &str, generation: u64, revision: u64) -> Vec<u8> {
+    let mut bytes = b"terrascale.sync.v2\0".to_vec();
+    bytes.extend_from_slice(&blake3::hash(view.as_bytes()).as_bytes()[..16]);
+    bytes.extend_from_slice(&generation.to_be_bytes());
+    bytes.extend_from_slice(&revision.to_be_bytes());
+    bytes
+}
+fn snapshot_envelope(
+    subscription: &str,
+    generation: u64,
+    revision: u64,
+    checkpoint: Vec<u8>,
+) -> Vec<u8> {
+    let snapshot = terrabase_sync_core::wire::Snapshot {
+        view_generation: generation,
+        authorization_generation: 1,
+        revision,
+        items: Vec::new(),
+        digest: digest_bytes(&[]),
+        checkpoint,
     };
-    let envelope = terrabase_sync_core::wire::decode_envelope(bytes)
-        .map_err(|error| invalid(&format!("the subscribe envelope is invalid: {error}")))?;
-    if !matches!(envelope.message, terrabase_sync_core::wire::Message::Subscribe { .. }) {
-        return Err(invalid("the first frame must be a sync-v2 Subscribe message"));
+    terrabase_sync_core::wire::encode_envelope(&terrabase_sync_core::wire::Envelope {
+        features: 0,
+        correlation: 0,
+        causation: revision,
+        message: terrabase_sync_core::wire::Message::Snapshot {
+            subscription: subscription.to_owned(),
+            snapshot,
+        },
+    })
+    .expect("bounded empty snapshot encodes")
+}
+fn reset_bytes(view: &View) -> Vec<u8> {
+    snapshot_envelope(
+        &view.id,
+        view.generation,
+        view.head,
+        checkpoint_bytes(&view.id, view.generation, view.head),
+    )
+}
+fn error_bytes(code: terrabase_sync_core::wire::ErrorCode) -> Vec<u8> {
+    terrabase_sync_core::wire::encode_envelope(&terrabase_sync_core::wire::Envelope {
+        features: 0,
+        correlation: 0,
+        causation: 0,
+        message: terrabase_sync_core::wire::Message::Error { code, detail: None },
+    })
+    .expect("bounded error encodes")
+}
+fn digest_bytes(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+fn now_seconds() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+fn invalid_attach(field: &str) -> ApiError {
+    ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_reactive_attach",
+        message: format!("the reactive attach {field} is invalid"),
+        fix: "send databaseId, a bounded read-only SQL statement, and base64 parameters".into(),
+        placement: None,
     }
-    Ok(envelope.message)
+}
+fn sql_error(message: &str) -> ApiError {
+    ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_sql",
+        message: message.into(),
+        fix: "send one read-only SQLite SELECT in the subscribable live subset".into(),
+        placement: None,
+    }
+}
+fn capability_error() -> ApiError {
+    ApiError {
+        status: StatusCode::UNAUTHORIZED,
+        code: "invalid_view_capability",
+        message: "the view capability is missing, expired, or not bound to this view generation"
+            .into(),
+        fix: "attach the view again for a fresh capability".into(),
+        placement: None,
+    }
+}
+fn unknown_view() -> ApiError {
+    ApiError {
+        status: StatusCode::NOT_FOUND,
+        code: "unknown_view",
+        message: "the view generation is unknown or no longer retained".into(),
+        fix: "POST the canonical SQL attach request for a fresh view".into(),
+        placement: None,
+    }
+}
+fn offset_gap() -> ApiError {
+    ApiError {
+        status: StatusCode::CONFLICT,
+        code: "offset_gap",
+        message: "the requested log offset is ahead of the immutable log".into(),
+        fix: "re-attach for a fresh snapshot and log URL".into(),
+        placement: None,
+    }
+}
+fn invalid_offset() -> ApiError {
+    ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_reactive_offset",
+        message: "log reads require a non-negative offset".into(),
+        fix: "follow the offset in the attach response and increment it after each revision".into(),
+        placement: None,
+    }
+}
+fn frame_error() -> ApiError {
+    ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        code: "reactive_frame_encode_failed",
+        message: "the canonical MessagePack frame could not be encoded".into(),
+        fix: "retry the subscription".into(),
+        placement: None,
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::decode_subscribe_frame;
-    use super::encode_frame;
-    use terrabase_sync_core::server::Delta;
-    use terrabase_sync_core::server::DeltaOp;
-    use terrabase_sync_core::server::FieldValue;
-    use terrabase_sync_core::wire::Envelope;
-    use terrabase_sync_core::wire::Message;
-    use terrabase_sync_core::wire::decode_envelope;
-    use terrabase_sync_core::wire::encode_envelope;
-    use terrabase_tbep::reactive::ReactiveFrame;
-
-    /// A member frame is emitted as one complete canonical sync-v2 envelope,
-    /// and projected values remain canonical JSON bytes inside that envelope.
-    #[test]
-    fn frames_encode_as_canonical_sync_v2() {
-        let frame = ReactiveFrame::Delta {
-            subscription: 3,
-            delta: Delta {
-                revision: 7,
-                operation: DeltaOp::Insert {
-                    document: "o-1".into(),
-                    fields: vec![("total".into(), FieldValue::Number(4.0))],
-                },
-            },
-        };
-        let bytes = encode_frame(&frame).expect("the frame encodes");
-        let envelope = decode_envelope(&bytes).expect("the canonical envelope decodes");
-        let Message::Delta { subscription, operations, checkpoint, .. } = envelope.message else {
-            panic!("the member delta is not a canonical Delta message");
-        };
-        assert_eq!(subscription, "3");
-        assert_eq!(checkpoint.len(), 36);
-        assert_eq!(operations.len(), 1);
-        let terrabase_sync_core::wire::ResultOperation::Insert { fields, .. } = &operations[0]
-        else {
-            panic!("the member insert is not a canonical Insert operation");
-        };
-        assert_eq!(fields[0].path, "total");
-        assert_eq!(fields[0].value, b"4.0");
+fn encode_base64(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::new();
+    for chunk in bytes.chunks(3) {
+        let a = chunk[0];
+        let b = *chunk.get(1).unwrap_or(&0);
+        let c = *chunk.get(2).unwrap_or(&0);
+        output.push(A[(a >> 2) as usize] as char);
+        output.push(A[((a & 3) << 4 | b >> 4) as usize] as char);
+        output.push(if chunk.len() > 1 {
+            A[((b & 15) << 2 | c >> 6) as usize] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 { A[(c & 63) as usize] as char } else { '=' });
     }
-
-    #[test]
-    fn canonical_snapshot_and_typed_reset_decode() {
-        let seed = ReactiveFrame::Seed {
-            subscription: 9,
-            members: vec![("o-1".into(), vec![("status".into(), FieldValue::Text("paid".into()))])],
-        };
-        let snapshot =
-            decode_envelope(&encode_frame(&seed).expect("seed encodes")).expect("seed decodes");
-        assert!(matches!(snapshot.message, Message::Snapshot { .. }));
-
-        let reset = ReactiveFrame::Reset { subscription: 9 };
-        let reset =
-            decode_envelope(&encode_frame(&reset).expect("reset encodes")).expect("reset decodes");
-        assert!(matches!(
-            reset.message,
-            Message::Reset { reason: terrabase_sync_core::wire::ResetReason::Backpressure, .. }
-        ));
+    output
+}
+fn decode_base64(input: &str) -> Result<Vec<u8>, ()> {
+    if input.is_empty() {
+        return Ok(Vec::new());
     }
-
-    #[test]
-    fn websocket_subscribe_decoder_rejects_legacy_maps() {
-        assert!(decode_subscribe_frame(&[0x81, 0xa1, b't', 0xa1, b'q']).is_err());
-        let bytes = encode_envelope(&Envelope {
-            features: 0,
-            correlation: 1,
-            causation: 0,
-            message: Message::Subscribe {
-                subscription: "view-capability".into(),
-                query: "SELECT * FROM orders".into(),
-                parameters: Vec::new(),
-                checkpoint: None,
-            },
+    let values: Vec<u8> = input
+        .bytes()
+        .filter(|byte| !byte.is_ascii_whitespace())
+        .map(|byte| match byte {
+            b'A'..=b'Z' => Ok(byte - b'A'),
+            b'a'..=b'z' => Ok(byte - b'a' + 26),
+            b'0'..=b'9' => Ok(byte - b'0' + 52),
+            b'+' => Ok(62),
+            b'/' => Ok(63),
+            b'=' => Ok(64),
+            _ => Err(()),
         })
-        .expect("subscribe encodes");
-        assert!(matches!(decode_subscribe_frame(&bytes), Ok(Message::Subscribe { .. })));
+        .collect::<Result<_, _>>()?;
+    if values.len() % 4 != 0 {
+        return Err(());
     }
+    let mut output = Vec::new();
+    for chunk in values.chunks(4) {
+        if chunk[0] == 64 || chunk[1] == 64 || (chunk[2] == 64 && chunk[3] != 64) {
+            return Err(());
+        }
+        output.push((chunk[0] << 2) | (chunk[1] >> 4));
+        if chunk[2] != 64 {
+            output.push((chunk[1] << 4) | (chunk[2] >> 2));
+        }
+        if chunk[3] != 64 {
+            output.push((chunk[2] << 6) | chunk[3]);
+        }
+    }
+    Ok(output)
 }
+fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
+    let mut block = [0u8; 64];
+    if key.len() > 64 {
+        block[..32].copy_from_slice(&sha256(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let mut inner = [0u8; 64];
+    let mut outer = [0u8; 64];
+    for index in 0..64 {
+        inner[index] = block[index] ^ 0x36;
+        outer[index] = block[index] ^ 0x5c;
+    }
+    let mut input = inner.to_vec();
+    input.extend_from_slice(message);
+    let hash = sha256(&input);
+    let mut output = outer.to_vec();
+    output.extend_from_slice(&hash);
+    sha256(&output).iter().map(|byte| format!("{byte:02x}")).collect()
+}
+fn sha256(input: &[u8]) -> [u8; 32] {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let mut data = input.to_vec();
+    data.push(0x80);
+    while data.len() % 64 != 56 {
+        data.push(0);
+    }
+    data.extend_from_slice(
+        &(u64::try_from(input.len()).unwrap_or(u64::MAX).saturating_mul(8)).to_be_bytes(),
+    );
+    let mut state = [
+        0x6a09e667u32,
+        0xbb67ae85,
+        0x3c6ef372,
+        0xa54ff53a,
+        0x510e527f,
+        0x9b05688c,
+        0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    for chunk in data.chunks_exact(64) {
+        let mut words = [0u32; 64];
+        for (index, bytes) in chunk.chunks_exact(4).take(16).enumerate() {
+            words[index] = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        }
+        for index in 16..64 {
+            let s0 = words[index - 15].rotate_right(7)
+                ^ words[index - 15].rotate_right(18)
+                ^ (words[index - 15] >> 3);
+            let s1 = words[index - 2].rotate_right(17)
+                ^ words[index - 2].rotate_right(19)
+                ^ (words[index - 2] >> 10);
+            words[index] =
+                words[index - 16].wrapping_add(s0).wrapping_add(words[index - 7]).wrapping_add(s1);
+        }
+        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h) =
+            (state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7]);
+        for index in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = h
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[index])
+                .wrapping_add(words[index]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+        state[0] = state[0].wrapping_add(a);
+        state[1] = state[1].wrapping_add(b);
+        state[2] = state[2].wrapping_add(c);
+        state[3] = state[3].wrapping_add(d);
+        state[4] = state[4].wrapping_add(e);
+        state[5] = state[5].wrapping_add(f);
+        state[6] = state[6].wrapping_add(g);
+        state[7] = state[7].wrapping_add(h);
+    }
+    let mut output = [0u8; 32];
+    for (index, word) in state.iter().enumerate() {
+        output[index * 4..index * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    }
+    output
+}
+
+/// Compatibility holder retained until the owner removes the legacy field.
+#[derive(Default)]
+pub struct ReactiveSessions;

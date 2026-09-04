@@ -309,7 +309,7 @@ impl Workload {
                 "the interval from a commit's acknowledgement to the consumer's delivery \
                  observation, per link: client link — commit publication, the content-free \
                  trigger, and the checkpoint-bounded delta the triggered client pulls \
-                 (sync-core apply/serve through the private Go gateway); member link — commit to the \
+                 (sync-core apply/serve through the member's public API); member link — commit to the \
                  pushed or catch-up-delivered batch a member applies (member-transport \
                  push/catch-up and apply)"
             }

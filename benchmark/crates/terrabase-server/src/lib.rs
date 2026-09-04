@@ -12,10 +12,16 @@ pub mod config;
 pub mod control;
 pub mod guards;
 pub mod http;
-#[cfg(feature = "production-fips")]
 pub mod production;
 pub mod reactive_api;
 pub mod runtime;
+pub mod view_capability;
 
 pub use config::ServerConfig;
 pub use runtime::run;
+pub use view_capability::{
+    CAPABILITY_HEADER, CAPABILITY_OVERLAP_SECONDS, CAPABILITY_VERSION, CapabilityError,
+    CapabilityIssuer, CapabilityKeyError, CapabilityVerifier, EDGE_CAPABILITY_HEADER,
+    EXPIRY_BUCKET_SECONDS, VIEW_CAPABILITY_HEADER, ViewCapability, ViewCapabilityClaims,
+    ViewCapabilityIssuer, ViewCapabilityVerifier,
+};

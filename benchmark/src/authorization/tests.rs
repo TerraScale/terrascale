@@ -322,7 +322,7 @@ fn signed_context_rejects_development_keys_in_production() {
     let key = PrincipalContextKey::new(signer.key_id(), signer.public_key().unwrap()).unwrap();
     assert!(matches!(
         PrincipalContextVerifier::new(
-            AuthorizationCryptoMode::ProductionFips,
+            AuthorizationCryptoMode::Production,
             "production",
             "spiffe://terrascale/gateway",
             "terrascale-go",
@@ -332,7 +332,7 @@ fn signed_context_rejects_development_keys_in_production() {
         Err(AuthorizationError::DevelopmentSigningKey)
     ));
     assert_eq!(
-        signer.sign(&signed_payload(), AuthorizationCryptoMode::ProductionFips),
+        signer.sign(&signed_payload(), AuthorizationCryptoMode::Production),
         Err(AuthorizationError::DevelopmentSigningKey)
     );
 }

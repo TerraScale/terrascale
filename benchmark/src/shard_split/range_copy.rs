@@ -1,0 +1,201 @@
+//! Range backfill interfaces.
+
+/// One opaque canonical key and its canonical document bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CopyEntry {
+    key: Vec<u8>,
+    value: Vec<u8>,
+}
+
+impl CopyEntry {
+    /// Creates one copy entry. Empty keys are refused by the source contract.
+    #[must_use]
+    pub fn new(key: Vec<u8>, value: Vec<u8>) -> Self {
+        Self { key, value }
+    }
+
+    /// Returns the canonical key.
+    #[must_use]
+    pub fn key(&self) -> &[u8] {
+        &self.key
+    }
+
+    /// Returns the opaque canonical document bytes.
+    #[must_use]
+    pub fn value(&self) -> &[u8] {
+        &self.value
+    }
+}
+
+/// One bounded backfill response, checkpointed at a journal sequence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CopyBatch {
+    entries: Vec<CopyEntry>,
+    through: u64,
+    done: bool,
+}
+
+impl CopyBatch {
+    /// Creates a response for a range-copy page.
+    #[must_use]
+    pub fn new(entries: Vec<CopyEntry>, through: u64, done: bool) -> Self {
+        Self { entries, through, done }
+    }
+
+    /// Returns entries in canonical key order.
+    #[must_use]
+    pub fn entries(&self) -> &[CopyEntry] {
+        &self.entries
+    }
+
+    /// Returns the source sequence represented by this page.
+    #[must_use]
+    pub const fn through(&self) -> u64 {
+        self.through
+    }
+
+    /// Returns whether this page completes the backfill.
+    #[must_use]
+    pub const fn done(&self) -> bool {
+        self.done
+    }
+}
+
+/// Failure detected while driving a range copy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CopyError {
+    /// The source failed before returning a page.
+    SourceFailed,
+    /// The target failed to durably apply a page.
+    TargetFailed,
+    /// A non-terminal empty page repeated the current checkpoint.
+    NoProgress,
+    /// A source returned a page that regressed its sequence checkpoint.
+    CheckpointRegressed {
+        /// Last accepted checkpoint.
+        previous: u64,
+        /// Invalid returned checkpoint.
+        returned: u64,
+    },
+    /// A source returned keys out of canonical order.
+    KeysOutOfOrder,
+    /// A source returned an empty key.
+    EmptyKey,
+}
+
+/// Source-side range scan seam implemented by the SQLite worker later.
+pub trait RangeCopySource {
+    /// Source-specific I/O failure.
+    type Error;
+
+    /// Reads one bounded page strictly after `after_key` and below `upper`.
+    fn read_range(
+        &mut self,
+        after_key: Option<&[u8]>,
+        upper: &[u8],
+        limit: usize,
+    ) -> Result<CopyBatch, Self::Error>;
+}
+
+/// Target-side idempotent apply seam implemented by the SQLite worker later.
+pub trait RangeCopyTarget {
+    /// Target-specific I/O failure.
+    type Error;
+
+    /// Applies one page transactionally and durably.
+    fn apply_copy_batch(&mut self, batch: &CopyBatch) -> Result<(), Self::Error>;
+}
+
+/// Resumable, bounded range-copy driver.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RangeCopier {
+    upper: Vec<u8>,
+    after_key: Option<Vec<u8>>,
+    through: u64,
+    copied: u64,
+    done: bool,
+}
+
+impl RangeCopier {
+    /// Starts a copy of keys below `upper`.
+    pub fn new(upper: Vec<u8>) -> Result<Self, CopyError> {
+        if upper.is_empty() {
+            return Err(CopyError::EmptyKey);
+        }
+        Ok(Self { upper, after_key: None, through: 0, copied: 0, done: false })
+    }
+
+    /// Returns the upper-exclusive range bound.
+    #[must_use]
+    pub fn upper(&self) -> &[u8] {
+        &self.upper
+    }
+
+    /// Returns the last durable source checkpoint.
+    #[must_use]
+    pub const fn through(&self) -> u64 {
+        self.through
+    }
+
+    /// Returns the number of entries durably applied so far.
+    #[must_use]
+    pub const fn copied(&self) -> u64 {
+        self.copied
+    }
+
+    /// Returns whether the source has declared the range complete.
+    #[must_use]
+    pub const fn is_done(&self) -> bool {
+        self.done
+    }
+
+    /// Copies and applies one bounded page, preserving its checkpoint.
+    pub fn step<S, T>(
+        &mut self,
+        source: &mut S,
+        target: &mut T,
+        limit: usize,
+    ) -> Result<bool, CopyError>
+    where
+        S: RangeCopySource,
+        T: RangeCopyTarget,
+    {
+        if self.done {
+            return Ok(true);
+        }
+        let batch = source
+            .read_range(self.after_key.as_deref(), &self.upper, limit.max(1))
+            .map_err(|_| CopyError::SourceFailed)?;
+        if batch.through() < self.through {
+            return Err(CopyError::CheckpointRegressed {
+                previous: self.through,
+                returned: batch.through(),
+            });
+        }
+        if batch.entries().is_empty() && !batch.done() && batch.through() == self.through {
+            return Err(CopyError::NoProgress);
+        }
+        let mut previous = self.after_key.as_deref();
+        for entry in batch.entries() {
+            if entry.key().is_empty() {
+                return Err(CopyError::EmptyKey);
+            }
+            if entry.key() >= self.upper.as_slice()
+                || previous.is_some_and(|key| entry.key() <= key)
+            {
+                return Err(CopyError::KeysOutOfOrder);
+            }
+            previous = Some(entry.key());
+        }
+        target.apply_copy_batch(&batch).map_err(|_| CopyError::TargetFailed)?;
+        self.through = batch.through();
+        self.copied = self.copied.saturating_add(batch.entries().len() as u64);
+        self.after_key = batch
+            .entries()
+            .last()
+            .map(|entry| entry.key.to_vec())
+            .or_else(|| self.after_key.clone());
+        self.done = batch.done();
+        Ok(self.done)
+    }
+}

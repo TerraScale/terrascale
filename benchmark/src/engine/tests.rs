@@ -84,6 +84,15 @@ fn tenant_scope(engine: &Engine, tenant_name: &str) -> TenantScope {
     TenantScope::from_parts(tenant(tenant_name), engine.identity())
 }
 
+fn open_owned_engine(tag: &str) -> (PathBuf, Engine, TenantId) {
+    let dir = location(tag);
+    let owner = crate::storage::DatabaseOwner::local_development();
+    let owner_tenant = tenant(&owner.tenant().to_text());
+    let config = EngineConfig::durable(&dir).expect("durable location").with_owner(owner);
+    let engine = Engine::open(config).expect("owned engine opens");
+    (dir, engine, owner_tenant)
+}
+
 fn commit_put(
     engine: &Engine,
     tenant_name: &str,
@@ -671,6 +680,100 @@ fn begin_rejects_snapshot_from_another_engine() {
     drop(second);
     std::fs::remove_dir_all(&first_dir).ok();
     std::fs::remove_dir_all(&second_dir).ok();
+}
+
+#[test]
+fn production_owner_rejects_forged_tenant_without_side_effects() {
+    let (dir, engine, owner_tenant) = open_owned_engine("owner-scope");
+    let owner_scope = TenantScope::from_parts(owner_tenant.clone(), engine.identity());
+    let snapshot = engine.read_snapshot(&owner_scope).expect("owner snapshot");
+    let mut transaction =
+        engine.begin(&owner_scope, snapshot, operation("owner-write")).expect("begins");
+    transaction.put(document("owner-doc", "users", "kept"), ExpectedVersion::New).expect("stages");
+    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+
+    let forged_scope = tenant_scope(&engine, "forged-tenant");
+    let before_sequence = engine.published_sequence().expect("sequence");
+    let before_metrics = engine.metrics().snapshot();
+    let before_documents = engine
+        .snapshot_documents(&owner_scope, &engine.read_snapshot(&owner_scope).expect("snapshot"))
+        .expect("documents");
+    let before_read_count = engine.metering_read_count(&owner_scope);
+    let boundary = before_sequence;
+
+    assert_eq!(engine.read_snapshot(&forged_scope), Err(EngineError::ScopeMismatch));
+    assert_eq!(
+        engine
+            .begin(
+                &forged_scope,
+                engine.read_snapshot(&owner_scope).expect("owner snapshot"),
+                operation("forged-begin"),
+            )
+            .err(),
+        Some(EngineError::ScopeMismatch)
+    );
+    assert_eq!(
+        engine.record_usage(&forged_scope, usage_record_request("forged-fact", 1_000)),
+        Err(UsageCommandError::ScopeMismatch)
+    );
+    assert_eq!(
+        engine.record_usage(&owner_scope, usage_record_request("wrong-owner-fact", 1_001)),
+        Err(UsageCommandError::InvalidRequest),
+        "usage facts must bind their Project and Database dimensions too"
+    );
+    assert_eq!(
+        engine.usage_page(&forged_scope, UsagePageRequest::try_new(None, 1, None).unwrap()),
+        Err(UsageCommandError::ScopeMismatch)
+    );
+    assert_eq!(engine.metering_fact(&forged_scope, "forged-tenant"), None);
+    assert_eq!(engine.metering_facts_page(&forged_scope, None, 1), (Vec::new(), None));
+    assert_eq!(engine.metering_live_bytes(&forged_scope), 0);
+    assert_eq!(engine.metering_read_count(&forged_scope), 0);
+    let replicated = crate::engine::ReplicatedRecord {
+        collection: CollectionName::try_new("users").unwrap(),
+        id: document_id("forged-doc"),
+        body: DocumentValue::String("forged".into()),
+        deleted: false,
+        commit_ulid: "forged-replication".into(),
+        hlc: 1,
+        origin: "peer-a".into(),
+        origin_sequence: 1,
+    };
+    assert_eq!(
+        engine.apply_replicated(&forged_scope, &replicated),
+        Err(EngineError::ScopeMismatch)
+    );
+    assert_eq!(
+        engine.snapshot_records_from(forged_scope.tenant().clone(), boundary, None, 1),
+        Err(EngineError::ScopeMismatch)
+    );
+    assert_eq!(
+        engine.tenant_commits(
+            &forged_scope.tenant().clone(),
+            crate::types::StorageSequence::new(0),
+            1
+        ),
+        Err(EngineError::ScopeMismatch)
+    );
+    assert_eq!(
+        engine.tenant_sequence(&forged_scope.tenant().clone(), boundary),
+        Err(EngineError::ScopeMismatch)
+    );
+
+    assert_eq!(engine.metering_read_count(&owner_scope), before_read_count);
+    assert_eq!(engine.published_sequence().expect("sequence unchanged"), before_sequence);
+    assert_eq!(
+        engine
+            .snapshot_documents(
+                &owner_scope,
+                &engine.read_snapshot(&owner_scope).expect("snapshot")
+            )
+            .expect("documents unchanged"),
+        before_documents
+    );
+    assert_eq!(engine.metrics().snapshot(), before_metrics);
+    drop(engine);
+    std::fs::remove_dir_all(dir).ok();
 }
 
 #[test]

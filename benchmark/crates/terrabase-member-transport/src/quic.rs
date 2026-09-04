@@ -232,7 +232,7 @@ impl QuicLane {
             .enable_all()
             .build()
             .map_err(|_| QuicLaneError::Runtime)?;
-        install_rustls_provider()?;
+        install_rustls_provider();
         // quinn's endpoints drive themselves on the ambient tokio runtime:
         // bind them inside this lane's runtime context.
         let _runtime_guard = runtime.enter();
@@ -744,26 +744,8 @@ pub enum QuicLaneError {
     Certificates,
 }
 
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "the local profile is infallible, but production-fips validates the active FIPS provider"
-)]
-fn install_rustls_provider() -> Result<(), QuicLaneError> {
-    #[cfg(feature = "production-fips")]
-    {
-        aws_lc_rs::try_fips_mode().map_err(|_| QuicLaneError::Certificates)?;
-        let provider = rustls::crypto::aws_lc_rs::default_provider();
-        if !provider.fips() {
-            return Err(QuicLaneError::Certificates);
-        }
-        let _ = provider.install_default();
-        if !rustls::crypto::CryptoProvider::get_default().is_some_and(|active| active.fips()) {
-            return Err(QuicLaneError::Certificates);
-        }
-    }
-    #[cfg(feature = "local-crypto")]
-    {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    }
-    Ok(())
+/// Installs the single non-FIPS rustls provider (D-41 defers FIPS builds
+/// past the first customer) for the lane's QUIC sockets.
+fn install_rustls_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }

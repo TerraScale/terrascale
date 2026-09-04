@@ -155,6 +155,39 @@ fn replication_frame(
     .expect("the adversarial frame encodes")
 }
 
+fn acknowledgement_frame(
+    source: &str,
+    target: &str,
+    tenant: &str,
+    message_id: u64,
+    correlation_id: u64,
+    reports: &[(&str, bool)],
+) -> terrabase_member_transport::EncodedFrame {
+    encode(&Envelope {
+        kind: FrameKind::AckBatch,
+        message_id,
+        correlation_id: Some(correlation_id),
+        causation_id: None,
+        idempotency_key: None,
+        source: MemberId::try_new(source).expect("the source identity parses"),
+        target: MemberId::try_new(target).expect("the target identity parses"),
+        issued_at: LaneInstant::at_ticks(0),
+        expires_at: None,
+        range: None,
+        epoch: None,
+        payload: Payload::AckBatch {
+            tenant: LaneTenantId::try_new(tenant).expect("the tenant identity parses"),
+            reports: reports
+                .iter()
+                .map(|(operation, held)| {
+                    (OperationId::try_new(operation).expect("the operation identity parses"), *held)
+                })
+                .collect(),
+        },
+    })
+    .expect("the acknowledgement frame encodes")
+}
+
 /// The member's live documents of the collection, at a fresh snapshot.
 fn orders(host: &MemberHost) -> Vec<Document> {
     let engine = host.engine();
@@ -572,6 +605,94 @@ fn drain_acks_refuses_a_wrong_tenant() {
     );
     assert_eq!(link.cursor(), None, "the forged acknowledgement cannot advance the cursor");
     assert_eq!(link.in_flight(), 1, "the forged acknowledgement leaves the frame pending");
+}
+
+/// An acknowledgement is a proof for one exact frame, not merely a
+/// correlated liveness signal. Every malformed report leaves the frame
+/// pending so the sender can retry it after the peer produces a valid report.
+#[test]
+fn drain_acks_refuses_any_non_exact_operation_report() {
+    let malformed = [
+        ("empty", vec![]),
+        (
+            "extra",
+            vec![
+                ("put-orders/ack-first-1", true),
+                ("put-orders/ack-second-2", true),
+                ("fabricated-extra", true),
+            ],
+        ),
+        ("missing", vec![("put-orders/ack-first-1", true)]),
+        ("reordered", vec![("put-orders/ack-second-2", true), ("put-orders/ack-first-1", true)]),
+        ("duplicate", vec![("put-orders/ack-first-1", true), ("put-orders/ack-first-1", true)]),
+        ("fabricated", vec![("put-orders/ack-first-1", true), ("not-carried-by-the-frame", true)]),
+    ];
+
+    for (case, reports) in malformed {
+        let (_source_location, source) = member(&format!("malformed-ack-source-{case}"));
+        let scope = scope();
+        put(&source, "orders/ack-first", 1);
+        put(&source, "orders/ack-second", 2);
+        let mut lane = InProcessLane::new();
+        let mut link = RegionLink::new("member-gru", "member-sfo").expect("the link opens");
+        assert_eq!(
+            link.ship(source.engine_host(), &scope, &mut lane).expect("the frame ships"),
+            ShipStep::Shipped(2),
+            "the test frame carries both operations ({case})"
+        );
+        let peer_id = MemberId::try_new("member-sfo").expect("the peer identity parses");
+        let source_id = MemberId::try_new("member-gru").expect("the source identity parses");
+        lane.send(
+            &peer_id,
+            &source_id,
+            acknowledgement_frame("member-sfo", "member-gru", &scope.tenant, 9, 1, &reports),
+        )
+        .expect("the malformed acknowledgement enters the lane");
+        assert!(
+            matches!(link.drain_acks(&mut lane), Err(terrabase_tbep::HostingError::Refused(_))),
+            "the {case} acknowledgement is refused"
+        );
+        assert_eq!(link.cursor(), None, "the {case} acknowledgement cannot advance the cursor");
+        assert_eq!(link.in_flight(), 1, "the {case} frame remains pending");
+    }
+}
+
+/// A verified negative holding report keeps retry behavior intact: it is not
+/// accepted as durability, but it also does not poison the lane.
+#[test]
+fn drain_acks_retries_an_exact_negative_report() {
+    let (_source_location, source) = member("negative-ack-source");
+    let scope = scope();
+    put(&source, "orders/negative-ack", 1);
+    let mut lane = InProcessLane::new();
+    let mut link = RegionLink::new("member-gru", "member-sfo").expect("the link opens");
+    assert_eq!(
+        link.ship(source.engine_host(), &scope, &mut lane).expect("the frame ships"),
+        ShipStep::Shipped(1)
+    );
+    let peer_id = MemberId::try_new("member-sfo").expect("the peer identity parses");
+    let source_id = MemberId::try_new("member-gru").expect("the source identity parses");
+    lane.send(
+        &peer_id,
+        &source_id,
+        acknowledgement_frame(
+            "member-sfo",
+            "member-gru",
+            &scope.tenant,
+            9,
+            1,
+            &[("put-orders/negative-ack-1", false)],
+        ),
+    )
+    .expect("the negative acknowledgement enters the lane");
+    link.drain_acks(&mut lane).expect("a negative holding is a retry, not a protocol error");
+    assert_eq!(link.cursor(), None, "a negative holding cannot advance the cursor");
+    assert_eq!(link.in_flight(), 0, "the failed frame releases its credit");
+    assert_eq!(
+        link.ship(source.engine_host(), &scope, &mut lane).expect("the frame retries"),
+        ShipStep::Shipped(1),
+        "the exact negative report leaves the record eligible for retry"
+    );
 }
 
 /// Duplicate delivery is an idempotent replay: the target publishes one

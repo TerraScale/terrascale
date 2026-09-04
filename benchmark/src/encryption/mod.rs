@@ -1,15 +1,9 @@
 //! Bounded encryption-at-rest primitives and key-provider seams.
 //!
-//! AWS-LC supplies AES-256-GCM, HKDF-SHA-256, SHA-256, and randomness. Release
-//! builds select its FIPS module through the `production-fips` feature. Local
-//! development uses the `local-crypto` feature and the local-file provider.
-//! OCI Vault wrapping and storage-format integration remain separate
-//! production responsibilities.
-
-#[cfg(all(feature = "local-crypto", feature = "production-fips"))]
-compile_error!("local-crypto and production-fips are mutually exclusive");
-#[cfg(not(any(feature = "local-crypto", feature = "production-fips")))]
-compile_error!("select exactly one of local-crypto or production-fips");
+//! AWS-LC supplies AES-256-GCM, HKDF-SHA-256, SHA-256, and randomness in its
+//! single non-FIPS build (D-41 defers FIPS builds past the first customer).
+//! Local development uses the local-file provider. OCI Vault wrapping and
+//! storage-format integration remain separate production responsibilities.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -62,7 +56,7 @@ pub enum ProviderMode {
     /// Local development with a key persisted beside the engine location.
     LocalFile,
     /// Production with an OCI Vault-authorized database key.
-    ProductionFips,
+    Production,
 }
 
 impl ProviderMode {
@@ -70,15 +64,15 @@ impl ProviderMode {
     #[must_use]
     pub const fn identity(self) -> &'static str {
         match self {
-            Self::LocalFile => "aws-lc-rs:local-file-non-fips",
-            Self::ProductionFips => "aws-lc-rs:production-fips",
+            Self::LocalFile => "aws-lc-rs:local-file",
+            Self::Production => "aws-lc-rs:production",
         }
     }
 
-    /// Returns whether this mode represents production FIPS operation.
+    /// Returns whether this mode represents production operation.
     #[must_use]
     pub const fn is_production(self) -> bool {
-        matches!(self, Self::ProductionFips)
+        matches!(self, Self::Production)
     }
 }
 
@@ -128,7 +122,7 @@ pub enum EncryptionError {
 impl fmt::Display for EncryptionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
-            Self::ProductionProviderUnavailable => "production FIPS provider unavailable",
+            Self::ProductionProviderUnavailable => "production provider unavailable",
             Self::LocalKeyUnavailable => "local encryption key unavailable",
             Self::UnsafeLocalKeyFile => "unsafe local encryption key file",
             Self::InvalidContext => "invalid encryption context",
@@ -467,7 +461,7 @@ impl fmt::Debug for ArtifactCipher {
 }
 
 impl ArtifactCipher {
-    /// Creates a local non-FIPS artifact cipher starting at ordinal zero.
+    /// Creates a local artifact cipher starting at ordinal zero.
     ///
     /// # Errors
     ///
@@ -508,7 +502,7 @@ impl ArtifactCipher {
     /// # Errors
     ///
     /// Returns an error when the lease is expired, its metadata does not match
-    /// the context, the FIPS module is unavailable, or the ordinal is invalid.
+    /// the context, the production provider is not configured, or the ordinal is invalid.
     pub fn from_database_key_lease(
         lease: &DatabaseKeyLease,
         context: EncryptionContext,
@@ -530,7 +524,7 @@ impl ArtifactCipher {
         }
         lease.with_database_key(|key| {
             Self::from_key(
-                ProviderMode::ProductionFips,
+                ProviderMode::Production,
                 key,
                 context,
                 next_ordinal,
@@ -547,9 +541,7 @@ impl ArtifactCipher {
         authorization_expires_at: Option<Instant>,
     ) -> Result<Self, EncryptionError> {
         context.validate()?;
-        if mode.is_production()
-            && (authorization_expires_at.is_none() || aws_lc_rs::try_fips_mode().is_err())
-        {
+        if mode.is_production() && authorization_expires_at.is_none() {
             return Err(EncryptionError::ProductionProviderUnavailable);
         }
         // `MAX_ORDINAL + 1` is the durable read-only recovery sentinel after

@@ -4,8 +4,8 @@
 //! the ULID specification vectors, minimum and maximum values,
 //! same-millisecond monotonic generation, entropy overflow, invalid and
 //! ambiguous text, wrong-length binary, text/binary round trips, byte
-//! ordering, storage-key ordering, hash-to-bucket placement, concurrent
-//! generation, and the Region boundary row (a Region has no ULID; only
+//! ordering, storage-key ordering, concurrent generation, and the Region
+//! boundary row (a Region has no ULID; only
 //! registered uppercase airport `RegionCode` values are accepted). The rows
 //! here are engine-side evidence, not a qualification claim: protobuf
 //! representation and Rust-to-Go agreement land with the private TBEP
@@ -20,7 +20,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use super::Clock;
-use super::IdentityPlacementError;
 use super::MAX_ENTROPY;
 use super::MAX_TIMESTAMP_MILLIS;
 use super::MonotonicGenerator;
@@ -29,8 +28,6 @@ use super::ULID_TEXT_LENGTH;
 use super::Ulid;
 use super::UlidError;
 use super::compare_storage_keys;
-use super::placement_bucket;
-use super::placement_digest;
 use crate::identity::generate;
 use crate::regions::RegionCatalog;
 use crate::regions::RegionCodeError;
@@ -408,69 +405,6 @@ fn concurrent_generation_is_unique_and_per_thread_increasing() {
             assert!(window[0] < window[1], "each thread's values are strictly increasing");
         }
     }
-}
-
-#[test]
-fn placement_digest_and_bucket_are_stable_and_in_range() {
-    const BUCKET_SPACE: u32 = 1 << 20;
-    let example = Ulid::from_text(SPEC_EXAMPLE).expect("the canonical example parses");
-    let identities = [example.to_bytes(), [0; ULID_BINARY_BYTES], [0xFF; ULID_BINARY_BYTES]];
-
-    // Golden digests and buckets: the placement identity is a contract, so
-    // the corpus anchors it exactly as the XXH64 reference vectors. Changing
-    // these bytes re-places every entity, which is a placement-format
-    // decision, not an implementation detail.
-    let pinned = [
-        ("3b00de85b434eb2680e97ad8b59ead977a1ba1a922aa2a3c213a384786bf5a97", 241_677),
-        ("1a63dba61d8da9bec6ce195d31ec7ad199f227c55fc89053ff1a7a9ab90c3f89", 108_093),
-        ("e011c35eab89d92619af7a1144326404f47fc9d786413f3fbf2e84e11517fe64", 917_788),
-    ];
-    for (identity, (digest, bucket)) in identities.iter().zip(pinned) {
-        assert_eq!(hex(&placement_digest(identity)), digest, "the placement digest is pinned");
-        assert_eq!(
-            placement_bucket(identity, BUCKET_SPACE),
-            Ok(bucket),
-            "the placement bucket is pinned",
-        );
-        // Determinism: the same identity always places identically.
-        assert_eq!(placement_digest(identity), placement_digest(identity));
-        assert!(placement_bucket(identity, BUCKET_SPACE).expect("non-empty") < BUCKET_SPACE);
-    }
-
-    // Distinct identities place independently: no shared digest.
-    let digests: Vec<_> = identities.iter().map(placement_digest).collect();
-    assert_ne!(digests[0], digests[1]);
-    assert_ne!(digests[0], digests[2]);
-    assert_ne!(digests[1], digests[2]);
-
-    // Hashed placement spreads identities instead of clustering them on the
-    // timestamp prefix, which is the ADR's reason for hashing at all.
-    let bucket_space = BUCKET_SPACE;
-    let mut occupied = HashSet::new();
-    let generator = MonotonicGenerator::new();
-    for _ in 0..1024 {
-        let identity = generator.generate().to_bytes();
-        let bucket =
-            placement_bucket(&identity, bucket_space).expect("the bucket space is non-empty");
-        assert!(bucket < bucket_space);
-        occupied.insert(bucket);
-    }
-    assert!(occupied.len() > 16, "placement spreads rather than clustering on a prefix");
-
-    // A one-bucket space places everything in bucket zero, and a zero-bucket
-    // space is a typed refusal rather than a sentinel bucket.
-    assert_eq!(placement_bucket(&identities[0], 1), Ok(0));
-    assert_eq!(placement_bucket(&identities[0], 0), Err(IdentityPlacementError::ZeroBucketCount),);
-}
-
-/// Encodes bytes as lowercase hex, the form the golden digest rows use.
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(text, "{byte:02x}");
-    }
-    text
 }
 
 #[test]

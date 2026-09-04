@@ -26,16 +26,16 @@ applied progress.
 
 Rules closed under the selected CRDT join remain available during a network
 partition. Uniqueness, one-time consume, strict cross-record checks, and other
-rules not closed under merge use the coordinated lane or are rejected. Schema
-validation never pretends a local check proves a global invariant.
+rules not closed under merge are enforced within a region and rejected
+cross-region. Schema validation never pretends a local check proves a global
+invariant.
 
 ## Schema catalog changes
 
-The schema catalog is versioned database metadata. A catalog update uses the
-coordinated lane and names its compatibility class. Members admit mutations
-only when they understand the required schema and datatype codec. Rolling
-deployment may support a declared old and new version window, but unknown
-required behavior fails closed.
+The schema catalog is versioned database metadata. A catalog update names its
+compatibility class. Members admit mutations only when they understand the
+required schema and datatype codec. Deployment may support a declared old and
+new version window, but unknown required behavior fails closed.
 
 Adding an optional path or tightening a bound only for future writes may be an
 online compatible change. Changing an established CRDT kind, field identity,

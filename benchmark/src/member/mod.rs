@@ -24,6 +24,14 @@ use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 pub const MAX_DATABASE_ID_BYTES: usize = 26;
 /// The maximum number of databases in one Member catalog.
 pub const MAX_DATABASES: usize = 1_024;
+/// Default resident RSS charge for one open SQLite database.
+pub const DEFAULT_DATABASE_RSS_BYTES: usize = 16 * 1024 * 1024;
+/// Default RSS budget for all resident SQLite databases.
+pub const DEFAULT_RSS_BUDGET_BYTES: usize = 1 * 1024 * 1024 * 1024;
+/// Default upper bound for simultaneous engine opens.
+pub const DEFAULT_MAX_CONCURRENT_OPENS: usize = 4;
+/// SQLite's one writer plus four fixed reader connections per open database.
+pub const SQLITE_CONNECTIONS_PER_OPEN_DATABASE: usize = 5;
 /// The maximum byte length accepted for a database location specification.
 pub const MAX_LOCATION_BYTES: usize = 4_096;
 /// The maximum admission capacity accepted by one Member.
@@ -207,6 +215,14 @@ pub struct AdmissionLimits {
     pub global: usize,
     /// Maximum operations admitted for one database.
     pub per_database: usize,
+    /// Maximum resident RSS charge across open database engines.
+    pub rss_budget_bytes: usize,
+    /// Conservative RSS charge reserved for one open database.
+    pub database_rss_bytes: usize,
+    /// Optional count cap retained as a secondary guard to the RSS budget.
+    pub max_open_databases: usize,
+    /// Maximum concurrent lazy engine opens.
+    pub max_concurrent_opens: usize,
 }
 
 impl AdmissionLimits {
@@ -214,13 +230,72 @@ impl AdmissionLimits {
     /// rejected when the catalog is opened.
     #[must_use]
     pub const fn new(global: usize, per_database: usize) -> Self {
-        Self { global, per_database }
+        Self {
+            global,
+            per_database,
+            rss_budget_bytes: DEFAULT_RSS_BUDGET_BYTES,
+            database_rss_bytes: DEFAULT_DATABASE_RSS_BYTES,
+            max_open_databases: MAX_DATABASES,
+            max_concurrent_opens: DEFAULT_MAX_CONCURRENT_OPENS,
+        }
+    }
+
+    /// Sets the hard resident RSS budget. The byte budget, not an engine
+    /// count, is the authority used for eviction.
+    #[must_use]
+    pub const fn with_rss_budget_bytes(mut self, bytes: usize) -> Self {
+        self.rss_budget_bytes = bytes;
+        self
+    }
+
+    /// Alias for [`Self::with_rss_budget_bytes`] used by callers that name
+    /// the resident set directly.
+    #[must_use]
+    pub const fn with_resident_rss_budget(mut self, bytes: usize) -> Self {
+        self.rss_budget_bytes = bytes;
+        self
+    }
+
+    /// Sets the conservative RSS charge reserved for each open database.
+    #[must_use]
+    pub const fn with_database_rss_bytes(mut self, bytes: usize) -> Self {
+        self.database_rss_bytes = bytes;
+        self
+    }
+
+    /// Alias for [`Self::with_database_rss_bytes`].
+    #[must_use]
+    pub const fn with_database_rss_charge(mut self, bytes: usize) -> Self {
+        self.database_rss_bytes = bytes;
+        self
+    }
+
+    /// Sets the maximum number of resident databases as a compatibility cap.
+    /// RSS remains the primary bound, so this cannot make the byte budget grow.
+    #[must_use]
+    pub const fn with_max_open_databases(mut self, count: usize) -> Self {
+        self.max_open_databases = count;
+        self.max_concurrent_opens = if self.max_concurrent_opens < count {
+            self.max_concurrent_opens
+        } else if count == 0 {
+            0
+        } else {
+            count
+        };
+        self
+    }
+
+    /// Sets the bound on simultaneous engine opens.
+    #[must_use]
+    pub const fn with_max_concurrent_opens(mut self, count: usize) -> Self {
+        self.max_concurrent_opens = count;
+        self
     }
 }
 
 impl Default for AdmissionLimits {
     fn default() -> Self {
-        Self { global: 256, per_database: 64 }
+        Self::new(256, 64)
     }
 }
 
@@ -274,6 +349,13 @@ pub enum MemberOpenError {
         /// The durable engine open failure.
         error: EngineOpenError,
     },
+    /// A validation probe failed its durable shutdown.
+    EngineShutdown {
+        /// The database whose probe could not flush.
+        database: DatabaseId,
+        /// The durable shutdown failure.
+        error: EngineShutdownError,
+    },
 }
 
 /// Errors returned when acquiring or draining the Member.
@@ -287,6 +369,30 @@ pub enum MemberError {
     Overloaded(AdmissionScope),
     /// The database engine is no longer available.
     StorageUnavailable(DatabaseId),
+    /// The RSS/count resident budget has no idle database available for
+    /// eviction; active leases pin every resident engine.
+    OpenDatabaseBudgetExhausted {
+        /// The configured RSS budget in bytes.
+        rss_budget_bytes: usize,
+    },
+    /// A resident database cannot be closed while an operation pins it.
+    DatabaseBusy(DatabaseId),
+    /// A lazy-open path failed catalog validation.
+    Validation(CatalogValidationError),
+    /// A lazy-open path could not construct engine configuration.
+    EngineConfig {
+        /// The database whose configuration failed.
+        database: DatabaseId,
+        /// The configuration failure.
+        error: EngineConfigError,
+    },
+    /// A lazy-open path could not open the engine.
+    EngineOpen {
+        /// The database whose engine failed.
+        database: DatabaseId,
+        /// The engine failure.
+        error: EngineOpenError,
+    },
     /// The bounded drain deadline elapsed while work remained active.
     DrainTimeout,
     /// An engine failed its final durable flush.
@@ -342,6 +448,20 @@ pub struct MemberStatus {
     pub storage: StorageHealth,
     /// Number of configured databases.
     pub databases: usize,
+    /// Number of resident database engines.
+    pub open_databases: usize,
+    /// Current conservative resident RSS charge.
+    pub resident_rss_bytes: usize,
+    /// Configured resident RSS budget.
+    pub rss_budget_bytes: usize,
+    /// Maximum SQLite connections implied by both resident bounds.
+    pub sqlite_connection_budget: usize,
+    /// Successful lazy engine opens since Member construction.
+    pub database_opens: u64,
+    /// Successful idle LRU evictions since Member construction.
+    pub database_evictions: u64,
+    /// Successful explicit/member closes since Member construction.
+    pub database_closes: u64,
     /// Number of admitted operations currently holding permits.
     pub active_operations: usize,
     /// Always false until an upper layer supplies membership and replication.
@@ -349,23 +469,63 @@ pub struct MemberStatus {
 }
 
 struct DatabaseEntry {
-    id: DatabaseId,
     location: PathBuf,
     scope: Option<DatabaseScope>,
-    engine: Mutex<Option<Arc<Engine>>>,
-    /// The last time an acquire handed out this database's engine. The
-    /// idle-close clock (D-44): a database with no request for the
-    /// configured window is evicted, and the next acquire reopens it.
-    last_used: Mutex<Instant>,
+    engine: ResidentEngine,
+    /// The last request time. LRU ordering uses the separate monotonic stamp
+    /// so ties are deterministic even when the platform clock is coarse.
+    last_used: Instant,
+    access_stamp: u64,
     admissions: Arc<AdmissionCounter>,
+}
+
+enum ResidentEngine {
+    Closed,
+    Opening,
+    Open(Arc<Engine>),
+    Closing,
+}
+
+#[derive(Default)]
+struct CatalogMetrics {
+    opens: u64,
+    evictions: u64,
+    closes: u64,
+}
+
+struct CatalogState {
+    databases: BTreeMap<DatabaseId, DatabaseEntry>,
+    open_databases: usize,
+    resident_rss_bytes: usize,
+    opening_databases: usize,
+    access_clock: u64,
+    metrics: CatalogMetrics,
+}
+
+impl CatalogState {
+    fn next_access(&mut self) -> u64 {
+        self.access_clock = self.access_clock.saturating_add(1);
+        self.access_clock
+    }
 }
 
 struct MemberInner {
     root: PathBuf,
-    databases: BTreeMap<DatabaseId, Arc<DatabaseEntry>>,
+    catalog: Mutex<CatalogState>,
+    catalog_changed: Condvar,
     global_admissions: Arc<AdmissionCounter>,
     lifecycle: Mutex<LifecycleState>,
+    rss_budget_bytes: usize,
+    database_rss_bytes: usize,
+    max_open_databases: usize,
+    max_concurrent_opens: usize,
+    backup_pause: Mutex<Option<BackupPauseCallback>>,
 }
+
+/// Callback invoked immediately before a resident database is closed. The
+/// backup owner should pause its per-file stream before dropping the SQLite
+/// file, then resume it after a later acquire reopens the database.
+pub type BackupPauseCallback = Arc<dyn Fn(&DatabaseId) + Send + Sync + 'static>;
 
 /// One opened, isolated Member catalog.
 #[derive(Clone)]
@@ -377,11 +537,10 @@ pub struct Member {
 pub type MemberCatalog = Member;
 
 impl Member {
-    /// Validates the complete catalog, then opens every durable engine.
-    ///
-    /// Engines are opened into a temporary collection first.  If any open or
-    /// final validation fails, already-opened engines are synchronously
-    /// flushed and no partially populated Member is published.
+    /// Validates the complete catalog, probing each durable engine once, then
+    /// publishes only closed entries. Engines are reopened lazily and kept in
+    /// an RSS-budgeted LRU, so the catalog itself never retains one engine per
+    /// configured database.
     ///
     /// The post-creation recheck closes the ordinary symlink/escape gap.  The
     /// standard library does not expose descriptor-relative no-follow
@@ -403,9 +562,8 @@ impl Member {
         let specs = collect_and_validate_specs(&root, specifications)
             .map_err(MemberOpenError::Validation)?;
 
-        let mut opened = Vec::with_capacity(specs.len());
-        for (id, location, scope) in specs {
-            let config = EngineConfig::durable(&location)
+        for (id, location, scope) in &specs {
+            let config = EngineConfig::durable(location.clone())
                 .map(|config| {
                     scope
                         .as_ref()
@@ -414,45 +572,51 @@ impl Member {
                 .map_err(|error| MemberOpenError::EngineConfig { database: id.clone(), error });
             let config = match config {
                 Ok(config) => config,
-                Err(error) => {
-                    close_opened(opened);
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             };
             if let Err(error) = revalidate_created_location(&root, &location) {
-                close_opened(opened);
                 return Err(MemberOpenError::Validation(error));
             }
-            let engine = match Engine::open(config) {
-                Ok(engine) => Arc::new(engine),
-                Err(error) => {
-                    close_opened(opened);
-                    return Err(MemberOpenError::EngineOpen { database: id, error });
-                }
-            };
-            opened.push((id, location, scope, engine));
+            let engine = Engine::open(config)
+                .map_err(|error| MemberOpenError::EngineOpen { database: id.clone(), error })?;
+            if let Err(error) = engine.shutdown() {
+                return Err(MemberOpenError::EngineShutdown { database: id.clone(), error });
+            }
         }
 
-        let databases = opened
+        let databases = specs
             .into_iter()
-            .map(|(id, location, scope, engine)| {
-                let entry = Arc::new(DatabaseEntry {
-                    id: id.clone(),
+            .map(|(id, location, scope)| {
+                let entry = DatabaseEntry {
                     location,
                     scope,
-                    engine: Mutex::new(Some(engine)),
-                    last_used: Mutex::new(Instant::now()),
+                    engine: ResidentEngine::Closed,
+                    last_used: Instant::now(),
+                    access_stamp: 0,
                     admissions: Arc::new(AdmissionCounter::new(limits.per_database)),
-                });
+                };
                 (id, entry)
             })
             .collect();
         Ok(Self {
             inner: Arc::new(MemberInner {
                 root,
-                databases,
+                catalog: Mutex::new(CatalogState {
+                    databases,
+                    open_databases: 0,
+                    resident_rss_bytes: 0,
+                    opening_databases: 0,
+                    access_clock: 0,
+                    metrics: CatalogMetrics::default(),
+                }),
+                catalog_changed: Condvar::new(),
                 global_admissions: Arc::new(AdmissionCounter::new(limits.global)),
                 lifecycle: Mutex::new(LifecycleState::Serving),
+                rss_budget_bytes: limits.rss_budget_bytes,
+                database_rss_bytes: limits.database_rss_bytes,
+                max_open_databases: limits.max_open_databases,
+                max_concurrent_opens: limits.max_concurrent_opens,
+                backup_pause: Mutex::new(None),
             }),
         })
     }
@@ -483,14 +647,20 @@ impl Member {
     }
 
     /// Returns a sorted iterator over configured database identities.
-    pub fn database_ids(&self) -> impl Iterator<Item = &DatabaseId> {
-        self.inner.databases.keys()
+    pub fn database_ids(&self) -> std::vec::IntoIter<DatabaseId> {
+        lock_unpoisoned(&self.inner.catalog)
+            .databases
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     /// Returns storage-only status.  Production readiness remains false.
     #[must_use]
     pub fn status(&self) -> MemberStatus {
         let lifecycle = *lock_unpoisoned(&self.inner.lifecycle);
+        let catalog = lock_unpoisoned(&self.inner.catalog);
         let storage = match lifecycle {
             LifecycleState::Serving => StorageHealth::Healthy,
             LifecycleState::Draining => StorageHealth::Draining,
@@ -499,7 +669,14 @@ impl Member {
         MemberStatus {
             lifecycle,
             storage,
-            databases: self.inner.databases.len(),
+            databases: catalog.databases.len(),
+            open_databases: catalog.open_databases,
+            resident_rss_bytes: catalog.resident_rss_bytes,
+            rss_budget_bytes: self.inner.rss_budget_bytes,
+            sqlite_connection_budget: self.sqlite_connection_budget(),
+            database_opens: catalog.metrics.opens,
+            database_evictions: catalog.metrics.evictions,
+            database_closes: catalog.metrics.closes,
             active_operations: self.inner.global_admissions.active(),
             production_ready: false,
         }
@@ -516,81 +693,129 @@ impl Member {
     /// [`MemberError::UnknownDatabase`] for an unconfigured identity, or a
     /// typed capacity/storage refusal.
     pub fn acquire(&self, database: &DatabaseId) -> Result<DatabaseLease, MemberError> {
-        let state = *lock_unpoisoned(&self.inner.lifecycle);
-        if state != LifecycleState::Serving {
+        if *lock_unpoisoned(&self.inner.lifecycle) != LifecycleState::Serving {
             return Err(MemberError::Draining);
         }
-        let entry = self
-            .inner
-            .databases
-            .get(database)
-            .cloned()
-            .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?;
         let global = self.inner.global_admissions.try_acquire(AdmissionScope::Global)?;
-        let local = match entry.admissions.try_acquire(AdmissionScope::Database) {
-            Ok(permit) => permit,
+        let (local, location) = {
+            let catalog = lock_unpoisoned(&self.inner.catalog);
+            let entry = catalog
+                .databases
+                .get(database)
+                .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?;
+            let local = match entry.admissions.try_acquire(AdmissionScope::Database) {
+                Ok(permit) => permit,
+                Err(error) => {
+                    drop(global);
+                    return Err(error);
+                }
+            };
+            (local, entry.location.clone())
+        };
+        let engine = match open_database_engine(&self.inner, database, &location) {
+            Ok(engine) => engine,
             Err(error) => {
+                drop(local);
                 drop(global);
                 return Err(error);
             }
         };
-        let engine = {
-            let mut guard = lock_unpoisoned(&entry.engine);
-            if guard.is_none() {
-                // Idle-close evicted this database; reopen it from its
-                // validated location and scope (D-44 lazy reopen) while
-                // holding the entry lock, so a concurrent eviction sweep
-                // cannot take the engine mid-open.
-                *guard = Some(reopen_database_engine(&entry)?);
-            }
-            let Some(engine) = guard.clone() else {
-                return Err(MemberError::StorageUnavailable(database.clone()));
-            };
-            *lock_unpoisoned(&entry.last_used) = Instant::now();
-            engine
-        };
-        Ok(DatabaseLease { entry, engine, _global: global, _local: local })
+        Ok(DatabaseLease {
+            database: database.clone(),
+            location,
+            engine,
+            _global: global,
+            _local: local,
+        })
     }
 
-    /// Closes every open database engine with no admitted request for at
-    /// least `idle` (D-44 idle close), returning how many were evicted.
-    ///
-    /// Eviction flushes through [`Engine::shutdown`] (retention sweep plus
-    /// WAL fold-back), never touches a database with an outstanding lease,
-    /// and is transparent: the next [`Member::acquire`] reopens the
-    /// database from its validated location and scope. A closed (already
-    /// evicted) database is not reported again. While the Member is not
-    /// serving, nothing is evicted.
+    /// Installs the callback used to pause a database's backup stream before
+    /// idle/LRU eviction. The callback is never called while the catalog lock
+    /// is held.
+    pub fn set_backup_pause_callback(&self, callback: Option<BackupPauseCallback>) {
+        *lock_unpoisoned(&self.inner.backup_pause) = callback;
+    }
+
+    /// Convenience builder for wiring the per-file backup pause callback.
+    #[must_use]
+    pub fn with_backup_pause_callback(
+        self,
+        callback: impl Fn(&DatabaseId) + Send + Sync + 'static,
+    ) -> Self {
+        self.set_backup_pause_callback(Some(Arc::new(callback)));
+        self
+    }
+
+    /// Closes every open database that has had no request for at least
+    /// `idle`. The entries remain in the catalog and reopen on demand.
     #[must_use]
     pub fn close_idle(&self, idle: Duration) -> usize {
+        self.close_idle_at(idle, Instant::now())
+    }
+
+    /// Deterministic variant of [`Self::close_idle`] for a caller that owns a
+    /// test clock. LRU order is always the monotonic access stamp, never the
+    /// platform clock's resolution.
+    #[must_use]
+    pub fn close_idle_at(&self, idle: Duration, now: Instant) -> usize {
         if *lock_unpoisoned(&self.inner.lifecycle) != LifecycleState::Serving {
             return 0;
         }
-        let mut evicted = 0;
-        for entry in self.inner.databases.values() {
-            if lock_unpoisoned(&entry.last_used).elapsed() < idle {
-                continue;
-            }
-            let mut guard = lock_unpoisoned(&entry.engine);
-            let Some(engine) = guard.take() else { continue };
-            // Re-check under the entry lock: an acquire may have reopened
-            // and used the database after the first check.
-            if lock_unpoisoned(&entry.last_used).elapsed() < idle {
-                *guard = Some(engine);
-                continue;
-            }
-            match Arc::try_unwrap(engine) {
-                Ok(engine) => {
-                    let _ = engine.shutdown();
-                    evicted += 1;
-                }
-                Err(shared) => {
-                    // A lease is outstanding; keep serving it.
-                    *guard = Some(shared);
-                }
+        let databases = {
+            let catalog = lock_unpoisoned(&self.inner.catalog);
+            catalog
+                .databases
+                .iter()
+                .filter(|(_, entry)| {
+                    matches!(entry.engine, ResidentEngine::Open(_))
+                        && now.saturating_duration_since(entry.last_used) >= idle
+                        && entry.admissions.active() == 0
+                })
+                .map(|(database, _)| database.clone())
+                .collect::<Vec<_>>()
+        };
+        let mut closed = 0;
+        for database in databases {
+            if close_database_engine(&self.inner, &database, CloseKind::Eviction).is_ok() {
+                closed += 1;
             }
         }
-        evicted
+        closed
+    }
+
+    /// Returns the number of resident database engines.
+    #[must_use]
+    pub fn open_database_count(&self) -> usize {
+        lock_unpoisoned(&self.inner.catalog).open_databases
+    }
+
+    /// Returns the secondary count guard for resident engines.
+    #[must_use]
+    pub fn max_open_databases(&self) -> usize {
+        self.inner.max_open_databases
+    }
+
+    /// Returns the configured RSS budget.
+    #[must_use]
+    pub fn rss_budget_bytes(&self) -> usize {
+        self.inner.rss_budget_bytes
+    }
+
+    /// Returns the configured SQLite connection budget implied by the
+    /// resident RSS budget and fixed per-engine pool width.
+    #[must_use]
+    pub fn sqlite_connection_budget(&self) -> usize {
+        self.inner
+            .rss_budget_bytes
+            .saturating_div(self.inner.database_rss_bytes.max(1))
+            .min(self.inner.max_open_databases)
+            .saturating_mul(SQLITE_CONNECTIONS_PER_OPEN_DATABASE)
+    }
+
+    /// Explicitly closes one resident database while retaining its catalog
+    /// entry. A lease pins it and returns `DatabaseBusy`.
+    pub fn close_database(&self, database: &DatabaseId) -> Result<(), MemberError> {
+        close_database_engine(&self.inner, database, CloseKind::Explicit)
     }
 
     /// Changes the Member to draining and waits for admitted work to finish.
@@ -619,23 +844,13 @@ impl Member {
         if !self.inner.global_admissions.wait_for_zero(timeout) {
             return Err(MemberError::DrainTimeout);
         }
+        let databases =
+            lock_unpoisoned(&self.inner.catalog).databases.keys().cloned().collect::<Vec<_>>();
         let mut first_error = None;
-        for entry in self.inner.databases.values() {
-            let engine = lock_unpoisoned(&entry.engine).take();
-            let Some(engine) = engine else { continue };
-            match Arc::try_unwrap(engine) {
-                Ok(engine) => {
-                    if let Err(error) = engine.shutdown()
-                        && first_error.is_none()
-                    {
-                        first_error =
-                            Some(MemberError::Shutdown { database: entry.id.clone(), error });
-                    }
-                }
-                Err(_) => {
-                    if first_error.is_none() {
-                        first_error = Some(MemberError::DrainTimeout);
-                    }
+        for database in databases {
+            if let Err(error) = close_database_engine(&self.inner, &database, CloseKind::Member) {
+                if first_error.is_none() {
+                    first_error = Some(error);
                 }
             }
         }
@@ -658,7 +873,8 @@ impl Member {
 
 /// An admitted operation's isolated database engine handle.
 pub struct DatabaseLease {
-    entry: Arc<DatabaseEntry>,
+    database: DatabaseId,
+    location: PathBuf,
     engine: Arc<Engine>,
     _global: AdmissionPermit,
     _local: AdmissionPermit,
@@ -668,14 +884,14 @@ impl DatabaseLease {
     /// Returns the database identity for this lease.
     #[must_use]
     pub fn database_id(&self) -> &DatabaseId {
-        &self.entry.id
+        &self.database
     }
 
     /// Returns the validated durable location.  Routing layers should use the
     /// identity, not this path, when handling requests.
     #[must_use]
     pub fn location(&self) -> &Path {
-        &self.entry.location
+        &self.location
     }
 
     /// Returns the durable owner tuple recovered for this database.
@@ -696,6 +912,13 @@ impl Deref for DatabaseLease {
 fn validate_limits(limits: AdmissionLimits) -> Result<(), CatalogValidationError> {
     if limits.global == 0
         || limits.per_database == 0
+        || limits.rss_budget_bytes == 0
+        || limits.database_rss_bytes == 0
+        || limits.database_rss_bytes > limits.rss_budget_bytes
+        || limits.max_open_databases == 0
+        || limits.max_open_databases > MAX_DATABASES
+        || limits.max_concurrent_opens == 0
+        || limits.max_concurrent_opens > limits.max_open_databases
         || limits.global > MAX_ADMISSION_PERMITS
         || limits.per_database > MAX_ADMISSION_PERMITS
     {
@@ -827,32 +1050,251 @@ fn reject_symlink_components(path: &Path) -> Result<(), CatalogValidationError> 
     Ok(())
 }
 
-/// Reopens one database engine from its validated location and scope.
-///
-/// The idle-close path funnels through here so an evicted database returns
-/// with the identical ownership binding [`Member::open`] established. Any
-/// failure to rebuild the configuration or reopen the engine surfaces as
-/// the same typed unavailability an evicted database reports.
-fn reopen_database_engine(entry: &DatabaseEntry) -> Result<Arc<Engine>, MemberError> {
-    let config = EngineConfig::durable(&entry.location)
-        .map(|config| {
-            entry
-                .scope
-                .as_ref()
-                .map_or(config.clone(), |scope| config.with_owner(scope.owner().clone()))
-        })
-        .map_err(|_| MemberError::StorageUnavailable(entry.id.clone()))?;
-    Engine::open(config)
-        .map(Arc::new)
-        .map_err(|_| MemberError::StorageUnavailable(entry.id.clone()))
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CloseKind {
+    Eviction,
+    Explicit,
+    Member,
 }
 
-fn close_opened(opened: Vec<(DatabaseId, PathBuf, Option<DatabaseScope>, Arc<Engine>)>) {
-    for (_, _, _, engine) in opened {
-        if let Ok(engine) = Arc::try_unwrap(engine) {
-            let _ = engine.shutdown();
+struct CloseWork {
+    database: DatabaseId,
+    engine: Arc<Engine>,
+    kind: CloseKind,
+}
+
+fn take_lru_eviction(catalog: &mut CatalogState) -> Option<CloseWork> {
+    let database = catalog
+        .databases
+        .iter()
+        .filter(|(_, entry)| {
+            entry.admissions.active() == 0 && matches!(entry.engine, ResidentEngine::Open(_))
+        })
+        .min_by_key(|(_, entry)| (entry.last_used, entry.access_stamp))
+        .map(|(database, _)| database.clone())?;
+    take_close_work(catalog, &database, CloseKind::Eviction)
+}
+
+fn take_close_work(
+    catalog: &mut CatalogState,
+    database: &DatabaseId,
+    kind: CloseKind,
+) -> Option<CloseWork> {
+    let entry = catalog.databases.get_mut(database)?;
+    let resident = std::mem::replace(&mut entry.engine, ResidentEngine::Closing);
+    match resident {
+        ResidentEngine::Open(engine) => {
+            Some(CloseWork { database: database.clone(), engine, kind })
+        }
+        other => {
+            entry.engine = other;
+            None
         }
     }
+}
+
+fn pause_backup(inner: &MemberInner, database: &DatabaseId) {
+    let callback = lock_unpoisoned(&inner.backup_pause).clone();
+    if let Some(callback) = callback {
+        callback(database);
+    }
+}
+
+fn perform_close(inner: &MemberInner, close: CloseWork) -> Result<(), MemberError> {
+    let engine = match Arc::try_unwrap(close.engine) {
+        Ok(engine) => engine,
+        Err(engine) => {
+            restore_close(inner, &close.database, engine);
+            return Err(MemberError::DatabaseBusy(close.database));
+        }
+    };
+    // Pause only after proving that no lease retained the engine. This keeps
+    // a failed/pinned eviction from stopping a healthy backup stream.
+    pause_backup(inner, &close.database);
+    let result = engine
+        .shutdown()
+        .map_err(|error| MemberError::Shutdown { database: close.database.clone(), error });
+    let mut catalog = lock_unpoisoned(&inner.catalog);
+    if !catalog.databases.contains_key(&close.database) {
+        return result;
+    }
+    match result {
+        Ok(()) => {
+            if let Some(entry) = catalog.databases.get_mut(&close.database) {
+                entry.engine = ResidentEngine::Closed;
+            }
+            catalog.open_databases = catalog.open_databases.saturating_sub(1);
+            catalog.resident_rss_bytes =
+                catalog.resident_rss_bytes.saturating_sub(inner.database_rss_bytes);
+            if close.kind == CloseKind::Eviction {
+                catalog.metrics.evictions = catalog.metrics.evictions.saturating_add(1);
+            } else if close.kind == CloseKind::Explicit {
+                catalog.metrics.closes = catalog.metrics.closes.saturating_add(1);
+            }
+            inner.catalog_changed.notify_all();
+            Ok(())
+        }
+        Err(error) => {
+            // `Engine::shutdown` consumes its handle even on an error. Keep
+            // the catalog coherent and release the reservation; a later
+            // request performs a normal validated reopen.
+            if let Some(entry) = catalog.databases.get_mut(&close.database) {
+                entry.engine = ResidentEngine::Closed;
+            }
+            catalog.open_databases = catalog.open_databases.saturating_sub(1);
+            catalog.resident_rss_bytes =
+                catalog.resident_rss_bytes.saturating_sub(inner.database_rss_bytes);
+            inner.catalog_changed.notify_all();
+            Err(error)
+        }
+    }
+}
+
+fn restore_close(inner: &MemberInner, database: &DatabaseId, engine: Arc<Engine>) {
+    let mut catalog = lock_unpoisoned(&inner.catalog);
+    if let Some(entry) = catalog.databases.get_mut(database) {
+        if matches!(entry.engine, ResidentEngine::Closing) {
+            entry.engine = ResidentEngine::Open(engine);
+        }
+    }
+    inner.catalog_changed.notify_all();
+}
+
+fn close_database_engine(
+    inner: &Arc<MemberInner>,
+    database: &DatabaseId,
+    kind: CloseKind,
+) -> Result<(), MemberError> {
+    let mut catalog = lock_unpoisoned(&inner.catalog);
+    let entry = catalog
+        .databases
+        .get(database)
+        .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?;
+    if entry.admissions.active() != 0 {
+        return Err(MemberError::DatabaseBusy(database.clone()));
+    }
+    let Some(close) = take_close_work(&mut catalog, database, kind) else {
+        return Ok(());
+    };
+    drop(catalog);
+    perform_close(inner, close)
+}
+
+fn open_database_engine(
+    inner: &Arc<MemberInner>,
+    database: &DatabaseId,
+    location: &Path,
+) -> Result<Arc<Engine>, MemberError> {
+    loop {
+        let mut catalog = lock_unpoisoned(&inner.catalog);
+        let scope = catalog
+            .databases
+            .get(database)
+            .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?
+            .scope
+            .clone();
+        let open_engine = catalog.databases.get(database).and_then(|entry| {
+            if let ResidentEngine::Open(engine) = &entry.engine {
+                Some(Arc::clone(engine))
+            } else {
+                None
+            }
+        });
+        if let Some(engine) = open_engine {
+            let stamp = catalog.next_access();
+            let entry = catalog.databases.get_mut(database).expect("database remains catalogued");
+            entry.last_used = Instant::now();
+            entry.access_stamp = stamp;
+            return Ok(engine);
+        }
+        if catalog.databases.get(database).is_some_and(|entry| {
+            matches!(entry.engine, ResidentEngine::Opening | ResidentEngine::Closing)
+        }) {
+            drop(wait_catalog(inner, catalog));
+            continue;
+        }
+        let can_open = catalog.open_databases < inner.max_open_databases
+            && catalog.resident_rss_bytes.saturating_add(inner.database_rss_bytes)
+                <= inner.rss_budget_bytes
+            && catalog.opening_databases < inner.max_concurrent_opens;
+        if !can_open {
+            if let Some(close) = take_lru_eviction(&mut catalog) {
+                drop(catalog);
+                perform_close(inner, close)?;
+                continue;
+            }
+            if catalog.opening_databases > 0 {
+                drop(wait_catalog(inner, catalog));
+                continue;
+            }
+            return Err(MemberError::OpenDatabaseBudgetExhausted {
+                rss_budget_bytes: inner.rss_budget_bytes,
+            });
+        }
+        if let Some(entry) = catalog.databases.get_mut(database) {
+            entry.engine = ResidentEngine::Opening;
+        }
+        catalog.open_databases += 1;
+        catalog.opening_databases += 1;
+        catalog.resident_rss_bytes =
+            catalog.resident_rss_bytes.saturating_add(inner.database_rss_bytes);
+        let stamp = catalog.next_access();
+        let scope = scope;
+        drop(catalog);
+
+        let result = revalidate_created_location(&inner.root, location)
+            .map_err(MemberError::Validation)
+            .and_then(|()| {
+                let config = EngineConfig::durable(location).map_err(|error| {
+                    MemberError::EngineConfig { database: database.clone(), error }
+                })?;
+                let config = scope
+                    .as_ref()
+                    .map_or(config.clone(), |scope| config.with_owner(scope.owner().clone()));
+                let engine = Engine::open(config).map(Arc::new).map_err(|error| {
+                    MemberError::EngineOpen { database: database.clone(), error }
+                })?;
+                if let Err(validation) = revalidate_created_location(&inner.root, location) {
+                    let shutdown =
+                        Arc::try_unwrap(engine).ok().and_then(|engine| engine.shutdown().err());
+                    return Err(shutdown.map_or(MemberError::Validation(validation), |error| {
+                        MemberError::Shutdown { database: database.clone(), error }
+                    }));
+                }
+                Ok(engine)
+            });
+        let mut catalog = lock_unpoisoned(&inner.catalog);
+        catalog.opening_databases = catalog.opening_databases.saturating_sub(1);
+        match result {
+            Ok(engine) => {
+                if let Some(entry) = catalog.databases.get_mut(database) {
+                    entry.engine = ResidentEngine::Open(Arc::clone(&engine));
+                    entry.last_used = Instant::now();
+                    entry.access_stamp = stamp;
+                }
+                catalog.metrics.opens = catalog.metrics.opens.saturating_add(1);
+                inner.catalog_changed.notify_all();
+                return Ok(engine);
+            }
+            Err(error) => {
+                if let Some(entry) = catalog.databases.get_mut(database) {
+                    entry.engine = ResidentEngine::Closed;
+                }
+                catalog.open_databases = catalog.open_databases.saturating_sub(1);
+                catalog.resident_rss_bytes =
+                    catalog.resident_rss_bytes.saturating_sub(inner.database_rss_bytes);
+                inner.catalog_changed.notify_all();
+                return Err(error);
+            }
+        }
+    }
+}
+
+fn wait_catalog<'a>(
+    inner: &MemberInner,
+    catalog: std::sync::MutexGuard<'a, CatalogState>,
+) -> std::sync::MutexGuard<'a, CatalogState> {
+    inner.catalog_changed.wait(catalog).unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 struct AdmissionCounter {
@@ -929,6 +1371,7 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn root(label: &str) -> PathBuf {
         let path = std::env::temp_dir()
@@ -982,6 +1425,7 @@ mod tests {
         let member = Member::open_production(&root, [spec], AdmissionLimits::new(4, 2))
             .expect("production member");
         // A just-used database is never idle.
+        drop(member.acquire(&id).expect("initial open"));
         assert_eq!(member.close_idle(Duration::from_mins(1)), 0);
         // Past the window with no requests, the engine closes flush...
         std::thread::sleep(Duration::from_millis(5));
@@ -1033,6 +1477,66 @@ mod tests {
             ),
             Err(MemberOpenError::Validation(CatalogValidationError::UnscopedDatabase))
         ));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rss_budget_evicts_idle_lru_and_never_exceeds_bytes() {
+        let root = root("rss-lru");
+        let limits = AdmissionLimits::new(4, 2)
+            .with_rss_budget_bytes(2)
+            .with_database_rss_bytes(1)
+            .with_max_open_databases(4)
+            .with_max_concurrent_opens(2);
+        let member = Member::open(
+            &root,
+            [
+                DatabaseSpec::new("one", "one"),
+                DatabaseSpec::new("two", "two"),
+                DatabaseSpec::new("three", "three"),
+            ],
+            limits,
+        )
+        .expect("member");
+        for id in ["one", "two", "three"] {
+            let id = DatabaseId::try_new(id).expect("id");
+            let lease = member.acquire(&id).expect("acquire");
+            drop(lease);
+            assert!(member.status().resident_rss_bytes <= 2);
+        }
+        assert_eq!(member.open_database_count(), 2);
+        assert_eq!(member.status().database_evictions, 1);
+        member.close(Duration::from_secs(5)).expect("close");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fake_clock_idle_close_pauses_backup_and_active_lease_pins() {
+        let root = root("fake-clock");
+        let member = Member::open(
+            &root,
+            [DatabaseSpec::new("db", "db")],
+            AdmissionLimits::new(4, 2)
+                .with_rss_budget_bytes(DEFAULT_DATABASE_RSS_BYTES)
+                .with_database_rss_bytes(DEFAULT_DATABASE_RSS_BYTES),
+        )
+        .expect("member");
+        let pauses = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&pauses);
+        member.set_backup_pause_callback(Some(Arc::new(move |_| {
+            observed.fetch_add(1, Ordering::SeqCst);
+        })));
+        let id = DatabaseId::try_new("db").expect("id");
+        let lease = member.acquire(&id).expect("acquire");
+        let fake_now = Instant::now() + Duration::from_secs(1);
+        assert_eq!(member.close_idle_at(Duration::ZERO, fake_now), 0);
+        drop(lease);
+        assert_eq!(member.close_idle_at(Duration::ZERO, fake_now), 1);
+        assert_eq!(pauses.load(Ordering::SeqCst), 1);
+        let reopened = member.acquire(&id).expect("reopen");
+        assert_eq!(reopened.location(), root.join("db").as_path());
+        drop(reopened);
+        member.close(Duration::from_secs(5)).expect("close");
         let _ = fs::remove_dir_all(root);
     }
 }

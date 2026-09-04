@@ -2,7 +2,7 @@
 //!
 //! [`StubWorld`] implements [`ReplicationEngine`] and [`SyncEngine`] with a
 //! single-threaded, discrete-time model: per-region document maps with
-//! remove-wins merge on `(hlc, origin)`, per-link in-flight queues subject
+//! causal remove-wins merge and HLC tie-breaks, per-link in-flight queues subject
 //! to the [`FaultPlan`], bounded dependency queues retried every step, and
 //! encode-once view caches. It is deliberately simple — delivery is
 //! reliable once faults heal, so acknowledged writes are never lost — which
@@ -10,10 +10,9 @@
 //! application, determinism, quiescence, convergence) before engine
 //! adapters arrive with E-5/E-6.
 //!
-//! The merge rule is a pure max-function over `(hlc, origin)` per key, so
-//! convergence is order-independent by construction; [`merge_doc`] is the
-//! single apply path shared by delivery, reconciliation, and the
-//! permutation check.
+//! The merge rule is a pure causal/LWW function per key, so convergence is
+//! order-independent by construction; [`merge_doc`] is the single apply path
+//! shared by delivery, reconciliation, and the permutation check.
 
 use std::collections::BTreeMap;
 
@@ -50,37 +49,87 @@ fn fnv_u64(state: u64, value: u64) -> u64 {
     fnv_bytes(state, &value.to_be_bytes())
 }
 
-/// The converged per-key version: live value or tombstone plus the
-/// `(hlc, origin)` that won it.
+/// Adds a length-delimited byte string to a digest. Length delimiters matter:
+/// without them, `(body = [1, 2])` and two adjacent fields `[1]`, `[2]` can
+/// become the same digest input.
+fn fnv_field(state: u64, bytes: &[u8]) -> u64 {
+    let hash = fnv_u64(fnv_bytes(state, &[0xF0]), u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+    fnv_bytes(hash, bytes)
+}
+
+/// Hashes every identity, value, tombstone, and causal field in a row.
+fn digest_row(mut hash: u64, row: &JournalRow) -> u64 {
+    hash = fnv_bytes(hash, &[0x52]);
+    hash = fnv_u64(hash, u64::from(row.origin.0));
+    hash = fnv_u64(hash, row.seq);
+    hash = fnv_u64(hash, row.hlc.value());
+    hash = fnv_u64(hash, row.key);
+    hash = fnv_bytes(hash, &[u8::from(row.tombstone)]);
+    hash = fnv_u64(hash, u64::try_from(row.context.len()).unwrap_or(u64::MAX));
+    for (origin, seq) in row.context.entries() {
+        hash = fnv_u64(hash, u64::from(origin.0));
+        hash = fnv_u64(hash, seq);
+    }
+    fnv_field(hash, &row.value)
+}
+
+/// The converged per-key version: canonical live bytes or an explicit
+/// tombstone, plus the causal metadata of the row that won it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DocVersion {
-    /// The live value; `None` when the key is deleted.
-    value: Option<u64>,
+    /// The raw canonical body; an empty body is valid for a live row.
+    value: Vec<u8>,
+    /// Whether the winning row is a tombstone.
+    tombstone: bool,
     /// The winning write's HLC.
     hlc: u64,
     /// The winning write's origin (deterministic tiebreak).
     origin: RegionId,
+    /// The winning write's sequence (its dotted identity).
+    seq: u64,
+    /// The winning write's causal context.
+    context: Frontier,
 }
 
-/// Applies `row` to `docs` with remove-wins map semantics and HLC
-/// tiebreak (ADR 0044 §2.2): the row wins when its `(hlc, origin)` exceeds
-/// the stored version's. Returns `true` when the visible state changed.
+/// Applies `row` to `docs` with causal remove-wins map semantics and HLC
+/// tiebreak (ADR 0044 §2.2). Returns `true` when the visible state changed.
 ///
 /// This is the one apply path: delivery, reconciliation, and the
 /// permutation check all funnel through it, so order-independence
 /// (invariant 3) holds wherever it is used.
 fn merge_doc(docs: &mut BTreeMap<u64, DocVersion>, row: &JournalRow) -> bool {
-    let incoming_value = if row.tombstone { None } else { Some(row.value) };
-    match docs.get(&row.key) {
-        Some(stored) if (stored.hlc, stored.origin) >= (row.hlc.value(), row.origin) => false,
-        _ => {
-            docs.insert(
-                row.key,
-                DocVersion { value: incoming_value, hlc: row.hlc.value(), origin: row.origin },
-            );
-            true
+    let incoming_dominates = |stored: &DocVersion| row.context.get(stored.origin) >= stored.seq;
+    let stored_dominates = |stored: &DocVersion| stored.context.get(row.origin) >= row.seq;
+    let wins = match docs.get(&row.key) {
+        None => true,
+        Some(stored) if incoming_dominates(stored) => true,
+        Some(stored) if stored_dominates(stored) => false,
+        Some(stored) => {
+            // A concurrent remove wins regardless of clock skew. HLC and
+            // origin are the deterministic tiebreak for competing puts (or
+            // competing removes).
+            if row.tombstone != stored.tombstone {
+                row.tombstone
+            } else {
+                (row.hlc.value(), row.origin) > (stored.hlc, stored.origin)
+            }
         }
+    };
+    if !wins {
+        return false;
     }
+    docs.insert(
+        row.key,
+        DocVersion {
+            value: row.value.clone(),
+            tombstone: row.tombstone,
+            hlc: row.hlc.value(),
+            origin: row.origin,
+            seq: row.seq,
+            context: row.context.clone(),
+        },
+    );
+    true
 }
 
 /// One region's stub state.
@@ -99,8 +148,6 @@ struct StubRegion {
     /// Rows waiting on causal dependencies (bounded in the engine; the
     /// stub retries them every step and they drain at quiescence).
     waiting: Vec<JournalRow>,
-    /// Total rows ever applied (feeds view-cut `seq_hi` without casts).
-    applied_total: u64,
 }
 
 impl StubRegion {
@@ -113,7 +160,6 @@ impl StubRegion {
             applied: BTreeMap::new(),
             docs: BTreeMap::new(),
             waiting: Vec::new(),
-            applied_total: 0,
         }
     }
 
@@ -133,7 +179,6 @@ impl StubRegion {
         }
         merge_doc(&mut self.docs, row);
         self.applied.insert(row.id(), row.clone());
-        self.applied_total = self.applied_total.saturating_add(1);
         true
     }
 }
@@ -162,8 +207,6 @@ pub struct StubWorld {
     pending: Vec<InFlight>,
     /// Encode-once view cache keyed by `(view, generation, offset)`.
     cache: BTreeMap<(String, u64, u64), (u64, Vec<u8>)>,
-    /// Count of applied deliveries; part of the determinism digest.
-    events: u64,
 }
 
 impl StubWorld {
@@ -178,7 +221,7 @@ impl StubWorld {
     pub fn with_faults(region_count: usize, faults: FaultPlan) -> Self {
         let regions =
             (0..region_count).map(|index| StubRegion::fresh(RegionId::from_index(index))).collect();
-        Self { regions, faults, step: 0, pending: Vec::new(), cache: BTreeMap::new(), events: 0 }
+        Self { regions, faults, step: 0, pending: Vec::new(), cache: BTreeMap::new() }
     }
 
     /// Returns the active fault schedule.
@@ -228,11 +271,12 @@ impl StubWorld {
             context,
             hlc: Hlc::new(stamped),
             key,
-            value: value.unwrap_or(0),
+            // The workload's numeric values stand in for already parsed
+            // canonical JSON. Keep the bytes opaque after this boundary.
+            value: value.map_or_else(Vec::new, |value| value.to_string().into_bytes()),
             tombstone: value.is_none(),
         };
         region.accept(&row);
-        self.events = self.events.saturating_add(1);
         self.enqueue_shipments(&row, position);
         Some(row)
     }
@@ -246,7 +290,6 @@ impl StubWorld {
                 continue;
             }
             let delay = self.faults.link_delay_steps(row.origin, peer.id, self.step);
-            let copies = self.faults.duplicate_copies(row.origin, peer.id, self.step);
             let window = self.faults.reorder_window(row.origin, peer.id, self.step);
             let reorder_jitter = if window == 0 {
                 0
@@ -256,10 +299,36 @@ impl StubWorld {
                 (row.seq.wrapping_add(u64::from(peer.id.0))) % window.saturating_add(1)
             };
             let deliver_at = self.step.saturating_add(delay).saturating_add(reorder_jitter);
-            for _ in 0..copies.max(1) {
+            // Duplicate faults model repeated network delivery, not distinct
+            // durable work. One queued identity is enough: the apply path is
+            // idempotent, and deduplication keeps memory bounded under a
+            // large duplicate fan-out.
+            if !self
+                .pending
+                .iter()
+                .any(|flight| flight.target == target && flight.row.id() == row.id())
+            {
                 self.pending.push(InFlight { row: row.clone(), target, deliver_at });
             }
         }
+    }
+
+    /// Queues one anti-entropy repair frame. Repair is intentionally just
+    /// another delivery: link faults, down targets, dependency checks, and
+    /// idempotence all remain in force.
+    fn schedule_repair_into(
+        pending: &mut Vec<InFlight>,
+        step: u64,
+        row: &JournalRow,
+        target: usize,
+    ) -> usize {
+        if !pending.iter().any(|flight| flight.target == target && flight.row.id() == row.id()) {
+            pending.push(InFlight { row: row.clone(), target, deliver_at: step });
+        }
+        // Count the missing row even if a tailer frame for the same identity
+        // was already queued: stats describe the set difference, while the
+        // queue remains deduplicated for bounded memory.
+        1
     }
 
     /// Attempts delivery of every due frame, then retries dependency
@@ -287,8 +356,7 @@ impl StubWorld {
             }
             if region.frontier().covers(&flight.row.context) {
                 region.accept(&flight.row);
-                self.events = self.events.saturating_add(1);
-            } else {
+            } else if !region.waiting.iter().any(|row| row.id() == flight.row.id()) {
                 region.waiting.push(flight.row);
             }
         }
@@ -309,7 +377,7 @@ impl StubWorld {
                     } else if region.frontier().covers(&row.context) {
                         region.accept(&row);
                         progressed = true;
-                    } else {
+                    } else if !still.iter().any(|pending| pending.id() == row.id()) {
                         still.push(row);
                     }
                 }
@@ -327,52 +395,94 @@ impl StubWorld {
             return 0;
         };
         let mut hash = 0xCBF2_9CE4_8422_2325u64;
-        for (origin, seq) in region.applied.keys() {
-            hash = fnv_u64(hash, u64::from(origin.0));
-            hash = fnv_u64(hash, *seq);
+        hash = fnv_u64(hash, u64::try_from(region.applied.len()).unwrap_or(u64::MAX));
+        // `BTreeMap` gives the journal set a stable order independent of
+        // delivery order. Include the complete row rather than only its
+        // identity: a body, tombstone, or context mutation is divergence.
+        for row in region.applied.values() {
+            hash = digest_row(hash, row);
         }
+        // Also cover materialized state so a broken apply path cannot hide
+        // behind an otherwise equal journal set.
+        hash = fnv_u64(hash, u64::try_from(region.docs.len()).unwrap_or(u64::MAX));
         for (key, version) in &region.docs {
             hash = fnv_u64(hash, *key);
-            hash = fnv_u64(hash, version.value.unwrap_or(u64::MAX));
+            hash = fnv_bytes(hash, &[u8::from(version.tombstone)]);
+            hash = fnv_field(hash, &version.value);
             hash = fnv_u64(hash, version.hlc);
+            hash = fnv_u64(hash, u64::from(version.origin.0));
+            hash = fnv_u64(hash, version.seq);
+            hash = fnv_u64(hash, u64::try_from(version.context.len()).unwrap_or(u64::MAX));
+            for (origin, seq) in version.context.entries() {
+                hash = fnv_u64(hash, u64::from(origin.0));
+                hash = fnv_u64(hash, seq);
+            }
         }
         hash
     }
 
-    /// Returns the world digest: every region digest plus the event
-    /// count. Two runs from one seed must agree exactly.
+    /// Returns the world digest: every region's complete journal and
+    /// materialized state. Delivery counters are intentionally excluded so
+    /// duplicate/reordered transport cannot change an equal state digest.
     #[must_use]
     pub fn digest(&self) -> u64 {
-        let mut hash = fnv_u64(0xCBF2_9CE4_8422_2325, self.events);
+        let mut hash = 0xCBF2_9CE4_8422_2325;
         for position in 0..self.regions.len() {
             hash = fnv_u64(hash, self.region_digest(position));
         }
         hash
     }
 
-    /// Renders the payload bytes of `view` from the region snapshot.
-    /// Engine adapters evaluate `Q(database at cut)`; the stub evaluates
-    /// at the current snapshot and records the cut it reflects.
-    fn render_view(&self, view: &str, position: usize) -> Option<(ViewCut, u64, Vec<u8>)> {
+    /// Reconstructs the materialized document map at `cut` from the retained
+    /// publication rows. Frontier membership, rather than the current state,
+    /// is the historical boundary; tombstones participate in reconstruction
+    /// even though they are not emitted by a live view.
+    fn state_at_cut(&self, position: usize, cut: &ViewCut) -> Option<BTreeMap<u64, DocVersion>> {
         let region = self.regions.get(position)?;
+        let mut docs = BTreeMap::new();
+        for row in region.applied.values() {
+            if row.seq <= cut.frontier.get(row.origin) {
+                merge_doc(&mut docs, row);
+            }
+        }
+        Some(docs)
+    }
+
+    /// Renders the payload bytes of `view` against a supplied historical cut.
+    fn render_view_at(&self, view: &str, position: usize, cut: &ViewCut) -> Option<(u64, Vec<u8>)> {
         if view != VIEW_ALL && view != VIEW_EVEN_KEYS {
             return None;
         }
-        let mut payload = format!("{view}|{STUB_GENERATION}|");
-        for (key, version) in &region.docs {
+        let docs = self.state_at_cut(position, cut)?;
+        // Length-delimited binary framing keeps the encoded view injective
+        // while carrying each canonical body without parsing or reencoding.
+        let mut payload = Vec::new();
+        payload.extend_from_slice(view.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(&STUB_GENERATION.to_be_bytes());
+        for (key, version) in &docs {
             if view == VIEW_EVEN_KEYS && key % 2 == 1 {
                 continue;
             }
-            if let Some(value) = version.value {
-                // `write!` to a `String` cannot fail; the result is discarded.
-                let _ = std::fmt::Write::write_fmt(&mut payload, format_args!("{key}:{value};"));
+            if !version.tombstone {
+                payload.extend_from_slice(&key.to_be_bytes());
+                let body_len = u64::try_from(version.value.len()).unwrap_or(u64::MAX);
+                payload.extend_from_slice(&body_len.to_be_bytes());
+                payload.extend_from_slice(&version.value);
             }
         }
-        let bytes = payload.into_bytes();
         let mut hash = 0xCBF2_9CE4_8422_2325u64;
-        hash = fnv_bytes(hash, &bytes);
-        let cut = ViewCut::new(region.frontier(), region.applied_total);
-        Some((cut, hash, bytes))
+        hash = fnv_bytes(hash, &payload);
+        Some((hash, payload))
+    }
+
+    /// Renders the current revision and records the exact cut it reflects.
+    fn render_view(&self, view: &str, position: usize) -> Option<(ViewCut, u64, Vec<u8>)> {
+        let region = self.regions.get(position)?;
+        let seq_hi = region.applied.keys().map(|(_, seq)| *seq).max().unwrap_or(0);
+        let cut = ViewCut::new(region.frontier(), seq_hi);
+        let (digest, bytes) = self.render_view_at(view, position, &cut)?;
+        Some((cut, digest, bytes))
     }
 }
 
@@ -385,6 +495,32 @@ impl StubWorld {
 pub fn capability_for(view: &str, generation: u64) -> u64 {
     let hash = fnv_bytes(0xCBF2_9CE4_8422_2325, view.as_bytes());
     fnv_u64(hash, generation)
+}
+
+/// Input accepted by [`StubWorld::verify_revision`]. The `&str` form keeps
+/// source compatibility with the original seam; revisions are verified from
+/// their supplied cut once callers provide a [`ViewRevision`].
+pub trait RevisionInput {
+    /// Resolves the supplied input to the revision that must be checked.
+    fn revision(&self, world: &StubWorld, region: RegionId) -> Option<ViewRevision>;
+}
+
+impl RevisionInput for &str {
+    fn revision(&self, world: &StubWorld, region: RegionId) -> Option<ViewRevision> {
+        world.view_revision(self, region)
+    }
+}
+
+impl RevisionInput for &ViewRevision {
+    fn revision(&self, _world: &StubWorld, _region: RegionId) -> Option<ViewRevision> {
+        Some((**self).clone())
+    }
+}
+
+impl RevisionInput for ViewRevision {
+    fn revision(&self, _world: &StubWorld, _region: RegionId) -> Option<ViewRevision> {
+        Some(self.clone())
+    }
 }
 
 impl ReplicationEngine for StubWorld {
@@ -432,25 +568,54 @@ impl ReplicationEngine for StubWorld {
         if left_position == right_position {
             return ReconcileStats::new(1, 0);
         }
-        // Union of row ids; differences ship through the normal apply path.
-        let mut union: BTreeMap<(RegionId, u64), JournalRow> = BTreeMap::new();
-        for (id, row) in &self.regions[left_position].applied {
-            union.insert(*id, row.clone());
-        }
-        for (id, row) in &self.regions[right_position].applied {
-            union.entry(*id).or_insert_with(|| row.clone());
-        }
-        let union_len = union.len();
-        let mut shipped = 0;
-        for (id, row) in &union {
-            for position in [left_position, right_position] {
-                if !self.regions[position].applied.contains_key(id) {
-                    self.regions[position].accept(row);
-                    self.events = self.events.saturating_add(1);
-                    shipped += 1;
+        // Walk the two sorted journal sets without materializing their union.
+        // Every difference becomes an in-flight frame and is delivered via
+        // the same dependency and fault gates as tailer traffic.
+        let left_rows = &self.regions[left_position].applied;
+        let right_rows = &self.regions[right_position].applied;
+        let mut left_iter = left_rows.iter().peekable();
+        let mut right_iter = right_rows.iter().peekable();
+        let pending = &mut self.pending;
+        let step = self.step;
+        let mut union_len = 0usize;
+        let mut scheduled = 0usize;
+        loop {
+            let left_id = left_iter.peek().map(|(id, _)| *id);
+            let right_id = right_iter.peek().map(|(id, _)| *id);
+            match (left_id, right_id) {
+                (None, None) => break,
+                (Some(_), None) => {
+                    union_len = union_len.saturating_add(1);
+                    if let Some((_, row)) = left_iter.next() {
+                        scheduled += Self::schedule_repair_into(pending, step, row, right_position);
+                    }
+                }
+                (None, Some(_)) => {
+                    union_len = union_len.saturating_add(1);
+                    if let Some((_, row)) = right_iter.next() {
+                        scheduled += Self::schedule_repair_into(pending, step, row, left_position);
+                    }
+                }
+                (Some(left_id), Some(right_id)) if left_id == right_id => {
+                    union_len = union_len.saturating_add(1);
+                    let _left = left_iter.next();
+                    let _right = right_iter.next();
+                }
+                (Some(left_id), Some(right_id)) if left_id < right_id => {
+                    union_len = union_len.saturating_add(1);
+                    if let Some((_, row)) = left_iter.next() {
+                        scheduled += Self::schedule_repair_into(pending, step, row, right_position);
+                    }
+                }
+                (Some(_), Some(_)) => {
+                    union_len = union_len.saturating_add(1);
+                    if let Some((_, row)) = right_iter.next() {
+                        scheduled += Self::schedule_repair_into(pending, step, row, left_position);
+                    }
                 }
             }
         }
+        self.drain_due();
         // Simulated RBSR cost: one root round, then descent only into
         // mismatching ranges, `RECONCILE_FANOUT`-ary. Matching roots stop
         // after the root exchange, so converged pairs cost one round and
@@ -461,25 +626,37 @@ impl ReplicationEngine for StubWorld {
             covered = covered.saturating_mul(RECONCILE_FANOUT);
             depth += 1;
         }
-        let rounds = if shipped == 0 { 1 } else { depth + 1 };
-        ReconcileStats::new(rounds, shipped)
+        let rounds = if scheduled == 0 { 1 } else { depth + 1 };
+        ReconcileStats::new(rounds, scheduled)
     }
 
     fn is_uniform(&self, row: &JournalRow, selected: &[RegionId]) -> bool {
         selected.iter().all(|region| {
-            self.regions
-                .iter()
-                .find(|item| item.id == *region)
-                .is_some_and(|peer| peer.applied.contains_key(&row.id()))
-                && self
-                    .regions
-                    .iter()
-                    .find(|item| item.id == *region)
-                    .is_some_and(|peer| peer.frontier().covers(&row.context))
+            self.regions.iter().find(|item| item.id == *region).is_some_and(|peer| {
+                // Presence of an identity alone is not uniformity: a
+                // conflicting body or tombstone at the same identity must be
+                // visible to the simulation's truth checks.
+                peer.applied.get(&row.id()) == Some(row) && peer.frontier().covers(&row.context)
+            })
         })
     }
 
     fn read(&self, region: RegionId, token: &SessionToken, key: u64) -> Option<Option<u64>> {
+        self.read_bytes(region, token, key).map(|body| {
+            body.and_then(|bytes| std::str::from_utf8(&bytes).ok()?.parse::<u64>().ok())
+        })
+    }
+
+    /// Reads the opaque canonical bytes for a key. This is the D-30 seam used
+    /// by adapters and tests; the legacy trait read decodes the stub's numeric
+    /// workload values on top of it.
+    #[must_use]
+    pub fn read_bytes(
+        &self,
+        region: RegionId,
+        token: &SessionToken,
+        key: u64,
+    ) -> Option<Option<Vec<u8>>> {
         let peer = self.regions.iter().find(|item| item.id == region)?;
         if self.faults.region_down(region, self.step) {
             return None;
@@ -487,7 +664,11 @@ impl ReplicationEngine for StubWorld {
         if !peer.frontier().covers(&token.frontier) {
             return None; // StaleReplica: the SDK follows the named region.
         }
-        Some(peer.docs.get(&key).and_then(|version| version.value))
+        Some(
+            peer.docs
+                .get(&key)
+                .and_then(|version| (!version.tombstone).then(|| version.value.clone())),
+        )
     }
 
     fn digest_after_permutation(&mut self, rows: &[JournalRow]) -> u64 {
@@ -496,11 +677,44 @@ impl ReplicationEngine for StubWorld {
             merge_doc(&mut docs, row);
         }
         let mut hash = 0xCBF2_9CE4_8422_2325u64;
+        let mut ordered_rows: Vec<&JournalRow> = rows.iter().collect();
+        ordered_rows.sort_by(|left, right| {
+            (
+                left.origin,
+                left.seq,
+                left.hlc,
+                left.key,
+                left.tombstone,
+                &left.value,
+                left.context.entries().collect::<Vec<_>>(),
+            )
+                .cmp(&(
+                    right.origin,
+                    right.seq,
+                    right.hlc,
+                    right.key,
+                    right.tombstone,
+                    &right.value,
+                    right.context.entries().collect::<Vec<_>>(),
+                ))
+        });
+        hash = fnv_u64(hash, u64::try_from(ordered_rows.len()).unwrap_or(u64::MAX));
+        for row in ordered_rows {
+            hash = digest_row(hash, row);
+        }
+        hash = fnv_u64(hash, u64::try_from(docs.len()).unwrap_or(u64::MAX));
         for (key, version) in &docs {
             hash = fnv_u64(hash, *key);
-            hash = fnv_u64(hash, version.value.unwrap_or(u64::MAX));
+            hash = fnv_bytes(hash, &[u8::from(version.tombstone)]);
+            hash = fnv_field(hash, &version.value);
             hash = fnv_u64(hash, version.hlc);
             hash = fnv_u64(hash, u64::from(version.origin.0));
+            hash = fnv_u64(hash, version.seq);
+            hash = fnv_u64(hash, u64::try_from(version.context.len()).unwrap_or(u64::MAX));
+            for (origin, seq) in version.context.entries() {
+                hash = fnv_u64(hash, u64::from(origin.0));
+                hash = fnv_u64(hash, seq);
+            }
         }
         hash
     }
@@ -518,18 +732,8 @@ impl SyncEngine for StubWorld {
     }
 
     fn verify_revision(&self, view: &str, region: RegionId) -> bool {
-        let position = self.regions.iter().position(|item| item.id == region);
-        let Some(position) = position else {
-            return false;
-        };
-        let expected = self.view_revision(view, region);
-        let Some(expected) = expected else {
-            return false;
-        };
-        let Some((_, digest, bytes)) = self.render_view(view, position) else {
-            return false;
-        };
-        expected.payload_digest == digest && expected.bytes == bytes
+        self.view_revision(view, region)
+            .is_some_and(|revision| self.verify_revision_at(&revision, region))
     }
 
     fn cached_bytes(
@@ -551,6 +755,41 @@ impl SyncEngine for StubWorld {
 }
 
 impl StubWorld {
+    /// Verifies either a supplied historical revision or, for compatibility,
+    /// obtains the current revision for `view` before checking its cut.
+    #[must_use]
+    pub fn verify_revision<R: RevisionInput>(&self, input: R, region: RegionId) -> bool {
+        input
+            .revision(self, region)
+            .is_some_and(|revision| self.verify_revision_at(&revision, region))
+    }
+
+    /// Verifies a supplied revision against the database state at the
+    /// revision's own historical cut. This deliberately does not obtain a
+    /// fresh revision from current state: callers can retain a revision,
+    /// perform later writes, and still verify the original cut.
+    #[must_use]
+    pub fn verify_revision_at(&self, revision: &ViewRevision, region: RegionId) -> bool {
+        let Some(position) = self.regions.iter().position(|item| item.id == region) else {
+            return false;
+        };
+        let current = &self.regions[position];
+        if !current.frontier().covers(&revision.cut.frontier)
+            || revision.cut.seq_hi > current.applied.keys().map(|(_, seq)| *seq).max().unwrap_or(0)
+            || revision.cut.frontier.entries().any(|(_, seq)| seq > revision.cut.seq_hi)
+        {
+            return false;
+        }
+        if revision.generation != STUB_GENERATION {
+            return false;
+        }
+        let Some((digest, bytes)) = self.render_view_at(&revision.view, position, &revision.cut)
+        else {
+            return false;
+        };
+        revision.payload_digest == digest && revision.bytes == bytes
+    }
+
     /// Serves a cache read after priming encode-once bytes from the origin
     /// revision. Split from [`SyncEngine::cached_bytes`] only because the
     /// trait takes `&self`; engine adapters with interior caches merge
@@ -569,6 +808,26 @@ impl StubWorld {
 mod tests {
     use super::*;
     use crate::faults::{Fault, FaultPlan};
+
+    fn row(
+        origin: u32,
+        seq: u64,
+        context: Frontier,
+        hlc: u64,
+        key: u64,
+        value: &[u8],
+        tombstone: bool,
+    ) -> JournalRow {
+        JournalRow {
+            origin: RegionId::new(origin),
+            seq,
+            context,
+            hlc: Hlc::new(hlc),
+            key,
+            value: value.to_vec(),
+            tombstone,
+        }
+    }
 
     #[test]
     fn submit_apply_and_read_round_trip() {
@@ -600,10 +859,11 @@ mod tests {
 
     #[test]
     fn reconcile_ships_only_missing_rows() {
-        // Region 1 stays down, so delivery cannot converge on its own and
-        // the repair path must ship exactly the missing rows.
+        // Region 1 is down while writes happen, so delivery cannot converge
+        // on its own; repair queues exactly the missing rows and waits for
+        // the normal fault gate to heal.
         let mut faults = FaultPlan::new();
-        faults.push(Fault::kill(RegionId::new(1), 0, u64::MAX));
+        faults.push(Fault::kill(RegionId::new(1), 0, 10));
         let mut world = StubWorld::with_faults(2, faults);
         for key in 0..3 {
             world.submit(RegionId::new(0), key, key).expect("up");
@@ -615,6 +875,10 @@ mod tests {
         );
         let stats = world.reconcile(RegionId::new(0), RegionId::new(1));
         assert_eq!(stats.rows_shipped, 3);
+        for _ in 0..10 {
+            world.step();
+        }
+        assert!(world.is_quiescent());
         assert_eq!(world.fingerprint(RegionId::new(0)), world.fingerprint(RegionId::new(1)));
     }
 
@@ -628,5 +892,61 @@ mod tests {
             world.step();
         }
         assert_eq!(world.fingerprint(RegionId::new(0)), world.fingerprint(RegionId::new(1)));
+    }
+
+    #[test]
+    fn digest_distinguishes_live_bytes_and_tombstone() {
+        let mut world = StubWorld::new(1);
+        let live = row(0, 1, Frontier::new(), 1, 7, b"\xff", false);
+        let tombstone = row(0, 1, Frontier::new(), 1, 7, b"\xff", true);
+        assert_ne!(
+            world.digest_after_permutation(std::slice::from_ref(&live)),
+            world.digest_after_permutation(std::slice::from_ref(&tombstone)),
+            "tombstone is a row, not absence of a body"
+        );
+        assert_ne!(
+            world.digest_after_permutation(&[row(0, 1, Frontier::new(), 1, 7, b"ab", false)]),
+            world.digest_after_permutation(&[row(0, 1, Frontier::new(), 1, 7, b"a", false)]),
+            "body framing must include lengths"
+        );
+        let mut context = Frontier::new();
+        context.advance(RegionId::new(4), 9);
+        assert_ne!(
+            world.digest_after_permutation(&[row(0, 1, Frontier::new(), 1, 7, b"a", false)]),
+            world.digest_after_permutation(&[row(0, 1, context, 1, 7, b"a", false)]),
+            "causal context belongs to the row digest"
+        );
+    }
+
+    #[test]
+    fn revision_verification_uses_the_supplied_historical_cut() {
+        let mut world = StubWorld::new(1);
+        let region = RegionId::new(0);
+        world.submit(region, 1, 10).expect("first write");
+        let revision = world.view_revision(VIEW_ALL, region).expect("revision");
+        world.submit(region, 1, 20).expect("later write");
+        assert!(world.verify_revision(&revision, region));
+        assert!(world.verify_revision_at(&revision, region));
+        let mut forged = revision.clone();
+        forged.bytes.push(0);
+        assert!(!world.verify_revision_at(&forged, region));
+    }
+
+    #[test]
+    fn reconciliation_obeys_partition_and_dependency_delivery() {
+        let left = RegionId::new(0);
+        let right = RegionId::new(1);
+        let mut faults = FaultPlan::new();
+        faults.push(Fault::partition(left, right, 0, 3));
+        let mut world = StubWorld::with_faults(2, faults);
+        let committed = world.submit(left, 1, 10).expect("left is up");
+        let stats = world.reconcile(left, right);
+        assert_eq!(stats.rows_shipped, 1);
+        assert!(!world.is_uniform(&committed, &[left, right]));
+        world.step();
+        world.step();
+        world.step();
+        assert!(world.is_quiescent());
+        assert!(world.is_uniform(&committed, &[left, right]));
     }
 }

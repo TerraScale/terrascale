@@ -137,10 +137,6 @@ fn unix_millis() -> i64 {
         .map_or(i64::MAX, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
 }
 
-/// The D-42 history floor: superseded rows stay reachable for at least
-/// thirty days regardless of consumer frontiers.
-const HISTORY_FLOOR_MILLIS: i64 = 30 * 24 * 60 * 60 * 1000;
-
 /// The database file name inside one location directory.
 pub(super) const DATABASE_FILE: &str = "terrabase.sqlite3";
 
@@ -229,8 +225,8 @@ impl ExtractedState {
     ///
     /// The base row carries sixteen placeholders — twelve originals, the
     /// four provenance columns (D-35: `kind`, `origin`, `origin_seq`, `hlc`),
-    /// and the TTL expiry column (S-02 slice D: `expires_at`) — so the
-    /// extracted columns start at placeholder 18.
+    /// and the TTL expiry and idempotency columns — so the extracted columns
+    /// start at placeholder 19.
     fn refresh_put_sql(&mut self) {
         let mut columns = String::new();
         let mut placeholders = String::new();
@@ -240,15 +236,16 @@ impl ExtractedState {
             columns.push_str(", ");
             columns.push_str(&quote_identifier(&numeric_column(field)));
             placeholders.push_str(", ?");
-            placeholders.push_str(&(18 + 2 * position).to_string());
-            placeholders.push_str(", ?");
             placeholders.push_str(&(19 + 2 * position).to_string());
+            placeholders.push_str(", ?");
+            placeholders.push_str(&(20 + 2 * position).to_string());
         }
         self.put_insert_sql = format!(
             "INSERT INTO documents
              (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
-              digest, version, deleted, committed_at, body, kind, origin, origin_seq, hlc, expires_at{columns})
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17{placeholders})"
+              digest, version, deleted, committed_at, body, kind, origin, origin_seq, hlc, expires_at,
+              client_request_ulid{columns})
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18{placeholders})"
         );
     }
 
@@ -448,6 +445,194 @@ fn migrate_documents_ttl(connection: &Connection) -> Result<(), ()> {
     connection.execute_batch("ALTER TABLE documents ADD COLUMN expires_at INTEGER;").map_err(|_| ())
 }
 
+/// Adds the durable operation identity column to pre-D-42 files.  The
+/// operation facts table itself is created by [`SCHEMA`], which is safe for
+/// existing files because all statements are `IF NOT EXISTS`.
+fn migrate_documents_idempotency(connection: &Connection) -> Result<(), ()> {
+    let mut statement = connection.prepare("PRAGMA table_info(documents)").map_err(|_| ())?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    if !columns.iter().any(|column| column == "client_request_ulid") {
+        connection
+            .execute(
+                "ALTER TABLE documents ADD COLUMN client_request_ulid TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|_| ())?;
+    }
+    connection
+        .execute_batch(
+            "CREATE UNIQUE INDEX IF NOT EXISTS documents_client_request_ulid
+             ON documents (tenant, client_request_ulid, commit_seq)
+             WHERE client_request_ulid <> '';
+             CREATE UNIQUE INDEX IF NOT EXISTS operation_facts_client_request_ulid
+             ON operation_facts (tenant, client_request_ulid)
+             WHERE client_request_ulid <> '';",
+        )
+        .map_err(|_| ())
+}
+
+/// Backfills operation facts from the folded document rows in an old file.
+/// Existing rows are the only durable evidence available, so a historical
+/// no-row delete cannot be invented; all future no-row operations are recorded
+/// before their transaction commits.  Roots are reconstructed in sequence
+/// order, making replay exact for rows created before this migration too.
+fn migrate_operation_facts(connection: &mut Connection) -> Result<(), ()> {
+    let transaction = connection.transaction().map_err(|_| ())?;
+    let existing = transaction
+        .query_row("SELECT COUNT(*) FROM operation_facts", [], |row| row.get::<_, i64>(0))
+        .map_err(|_| ())?;
+    // A non-empty table is already a post-migration database.  Never
+    // reconstruct only a missing suffix from the initial root: that would
+    // silently manufacture incorrect replay roots for a corrupted file.
+    if existing != 0 {
+        return transaction.commit().map_err(|_| ());
+    }
+    let mut statement = transaction
+        .prepare(
+            "SELECT tenant, commit_ulid, MIN(digest), MIN(commit_seq), MIN(requested),
+                    SUM(CASE WHEN LENGTH(body) = 0 THEN 1
+                             ELSE (LENGTH(body) + 4095) / 4096 END),
+                    SUM(LENGTH(body))
+             FROM documents
+             WHERE commit_ulid <> ''
+             GROUP BY tenant, commit_ulid
+             ORDER BY MIN(commit_seq), tenant, commit_ulid",
+        )
+        .map_err(|_| ())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    let mut root = INITIAL_ROOT_HEAD.to_owned();
+    for (tenant, operation, digest, sequence, requested, writes, bytes) in rows {
+        let sequence = u64::try_from(sequence).map_err(|_| ())?;
+        // Digests use SQLite's signed INTEGER slot; preserve all u64 bits.
+        #[allow(clippy::cast_sign_loss)]
+        let digest = digest as u64;
+        let requested = codec::durability_of(u8::try_from(requested).map_err(|_| ())?).ok_or(())?;
+        let next_root = chained_root(&root, sequence, digest);
+        next_root.clone_into(&mut root);
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO operation_facts
+                 (tenant, client_request_ulid, digest, committed, sequence, requested, root, writes, bytes)
+                 VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    tenant,
+                    operation,
+                    digest as i64,
+                    sequence as i64,
+                    codec::durability_code(requested),
+                    next_root,
+                    writes,
+                    bytes
+                ],
+            )
+            .map_err(|_| ())?;
+        transaction
+            .execute(
+                "UPDATE documents SET client_request_ulid = ?1
+                 WHERE tenant = ?2 AND commit_ulid = ?1 AND client_request_ulid = ''",
+                rusqlite::params![operation, tenant],
+            )
+            .map_err(|_| ())?;
+    }
+    transaction.commit().map_err(|_| ())
+}
+
+/// Refuses malformed durable operation facts instead of letting a corrupt
+/// counter or receipt turn into an apparently successful replay.
+fn validate_operation_facts(connection: &Connection) -> Result<(), ()> {
+    let mut statement = connection
+        .prepare(
+            "SELECT digest, committed, rejection, sequence, requested, root, writes, bytes
+             FROM operation_facts",
+        )
+        .map_err(|_| ())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+            ))
+        })
+        .map_err(|_| ())?;
+    for row in rows {
+        let (_digest, committed, rejection, sequence, requested, root, writes, bytes) =
+            row.map_err(|_| ())?;
+        if writes < 0 || bytes < 0 || !matches!(committed, 0 | 1) {
+            return Err(());
+        }
+        let requested = u8::try_from(requested).map_err(|_| ())?;
+        if codec::durability_of(requested).is_none() {
+            return Err(());
+        }
+        if committed == 1 {
+            if sequence <= 0 || root.is_empty() || writes == 0 {
+                return Err(());
+            }
+        } else if sequence != 0
+            || !root.is_empty()
+            || codec::decode_rejection(u8::try_from(rejection).map_err(|_| ())?).is_none()
+        {
+            return Err(());
+        }
+    }
+    drop(statement);
+    let mismatched_rows = connection
+        .query_row(
+            "SELECT COUNT(*) FROM documents
+             WHERE client_request_ulid = '' OR client_request_ulid <> commit_ulid",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| ())?;
+    if mismatched_rows != 0 {
+        return Err(());
+    }
+    let missing_facts = connection
+        .query_row(
+            "SELECT COUNT(*) FROM (
+                 SELECT DISTINCT tenant, commit_ulid FROM documents
+             ) AS document_operations
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM operation_facts
+                 WHERE operation_facts.tenant = document_operations.tenant
+                   AND operation_facts.client_request_ulid = document_operations.commit_ulid
+             )",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| ())?;
+    if missing_facts != 0 {
+        return Err(());
+    }
+    Ok(())
+}
+
 /// Quotes one identifier for SQL, doubling embedded double quotes.
 fn quote_identifier(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
@@ -510,6 +695,7 @@ CREATE TABLE IF NOT EXISTS documents (
     origin_seq  INTEGER NOT NULL DEFAULT 0,
     hlc         INTEGER NOT NULL DEFAULT 0,
     expires_at  INTEGER,
+    client_request_ulid TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (tenant, collection, id, commit_seq)
 ) WITHOUT ROWID;
 
@@ -525,6 +711,29 @@ CREATE TABLE IF NOT EXISTS rejections (
     rejection  INTEGER NOT NULL,
     PRIMARY KEY (tenant, operation)
 ) WITHOUT ROWID;
+
+-- Durable operation facts are the idempotency ledger without making the
+-- retired `ledger` table part of the row model.  One row exists for every
+-- accepted operation, including a delete that matched no document.  The
+-- unique partial index makes the client request ULID a true per-tenant
+-- identity while permitting the empty value carried by pre-migration rows.
+CREATE TABLE IF NOT EXISTS operation_facts (
+    tenant              TEXT    NOT NULL,
+    client_request_ulid TEXT    NOT NULL,
+    digest              INTEGER NOT NULL,
+    committed           INTEGER NOT NULL,
+    rejection           INTEGER NOT NULL DEFAULT 0,
+    sequence            INTEGER NOT NULL DEFAULT 0,
+    requested           INTEGER NOT NULL DEFAULT 1,
+    root                TEXT    NOT NULL DEFAULT '',
+    writes              INTEGER NOT NULL DEFAULT 0,
+    bytes               INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (tenant, client_request_ulid)
+) WITHOUT ROWID;
+
+CREATE UNIQUE INDEX IF NOT EXISTS operation_facts_client_request_ulid
+    ON operation_facts (tenant, client_request_ulid)
+    WHERE client_request_ulid <> '';
 
 CREATE TABLE IF NOT EXISTS usage_facts (
     tenant       TEXT    NOT NULL,
@@ -611,6 +820,15 @@ CREATE TABLE IF NOT EXISTS metering_db_facts (
     bytes  INTEGER NOT NULL
 ) WITHOUT ROWID;
 
+-- Optional per-collection history windows.  A missing row means the D-25
+-- default (30 days here, capped by the plan at the caller).  The CHECK is
+-- deliberately in SQLite so old files and direct migrations cannot install
+-- an unsupported retention window.
+CREATE TABLE IF NOT EXISTS collection_history (
+    collection TEXT PRIMARY KEY,
+    days       INTEGER NOT NULL CHECK (days BETWEEN 1 AND 30)
+) WITHOUT ROWID;
+
 -- Declared merge schemas (S-05 D-36): one row per collection naming the
 -- typed CRDT fields. Schema-free collections have no row and merge with
 -- the remove-wins map default, storing no per-field kernels.
@@ -661,6 +879,10 @@ const INITIAL_ROOT_HEAD: &str = "sqlite3-00000000000000000000000000000000";
 
 /// Metadata key binding the `SQLite` schema to the location's owner record.
 const SCHEMA_BINDING_KEY: &str = "sqlite_schema_binding";
+
+/// Version marker for the canonical JSON document body stored in `body`.
+const BODY_ENCODING_KEY: &str = "document_body_encoding";
+const BODY_ENCODING_JSON_V1: &str = "json-v1";
 
 /// A pre-binding database is accepted only when it has the old core shape.
 /// This is the deliberate upgrade rule for prelaunch fixtures: after the
@@ -830,7 +1052,20 @@ impl SqliteStorage {
         let mut writer =
             Connection::open(&database_path).map_err(|_| StorageOpenError::Unavailable)?;
         if database_exists {
-            let _legacy = validate_database_binding(&writer, &expected_binding)?;
+            let legacy = validate_database_binding(&writer, &expected_binding)?;
+            if !legacy {
+                // A bound file with a missing root is corrupt, not a fresh
+                // legacy file.  Do this check before WAL/schema pragmas so
+                // opening it cannot silently manufacture a new root chain.
+                let root = writer
+                    .query_row("SELECT value FROM meta WHERE key = 'root_head'", [], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .map_err(|_| StorageOpenError::Unavailable)?;
+                if root.is_empty() {
+                    return Err(StorageOpenError::Unavailable);
+                }
+            }
         }
         configure_connection(&writer)?;
         writer.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
@@ -856,6 +1091,9 @@ impl SqliteStorage {
         migrate_documents_origin_sequence(&mut writer, &local_origin)
             .map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        migrate_documents_idempotency(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        migrate_operation_facts(&mut writer).map_err(|()| StorageOpenError::Unavailable)?;
+        validate_operation_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         // The SQLite schema is authoritative; the metadata table carries only
         // runtime state, never a backend selector.
         writer
@@ -985,27 +1223,15 @@ impl SqliteStorage {
             return Ok(0);
         };
         // The D-42 history floor: a row is prunable only when every
-        // consumer frontier has passed it AND it is older than the floor's
-        // 30-day retention. The cutoff rises with the sweep's own clock, so
-        // a fresh row is never prunable regardless of frontiers.
-        let cutoff = unix_millis().saturating_sub(HISTORY_FLOOR_MILLIS);
-        // The OLDEST row still inside the floor's window: sequences are
-        // allocated in commit order under the one writer, so every row at
-        // or below it is inside the window too and only older rows may
-        // leave. Zero means every row is older than the floor and only the
-        // frontiers bound the sweep.
-        let oldest_retained = u64::try_from(
-            transaction
-                .query_row(
-                    "SELECT COALESCE(MIN(commit_seq), 0) FROM documents
-                     WHERE committed_at >= ?1",
-                    rusqlite::params![cutoff],
-                    |row| row.get::<_, i64>(0),
-                )
-                .map_err(|_| ())?,
-        )
-        .unwrap_or(0);
-        let floor = if oldest_retained == 0 { frontier } else { frontier.min(oldest_retained) };
+        // consumer frontier has passed it AND it is older than its
+        // collection's 1..30 day retention window. Missing declarations use
+        // the 30-day default. The cutoff rises with the sweep's own clock,
+        // so a fresh row is never prunable regardless of frontiers.
+        let now = unix_millis();
+        // Retention is evaluated per row below.  A single global
+        // `oldest_retained` sequence would incorrectly pin a short-window
+        // collection behind an older long-window collection.
+        let floor = frontier;
         // Whole-commit retention: a below-floor commit survives only when
         // one of its rows is the newest version of its key — the row an
         // above-floor snapshot resolves when no later write exists. Every
@@ -1017,7 +1243,12 @@ impl SqliteStorage {
         // order.
         let pruned = transaction
             .execute(
-                "DELETE FROM documents WHERE commit_seq < ?1 AND commit_seq NOT IN (
+                "DELETE FROM documents
+                 WHERE commit_seq < ?1
+                   AND committed_at < ?2 -
+                     COALESCE((SELECT days FROM collection_history
+                               WHERE collection = documents.collection), 30) * ?3
+                   AND commit_seq NOT IN (
                    SELECT pin.commit_seq FROM documents pin
                    WHERE NOT EXISTS (
                      SELECT 1 FROM documents newer
@@ -1027,7 +1258,7 @@ impl SqliteStorage {
                        AND newer.commit_seq > pin.commit_seq
                    )
                  )",
-                rusqlite::params![floor as i64],
+                rusqlite::params![floor as i64, now, 24_i64 * 60 * 60 * 1000],
             )
             .map_err(|_| ())?;
         transaction.commit().map_err(|_| ())?;
@@ -1224,7 +1455,15 @@ fn stage_intent(
         }
         return Ok(CommitResult::Committed(StorageReceipt {
             sequence: StorageSequence::new(entry.sequence),
-            root: StorageRootId::from_recorded(root_head.clone()),
+            root: StorageRootId::from_recorded(if entry.root.is_empty() {
+                // Legacy rows predating operation facts cannot recover a
+                // historical root; exposing the current head would falsely
+                // claim an exact replay, so retain the explicit fail-closed
+                // empty marker instead.
+                String::new()
+            } else {
+                entry.root
+            }),
             durability: entry.requested,
         }));
     }
@@ -1327,6 +1566,8 @@ fn stage_intent(
         hlc: provenance.hlc(),
     };
     let mut published_writes: Vec<PublishedWrite> = Vec::with_capacity(intent.writes.len());
+    let mut billed_writes = 0_u64;
+    let mut billed_bytes = 0_u64;
     for write in &intent.writes {
         match write {
             StagedWrite::Put { document, .. } | StagedWrite::ReplicatedPut { document, .. } => {
@@ -1353,9 +1594,13 @@ fn stage_intent(
                     descriptors,
                     fts_descriptors,
                 )?;
+                let body_len = encode_document_body(&published).len() as u64;
+                billed_writes = billed_writes.saturating_add(billed_writes_for_bytes(body_len));
+                billed_bytes = billed_bytes.saturating_add(body_len);
                 published_writes.push(PublishedWrite::Put { document: published });
             }
             StagedWrite::Delete { collection, id, .. } => {
+                billed_writes = billed_writes.saturating_add(1);
                 let version_at_delete = match collection {
                     Some(collection) => {
                         version_at(transaction, &intent.tenant, collection, id, sequence - 1)?
@@ -1402,6 +1647,7 @@ fn stage_intent(
                 });
             }
             StagedWrite::ReplicatedDelete { collection, id, .. } => {
+                billed_writes = billed_writes.saturating_add(1);
                 let version_at_delete =
                     version_at(transaction, &intent.tenant, collection, id, sequence - 1)?
                         .unwrap_or(0);
@@ -1432,6 +1678,19 @@ fn stage_intent(
         published_writes,
     );
     let _ = &published;
+    insert_operation_fact(
+        transaction,
+        &intent.tenant,
+        &row_identity,
+        intent.digest,
+        true,
+        CommitRejection::Storage,
+        sequence,
+        intent.durability,
+        root.as_str(),
+        billed_writes,
+        billed_bytes,
+    )?;
     update_root_head(transaction, root.as_str())?;
     root.clone_into(root_head);
     Ok(CommitResult::Committed(StorageReceipt {
@@ -1439,6 +1698,46 @@ fn stage_intent(
         root: StorageRootId::from_recorded(root),
         durability: intent.durability,
     }))
+}
+
+/// Persists one operation's complete replay and billing facts in the same
+/// transaction as its folded rows.  `rejection` is ignored for committed
+/// facts but keeps the call shape shared with rejection binding.
+fn insert_operation_fact(
+    transaction: &rusqlite::Transaction<'_>,
+    tenant: &TenantId,
+    operation: &OperationId,
+    digest: u64,
+    committed: bool,
+    rejection: CommitRejection,
+    sequence: u64,
+    requested: LocalDurability,
+    root: &str,
+    writes: u64,
+    bytes: u64,
+) -> Result<(), ()> {
+    transaction
+        .prepare_cached(
+            "INSERT INTO operation_facts
+             (tenant, client_request_ulid, digest, committed, rejection, sequence, requested, root, writes, bytes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        )
+        .and_then(|mut statement| {
+            statement.execute(rusqlite::params![
+                tenant.as_str(),
+                operation.as_str(),
+                digest as i64,
+                i64::from(committed),
+                codec::rejection_code(rejection),
+                sequence as i64,
+                codec::durability_code(requested),
+                root,
+                writes as i64,
+                bytes as i64,
+            ])
+        })
+        .map(|_| ())
+        .map_err(|_| ())
 }
 
 /// The durable resolution of one operation identity: a committed commit
@@ -1449,6 +1748,7 @@ struct OperationView {
     sequence: u64,
     requested: LocalDurability,
     rejection: Option<CommitRejection>,
+    root: String,
 }
 
 /// Reads one operation's durable resolution from the folded rows and the
@@ -1462,6 +1762,62 @@ fn operation_view(
     row_operation: &OperationId,
     ledger_operation: &OperationId,
 ) -> Result<Option<OperationView>, ()> {
+    // Operation facts are authoritative: unlike folded rows they also cover
+    // no-row deletes and retain the original root for byte-for-byte receipt
+    // replay after later commits or a process restart.
+    match transaction.query_row(
+        "SELECT digest, committed, rejection, sequence, requested, root
+         FROM operation_facts
+         WHERE tenant = ?1 AND (client_request_ulid = ?2 OR client_request_ulid = ?3)
+         ORDER BY CASE WHEN client_request_ulid = ?2 THEN 0 ELSE 1 END
+         LIMIT 1",
+        rusqlite::params![tenant.as_str(), row_operation.as_str(), ledger_operation.as_str()],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        },
+    ) {
+        Ok((digest, committed, code, sequence, requested, root)) => {
+            let rejection = if committed == 0 {
+                codec::decode_rejection(u8::try_from(code).map_err(|_| ())?).ok_or(())?
+            } else if committed == 1 {
+                // A committed fact must never carry a rejection code.
+                return Ok(Some(OperationView {
+                    #[allow(clippy::cast_sign_loss)]
+                    digest: digest as u64,
+                    sequence: {
+                        let sequence = u64::try_from(sequence).map_err(|_| ())?;
+                        if sequence == 0 {
+                            return Err(());
+                        }
+                        sequence
+                    },
+                    requested: codec::durability_of(u8::try_from(requested).map_err(|_| ())?)
+                        .ok_or(())?,
+                    rejection: None,
+                    root,
+                }));
+            } else {
+                return Err(());
+            };
+            return Ok(Some(OperationView {
+                #[allow(clippy::cast_sign_loss)]
+                digest: digest as u64,
+                sequence: 0,
+                requested: LocalDurability::Written,
+                rejection: Some(rejection),
+                root,
+            }));
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => {}
+        Err(_) => return Err(()),
+    }
     if let Ok(row) = transaction.query_row(
         "SELECT digest, MIN(commit_seq), MIN(requested) FROM documents
          WHERE tenant = ?1 AND commit_ulid = ?2",
@@ -1475,6 +1831,7 @@ fn operation_view(
             sequence: u64::try_from(sequence).map_err(|_| ())?,
             requested: codec::durability_of(u8::try_from(requested).map_err(|_| ())?).ok_or(())?,
             rejection: None,
+            root: String::new(),
         }));
     }
     let rejection = match transaction.query_row(
@@ -1498,6 +1855,7 @@ fn operation_view(
         sequence: 0,
         requested: LocalDurability::Written,
         rejection,
+        root: String::new(),
     }))
 }
 
@@ -1554,7 +1912,20 @@ fn insert_rejection_row(
             ])
         })
         .map(|_| ())
-        .map_err(|_| ())
+        .map_err(|_| ())?;
+    insert_operation_fact(
+        transaction,
+        tenant,
+        operation,
+        digest,
+        false,
+        rejection,
+        0,
+        LocalDurability::Written,
+        "",
+        0,
+        0,
+    )
 }
 
 /// Writes one document put row with its extracted index columns (D-42):
@@ -1578,7 +1949,7 @@ fn insert_put_row(
     fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
 ) -> Result<(), ()> {
     let committed_at = unix_millis();
-    let mut parameters: Vec<Value> = Vec::with_capacity(17 + 2 * extracted_fields.len());
+    let mut parameters: Vec<Value> = Vec::with_capacity(18 + 2 * extracted_fields.len());
     parameters.push(Value::Text(tenant.as_str().to_owned()));
     parameters.push(Value::Text(document.collection().as_str().to_owned()));
     parameters.push(Value::Text(document.id().as_str().to_owned()));
@@ -1599,6 +1970,7 @@ fn insert_put_row(
         Some(millis) => Value::Integer(millis),
         None => Value::Null,
     });
+    parameters.push(Value::Text(commit.operation.as_str().to_owned()));
     // One extracted scalar per registered field of this row's collection;
     // every other column binds NULL — the same shape a backfilled row
     // carries. Building descriptors extract too: every row the write path
@@ -1644,8 +2016,9 @@ fn insert_document_row(
         .prepare_cached(
             "INSERT INTO documents
              (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
-              digest, version, deleted, committed_at, body, kind, origin, origin_seq, hlc)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+              digest, version, deleted, committed_at, body, kind, origin, origin_seq, hlc,
+              client_request_ulid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         )
         .and_then(|mut statement| {
             statement.execute(rusqlite::params![
@@ -1665,6 +2038,7 @@ fn insert_document_row(
                 commit.origin,
                 commit.origin_sequence as i64,
                 commit.hlc as i64,
+                commit.operation.as_str(),
             ])
         })
         .map(|_| ())
@@ -1831,44 +2205,40 @@ fn flush_metering_db_facts(
     intents: &[CommitIntent],
     results: &[Option<CommitResult>],
 ) -> Result<(), ()> {
-    use std::collections::{BTreeMap, HashSet};
+    use std::collections::BTreeMap;
     let mut billed: BTreeMap<String, (u64, u64, u64)> = BTreeMap::new();
-    let mut row_seqs: HashSet<u64> = HashSet::new();
     {
         let mut statement = transaction
             .prepare_cached(
-                "SELECT tenant, commit_seq, LENGTH(body) FROM documents WHERE commit_seq > ?1",
+                "SELECT tenant, sequence, writes, bytes FROM operation_facts
+                 WHERE committed = 1 AND sequence > ?1",
             )
             .map_err(|_| ())?;
         let rows = statement
             .query_map([wave_base as i64], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
             })
             .map_err(|_| ())?;
         for row in rows {
-            let (tenant, seq, len) = row.map_err(|_| ())?;
-            let Ok(seq) = u64::try_from(seq) else { continue };
-            let bytes = u64::try_from(len).map_err(|_| ())?;
-            row_seqs.insert(seq);
+            let (tenant, seq, writes, bytes) = row.map_err(|_| ())?;
+            let seq = u64::try_from(seq).map_err(|_| ())?;
+            let writes = u64::try_from(writes).map_err(|_| ())?;
+            let bytes = u64::try_from(bytes).map_err(|_| ())?;
             let entry = billed.entry(tenant).or_insert((0, 0, 0));
             entry.0 = entry.0.max(seq);
-            entry.1 = entry.1.saturating_add(billed_writes_for_bytes(bytes));
+            entry.1 = entry.1.saturating_add(writes);
             entry.2 = entry.2.saturating_add(bytes);
         }
     }
-    for (intent, result) in intents.iter().zip(results.iter()) {
-        let Some(CommitResult::Committed(receipt)) = result else { continue };
-        let sequence = receipt.sequence.get();
-        let entry = billed.entry(intent.tenant.as_str().to_owned()).or_insert((0, 0, 0));
-        entry.0 = entry.0.max(sequence);
-        // A sequence-only publication of THIS wave wrote no row but still
-        // bills its single delete. A retried identity replays an old
-        // sequence at or below the wave floor, so the floor check keeps
-        // retries billing nothing twice.
-        if sequence > wave_base && !row_seqs.contains(&sequence) {
-            entry.1 = entry.1.saturating_add(1);
-        }
-    }
+    // Keep the arguments in the signature so the flush remains coupled to
+    // the exact wave that staged the facts; all accounting now comes from
+    // the durable operation rows, including no-row operations.
+    let _ = (intents, results);
     for (db, (seq_hi, writes, bytes)) in &billed {
         // A wave with only rejections bills nothing and writes no row.
         if *seq_hi == 0 && *writes == 0 {
@@ -1931,54 +2301,25 @@ fn reconcile_usage_counters(connection: &Connection) -> Result<(), ()> {
     Ok(())
 }
 
-/// Rebuilds the per-database metering facts from the folded journal when any
-/// recorded high-water trails the journal — the facts are a cache, the
-/// journal is the truth (E-9, D-42).
-///
-/// The rebuild recomputes every database from its stored rows with the same
-/// `ceil(bytes / 4 KiB)` rule the wave flush applies, so retries (which
-/// wrote one row once) and splits (whose rows moved with their key range)
-/// reconcile to the same facts a clean run would hold. One disclosed
-/// corner: a sequence-only publication (a matched-no-row delete) bills its
-/// single unit in the live wave but leaves no row, so after a restart it
-/// contributes `seq_hi` only — a bounded undercount of one unit per such
-/// op, never an overcount.
+/// Rebuilds the per-database metering facts from durable operation facts.
+/// The operation rows are the billing truth: retries write one fact once, and
+/// a no-row delete remains represented even though it has no folded document
+/// row (E-9, D-16/D-42).
 fn reconcile_metering_db_facts(connection: &Connection) -> Result<(), ()> {
-    let high_water = connection
-        .query_row("SELECT COALESCE(MAX(commit_seq), 0) FROM documents", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .map_err(|_| ())?;
-    if high_water == 0 {
-        return Ok(());
-    }
-    let (recorded_hi, recorded_dbs, journal_dbs): (i64, i64, i64) = connection
-        .query_row(
-            "SELECT COALESCE(MAX(seq_hi), 0), COUNT(*),
-                    (SELECT COUNT(DISTINCT tenant) FROM documents)
-             FROM metering_db_facts",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .map_err(|_| ())?;
-    if recorded_hi >= high_water && recorded_dbs >= journal_dbs {
-        return Ok(());
-    }
+    // This cache is rebuilt on every open.  A torn wave can leave all
+    // counters internally plausible (including a matching high-water), so a
+    // high-water comparison alone cannot detect corruption. Operation facts
+    // are the durable source of truth and include sequence-only deletes.
+    connection.execute_batch("DELETE FROM metering_db_facts;").map_err(|_| ())?;
     connection
         .execute_batch(
             "INSERT INTO metering_db_facts (db, seq_hi, writes, bytes)
-             SELECT tenant, MAX(commit_seq),
-                    SUM(CASE WHEN LENGTH(body) = 0 THEN 1
-                             ELSE (LENGTH(body) + 4095) / 4096 END),
-                    SUM(LENGTH(body))
-             FROM documents GROUP BY tenant
-             ON CONFLICT(db) DO UPDATE SET
-                seq_hi = excluded.seq_hi,
-                writes = excluded.writes,
-                bytes = excluded.bytes",
+             SELECT tenant, MAX(sequence), SUM(writes), SUM(bytes)
+             FROM operation_facts
+             WHERE committed = 1
+             GROUP BY tenant",
         )
-        .map_err(|_| ())?;
-    Ok(())
+        .map_err(|_| ())
 }
 
 /// The highest sequence any durable row names. Commits' folded document rows,
@@ -1991,6 +2332,8 @@ fn durable_watermark(connection: &Connection) -> Result<u64, ()> {
                  SELECT MAX(commit_seq) AS sequence FROM documents
                  UNION ALL
                  SELECT MAX(seq) AS sequence FROM usage_facts
+                 UNION ALL
+                 SELECT MAX(sequence) AS sequence FROM operation_facts
                  UNION ALL
                  SELECT MAX(seq_hi) AS sequence FROM metering_db_facts
              )",
@@ -2181,18 +2524,217 @@ fn conflict_for_absent_document(
     Ok(in_snapshot != in_published || in_published || !codec::matches_expectation(None, expected))
 }
 
-/// Encodes one document body with the shared private codec.
+/// Escapes one string using the JSON string grammar.  Non-ASCII UTF-8 stays
+/// literal, which makes the bytes deterministic without needless escaping.
+fn append_json_string(output: &mut Vec<u8>, value: &str) {
+    output.push(b'"');
+    for byte in value.bytes() {
+        match byte {
+            b'"' => output.extend_from_slice(br#"\""#),
+            b'\\' => output.extend_from_slice(br#"\\"#),
+            0x00..=0x1f => output.extend_from_slice(format!("\\u{byte:04x}").as_bytes()),
+            _ => output.push(byte),
+        }
+    }
+    output.push(b'"');
+}
+
+fn append_json_value(output: &mut Vec<u8>, value: &DocumentValue) {
+    match value {
+        DocumentValue::Null => output.extend_from_slice(b"null"),
+        DocumentValue::Boolean(value) => output.extend_from_slice(if *value { b"true" } else { b"false" }),
+        DocumentValue::Integer(value) => output.extend_from_slice(value.to_string().as_bytes()),
+        DocumentValue::Number(value) if value.is_finite() => {
+            output.extend_from_slice(value.to_string().as_bytes());
+        }
+        // JSON has no non-finite number representation.  Such values are
+        // outside the public document contract; null keeps migration and
+        // reads fail-closed rather than emitting invalid JSON.
+        DocumentValue::Number(_) => output.extend_from_slice(b"null"),
+        DocumentValue::String(value) => append_json_string(output, value),
+        DocumentValue::Array(items) => {
+            output.push(b'[');
+            for (index, item) in items.iter().enumerate() {
+                if index != 0 {
+                    output.push(b',');
+                }
+                append_json_value(output, item);
+            }
+            output.push(b']');
+        }
+        DocumentValue::Object(fields) => {
+            output.push(b'{');
+            for (index, (name, item)) in fields.iter().enumerate() {
+                if index != 0 {
+                    output.push(b',');
+                }
+                append_json_string(output, name);
+                output.push(b':');
+                append_json_value(output, item);
+            }
+            output.push(b'}');
+        }
+    }
+}
+
+/// Encodes one document as a deterministic JSON envelope.  Keeping identity
+/// and version in the envelope preserves the existing zero-copy row API while
+/// replacing the private binary body representation with canonical JSON.
 fn encode_document_body(document: &Document) -> Vec<u8> {
     let mut bytes = Vec::new();
-    codec::encode_document(&mut bytes, document);
+    bytes.extend_from_slice(b"{\"$collection\":");
+    append_json_string(&mut bytes, document.collection().as_str());
+    bytes.extend_from_slice(b",\"$id\":");
+    append_json_string(&mut bytes, document.id().as_str());
+    bytes.extend_from_slice(b",\"$value\":");
+    append_json_value(&mut bytes, document.value());
+    bytes.extend_from_slice(b",\"$version\":");
+    bytes.extend_from_slice(document.metadata().version().to_string().as_bytes());
+    bytes.push(b'}');
     bytes
 }
 
-/// Decodes one document body, rejecting trailing bytes.
+struct JsonParser<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl<'a> JsonParser<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, position: 0 }
+    }
+
+    fn whitespace(&mut self) {
+        while self.bytes.get(self.position).is_some_and(|byte| byte.is_ascii_whitespace()) {
+            self.position += 1;
+        }
+    }
+
+    fn consume(&mut self, expected: u8) -> Option<()> {
+        self.whitespace();
+        (self.bytes.get(self.position).copied()? == expected).then(|| self.position += 1)
+    }
+
+    fn string(&mut self) -> Option<String> {
+        self.consume(b'"')?;
+        let mut output = String::new();
+        while let Some(byte) = self.bytes.get(self.position).copied() {
+            self.position += 1;
+            match byte {
+                b'"' => return Some(output),
+                b'\\' => match self.bytes.get(self.position).copied()? {
+                    b'"' | b'\\' | b'/' => {
+                        output.push(self.bytes[self.position] as char);
+                        self.position += 1;
+                    }
+                    b'b' => { output.push('\u{8}'); self.position += 1; }
+                    b'f' => { output.push('\u{c}'); self.position += 1; }
+                    b'n' => { output.push('\n'); self.position += 1; }
+                    b'r' => { output.push('\r'); self.position += 1; }
+                    b't' => { output.push('\t'); self.position += 1; }
+                    b'u' => {
+                        self.position += 1;
+                        let hex = self.bytes.get(self.position..self.position + 4)?;
+                        let text = std::str::from_utf8(hex).ok()?;
+                        let code = u32::from_str_radix(text, 16).ok()?;
+                        output.push(char::from_u32(code)?);
+                        self.position += 4;
+                    }
+                    _ => return None,
+                },
+                0..=0x1f => return None,
+                _ => {
+                    let tail = std::str::from_utf8(&self.bytes[self.position - 1..]).ok()?;
+                    let character = tail.chars().next()?;
+                    if character.len_utf8() > 1 {
+                        self.position += character.len_utf8() - 1;
+                    }
+                    output.push(character);
+                }
+            }
+        }
+        None
+    }
+
+    fn value(&mut self, depth: usize) -> Option<DocumentValue> {
+        if depth > codec::MAX_VALUE_DEPTH {
+            return None;
+        }
+        self.whitespace();
+        match self.bytes.get(self.position).copied()? {
+            b'n' if self.bytes.get(self.position..self.position + 4) == Some(b"null") => {
+                self.position += 4; Some(DocumentValue::Null)
+            }
+            b't' if self.bytes.get(self.position..self.position + 4) == Some(b"true") => {
+                self.position += 4; Some(DocumentValue::Boolean(true))
+            }
+            b'f' if self.bytes.get(self.position..self.position + 5) == Some(b"false") => {
+                self.position += 5; Some(DocumentValue::Boolean(false))
+            }
+            b'"' => self.string().map(DocumentValue::String),
+            b'[' => {
+                self.position += 1;
+                let mut values = Vec::new();
+                self.whitespace();
+                if self.bytes.get(self.position) == Some(&b']') { self.position += 1; return Some(DocumentValue::Array(values)); }
+                loop {
+                    values.push(self.value(depth + 1)?);
+                    self.whitespace();
+                    match self.bytes.get(self.position).copied()? {
+                        b',' => self.position += 1,
+                        b']' => { self.position += 1; break; }
+                        _ => return None,
+                    }
+                }
+                Some(DocumentValue::Array(values))
+            }
+            b'{' => {
+                self.position += 1;
+                let mut fields = std::collections::BTreeMap::new();
+                self.whitespace();
+                if self.bytes.get(self.position) == Some(&b'}') { self.position += 1; return Some(DocumentValue::Object(fields)); }
+                loop {
+                    let name = self.string()?;
+                    self.consume(b':')?;
+                    fields.insert(name, self.value(depth + 1)?);
+                    self.whitespace();
+                    match self.bytes.get(self.position).copied()? {
+                        b',' => self.position += 1,
+                        b'}' => { self.position += 1; break; }
+                        _ => return None,
+                    }
+                }
+                Some(DocumentValue::Object(fields))
+            }
+            b'-' | b'0'..=b'9' => {
+                let start = self.position;
+                while self.bytes.get(self.position).is_some_and(|byte| byte.is_ascii_digit() || b"+-.eE".contains(byte)) { self.position += 1; }
+                let text = std::str::from_utf8(&self.bytes[start..self.position]).ok()?;
+                if !text.contains(['.', 'e', 'E']) {
+                    if let Ok(value) = text.parse::<i64>() { return Some(DocumentValue::Integer(value)); }
+                }
+                text.parse::<f64>().ok().filter(|value| value.is_finite()).map(DocumentValue::Number)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Decodes one canonical JSON body, rejecting trailing bytes and malformed
+/// envelope metadata.
 fn decode_document_body(bytes: &[u8]) -> Option<Document> {
-    let mut reader = codec::Reader::new(bytes);
-    let document = codec::decode_document(&mut reader)?;
-    (reader.remaining() == 0).then_some(document)
+    let mut parser = JsonParser::new(bytes);
+    let DocumentValue::Object(mut fields) = parser.value(0)? else { return None };
+    parser.whitespace();
+    if parser.position != bytes.len() { return None; }
+    let collection = match fields.remove("$collection")? { DocumentValue::String(value) => CollectionName::try_new(&value).ok()?, _ => return None };
+    let id = match fields.remove("$id")? { DocumentValue::String(value) => DocumentId::try_new(&value).ok()?, _ => return None };
+    let version = match fields.remove("$version")? { DocumentValue::Integer(value) if value >= 0 => u64::try_from(value).ok()?, _ => return None };
+    let value = fields.remove("$value")?;
+    if !fields.is_empty() { return None; }
+    let mut document = Document::new(id, collection, value);
+    document.set_version(version);
+    Some(document)
 }
 
 /// Derives the next root-chain identity from the current head.
@@ -2331,8 +2873,44 @@ impl StoragePort for SqliteStorage {
         tenant: &TenantId,
         operation: &OperationId,
     ) -> Option<OperationResolution> {
-        self.reader()
-            .connection()
+        let reader = self.reader();
+        let connection = reader.connection();
+        match connection.query_row(
+            "SELECT digest, committed, rejection, sequence, requested
+             FROM operation_facts WHERE tenant = ?1 AND client_request_ulid = ?2",
+            rusqlite::params![tenant.as_str(), operation.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        ) {
+            Ok((digest, committed, rejection, sequence, requested)) => {
+                #[allow(clippy::cast_sign_loss)]
+                let _digest = digest as u64;
+                if committed == 1 {
+                    let sequence = u64::try_from(sequence).ok()?;
+                    if sequence == 0 {
+                        return None;
+                    }
+                    let sequence = StorageSequence::new(sequence);
+                    let durability = codec::durability_of(u8::try_from(requested).ok()?)?;
+                    return Some(OperationResolution::Committed { sequence, durability });
+                }
+                if committed != 0 {
+                    return None;
+                }
+                let rejection = codec::decode_rejection(u8::try_from(rejection).ok()?)?;
+                return Some(OperationResolution::Rejected(rejection));
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(_) => return None,
+        }
+        connection
             .query_row(
                 "SELECT MIN(commit_seq), MIN(requested) FROM documents
                  WHERE tenant = ?1 AND commit_ulid = ?2",
@@ -2372,26 +2950,26 @@ impl StoragePort for SqliteStorage {
         if fact.scope().tenant_id() != tenant || !standalone_usage_fact_is_valid(&fact) {
             return Err(UsageStorageError::Corrupt);
         }
-        {
-            let reader = self.reader();
-            if let Some(body) = usage_fact_body(reader.connection(), &fact)
-                .map_err(|()| UsageStorageError::Corrupt)?
-            {
-                // The identity is already bound: the same content is the
-                // idempotent replay; different content is the rebinding.
-                let existing =
-                    DurableUsageFact::decode(&body).map_err(|_| UsageStorageError::Corrupt)?;
-                return if existing.fact() == &fact {
-                    Ok((existing, true))
-                } else {
-                    Err(UsageStorageError::IdentityConflict)
-                };
-            }
-        }
         let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let transaction = writer
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| UsageStorageError::Unavailable)?;
+        // The writer transaction is the linearization point.  Checking only
+        // through a read-pool connection races another recorder between its
+        // check and INSERT; checking again here turns that race into an
+        // exact replay instead of an unavailable error.
+        if let Some(body) =
+            usage_fact_body(&transaction, &fact).map_err(|()| UsageStorageError::Corrupt)?
+        {
+            let existing =
+                DurableUsageFact::decode(&body).map_err(|_| UsageStorageError::Corrupt)?;
+            drop(transaction);
+            return if existing.fact() == &fact {
+                Ok((existing, true))
+            } else {
+                Err(UsageStorageError::IdentityConflict)
+            };
+        }
         // Usage facts share the commit sequence space, exactly the
         // reference engines' watermark rule.
         let Some(sequence) = durable_watermark(&transaction)
@@ -2400,31 +2978,48 @@ impl StoragePort for SqliteStorage {
         else {
             return Err(UsageStorageError::Unavailable);
         };
-        let durable =
-            DurableUsageFact::try_new(fact, sequence, 1).map_err(|_| UsageStorageError::Corrupt)?;
+        let durable = DurableUsageFact::try_new(fact.clone(), sequence, 1)
+            .map_err(|_| UsageStorageError::Corrupt)?;
         let scope = durable.fact().scope();
         let identity = durable.fact().identity();
-        transaction
-            .execute(
-                "INSERT INTO usage_facts
+        let inserted = transaction.execute(
+            "INSERT INTO usage_facts
                  (tenant, project, database, partition, region, rule, fact_id,
                   seq, start_millis, end_millis, body)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                rusqlite::params![
-                    tenant.as_str(),
-                    scope.project_id().as_str(),
-                    scope.database_id().as_str(),
-                    scope.partition_id().as_str(),
-                    scope.region_id().as_str(),
-                    minting_rule_code(identity.rule()),
-                    identity.id().as_str(),
-                    sequence as i64,
-                    durable.fact().window().start_millis() as i64,
-                    durable.fact().window().end_millis() as i64,
-                    durable.encoded(),
-                ],
-            )
-            .map_err(|_| UsageStorageError::Unavailable)?;
+            rusqlite::params![
+                tenant.as_str(),
+                scope.project_id().as_str(),
+                scope.database_id().as_str(),
+                scope.partition_id().as_str(),
+                scope.region_id().as_str(),
+                minting_rule_code(identity.rule()),
+                identity.id().as_str(),
+                sequence as i64,
+                durable.fact().window().start_millis() as i64,
+                durable.fact().window().end_millis() as i64,
+                durable.encoded(),
+            ],
+        );
+        if let Err(_error) = inserted {
+            // A concurrent/legacy writer may have won the identity between
+            // the lookup and INSERT.  Re-read under this same transaction so
+            // a unique-key race is replay-safe; unrelated SQLite failures
+            // remain unavailable and roll back.
+            if let Some(body) =
+                usage_fact_body(&transaction, &fact).map_err(|()| UsageStorageError::Corrupt)?
+            {
+                let existing =
+                    DurableUsageFact::decode(&body).map_err(|_| UsageStorageError::Corrupt)?;
+                drop(transaction);
+                return if existing.fact() == &fact {
+                    Ok((existing, true))
+                } else {
+                    Err(UsageStorageError::IdentityConflict)
+                };
+            }
+            return Err(UsageStorageError::Unavailable);
+        }
         transaction.commit().map_err(|_| UsageStorageError::Unavailable)?;
         Ok((durable, false))
     }
@@ -2556,18 +3151,20 @@ impl StoragePort for SqliteStorage {
     fn metering_live_bytes(&self, db: &str) -> u64 {
         let reader = self.reader();
         let connection = reader.connection();
-        // Newest version per key, tombstones excluded. TTL-expired rows the
-        // sweep has not tombstoned yet still count; the sweep converges the
-        // snapshot the same way reads do.
+        // Newest version per key, tombstones and TTL-expired rows excluded.
+        // Expiry is a storage-accounting boundary immediately, even before
+        // the asynchronous sweep writes its replicated tombstone.
         connection
             .query_row(
                 "SELECT COALESCE(SUM(LENGTH(body)), 0) FROM documents AS live
-                 WHERE tenant = ?1 AND deleted = 0 AND commit_seq = (
+                 WHERE tenant = ?1 AND deleted = 0
+                   AND (collection = ?2 OR expires_at IS NULL OR expires_at > ?3)
+                   AND commit_seq = (
                     SELECT MAX(commit_seq) FROM documents
                     WHERE tenant = live.tenant
                       AND collection = live.collection
                       AND id = live.id)",
-                [db],
+                rusqlite::params![db, RESERVED_FAMILY_COLLECTION, unix_millis()],
                 |row| row.get::<_, i64>(0),
             )
             .ok()
@@ -3650,22 +4247,30 @@ impl StoragePort for SqliteStorage {
                             UNION ALL
                             SELECT MAX(seq) AS sequence FROM usage_facts
                             UNION ALL
+                            SELECT MAX(sequence) AS sequence FROM operation_facts
+                            UNION ALL
                             SELECT MAX(seq_hi) AS sequence FROM metering_db_facts)),
                         (SELECT value FROM meta WHERE key = 'root_head')",
                 [],
                 |row| {
                     let sequence = row.get::<_, i64>(0)?;
                     let root = row.get::<_, String>(1)?;
-                    Ok((u64::try_from(sequence).unwrap_or(0), root))
+                    Ok((sequence, root))
                 },
             )
             .ok()
-            .map_or(
-                (StorageSequence::new(0), StorageRootId::from_recorded(String::new())),
-                |(sequence, root)| {
-                    (StorageSequence::new(sequence), StorageRootId::from_recorded(root))
-                },
-            )
+            .and_then(|(sequence, root)| {
+                Some((
+                    StorageSequence::new(u64::try_from(sequence).ok()?),
+                    StorageRootId::from_recorded(root),
+                ))
+            })
+            .unwrap_or_else(|| {
+                // The trait predates typed read errors.  An empty root is an
+                // explicit fail-closed marker; never manufacture the initial
+                // root or sequence zero from a failed/corrupt query.
+                (StorageSequence::new(0), StorageRootId::from_recorded(String::new()))
+            })
     }
 
     fn run_retention_sweep(&mut self) -> Result<(), ()> {

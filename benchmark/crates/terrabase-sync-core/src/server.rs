@@ -20,6 +20,10 @@ use std::collections::BTreeMap;
 use crate::subscription::CommittedRow;
 use crate::subscription::DependencyIndex;
 pub use crate::subscription::FieldValue;
+use crate::view::{MAX_PLAN_TEXT_BYTES, MAX_TOP_K_ITEMS};
+
+const MAX_LEGACY_SUBSCRIPTIONS: usize = 1_024;
+const MAX_LEGACY_CONDITIONS: usize = 1_024;
 
 /// One membership comparison over an extracted field.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -183,6 +187,20 @@ impl SubscriptionEngine {
     pub fn register(&mut self, spec: SubscriptionSpec) -> u64 {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
+        // This compatibility matcher has no fallible registration result;
+        // refuse excess state while preserving its monotonic opaque id.
+        if self.subscriptions.len() >= MAX_LEGACY_SUBSCRIPTIONS
+            || spec.conditions.len() > MAX_LEGACY_CONDITIONS
+            || spec.projection.len() > MAX_LEGACY_CONDITIONS
+            || spec.collection.len() > MAX_PLAN_TEXT_BYTES
+            || spec.conditions.iter().any(|condition| {
+                condition.field.len() > MAX_PLAN_TEXT_BYTES
+                    || matches!(&condition.value, FieldValue::Text(value) if value.len() > MAX_PLAN_TEXT_BYTES)
+            })
+            || spec.projection.iter().any(|field| field.len() > 1_024)
+        {
+            return id;
+        }
         if spec.conditions.is_empty() {
             self.collection_wide.entry(spec.collection.clone()).or_default().push(id);
         } else {
@@ -253,7 +271,7 @@ impl SubscriptionEngine {
             return;
         };
         let collection = state.spec.collection.clone();
-        for (document, fields) in members {
+        for (document, fields) in members.into_iter().take(MAX_TOP_K_ITEMS) {
             self.holders.entry((collection.clone(), document.clone())).or_default().insert(id);
             state.members.insert(document, fields);
         }
@@ -293,6 +311,13 @@ impl SubscriptionEngine {
                 .is_some_and(|holders| holders.contains(&id));
             let operation = match (holds, matched) {
                 (false, true) => {
+                    // The old matcher remains as a compatibility seam for
+                    // the member adapter, but may never become an unbounded
+                    // result cache. Production shared views enforce the same
+                    // limit in `crate::view::SharedView`.
+                    if state.members.len() >= MAX_TOP_K_ITEMS {
+                        continue;
+                    }
                     self.holders
                         .entry((event.collection.clone(), event.document.clone()))
                         .or_default()

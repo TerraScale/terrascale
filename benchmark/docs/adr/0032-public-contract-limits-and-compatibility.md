@@ -39,7 +39,7 @@ deprecated contract remains fully authorized, monitored, tested, and supported
 until its published retirement date. TerraScale does not promise permanent
 readers, writers, or adapters for older public majors.
 
-Private TBEP follows the `N` and `N-1` rolling-upgrade window in ADR 0031. Its
+Private TBEP spans only the current release. Its
 compatibility window does not extend public support and never appears in a
 public negotiation.
 

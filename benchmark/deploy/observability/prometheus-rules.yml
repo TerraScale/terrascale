@@ -1,298 +1,74 @@
-# TerraBase production alert policy for the bounded metric contract.
+# TerraBase SLO rules for the bounded metric contract.
+#
+# The only alerting rules in this file page. Every cause-level signal remains
+# a dashboard fact; the OnCall router accepts only slo.burn_rate.* events.
+# The request counters are currently emitted by the private TBEP host-call
+# path, not by the public HTTP API or an external probe. Until the external
+# probe is wired, these recording rules are an explicitly named availability
+# proxy and must not be represented as the published D-75 SLO measurement.
 groups:
-  - name: terrabase-availability
+  - name: terrabase-slo-recordings
     interval: 30s
     rules:
-      - alert: TerraBaseScrapeMissing
-        expr: up{job="terrabase"} == 0 or absent(up{job="terrabase"})
-        for: 5m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase metrics scrape is unavailable
-          description: The private TerraBase metrics target has failed or disappeared for five minutes.
+      # D-75: 99.9% monthly availability, so the error budget is 0.1%.
+      # Rejected requests are excluded: invalid credentials, customer limits,
+      # and requested suspension are not unavailable operations.
+      - record: terrabase:slo:api_requests:rate5m
+        expr: sum by (job, region) (rate(terrabase_requests_total{job="terrabase",region!="unknown",outcome=~"success|error|timeout"}[5m]))
+      - record: terrabase:slo:api_errors:rate5m
+        expr: sum by (job, region) (rate(terrabase_requests_total{job="terrabase",region!="unknown",outcome=~"error|timeout"}[5m]))
+      - record: terrabase:slo:api_error_ratio:5m
+        expr: terrabase:slo:api_errors:rate5m / clamp_min(terrabase:slo:api_requests:rate5m, 0.000000001)
+      - record: terrabase:slo:api_error_ratio:30m
+        expr: sum by (job, region) (rate(terrabase_requests_total{job="terrabase",region!="unknown",outcome=~"error|timeout"}[30m])) / clamp_min(sum by (job, region) (rate(terrabase_requests_total{job="terrabase",region!="unknown",outcome=~"success|error|timeout"}[30m])), 0.000000001)
+      - record: terrabase:slo:api_error_ratio:1h
+        expr: sum by (job, region) (rate(terrabase_requests_total{job="terrabase",region!="unknown",outcome=~"error|timeout"}[1h])) / clamp_min(sum by (job, region) (rate(terrabase_requests_total{job="terrabase",region!="unknown",outcome=~"success|error|timeout"}[1h])), 0.000000001)
+      - record: terrabase:slo:api_error_ratio:6h
+        expr: sum by (job, region) (rate(terrabase_requests_total{job="terrabase",region!="unknown",outcome=~"error|timeout"}[6h])) / clamp_min(sum by (job, region) (rate(terrabase_requests_total{job="terrabase",region!="unknown",outcome=~"success|error|timeout"}[6h])), 0.000000001)
 
-      - alert: TerraBaseReadinessLost
-        expr: terrabase_liveness == 1 and on(job, instance) terrabase_ready == 0
-        for: 5m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase is live but not ready
-          description: Required admission or dependency checks have not been healthy for five minutes.
+      # Burn rate is error ratio divided by the 0.001 D-75 budget.
+      - record: terrabase:slo:api_burn_rate:5m
+        expr: terrabase:slo:api_error_ratio:5m / 0.001
+      - record: terrabase:slo:api_burn_rate:30m
+        expr: terrabase:slo:api_error_ratio:30m / 0.001
+      - record: terrabase:slo:api_burn_rate:1h
+        expr: terrabase:slo:api_error_ratio:1h / 0.001
+      - record: terrabase:slo:api_burn_rate:6h
+        expr: terrabase:slo:api_error_ratio:6h / 0.001
 
-      - alert: TerraBaseLivenessLost
-        expr: terrabase_liveness == 0
-        for: 1m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase reached a terminal lifecycle state
-          description: The process is reachable but its lifecycle is terminal; preserve evidence before restart.
-
-      - alert: TerraBaseStartupStuck
-        expr: terrabase_started == 0 and on(job, instance) terrabase_liveness == 1
-        for: 10m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase startup has not completed
-          description: Durable engine open or private listener admission has not completed for ten minutes.
-
-      - alert: TerraBaseRequiredComponentUnavailable
-        expr: terrabase_component_health{component=~"storage|replication|membership"} <= 0
-        for: 5m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: A required TerraBase component is unavailable
-          description: The {{ $labels.component }} component is unhealthy or has no trustworthy observation.
-
-      - alert: TerraBaseOptionalComponentUnavailable
-        expr: terrabase_component_health{component=~"control_plane|backup|metrics"} == 0
-        for: 15m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: An observed optional TerraBase component is unhealthy
-          description: Unknown or unconfigured optional components report -1 and do not fire this alert.
-
-      - alert: TerraBaseComponentDegraded
-        expr: terrabase_component_health == 0.5
-        for: 15m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: A TerraBase component is degraded
-          description: The {{ $labels.component }} component is serving with reduced health or redundancy.
-
-  - name: terrabase-traffic-and-saturation
+  - name: terrabase-slo-pages
     interval: 30s
     rules:
-      - alert: TerraBaseRequestErrorsHigh
+      # Fast burn: 14.4x in both the 1h and 5m windows. The two-window
+      # confirmation avoids paging on a short-lived spike.
+      - alert: TerraBaseSLOBurnRateFast
         expr: |
-          (
-            sum by (job, instance, region, operation) (
-              rate(terrabase_requests_total{outcome=~"error|timeout"}[5m])
-            )
-            /
-            clamp_min(
-              sum by (job, instance, region, operation) (rate(terrabase_requests_total[5m])),
-              0.000000001
-            )
-          ) > 0.01
-          and on (job, instance, region, operation)
-          sum by (job, instance, region, operation) (rate(terrabase_requests_total[5m])) > 1
-        for: 10m
+          terrabase:slo:api_burn_rate:1h{region!="unknown"} >= 14.4
+            and on (job, region)
+          terrabase:slo:api_burn_rate:5m{region!="unknown"} >= 14.4
+        for: 2m
         labels:
           service: terrabase
-          severity: warning
+          severity: critical
+          notification: page
+          slo: api_availability
         annotations:
-          summary: TerraBase engine error or timeout rate is high
-          description: Errors and timeouts exceed one percent for {{ $labels.operation }} in {{ $labels.region }} while traffic exceeds one request per second.
+          summary: TerraBase API availability is burning its error budget quickly
+          description: The 99.9% API availability proxy is burning at least 14.4x in {{ $labels.region }} in both the 1h and 5m windows. Confirm the external probe before treating this as the published D-75 SLO.
 
-      - alert: TerraBaseQueueSaturationHigh
-        expr: terrabase_queue_depth / clamp_min(terrabase_queue_capacity, 1) > 0.80
-        for: 10m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: A TerraBase work queue is above 80 percent
-          description: Queue {{ $labels.queue }} has remained above the saturation threshold for ten minutes.
-
-      - alert: TerraBaseAdmissionRejectionsHigh
-        expr: sum by (job, instance, operation, reason) (rate(terrabase_admission_rejections_total[5m])) > 1
-        for: 10m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase admission rejections are sustained
-          description: Operation {{ $labels.operation }} is being rejected for {{ $labels.reason }} above one request per second.
-
-      - alert: TerraBaseReadLatencyP99High
+      # Slow burn: 6x in both the 6h and 30m windows. This catches a sustained
+      # customer-visible degradation that the fast tier may not catch.
+      - alert: TerraBaseSLOBurnRateSlow
         expr: |
-          histogram_quantile(
-            0.99,
-            sum by (job, instance, le, region, operation) (
-              rate(terrabase_request_duration_seconds_bucket{operation="read",outcome="success"}[5m])
-            )
-          ) > 0.010
-          and on (job, instance, region, operation)
-          sum by (job, instance, region, operation) (
-            rate(terrabase_requests_total{operation="read",outcome="success"}[5m])
-          ) > 1
-        for: 10m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase successful read p99 is above 10 ms
-          description: Engine read latency in {{ $labels.region }} has exceeded the ADR 0033 threshold for ten minutes at sustained traffic.
-
-      - alert: TerraBaseWriteLatencyP99High
-        expr: |
-          histogram_quantile(
-            0.99,
-            sum by (job, instance, le, region, operation) (
-              rate(terrabase_request_duration_seconds_bucket{operation="write",outcome="success"}[5m])
-            )
-          ) > 0.020
-          and on (job, instance, region, operation)
-          sum by (job, instance, region, operation) (
-            rate(terrabase_requests_total{operation="write",outcome="success"}[5m])
-          ) > 1
-        for: 10m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase successful write p99 is above 20 ms
-          description: Engine write latency in {{ $labels.region }} has exceeded the ADR 0033 threshold for ten minutes at sustained traffic.
-
-  - name: terrabase-durability-and-replication
-    interval: 30s
-    rules:
-      - alert: TerraBaseWalFsyncErrors
-        expr: increase(terrabase_wal_fsync_total{outcome="error"}[5m]) > 0
-        for: 1m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase WAL fsync failed
-          description: At least one WAL fsync failed in the last five minutes; preserve WAL and storage evidence.
-
-      - alert: TerraBaseCommitOutcomeUnknown
-        expr: increase(terrabase_commits_total{outcome="unknown"}[5m]) > 0
-        for: 1m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase reported an indeterminate commit outcome
-          description: A caller-visible commit requires durability resolution; follow the indeterminate commit runbook.
-
-      - alert: TerraBaseReplicationLagHigh
-        expr: terrabase_replication_lag_seconds{region!="unknown"} > 5
-        for: 10m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase replication lag is high
-          description: Region {{ $labels.region }} has exceeded five seconds of observed lag for ten minutes.
-
-      - alert: TerraBaseReplicationLagCritical
-        expr: terrabase_replication_lag_seconds{region!="unknown"} > 30
-        for: 5m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase replication lag is critical
-          description: Region {{ $labels.region }} has exceeded thirty seconds of observed lag for five minutes.
-
-      - alert: TerraBaseReplicationFrontierUnhealthy
-        expr: terrabase_replication_frontier_health{region!="unknown"} <= 0
-        for: 5m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase replication frontier is unhealthy or unknown
-          description: Region {{ $labels.region }} lacks a healthy verified replication frontier.
-
-      - alert: TerraBaseActiveMembersLow
-        expr: terrabase_active_members{region!="unknown"} < 2
-        for: 5m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase has fewer than two active Members
-          description: The collector emits this series only for selected Regions; Region {{ $labels.region }} is below RF=2.
-
-  - name: terrabase-background-work
-    interval: 30s
-    rules:
-      - alert: TerraBaseContinuousBackupStale
-        expr: terrabase_backup_last_success_age_seconds{mode="continuous"} > 93600
+          terrabase:slo:api_burn_rate:6h{region!="unknown"} >= 6
+            and on (job, region)
+          terrabase:slo:api_burn_rate:30m{region!="unknown"} >= 6
         for: 15m
         labels:
           service: terrabase
           severity: critical
+          notification: page
+          slo: api_availability
         annotations:
-          summary: TerraBase continuous backup is older than 26 hours
-          description: No verified continuous backup success has been observed within the operating threshold for the ADR 0033 daily recovery-point target.
-
-      - alert: TerraBaseBackupErrors
-        expr: sum by (job, instance, mode) (increase(terrabase_backup_runs_total{outcome="error"}[30m])) > 0
-        for: 1m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase backup failed
-          description: A {{ $labels.mode }} backup failed in the last thirty minutes.
-
-      - alert: TerraBaseUsageExportErrors
-        expr: increase(terrabase_usage_export_failures_total[15m]) > 0
-        for: 1m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase usage export failed
-          description: Authoritative usage publication failed in the last fifteen minutes; inspect the usage-export queue and frontier.
-
-      - alert: TerraBaseUsageExportFrontierMissing
-        expr: up{job="terrabase"} == 1 unless on(job, instance) terrabase_usage_export_frontier
-        for: 15m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase usage-export frontier telemetry is missing
-          description: The exporter has not published its durable frontier; verify collector wiring.
-
-  - name: terrabase-clock-and-egress
-    interval: 30s
-    rules:
-      - alert: TerraBaseClockOffsetHigh
-        expr: abs(terrabase_clock_offset_seconds) > 0.4
-        for: 5m
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase host clock offset is approaching the refusal line
-          description: Measured offset against OCI NTP exceeds 0.4 seconds in magnitude; new writes stop at 0.5 seconds (D-69). Verify chrony before the member refuses writes.
-
-      - alert: TerraBaseClockWritesRefused
-        expr: increase(terrabase_clock_write_refusals_total[5m]) > 0
-        for: 1m
-        labels:
-          service: terrabase
-          severity: critical
-        annotations:
-          summary: TerraBase refused writes over clock offset
-          description: The member refused new writes because its clock offset exceeded 0.5 seconds; HLCs are never minted from a suspect clock (D-69).
-
-      - alert: TerraBaseEgressMonthlyHigh
-        expr: sum by (job, instance, region) (increase(terrabase_egress_bytes_total[1h])) * 730 > 8000000000000
-        for: 6h
-        labels:
-          service: terrabase
-          severity: warning
-        annotations:
-          summary: TerraBase egress is on pace past 8 TB/month
-          description: Region {{ $labels.region }} is emitting billable OCI outbound above the 8 TB/month pace for six hours (D-66). Inspect replication, snapshot, and direct-read classes before the buffer burns.
+          summary: TerraBase API availability is burning its error budget steadily
+          description: The 99.9% API availability proxy is burning at least 6x in {{ $labels.region }} in both the 6h and 30m windows. Confirm the external probe before treating this as the published D-75 SLO.

@@ -112,11 +112,11 @@ protocol suites as the generic artifact. An unlabelled `target-cpu=native`
 binary cannot enter an artifact repository or deployment plan.
 
 Native x86_64 and Ampere ARM64 runners build, lint, and test every release.
-Qualification creates storage, WAL, segment, snapshot, backup, CRDT, and
+Qualification creates storage, snapshot, backup, CRDT, and
 protocol artifacts on each architecture and consumes them on the other. A
 mixed-architecture replica set must converge on the same canonical state,
 hashes, conflict winners, range fingerprints, and visible documents through normal
-replication, repair, compaction, backup, restore, and an N/N-1 upgrade.
+replication, repair, backup, and restore.
 
 Performance baselines are architecture and storage-profile specific. The
 primary GA workload and thirty-day production soak use the Ampere Tier-2-only

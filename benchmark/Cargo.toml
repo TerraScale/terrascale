@@ -33,9 +33,8 @@ path = "src/bin/terrabase-bench-served.rs"
 required-features = ["bench-tools"]
 
 [features]
-default = ["local-crypto"]
-local-crypto = ["aws-lc-rs/non-fips"]
-production-fips = ["aws-lc-rs/fips"]
+# Single non-FIPS crypto profile (D-41 defers FIPS builds past the first
+# customer): aws-lc-rs builds its non-FIPS module on every build.
 # Enables the audited served benchmark command. This is kept opt-in so the
 # engine's normal library build does not include benchmark orchestration.
 bench-tools = []
@@ -53,7 +52,7 @@ name = "member"
 path = "tests/member/main.rs"
 
 [dependencies]
-aws-lc-rs = { version = "1.18.0", default-features = false }
+aws-lc-rs = { version = "1.18.0", default-features = false, features = ["non-fips"] }
 
 blake3 = "1.8.2"
 zeroize = "1.9.0"

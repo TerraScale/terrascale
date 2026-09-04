@@ -46,11 +46,11 @@ fn cipher(key: [u8; 32]) -> ArtifactCipher {
 
 #[test]
 fn local_provider_is_explicit_and_production_fails_closed() {
-    assert_eq!(ProviderMode::LocalFile.identity(), "aws-lc-rs:local-file-non-fips");
-    assert_eq!(ProviderMode::ProductionFips.identity(), "aws-lc-rs:production-fips");
+    assert_eq!(ProviderMode::LocalFile.identity(), "aws-lc-rs:local-file");
+    assert_eq!(ProviderMode::Production.identity(), "aws-lc-rs:production");
     assert!(matches!(
         ArtifactCipher::new(
-            ProviderMode::ProductionFips,
+            ProviderMode::Production,
             DatabaseKey::from_bytes([7; 32]),
             context("01JTENANT"),
         ),
@@ -112,12 +112,6 @@ fn key_derivation_domains_environment_tenant_and_database() {
         let start = ciphertext_start(envelope);
         assert_ne!(first_ciphertext, &envelope[start..start + plaintext.len()]);
     }
-}
-
-#[cfg(feature = "production-fips")]
-#[test]
-fn production_profile_links_an_operational_aws_lc_fips_module() {
-    aws_lc_rs::try_fips_mode().expect("the production AWS-LC provider is in FIPS mode");
 }
 
 #[test]
@@ -328,12 +322,6 @@ fn oci_vault_seam_is_unconfigured_and_fails_closed() {
     assert_eq!(provider.identity(), KeyProviderIdentity::OciVault);
     assert_eq!(provider.capability(), ProviderCapability::Unconfigured);
     assert!(!production_capability_status(&provider).is_production_ready());
-    #[cfg(feature = "local-crypto")]
-    assert_eq!(
-        production_capability_status(&provider),
-        ProductionCapabilityStatus::LocalCryptoSelected
-    );
-    #[cfg(feature = "production-fips")]
     assert_eq!(
         production_capability_status(&provider),
         ProductionCapabilityStatus::OciVaultUnconfigured

@@ -1,4 +1,4 @@
-//! The ADR 0045 auto-indexing engine skeleton: observe and candidates (E-4b).
+//! The qualified observe/compress/candidate algorithms for ADR 0045 (E-4b).
 //!
 //! This module implements the first two stages of the loop in ADR 0045
 //! `0045-auto-indexing-engine.md`:
@@ -10,15 +10,10 @@
 //!  monitor ◀── active ◀── verify (shadow) ◀── build (invisible, budgeted)
 //! ```
 //!
-//! Only observe (section 3.1), compress (3.2), and candidates (3.3) live here.
-//! The later stages — hypothetical-index compile check (3.4), the contextual
-//! bandit with the write budget (3.5), invisible budgeted build with the
-//! watermark (3.6), shadow verification with the Welch t-test and plan pins
-//! (3.7), monitor/revert (3.8), and retire/merge (3.9) — are named as frozen
-//! constants in [`later`] so the follow-up lanes share one vocabulary, but
-//! they have no logic yet. Nothing here changes planning: the existing
-//! first-query optimizer in the parent module stays the serving path until
-//! the bandit lane wires selection behind the same fail-closed guards.
+//! This compatibility module supplies the public data model and the first
+//! three stages. The coordinator and later-stage ports live beside it in the
+//! parent module, so each follow-up worker can land independently without
+//! changing callers.
 //!
 //! # Observe
 //!
@@ -55,7 +50,7 @@
 //! per-collection set is capped at [`MAX_CANDIDATES_PER_COLLECTION`]; the
 //! [`CandidateSet`] evicts the oldest-unused entry past the cap.
 //!
-//! All estimators in this skeleton are deliberately simple and documented as
+//! All estimators in this compatibility implementation are deliberately simple and documented as
 //! such: the bandit lane replaces estimated benefit with measured logical
 //! work saved, and the compile-check lane replaces the width heuristic with
 //! scratch-schema statistics. What is frozen here is the shape of the inputs
@@ -238,7 +233,6 @@ impl Template {
     /// callers build templates through [`Self::try_new`]. The execution-hook
     /// lane calls this on every execution; until that lane lands, the
     /// in-crate test below is the only caller.
-    #[allow(dead_code, reason = "wired by the execution-hook lane; exercised by tests")]
     pub(crate) fn of(query: &crate::query::model::NormalizedQuery) -> Self {
         use crate::query::spec::QueryCondition;
         let collection = query

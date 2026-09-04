@@ -1,10 +1,22 @@
-.PHONY: check contracts stack stack-check stack-down
+.PHONY: check contracts stack stack-check stack-test stack-config-test stack-pre-engine stack-down
 
 stack:
 	./scripts/stack.sh up
 
 stack-check:
 	./scripts/stack.sh check
+
+stack-test:
+	./scripts/stack.sh test
+
+stack-config-test:
+	./tests/stack/test_stack_config.sh
+	python3 ./tests/stack/test_webhook_receiver.py
+
+# Transitional harness for engine work before E-5/E-6 are available. It is
+# deliberately separate: the normal `stack` target never starts the X-4 stub.
+stack-pre-engine:
+	./scripts/stack.sh pre-engine
 
 stack-down:
 	./scripts/stack.sh down

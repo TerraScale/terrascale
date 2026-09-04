@@ -122,11 +122,12 @@ Completed creation may return a result reference; clients retrieve the result
 with an ordinary typed operation rather than replaying the original mutation.
 Operation records and results have an explicit retention and expiry response.
 
-Private TBEP gRPC sends typed operation snapshots and deltas to the Go gateway.
+Private TBEP gRPC sends typed operation snapshots and deltas to the
+orchestrator and CLI over the private control protocol.
 Each update carries the operation ULID, progress generation, monotone update
 sequence, state, stage, units, timestamps, and typed result or error.
 Unavailable history sends a fresh authorized operation snapshot. Public
-polling through the gateway is a supported status fallback, not the engine's
+polling through the member's public API is a supported status fallback, not the engine's
 execution or correctness mechanism.
 
 Public SDKs expose the same typed `Operation<T>` behavior for wait, observe,

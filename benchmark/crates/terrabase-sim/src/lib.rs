@@ -21,6 +21,7 @@
 pub mod check;
 pub mod faults;
 pub mod model;
+pub mod production;
 pub mod rng;
 pub mod traits;
 pub mod workload;
@@ -29,6 +30,7 @@ pub mod world;
 pub use check::{Invariant, SimConfig, SimReport, run_scenario};
 pub use faults::{Fault, FaultKind, FaultPlan};
 pub use model::{Frontier, Hlc, JournalRow, RegionId, SessionToken, ViewCut};
+pub use production::{ProductionWorld, ProductionWorldError};
 pub use rng::{SimRng, seed_batch};
 pub use traits::{ReconcileStats, ReplicationEngine, SyncEngine, ViewRevision};
 pub use workload::{Op, Workload};

@@ -10,7 +10,7 @@
     {
       "path": "openapi.json",
       "mediaType": "application/vnd.oai.openapi+json;version=3.1",
-      "blake3": "6a0972188d6777aa17bd40fbd95e315a25f5e1142309fec8ab865b58ed96276e"
+      "blake3": "45182d1ebd2ecfe047efcf0938715ae1adb7997ed5ec46dd2e515113ec1540a2"
     },
     {
       "path": "proto/terrabase/v1/engine.proto",

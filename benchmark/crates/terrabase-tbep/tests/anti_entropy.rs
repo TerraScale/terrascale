@@ -1,6 +1,7 @@
 //! Qualification cases for durable journal-row range reconciliation.
 
 use terrabase::engine::CommitOutcome;
+use terrabase::engine::ReplicatedRecord;
 use terrabase::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
     OperationId, TenantId,
@@ -9,7 +10,8 @@ use terrabase_replication_core::anti_entropy::{
     JournalRowId, RepairError, RowDifference, RowSummary, row_hash,
 };
 use terrabase_tbep::anti_entropy::{
-    DurableJournalRow, JournalRowSource, reconcile_journal_rows, repair_once_sources_bounded,
+    AuthenticatedMutation, DurableJournalRow, JournalRowSource, prove_snapshot_reconciliation,
+    reconcile_journal_rows, repair_once_sources_bounded, repair_once_sources_bounded_with_budgets,
 };
 use terrabase_tbep::engine_host::EngineHost;
 use terrabase_tbep::host::HostingError;
@@ -38,6 +40,63 @@ impl JournalRowSource for FailingJournal {
     ) -> Result<Vec<DurableJournalRow>, HostingError> {
         Err(HostingError::EngineFailure("injected journal read failure".into()))
     }
+}
+
+struct MutableJournal {
+    rows: std::sync::Mutex<Vec<DurableJournalRow>>,
+    mutations: std::sync::Mutex<Result<Vec<AuthenticatedMutation>, HostingError>>,
+}
+
+impl MutableJournal {
+    fn new(rows: Vec<DurableJournalRow>, mutations: Vec<AuthenticatedMutation>) -> Self {
+        Self { rows: std::sync::Mutex::new(rows), mutations: std::sync::Mutex::new(Ok(mutations)) }
+    }
+}
+
+impl JournalRowSource for MutableJournal {
+    fn durable_journal_rows(
+        &self,
+        _scope: &BoundScope,
+    ) -> Result<Vec<DurableJournalRow>, HostingError> {
+        Ok(self.rows.lock().unwrap().clone())
+    }
+
+    fn durable_mutations(
+        &self,
+        _scope: &BoundScope,
+    ) -> Result<Vec<AuthenticatedMutation>, HostingError> {
+        self.mutations.lock().unwrap().clone()
+    }
+
+    fn apply_mutations(
+        &self,
+        _scope: &BoundScope,
+        mutations: &[AuthenticatedMutation],
+    ) -> Result<usize, HostingError> {
+        let mut rows = self.rows.lock().unwrap();
+        rows.extend(mutations.iter().map(|mutation| mutation.row.clone()));
+        Ok(mutations.len())
+    }
+}
+
+fn mutation(
+    tenant: &str,
+    origin: &str,
+    sequence: u64,
+    body: DocumentValue,
+) -> AuthenticatedMutation {
+    let id = JournalRowId::new(origin, sequence).unwrap();
+    let record = ReplicatedRecord {
+        collection: CollectionName::try_new("orders").unwrap(),
+        id: DocumentId::try_new(format!("doc-{sequence}")).unwrap(),
+        body,
+        deleted: false,
+        commit_ulid: format!("commit-{sequence}"),
+        hlc: sequence,
+        origin: origin.into(),
+        origin_sequence: sequence,
+    };
+    AuthenticatedMutation::new(tenant, DurableJournalRow::new(id, [sequence as u8; 32]), record)
 }
 
 #[test]
@@ -187,4 +246,67 @@ fn equal_tombstones_are_a_present_durable_row() {
 fn duplicate_durable_identity_fails_closed() {
     let rows = [row("gru", 1, b"first"), row("gru", 1, b"second")];
     assert_eq!(reconcile_journal_rows(&rows, &[], 1), Err(RepairError::DuplicateRowIdentity));
+}
+
+#[test]
+fn bounded_mutation_range_repairs_deterministically() {
+    let incoming = mutation("tenant-a", "gru", 1, DocumentValue::Integer(7));
+    let peer = MutableJournal::new(vec![incoming.row.clone()], vec![incoming]);
+    let local = MutableJournal::new(Vec::new(), Vec::new());
+    let result = repair_once_sources_bounded(&local, &peer, &scope(), 1).unwrap();
+    assert_eq!(result, terrabase_tbep::anti_entropy::RepairDecision::Converged { repaired: 1 });
+    assert_eq!(local.rows.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn unavailable_or_over_budget_transfer_falls_back_to_snapshot() {
+    let incoming = mutation("tenant-a", "gru", 1, DocumentValue::String("payload".into()));
+    let peer = MutableJournal::new(vec![incoming.row.clone()], Vec::new());
+    let local = MutableJournal::new(Vec::new(), Vec::new());
+    assert!(matches!(
+        repair_once_sources_bounded(&local, &peer, &scope(), 1).unwrap(),
+        terrabase_tbep::anti_entropy::RepairDecision::NeedsSnapshot { .. }
+    ));
+
+    let peer = MutableJournal::new(vec![incoming.row.clone()], vec![incoming]);
+    let local = MutableJournal::new(Vec::new(), Vec::new());
+    assert!(matches!(
+        repair_once_sources_bounded_with_budgets(&local, &peer, &scope(), 1, 1, 1).unwrap(),
+        terrabase_tbep::anti_entropy::RepairDecision::NeedsSnapshot { .. }
+    ));
+}
+
+#[test]
+fn tampered_mutation_and_scope_are_rejected() {
+    let mut incoming = mutation("tenant-a", "gru", 1, DocumentValue::Integer(7));
+    incoming.authentication[0] ^= 1;
+    let peer = MutableJournal::new(vec![incoming.row.clone()], vec![incoming]);
+    let local = MutableJournal::new(Vec::new(), Vec::new());
+    assert!(matches!(
+        repair_once_sources_bounded(&local, &peer, &scope(), 1),
+        Err(HostingError::Invalid(_))
+    ));
+
+    let incoming = mutation("tenant-b", "gru", 1, DocumentValue::Integer(7));
+    let peer = MutableJournal::new(vec![incoming.row.clone()], vec![incoming]);
+    assert!(matches!(
+        repair_once_sources_bounded(&local, &peer, &scope(), 1),
+        Err(HostingError::Invalid(_))
+    ));
+}
+
+#[test]
+fn snapshot_proof_must_match_before_cursor_advance() {
+    let copied = mutation("tenant-a", "gru", 1, DocumentValue::Integer(7)).row;
+    let source = MutableJournal::new(vec![copied.clone()], Vec::new());
+    let target = MutableJournal::new(vec![copied], Vec::new());
+    let proof = prove_snapshot_reconciliation(&source, &target, &scope(), 8).unwrap();
+    assert_eq!(proof.source, proof.target);
+
+    let divergent = mutation("tenant-a", "gru", 2, DocumentValue::Integer(8)).row;
+    let target = MutableJournal::new(vec![divergent], Vec::new());
+    assert!(matches!(
+        prove_snapshot_reconciliation(&source, &target, &scope(), 8),
+        Err(HostingError::EngineFailure(_))
+    ));
 }

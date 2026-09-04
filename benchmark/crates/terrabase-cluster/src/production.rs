@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
@@ -18,11 +18,11 @@ use terrabase::member::{
     DatabaseId, DatabaseLease, LifecycleState, Member, MemberError as StorageMemberError,
     StorageHealth,
 };
-use terrabase::types::TenantId;
 use terrabase::{Engine, RegionCode};
-use terrabase_member_transport::production::{
-    ProductionDrainReport as TransportDrainReport, ProductionQuicEndpoint, ProductionRegion,
-    ProductionTransportFacts,
+pub use terrabase_member_transport::production::{
+    MemberWorkloadIdentity, ProductionDrainReport as TransportDrainReport, ProductionPeerAdmission,
+    ProductionQuicEndpoint, ProductionRegion, ProductionTlsMaterial, ProductionTransportConfig,
+    ProductionTransportError, ProductionTransportFacts, ProductionTransportLimits,
 };
 
 /// The maximum selected Regions in the initial production topology.
@@ -592,7 +592,7 @@ impl ProductionMemberRuntime {
         if !self.membership_admitted.load(Ordering::Acquire) {
             blockers.insert(ProductionReadinessBlocker::MembershipNotAdmitted);
         }
-        if !transport.bound || !transport.accepting || !transport.aws_lc_fips {
+        if !transport.bound || !transport.accepting || !transport.tls_provider_ready {
             blockers.insert(ProductionReadinessBlocker::TransportNotAccepting);
         }
         if transport.authenticated_peers < transport.configured_peers {

@@ -34,6 +34,7 @@ pub(crate) const MAX_SQL_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 pub(crate) const SQL_PROGRESS_INTERVAL: i32 = 1_000;
 pub(crate) const MAX_SQL_STEPS: u64 = 5_000_000;
 pub(crate) const MAX_SQL_TIME: Duration = Duration::from_secs(30);
+const SQL_METADATA_COLUMNS: [&str; 4] = ["_rev", "_hlc", "_created", "_updated"];
 
 const ABORT_NONE: u8 = 0;
 const ABORT_DEADLINE: u8 = 1;
@@ -125,6 +126,24 @@ pub(crate) fn execute(
     if snapshot.engine_identity() != engine.identity() {
         return Err(QueryError::SnapshotEngineMismatch);
     }
+    // FTS5 `MATCH` rides the typed seam (D-78/D-39): the in-memory SQLite
+    // copy holds plain tables with no FTS5 index, so `MATCH` has no
+    // executable form there (`unable to use function MATCH`). The SQL
+    // lowering already resolved the query string — bound or literal — into
+    // typed `Search` conditions, and the typed executor serves them exactly
+    // (analyzer term space, FTS narrowing, exact re-check). Live plans only:
+    // `EXPLAIN` keeps its SQLite path so it still reports the VM program
+    // instead of executing the statement.
+    if plan.sql_execute_only_operator().is_none()
+        && plan
+            .model()
+            .predicate()
+            .conditions()
+            .iter()
+            .any(|condition| matches!(condition, super::QueryCondition::Search { .. }))
+    {
+        return super::execute::execute(engine, &engine.index_catalog(), plan, snapshot);
+    }
     let control = SqlControl::new(runtime);
     control.check()?;
     let scope = TenantScope::from_parts(snapshot.tenant().clone(), engine.identity());
@@ -151,12 +170,12 @@ pub(crate) fn execute(
     connection
         .progress_handler(SQL_PROGRESS_INTERVAL, Some(move || progress_control.progress()))
         .map_err(|_| QueryError::StorageFailure)?;
-    load_documents(&connection, &documents, &runtime.tables, &control)?;
+    load_documents(&connection, &documents, &runtime.tables, snapshot.sequence().get(), &control)?;
     control.check()?;
     let mut statement = connection
         .prepare(&runtime.text)
         .map_err(|_| control.interrupted(QueryError::InvalidSpec))?;
-    bind_parameters(&mut statement, runtime)?;
+    let bound = bound_values(&statement, runtime)?;
     let column_count = statement.column_count();
     let mut names = Vec::with_capacity(column_count);
     let mut seen = BTreeSet::new();
@@ -167,7 +186,9 @@ pub(crate) fn execute(
         }
         names.push(name);
     }
-    let mut rows = statement.query([]).map_err(|_| control.interrupted(QueryError::InvalidSpec))?;
+    let mut rows = statement
+        .query(rusqlite::params_from_iter(bound.iter()))
+        .map_err(|_| control.interrupted(QueryError::InvalidSpec))?;
     let mut result_rows = Vec::new();
     let mut output_bytes = 0usize;
     let mut used_ids = BTreeSet::new();
@@ -249,28 +270,30 @@ fn resolve_source_id(
         .find(|id| !used_ids.contains(id))
 }
 
-fn bind_parameters(
-    statement: &mut rusqlite::Statement<'_>,
+fn bound_values(
+    statement: &rusqlite::Statement<'_>,
     runtime: &SqlRuntime,
-) -> Result<(), QueryError> {
+) -> Result<Vec<Value>, QueryError> {
+    // SQLite parameter indexes are 1-based; parameter_count is the largest
+    // index, so explicit ?3 leaves two legitimate NULL slots.
+    let mut values = vec![Value::Null; statement.parameter_count()];
     for index in 1..=statement.parameter_count() {
-        let name = statement.parameter_name(index).map_or_else(
-            || index.to_string(),
-            |name| name.trim_start_matches(['$', ':', '@', '?']).to_owned(),
-        );
-        let Some(value) = runtime.parameters.get(&name) else {
-            return Err(QueryError::InvalidSpec);
-        };
-        let value = sqlite_value(value)?;
-        statement.raw_bind_parameter(index, &value).map_err(|_| QueryError::InvalidSpec)?;
+        let name = statement
+            .parameter_name(index)
+            .map(|name| name.trim_start_matches(['$', ':', '@', '?']).to_owned())
+            .unwrap_or_else(|| index.to_string());
+        if let Some(value) = runtime.parameters.get(&name) {
+            values[index - 1] = sqlite_value(value)?;
+        }
     }
-    Ok(())
+    Ok(values)
 }
 
 fn load_documents(
     connection: &Connection,
     documents: &[Document],
     table_names: &[String],
+    snapshot_sequence: u64,
     control: &SqlControl,
 ) -> Result<(), QueryError> {
     let mut fields = BTreeMap::<String, BTreeSet<String>>::new();
@@ -291,10 +314,14 @@ fn load_documents(
         let mut schema =
             format!("CREATE TABLE \"{}\" (\"_id\" TEXT, \"body\" TEXT", quote(collection));
         for name in names {
-            if name != "_id" && name != "body" {
+            if name != "_id" && name != "body" && !SQL_METADATA_COLUMNS.contains(&name.as_str()) {
                 write!(&mut schema, ", \"{}\"", quote(name))
                     .map_err(|_| QueryError::StorageFailure)?;
             }
+        }
+        for column in SQL_METADATA_COLUMNS {
+            write!(&mut schema, ", \"{column}\" INTEGER")
+                .map_err(|_| QueryError::StorageFailure)?;
         }
         schema.push(')');
         connection
@@ -306,7 +333,17 @@ fn load_documents(
         let DocumentValue::Object(values) = document.value() else { continue };
         let Some(names) = fields.get(document.collection().as_str()) else { continue };
         let mut columns = vec!["_id".to_owned(), "body".to_owned()];
-        columns.extend(names.iter().filter(|name| *name != "_id" && *name != "body").cloned());
+        columns.extend(SQL_METADATA_COLUMNS.iter().map(|column| (*column).to_owned()));
+        columns.extend(
+            names
+                .iter()
+                .filter(|name| {
+                    *name != "_id"
+                        && *name != "body"
+                        && !SQL_METADATA_COLUMNS.contains(&name.as_str())
+                })
+                .cloned(),
+        );
         let placeholders =
             (1..=columns.len()).map(|index| format!("?{index}")).collect::<Vec<_>>().join(",");
         let sql = format!(
@@ -317,8 +354,14 @@ fn load_documents(
         let mut params = vec![
             Value::Text(document.id().as_str().to_owned()),
             Value::Text(json_value(document.value())?),
+            Value::Integer(i64::try_from(document.metadata().version()).unwrap_or(i64::MAX)),
+            Value::Integer(i64::try_from(snapshot_sequence).unwrap_or(i64::MAX)),
+            Value::Integer(i64::try_from(snapshot_sequence).unwrap_or(i64::MAX)),
+            Value::Integer(i64::try_from(snapshot_sequence).unwrap_or(i64::MAX)),
         ];
-        for name in names.iter().filter(|name| *name != "_id" && *name != "body") {
+        for name in names.iter().filter(|name| {
+            *name != "_id" && *name != "body" && !SQL_METADATA_COLUMNS.contains(&name.as_str())
+        }) {
             params.push(values.get(name).map_or(Ok(Value::Null), sqlite_value)?);
         }
         connection

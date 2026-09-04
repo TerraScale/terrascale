@@ -15,25 +15,34 @@ ingress during incident response.
 
 Import `grafana-dashboard.json` into the operator Grafana instance and select
 its Prometheus data source. The dashboard has Region and operation filters and
-shows:
+shows only metric families in the current bounded registry:
 
-- readiness, requests per second, error percentage, p99 latency, storage
-  usage, storage utilization, and worst replication lag at a glance;
-- traffic by operation and outcome;
-- p50, p95, and p99 request latency;
-- storage by tier and its 24-hour change;
-- replication lag, backlog, frontier health, active Members, and component
-  health;
-- in-flight work, queue utilization, admission rejections, commit and WAL
-  latency, and durability outcomes;
-- storage errors, compaction backlog and I/O, backup age and results, and the
-  usage-export frontier and failures.
+- readiness, requests per second, error percentage, and request p99;
+- traffic by operation and outcome, plus p50/p95/p99 request latency;
+- replication frontier health and component health;
+- admission rejections, commit latency/outcomes, and usage-export
+  frontier/failures;
+- host clock offset/refusals and direct-member egress;
+- dashboard-only API burn-rate windows and projected monthly egress.
 
-Scope the Prometheus job to one TerraBase deployment. Request rates and local
-storage bytes can be summed across its Member targets. Readiness and component
-health use the minimum; replication lag uses the maximum. Do not merge
-unrelated clusters into one dashboard total.
+No retired storage-stack panels or queries are included; the current member
+does not produce those legacy families.
+
+Scope the Prometheus job to one TerraBase deployment. Request rates and
+replication observations can be summed or reduced across its Member targets as
+described by each panel. Do not merge unrelated clusters into one dashboard
+total. Egress is billable OCI outbound only; CDN delivery is not in the
+TerraBase counter.
 
 Load `prometheus-rules.yml` through the Prometheus rule path shown in
-`prometheus.yml`. Dashboard and rule edits enter production only through
-versioned deployment configuration and a new qualification receipt.
+`prometheus.yml`. It contains recording rules for the four SLO burn windows
+and exactly two paging alerts (fast 1h/5m and slow 6h/30m). All lifecycle,
+health, durability, replication, backup, usage-export, clock, egress, and
+telemetry-gap signals are dashboard-only; OnCall must receive only the SLO
+burn-rate events.
+
+The SLO recordings currently use TBEP private host-call outcomes as a proxy.
+The public HTTP API request middleware and the independent external probe are
+not wired in this repository, so these recordings do not yet prove the D-75
+public API SLO. The external probe and Grafana/OnCall routing are deployment
+requirements owned by `ts-orchestrator`.

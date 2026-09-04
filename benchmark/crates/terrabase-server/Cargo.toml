@@ -7,19 +7,6 @@ license = "MIT"
 description = "Production TerraBase engine daemon"
 publish = false
 
-[features]
-default = ["local-crypto"]
-local-crypto = [
-  "terrabase/local-crypto",
-  "terrabase-tbep/local-crypto",
-  "terrabase-cluster/local-crypto",
-]
-production-fips = [
-  "terrabase/production-fips",
-  "terrabase-tbep/production-fips",
-  "terrabase-cluster/production-fips",
-]
-
 [lints.rust]
 unsafe_code = "deny"
 missing_docs = "deny"

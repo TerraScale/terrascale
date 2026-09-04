@@ -19,8 +19,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use aws_lc_rs::rand::{SecureRandom, SystemRandom};
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use ring::rand::{SecureRandom, SystemRandom};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use tokio::sync::Notify;
 use x509_parser::extensions::{GeneralName, ParsedExtension};
 use x509_parser::prelude::{FromDer, X509Certificate};
@@ -539,6 +539,33 @@ impl ProductionTlsMaterial {
         }
         Ok(Self { certificate_chain, private_key, member_ca_roots })
     }
+
+    /// Parses one bounded PEM bundle for the production endpoint.
+    ///
+    /// The caller remains responsible for reading files with its own
+    /// ownership, permission, and size policy. This helper only parses the
+    /// already-read bytes and never accepts ambient/default credentials.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProductionTransportError::InvalidTlsMaterial`] when any
+    /// certificate or private key cannot be parsed, or a required collection
+    /// is empty.
+    pub fn from_pem(
+        certificate_pem: &[u8],
+        private_key_pem: &[u8],
+        member_ca_pem: &[u8],
+    ) -> Result<Self, ProductionTransportError> {
+        let certificate_chain = CertificateDer::pem_slice_iter(certificate_pem)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ProductionTransportError::InvalidTlsMaterial)?;
+        let private_key = PrivateKeyDer::from_pem_slice(private_key_pem)
+            .map_err(|_| ProductionTransportError::InvalidTlsMaterial)?;
+        let member_ca_roots = CertificateDer::pem_slice_iter(member_ca_pem)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ProductionTransportError::InvalidTlsMaterial)?;
+        Self::try_new(certificate_chain, private_key, member_ca_roots)
+    }
 }
 
 /// A frame queue whose frame and byte use are both bounded.
@@ -625,8 +652,8 @@ pub struct ProductionTransportFacts {
     pub mutual_tls: bool,
     /// TLS and QUIC early application data are disabled.
     pub zero_rtt_disabled: bool,
-    /// The selected provider reports FIPS mode.
-    pub aws_lc_fips: bool,
+    /// The selected TLS provider is installed and enforces TLS 1.3 mTLS.
+    pub tls_provider_ready: bool,
     /// Peers admitted by the current membership version.
     pub configured_peers: usize,
     /// Currently authenticated application sessions.
@@ -660,12 +687,13 @@ pub struct ProductionQuicEndpoint {
 }
 
 impl ProductionQuicEndpoint {
-    /// Binds one endpoint with AWS-LC FIPS, TLS 1.3-only mutual
+    /// Binds one endpoint with the single non-FIPS ring provider (D-41
+    /// defers FIPS builds past the first customer), TLS 1.3-only mutual
     /// authentication, early data disabled, and bounded QUIC flow control.
     ///
     /// # Errors
     ///
-    /// Returns a typed transport error when FIPS mode is unavailable, the
+    /// Returns a typed transport error when the
     /// local certificate identity differs from the configured identity, TLS
     /// material cannot be installed, or the UDP address cannot be bound.
     #[allow(clippy::too_many_lines)]
@@ -673,7 +701,6 @@ impl ProductionQuicEndpoint {
         config: ProductionTransportConfig,
         tls: ProductionTlsMaterial,
     ) -> Result<Self, ProductionTransportError> {
-        aws_lc_rs::try_fips_mode().map_err(|_| ProductionTransportError::FipsUnavailable)?;
         let leaf =
             tls.certificate_chain.first().ok_or(ProductionTransportError::InvalidTlsMaterial)?;
         let local_identity = MemberWorkloadIdentity::from_leaf_certificate(leaf)?;
@@ -681,7 +708,7 @@ impl ProductionQuicEndpoint {
             return Err(ProductionTransportError::IdentityMismatch);
         }
 
-        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
         let mut roots = rustls::RootCertStore::empty();
         for root in &tls.member_ca_roots {
             roots.add(root.clone()).map_err(|_| ProductionTransportError::InvalidTlsMaterial)?;
@@ -812,7 +839,7 @@ impl ProductionQuicEndpoint {
             tls13_only: true,
             mutual_tls: true,
             zero_rtt_disabled: true,
-            aws_lc_fips: aws_lc_rs::try_fips_mode().is_ok(),
+            tls_provider_ready: true,
             configured_peers: self.config.peers.len(),
             authenticated_connections: self.state.authenticated_connections.load(Ordering::Acquire),
             authenticated_peers: self.state.authenticated_peer_count(),
@@ -1413,8 +1440,6 @@ pub enum ProductionTransportError {
     InvalidLimits,
     /// Certificate, key, or CA material could not form the required mTLS policy.
     InvalidTlsMaterial,
-    /// The AWS-LC provider did not report FIPS mode.
-    FipsUnavailable,
     /// The local UDP endpoint could not bind.
     Bind,
     /// A peer was absent from the admitted membership.
@@ -1661,7 +1686,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn two_fips_mtls_endpoints_exchange_authenticated_frames() {
+    async fn two_mtls_endpoints_exchange_authenticated_frames() {
         let first_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("first port");
         let second_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("second port");
         let first_address = first_socket.local_addr().expect("first address");

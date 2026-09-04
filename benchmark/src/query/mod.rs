@@ -32,7 +32,6 @@ mod result;
 mod spec;
 mod sql_execute;
 mod statistics;
-mod vector;
 
 pub mod bulk;
 mod family_sources;
@@ -46,8 +45,6 @@ mod family_sources_tests;
 mod includes_tests;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod vector_tests;
 
 use std::sync::Arc;
 
@@ -102,13 +99,6 @@ pub(crate) use sql::SqlErrorClass;
 /// The launch live-subset tag and the typed subscribe refusal (E-4, D-78):
 /// the whole `NotSubscribable` decision, pinned for SDK conformance.
 pub use sql::{LiveSubset, NotSubscribable};
-pub use vector::{
-    DEFAULT_VECTOR_SEARCH_LIMIT, MAX_VECTOR_DIMENSIONS, MAX_VECTOR_SEARCH_LIMIT,
-    MIN_VECTOR_DIMENSIONS, VECTOR_PREDICATE_VERSION, VECTOR_SEARCH_WINDOW, VectorEmbeddingType,
-    VectorIndexDeclaration, VectorIndexDrift, VectorIndexError, VectorMatch, VectorOptions,
-    VectorOptionsError, VectorPredicate, VectorSearchError, VectorSearchMode, VectorSearchRequest,
-    VectorSearchResult, VectorSearchStatistics, VectorSimilarity,
-};
 
 use crate::{
     engine::Engine,
@@ -382,9 +372,10 @@ impl<'engine> QueryStore<'engine> {
         cancellation: Option<crate::types::Cancellation>,
         parameters: sql::SqlParameters,
     ) -> Result<QueryPlan, QueryError> {
-        let parsed = sql::parse(text.as_str(), crate::operations::MAX_SQL_TEXT_BYTES)
+        let runtime_text = normalize_sql_parameter_markers(text.as_str());
+        let parsed = sql::parse(&runtime_text, crate::operations::MAX_SQL_TEXT_BYTES)
             .map_err(|_| QueryError::InvalidSpec)?;
-        sql::validate_parameters(text.as_str(), &parameters)
+        sql::validate_parameters(&runtime_text, &parameters)
             .map_err(|_| QueryError::InvalidSpec)?;
         let lowered = match sql::lower(&parsed, &parameters) {
             Ok(lowered) => lowered,
@@ -413,7 +404,7 @@ impl<'engine> QueryStore<'engine> {
                 return Ok(QueryPlan::new_sql(
                     query,
                     sql::SqlRuntime {
-                        text: text.as_str().to_owned(),
+                        text: runtime_text,
                         parameters,
                         tables: sql::table_names(&parsed),
                         deadline,
@@ -456,7 +447,7 @@ impl<'engine> QueryStore<'engine> {
         Ok(QueryPlan::new_sql(
             query,
             sql::SqlRuntime {
-                text: text.as_str().to_owned(),
+                text: runtime_text,
                 parameters,
                 tables: sql::table_names(&parsed),
                 deadline,
@@ -543,6 +534,106 @@ impl<'engine> QueryStore<'engine> {
     ) -> Result<QueryExplanation, QueryError> {
         execute::explain(self.engine, plan, snapshot)
     }
+}
+
+/// Normalizes numbered SQLite markers for the SQL front end. `sqlparser`
+/// preserves `?1` as a marker containing `?`, while the binding seam uses
+/// `1`; named `:1` is equivalent in SQLite. Quoted text and comments remain
+/// byte-for-byte unchanged.
+fn normalize_sql_parameter_markers(text: &str) -> String {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Mode {
+        Code,
+        Single,
+        Double,
+        Backtick,
+        Bracket,
+        LineComment,
+        BlockComment,
+    }
+    let mut chars = text.chars().peekable();
+    let mut mode = Mode::Code;
+    let mut output = String::with_capacity(text.len());
+    while let Some(character) = chars.next() {
+        match mode {
+            Mode::Code => match character {
+                '\'' => {
+                    output.push(character);
+                    mode = Mode::Single;
+                }
+                '"' => {
+                    output.push(character);
+                    mode = Mode::Double;
+                }
+                '`' => {
+                    output.push(character);
+                    mode = Mode::Backtick;
+                }
+                '[' => {
+                    output.push(character);
+                    mode = Mode::Bracket;
+                }
+                '-' if chars.peek() == Some(&'-') => {
+                    output.push_str("--");
+                    chars.next();
+                    mode = Mode::LineComment;
+                }
+                '/' if chars.peek() == Some(&'*') => {
+                    output.push_str("/*");
+                    chars.next();
+                    mode = Mode::BlockComment;
+                }
+                '?' if chars.peek().is_some_and(char::is_ascii_digit) => output.push(':'),
+                _ => output.push(character),
+            },
+            Mode::Single => {
+                output.push(character);
+                if character == '\'' {
+                    if chars.peek() == Some(&'\'') {
+                        output.push(chars.next().expect("peeked quote"));
+                    } else {
+                        mode = Mode::Code;
+                    }
+                }
+            }
+            Mode::Double => {
+                output.push(character);
+                if character == '"' {
+                    if chars.peek() == Some(&'"') {
+                        output.push(chars.next().expect("peeked quote"));
+                    } else {
+                        mode = Mode::Code;
+                    }
+                }
+            }
+            Mode::Backtick => {
+                output.push(character);
+                if character == '`' {
+                    mode = Mode::Code;
+                }
+            }
+            Mode::Bracket => {
+                output.push(character);
+                if character == ']' {
+                    mode = Mode::Code;
+                }
+            }
+            Mode::LineComment => {
+                output.push(character);
+                if character == '\n' || character == '\r' {
+                    mode = Mode::Code;
+                }
+            }
+            Mode::BlockComment => {
+                output.push(character);
+                if character == '*' && chars.peek() == Some(&'/') {
+                    output.push(chars.next().expect("peeked slash"));
+                    mode = Mode::Code;
+                }
+            }
+        }
+    }
+    output
 }
 
 /// Validates one public SQL text through the read-only front end.

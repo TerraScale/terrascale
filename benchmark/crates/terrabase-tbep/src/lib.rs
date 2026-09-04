@@ -58,11 +58,6 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
-#[cfg(all(feature = "local-crypto", feature = "production-fips"))]
-compile_error!("select exactly one of `local-crypto` or `production-fips`");
-#[cfg(not(any(feature = "local-crypto", feature = "production-fips")))]
-compile_error!("select one of `local-crypto` or `production-fips`");
-
 pub mod anti_entropy;
 pub mod catalog;
 pub mod engine_host;

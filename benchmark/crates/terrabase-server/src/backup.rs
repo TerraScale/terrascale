@@ -4,8 +4,9 @@
 //! hot path (D-29); restore always lands as a new database.
 //!
 //! Readiness is judged from replica artifacts (the snapshot file inside a
-//! generation directory), never from the child process being alive — a
-//! stream that spawns happily and ships nothing is not ready.
+//! generation directory) after polling child liveness — a stream that spawns
+//! happily and ships nothing is not ready, and a dead child is restarted only
+//! within a bounded budget.
 //!
 //! Object-storage lifecycle (segments older than 24 h to Infrequent
 //! Access, older than 7 days to Archive, same-region bucket) is
@@ -20,6 +21,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use terrabase::encryption::{DatabaseKeyVersion, KeyProviderIdentity};
+use terrabase::regions::RegionCode;
+
+/// A bounded number of child restarts.  A repeatedly failing backup must not
+/// become an unbounded process-spawn loop (or hide a broken deployment).
+const MAX_RESTARTS: u8 = 3;
+
 /// The database file Litestream streams, inside one engine location.
 #[must_use]
 pub fn database_file(location: &Path) -> PathBuf {
@@ -29,16 +37,155 @@ pub fn database_file(location: &Path) -> PathBuf {
 /// One attached stream: the child and where its artifacts land.
 struct Stream {
     child: Child,
-    /// The replica directory generations live under.
+    spec: StreamSpec,
+    restarts: u8,
+}
+
+/// An attach operation that has reserved a registry slot but has not yet
+/// spawned a child.  Keeping this state in the registry closes the duplicate
+/// attach race without holding a mutex across filesystem or process I/O.
+enum StreamSlot {
+    Starting(StreamSpec),
+    Running(Stream),
+    Restarting(StreamSpec, u8),
+    Failed(StreamSpec, u8),
+}
+
+#[derive(Clone)]
+struct StreamSpec {
+    file: PathBuf,
     replica_dir: PathBuf,
-    /// The `file://` URL `restore` consumes for this database.
     replica_url: String,
+    destination_region: RegionCode,
+    endpoint: Option<String>,
+    retention: String,
+    encryption: BackupEncryptionConfig,
+}
+
+/// The encryption metadata required for every backup stream.
+///
+/// Litestream remains the transport process; TerraBase's encryption seam
+/// carries the provider and key-version identity into the generated stream
+/// configuration so the eventual provider adapter can authorize the backup
+/// key.  No key material is placed in the configuration or logs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BackupEncryptionConfig {
+    /// The service-managed key provider identity.
+    pub provider: KeyProviderIdentity,
+    /// The database key version used for this backup artifact family.
+    pub key_version: DatabaseKeyVersion,
+}
+
+impl BackupEncryptionConfig {
+    /// Constructs mandatory backup encryption metadata.
+    #[must_use]
+    pub const fn new(provider: KeyProviderIdentity, key_version: DatabaseKeyVersion) -> Self {
+        Self { provider, key_version }
+    }
+}
+
+/// Where one database's backup artifacts are written.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BackupDestination {
+    /// A local filesystem replica used by development and CI.
+    File {
+        /// Root under which the database-specific replica directory is made.
+        root: PathBuf,
+        /// Canonical placement Region owning this destination.
+        region: RegionCode,
+    },
+    /// An OCI S3-compatible Object Storage bucket in one canonical Region.
+    ObjectStorage {
+        /// S3-compatible endpoint URL supplied by the provider adapter.
+        endpoint: String,
+        /// Object Storage bucket.
+        bucket: String,
+        /// Database-independent prefix in the bucket.
+        prefix: String,
+        /// Canonical placement Region owning this destination.
+        region: RegionCode,
+    },
+}
+
+impl BackupDestination {
+    fn region(&self) -> RegionCode {
+        match self {
+            Self::File { region, .. } | Self::ObjectStorage { region, .. } => *region,
+        }
+    }
+
+    fn replica(&self, database: &str) -> (PathBuf, String, Option<String>) {
+        match self {
+            Self::File { root, .. } => {
+                let dir = root.join(database);
+                (dir.clone(), format!("file://{}", dir.display()), None)
+            }
+            Self::ObjectStorage { endpoint, bucket, prefix, .. } => {
+                let path = if prefix.is_empty() {
+                    database.to_owned()
+                } else {
+                    format!("{prefix}/{database}")
+                };
+                (PathBuf::new(), format!("s3://{bucket}/{path}"), Some(endpoint.clone()))
+            }
+        }
+    }
+
+    fn valid(&self) -> bool {
+        match self {
+            Self::File { root, .. } => !root.as_os_str().is_empty(),
+            Self::ObjectStorage { endpoint, bucket, prefix, .. } => {
+                (endpoint.starts_with("https://") || endpoint.starts_with("http://"))
+                    && !bucket.is_empty()
+                    && !prefix.contains("..")
+                    && !prefix.chars().any(char::is_control)
+            }
+        }
+    }
+}
+
+/// The complete, validated input needed to attach one stream.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackupAttachConfig {
+    /// The live SQLite location being streamed.
+    pub location: PathBuf,
+    /// Same-Region backup destination.
+    pub destination: BackupDestination,
+    /// Litestream retention value, for example `168h`.
+    pub retention: String,
+    /// Mandatory per-database backup encryption metadata.
+    pub encryption: BackupEncryptionConfig,
+}
+
+impl BackupAttachConfig {
+    /// Builds the complete stream input; encryption is intentionally a
+    /// required argument rather than an optional setting.
+    #[must_use]
+    pub const fn new(
+        location: PathBuf,
+        destination: BackupDestination,
+        retention: String,
+        encryption: BackupEncryptionConfig,
+    ) -> Self {
+        Self { location, destination, retention, encryption }
+    }
+}
+
+/// One existing database stream from the durable member catalog.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackupCatalogEntry {
+    /// Stable database name.
+    pub database: String,
+    /// Region and encrypted destination/stream configuration.
+    pub config: BackupAttachConfig,
+    /// Region where the database is placed.  The destination must match it.
+    pub placement_region: RegionCode,
 }
 
 /// The per-member fleet of Litestream streams, one per hosted database.
 pub struct BackupStreams {
     litestream: PathBuf,
-    streams: Mutex<BTreeMap<String, Stream>>,
+    streams: Mutex<BTreeMap<String, StreamSlot>>,
     /// The billing plan per database (S-06 plan plumbing, D-25): the
     /// retention window each stream is configured with and each `?at=`
     /// gate is judged against. The billing lane owns this map post-M1
@@ -70,13 +217,31 @@ impl BackupStreams {
         Self::new(Self::discover().unwrap_or_default())
     }
 
+    /// Opens a fleet and immediately re-attaches the explicit durable
+    /// catalog.  This is the startup seam for a Member composition; callers
+    /// that need to report an attach refusal can fail startup on the returned
+    /// error before exposing readiness.
+    pub fn open_from_catalog<I>(litestream: PathBuf, catalog: I) -> io::Result<Self>
+    where
+        I: IntoIterator<Item = BackupCatalogEntry>,
+    {
+        let fleet = Self::new(litestream);
+        fleet.reattach_catalog(catalog)?;
+        Ok(fleet)
+    }
+
     /// Whether a stream child runs for the database.
     ///
     /// # Panics
     ///
     /// Panics if the stream registry lock is poisoned.
     pub fn attached(&self, database: &str) -> bool {
-        self.streams.lock().expect("the stream lock is not poisoned").contains_key(database)
+        self.supervise(database);
+        self.streams
+            .lock()
+            .expect("the stream lock is not poisoned")
+            .get(database)
+            .is_some_and(|slot| matches!(slot, StreamSlot::Running(_)))
     }
 
     /// The database's billing plan (S-06 plan plumbing, D-25): the stored
@@ -175,43 +340,321 @@ impl BackupStreams {
         replica_root: &Path,
         retention: &str,
     ) -> io::Result<()> {
-        let file = database_file(location);
-        let replica_dir = replica_root.join(database);
-        std::fs::create_dir_all(&replica_dir)?;
-        let replica_url = format!("file://{}", replica_dir.display());
-        let config = replica_dir.join("litestream.yml");
-        std::fs::write(
-            &config,
-            format!(
-                "dbs:\n  - path: {}\n    replicas:\n      - url: {replica_url}\n        retention: {retention}\n",
-                file.display()
-            ),
-        )?;
-        let log = std::fs::File::create(replica_dir.join("litestream.log"))?;
-        let child = Command::new(&self.litestream)
+        let encryption = BackupEncryptionConfig::new(
+            KeyProviderIdentity::LocalFile,
+            DatabaseKeyVersion::generate(),
+        );
+        let config = BackupAttachConfig {
+            location: location.to_path_buf(),
+            destination: BackupDestination::File {
+                root: replica_root.to_path_buf(),
+                // Legacy callers predate the placement catalog.  The
+                // explicit catalog path below always supplies the real Region.
+                region: RegionCode::GRU,
+            },
+            retention: retention.to_owned(),
+            encryption,
+        };
+        self.attach_with_config(database, RegionCode::GRU, config)
+    }
+
+    /// Attaches a stream from an explicit placement and encryption config.
+    /// The destination Region must equal the database placement Region and
+    /// encryption metadata cannot be omitted by this path.
+    ///
+    /// # Errors
+    ///
+    /// Returns a validation, filesystem, duplicate, or process-spawn error.
+    pub fn attach_with_config(
+        &self,
+        database: &str,
+        placement_region: RegionCode,
+        config: BackupAttachConfig,
+    ) -> io::Result<()> {
+        let spec = self.spec_for(database, placement_region, config)?;
+        {
+            let mut streams = self.streams.lock().expect("the stream lock is not poisoned");
+            if streams.contains_key(database) {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("a stream for {database} already runs or starts"),
+                ));
+            }
+            // Reserve before touching the filesystem or spawning.  A
+            // concurrent duplicate now fails without creating a child.
+            streams.insert(database.to_owned(), StreamSlot::Starting(spec.clone()));
+        }
+
+        let child = match self.spawn(&spec) {
+            Ok(child) => child,
+            Err(error) => {
+                self.streams.lock().expect("the stream lock is not poisoned").remove(database);
+                return Err(error);
+            }
+        };
+        let mut streams = self.streams.lock().expect("the stream lock is not poisoned");
+        match streams.get_mut(database) {
+            Some(slot @ StreamSlot::Starting(_)) => {
+                *slot = StreamSlot::Running(Stream { child, spec, restarts: 0 });
+                Ok(())
+            }
+            // detach() may have won while spawn was outside the lock.  Never
+            // orphan the process in that case.
+            _ => {
+                drop(streams);
+                let mut child = child;
+                let _ = child.kill();
+                let _ = child.wait();
+                Err(io::Error::new(io::ErrorKind::Interrupted, "backup attach was cancelled"))
+            }
+        }
+    }
+
+    /// Re-attaches every existing stream from the durable member catalog.
+    /// Startup callers must pass the catalog explicitly; no directory scan is
+    /// treated as authority because it cannot prove placement or key policy.
+    /// If any entry refuses, all streams attached by this call are stopped.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first entry's refusal and leaves no partially reattached
+    /// child behind.
+    pub fn reattach_catalog<I>(&self, catalog: I) -> io::Result<()>
+    where
+        I: IntoIterator<Item = BackupCatalogEntry>,
+    {
+        let mut attached = Vec::new();
+        for entry in catalog {
+            if let Err(error) =
+                self.attach_with_config(&entry.database, entry.placement_region, entry.config)
+            {
+                for database in attached {
+                    self.detach(&database);
+                }
+                return Err(error);
+            }
+            attached.push(entry.database);
+        }
+        Ok(())
+    }
+
+    /// Alias for startup composition code that calls this operation an
+    /// attach rather than a reattach.
+    pub fn attach_catalog<I>(&self, catalog: I) -> io::Result<()>
+    where
+        I: IntoIterator<Item = BackupCatalogEntry>,
+    {
+        self.reattach_catalog(catalog)
+    }
+
+    /// Borrowed-catalog form for runtime composition that retains its typed
+    /// catalog for other startup services.
+    pub fn reattach_existing(&self, catalog: &[BackupCatalogEntry]) -> io::Result<()> {
+        self.reattach_catalog(catalog.iter().cloned())
+    }
+
+    /// Startup-composition spelling of [`Self::reattach_catalog`].
+    pub fn start_from_catalog<I>(&self, catalog: I) -> io::Result<()>
+    where
+        I: IntoIterator<Item = BackupCatalogEntry>,
+    {
+        self.reattach_catalog(catalog)
+    }
+
+    fn spec_for(
+        &self,
+        database: &str,
+        placement_region: RegionCode,
+        config: BackupAttachConfig,
+    ) -> io::Result<StreamSpec> {
+        if !valid_database_name(database)
+            || config.retention.trim().is_empty()
+            || !config.destination.valid()
+            || config.destination.region() != placement_region
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "backup destination must be in the database placement Region and retention must be set",
+            ));
+        }
+        let (mut replica_dir, replica_url, endpoint) = config.destination.replica(database);
+        if replica_dir.as_os_str().is_empty() {
+            replica_dir = config
+                .location
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(".terrabase-litestream")
+                .join(database);
+        }
+        Ok(StreamSpec {
+            file: database_file(&config.location),
+            replica_dir,
+            replica_url,
+            destination_region: placement_region,
+            endpoint,
+            retention: config.retention,
+            encryption: config.encryption,
+        })
+    }
+
+    fn spawn(&self, spec: &StreamSpec) -> io::Result<Child> {
+        if !spec.replica_dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(&spec.replica_dir)?;
+        }
+        let config = spec.replica_dir.join("litestream.yml");
+        // The provider adapter owns object-storage credentials.  The key
+        // identity is metadata only; plaintext key material never reaches
+        // Litestream, its environment, or this config.
+        let endpoint = spec
+            .endpoint
+            .as_deref()
+            .map_or_else(String::new, |endpoint| format!("        endpoint: {endpoint}\n"));
+        let yaml = format!(
+            "# terrabase-backup-provider: {}\n# terrabase-backup-key-version: {}\n# terrabase-backup-region: {}\ndbs:\n  - path: {}\n    replicas:\n      - url: {}\n{endpoint}        retention: {}\n        sync-interval: 10s\n        encryption:\n          provider: {}\n          key-version: {}\n",
+            spec.encryption.provider.as_str(),
+            spec.encryption.key_version,
+            spec.destination_region,
+            spec.file.display(),
+            spec.replica_url,
+            spec.retention,
+            spec.encryption.provider.as_str(),
+            spec.encryption.key_version,
+        );
+        std::fs::write(&config, yaml)?;
+        let log_dir = if spec.replica_dir.as_os_str().is_empty() {
+            spec.file.parent().unwrap_or_else(|| Path::new("."))
+        } else {
+            &spec.replica_dir
+        };
+        std::fs::create_dir_all(log_dir)?;
+        let log = std::fs::File::create(log_dir.join("litestream.log"))?;
+        Command::new(&self.litestream)
             .arg("replicate")
             .arg("-config")
             .arg(&config)
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log))
-            .spawn()?;
-        let mut streams = self.streams.lock().expect("the stream lock is not poisoned");
-        if streams.contains_key(database) {
-            return Err(io::Error::other(format!("a stream for {database} already runs")));
-        }
-        streams.insert(database.to_owned(), Stream { child, replica_dir, replica_url });
-        Ok(())
+            .spawn()
     }
 
     /// Readiness from artifacts: some generation directory holds a
-    /// non-empty snapshot of the database file. Never asks the child.
+    /// non-empty snapshot of the database file, and the child is live (or was
+    /// restarted within the bounded supervision budget).
     ///
     /// # Panics
     ///
     /// Panics if the stream registry lock is poisoned.
     pub fn is_ready(&self, database: &str) -> bool {
+        self.supervise(database);
         let streams = self.streams.lock().expect("the stream lock is not poisoned");
-        streams.get(database).is_some_and(|stream| snapshot_artifact(&stream.replica_dir).is_some())
+        streams.get(database).is_some_and(|slot| {
+            matches!(slot, StreamSlot::Running(stream)
+                if snapshot_artifact(&stream.spec.replica_dir).is_some())
+        })
+    }
+
+    /// Polls the stream child and reports whether a running child remains in
+    /// the registry.  Readiness additionally requires a snapshot artifact.
+    #[must_use]
+    pub fn check_liveness(&self, database: &str) -> bool {
+        self.supervise(database);
+        self.streams
+            .lock()
+            .expect("the stream lock is not poisoned")
+            .get(database)
+            .is_some_and(|slot| matches!(slot, StreamSlot::Running(_)))
+    }
+
+    /// Polls one child with `try_wait` and performs at most the bounded
+    /// restart budget.  This is intentionally synchronous: readiness probes
+    /// get an authoritative liveness answer and never retain a dead child.
+    fn supervise(&self, database: &str) {
+        let (spec, attempt) = {
+            let mut streams = self.streams.lock().expect("the stream lock is not poisoned");
+            let Some(slot) = streams.get_mut(database) else { return };
+            match slot {
+                StreamSlot::Running(stream) => match stream.child.try_wait() {
+                    Ok(None) => return,
+                    Ok(Some(_)) => {
+                        let attempt = stream.restarts.saturating_add(1);
+                        let spec = stream.spec.clone();
+                        if attempt > MAX_RESTARTS {
+                            *slot = StreamSlot::Failed(spec, attempt);
+                            return;
+                        }
+                        *slot = StreamSlot::Restarting(spec.clone(), attempt);
+                        (spec, attempt)
+                    }
+                    Err(_) => {
+                        let _ = stream.child.kill();
+                        let _ = stream.child.wait();
+                        let attempt = stream.restarts.saturating_add(1);
+                        let spec = stream.spec.clone();
+                        if attempt > MAX_RESTARTS {
+                            *slot = StreamSlot::Failed(spec, attempt);
+                            return;
+                        }
+                        *slot = StreamSlot::Restarting(spec.clone(), attempt);
+                        (spec, attempt)
+                    }
+                },
+                StreamSlot::Failed(spec, previous) if *previous < MAX_RESTARTS => {
+                    let attempt = previous.saturating_add(1);
+                    let spec = spec.clone();
+                    *slot = StreamSlot::Restarting(spec.clone(), attempt);
+                    (spec, attempt)
+                }
+                StreamSlot::Failed(_, _)
+                | StreamSlot::Starting(_)
+                | StreamSlot::Restarting(_, _) => {
+                    return;
+                }
+            }
+        };
+
+        let result = self.spawn(&spec);
+        let mut streams = self.streams.lock().expect("the stream lock is not poisoned");
+        match result {
+            Ok(mut child) => {
+                // A process can exit between spawn and registry install.  Do
+                // not publish a dead replacement as a ready stream.
+                if !child.try_wait().is_ok_and(|status| status.is_none()) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if attempt >= MAX_RESTARTS {
+                        streams.remove(database);
+                    } else if streams.get(database).is_some_and(|slot| {
+                        matches!(slot, StreamSlot::Restarting(_, current) if *current == attempt)
+                    }) {
+                        if let Some(slot) = streams.get_mut(database) {
+                            *slot = StreamSlot::Failed(spec, attempt);
+                        }
+                    }
+                    return;
+                }
+                let install = streams.get_mut(database).is_some_and(|slot| {
+                    matches!(slot, StreamSlot::Restarting(_, current) if *current == attempt)
+                });
+                if install {
+                    if let Some(slot) = streams.get_mut(database) {
+                        *slot = StreamSlot::Running(Stream { child, spec, restarts: attempt });
+                    }
+                } else {
+                    let mut child = child;
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+            Err(_) => if attempt >= MAX_RESTARTS {
+                streams.remove(database);
+            } else if streams.get(database).is_some_and(
+                |slot| matches!(slot, StreamSlot::Restarting(_, current) if *current == attempt),
+            ) {
+                if let Some(slot) = streams.get_mut(database) {
+                    *slot = StreamSlot::Failed(spec, attempt);
+                }
+            },
+        }
     }
 
     /// Polls [`Self::is_ready`] until it holds or the deadline passes.
@@ -276,7 +719,12 @@ impl BackupStreams {
             let streams = self.streams.lock().expect("the stream lock is not poisoned");
             streams
                 .get(database)
-                .map(|stream| stream.replica_url.clone())
+                .and_then(|slot| match slot {
+                    StreamSlot::Running(stream) => Some(stream.spec.replica_url.clone()),
+                    StreamSlot::Starting(_)
+                    | StreamSlot::Restarting(_, _)
+                    | StreamSlot::Failed(_, _) => None,
+                })
                 .ok_or_else(|| RestoreError::NotStreamed(database.to_owned()))?
         };
         let mut command = Command::new(&self.litestream);
@@ -311,7 +759,7 @@ impl BackupStreams {
     ///
     /// Panics if the stream registry or plan lock is poisoned.
     pub fn detach(&self, database: &str) {
-        if let Some(mut stream) =
+        if let Some(StreamSlot::Running(mut stream)) =
             self.streams.lock().expect("the stream lock is not poisoned").remove(database)
         {
             let _ = stream.child.kill();
@@ -330,6 +778,19 @@ impl BackupStreams {
             self.streams.lock().expect("the stream lock is not poisoned").keys().cloned().collect();
         for database in streams {
             self.detach(&database);
+        }
+    }
+}
+
+impl Drop for BackupStreams {
+    fn drop(&mut self) {
+        let streams =
+            std::mem::take(self.streams.get_mut().expect("the stream lock is not poisoned"));
+        for slot in streams.into_values() {
+            if let StreamSlot::Running(mut stream) = slot {
+                let _ = stream.child.kill();
+                let _ = stream.child.wait();
+            }
         }
     }
 }
@@ -550,6 +1011,15 @@ fn snapshot_artifact(replica_dir: &Path) -> Option<PathBuf> {
         .flatten()
         .map(|entry| entry.path())
         .find(|path| std::fs::metadata(path).is_ok_and(|meta| meta.len() > 0))
+}
+
+fn valid_database_name(database: &str) -> bool {
+    (1..=63).contains(&database.len())
+        && database.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+        })
+        && !database.starts_with('-')
+        && !database.ends_with('-')
 }
 
 /// Counts the WAL segments shipped so far (LTX level 0) — tests wait on
@@ -897,6 +1367,225 @@ mod tests {
         );
         fleet.detach("database-a");
         assert_eq!(fleet.plan_for("database-a"), DEFAULT_PLAN);
+    }
+
+    #[cfg(unix)]
+    fn fake_litestream(label: &str, marker: &Path, exit_mode: &str) -> (TestLocation, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = TestLocation::new(label);
+        std::fs::create_dir_all(directory.path()).expect("the fake process directory creates");
+        let binary = directory.path().join("litestream");
+        let script = format!(
+            "#!/bin/sh\nMARKER={marker}\nprintf '%s\\n' \"$$\" >> \"$MARKER\"\nif [ \"{exit_mode}\" = \"always\" ] || ([ \"{exit_mode}\" = \"once\" ] && [ \"$(wc -l < \"$MARKER\")\" -eq 1 ]); then exit 23; fi\nexec sleep 1000\n"
+        );
+        std::fs::write(&binary, script).expect("the fake process writes");
+        let mut permissions =
+            std::fs::metadata(&binary).expect("the fake process exists").permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&binary, permissions).expect("the fake process is executable");
+        (directory, binary)
+    }
+
+    #[cfg(unix)]
+    fn explicit_config(
+        location: &Path,
+        replica_root: &Path,
+        region: RegionCode,
+    ) -> BackupAttachConfig {
+        BackupAttachConfig {
+            location: location.to_path_buf(),
+            destination: BackupDestination::File { root: replica_root.to_path_buf(), region },
+            retention: "24h".to_owned(),
+            encryption: BackupEncryptionConfig::new(
+                KeyProviderIdentity::LocalFile,
+                DatabaseKeyVersion::generate(),
+            ),
+        }
+    }
+
+    #[cfg(unix)]
+    fn marker_lines(path: &Path) -> usize {
+        std::fs::read_to_string(path).map_or(0, |text| text.lines().count())
+    }
+
+    #[cfg(unix)]
+    fn wait_for_marker(path: &Path) {
+        wait_for_marker_count(path, 1);
+    }
+
+    #[cfg(unix)]
+    fn wait_for_marker_count(path: &Path, count: usize) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while marker_lines(path) < count {
+            assert!(std::time::Instant::now() < deadline, "the fake process starts");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_catalog_requires_same_region_and_encryption_metadata() {
+        let fleet = BackupStreams::new(PathBuf::from("/does/not/spawn"));
+        let location = TestLocation::new("catalog-location");
+        let replica = TestLocation::new("catalog-replica");
+        let config = explicit_config(location.path(), replica.path(), RegionCode::SFO);
+        let refused = fleet.attach_with_config("database-a", RegionCode::GRU, config);
+        assert_eq!(
+            refused.expect_err("a cross-region destination is refused").kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert!(!fleet.attached("database-a"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_catalog_reattaches_every_existing_database() {
+        let marker = TestLocation::new("catalog-marker");
+        std::fs::create_dir_all(marker.path()).expect("the marker directory creates");
+        let marker_path = marker.path().join("pids");
+        let (_binary_dir, binary) = fake_litestream("catalog-process", &marker_path, "never");
+        let location_a = TestLocation::new("catalog-location-a");
+        let location_b = TestLocation::new("catalog-location-b");
+        let replica_a = TestLocation::new("catalog-replica-a");
+        let replica_b = TestLocation::new("catalog-replica-b");
+        let catalog = vec![
+            BackupCatalogEntry {
+                database: "database-a".to_owned(),
+                config: explicit_config(location_a.path(), replica_a.path(), RegionCode::GRU),
+                placement_region: RegionCode::GRU,
+            },
+            BackupCatalogEntry {
+                database: "database-b".to_owned(),
+                config: explicit_config(location_b.path(), replica_b.path(), RegionCode::SFO),
+                placement_region: RegionCode::SFO,
+            },
+        ];
+        let fleet = BackupStreams::open_from_catalog(binary, catalog)
+            .expect("the startup catalog reattaches");
+        wait_for_marker_count(&marker_path, 2);
+        assert!(fleet.attached("database-a"));
+        assert!(fleet.attached("database-b"));
+        assert_eq!(marker_lines(&marker_path), 2);
+        let yaml = std::fs::read_to_string(replica_a.path().join("database-a/litestream.yml"))
+            .expect("the stream config is written");
+        assert!(yaml.contains("encryption:") && yaml.contains("key-version:"));
+        fleet.detach_all();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn concurrent_duplicate_attach_spawns_one_fake_process() {
+        let marker = TestLocation::new("duplicate-marker");
+        std::fs::create_dir_all(marker.path()).expect("the marker directory creates");
+        let marker_path = marker.path().join("pids");
+        let (_binary_dir, binary) = fake_litestream("duplicate-process", &marker_path, "never");
+        let location = TestLocation::new("duplicate-location");
+        let replica = TestLocation::new("duplicate-replica");
+        let fleet = Arc::new(BackupStreams::new(binary));
+        let config = explicit_config(location.path(), replica.path(), RegionCode::GRU);
+        let first = {
+            let fleet = Arc::clone(&fleet);
+            let config = config.clone();
+            std::thread::spawn(move || {
+                fleet.attach_with_config("database-a", RegionCode::GRU, config)
+            })
+        };
+        let second = {
+            let fleet = Arc::clone(&fleet);
+            std::thread::spawn(move || {
+                fleet.attach_with_config("database-a", RegionCode::GRU, config)
+            })
+        };
+        let first = first.join().expect("the first attach joins");
+        let second = second.join().expect("the duplicate attach joins");
+        assert!(first.is_ok() ^ second.is_ok(), "exactly one attach wins: {first:?} {second:?}");
+        wait_for_marker(&marker_path);
+        assert_eq!(marker_lines(&marker_path), 1, "the duplicate must not spawn a leaked process");
+        fleet.detach_all();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exited_child_is_restarted_only_within_the_bound() {
+        let marker = TestLocation::new("restart-marker");
+        std::fs::create_dir_all(marker.path()).expect("the marker directory creates");
+        let marker_path = marker.path().join("pids");
+        let (_binary_dir, binary) = fake_litestream("restart-process", &marker_path, "once");
+        let location = TestLocation::new("restart-location");
+        let replica = TestLocation::new("restart-replica");
+        let fleet = BackupStreams::new(binary);
+        fleet
+            .attach_with_config(
+                "database-a",
+                RegionCode::GRU,
+                explicit_config(location.path(), replica.path(), RegionCode::GRU),
+            )
+            .expect("the first fake process attaches");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while marker_lines(&marker_path) < 2 {
+            let _ = fleet.is_ready("database-a");
+            assert!(std::time::Instant::now() < deadline, "the bounded restart starts");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(fleet.attached("database-a"), "the replacement child is supervised");
+        fleet.detach_all();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repeatedly_exited_child_stops_after_bounded_restarts() {
+        let marker = TestLocation::new("bounded-marker");
+        std::fs::create_dir_all(marker.path()).expect("the marker directory creates");
+        let marker_path = marker.path().join("pids");
+        let (_binary_dir, binary) = fake_litestream("bounded-process", &marker_path, "always");
+        let location = TestLocation::new("bounded-location");
+        let replica = TestLocation::new("bounded-replica");
+        let fleet = BackupStreams::new(binary);
+        fleet
+            .attach_with_config(
+                "database-a",
+                RegionCode::GRU,
+                explicit_config(location.path(), replica.path(), RegionCode::GRU),
+            )
+            .expect("the fake process attaches");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while fleet.check_liveness("database-a") {
+            assert!(std::time::Instant::now() < deadline, "restarts remain bounded");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(marker_lines(&marker_path) <= usize::from(MAX_RESTARTS) + 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dropping_fleet_stops_fake_process() {
+        let marker = TestLocation::new("shutdown-marker");
+        std::fs::create_dir_all(marker.path()).expect("the marker directory creates");
+        let marker_path = marker.path().join("pids");
+        let (_binary_dir, binary) = fake_litestream("shutdown-process", &marker_path, "never");
+        let location = TestLocation::new("shutdown-location");
+        let replica = TestLocation::new("shutdown-replica");
+        let fleet = BackupStreams::new(binary);
+        fleet
+            .attach_with_config(
+                "database-a",
+                RegionCode::GRU,
+                explicit_config(location.path(), replica.path(), RegionCode::GRU),
+            )
+            .expect("the fake process attaches");
+        wait_for_marker(&marker_path);
+        let pid: i32 = std::fs::read_to_string(&marker_path)
+            .expect("the fake process records its pid")
+            .trim()
+            .parse()
+            .expect("the pid parses");
+        drop(fleet);
+        std::thread::sleep(Duration::from_millis(20));
+        let status = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .expect("kill probe runs");
+        assert!(!status.success(), "dropping the fleet stops the child");
     }
 
     /// Without a stream there is no replica to time-travel into: the

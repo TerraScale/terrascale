@@ -2,28 +2,22 @@
 # E-15 local three-member harness (development only, never shipped).
 #
 # Boots GRU / SFO / FRA terrabase-server members as local processes
-# (no containers), plus the G1 edge pieces around them:
-#   - REST Worker under `wrangler dev`  (../ts-proxy, opportunistic)
-#   - Snippet under the local edge harness (../ts-proxy/harness, opportunistic)
-#   - dashboard on workerd (../ts-dashboard, opportunistic)
-#   - local webhook receiver (always; scripts/stack-webhook-receiver.py)
-#
-# Members are the gate: `up` and `check` fail closed unless all three answer
-# both their operator probe (GET /live, unauthenticated) and their public
-# probe (GET /api/v1/health, bootstrap Bearer key). Edge pieces never fail
-# the stack: when a sibling checkout or tool is absent the script prints a
-# SKIP line telling the operator exactly what would enable it.
+# (no containers), plus every G1 edge piece around them. All pieces are
+# mandatory for the normal `up` target: a missing checkout, tool, process, or
+# health signal is an error. The X-4 stub is available only through the
+# separately named `pre-engine` target and is never a substitute for a member.
 #
 # Usage:
 #   ./scripts/stack.sh up      # boot everything, wait, verify  (default)
 #   ./scripts/stack.sh check   # probe running members, exit non-zero on failure
+#   ./scripts/stack.sh test    # run the real P-3 journey and X-6 qualification
+#   ./scripts/stack.sh pre-engine # members + X-4 stub before E-5/E-6 land
 #   ./scripts/stack.sh down    # stop everything started by `up`
 #   ./scripts/stack.sh logs [-f] [gru|sfo|fra|proxy|dashboard|webhooks|stub]
 #
 # Knobs:
 #   STACK_FRESH=1          wipe .terrascale/stack (data, certs, configs) before up
-#   STACK_MEMBERS_ONLY=1   boot members + webhook receiver only, skip the edge
-#   STACK_EDGE_QUALIFY=1   run one local-edge qualification pass against the stub
+#   STACK_DRY_RUN=1        print the plan without creating files or processes
 #   STACK_NO_BUILD=1       never invoke cargo (fails if the binary is missing)
 #
 # Ports (fixed, documented in docs/development/local-stack.md):
@@ -44,6 +38,9 @@ BIN="$ROOT/target/debug/terrabase-server"
 
 PROXY_DIR="$ROOT/../ts-proxy"
 DASHBOARD_DIR="$ROOT/../ts-dashboard"
+TYPESCRIPT_DIR="$ROOT/../ts-typescript"
+EDGE_RUN="$PROXY_DIR/harness/local-edge/run.ts"
+JOURNEY_FILE="$TYPESCRIPT_DIR/test/journey.test.ts"
 
 PROXY_PORT=7000
 STUB_PORT=7080
@@ -92,6 +89,18 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command '$1' ($2)"
 }
 
+dry_run() { [ "${STACK_DRY_RUN:-0}" = "1" ]; }
+
+run_or_print() {
+  if dry_run; then
+    printf 'stack: DRY-RUN:'
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+  "$@"
+}
+
 # --- process bookkeeping -------------------------------------------------
 
 record_pid() {
@@ -109,6 +118,9 @@ stop_all() {
     if is_alive "$pid"; then
       log "stopping $name (pid $pid)"
       kill "$pid" 2>/dev/null || true
+      # Every process is its own session (setsid), so terminate descendants
+      # such as wrangler/vinext as part of the same deterministic teardown.
+      kill -- "-$pid" 2>/dev/null || true
     fi
   done <"$PIDS_FILE"
   sleep 1
@@ -117,9 +129,19 @@ stop_all() {
     if is_alive "$pid"; then
       warn "$name (pid $pid) ignored SIGTERM, sending SIGKILL"
       kill -9 "$pid" 2>/dev/null || true
+      kill -KILL -- "-$pid" 2>/dev/null || true
     fi
   done <"$PIDS_FILE"
   rm -f "$PIDS_FILE"
+}
+
+stop_on_failure() {
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    warn "startup failed; tearing down processes started by this stack"
+    stop_all || true
+  fi
+  return "$status"
 }
 
 # --- material -------------------------------------------------------------
@@ -152,6 +174,10 @@ gen_tls_once() {
 }
 
 ensure_tls() {
+  if dry_run; then
+    log "DRY-RUN: would mint throwaway TLS material in $TLS_DIR"
+    return 0
+  fi
   if [ -f "$TLS_DIR/server.crt" ] && [ -f "$TLS_DIR/server.key" ] && [ -f "$TLS_DIR/ca.crt" ] \
     && ! tls_has_padding; then
     return 0
@@ -173,6 +199,10 @@ ensure_tls() {
 }
 
 ensure_bootstrap_key() {
+  if dry_run; then
+    log "DRY-RUN: would create 0600 bootstrap key at $BOOTSTRAP_KEY_FILE"
+    return 0
+  fi
   if [ -f "$BOOTSTRAP_KEY_FILE" ]; then
     return 0
   fi
@@ -187,6 +217,10 @@ ensure_bootstrap_key() {
 }
 
 ensure_dashboard_secret() {
+  if dry_run; then
+    log "DRY-RUN: would create 0600 dashboard secret"
+    return 0
+  fi
   # Dev-only Better Auth session secret for the local dashboard. Request-time
   # guard only; generated per stack, never committed (gitignored with the
   # rest of .terrascale/stack).
@@ -215,6 +249,10 @@ write_config() {
   api="$(api_port "$region")"
   local member_dir="$STACK_DIR/$name"
   local config="$STACK_DIR/$name.toml"
+  if dry_run; then
+    log "DRY-RUN: would write $config and create $member_dir/{engine,data}"
+    return 0
+  fi
   mkdir -p "$member_dir/engine" "$member_dir/data"
   {
     printf '# E-15 local stack config for %s. Generated by scripts/stack.sh; do not hand-edit.\n' "$region"
@@ -247,6 +285,10 @@ write_config() {
 }
 
 ensure_binary() {
+  if dry_run; then
+    log "DRY-RUN: would use $BIN (or cargo build --locked -p terrabase-server)"
+    return 0
+  fi
   if [ -x "$BIN" ]; then
     return 0
   fi
@@ -265,8 +307,11 @@ start_member() {
   name="$(lower "$region")"
   api="$(api_port "$region")"
   log "starting $region member (public API 127.0.0.1:$api)"
-  # shellcheck disable=SC2086
-  nohup "$BIN" --config "$STACK_DIR/$name.toml" >>"$LOG_DIR/$name.log" 2>&1 &
+  if dry_run; then
+    run_or_print setsid "$BIN" --config "$STACK_DIR/$name.toml"
+    return 0
+  fi
+  nohup setsid "$BIN" --config "$STACK_DIR/$name.toml" >>"$LOG_DIR/$name.log" 2>&1 &
   record_pid "member-$name" "$!"
 }
 
@@ -284,6 +329,10 @@ wait_for_members() {
         ok=0
         break
       fi
+      if ! curl -sf --max-time 2 "http://127.0.0.1:$(obs_port "$region")/ready" >/dev/null 2>&1; then
+        ok=0
+        break
+      fi
     done
     if [ "$ok" = "1" ]; then
       return 0
@@ -293,29 +342,103 @@ wait_for_members() {
   return 1
 }
 
-check_members() {
-  # Probes every member exactly the way `up` gates on. Returns non-zero with
-  # the failing member named when anything does not answer.
-  local failures=0 region body
-  for region in $REGIONS; do
-    if curl -sf --max-time 5 "http://127.0.0.1:$(obs_port "$region")/live" >/dev/null 2>&1; then
-      log "$region operator /live: ok (127.0.0.1:$(obs_port "$region"))"
+wait_for_members_basic() {
+  local deadline=$((SECONDS + 90)) region ok
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    ok=1
+    for region in $REGIONS; do
+      curl -sf --max-time 2 "http://127.0.0.1:$(obs_port "$region")/live" >/dev/null 2>&1 || ok=0
+      curl -sf --max-time 2 -H "Authorization: Bearer $(bootstrap_key)" \
+        "http://127.0.0.1:$(api_port "$region")/api/v1/health" >/dev/null 2>&1 || ok=0
+    done
+    [ "$ok" = "1" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+check_processes() {
+  local failures=0 name pid
+  [ -f "$PIDS_FILE" ] || { warn "no process state at $PIDS_FILE"; return 1; }
+  while read -r name pid; do
+    [ -n "${pid:-}" ] || continue
+    if is_alive "$pid"; then
+      log "$name process: ok (pid $pid)"
     else
-      warn "$region operator /live FAILED (127.0.0.1:$(obs_port "$region")/live)"
+      warn "$name process FAILED (pid $pid)"
       failures=$((failures + 1))
-      continue
     fi
-    body="$(curl -sf --max-time 5 -H "Authorization: Bearer $(bootstrap_key)" \
-      "http://127.0.0.1:$(api_port "$region")/api/v1/health" 2>/dev/null || true)"
-    case "$body" in
-      *'"healthy":true'*)
-        log "$region public /api/v1/health: ok (127.0.0.1:$(api_port "$region")) $body"
-        ;;
-      *)
-        warn "$region public /api/v1/health FAILED (127.0.0.1:$(api_port "$region")): '${body:-no body}'"
-        failures=$((failures + 1))
-        ;;
-    esac
+  done <"$PIDS_FILE"
+  return "$failures"
+}
+
+check_member() {
+  local region="$1" failures=0 body metrics
+  if curl -sf --max-time 5 "http://127.0.0.1:$(obs_port "$region")/live" >/dev/null 2>&1; then
+    log "$region operator /live: ok (127.0.0.1:$(obs_port "$region"))"
+  else
+    warn "$region operator /live FAILED (127.0.0.1:$(obs_port "$region")/live)"
+    failures=$((failures + 1))
+  fi
+  for probe in ready startup; do
+    if curl -sf --max-time 5 "http://127.0.0.1:$(obs_port "$region")/$probe" >/dev/null 2>&1; then
+      log "$region operator /$probe: ok"
+    else
+      warn "$region operator /$probe FAILED"
+      failures=$((failures + 1))
+    fi
+  done
+  metrics="$(curl -sf --max-time 5 "http://127.0.0.1:$(obs_port "$region")/internal/metrics" 2>/dev/null || true)"
+  for metric in \
+    'terrabase_ready 1' \
+    'terrabase_component_health{component="storage"} 1' \
+    'terrabase_component_health{component="replication"} 1' \
+    'terrabase_component_health{component="membership"} 1'; do
+    if printf '%s\n' "$metrics" | grep -Fq "$metric"; then
+      log "$region metrics: $metric"
+    else
+      warn "$region metrics missing readiness fact: $metric"
+      failures=$((failures + 1))
+    fi
+  done
+  body="$(curl -sf --max-time 5 -H "Authorization: Bearer $(bootstrap_key)" \
+    "http://127.0.0.1:$(api_port "$region")/api/v1/health" 2>/dev/null || true)"
+  case "$body" in
+    *"\"region\":\"$region\""*'"healthy":true'*)
+      log "$region public /api/v1/health: ok $body" ;;
+    *)
+      warn "$region public /api/v1/health FAILED: '${body:-no body}'"
+      failures=$((failures + 1)) ;;
+  esac
+  body="$(curl -sf --max-time 5 -H "Authorization: Bearer $(bootstrap_key)" \
+    "http://127.0.0.1:$(api_port "$region")/api/v1/regions" 2>/dev/null || true)"
+  case "$body" in
+    *"\"region\":\"$region\""*'"healthy":true'*) log "$region control/regions: ok" ;;
+    *) warn "$region control/regions FAILED: '${body:-no body}'"; failures=$((failures + 1)) ;;
+  esac
+  body="$(curl -sf --max-time 5 -H "Authorization: Bearer $(bootstrap_key)" \
+    "http://127.0.0.1:$(api_port "$region")/api/v1/databases" 2>/dev/null || true)"
+  if [ -n "$body" ]; then
+    log "$region control catalog: ok"
+  else
+    warn "$region control catalog FAILED"
+    failures=$((failures + 1))
+  fi
+  body="$(curl -sf --max-time 5 -H "Authorization: Bearer $(bootstrap_key)" \
+    "http://127.0.0.1:$(api_port "$region")/api/v1/databases/local/backups" 2>/dev/null || true)"
+  case "$body" in
+    *'"ready":true'*'"streaming":true'*) log "$region backup readiness: ok" ;;
+    *) warn "$region backup readiness FAILED: '${body:-no body}'"; failures=$((failures + 1)) ;;
+  esac
+  return "$failures"
+}
+
+check_members() {
+  # Every member must expose process, lifecycle, replication, control-plane,
+  # and backup facts. Missing facts are failures, never optional warnings.
+  local failures=0 region
+  for region in $REGIONS; do
+    check_member "$region" || failures=$((failures + $?))
   done
   if curl -sf --max-time 5 "http://127.0.0.1:$WEBHOOK_PORT/health" >/dev/null 2>&1; then
     log "webhook receiver /health: ok (127.0.0.1:$WEBHOOK_PORT)"
@@ -323,65 +446,64 @@ check_members() {
     warn "webhook receiver /health FAILED (127.0.0.1:$WEBHOOK_PORT/health)"
     failures=$((failures + 1))
   fi
+  check_processes || failures=$((failures + $?))
   return "$failures"
 }
 
-# --- edge pieces (opportunistic; never fail the stack) ----------------------
+# --- edge pieces -------------------------------------------------------------
+
+require_full_stack_inputs() {
+  need_cmd node "install Node.js 22+ for the local Snippet and journey"
+  need_cmd npm "install npm for the local Workers"
+  need_cmd setsid "install util-linux for deterministic process groups"
+  [ -d "$PROXY_DIR" ] || die "missing required ts-proxy checkout at $PROXY_DIR"
+  [ -d "$PROXY_DIR/node_modules" ] || die "missing $PROXY_DIR/node_modules (run: cd $PROXY_DIR && npm ci)"
+  [ -f "$PROXY_DIR/node_modules/.bin/wrangler" ] || die "missing ts-proxy Wrangler (run: cd $PROXY_DIR && npm ci)"
+  [ -f "$EDGE_RUN" ] || die "missing required X-6 local edge harness at $EDGE_RUN"
+  [ -d "$DASHBOARD_DIR" ] || die "missing required ts-dashboard checkout at $DASHBOARD_DIR"
+  [ -d "$DASHBOARD_DIR/node_modules" ] || die "missing $DASHBOARD_DIR/node_modules (run: cd $DASHBOARD_DIR && npm ci)"
+  [ -f "$DASHBOARD_DIR/node_modules/.bin/vinext" ] || die "missing dashboard Vinext (run: cd $DASHBOARD_DIR && npm ci)"
+  [ -f "$TYPESCRIPT_DIR/package.json" ] || die "missing required ts-typescript checkout at $TYPESCRIPT_DIR"
+  [ -d "$TYPESCRIPT_DIR/node_modules" ] || die "missing $TYPESCRIPT_DIR/node_modules (run: cd $TYPESCRIPT_DIR && npm ci)"
+  [ -f "$JOURNEY_FILE" ] || die "missing required P-3 journey at $JOURNEY_FILE"
+}
+
+require_base_inputs() {
+  need_cmd curl "install curl for stack readiness probes"
+  need_cmd python3 "install python3 for the local webhook receiver"
+  need_cmd openssl "install openssl to mint the stack's throwaway dev certificates"
+  need_cmd setsid "install util-linux for deterministic process groups"
+}
 
 start_proxy() {
   # REST Worker under `wrangler dev` (G1). DEV_ORIGINS in ts-proxy's
-  # wrangler.toml already points at this stack's 7101/7102/7103.
-  if [ ! -d "$PROXY_DIR" ]; then
-    warn "SKIP proxy: no ts-proxy checkout at $PROXY_DIR"
-    return 0
-  fi
-  if ! command -v wrangler >/dev/null 2>&1 && [ ! -x "$PROXY_DIR/node_modules/.bin/wrangler" ]; then
-    if [ ! -d "$PROXY_DIR/node_modules" ]; then
-      warn "SKIP proxy: wrangler not found; run (cd $PROXY_DIR && npm ci) then re-run stack up"
-      return 0
-    fi
-  fi
-  if [ ! -d "$PROXY_DIR/node_modules" ]; then
-    warn "SKIP proxy: $PROXY_DIR/node_modules missing; run (cd $PROXY_DIR && npm ci) then re-run stack up"
-    return 0
-  fi
+  # wrangler.toml points at this stack's three members.
   log "starting REST Worker under wrangler dev on 127.0.0.1:$PROXY_PORT"
-  (cd "$PROXY_DIR" && nohup npm run dev >>"$LOG_DIR/proxy.log" 2>&1 & echo "proxy $!" >>"$PIDS_FILE")
-  if curl -sf --max-time 2 "http://127.0.0.1:$PROXY_PORT/api/v1/regions" >/dev/null 2>&1; then
-    log "proxy /api/v1/regions: ok"
-  else
-    warn "proxy not answering yet; tail $LOG_DIR/proxy.log (wrangler can take ~30 s on first boot)"
+  if dry_run; then
+    run_or_print npm --prefix "$PROXY_DIR" run dev
+    return 0
   fi
+  nohup setsid npm --prefix "$PROXY_DIR" run dev >>"$LOG_DIR/proxy.log" 2>&1 &
+  record_pid "proxy" "$!"
 }
 
 start_stub_origin() {
-  # X-4 stub origin for the local edge harness. Only started so the Snippet
-  # gate and the X-6 harness have something deterministic to point at.
-  if [ ! -d "$PROXY_DIR/stub" ]; then
-    warn "SKIP stub origin: no stub at $PROXY_DIR/stub"
-    return 0
+  # X-4 is explicitly pre-engine only. Full `up` never invokes this function.
+  if ! dry_run; then
+    need_cmd go "install Go for the separately named pre-engine stub target"
   fi
-  if ! command -v go >/dev/null 2>&1; then
-    warn "SKIP stub origin: go toolchain not found"
-    return 0
-  fi
-  # The stub is its own Go module (stub/go.mod) sharing the harness's
-  # insecure dev capability key, so the Snippet gate verifies end to end
-  # with no extra configuration. Loopback only, never exposed.
+  [ -d "$PROXY_DIR/stub" ] || die "missing X-4 stub at $PROXY_DIR/stub"
   log "starting X-4 stub origin on 127.0.0.1:$STUB_PORT"
-  (cd "$PROXY_DIR/stub" && nohup go run . -addr "127.0.0.1:$STUB_PORT" -verify-cap >>"$LOG_DIR/stub.log" 2>&1 & echo "stub $!" >>"$PIDS_FILE")
+  if dry_run; then
+    run_or_print go -C "$PROXY_DIR/stub" run . -addr "127.0.0.1:$STUB_PORT" -verify-cap
+    return 0
+  fi
+  nohup setsid go -C "$PROXY_DIR/stub" run . -addr "127.0.0.1:$STUB_PORT" -verify-cap >>"$LOG_DIR/stub.log" 2>&1 &
+  record_pid "stub" "$!"
 }
 
 start_dashboard() {
   # Dashboard on workerd via `vinext dev` (D-59: workerd in dev too).
-  if [ ! -d "$DASHBOARD_DIR" ]; then
-    warn "SKIP dashboard: no ts-dashboard checkout at $DASHBOARD_DIR"
-    return 0
-  fi
-  if [ ! -d "$DASHBOARD_DIR/node_modules" ]; then
-    warn "SKIP dashboard: $DASHBOARD_DIR/node_modules missing; run (cd $DASHBOARD_DIR && npm ci) then re-run stack up"
-    return 0
-  fi
   log "starting dashboard on workerd (127.0.0.1:$DASHBOARD_PORT)"
   # The dashboard requires its runtime base URLs even in dev: first-contact
   # API calls go to the local proxy, the public URL is the local origin.
@@ -398,6 +520,10 @@ start_dashboard() {
   # is not in ts-dashboard/.gitignore yet — adding it there keeps this
   # stack-managed file from showing as untracked noise.
   ensure_dashboard_secret
+  if dry_run; then
+    run_or_print npm --prefix "$DASHBOARD_DIR" run dev -- --port "$DASHBOARD_PORT"
+    return 0
+  fi
   {
     printf 'TERRASCALE_API_BASE_URL="http://127.0.0.1:%s"\n' "$PROXY_PORT"
     printf 'TERRASCALE_DASHBOARD_PUBLIC_URL="http://127.0.0.1:%s"\n' "$DASHBOARD_PORT"
@@ -405,35 +531,44 @@ start_dashboard() {
     printf 'TERRASCALE_AUTH_TERMS_VERSION="local-2026-08-30"\n'
     printf 'BETTER_AUTH_SECRET="%s"\n' "$(cat "$STACK_DIR/dashboard-auth-secret")"
   } >"$DASHBOARD_DIR/.dev.vars"
-  (cd "$DASHBOARD_DIR" && nohup env \
+  nohup setsid env \
     NODE_ENV="development" \
     TERRASCALE_API_BASE_URL="http://127.0.0.1:$PROXY_PORT" \
     TERRASCALE_DASHBOARD_PUBLIC_URL="http://127.0.0.1:$DASHBOARD_PORT" \
     TERRASCALE_DASHBOARD_DEV_PORT="$DASHBOARD_PORT" \
     TERRASCALE_AUTH_TERMS_VERSION="local-2026-08-30" \
     BETTER_AUTH_SECRET="$(cat "$STACK_DIR/dashboard-auth-secret")" \
-    npm run dev >>"$LOG_DIR/dashboard.log" 2>&1 & echo "dashboard $!" >>"$PIDS_FILE")
-  warn "dashboard boot is warn-only; tail $LOG_DIR/dashboard.log and open http://127.0.0.1:$DASHBOARD_PORT"
+    npm --prefix "$DASHBOARD_DIR" run dev -- --port "$DASHBOARD_PORT" >>"$LOG_DIR/dashboard.log" 2>&1 &
+  record_pid "dashboard" "$!"
 }
 
 start_webhooks() {
-  need_cmd python3 "install python3 to run the local webhook receiver"
   log "starting webhook receiver on 127.0.0.1:$WEBHOOK_PORT"
-  nohup python3 "$ROOT/scripts/stack-webhook-receiver.py" --port "$WEBHOOK_PORT" --log "$WEBHOOKS_LOG" \
+  if dry_run; then
+    run_or_print python3 "$ROOT/scripts/stack-webhook-receiver.py" --port "$WEBHOOK_PORT" --log "$WEBHOOKS_LOG"
+    return 0
+  fi
+  nohup setsid python3 "$ROOT/scripts/stack-webhook-receiver.py" --port "$WEBHOOK_PORT" --log "$WEBHOOKS_LOG" \
     >>"$LOG_DIR/webhooks.log" 2>&1 &
   record_pid "webhooks" "$!"
 }
 
-run_edge_qualification() {
-  if [ "${STACK_EDGE_QUALIFY:-0}" != "1" ]; then
+run_x6() {
+  local qualification="${1:-0}" endpoint="http://127.0.0.1:7101/api/v1/reactive/views"
+  log "running X-6 local edge harness against real member GRU (qualification=$qualification)"
+  if dry_run; then
+    log "DRY-RUN: would set TERRABASE_VIEW_ENDPOINT=$endpoint LOCAL_EDGE_QUALIFICATION=$qualification"
+    run_or_print node --experimental-strip-types "$EDGE_RUN"
     return 0
   fi
-  if [ ! -f "$PROXY_DIR/harness/local-edge/run.ts" ]; then
-    warn "SKIP edge qualification: no harness at $PROXY_DIR/harness/local-edge/run.ts"
-    return 0
-  fi
-  log "running local-edge qualification (32 readers) against the stub origin"
-  (cd "$PROXY_DIR" && TERRABASE_VIEW_ENDPOINT="http://127.0.0.1:$STUB_PORT" node --experimental-strip-types harness/local-edge/run.ts) 2>&1 | tee "$LOG_DIR/edge-qualify.log" || warn "edge qualification failed; see $LOG_DIR/edge-qualify.log"
+  (cd "$PROXY_DIR" && \
+    TERRABASE_VIEW_ENDPOINT="$endpoint" \
+    LOCAL_EDGE_QUALIFICATION="$qualification" \
+    LOCAL_EDGE_CAPABILITY_KEY="${LOCAL_EDGE_CAPABILITY_KEY:-}" \
+    node --experimental-strip-types harness/local-edge/run.ts) >"$LOG_DIR/edge-qualify.log" 2>&1 || {
+      tail -n 40 "$LOG_DIR/edge-qualify.log" >&2 || true
+      die "X-6 local edge qualification failed against real member GRU"
+    }
 }
 
 print_summary() {
@@ -441,15 +576,73 @@ print_summary() {
   for region in $REGIONS; do
     log "  $region  api=http://127.0.0.1:$(api_port "$region")  tbep=127.0.0.1:$(tbep_port "$region")  obs=http://127.0.0.1:$(obs_port "$region")"
   done
-  log "  proxy=http://127.0.0.1:$PROXY_PORT  stub=http://127.0.0.1:$STUB_PORT  webhooks=http://127.0.0.1:$WEBHOOK_PORT  dashboard=http://127.0.0.1:$DASHBOARD_PORT"
+  log "  proxy=http://127.0.0.1:$PROXY_PORT  webhooks=http://127.0.0.1:$WEBHOOK_PORT  dashboard=http://127.0.0.1:$DASHBOARD_PORT"
   log "  journey: export STACK_BOOTSTRAP_KEY=\"\$(cat $BOOTSTRAP_KEY_FILE)\"; curl -H \"Authorization: Bearer \$STACK_BOOTSTRAP_KEY\" http://127.0.0.1:7101/api/v1/health"
   log "  logs: $LOG_DIR  |  stop: ./scripts/stack.sh down"
+}
+
+wait_for_http() {
+  local name="$1" url="$2" deadline=$((SECONDS + 90))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if curl -sfL --max-time 2 "$url" >/dev/null 2>&1; then
+      log "$name: ready ($url)"
+      return 0
+    fi
+    sleep 1
+  done
+  die "$name did not become ready: $url"
+}
+
+check_edge_components() {
+  local failures=0 body
+  body="$(curl -sfL --max-time 5 "http://127.0.0.1:$PROXY_PORT/api/v1/regions" 2>/dev/null || true)"
+  case "$body" in
+    *'"hosts"'*'127.0.0.1:7101'*'127.0.0.1:7102'*'127.0.0.1:7103'*)
+      log "proxy Worker dev mode: ok ($body)" ;;
+    *)
+      warn "proxy Worker dev mode FAILED: '${body:-no body}'"
+      failures=$((failures + 1)) ;;
+  esac
+  body="$(curl -sfL --max-time 5 "http://127.0.0.1:$DASHBOARD_PORT/" 2>/dev/null || true)"
+  if [ -n "$body" ]; then
+    log "dashboard workerd: ok (127.0.0.1:$DASHBOARD_PORT)"
+  else
+    warn "dashboard workerd FAILED (127.0.0.1:$DASHBOARD_PORT)"
+    failures=$((failures + 1))
+  fi
+  return "$failures"
+}
+
+check_full_stack() {
+  local failures=0
+  check_members || failures=$((failures + $?))
+  check_edge_components || failures=$((failures + $?))
+  return "$failures"
+}
+
+dry_run_plan() {
+  log "DRY-RUN: full E-15 stack requires 3 real members, proxy Worker dev, local Snippet/X-6 harness, dashboard workerd, and webhook receiver"
+  require_base_inputs || true
+  for region in $REGIONS; do write_config "$region"; done
+  ensure_binary
+  for region in $REGIONS; do start_member "$region"; done
+  start_proxy
+  start_dashboard
+  start_webhooks
+  log "DRY-RUN: readiness probes include /live /startup /ready /internal/metrics, public health/regions/catalog/backups, proxy, dashboard, and webhook"
+  log "DRY-RUN: use 'make stack-test' for P-3 and X-6 against real GRU member"
 }
 
 # --- subcommands -------------------------------------------------------------
 
 cmd_up() {
-  need_cmd curl "install curl for the stack readiness probes"
+  if dry_run; then
+    dry_run_plan
+    return 0
+  fi
+  require_base_inputs
+  require_full_stack_inputs
+  trap stop_on_failure EXIT
   if [ "${STACK_FRESH:-0}" = "1" ]; then
     log "STACK_FRESH=1: wiping $STACK_DIR"
     stop_all || true
@@ -478,26 +671,81 @@ cmd_up() {
     done
     die "stack up failed: members unhealthy"
   fi
-  if [ "${STACK_MEMBERS_ONLY:-0}" = "1" ]; then
-    log "STACK_MEMBERS_ONLY=1: skipping proxy/stub/dashboard/edge"
-  else
-    start_stub_origin
-    start_proxy
-    start_dashboard
-    run_edge_qualification
-  fi
-  if ! check_members; then
+  start_proxy
+  start_dashboard
+  wait_for_http "proxy Worker" "http://127.0.0.1:$PROXY_PORT/api/v1/regions"
+  wait_for_http "dashboard workerd" "http://127.0.0.1:$DASHBOARD_PORT/"
+  if ! check_full_stack; then
     die "stack up failed: final verification failed"
   fi
+  run_x6 0
+  trap - EXIT
   print_summary
 }
 
 cmd_check() {
+  if dry_run; then
+    log "DRY-RUN: would check all member, replication/control/backup, proxy, dashboard, and webhook readiness"
+    return 0
+  fi
   [ -f "$BOOTSTRAP_KEY_FILE" ] || die "no $BOOTSTRAP_KEY_FILE; is the stack up? (./scripts/stack.sh up)"
-  if ! check_members; then
+  require_base_inputs
+  require_full_stack_inputs
+  if ! check_full_stack; then
     die "stack check failed"
   fi
-  log "stack check passed: 3/3 members + webhook receiver healthy"
+  run_x6 0
+  log "stack check passed: 3/3 real members + proxy + Snippet edge + dashboard + webhook healthy"
+}
+
+cmd_test() {
+  if dry_run; then
+    log "DRY-RUN: would run P-3 journey against $TYPESCRIPT_DIR and X-6 qualification against http://127.0.0.1:7101"
+    return 0
+  fi
+  [ -f "$BOOTSTRAP_KEY_FILE" ] || die "no $BOOTSTRAP_KEY_FILE; is the stack up? (./scripts/stack.sh up)"
+  require_base_inputs
+  require_full_stack_inputs
+  check_full_stack || die "stack test preflight failed"
+  log "running P-3 journey against real GRU member"
+  (cd "$TYPESCRIPT_DIR" && \
+    TERRASCALE_API_BASE_URL="http://127.0.0.1:7101" \
+    TERRASCALE_E2E_ACCESS_TOKEN="$(bootstrap_key)" \
+    TERRASCALE_E2E_PROJECT_ID="${TERRASCALE_E2E_PROJECT_ID:-local}" \
+    TERRASCALE_E2E_ORGANIZATION_ID="${TERRASCALE_E2E_ORGANIZATION_ID:-local}" \
+    npm test -- --run test/journey.test.ts) 2>&1 | tee "$LOG_DIR/p3-journey.log"
+  run_x6 1
+  log "stack test passed: P-3 journey + X-6 10,000-subscriber qualification"
+}
+
+cmd_pre_engine() {
+  if dry_run; then
+    log "DRY-RUN: would start the pre-engine member/webhook harness and the explicitly named X-4 stub"
+    for region in $REGIONS; do write_config "$region"; done
+    ensure_binary
+    for region in $REGIONS; do start_member "$region"; done
+    start_stub_origin
+    start_webhooks
+    return 0
+  fi
+  require_base_inputs
+  need_cmd go "install Go for the separately named pre-engine stub target"
+  [ -d "$PROXY_DIR/stub" ] || die "missing X-4 stub at $PROXY_DIR/stub"
+  trap stop_on_failure EXIT
+  stop_all || true
+  mkdir -p "$STACK_DIR" "$LOG_DIR"
+  : >"$PIDS_FILE"
+  ensure_tls
+  ensure_bootstrap_key
+  for region in $REGIONS; do write_config "$region"; done
+  ensure_binary
+  for region in $REGIONS; do start_member "$region"; done
+  start_stub_origin
+  start_webhooks
+  wait_for_members_basic || die "pre-engine stack failed: members unhealthy"
+  wait_for_http "X-4 stub origin" "http://127.0.0.1:$STUB_PORT/health"
+  trap - EXIT
+  print_summary
 }
 
 cmd_down() {
@@ -532,5 +780,7 @@ case "$cmd" in
   down) shift; cmd_down "$@" ;;
   logs) shift; cmd_logs "$@" ;;
   -h | --help | help) usage ;;
-  *) die "unknown subcommand '$cmd' (up|check|down|logs)" ;;
+  test) shift; cmd_test "$@" ;;
+  pre-engine) shift; cmd_pre_engine "$@" ;;
+  *) die "unknown subcommand '$cmd' (up|check|test|pre-engine|down|logs)" ;;
 esac

@@ -32,6 +32,10 @@
 //! point-in-time recovery points; unlike a full backup, the boundary is
 //! the caller's pinned fact, not the run's high-water mark.
 //!
+//! Every production plan is constructed with a database-bound OCI Vault key
+//! lease. Plaintext is available only to the in-crate `cfg(test)` fixtures;
+//! there is no production plaintext default.
+//!
 //! # Fail-closed and disclosure rules
 //!
 //! Every artifact is verifiable by manifest and checksum:
@@ -104,8 +108,13 @@ use manifest::{ENCRYPTED_MANIFEST_FILE, MANIFEST_FILE, ManifestFacts, point_dire
 use records::{MemberWriter, Record};
 use sha256::digest_file;
 
-use crate::encryption::ArtifactCipher;
+use crate::encryption::{
+    ArtifactCipher, ArtifactKind, Compression, DatabaseKeyLease, DatabaseKeyVersion,
+    EncryptionContext, EncryptionError, KeyPurpose, KeyScope,
+};
 use crate::engine::{Engine, MAX_SNAPSHOT_RECORD_PAGE};
+use crate::identity::DatabaseUlid;
+use crate::regions::{RegionCatalog, RegionCode};
 use crate::storage::{PublishedCommit, PublishedWrite};
 use crate::types::{Cancellation, LocalDurability, StorageSequence, TenantId};
 
@@ -157,6 +166,118 @@ pub enum BackupKind {
     Snapshot,
 }
 
+/// A validated authorization to encrypt backup artifacts for one database.
+///
+/// Production composition must obtain this capability from an OCI Vault
+/// [`DatabaseKeyLease`]. The lease's key scope is retained as non-secret
+/// identity metadata and checked again against the opened Engine and its
+/// placement Region before any bytes are read. Raw keys and an unbound
+/// [`ArtifactCipher`] cannot be supplied to a [`BackupPlan`].
+#[derive(Clone, Debug)]
+pub struct BackupEncryption {
+    cipher: Arc<Mutex<ArtifactCipher>>,
+    scope: KeyScope,
+    region: RegionCode,
+    key_version: DatabaseKeyVersion,
+}
+
+/// Refusals while constructing a database-bound backup encryption capability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BackupEncryptionError {
+    /// The Region is not an active Region in the production catalog.
+    InvalidRegion,
+    /// The lease does not belong to the backup key hierarchy.
+    InvalidKeyPurpose,
+    /// The encryption foundation rejected the lease or context.
+    Encryption(EncryptionError),
+}
+
+impl std::fmt::Display for BackupEncryptionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidRegion => formatter.write_str("backup Region is not active"),
+            Self::InvalidKeyPurpose => formatter.write_str("key lease is not for backups"),
+            Self::Encryption(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for BackupEncryptionError {}
+
+impl BackupEncryption {
+    /// Creates a production backup capability from an authorized OCI lease.
+    ///
+    /// The resulting cipher is bound to the lease's database,
+    /// tenant, project, environment, key version, and the backup hierarchy.
+    /// The Region is validated against the active production catalog and is
+    /// checked against the Engine owner again by [`run_backup`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed refusal for an inactive Region, a non-backup key
+    /// scope, malformed metadata, an expired lease, or crypto failure.
+    pub fn from_database_key_lease(
+        lease: &DatabaseKeyLease,
+        region: RegionCode,
+        next_ordinal: u128,
+    ) -> Result<Self, BackupEncryptionError> {
+        if !RegionCatalog::production().is_registered(&region) {
+            return Err(BackupEncryptionError::InvalidRegion);
+        }
+        let metadata = lease.metadata();
+        let scope = metadata.scope().clone();
+        let key_version = metadata.version();
+        if scope.purpose() != KeyPurpose::Backup {
+            return Err(BackupEncryptionError::InvalidKeyPurpose);
+        }
+        let artifact_id = crate::identity::process_generator().generate();
+        let context = EncryptionContext::for_artifact(
+            &scope,
+            ArtifactKind::Backup,
+            artifact_id,
+            key_version,
+            3,
+            Compression::None,
+        )
+        .map_err(BackupEncryptionError::Encryption)?;
+        let cipher = ArtifactCipher::from_database_key_lease(lease, context, next_ordinal)
+            .map_err(BackupEncryptionError::Encryption)?;
+        Ok(Self { cipher: Arc::new(Mutex::new(cipher)), scope, region, key_version })
+    }
+
+    /// Returns the database identity authorized by this capability.
+    #[must_use]
+    pub const fn database(&self) -> DatabaseUlid {
+        self.scope.database()
+    }
+
+    /// Returns the placement Region authorized by this capability.
+    #[must_use]
+    pub const fn region(&self) -> RegionCode {
+        self.region
+    }
+
+    /// Returns the database-key version authorized by this capability.
+    #[must_use]
+    pub const fn key_version(&self) -> DatabaseKeyVersion {
+        self.key_version
+    }
+
+    fn validate_for_engine(&self, engine: &Engine) -> Result<(), BackupError> {
+        let owner = engine.database_owner();
+        let scope = &self.scope;
+        if scope.database() != owner.database()
+            || scope.tenant() != owner.tenant()
+            || scope.project() != Some(owner.project())
+            || scope.environment() != owner.environment().as_str()
+            || self.region != owner.region()
+        {
+            return Err(BackupError::EncryptionScopeMismatch);
+        }
+        Ok(())
+    }
+}
+
 /// A validated backup request: kind, boundary facts, item selection,
 /// member bound, throttling bound, progress observation, and cancellation
 /// (PB-6010, PB-6017).
@@ -174,16 +295,21 @@ pub struct BackupPlan {
     tenants: Option<Vec<TenantId>>,
     progress: Option<Arc<dyn Fn(BackupProgress) + Send + Sync>>,
     cancellation: Option<Arc<Cancellation>>,
-    /// Explicit opt-in encryption for the current backup format. Plaintext
-    /// output remains available only through the legacy-compatible builder.
-    encryption: Option<Arc<Mutex<ArtifactCipher>>>,
+    encryption: BackupEncryptionMode,
+}
+
+#[derive(Clone, Debug)]
+enum BackupEncryptionMode {
+    Encrypted(BackupEncryption),
+    #[cfg(test)]
+    Plaintext,
 }
 
 impl BackupPlan {
     /// Plans a full backup of every committed tenant at the run's proven
     /// boundary.
     #[must_use]
-    pub fn full() -> Self {
+    pub fn full(encryption: BackupEncryption) -> Self {
         Self {
             kind: BackupKind::Full,
             pinned_boundary: None,
@@ -192,7 +318,22 @@ impl BackupPlan {
             tenants: None,
             progress: None,
             cancellation: None,
-            encryption: None,
+            encryption: BackupEncryptionMode::Encrypted(encryption),
+        }
+    }
+
+    /// Creates a plaintext full plan for in-crate unit tests only.
+    #[cfg(test)]
+    pub(crate) fn local_test_full_plaintext() -> Self {
+        Self {
+            kind: BackupKind::Full,
+            pinned_boundary: None,
+            member_bound_bytes: DEFAULT_MEMBER_BOUND_BYTES,
+            read_ops_per_second: None,
+            tenants: None,
+            progress: None,
+            cancellation: None,
+            encryption: BackupEncryptionMode::Plaintext,
         }
     }
 
@@ -203,8 +344,14 @@ impl BackupPlan {
     /// [`BackupError::ChainIncomplete`] rather than minting an unanchored
     /// link.
     #[must_use]
-    pub fn incremental_since(base: StorageSequence) -> Self {
-        Self { kind: BackupKind::Incremental { base }, ..Self::full() }
+    pub fn incremental_since(base: StorageSequence, encryption: BackupEncryption) -> Self {
+        Self { kind: BackupKind::Incremental { base }, ..Self::full(encryption) }
+    }
+
+    /// Creates a plaintext incremental plan for in-crate unit tests only.
+    #[cfg(test)]
+    pub(crate) fn local_test_incremental_since(base: StorageSequence) -> Self {
+        Self { kind: BackupKind::Incremental { base }, ..Self::local_test_full_plaintext() }
     }
 
     /// Plans a snapshot backup pinned at `boundary`.
@@ -212,8 +359,22 @@ impl BackupPlan {
     /// The boundary must be at or below the source's journal high-water
     /// mark; a boundary the source cannot prove complete fails closed.
     #[must_use]
-    pub fn snapshot_at(boundary: StorageSequence) -> Self {
-        Self { kind: BackupKind::Snapshot, pinned_boundary: Some(boundary), ..Self::full() }
+    pub fn snapshot_at(boundary: StorageSequence, encryption: BackupEncryption) -> Self {
+        Self {
+            kind: BackupKind::Snapshot,
+            pinned_boundary: Some(boundary),
+            ..Self::full(encryption)
+        }
+    }
+
+    /// Creates a plaintext snapshot plan for in-crate unit tests only.
+    #[cfg(test)]
+    pub(crate) fn local_test_snapshot_at(boundary: StorageSequence) -> Self {
+        Self {
+            kind: BackupKind::Snapshot,
+            pinned_boundary: Some(boundary),
+            ..Self::local_test_full_plaintext()
+        }
     }
 
     /// Bounds each archive member at `bytes` (records are never split).
@@ -256,20 +417,6 @@ impl BackupPlan {
     #[must_use]
     pub fn with_cancellation(mut self, cancellation: Arc<Cancellation>) -> Self {
         self.cancellation = Some(cancellation);
-        self
-    }
-
-    /// Enables authenticated encryption for every member and the manifest.
-    ///
-    /// The cipher (including its ordinal state) is caller-owned. A caller
-    /// that may restart between runs must persist the next ordinal returned
-    /// by its reservation policy before publishing a backup, as required by
-    /// [`crate::encryption::ArtifactCipher`]. Encrypted recovery points use a
-    /// distinct current-format manifest name and are never discovered by the
-    /// plaintext compatibility reader.
-    #[must_use]
-    pub fn with_encryption(mut self, cipher: ArtifactCipher) -> Self {
-        self.encryption = Some(Arc::new(Mutex::new(cipher)));
         self
     }
 }
@@ -524,6 +671,14 @@ pub enum BackupError {
     /// (BK-01 extension of the W4 category table: destination I/O failure
     /// is a distinct, typed fail-closed cause).
     DestinationUnavailable,
+    /// The plan did not carry the required database encryption capability.
+    EncryptionRequired,
+    /// The encryption capability names a different database or Region than
+    /// the Engine's durable owner tuple.
+    EncryptionScopeMismatch,
+    /// The encryption provider refused an operation, including an expired
+    /// lease or an invalid ordinal reservation.
+    EncryptionUnavailable,
 }
 
 /// The typed family-record input produced from the reserved collection
@@ -615,7 +770,9 @@ impl FamilyRecordInput {
 /// [`BackupError::SourceUnavailable`] when the source cannot prove the
 /// requested range, [`BackupError::Cancelled`] when the caller's signal
 /// fired (leaving no usable partial recovery point), and
-/// [`BackupError::DestinationUnavailable`] on destination I/O failure.
+/// [`BackupError::DestinationUnavailable`] on destination I/O failure. A
+/// production plan always carries a [`BackupEncryption`] capability; a
+/// database or Region mismatch fails before the first source read.
 #[allow(clippy::needless_pass_by_value)] // the public seam takes the plan by value
 pub fn run_backup(
     engine: &Engine,
@@ -703,10 +860,15 @@ fn execute(
     let mut state = RunState::new(plan);
     state.observe(BackupStep::Admitted)?;
 
-    let tenants = selected_tenants(engine, &mut state, plan)?;
-    let boundary = resolve_boundary(engine, &mut state, plan, destination)?;
-
-    let mut writer = match &plan.encryption {
+    let encryption = match &plan.encryption {
+        BackupEncryptionMode::Encrypted(encryption) => {
+            encryption.validate_for_engine(engine)?;
+            Some(Arc::clone(&encryption.cipher))
+        }
+        #[cfg(test)]
+        BackupEncryptionMode::Plaintext => None,
+    };
+    let mut writer = match &encryption {
         Some(cipher) => MemberWriter::new_encrypted(
             staging.path().to_owned(),
             plan.member_bound_bytes,
@@ -714,6 +876,9 @@ fn execute(
         ),
         None => MemberWriter::new(staging.path().to_owned(), plan.member_bound_bytes),
     };
+
+    let tenants = selected_tenants(engine, &mut state, plan)?;
+    let boundary = resolve_boundary(engine, &mut state, plan, destination)?;
     // Bind the complete selected scope even when a tenant contributes no
     // records to this particular range. Object-store chain planners use the
     // manifest scope to detect a requested tenant that is absent from the
@@ -757,7 +922,7 @@ fn execute(
         engine.database_id().to_text(),
         destination,
         staging,
-        plan.encryption.as_ref(),
+        encryption.as_ref(),
     )
 }
 

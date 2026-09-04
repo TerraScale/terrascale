@@ -2,7 +2,7 @@
 //!
 //! **Status: implemented.** The identity layer itself — the strict value
 //! codec, the cryptographically secure monotonic generator, the typed entity
-//! newtypes, and the storage-key/placement helpers — is implemented and
+//! newtypes and storage-key helpers — is implemented and
 //! covered by the corpus in `src/identity/tests.rs`. What remains open is the
 //! engine's persisted-format migration to ULID keys: ADR 0031's activation
 //! rules govern format changes, and **no existing storage, WAL, manifest,
@@ -69,44 +69,6 @@ pub use ulid::UlidError;
 use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
-use std::sync::LazyLock;
-
-/// The domain-separation context of identity placement hashing. Bucket
-/// placement hashes the domain-separated 16-byte identity and then maps the
-/// hash to a stable bucket (ADR 0027 'Storage and sharding'), so the context
-/// is a versioned constant: changing it re-places every entity and is
-/// therefore a persisted-placement decision, not an implementation detail.
-const PLACEMENT_CONTEXT: &str = "TerraBase/identity/ulid/placement/blake3/v1";
-
-/// The keyed BLAKE3 domain key of placement hashing, derived once per process
-/// from the fixed context above. Keyed mode is the domain separation: the
-/// digest of an identity under this key is unrelated to the digest of the
-/// same bytes under any other BLAKE3 use in the engine, including the entropy
-/// stream of [`generate`].
-static PLACEMENT_KEY: LazyLock<[u8; 32]> =
-    LazyLock::new(|| blake3::derive_key(PLACEMENT_CONTEXT, b"TerraBase identity placement"));
-
-/// The typed refusals of identity placement.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum IdentityPlacementError {
-    /// The caller asked for a placement into zero buckets. There is no bucket
-    /// to place into, and refusing is cheaper and clearer than returning a
-    /// sentinel bucket number.
-    ZeroBucketCount,
-}
-
-impl fmt::Display for IdentityPlacementError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Self::ZeroBucketCount => {
-                formatter.write_str("identity placement needs at least one bucket")
-            }
-        }
-    }
-}
-
-impl std::error::Error for IdentityPlacementError {}
-
 /// Declares one typed entity identity of the ADR 0027 entity list.
 ///
 /// The generated type is a transparent wrapper over the strict [`Ulid`]
@@ -312,55 +274,4 @@ pub fn compare_storage_keys(
     right: &[u8; ULID_BINARY_BYTES],
 ) -> Ordering {
     left.cmp(right)
-}
-
-/// Returns the domain-separated BLAKE3 placement digest of one identity's
-/// 16-byte form.
-///
-/// ULID time locality is useful inside ordered segments but must not create
-/// one hot timestamp-prefix Partition, so bucket placement hashes the
-/// domain-separated identity instead of ordering by it (ADR 0027 'Storage and
-/// sharding'). The digest is a pure function of the bytes: same identity in,
-/// same digest out, forever, and unrelated to any other BLAKE3 use in the
-/// engine through the keyed domain of `PLACEMENT_CONTEXT`.
-#[must_use]
-pub fn placement_digest(identity: &[u8; ULID_BINARY_BYTES]) -> [u8; 32] {
-    blake3::Hasher::new_keyed(&PLACEMENT_KEY).update(identity).finalize().into()
-}
-
-/// Maps one identity's placement digest into a stable bucket of
-/// `[0, bucket_count)`.
-///
-/// The mapping is Lemire's multiply-shift over the first 64 bits of the
-/// [`placement_digest`], which is bias-free for any bucket count that is not
-/// a power of two — unlike a reduction modulo `bucket_count`. Range movement
-/// changes bucket ownership, never the entity identity, so a re-shard moves
-/// the same identity to a new owner without minting a new one.
-///
-/// # Errors
-///
-/// Returns [`IdentityPlacementError::ZeroBucketCount`] when `bucket_count`
-/// is zero: there is no bucket to place into.
-pub fn placement_bucket(
-    identity: &[u8; ULID_BINARY_BYTES],
-    bucket_count: u32,
-) -> Result<u32, IdentityPlacementError> {
-    if bucket_count == 0 {
-        return Err(IdentityPlacementError::ZeroBucketCount);
-    }
-    let digest = placement_digest(identity);
-    let high = digest_prefix_u64(&digest);
-    // The multiply-shift result is strictly below `bucket_count`, so the
-    // narrowing to the bucket type is paid for by that invariant.
-    #[allow(clippy::cast_possible_truncation)]
-    let bucket = ((u128::from(high) * u128::from(bucket_count)) >> 64) as u32;
-    Ok(bucket)
-}
-
-/// Reads the first eight digest bytes as a big-endian word. The digest is a
-/// fixed 32-byte array, so the copy always sees exactly eight bytes.
-fn digest_prefix_u64(digest: &[u8; 32]) -> u64 {
-    let mut prefix = [0; 8];
-    prefix.copy_from_slice(&digest[..8]);
-    u64::from_be_bytes(prefix)
 }

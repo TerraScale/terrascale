@@ -10,10 +10,11 @@ use std::sync::Mutex;
 use std::sync::mpsc::Receiver;
 
 use terrabase::engine::Engine;
+use terrabase::query::QueryError;
 
 use crate::engine_host::EngineHost;
 use crate::host::{HostingError, SyncDeliveryHost, TbepHost, TbepNotification};
-use crate::reactive::extract_path;
+use crate::reactive::{ReactivePlanAdapter, canonical_json_bytes, extract_path};
 use crate::registry;
 
 /// Explicit construction options for the staged `MemberHost`.
@@ -109,16 +110,124 @@ impl MemberHost {
         spec: &terrabase_sync_core::server::SubscriptionSpec,
         resume: Option<(u64, u64)>,
     ) -> Result<ReactiveOpen, HostingError> {
+        self.reactive_subscribe_authorized(scope, scope.principal.as_str(), spec, resume)
+    }
+
+    /// Attaches an authorization-equivalent reader to the shared SQL view.
+    /// The authorization scope is part of the view identity; callers must
+    /// pass the canonical rule/entitlement binding, never a per-request id.
+    pub fn reactive_subscribe_authorized(
+        &self,
+        scope: &registry::BoundScope,
+        authorization_scope: &str,
+        spec: &terrabase_sync_core::server::SubscriptionSpec,
+        resume: Option<(u64, u64)>,
+    ) -> Result<ReactiveOpen, HostingError> {
         self.synchronize(scope)?;
         if let Some((previous, revision)) = resume
-            && let Some((id, receiver, missed)) =
-                self.delivery.reactive_resume(previous, revision, spec)
+            && let Some((id, receiver, missed)) = self.delivery.reactive_resume_authorized(
+                scope,
+                authorization_scope,
+                previous,
+                revision,
+                spec,
+            )
         {
             return Ok((id, receiver, Some(missed)));
         }
-        let (id, receiver) = self.delivery.reactive_subscribe(scope, spec.clone())?;
-        let members = self.scan_members(scope, spec)?;
-        self.delivery.reactive_seed(id, members);
+        let (id, receiver) = self.delivery.reactive_subscribe_authorized(
+            scope,
+            authorization_scope,
+            spec.clone(),
+        )?;
+        // A shared view is scanned exactly once.  Every later reader gets
+        // the already materialized snapshot from `ReactiveState`.
+        if self.delivery.reactive_needs_seed(id) {
+            let (members, raw) = self.scan_members(scope, spec)?;
+            self.delivery.reactive_seed_with_raw(id, members, raw);
+        } else {
+            self.delivery.reactive_seed(id, Vec::new());
+        }
+        Ok((id, receiver, None))
+    }
+
+    /// Opens a reactive view from the query planner's compiled SQL plan.
+    /// Snapshot seeding executes that plan once; committed rows then flow
+    /// through the dependency-indexed shared materializer.
+    pub fn reactive_subscribe_plan(
+        &self,
+        scope: &registry::BoundScope,
+        plan: &ReactivePlanAdapter,
+        authorization_scope: &str,
+        resume: Option<(u64, u64)>,
+    ) -> Result<ReactiveOpen, HostingError> {
+        self.synchronize(scope)?;
+        let spec = plan.subscription_spec();
+        if let Some(refusal) = plan.query_plan().sql_execute_only_refusal() {
+            return Err(HostingError::Invalid(format!(
+                "the reactive query is execute-only: {refusal:?}"
+            )));
+        }
+        if plan
+            .query_plan()
+            .source()
+            .collection()
+            .is_none_or(|collection| collection.as_str() != spec.collection.as_str())
+        {
+            return Err(HostingError::Invalid(
+                "the reactive SQL plan and dependency collection differ".into(),
+            ));
+        }
+        if let Some((previous, revision)) = resume
+            && let Some(opened) = self.delivery.reactive_resume_authorized(
+                scope,
+                authorization_scope,
+                previous,
+                revision,
+                spec,
+            )
+        {
+            return Ok((opened.0, opened.1, Some(opened.2)));
+        }
+        let (id, receiver) = self.delivery.reactive_subscribe_authorized(
+            scope,
+            authorization_scope,
+            spec.clone(),
+        )?;
+        if self.delivery.reactive_needs_seed(id) {
+            let engine_scope = self.engine.engine_scope_of(scope)?;
+            let snapshot = self.engine.read_snapshot(&engine_scope).map_err(|error| {
+                HostingError::EngineFailure(format!("the reactive plan snapshot failed: {error:?}"))
+            })?;
+            let result =
+                self.engine.engine().queries().execute(plan.query_plan(), &snapshot).map_err(
+                    |error: QueryError| {
+                        HostingError::Invalid(format!(
+                            "the reactive SQL plan is not servable: {error:?}"
+                        ))
+                    },
+                )?;
+            let mut members = Vec::new();
+            let mut raw = Vec::new();
+            for row in result.rows() {
+                let fields = row
+                    .projected()
+                    .iter()
+                    .filter_map(|(field, value)| {
+                        field_value(value).map(|value| (field.clone(), value))
+                    })
+                    .collect();
+                let document = row.document();
+                members.push((document.id().as_str().to_owned(), fields));
+                raw.push((
+                    document.id().as_str().to_owned(),
+                    canonical_json_bytes(document.value()),
+                ));
+            }
+            self.delivery.reactive_seed_with_raw(id, members, raw);
+        } else {
+            self.delivery.reactive_seed(id, Vec::new());
+        }
         Ok((id, receiver, None))
     }
 
@@ -146,6 +255,14 @@ impl MemberHost {
         self.delivery.reactive_detach(id);
     }
 
+    /// Returns the exact canonical JSON bytes retained for a reader's view
+    /// row.  The returned copy is suitable for splicing into a response or
+    /// handing to a replication adapter without parsing it.
+    #[must_use]
+    pub fn reactive_raw_body(&self, id: u64, document: &str) -> Option<Vec<u8>> {
+        self.delivery.reactive_raw_body(id, document)
+    }
+
     /// One subscription's seed members from a consistent engine scan:
     /// the documents whose extracted values satisfy the spec's predicate,
     /// projected per the spec, in document order.
@@ -153,7 +270,7 @@ impl MemberHost {
         &self,
         scope: &registry::BoundScope,
         spec: &terrabase_sync_core::server::SubscriptionSpec,
-    ) -> Result<crate::reactive::ProjectedMembers, HostingError> {
+    ) -> Result<(crate::reactive::ProjectedMembers, Vec<(String, Vec<u8>)>), HostingError> {
         use terrabase_sync_core::server::Condition;
 
         let engine = self.engine.engine();
@@ -174,6 +291,7 @@ impl MemberHost {
             fields.insert(field.clone());
         }
         let mut members = Vec::new();
+        let mut raw = Vec::new();
         for document in documents {
             let values: Vec<(String, Option<terrabase_sync_core::subscription::FieldValue>)> =
                 fields
@@ -200,8 +318,9 @@ impl MemberHost {
                 })
                 .collect();
             members.push((document.id().as_str().to_owned(), projected));
+            raw.push((document.id().as_str().to_owned(), canonical_json_bytes(document.value())));
         }
-        Ok(members)
+        Ok((members, raw))
     }
 
     fn synchronize(&self, scope: &registry::BoundScope) -> Result<(), HostingError> {
@@ -236,6 +355,25 @@ impl MemberHost {
             (Starting, _) | (_, Starting) => Starting,
             (Serving, Serving) => Serving,
         }
+    }
+}
+
+fn field_value(
+    value: &terrabase::types::DocumentValue,
+) -> Option<terrabase_sync_core::subscription::FieldValue> {
+    match value {
+        terrabase::types::DocumentValue::String(value) => {
+            Some(terrabase_sync_core::subscription::FieldValue::Text(value.clone()))
+        }
+        terrabase::types::DocumentValue::Integer(value) =>
+        {
+            #[allow(clippy::cast_precision_loss, reason = "sync dependency values use f64")]
+            Some(terrabase_sync_core::subscription::FieldValue::Number(*value as f64))
+        }
+        terrabase::types::DocumentValue::Number(value) => {
+            Some(terrabase_sync_core::subscription::FieldValue::Number(*value))
+        }
+        _ => None,
     }
 }
 

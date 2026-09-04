@@ -18,6 +18,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::mpsc::SyncSender;
 use std::sync::mpsc::sync_channel;
 
+use terrabase::QueryPlan;
 use terrabase::streaming::SyncJournalMutation;
 use terrabase::streaming::SyncJournalRecord;
 use terrabase::types::DocumentValue;
@@ -26,6 +27,56 @@ use terrabase_sync_core::server::RowEvent;
 use terrabase_sync_core::server::SubscriptionEngine;
 use terrabase_sync_core::server::SubscriptionSpec;
 use terrabase_sync_core::subscription::FieldValue;
+
+/// A stable identity for a materialized view.  Authorization-equivalent
+/// readers use the same identity and therefore share one materializer; the
+/// scope component prevents a reader from ever sharing rows across database
+/// or authorization boundaries.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub(crate) struct SharedViewKey {
+    scope: String,
+    spec: SubscriptionSpec,
+}
+
+/// The compile-ready adapter passed from the SQL query registry to the sync
+/// registry.  Query compilation remains owned by `terrabase`; this adapter
+/// carries the immutable compiled plan together with the dependency metadata
+/// consumed by the sync-core interval index.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReactivePlanAdapter {
+    query: QueryPlan,
+    subscription: SubscriptionSpec,
+}
+
+impl ReactivePlanAdapter {
+    /// Binds a compiled SQL plan to its sync dependency description.
+    #[must_use]
+    pub fn new(query: QueryPlan, subscription: SubscriptionSpec) -> Self {
+        Self { query, subscription }
+    }
+
+    /// Returns the immutable SQL plan for snapshot seeding.
+    #[must_use]
+    pub fn query_plan(&self) -> &QueryPlan {
+        &self.query
+    }
+
+    /// Returns the dependency/index description registered with sync-core.
+    #[must_use]
+    pub fn subscription_spec(&self) -> &SubscriptionSpec {
+        &self.subscription
+    }
+}
+
+impl SharedViewKey {
+    pub(crate) fn new(scope: impl Into<String>, spec: SubscriptionSpec) -> Self {
+        Self { scope: scope.into(), spec }
+    }
+
+    pub(crate) fn spec(&self) -> &SubscriptionSpec {
+        &self.spec
+    }
+}
 
 /// The bounded capacity of one subscription's delivery channel.
 const REACTIVE_CHANNEL_CAPACITY: usize = 1024;
@@ -66,6 +117,14 @@ pub enum ReactiveFrame {
 #[derive(Default)]
 pub struct ReactiveState {
     engine: SubscriptionEngine,
+    /// One sync-core materializer per canonical view, independent of the
+    /// number of attached readers.
+    views: BTreeMap<SharedViewKey, u64>,
+    /// The inverse mapping lets one materialized delta fan out to readers.
+    reader_views: BTreeMap<u64, u64>,
+    /// Readers retain their key for authorization and resume validation.
+    reader_keys: BTreeMap<u64, SharedViewKey>,
+    seeded_views: BTreeSet<u64>,
     feeds: BTreeMap<u64, SyncSender<ReactiveFrame>>,
     /// Subscriptions whose backlog was dropped: further deltas coalesce
     /// away until the consumer re-bootstraps through a fresh seed.
@@ -83,12 +142,27 @@ pub struct ReactiveState {
     /// ring is dropped) — a reaped subscription's resume is a plain
     /// fresh seed (Reset semantics), never a wrong replay.
     detached: BTreeSet<u64>,
+    /// The exact canonical body bytes last seen for each row.  This is a
+    /// byte seam for encoders and replication adapters; no reader reparses a
+    /// body to obtain its wire representation.
+    raw_bodies: BTreeMap<(u64, String), Vec<u8>>,
+    next_reader: u64,
 }
 
 impl ReactiveState {
     /// Registers one subscription and opens its bounded delivery
     /// channel. The caller seeds it before the first pump.
     pub(crate) fn subscribe(&mut self, spec: SubscriptionSpec) -> (u64, Receiver<ReactiveFrame>) {
+        self.subscribe_scoped(String::new(), spec)
+    }
+
+    /// Attaches one reader to a canonical shared view.  The materializer is
+    /// registered only once for equal `(authorization scope, plan)` keys.
+    pub(crate) fn subscribe_scoped(
+        &mut self,
+        scope: impl Into<String>,
+        spec: SubscriptionSpec,
+    ) -> (u64, Receiver<ReactiveFrame>) {
         self.reap();
         let fields = self.fields.entry(spec.collection.clone()).or_default();
         for condition in &spec.conditions {
@@ -97,7 +171,18 @@ impl ReactiveState {
         for field in &spec.projection {
             fields.insert(field.clone());
         }
-        let id = self.engine.register(spec);
+        let key = SharedViewKey::new(scope, spec);
+        let view = if let Some(view) = self.views.get(&key).copied() {
+            view
+        } else {
+            let view = self.engine.register(key.spec().clone());
+            self.views.insert(key.clone(), view);
+            view
+        };
+        let id = self.next_reader;
+        self.next_reader = self.next_reader.saturating_add(1);
+        self.reader_views.insert(id, view);
+        self.reader_keys.insert(id, key);
         let (sender, receiver) = sync_channel(REACTIVE_CHANNEL_CAPACITY);
         self.feeds.insert(id, sender);
         (id, receiver)
@@ -105,23 +190,56 @@ impl ReactiveState {
 
     /// Seeds one subscription's result and delivers the Seed frame.
     pub(crate) fn seed(&mut self, id: u64, members: Vec<(String, Vec<(String, FieldValue)>)>) {
+        self.seed_with_raw(id, members, Vec::new());
+    }
+
+    /// Seeds a shared view and records its canonical body bytes alongside the
+    /// projected values.  The bytes are retained once per view, not once per
+    /// reader.
+    pub(crate) fn seed_with_raw(
+        &mut self,
+        id: u64,
+        members: Vec<(String, Vec<(String, FieldValue)>)>,
+        raw: Vec<(String, Vec<u8>)>,
+    ) {
+        let Some(view) = self.reader_views.get(&id).copied() else { return };
         self.reset_pending.remove(&id);
+        if self.seeded_views.insert(view) {
+            self.engine.seed(view, members);
+            for (document, body) in raw {
+                self.raw_bodies.insert((view, document), body);
+            }
+        }
+        let current: ProjectedMembers = self
+            .engine
+            .members(view)
+            .into_iter()
+            .flat_map(|members| {
+                members.iter().map(|(document, fields)| (document.clone(), fields.clone()))
+            })
+            .collect();
         if let Some(sender) = self.feeds.get(&id)
-            && sender
-                .send(ReactiveFrame::Seed { subscription: id, members: members.clone() })
-                .is_err()
+            && sender.send(ReactiveFrame::Seed { subscription: id, members: current }).is_err()
         {
             self.feeds.remove(&id);
         }
-        self.engine.seed(id, members);
     }
 
     /// Retracts one subscription.
     pub(crate) fn unsubscribe(&mut self, id: u64) {
         self.detached.remove(&id);
         self.rings.remove(&id);
-        self.engine.unregister(id);
+        let view = self.reader_views.remove(&id);
+        let key = self.reader_keys.remove(&id);
         self.feeds.remove(&id);
+        if let (Some(view), Some(key)) = (view, key)
+            && !self.reader_views.values().any(|candidate| *candidate == view)
+        {
+            self.engine.unregister(view);
+            self.seeded_views.remove(&view);
+            self.views.remove(&key);
+            self.raw_bodies.retain(|(candidate, _), _| *candidate != view);
+        }
     }
 
     /// Marks one subscription's transport closed while retaining its
@@ -138,14 +256,18 @@ impl ReactiveState {
         for id in dead {
             self.detached.remove(&id);
             self.rings.remove(&id);
-            self.engine.unregister(id);
-            self.feeds.remove(&id);
+            self.unsubscribe(id);
         }
     }
 
     /// The live subscription count.
     pub(crate) fn len(&self) -> usize {
         self.feeds.len()
+    }
+
+    /// Number of materialized views, as opposed to attached readers.
+    pub(crate) fn view_len(&self) -> usize {
+        self.views.len()
     }
 
     /// Applies one committed journal record: dependency values and
@@ -173,8 +295,22 @@ impl ReactiveState {
             put,
             extracted,
         };
-        for (id, delta) in self.engine.apply(&event) {
-            self.deliver(id, ReactiveFrame::Delta { subscription: id, delta });
+        let bytes = value.map(canonical_json_bytes);
+        let deltas = self.engine.apply(&event);
+        for (view, delta) in deltas {
+            if let Some(body) = bytes.clone() {
+                self.raw_bodies.insert((view, document.to_owned()), body);
+            } else {
+                self.raw_bodies.remove(&(view, document.to_owned()));
+            }
+            let readers: Vec<u64> = self
+                .reader_views
+                .iter()
+                .filter_map(|(reader, candidate)| (*candidate == view).then_some(*reader))
+                .collect();
+            for id in readers {
+                self.deliver(id, ReactiveFrame::Delta { subscription: id, delta: delta.clone() });
+            }
         }
     }
 
@@ -220,8 +356,12 @@ impl ReactiveState {
     /// else (unknown subscription, coalesced backlog, revision below
     /// the retained floor, changed specification) answers `None` and
     /// the caller seeds fresh (Reset semantics).
-    pub(crate) fn resume(
+    /// Resumes a reader only when its authorization-scoped canonical view is
+    /// still the same view.  A checkpoint from another authorization scope
+    /// is a reset, never a cross-scope replay.
+    pub(crate) fn resume_scoped(
         &mut self,
+        scope: String,
         previous: u64,
         revision: u64,
         spec: &SubscriptionSpec,
@@ -233,18 +373,101 @@ impl ReactiveState {
         if revision + 1 < oldest {
             return None; // below the retained floor: Reset
         }
-        if !self.engine.specification_of(previous).is_some_and(|held| held == spec) {
+        let view = self.reader_views.get(&previous).copied()?;
+        let key = self.reader_keys.get(&previous)?;
+        if key.scope != scope {
+            return None;
+        }
+        if !self.engine.specification_of(view).is_some_and(|held| held == spec) {
             return None; // the view changed: Reset
         }
-        let members: ProjectedMembers =
-            self.engine.members(previous)?.clone().into_iter().collect();
+        let members: ProjectedMembers = self.engine.members(view)?.clone().into_iter().collect();
         let missed: Vec<Delta> =
             ring.iter().filter(|delta| delta.revision > revision).cloned().collect();
-        let (id, receiver) = self.subscribe(spec.clone());
-        self.engine.seed(id, members);
+        let key = key.clone();
+        let (id, receiver) = self.subscribe_scoped(key.scope.clone(), spec.clone());
+        let resumed_view = self.reader_views.get(&id).copied()?;
+        self.engine.seed(resumed_view, members);
+        self.seeded_views.insert(resumed_view);
         self.rings.insert(id, ring);
         Some((id, receiver, missed))
     }
+
+    /// Whether this reader's shared view has already been seeded.
+    pub(crate) fn needs_seed(&self, id: u64) -> bool {
+        self.reader_views.get(&id).is_some_and(|view| !self.seeded_views.contains(view))
+    }
+
+    /// Returns the canonical body bytes retained for one materialized row.
+    #[must_use]
+    pub(crate) fn raw_body(&self, id: u64, document: &str) -> Option<&[u8]> {
+        let view = self.reader_views.get(&id)?;
+        self.raw_bodies.get(&(*view, document.to_owned())).map(Vec::as_slice)
+    }
+}
+
+/// Encodes a `DocumentValue` as canonical JSON bytes (objects are already
+/// ordered by the engine's `BTreeMap`).  This is deliberately local to the
+/// adapter because the storage/write seam owns parsing and canonicalization.
+#[must_use]
+pub fn canonical_json_bytes(value: &DocumentValue) -> Vec<u8> {
+    fn write(value: &DocumentValue, out: &mut Vec<u8>) {
+        match value {
+            DocumentValue::Null => out.extend_from_slice(b"null"),
+            DocumentValue::Boolean(flag) => {
+                out.extend_from_slice(if *flag { b"true" } else { b"false" })
+            }
+            DocumentValue::Integer(number) => out.extend_from_slice(number.to_string().as_bytes()),
+            DocumentValue::Number(number) => out.extend_from_slice(number.to_string().as_bytes()),
+            DocumentValue::String(text) => {
+                out.push(b'"');
+                for character in text.chars() {
+                    match character {
+                        '"' => out.extend_from_slice(b"\\\""),
+                        '\\' => out.extend_from_slice(b"\\\\"),
+                        '\n' => out.extend_from_slice(b"\\n"),
+                        '\r' => out.extend_from_slice(b"\\r"),
+                        '\t' => out.extend_from_slice(b"\\t"),
+                        character if character.is_control() => {
+                            out.extend_from_slice(
+                                format!("\\u{:04x}", character as u32).as_bytes(),
+                            );
+                        }
+                        character => {
+                            let mut buffer = [0; 4];
+                            out.extend_from_slice(character.encode_utf8(&mut buffer).as_bytes());
+                        }
+                    }
+                }
+                out.push(b'"');
+            }
+            DocumentValue::Array(values) => {
+                out.push(b'[');
+                for (index, value) in values.iter().enumerate() {
+                    if index != 0 {
+                        out.push(b',');
+                    }
+                    write(value, out);
+                }
+                out.push(b']');
+            }
+            DocumentValue::Object(fields) => {
+                out.push(b'{');
+                for (index, (name, value)) in fields.iter().enumerate() {
+                    if index != 0 {
+                        out.push(b',');
+                    }
+                    write(&DocumentValue::String(name.clone()), out);
+                    out.push(b':');
+                    write(value, out);
+                }
+                out.push(b'}');
+            }
+        }
+    }
+    let mut bytes = Vec::new();
+    write(value, &mut bytes);
+    bytes
 }
 
 /// Reads one dotted-path field off the in-hand document value: the two
@@ -380,5 +603,50 @@ mod tests {
         reactive.unsubscribe(id);
         assert_eq!(reactive.len(), 0);
         assert!(receiver.recv().is_err(), "the channel is closed");
+    }
+
+    #[test]
+    fn authorization_equivalent_readers_share_one_materializer() {
+        let mut reactive = ReactiveState::default();
+        let (first, first_feed) = reactive.subscribe_scoped("tenant/db/rule-1", spec());
+        reactive.seed_with_raw(
+            first,
+            vec![("o-1".into(), vec![("total".into(), FieldValue::Number(1.0))])],
+            vec![("o-1".into(), br#"{"status":"paid","total":1}"#.to_vec())],
+        );
+        let _ = first_feed.recv().expect("first seed");
+        let (second, second_feed) = reactive.subscribe_scoped("tenant/db/rule-1", spec());
+        reactive.seed(second, Vec::new());
+        let _ = second_feed.recv().expect("second seed");
+        assert_eq!(reactive.view_len(), 1);
+        assert_eq!(reactive.len(), 2);
+        assert_eq!(reactive.raw_body(second, "o-1"), Some(&br#"{"status":"paid","total":1}"#[..]));
+
+        let paid = object_document("paid");
+        reactive.apply_put("orders", "o-2", Some(&paid));
+        assert!(matches!(first_feed.recv().expect("first delta"), ReactiveFrame::Delta { .. }));
+        assert!(matches!(second_feed.recv().expect("second delta"), ReactiveFrame::Delta { .. }));
+    }
+
+    #[test]
+    fn different_authorization_scopes_never_share_state() {
+        let mut reactive = ReactiveState::default();
+        let (first, first_feed) = reactive.subscribe_scoped("tenant/db/rule-1", spec());
+        reactive.seed(first, Vec::new());
+        let _ = first_feed.recv();
+        let (second, second_feed) = reactive.subscribe_scoped("tenant/db/rule-2", spec());
+        reactive.seed(second, Vec::new());
+        let _ = second_feed.recv();
+        assert_eq!(reactive.view_len(), 2);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn canonical_bytes_are_deterministic_and_object_sorted() {
+        let value = DocumentValue::Object(std::collections::BTreeMap::from([
+            ("z".to_owned(), DocumentValue::Boolean(true)),
+            ("a".to_owned(), DocumentValue::String("line\n".to_owned())),
+        ]));
+        assert_eq!(super::canonical_json_bytes(&value), br#"{"a":"line\n","z":true}"#);
     }
 }

@@ -1,182 +1,45 @@
-name: terrabase checks
+name: terrabase CI
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop]
 
 permissions:
   contents: read
 
-concurrency:
-  # Forgejo's runner provides the GitHub-compatible context for workflow and
-  # ref values; using it also keeps this file portable to local act runs.
-  group: terrabase-${{ github.workflow }}-${{ github.sha }}
-  cancel-in-progress: false
-
-env:
-  CC: /nix/store/c7c0yarb87cv4jxlyr02dxryrlmyi232-gcc-wrapper-15.2.0/bin/gcc
-  CXX: /nix/store/c7c0yarb87cv4jxlyr02dxryrlmyi232-gcc-wrapper-15.2.0/bin/g++
-  CMAKE: /nix/store/vrsali0sa6hwri27azgn4q0y0kmrglyi-cmake-4.1.6/bin/cmake
-  CMAKE_GENERATOR: Ninja
-  CMAKE_MAKE_PROGRAM: /nix/store/60z9n8f7cczph0klb7ny1mikhd8m1vkl-ninja-1.13.2/bin/ninja
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
-  RUST_BACKTRACE: 1
-  RUSTDOCFLAGS: "-D warnings"
-
 jobs:
-  checks:
+  ci:
     runs-on: terrascale-builder
-    timeout-minutes: 120
+    timeout-minutes: 30
+    env:
+      TS_DEPLOY_RELEASE_SIGNING_KEY: ${{ secrets.TS_DEPLOY_RELEASE_SIGNING_KEY }}
+      TERRASCALE_RELEASE_MANIFEST: .terrascale-develop-release/manifest.json
+      TERRASCALE_DELIVERY_REQUEST: .terrascale-develop-release/request.json
+      TERRASCALE_ORCHESTRATOR_DELIVERY_URL: ${{ secrets.TERRASCALE_ORCHESTRATOR_DELIVERY_URL }}
+      TERRASCALE_ORCHESTRATOR_TOKEN: ${{ secrets.TERRASCALE_ORCHESTRATOR_TOKEN }}
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          github-server-url: "https://git.terrascale.tech"
           ref: ${{ forgejo.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify checks checkout revision
-        run: |
-          event_sha='${{ forgejo.sha }}'
-          checked_out_head="$(git rev-parse --verify HEAD)"
-          [[ "$event_sha" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$event_sha" == "$checked_out_head" ]]
-          [[ "$(git rev-parse --verify HEAD^{tree})" == "$(git rev-parse --verify "$event_sha^{tree}")" ]]
-          test -z "$(git status --porcelain)"
-      - uses: https://data.forgejo.org/actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
-        with:
-          go-version: stable
-          cache: false
-      - name: Install pinned Rust toolchain
-        uses: https://github.com/dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
-        with:
-          toolchain: 1.97.1
-          components: rustfmt, clippy
-      - name: Select explicit GCC host linker
-        run: |
-          host_triple="$(rustc -vV | sed -n 's/^host: //p')"
-          test -n "$host_triple"
-          linker_env="CARGO_TARGET_$(printf '%s' "$host_triple" | LC_ALL=C tr '[:lower:]-' '[:upper:]_')_LINKER"
-          printf '%s=%s\n' "$linker_env" "$CC" >> "$GITHUB_ENV"
-      - name: Cache Cargo dependencies
-        uses: https://data.forgejo.org/actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-rust-1.97.1-${{ hashFiles('rust-toolchain.toml', '**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-rust-1.97.1-
-      - name: Workspace metadata (locked)
-        run: cargo metadata --locked --format-version 1 --no-deps
-      - name: Format
-        run: cargo fmt --all -- --check
-      - name: Build (debug)
-        run: cargo check --workspace --all-targets --locked
-      - name: Build (release)
-        run: cargo build --workspace --locked --release
-      # Dev profile first: debug_assert! contracts compile out under
-      # --release, so a release-only run cannot gate them (SE-07 warden
-      # repair: an off-by-one frame-header assertion was green in every
-      # release gate and deterministically red in dev).
-      - name: Test (dev profile)
-        run: |
-          scripts/run-checked-rust-tests.sh workspace-dev \
-            --allow-ignore binary:terrabase::benchmarks::optimizer_tests::ix04_adhoc_workload_characterization \
-            --allow-ignore binary:terrabase::benchmarks::optimizer_tests::ix04_write_path_overhead_characterization \
-            --allow-ignore binary:vectors_runner::regenerate_corpus \
-            --allow-ignore binary:generate_extension_corpus::regenerate_extension_corpus \
-            --allow-ignore binary:terrabase::benchmarks::tests::terrabase_lane_counter_characterization \
-            --skip benchmarks::lane_run::tests::probe_lane_operation_costs \
-            --skip benchmarks::lane_run::tests::probe_read_subcall_costs \
-            --skip benchmarks::lane_run::tests::probe_write_durability_costs \
-            --skip benchmarks::lane_run::tests::probe_concurrent_synced_writes \
-            -- --workspace --locked
-      - name: Test
-        run: |
-          scripts/run-checked-rust-tests.sh workspace-release \
-            --allow-ignore binary:terrabase::benchmarks::optimizer_tests::ix04_adhoc_workload_characterization \
-            --allow-ignore binary:terrabase::benchmarks::optimizer_tests::ix04_write_path_overhead_characterization \
-            --allow-ignore binary:vectors_runner::regenerate_corpus \
-            --allow-ignore binary:generate_extension_corpus::regenerate_extension_corpus \
-            --allow-ignore binary:terrabase::benchmarks::tests::terrabase_lane_counter_characterization \
-            --skip benchmarks::lane_run::tests::probe_lane_operation_costs \
-            --skip benchmarks::lane_run::tests::probe_read_subcall_costs \
-            --skip benchmarks::lane_run::tests::probe_write_durability_costs \
-            --skip benchmarks::lane_run::tests::probe_concurrent_synced_writes \
-            -- --workspace --locked --release
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Served benchmark binary feature gate
-        run: |
-          cargo check --locked --features bench-tools --bin terrabase-bench-served
-          scripts/run-checked-rust-tests.sh served-bench-tools -- --locked --features bench-tools --bin terrabase-bench-served
-          cargo clippy --locked --features bench-tools --bin terrabase-bench-served -- -D warnings
-      - name: Documentation
-        run: cargo doc --workspace --no-deps --locked
-      # The benchmark-lane driver is a standalone workspace so the engine
-      # core stays zero-dependency; it builds and its unit tests run in the
-      # same gate. Reference lanes (PostgreSQL, RavenDB) are
-      # operator-provisioned and never run here — a CI reference run could
-      # never be a fair timing claim.
-      - name: Benchmark lane driver
-        run: |
-          cargo fmt --manifest-path bench/Cargo.toml -- --check
-          cargo check --manifest-path bench/Cargo.toml --locked
-          cargo build --manifest-path bench/Cargo.toml --locked --release
-          scripts/run-checked-rust-tests.sh standalone-bench -- --manifest-path bench/Cargo.toml --locked
-          cargo clippy --manifest-path bench/Cargo.toml --all-targets --locked -- -D warnings
-          cargo doc --manifest-path bench/Cargo.toml --no-deps --locked
-          history_check="$(mktemp -d)"
-          trap 'rm -rf -- "$history_check"' EXIT
-          cargo run --manifest-path bench/Cargo.toml --locked -- --render-history --history-dir "$history_check"
-          history_files=("$history_check"/*.md)
-          test "${#history_files[@]}" -eq 1
-          grep -Fq '# Benchmark history' "${history_files[0]}"
-          grep -Fq '| workload | side | status |' "${history_files[0]}"
-
-      - name: Install pinned yq
+      - name: Run ts-deploy CI
         env:
-          GOBIN: ${{ runner.temp }}/terrabase-ci-bin
+          TS_DEPLOY_READ_TOKEN: ${{ secrets.TS_DEPLOY_READ_TOKEN }}
         run: |
-          mkdir -p "$GOBIN"
-          go install github.com/mikefarah/yq/v4@v4.45.1
-          "$GOBIN/yq" --version | grep -F 'version v4.45.1'
-          echo "$GOBIN" >> "$GITHUB_PATH"
-      - name: Observability assets
-        run: |
-          scripts/validate-structured-assets.sh
-          jq -e '
-            ([.panels[].title] | index("Requests / second")) != null and
-            ([.panels[].title] | index("Storage utilization by tier")) != null and
-            ([.panels[].title] | index("Queue utilization")) != null and
-            ([.panels[].title] | index("Committed durability p99")) != null and
-            ([.panels[].title] | index("Backup age")) != null and
-            ([.. | strings | select(contains("terrabase_requests_total"))] | length) > 0 and
-            ([.. | strings | select(contains("terrabase_storage_capacity_bytes"))] | length) > 0
-          ' deploy/observability/grafana-dashboard.json >/dev/null
-          yq -e '
-            [.groups[].rules[] | select(.alert == "TerraBaseReadinessLost")] | length == 1
-          ' deploy/observability/prometheus-rules.yml >/dev/null
-          yq -e '
-            [.groups[].rules[] | select(.alert == "TerraBaseStorageUtilizationCritical")] | length == 1
-          ' deploy/observability/prometheus-rules.yml >/dev/null
-      - name: Install pinned cargo-deny
-        run: cargo install cargo-deny --version 0.20.2 --locked
-      - name: Dependency, license, and advisory audits
-        run: |
-          cargo deny --workspace --all-features --locked check
-          cargo deny --manifest-path bench/Cargo.toml --config bench/deny.toml --locked check
-
-      # The protobuf is the TBEP contract of record: lint clean. Breaking
-      # checks return once the M1 reshape settles (S-12 lands the final
-      # control-only proto; the data-plane deletion at 0dead77 and S-12's
-      # further reduction are deliberate breaks). Generated Go bindings
-      # return with `make contracts` (S-00/S-12).
-      - name: Schema lint
-        env:
-          GOBIN: ${{ runner.temp }}/terrabase-ci-bin
-        run: |
-          mkdir -p "$GOBIN"
-          go install github.com/bufbuild/buf/cmd/buf@v1.50.0
-          export PATH="$GOBIN:$PATH"
-          buf lint
+          set -euo pipefail
+          case "$(uname -m)" in
+            aarch64|arm64) asset=ts-deploy-linux-arm64 ;;
+            x86_64|amd64) asset=ts-deploy-linux-amd64 ;;
+            *) echo "unsupported runner architecture" >&2; exit 1 ;;
+          esac
+          location=$(curl --proto '=https' --tlsv1.2 -fsSI -H "Authorization: token ${TS_DEPLOY_READ_TOKEN}" "https://git.terrascale.tech/TerraScale/ts-deploy/releases/latest" | tr -d '\r' | awk 'tolower($1) == "location:" { count++; location=$2 } END { if (count != 1) exit 1; print location }')
+          printf '%s\n' "${location}" | grep -Eq '^/TerraScale/ts-deploy/releases/tag/v0\.0\.0-dev\.([0-9a-f]{40}|[0-9a-f]{64})$'
+          tag=${location##*/}
+          release="https://git.terrascale.tech/TerraScale/ts-deploy/releases/download/${tag}"
+          curl -fsSL -H "Authorization: token ${TS_DEPLOY_READ_TOKEN}" -o SHA256SUMS "${release}/SHA256SUMS" -o ts-deploy "${release}/${asset}"
+          test "$(grep -Fc "  ${asset}" SHA256SUMS)" -eq 1
+          awk -v asset="${asset}" '$2 == asset { print $1 "  ts-deploy" }' SHA256SUMS | sha256sum -c -
+          chmod +x ts-deploy
+          ./ts-deploy ci --repo terrabase

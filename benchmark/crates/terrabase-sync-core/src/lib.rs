@@ -38,6 +38,8 @@ pub mod native;
 pub mod protocol;
 pub mod server;
 pub mod subscription;
+/// Bounded canonical shared-view registry and immutable revision publications.
+pub mod view;
 /// The bounded MessagePack codec for the public `terrascale.sync.v2` wire.
 pub mod wire;
 

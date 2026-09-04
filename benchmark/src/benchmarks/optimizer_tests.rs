@@ -165,17 +165,31 @@ fn the_first_sighting_of_each_shape_creates_exactly_one_index() {
     assert_eq!(window.refusals, 0);
     // D-42 supersedes the memory-only half of OH-B1: the first sighting of
     // a field durably registers its extracted-column descriptor (one ALTER
-    // pair, one descriptor row, covering indexes per field), so the creation
-    // stream appends descriptor bytes — bounded, one registration per field,
-    // then `Unchanged`. Steady-state serving still appends nothing: the same
-    // shapes re-run choose their indexes without writing a byte.
-    assert!(window.durable_bytes_written > 0, "the first sighting registers durable descriptors");
+    // pair, one descriptor row, covering indexes per field) — one Active
+    // registration per field, then `Unchanged`. File sizes do not witness
+    // it: under WAL with the engine's off-path passive checkpoints the
+    // window's frames land in reused WAL capacity, so the durable-byte
+    // counter reads zero while the registrations commit. The non-vacuity
+    // guard is therefore the durable table itself: all four fields stand
+    // Active after the window. Steady-state serving still appends nothing:
+    // the same shapes re-run choose their indexes without writing a byte,
+    // and the descriptor set is unchanged.
+    assert_eq!(
+        active_descriptor_fields(&lane),
+        ["f0", "f1", "f2", "f3"],
+        "the first sighting registers durable descriptors"
+    );
     let steady = optimizer::run_single_collection(&lane, "adhoc", &["f0", "f1", "f2", "f3"]);
     assert_eq!(steady.creations, 0, "the re-run creates nothing");
     assert_eq!(
         steady.durable_bytes_written,
         budgets::DURABLE_BYTES_PER_CREATION * u64::try_from(shapes.len()).unwrap_or(0),
         "OH-B1: served shapes append no durable bytes"
+    );
+    assert_eq!(
+        active_descriptor_fields(&lane),
+        ["f0", "f1", "f2", "f3"],
+        "OH-B1: served shapes re-register nothing"
     );
 
     lane.remove();
@@ -664,6 +678,19 @@ fn ix04_write_path_overhead_characterization() {
     );
 
     lane.remove();
+}
+
+/// The lane's active durable-descriptor fields, sorted: the D-31
+/// registration state the first-query policy converges.
+fn active_descriptor_fields(lane: &AdHocLane) -> Vec<String> {
+    let mut fields = lane
+        .descriptors()
+        .into_iter()
+        .filter(|listing| listing.active)
+        .map(|listing| listing.field)
+        .collect::<Vec<_>>();
+    fields.sort();
+    fields
 }
 
 /// The index one record's outcome served, when it served one.

@@ -771,12 +771,14 @@ impl SyncDeliveryHost {
         }
     }
 
-    /// Registers one reactive subscription and opens its bounded
-    /// delivery channel (`S-04`). The caller seeds it from a consistent
-    /// scan before the first pump.
-    pub(crate) fn reactive_subscribe(
+    /// Attaches a reader to a shared view.  `authorization_scope` is the
+    /// canonical rule/principal scope, rather than an opaque reader id, so
+    /// equivalent authorizations collapse onto one materializer while
+    /// distinct scopes remain isolated.
+    pub(crate) fn reactive_subscribe_authorized(
         &self,
         scope: &BoundScope,
+        authorization_scope: &str,
         spec: terrabase_sync_core::server::SubscriptionSpec,
     ) -> Result<(u64, Receiver<crate::reactive::ReactiveFrame>), HostingError> {
         let mut state = self.lock();
@@ -786,10 +788,11 @@ impl SyncDeliveryHost {
                 "the reactive subscription limit is exhausted".into(),
             ));
         }
-        // ponytail: a host-wide cap; per-tenant reactive bounds ride the
-        // transport's admission (connection limits are the abuse guard).
-        let _ = scope;
-        Ok(state.reactive.subscribe(spec))
+        let view_scope = format!(
+            "{}\u{1f}{}\u{1f}{}\u{1f}{}",
+            scope.tenant, scope.project, scope.database, authorization_scope
+        );
+        Ok(state.reactive.subscribe_scoped(view_scope, spec))
     }
 
     /// Seeds one reactive subscription's result and delivers the Seed
@@ -798,16 +801,27 @@ impl SyncDeliveryHost {
         self.lock().reactive.seed(id, members);
     }
 
+    /// Seeds one view with projected fields and the raw canonical bodies
+    /// produced by the query-plan adapter.
+    pub(crate) fn reactive_seed_with_raw(
+        &self,
+        id: u64,
+        members: crate::reactive::ProjectedMembers,
+        raw: Vec<(String, Vec<u8>)>,
+    ) {
+        self.lock().reactive.seed_with_raw(id, members, raw);
+    }
+
     /// Retracts one reactive subscription.
     pub(crate) fn reactive_unsubscribe(&self, id: u64) {
         self.lock().reactive.unsubscribe(id);
     }
 
-    /// Resumes one reactive subscription from a checkpoint: replays the
-    /// retained revisions when the ring still covers them (`None` means
-    /// the caller seeds fresh — Reset semantics).
-    pub(crate) fn reactive_resume(
+    /// Scoped resume adapter for the public member host.
+    pub(crate) fn reactive_resume_authorized(
         &self,
+        scope: &BoundScope,
+        authorization_scope: &str,
         previous: u64,
         revision: u64,
         spec: &terrabase_sync_core::server::SubscriptionSpec,
@@ -816,7 +830,22 @@ impl SyncDeliveryHost {
         Receiver<crate::reactive::ReactiveFrame>,
         Vec<terrabase_sync_core::server::Delta>,
     )> {
-        self.lock().reactive.resume(previous, revision, spec)
+        let view_scope = format!(
+            "{}\u{1f}{}\u{1f}{}\u{1f}{}",
+            scope.tenant, scope.project, scope.database, authorization_scope
+        );
+        self.lock().reactive.resume_scoped(view_scope, previous, revision, spec)
+    }
+
+    /// Whether the reader is the first attachment of its shared view.
+    pub(crate) fn reactive_needs_seed(&self, id: u64) -> bool {
+        self.lock().reactive.needs_seed(id)
+    }
+
+    /// Returns a view row's canonical body bytes without decoding it.
+    #[must_use]
+    pub(crate) fn reactive_raw_body(&self, id: u64, document: &str) -> Option<Vec<u8>> {
+        self.lock().reactive.raw_body(id, document).map(ToOwned::to_owned)
     }
 
     /// Marks one reactive subscription's transport closed while

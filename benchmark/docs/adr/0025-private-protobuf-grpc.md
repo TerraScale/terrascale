@@ -11,23 +11,20 @@ authority: direct workspace-owner instruction
 Private TBEP uses generated protobuf messages and gRPC over HTTP/2. The schema
 of record is `crates/terrabase-tbep/proto/terrabase/v1/engine.proto`. Rust uses
 prost and tonic. The generated bindings in `terrabase-go` are the only network
-client bindings permitted to communicate with TerraBase.
+client bindings permitted to communicate with TerraBase over private TBEP;
+the orchestrator and CLI use them. Public clients call the member's public
+HTTP API (D-34). They never call TBEP.
 
-The production `TerraScale.Database` gateway is implemented in Go and uses
-`terrabase-go`. Public clients call that gateway. They never call TBEP or a
-TerraBase Member.
-
-TerraBase has no public binary protocol, public WebSocket protocol, public
-MessagePack codec, private FlatBuffers codec, dual codec, or compatibility
-reader for those retired designs. The database remains greenfield, so the
+TerraBase has no public binary protocol, public WebSocket protocol, or public
+MessagePack codec. The database remains greenfield, so the
 repository deletes those schemas, generated artifacts, fixtures, and
 requirements after the protobuf/gRPC replacement has equivalent test
 coverage.
 
 TerraBase still owns the transport-independent reactive result-view state
 machine. TBEP exposes its bounded session, snapshot, delta, acknowledgement,
-resume, and close operations through gRPC. The Go gateway owns any public HTTP
-streaming representation outside this repository.
+resume, and close operations through gRPC. The member serves the public HTTP
+API itself (D-34); no gateway stands between public clients and members.
 
 ## Schema ownership and generation
 
@@ -91,9 +88,8 @@ CI compares the schema with the last release and rejects field removal, type
 changes, identifier reuse, service removal, or changed wire meaning inside the
 same major.
 
-Private protocol and storage compatibility supports release `N` and `N-1`
-only during the bounded rolling window in ADR 0031. No older private client or
-Member compatibility reader is retained.
+Private protocol and storage compatibility spans only the current release:
+no older private client or Member compatibility reader is retained.
 
 ## Required evidence
 

@@ -98,7 +98,7 @@ audience, wrong gateway binding, malformed grants, non-canonical identities,
 metadata override attempts, policy downgrade, revocation during a reactive
 session, cross-tenant and cross-database access, catalog path traversal,
 noisy-tenant saturation, dedicated-placement movement, redaction, and usage
-attribution. The live matrix runs through the Go gateway, `terrabase-go`, mTLS,
+attribution. The live matrix runs through the member's public API, mTLS,
 the complete Member host, and at least two tenants with multiple users.
 
 The release gate also proves that every public operation has one closed engine

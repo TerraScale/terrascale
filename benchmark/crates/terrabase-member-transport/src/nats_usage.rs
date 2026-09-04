@@ -40,9 +40,6 @@ use std::fmt;
 use std::fmt::Write as _;
 use std::net::SocketAddr;
 
-#[cfg(feature = "production-fips")]
-use aws_lc_rs::rand::{SecureRandom, SystemRandom};
-#[cfg(feature = "local-crypto")]
 use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::identity::{MemberId, RegionId, validate_identifier};

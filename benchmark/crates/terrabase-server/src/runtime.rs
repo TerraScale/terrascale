@@ -20,6 +20,7 @@ use terrabase_tbep::registry::SupervisionShutdownRequest;
 use tokio::sync::oneshot;
 
 use crate::config::{ServerConfig, ServerMode};
+use crate::production::ProductionStartupError;
 
 const MAX_PEM_BYTES: u64 = 1024 * 1024;
 const MAX_PEM_BYTES_USIZE: usize = 1024 * 1024;
@@ -34,7 +35,7 @@ const MAX_PEM_BYTES_USIZE: usize = 1024 * 1024;
 #[allow(clippy::too_many_lines, reason = "one listener per block, one drain")]
 pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
     if config.mode == ServerMode::Production {
-        return Err(Box::new(DaemonError::ProductionCompositionUnavailable));
+        return run_production(config).await;
     }
     let grpc_config = TbepGrpcConfig::try_new(
         config.max_message_bytes,
@@ -164,6 +165,156 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
     }
     metrics.transition_service(ServiceState::Stopped)?;
     Ok(())
+}
+
+/// Opens the production catalog and performs the production-only startup
+/// checks before any serving claim is made.
+///
+/// The storage/catalog half of the production process is available today. The
+/// remaining Member-host adapter is intentionally an explicit seam: silently
+/// opening one compatibility [`EngineHost`] here would create a second
+/// storage authority and could acknowledge writes without the RF=2 data
+/// plane. Until that adapter is supplied, startup fails with its component
+/// name after opening (and dropping) the real catalog.
+async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let production =
+        config.production.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
+
+    // This is the production storage boundary. It opens every enabled
+    // database below one root and verifies the route and placement catalogs;
+    // it must happen before a listener is allowed to claim readiness.
+    let bootstrap = crate::production::ProductionCatalogBootstrap::open(production)
+        .map_err(|error| DaemonError::ProductionStartup(ProductionStartupError::Catalog(error)))?;
+    let mut parts = bootstrap.into_parts();
+    let transport = match build_production_transport(production) {
+        Ok(transport) => transport,
+        Err(error) => {
+            let _ = parts.member.close(config.shutdown_grace);
+            return Err(Box::new(DaemonError::ProductionStartup(
+                ProductionStartupError::Transport(error),
+            )));
+        }
+    };
+    let member_for_cleanup = parts.member.clone();
+    let member = match terrabase_cluster::production::ProductionMemberRuntime::try_new(
+        parts.placement.clone(),
+        parts.routes.clone(),
+        parts.member,
+        transport,
+    ) {
+        Ok(member) => member,
+        Err(error) => {
+            let _ = member_for_cleanup.close(config.shutdown_grace);
+            return Err(Box::new(DaemonError::ProductionStartup(ProductionStartupError::Member(
+                error,
+            ))));
+        }
+    };
+
+    // Membership is deliberately not inferred from the static file. The
+    // orchestrator's durable admission record is the authority; until its
+    // source is wired, close the already-opened endpoint and catalog and
+    // identify that one missing dependency.
+    let _ = member.drain().await;
+    Err(Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+        crate::production::ProductionComponentError {
+            component: crate::production::ProductionComponent::Membership,
+            detail: "no durable orchestrator membership source is configured",
+        },
+    ))))
+}
+
+fn build_production_transport(
+    config: &crate::config::ProductionConfig,
+) -> Result<terrabase_cluster::production::ProductionQuicEndpoint, String> {
+    use terrabase_cluster::production::{
+        MemberWorkloadIdentity, ProductionPeerAdmission, ProductionTlsMaterial,
+        ProductionTransportConfig, ProductionTransportLimits,
+    };
+
+    let local = MemberWorkloadIdentity::try_new(
+        config.environment.name.as_str(),
+        config.environment.cluster.to_text().as_str(),
+        config.environment.member.to_text().as_str(),
+    )
+    .map_err(|error| format!("local workload identity: {error:?}"))?;
+    let local_region = production_region(
+        config
+            .databases
+            .iter()
+            .find(|db| db.enabled)
+            .map(|db| db.region)
+            .ok_or("no enabled database")?,
+    )?;
+    let mut peers = Vec::with_capacity(config.transport.peers.len());
+    for peer in &config.transport.peers {
+        let identity = MemberWorkloadIdentity::parse(&peer.spiffe_identity)
+            .map_err(|error| format!("peer workload identity: {error:?}"))?;
+        let region = config
+            .placement
+            .regions
+            .iter()
+            .find_map(|(region, members)| members.contains(&peer.member).then_some(*region))
+            .ok_or_else(|| format!("peer {} has no placement Region", peer.member))?;
+        let region = production_region(region)?;
+        let server_name = peer.endpoint.ip().to_string();
+        peers.push(
+            ProductionPeerAdmission::try_new(identity, region, peer.endpoint, &server_name)
+                .map_err(|error| format!("peer transport: {error:?}"))?,
+        );
+    }
+    let max_inflight = config.transport.max_inflight.min(1024);
+    let max_queued_bytes = config
+        .transport
+        .max_message_bytes
+        .saturating_mul(max_inflight)
+        .min(1024 * 1024 * 1024)
+        .max(config.transport.max_message_bytes);
+    let limits = ProductionTransportLimits::try_new(
+        config.transport.max_message_bytes,
+        max_inflight,
+        256,
+        max_queued_bytes,
+        config.shutdown_grace.min(std::time::Duration::from_mins(60)),
+        config.request_timeout.min(std::time::Duration::from_mins(2)),
+        std::time::Duration::from_mins(1),
+        config.shutdown_grace.min(std::time::Duration::from_mins(5)),
+    )
+    .map_err(|error| format!("transport limits: {error:?}"))?;
+    let transport = ProductionTransportConfig::try_new(
+        config.transport.quic_listen,
+        local,
+        local_region,
+        config.placement.generation,
+        config.placement.epoch,
+        peers,
+        limits,
+    )
+    .map_err(|error| format!("transport configuration: {error:?}"))?;
+    let certificate =
+        read_pem(&config.transport.server_certificate, false).map_err(|error| error.to_string())?;
+    let private_key =
+        read_pem(&config.transport.server_private_key, true).map_err(|error| error.to_string())?;
+    let client_ca =
+        read_pem(&config.transport.client_ca, false).map_err(|error| error.to_string())?;
+    let tls = ProductionTlsMaterial::from_pem(
+        certificate.as_bytes(),
+        private_key.as_bytes(),
+        client_ca.as_bytes(),
+    )
+    .map_err(|error| format!("TLS material: {error:?}"))?;
+    ProductionQuicEndpoint::bind(transport, tls).map_err(|error| format!("QUIC bind: {error:?}"))
+}
+
+fn production_region(
+    region: terrabase::regions::RegionCode,
+) -> Result<terrabase_cluster::production::ProductionRegion, String> {
+    match region.as_str() {
+        "GRU" => Ok(terrabase_cluster::production::ProductionRegion::Gru),
+        "SFO" => Ok(terrabase_cluster::production::ProductionRegion::Sfo),
+        "FRA" => Ok(terrabase_cluster::production::ProductionRegion::Fra),
+        _ => Err(format!("unsupported production Region {region}")),
+    }
 }
 
 async fn wait_for_shutdown() -> Result<(), std::io::Error> {
@@ -456,7 +607,8 @@ enum DaemonError {
     PrivateKeyPermissions,
     UnsafeUdsPath,
     ShutdownTimeout,
-    ProductionCompositionUnavailable,
+    ProductionConfigurationMissing,
+    ProductionStartup(ProductionStartupError),
 }
 
 impl std::fmt::Display for DaemonError {
@@ -471,8 +623,12 @@ impl std::fmt::Display for DaemonError {
             }
             Self::UnsafeUdsPath => formatter.write_str("the local UDS path is unsafe"),
             Self::ShutdownTimeout => formatter.write_str("graceful shutdown exceeded its deadline"),
-            Self::ProductionCompositionUnavailable => formatter
-                .write_str("production configuration requires the complete Member orchestrator"),
+            Self::ProductionConfigurationMissing => {
+                formatter.write_str("production mode has no typed production configuration")
+            }
+            Self::ProductionStartup(error) => {
+                write!(formatter, "production startup failed: {error}")
+            }
         }
     }
 }
@@ -539,7 +695,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn production_mode_refuses_before_secret_or_listener_side_effects() {
+    async fn production_mode_requires_typed_configuration_before_side_effects() {
         let engine_location = temporary_path("production-refused-engine");
         let config = ServerConfig {
             mode: ServerMode::Production,
@@ -565,8 +721,8 @@ mod tests {
             tls_handshake_timeout: std::time::Duration::from_secs(1),
             shutdown_grace: std::time::Duration::from_secs(1),
         };
-        let error = run(config).await.expect_err("production handoff must refuse");
-        assert!(error.to_string().contains("complete Member orchestrator"));
+        let error = run(config).await.expect_err("production configuration must be present");
+        assert!(error.to_string().contains("no typed production configuration"));
         assert!(!engine_location.exists());
     }
 

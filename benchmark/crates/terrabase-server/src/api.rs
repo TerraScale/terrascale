@@ -610,7 +610,7 @@ fn enrich_openapi(raw: String) -> String {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default()
                 .to_owned();
-            operation["security"] = serde_json::json!([{ "bearerAuth": [] }]);
+            operation.insert("security".to_owned(), serde_json::json!([{ "bearerAuth": [] }]));
             for variable in path_variables(path) {
                 add_parameter(operation, &variable, "path", true, "string");
             }
@@ -620,7 +620,7 @@ fn enrich_openapi(raw: String) -> String {
             }
 
             if pending_operation(&operation_id) {
-                operation["responses"] = serde_json::json!({});
+                operation.insert("responses".to_owned(), serde_json::json!({}));
                 set_json_response(
                     operation,
                     "501",
@@ -653,10 +653,10 @@ fn enrich_openapi(raw: String) -> String {
                             response.remove("content");
                         } else if status.starts_with('2') {
                             if let Some(schema) = success_schema {
-                                response["content"] = json_content(schema);
+                                response.insert("content".into(), json_content(schema));
                             }
                         } else if status.parse::<u16>().is_ok_and(|code| code >= 400) {
-                            response["content"] = json_content("ErrorResponse");
+                            response.insert("content".into(), json_content("ErrorResponse"));
                         }
                     }
                 }
@@ -704,11 +704,11 @@ fn enrich_openapi(raw: String) -> String {
                         .and_then(|responses| responses.get_mut("200"))
                         .and_then(serde_json::Value::as_object_mut)
                     {
-                        response["content"] = serde_json::json!({
+                        response.insert("content".to_owned(), serde_json::json!({
                             "application/msgpack": {
                                 "schema": { "$ref": "#/components/schemas/ReactiveFramesResponse" }
                             }
-                        });
+                        }));
                     }
                 }
             }
@@ -752,11 +752,14 @@ fn add_route_parameters(operation: &mut serde_json::Map<String, serde_json::Valu
         "list_documents" | "document_history" => {
             add_parameter(operation, "limit", "query", false, "integer");
             add_parameter(operation, "after", "query", false, "string");
+            set_parameter_bounds(operation, "limit", "query", 1, 1000);
         }
         "get_document" => {
             add_parameter(operation, "at", "query", false, "integer");
             add_parameter(operation, "if-none-match", "header", false, "string");
             add_parameter(operation, "x-terrascale-session", "header", false, "integer");
+            set_parameter_format(operation, "at", "query", "int64");
+            set_parameter_format(operation, "x-terrascale-session", "header", "int64");
         }
         "put_document" | "patch_document" | "delete_document" => {
             add_parameter(operation, "if-match", "header", false, "string");
@@ -778,6 +781,16 @@ fn add_route_parameters(operation: &mut serde_json::Map<String, serde_json::Valu
                 "header",
                 &["regional", "global"],
             );
+        }
+        "execute_sql" => {
+            add_parameter(operation, "x-terrascale-timeout-ms", "header", false, "integer");
+            add_parameter(operation, "x-terrascale-cancelled", "header", false, "boolean");
+            set_parameter_bounds(operation, "x-terrascale-timeout-ms", "header", 1, 30000);
+        }
+        "view_log" => {
+            add_parameter(operation, "offset", "query", true, "integer");
+            add_parameter(operation, "x-terrascale-view-capability", "header", true, "string");
+            set_parameter_format(operation, "offset", "query", "int64");
         }
         _ => {}
     }
@@ -803,15 +816,65 @@ fn set_parameter_enum(
     parameter["schema"]["enum"] = serde_json::json!(values);
 }
 
+fn set_parameter_format(
+    operation: &mut serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    location: &str,
+    format: &str,
+) {
+    let Some(parameters) =
+        operation.get_mut("parameters").and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    let Some(parameter) = parameters.iter_mut().find(|parameter| {
+        parameter.get("name").and_then(serde_json::Value::as_str) == Some(name)
+            && parameter.get("in").and_then(serde_json::Value::as_str) == Some(location)
+    }) else {
+        return;
+    };
+    let Some(schema) = parameter.get_mut("schema").and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    schema.insert("format".to_owned(), serde_json::json!(format));
+}
+
+fn set_parameter_bounds(
+    operation: &mut serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    location: &str,
+    minimum: u64,
+    maximum: u64,
+) {
+    let Some(parameters) =
+        operation.get_mut("parameters").and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    let Some(parameter) = parameters.iter_mut().find(|parameter| {
+        parameter.get("name").and_then(serde_json::Value::as_str) == Some(name)
+            && parameter.get("in").and_then(serde_json::Value::as_str) == Some(location)
+    }) else {
+        return;
+    };
+    let Some(schema) = parameter.get_mut("schema").and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    schema.insert("minimum".to_owned(), serde_json::json!(minimum));
+    schema.insert("maximum".to_owned(), serde_json::json!(maximum));
+}
+
 fn set_request_body(
     operation: &mut serde_json::Map<String, serde_json::Value>,
     schema: &str,
     required: bool,
 ) {
-    operation["requestBody"] = serde_json::json!({
+    operation.insert("requestBody".to_owned(), serde_json::json!({
         "required": required,
         "content": { "application/json": { "schema": { "$ref": format!("#/components/schemas/{schema}") } } }
-    });
+    }));
 }
 
 fn json_content(schema: &str) -> serde_json::Value {
@@ -833,8 +896,8 @@ fn set_json_response(
         .entry(status.to_owned())
         .or_insert_with(|| serde_json::json!({"description": description}));
     if let Some(response) = response.as_object_mut() {
-        response.entry("description").or_insert_with(|| serde_json::json!(description));
-        response["content"] = json_content(schema);
+        response.insert("description".to_owned(), serde_json::json!(description));
+        response.insert("content".into(), json_content(schema));
     }
 }
 
@@ -853,7 +916,16 @@ fn set_response_header(
         return;
     };
     response.entry("headers").or_insert_with(|| serde_json::json!({}));
-    response["headers"][name] = serde_json::json!({ "schema": { "type": schema_type } });
+    let mut schema = serde_json::Map::new();
+    schema.insert("type".to_owned(), serde_json::json!(schema_type));
+    if schema_type == "integer" {
+        schema.insert("format".to_owned(), serde_json::json!("int64"));
+    }
+    let headers = response
+        .get_mut("headers")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("OpenAPI response headers are an object");
+    headers.insert(name.to_owned(), serde_json::json!({ "schema": schema }));
 }
 
 fn request_schema(operation_id: &str) -> Option<(&'static str, bool)> {
@@ -864,7 +936,8 @@ fn request_schema(operation_id: &str) -> Option<(&'static str, bool)> {
         "put_document" | "patch_document" => ("JsonValue", true),
         "execute_sql" => ("SqlRequest", true),
         "create_webhook" => ("WebhookRequest", true),
-        "attach_view" => ("AttachViewRequest", true),
+        // The pending handler accepts an empty body and uses the unnamed view.
+        "attach_view" => ("AttachViewRequest", false),
         "restore_backup" | "create_branch" => ("RestoreRequest", true),
         "poll" => ("ReactivePollRequest", true),
         _ => return None,
@@ -886,7 +959,7 @@ fn success_schema(operation_id: &str) -> Option<&'static str> {
         "get_document" => Some("JsonValue"),
         "put_document" | "patch_document" => Some("DocumentWriteResponse"),
         "document_history" => Some("HistoryResponse"),
-        "execute_sql" => Some("SqlResponse"),
+        "execute_sql" => Some("SqlResultResponse"),
         "list_backups" => Some("BackupStatusResponse"),
         "poll" => Some("ReactiveFramesResponse"),
         _ => None,
@@ -919,7 +992,7 @@ fn openapi_schemas() -> serde_json::Value {
             { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/JsonValue" } }
         ]
     });
-    serde_json::json!({
+    let mut schemas = serde_json::json!({
         "JsonValue": json_value,
         "ErrorResponse": {
             "type": "object", "required": ["error"],
@@ -956,7 +1029,84 @@ fn openapi_schemas() -> serde_json::Value {
         "AttachViewRequest": { "type": "object", "properties": { "view": { "type": "string" }, "name": { "type": "string" }, "id": { "type": "string" } } },
         "ReactivePollRequest": { "type": "object", "required": ["op"], "properties": { "op": { "type": "string", "enum": ["subscribe", "poll", "unsubscribe"] }, "collection": { "type": "string" }, "conditions": { "type": "array", "items": { "type": "object" } }, "projection": { "type": "array", "items": { "type": "string" } }, "subscription": { "type": "integer", "format": "int64" }, "resume": { "type": "object" } } },
         "ReactiveFramesResponse": { "type": "array", "description": "MessagePack frames; projected bodies are canonical JSON strings.", "items": { "type": "object", "additionalProperties": true } }
-    })
+    });
+    let Some(schemas) = schemas.as_object_mut() else {
+        return serde_json::json!({});
+    };
+    schemas.insert("SqlExplainResponse".to_owned(), serde_json::json!({
+        "type": "object",
+        "required": ["dialect", "collection", "order", "access"],
+        "properties": {
+            "dialect": { "type": "string", "const": "sql/sqlite-readonly" },
+            "collection": { "type": ["string", "null"] },
+            "order": { "type": "array", "items": {
+                "type": "object", "required": ["field", "direction"],
+                "properties": { "field": { "type": "string" }, "direction": { "type": "string", "enum": ["asc", "desc"] } }
+            } },
+            "access": { "type": "string", "const": "scan" }
+        }
+    }));
+    schemas.insert(
+        "SqlResultResponse".to_owned(),
+        serde_json::json!({
+            "oneOf": [
+                { "$ref": "#/components/schemas/SqlResponse" },
+                { "$ref": "#/components/schemas/SqlExplainResponse" }
+            ]
+        }),
+    );
+    schemas.insert("ReactiveCondition".to_owned(), serde_json::json!({
+        "type": "object", "required": ["field", "op", "value"],
+        "properties": {
+            "field": { "type": "string" },
+            "op": { "type": "string", "enum": ["equals", "less", "less_or_equal", "greater", "greater_or_equal"] },
+            "value": { "oneOf": [{ "type": "string" }, { "type": "number" }] }
+        }
+    }));
+    schemas.insert(
+        "ReactiveResume".to_owned(),
+        serde_json::json!({
+            "type": "object", "required": ["subscription", "revision"],
+            "properties": {
+                "subscription": { "type": "integer", "format": "int64" },
+                "revision": { "type": "integer", "format": "int64" }
+            }
+        }),
+    );
+    schemas.insert("ReactivePollRequest".to_owned(), serde_json::json!({
+        "oneOf": [
+            { "type": "object", "required": ["op", "collection"], "properties": {
+                "op": { "const": "subscribe" }, "collection": { "type": "string" },
+                "conditions": { "type": "array", "items": { "$ref": "#/components/schemas/ReactiveCondition" } },
+                "projection": { "type": "array", "items": { "type": "string" } },
+                "resume": { "$ref": "#/components/schemas/ReactiveResume" }
+            } },
+            { "type": "object", "required": ["op", "subscription"], "properties": {
+                "op": { "const": "poll" }, "subscription": { "type": "integer", "format": "int64" }
+            } },
+            { "type": "object", "required": ["op", "subscription"], "properties": {
+                "op": { "const": "unsubscribe" }, "subscription": { "type": "integer", "format": "int64" }
+            } }
+        ]
+    }));
+    schemas.insert("ReactiveEnvelope".to_owned(), serde_json::json!({
+        "type": "array",
+        "description": "One indexed sync-v2 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
+        "minItems": 7, "maxItems": 7,
+        "prefixItems": [
+            { "type": "integer", "minimum": 0 }, { "type": "integer", "minimum": 0 },
+            { "type": "integer", "minimum": 0 }, { "type": "integer", "minimum": 0 },
+            { "type": "integer", "minimum": 0 }, { "type": "integer", "minimum": 0 },
+            { "oneOf": [{ "type": "array" }, { "type": "object" }] }
+        ],
+        "items": false
+    }));
+    schemas.insert("ReactiveFramesResponse".to_owned(), serde_json::json!({
+        "type": "array",
+        "description": "MessagePack array of indexed sync-v2 envelopes; projected bodies remain opaque canonical JSON bytes.",
+        "items": { "$ref": "#/components/schemas/ReactiveEnvelope" }
+    }));
+    serde_json::Value::Object(std::mem::take(schemas))
 }
 
 /// Renders the served `OpenAPI` document: exactly the bytes
@@ -3405,7 +3555,7 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
+        let body = axum::body::to_bytes(response.into_body(), 1_048_576).await.expect("body");
         let document: serde_json::Value = serde_json::from_slice(&body).expect("valid JSON");
         let paths = document.get("paths").and_then(serde_json::Value::as_object).expect("paths");
         for (path, route) in [
@@ -3464,6 +3614,18 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("bearer")
         );
+        let schemas =
+            components.get("schemas").and_then(serde_json::Value::as_object).expect("schemas");
+        assert!(schemas.contains_key("SqlExplainResponse"));
+        assert!(schemas.contains_key("SqlResultResponse"));
+        assert_eq!(
+            schemas
+                .get("ReactiveFramesResponse")
+                .and_then(|schema| schema.get("items"))
+                .and_then(|items| items.get("$ref"))
+                .and_then(serde_json::Value::as_str),
+            Some("#/components/schemas/ReactiveEnvelope")
+        );
         let paths = document.get("paths").and_then(serde_json::Value::as_object).expect("paths");
         let body_operations = [
             "create_database",
@@ -3514,9 +3676,11 @@ mod tests {
                         .get("requestBody")
                         .and_then(serde_json::Value::as_object)
                         .expect("request body");
+                    let expected_required =
+                        if id == "attach_view" { Some(false) } else { Some(true) };
                     assert_eq!(
                         body.get("required").and_then(serde_json::Value::as_bool),
-                        Some(true),
+                        expected_required,
                         "body required for {id}"
                     );
                     assert!(
@@ -3525,6 +3689,17 @@ mod tests {
                             .is_some_and(|content| !content.is_empty()),
                         "body media for {id}"
                     );
+                }
+                if id == "view_log" {
+                    let parameters = operation
+                        .get("parameters")
+                        .and_then(serde_json::Value::as_array)
+                        .expect("view log parameters");
+                    assert!(parameters.iter().any(|parameter| {
+                        parameter.get("name") == Some(&serde_json::json!("offset"))
+                            && parameter.get("in") == Some(&serde_json::json!("query"))
+                            && parameter.get("required") == Some(&serde_json::json!(true))
+                    }));
                 }
                 let responses = operation
                     .get("responses")

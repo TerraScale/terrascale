@@ -515,7 +515,7 @@ pub enum EngineError {
     SnapshotEngineMismatch,
     /// A snapshot belongs to another tenant.
     SnapshotTenantMismatch,
-    /// A requested scope does not match the snapshot scope.
+    /// A scope does not match this Engine's identity or durable owner.
     ScopeMismatch,
     /// An operation identity has already been used for another request.
     OperationIdReuse {
@@ -909,6 +909,10 @@ pub(crate) struct StorageState {
 pub struct Engine {
     identity: u128,
     durable_owner: crate::storage::DatabaseOwner,
+    /// Whether this location was opened with an explicit production owner.
+    /// Local-development opens retain the existing multi-tenant compatibility
+    /// path; production locations are strictly database-per-tenant (D-51).
+    owner_scope_enforced: bool,
     /// The engine's replication clock (D-36): one hybrid stamp per
     /// database. Origin commits tick it; replicated applies witness it.
     /// The deterministic merge compares `(hlc, origin)` totals.
@@ -1031,6 +1035,7 @@ impl Engine {
         Ok(Self {
             identity: EngineIdentity::next().0,
             durable_owner: owner,
+            owner_scope_enforced: config.owner.is_some(),
             replication_clock: Mutex::new(ReplicationClockStamp::new(Self::now_millis(), 0)),
             // Keep existing local/development callers usable until the host
             // starts feeding observations. Production wiring must publish a
@@ -1446,6 +1451,10 @@ impl Engine {
         request: UsageRecordRequest,
     ) -> Result<UsageRecordReceipt, UsageCommandError> {
         self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
+        if !self.usage_owner_matches(request.project_id().as_str(), request.database_id().as_str())
+        {
+            return Err(UsageCommandError::InvalidRequest);
+        }
         let fact = request
             .fact_for(scope.tenant().clone())
             .map_err(|_| UsageCommandError::InvalidRequest)?;
@@ -1483,6 +1492,10 @@ impl Engine {
         scope: &TenantScope,
         request: UsagePageRequest,
     ) -> Result<UsagePage, UsageCommandError> {
+        // Scope refusal is an authorization failure, not an export/storage
+        // failure. Return before the wrapper's failure counter so a forged
+        // tenant cannot alter observable metrics.
+        self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
         let result = self.usage_page_unobserved(scope, &request);
         match &result {
             Ok(page) => {
@@ -1953,6 +1966,10 @@ impl Engine {
         scope: &TenantScope,
         record: &ReplicatedRecord,
     ) -> Result<AppliedReplication, EngineError> {
+        // Validate before witnessing the remote HLC or taking any storage
+        // lock: a foreign tenant must not mutate clock, bytes, sequence, or
+        // replication idempotency state.
+        self.validate_scope(scope)?;
         if record.origin.is_empty()
             || record.origin_sequence == 0
             || record.origin_sequence > i64::MAX as u64
@@ -2306,7 +2323,32 @@ impl Engine {
         if scope.engine_identity() != self.identity {
             return Err(EngineError::ScopeMismatch);
         }
+        self.validate_tenant(scope.tenant())
+    }
+
+    /// Validates the logical tenant against this location's durable owner.
+    ///
+    /// Production opens are one database per tenant (D-51), so a scope that
+    /// merely forges this Engine's process identity is still foreign. The
+    /// existing local-development ownership mode intentionally remains the
+    /// compatibility path for in-process multi-tenant fixtures and
+    /// control-plane tests; it is never used by `Member::open_production`.
+    fn validate_tenant(&self, tenant: &TenantId) -> Result<(), EngineError> {
+        if self.owner_scope_enforced && tenant.as_str() != self.durable_owner.tenant().to_text() {
+            return Err(EngineError::ScopeMismatch);
+        }
         Ok(())
+    }
+
+    /// Checks the non-tenant usage dimensions against the durable owner.
+    ///
+    /// The serving boundary already authenticates these fields, but the
+    /// Engine repeats the database binding so a direct trusted caller cannot
+    /// mint a fact attributed to another Project or database.
+    fn usage_owner_matches(&self, project: &str, database: &str) -> bool {
+        !self.owner_scope_enforced
+            || (project == self.durable_owner.project().to_text()
+                && database == self.durable_owner.database().to_text())
     }
 
     /// Returns every document of one tenant as the supplied read snapshot
@@ -2801,6 +2843,7 @@ impl Engine {
         &self,
         tenant: &TenantId,
     ) -> Result<Vec<AutoIndexRecommendation>, EngineError> {
+        self.validate_tenant(tenant)?;
         let listings = self.index_descriptors()?;
         let mut observed: BTreeMap<(String, String), u64> = BTreeMap::new();
         for record in self.indexes.selection_records(tenant) {
@@ -2903,6 +2946,7 @@ impl Engine {
         after: Option<(CollectionName, DocumentId)>,
         limit: u32,
     ) -> Result<Vec<SnapshotRecord>, EngineError> {
+        self.validate_tenant(&tenant)?;
         if limit > MAX_SNAPSHOT_RECORD_PAGE {
             return Err(EngineError::SnapshotPageLimitExceeded);
         }
@@ -2971,6 +3015,7 @@ impl Engine {
         after: StorageSequence,
         limit: u32,
     ) -> Result<Vec<PublishedCommit>, EngineError> {
+        self.validate_tenant(tenant)?;
         let storage = self.lock_storage()?;
         Ok(storage.port.tenant_commits(tenant, after, limit))
     }
@@ -3035,6 +3080,7 @@ impl Engine {
         tenant: &TenantId,
         at: StorageSequence,
     ) -> Result<Option<StorageSequence>, EngineError> {
+        self.validate_tenant(tenant)?;
         let storage = self.lock_storage()?;
         Ok(storage.port.tenant_sequence(tenant, at))
     }
@@ -3127,6 +3173,9 @@ impl Engine {
         selected: u64,
         processed: u64,
     ) {
+        if self.validate_tenant(tenant).is_err() {
+            return;
+        }
         self.bulk_audit.record(stage, kind, tenant, operation, selected, processed);
     }
 
@@ -3205,6 +3254,12 @@ impl Transaction<'_> {
     ) -> Result<(), UsageCommandError> {
         if context.request_id().as_str() != self.operation.as_str() {
             return Err(UsageCommandError::IdentityMismatch);
+        }
+        if !self
+            .engine
+            .usage_owner_matches(context.project_id().as_str(), context.database_id().as_str())
+        {
+            return Err(UsageCommandError::InvalidRequest);
         }
         if self.usage_admission.is_some() {
             return Err(UsageCommandError::InvalidRequest);

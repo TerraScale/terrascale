@@ -114,6 +114,16 @@ pub const LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST: u64 = 100;
 /// log-agent configuration (D-72).
 pub const LOG_RETENTION_DAYS: u32 = 14;
 
+/// The maximum UTF-8 byte length retained in one structured-log message.
+///
+/// This is deliberately smaller than [`MAX_DIAGNOSTIC_BYTES`]: the latter is
+/// the amount inspected by the redactor, while this is the amount allowed to
+/// cross the log-emitter boundary.
+pub const MAX_LOG_MESSAGE_BYTES: usize = 16 * 1024;
+
+/// The maximum byte length of a closed-schema string field.
+pub const MAX_LOG_FIELD_BYTES: usize = 64;
+
 /// The fixed upper bound on egress-kind label values.
 pub const MAX_EGRESS_KIND_LABEL_VALUES: usize = EGRESS_KINDS.len();
 
@@ -2077,7 +2087,9 @@ impl LogRecord {
         event: LogEvent,
         message: &str,
     ) -> Self {
-        Self { timestamp_millis, level, component, event, message: redact_diagnostic(message) }
+        let redacted = redact_diagnostic(message);
+        let message = bounded_log_message(&redacted).to_owned();
+        Self { timestamp_millis, level, component, event, message }
     }
 
     /// Returns the millisecond Unix timestamp.
@@ -2110,27 +2122,100 @@ impl LogRecord {
         &self.message
     }
 
-    /// Renders one agent-shippable log line with the [`LOG_FIELD_*`] names.
+    /// Renders one agent-shippable JSON log line with the [`LOG_FIELD_*`]
+    /// names.
+    ///
+    /// Every value is encoded as JSON, including all C0 controls, DEL, and
+    /// Unicode line separators. The result contains no literal line
+    /// separator, so one call always produces exactly one log record.
     #[must_use]
     pub fn to_log_line(&self) -> String {
-        format!(
-            "{}={} {}={} {}={} {}={} {}=\"{}\"",
-            LOG_FIELD_TIMESTAMP,
-            self.timestamp_millis,
-            LOG_FIELD_LEVEL,
-            self.level.as_str(),
-            LOG_FIELD_COMPONENT,
-            self.component.as_str(),
-            LOG_FIELD_EVENT,
-            self.event.as_str(),
-            LOG_FIELD_MESSAGE,
-            self.message
-                .replace('\\', "\\\\")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r")
-                .replace('"', "\\\""),
-        )
+        let mut line = String::with_capacity(self.message.len().saturating_add(128));
+        line.push('{');
+        let valid = append_json_number_field(&mut line, LOG_FIELD_TIMESTAMP, self.timestamp_millis)
+            && append_json_string_field(&mut line, LOG_FIELD_LEVEL, self.level.as_str())
+            && append_json_string_field(&mut line, LOG_FIELD_COMPONENT, self.component.as_str())
+            && append_json_string_field(&mut line, LOG_FIELD_EVENT, self.event.as_str())
+            && append_json_string_field(&mut line, LOG_FIELD_MESSAGE, &self.message);
+        if valid {
+            line.push('}');
+            line
+        } else {
+            // These keys and enum values are closed constants today. Keep a
+            // fail-closed path so a future schema edit cannot produce an
+            // unsafe key or leak a caller-supplied value.
+            r#"{"error":"invalid log schema"}"#.to_owned()
+        }
     }
+}
+
+fn bounded_log_message(input: &str) -> &str {
+    if input.len() <= MAX_LOG_MESSAGE_BYTES {
+        return input;
+    }
+    let mut end = MAX_LOG_MESSAGE_BYTES;
+    while !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    &input[..end]
+}
+
+fn append_json_number_field(output: &mut String, key: &str, value: u64) -> bool {
+    if !is_safe_log_field_name(key) {
+        return false;
+    }
+    if output.len() > 1 {
+        output.push(',');
+    }
+    output.push('"');
+    output.push_str(key);
+    output.push_str("\":");
+    output.push_str(&value.to_string());
+    true
+}
+
+fn append_json_string_field(output: &mut String, key: &str, value: &str) -> bool {
+    let max_value_bytes =
+        if key == LOG_FIELD_MESSAGE { MAX_LOG_MESSAGE_BYTES } else { MAX_LOG_FIELD_BYTES };
+    if !is_safe_log_field_name(key) || value.len() > max_value_bytes {
+        return false;
+    }
+    if output.len() > 1 {
+        output.push(',');
+    }
+    output.push('"');
+    output.push_str(key);
+    output.push_str("\":");
+    append_json_string(output, value);
+    true
+}
+
+fn is_safe_log_field_name(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= MAX_LOG_FIELD_BYTES
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn append_json_string(output: &mut String, value: &str) {
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\u{08}' => output.push_str("\\b"),
+            '\t' => output.push_str("\\t"),
+            '\n' => output.push_str("\\n"),
+            '\u{0c}' => output.push_str("\\f"),
+            '\r' => output.push_str("\\r"),
+            '\u{00}'..='\u{1f}' | '\u{7f}' | '\u{85}' | '\u{2028}' | '\u{2029}' => {
+                write!(output, "\\u{:04x}", character as u32).expect("writing String cannot fail");
+            }
+            _ => output.push(character),
+        }
+    }
+    output.push('"');
 }
 
 /// Redacts secrets from diagnostic text before it is handed to logs or an
@@ -2737,7 +2822,7 @@ mod tests {
         assert!(record.message().contains("tenant=public"));
         assert_eq!(
             record.to_log_line(),
-            "ts=1757000000000 level=error component=storage event=failed msg=\"fsync failed token=[REDACTED] tenant=public\""
+            r#"{"ts":1757000000000,"level":"error","component":"storage","event":"failed","msg":"fsync failed token=[REDACTED] tenant=public"}"#
         );
         assert_eq!(LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST, 100);
         assert_eq!(LOG_RETENTION_DAYS, 14);
@@ -2758,7 +2843,21 @@ mod tests {
         let line = record.to_log_line();
         assert!(!line.contains('\n'));
         assert!(!line.contains('\r'));
-        assert!(line.ends_with("msg=\"first line\\nsecond line\\rfinal\""));
+        assert!(line.ends_with(r#""msg":"first line\nsecond line\rfinal"}"#));
+    }
+
+    #[test]
+    fn log_schema_rejects_unsafe_or_unbounded_field_names() {
+        assert!(is_safe_log_field_name(LOG_FIELD_TIMESTAMP));
+        assert!(is_safe_log_field_name(LOG_FIELD_LEVEL));
+        assert!(is_safe_log_field_name(LOG_FIELD_COMPONENT));
+        assert!(is_safe_log_field_name(LOG_FIELD_EVENT));
+        assert!(is_safe_log_field_name(LOG_FIELD_MESSAGE));
+        assert!(!is_safe_log_field_name(""));
+        assert!(!is_safe_log_field_name("bad-key"));
+        assert!(!is_safe_log_field_name("bad key"));
+        assert!(!is_safe_log_field_name("bad\nkey"));
+        assert!(!is_safe_log_field_name(&"x".repeat(MAX_LOG_FIELD_BYTES + 1)));
     }
 
     #[test]

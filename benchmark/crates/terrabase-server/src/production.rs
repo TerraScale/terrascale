@@ -25,6 +25,143 @@ use terrabase_cluster::production::{
 
 use crate::config::ProductionConfig;
 
+/// A production dependency whose health is required before serving.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ProductionComponent {
+    /// The durable membership/placement authority.
+    Membership,
+    /// The RF=2 WAL follower and cross-Region journal tailer.
+    Replication,
+    /// The complete Member-backed public API host.
+    PublicApi,
+    /// The private TBEP mTLS control host.
+    ControlApi,
+    /// Litestream backup and restore workers.
+    Backup,
+    /// Prometheus and lifecycle probe listener.
+    Metrics,
+    /// Structured process logging.
+    Logging,
+    /// Host clock discipline against OCI NTP.
+    Chrony,
+}
+
+impl ProductionComponent {
+    /// Returns the stable operator-facing component name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Membership => "membership",
+            Self::Replication => "replication",
+            Self::PublicApi => "public-api",
+            Self::ControlApi => "control-api",
+            Self::Backup => "backup",
+            Self::Metrics => "metrics",
+            Self::Logging => "logging",
+            Self::Chrony => "chrony",
+        }
+    }
+}
+
+/// A precise refusal from one missing production integration seam.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProductionComponentError {
+    /// The component that could not be initialized.
+    pub component: ProductionComponent,
+    /// A bounded, non-secret explanation suitable for startup logs.
+    pub detail: &'static str,
+}
+
+impl std::fmt::Display for ProductionComponentError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.component.as_str(), self.detail)
+    }
+}
+
+impl std::error::Error for ProductionComponentError {}
+
+/// Integration seam for dependencies that are owned by the Member runtime.
+///
+/// The catalog is opened before this callback and is transferred only after
+/// the callback succeeds. Implementations must not claim readiness here;
+/// callers do that only after their membership, transport, replication,
+/// backup, metrics, logging, and clock observations are all active.
+pub trait ProductionDependencyProvider: Send + Sync {
+    /// Initializes the complete production serving composition.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact component that is unavailable. A provider must not
+    /// collapse an individual missing integration into a generic production
+    /// mode refusal.
+    fn initialize(
+        &self,
+        config: &ProductionConfig,
+        catalog: &ProductionCatalogParts,
+    ) -> Result<(), ProductionComponentError>;
+}
+
+/// Default provider used by the binary until the real Member host adapter is
+/// linked. It deliberately identifies the absent integration precisely.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MissingProductionDependencyProvider;
+
+impl ProductionDependencyProvider for MissingProductionDependencyProvider {
+    fn initialize(
+        &self,
+        _config: &ProductionConfig,
+        _catalog: &ProductionCatalogParts,
+    ) -> Result<(), ProductionComponentError> {
+        Err(ProductionComponentError {
+            component: ProductionComponent::Replication,
+            detail: "the durable RF=2 data-plane and complete Member host adapter is not installed",
+        })
+    }
+}
+
+/// Opens the authoritative production catalog and invokes an injected
+/// dependency provider before transferring ownership of its engines.
+///
+/// This function is the testable composition boundary used by the daemon and
+/// by the local harness. It has no development fallback and performs no
+/// listener bind when a required provider is absent.
+pub fn prepare_production<P: ProductionDependencyProvider>(
+    config: &ProductionConfig,
+    provider: &P,
+) -> Result<ProductionCatalogParts, ProductionStartupError> {
+    let bootstrap =
+        ProductionCatalogBootstrap::open(config).map_err(ProductionStartupError::Catalog)?;
+    let parts = bootstrap.into_parts();
+    provider.initialize(config, &parts).map_err(ProductionStartupError::Component)?;
+    Ok(parts)
+}
+
+/// Failure before a production Member can make a serving claim.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ProductionStartupError {
+    /// The durable catalog could not be opened or validated.
+    Catalog(ProductionCatalogError),
+    /// The QUIC endpoint or its mTLS material could not be opened.
+    Transport(String),
+    /// The catalog and transport did not agree on the admitted Member.
+    Member(terrabase_cluster::production::ProductionMemberError),
+    /// One required integration seam is unavailable.
+    Component(ProductionComponentError),
+}
+
+impl std::fmt::Display for ProductionStartupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Catalog(error) => write!(formatter, "production catalog: {error}"),
+            Self::Transport(error) => write!(formatter, "production transport: {error}"),
+            Self::Member(error) => write!(formatter, "production Member: {error:?}"),
+            Self::Component(error) => write!(formatter, "production component: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ProductionStartupError {}
+
 /// A fully opened production storage catalog and its static cluster bindings.
 ///
 /// This object contains no ready/serving claim. The embedded member's status
@@ -508,9 +645,19 @@ mod tests {
 
     use super::{
         DatabaseRouteScope, DatabaseRoutingCatalog, ProductionCatalogBootstrap,
-        ProductionCatalogError, ProductionPlacement, ProductionRegionSeats, close_with,
-        derive_root, normalize_location,
+        ProductionCatalogError, ProductionComponent, ProductionComponentError, ProductionPlacement,
+        ProductionRegionSeats, close_with, derive_root, normalize_location,
     };
+
+    #[test]
+    fn component_refusals_are_precise_and_do_not_use_the_old_global_error() {
+        let error = ProductionComponentError {
+            component: ProductionComponent::Replication,
+            detail: "test seam is absent",
+        };
+        assert_eq!(error.component.as_str(), "replication");
+        assert_eq!(error.to_string(), "replication: test seam is absent");
+    }
 
     fn opened_bootstrap(label: &str) -> (ProductionCatalogBootstrap, PathBuf, DatabaseSpec) {
         let root = std::env::temp_dir()

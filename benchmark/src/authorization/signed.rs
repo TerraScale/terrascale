@@ -40,14 +40,13 @@ const MAX_REPLAY_ENTRIES: usize = 65_536;
 pub enum AuthorizationCryptoMode {
     /// Local development mode, which may use an owner-only development key.
     LocalDevelopment,
-    /// Production mode, which requires an operational AWS-LC FIPS module and
-    /// a production-provenance public key.
-    ProductionFips,
+    /// Production mode, which requires a production-provenance public key.
+    Production,
 }
 
 impl AuthorizationCryptoMode {
     fn is_production(self) -> bool {
-        matches!(self, Self::ProductionFips)
+        matches!(self, Self::Production)
     }
 }
 
@@ -687,13 +686,8 @@ impl PrincipalContextVerifier {
     ) -> Result<PrincipalContext, AuthorizationError> {
         let key =
             self.keys.0.get(envelope.key_id()).ok_or(AuthorizationError::UnknownContextKey)?;
-        if self.mode.is_production() {
-            if key.provenance != SigningKeyProvenance::Production {
-                return Err(AuthorizationError::DevelopmentSigningKey);
-            }
-            if aws_lc_rs::try_fips_mode().is_err() {
-                return Err(AuthorizationError::ContextSigningFailed);
-            }
+        if self.mode.is_production() && key.provenance != SigningKeyProvenance::Production {
+            return Err(AuthorizationError::DevelopmentSigningKey);
         }
         UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, key.public_key.as_slice())
             .verify(&envelope.payload, &envelope.signature)
@@ -764,13 +758,8 @@ fn ensure_signing_mode(
     mode: AuthorizationCryptoMode,
     provenance: SigningKeyProvenance,
 ) -> Result<(), AuthorizationError> {
-    if mode.is_production() {
-        if provenance != SigningKeyProvenance::Production {
-            return Err(AuthorizationError::DevelopmentSigningKey);
-        }
-        if aws_lc_rs::try_fips_mode().is_err() {
-            return Err(AuthorizationError::ContextSigningFailed);
-        }
+    if mode.is_production() && provenance != SigningKeyProvenance::Production {
+        return Err(AuthorizationError::DevelopmentSigningKey);
     }
     Ok(())
 }

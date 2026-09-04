@@ -853,18 +853,7 @@ fn tls_server_config(
         roots.add(certificate).map_err(std::io::Error::other)?;
     }
 
-    #[cfg(feature = "local-crypto")]
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    #[cfg(feature = "production-fips")]
-    let provider = {
-        let provider = rustls::crypto::aws_lc_rs::default_provider();
-        if !provider.fips() {
-            return Err(std::io::Error::other(
-                "the production TLS provider is not operating in FIPS mode",
-            ));
-        }
-        Arc::new(provider)
-    };
     let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
         Arc::new(roots),
         Arc::clone(&provider),

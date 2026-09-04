@@ -117,9 +117,10 @@ impl Frontier {
 /// One committed publication-journal row (ADR 0044 §0).
 ///
 /// Carries the per-origin total order (`origin`, `seq`), the causal
-/// `context`, the `hlc` tiebreak, and a compact key/value body standing in
-/// for canonical document bytes. Real-engine adapters replace the body with
-/// canonical bytes plus dot/context metadata without changing the shape.
+/// `context`, the `hlc` tiebreak, and the canonical document body.  The body
+/// is deliberately opaque to the simulation: it is the exact byte sequence
+/// produced by the write path (D-30), including for values which happen to
+/// have the same decoded representation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JournalRow {
     /// The Region that committed this row.
@@ -132,9 +133,12 @@ pub struct JournalRow {
     pub hlc: Hlc,
     /// The document key this row writes.
     pub key: u64,
-    /// The document value; ignored when `tombstone` is set.
-    pub value: u64,
-    /// Whether this row deletes `key` (remove-wins map semantics).
+    /// The raw canonical document bytes; empty bytes are valid in the model
+    /// and remain distinct from a tombstone.
+    pub value: Vec<u8>,
+    /// Whether this row deletes `key`.  This is explicit rather than encoded
+    /// as an absent body: a tombstone is a durable journal row and must remain
+    /// distinguishable in reconciliation and digests.
     pub tombstone: bool,
 }
 
@@ -143,6 +147,20 @@ impl JournalRow {
     #[must_use]
     pub fn id(&self) -> (RegionId, u64) {
         (self.origin, self.seq)
+    }
+
+    /// Returns the canonical body for a live row, or `None` for a tombstone.
+    #[must_use]
+    pub fn body(&self) -> Option<&[u8]> {
+        (!self.tombstone).then_some(self.value.as_slice())
+    }
+
+    /// Returns the exact stored body bytes, including the payload attached to
+    /// a tombstone when a producer supplied one. Callers should consult
+    /// [`Self::tombstone`](Self::tombstone) before treating them as a value.
+    #[must_use]
+    pub fn canonical_bytes(&self) -> &[u8] {
+        &self.value
     }
 }
 
@@ -189,5 +207,39 @@ impl ViewCut {
     #[must_use]
     pub fn new(frontier: Frontier, seq_hi: u64) -> Self {
         Self { frontier, seq_hi }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn journal_body_and_tombstone_are_independent() {
+        let live = JournalRow {
+            origin: RegionId::new(1),
+            seq: 1,
+            context: Frontier::new(),
+            hlc: Hlc::new(1),
+            key: 7,
+            value: Vec::new(),
+            tombstone: false,
+        };
+        let mut tombstone = live.clone();
+        tombstone.tombstone = true;
+        assert_eq!(live.body(), Some([].as_slice()));
+        assert_eq!(tombstone.body(), None);
+        assert_ne!(live, tombstone);
+    }
+
+    #[test]
+    fn frontier_entries_are_canonical() {
+        let mut frontier = Frontier::new();
+        frontier.advance(RegionId::new(4), 2);
+        frontier.advance(RegionId::new(1), 9);
+        assert_eq!(
+            frontier.entries().collect::<Vec<_>>(),
+            vec![(RegionId::new(1), 9), (RegionId::new(4), 2)]
+        );
     }
 }

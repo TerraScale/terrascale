@@ -38,9 +38,11 @@
 
 use std::path::Path;
 
+use terrabase::engine::ReplicatedRecord;
 use terrabase::streaming::ChangeCheckpoint;
 use terrabase_replication_core::anti_entropy::{
-    Hash32, JournalRowId, RangeSummaryTable, ReconciliationPlan, RepairError, RowSummary,
+    Hash32, JournalRowId, RangeFingerprint, RangeSummaryTable, ReconciliationPlan, RepairError,
+    RowSummary,
 };
 
 use crate::engine_host::EngineHost;
@@ -61,6 +63,12 @@ pub const MAX_REPAIR_RANGES: usize = 64;
 )]
 pub const MAX_REPAIR_ROWS_PER_RANGE: usize =
     terrabase_replication_core::anti_entropy::DEFAULT_LEAF_ROWS as usize;
+
+/// Maximum number of content-bearing mutations one repair pass may apply.
+pub const MAX_REPAIR_MUTATIONS: usize = 256;
+
+/// Maximum encoded mutation bytes one repair pass may transfer.
+pub const MAX_REPAIR_MUTATION_BYTES: usize = 4 * 1024 * 1024;
 
 /// What one repair pass decided.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -93,6 +101,96 @@ pub struct DurableJournalRow {
     pub id: JournalRowId,
     /// Hash of the canonical durable journal-row bytes.
     pub row_hash: Hash32,
+}
+
+/// A content-bearing journal row together with the hash that authenticates it.
+///
+/// The hash is checked against the reconciliation row before application and
+/// the full row set is reconciled again afterwards.  A transport must not
+/// substitute a document scan or a synthetic identity for these fields.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuthenticatedMutation {
+    /// Tenant whose journal contains the mutation.
+    pub tenant: String,
+    /// Stable identity and durable row hash advertised by the source.
+    pub row: DurableJournalRow,
+    /// Reconstructable mutation, including source causal provenance.
+    pub mutation: ReplicatedRecord,
+    /// Authentication tag over the complete mutation envelope.
+    pub authentication: Hash32,
+}
+
+impl AuthenticatedMutation {
+    /// Builds an authenticated mutation envelope.
+    #[must_use]
+    pub fn new(
+        tenant: impl Into<String>,
+        row: DurableJournalRow,
+        mutation: ReplicatedRecord,
+    ) -> Self {
+        let tenant = tenant.into();
+        let authentication = mutation_authentication(&tenant, &row, &mutation);
+        Self { tenant, row, mutation, authentication }
+    }
+
+    /// Returns a conservative encoded size used by the transfer byte budget.
+    #[must_use]
+    pub fn encoded_len(&self) -> usize {
+        self.tenant
+            .len()
+            .saturating_add(self.row.id.origin().len())
+            .saturating_add(self.mutation.collection.as_str().len())
+            .saturating_add(self.mutation.id.as_str().len())
+            .saturating_add(self.mutation.commit_ulid.len())
+            .saturating_add(self.mutation.body_debug_len())
+            .saturating_add(8 + 8 + 1 + 32)
+    }
+
+    fn verify(&self, scope: &BoundScope) -> Result<(), HostingError> {
+        if self.tenant != scope.tenant
+            || self.row.id.origin() != self.mutation.origin
+            || self.row.id.sequence() != self.mutation.origin_sequence
+            || self.authentication
+                != mutation_authentication(&self.tenant, &self.row, &self.mutation)
+        {
+            return Err(HostingError::Invalid(
+                "the anti-entropy mutation authentication or scope does not match".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Hashes the immutable transfer envelope.  `Debug` is deterministic here:
+/// document objects use `BTreeMap`, and this is an internal authenticated
+/// transport seam rather than a public serialization format.
+fn mutation_authentication(
+    tenant: &str,
+    row: &DurableJournalRow,
+    mutation: &ReplicatedRecord,
+) -> Hash32 {
+    let bytes = format!(
+        "{tenant}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{:?}",
+        row.id.origin(),
+        row.id.sequence(),
+        mutation.collection.as_str(),
+        mutation.id.as_str(),
+        mutation.commit_ulid,
+        mutation.hlc,
+        mutation.deleted,
+        mutation.body,
+    );
+    terrabase_replication_core::anti_entropy::row_hash(bytes.as_bytes())
+}
+
+trait ReplicatedRecordBodyLen {
+    fn body_debug_len(&self) -> usize;
+}
+
+impl ReplicatedRecordBodyLen for ReplicatedRecord {
+    fn body_debug_len(&self) -> usize {
+        format!("{:?}", self.body).len()
+    }
 }
 
 /// Result of a bounded journal summary scan. `complete` is false when the
@@ -163,6 +261,30 @@ pub trait JournalRowSource {
             }
         }
         Ok(JournalSummary { table, complete })
+    }
+
+    /// Returns content-bearing mutations for bounded anti-entropy transfer.
+    ///
+    /// A source that cannot reconstruct the exact mutation must leave this
+    /// seam unavailable; callers then retain the snapshot fallback.
+    fn durable_mutations(
+        &self,
+        _scope: &BoundScope,
+    ) -> Result<Vec<AuthenticatedMutation>, HostingError> {
+        Err(HostingError::EngineFailure("mutation-range transfer is unavailable".into()))
+    }
+
+    /// Applies a verified mutation range to this source's member.
+    ///
+    /// The default is deliberately unavailable for summary-only adapters.
+    /// Implementations must apply records idempotently and durably before
+    /// returning so the post-apply proof can be trusted.
+    fn apply_mutations(
+        &self,
+        _scope: &BoundScope,
+        _mutations: &[AuthenticatedMutation],
+    ) -> Result<usize, HostingError> {
+        Err(HostingError::EngineFailure("mutation-range apply is unavailable".into()))
     }
 }
 
@@ -243,8 +365,39 @@ where
     L: JournalRowSource,
     R: JournalRowSource,
 {
+    repair_once_sources_bounded_with_budgets(
+        local,
+        peer,
+        scope,
+        max_ranges,
+        MAX_REPAIR_MUTATIONS,
+        MAX_REPAIR_MUTATION_BYTES,
+    )
+}
+
+/// Runs a bounded reconciliation and, when possible, transfers the exact
+/// missing mutations instead of immediately requiring a snapshot.
+///
+/// A source or target that does not implement the mutation seams returns a
+/// snapshot decision.  This is intentionally a safe fallback for old
+/// transports: a digest-only exchange must never be treated as repair.
+pub fn repair_once_sources_bounded_with_budgets<L, R>(
+    local: &L,
+    peer: &R,
+    scope: &BoundScope,
+    max_ranges: usize,
+    max_mutations: usize,
+    max_bytes: usize,
+) -> Result<RepairDecision, HostingError>
+where
+    L: JournalRowSource,
+    R: JournalRowSource,
+{
     if max_ranges == 0 {
         return Err(HostingError::Invalid("the repair range budget must be nonzero".into()));
+    }
+    if max_mutations == 0 || max_bytes == 0 {
+        return Err(HostingError::Invalid("the mutation repair budgets must be nonzero".into()));
     }
     let row_budget = max_ranges.saturating_mul(MAX_REPAIR_ROWS_PER_RANGE).max(1);
     let local_summary = JournalRowSource::durable_journal_summary(local, scope, row_budget)?;
@@ -272,11 +425,95 @@ where
     if plan.is_converged() {
         Ok(RepairDecision::Converged { repaired: 0 })
     } else {
-        // Journal rows are now compared correctly, but applying a missing row
-        // still requires the source's reconstructable mutation payload and
-        // the source dot on the replication envelope. Keep the operation
-        // fail-closed until that transport carries both facts.
-        Ok(RepairDecision::NeedsSnapshot { ranges: plan.differences().len(), max_ranges })
+        if plan.differences().len() > max_mutations {
+            return Ok(RepairDecision::NeedsSnapshot {
+                ranges: plan.differences().len(),
+                max_ranges,
+            });
+        }
+        // This function mutates `local`; a row which only local has would
+        // require a reciprocal target. Keep that direction snapshot-gated.
+        if plan.differences().iter().any(|difference| {
+            matches!(
+                difference,
+                terrabase_replication_core::anti_entropy::RowDifference::MissingRemote(_)
+            )
+        }) {
+            return Ok(RepairDecision::NeedsSnapshot {
+                ranges: plan.differences().len(),
+                max_ranges,
+            });
+        }
+        let mutations = match peer.durable_mutations(scope) {
+            Ok(mutations) => mutations,
+            Err(_) => {
+                return Ok(RepairDecision::NeedsSnapshot {
+                    ranges: plan.differences().len(),
+                    max_ranges,
+                });
+            }
+        };
+        let mut by_id = std::collections::BTreeMap::new();
+        for mutation in mutations {
+            mutation.verify(scope)?;
+            if by_id.insert(mutation.row.id.clone(), mutation).is_some() {
+                return Err(HostingError::Invalid(
+                    "the anti-entropy mutation range contains a duplicate identity".into(),
+                ));
+            }
+        }
+        let mut transfer = Vec::with_capacity(plan.differences().len());
+        let mut bytes = 0usize;
+        for difference in plan.differences() {
+            let id = difference.id();
+            let Some(mutation) = by_id.remove(id) else {
+                return Ok(RepairDecision::NeedsSnapshot {
+                    ranges: plan.differences().len(),
+                    max_ranges,
+                });
+            };
+            let expected = match difference {
+                terrabase_replication_core::anti_entropy::RowDifference::MissingLocal(row) => {
+                    row.row_hash
+                }
+                terrabase_replication_core::anti_entropy::RowDifference::HashMismatch {
+                    remote,
+                    ..
+                } => *remote,
+                terrabase_replication_core::anti_entropy::RowDifference::MissingRemote(_) => {
+                    unreachable!()
+                }
+            };
+            if mutation.row.row_hash != expected {
+                return Err(HostingError::Invalid(
+                    "the anti-entropy mutation hash does not match its reconciliation row".into(),
+                ));
+            }
+            bytes = bytes.saturating_add(mutation.encoded_len());
+            if bytes > max_bytes {
+                return Ok(RepairDecision::NeedsSnapshot {
+                    ranges: plan.differences().len(),
+                    max_ranges,
+                });
+            }
+            transfer.push(mutation);
+        }
+        let repaired = match local.apply_mutations(scope, &transfer) {
+            Ok(repaired) => repaired,
+            Err(_) => {
+                return Ok(RepairDecision::NeedsSnapshot {
+                    ranges: plan.differences().len(),
+                    max_ranges,
+                });
+            }
+        };
+        let local_after = local.durable_journal_summary(scope, row_budget)?;
+        if !local_after.complete || local_after.table != peer_summary.table {
+            return Err(HostingError::EngineFailure(
+                "the anti-entropy mutation transfer failed its post-apply proof".into(),
+            ));
+        }
+        Ok(RepairDecision::Converged { repaired })
     }
 }
 
@@ -302,6 +539,52 @@ pub fn journal_end(
             return Ok(cursor);
         }
     }
+}
+
+/// The post-copy proof required before a snapshot cursor may be trusted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SnapshotProof {
+    /// Source's complete journal fingerprint.
+    pub source: RangeFingerprint,
+    /// Target's complete journal fingerprint after the copy.
+    pub target: RangeFingerprint,
+}
+
+/// Reconciles both complete journal sets after a snapshot copy.
+///
+/// Callers must invoke this before advancing a replication cursor to
+/// [`journal_end`].  An incomplete or unavailable summary is an error, never
+/// permission to trust the copied bytes.
+pub fn prove_snapshot_reconciliation<L, R>(
+    source: &L,
+    target: &R,
+    scope: &BoundScope,
+    max_rows: usize,
+) -> Result<SnapshotProof, HostingError>
+where
+    L: JournalRowSource,
+    R: JournalRowSource,
+{
+    if max_rows == 0 {
+        return Err(HostingError::Invalid("the snapshot proof row budget must be nonzero".into()));
+    }
+    let source_summary = source.durable_journal_summary(scope, max_rows)?;
+    let target_summary = target.durable_journal_summary(scope, max_rows)?;
+    if !source_summary.complete || !target_summary.complete {
+        return Err(HostingError::EngineFailure(
+            "the snapshot post-copy proof exceeded its row budget".into(),
+        ));
+    }
+    let proof = SnapshotProof {
+        source: source_summary.table.proof(),
+        target: target_summary.table.proof(),
+    };
+    if proof.source != proof.target || source_summary.table != target_summary.table {
+        return Err(HostingError::EngineFailure(
+            "the snapshot post-copy reconciliation proof does not match".into(),
+        ));
+    }
+    Ok(proof)
 }
 
 /// What a snapshot bootstrap installed.

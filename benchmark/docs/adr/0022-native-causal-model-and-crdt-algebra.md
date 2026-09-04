@@ -485,8 +485,8 @@ A checksum proves identity and corruption detection, not authorization.
 Generated protobuf messages are the bounded private TBEP control envelope under
 ADR 0025. Native CRDT and snapshot bytes are opaque length-bounded fields inside
 that envelope. A payload is validated against its declared native codec before
-any progress acknowledgment. The Go gateway never receives raw CRDT, causal,
-snapshot, or replication payloads.
+any progress acknowledgment. Only the orchestrator and CLI speak private TBEP;
+public clients never receive raw CRDT, causal, snapshot, or replication payloads.
 
 Compression occurs after canonical encoding. The receiver authenticates the
 frame, enforces compressed and declared uncompressed bounds, decompresses into

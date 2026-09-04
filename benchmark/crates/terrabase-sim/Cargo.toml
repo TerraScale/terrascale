@@ -31,3 +31,10 @@ pedantic = "warn"
 [dependencies]
 rand = "0.9"
 rand_chacha = "0.9"
+# The adapter is the one deliberate integration point for the durable Engine.
+# The Engine does not depend on this harness, so this edge does not form a
+# cycle and keeps the stub crate's trait vocabulary independent.
+terrabase = { path = "../..", default-features = false }
+terrabase-member-transport = { path = "../terrabase-member-transport", default-features = false }
+terrabase-replication-core = { path = "../terrabase-replication-core" }
+terrabase-sync-core = { path = "../terrabase-sync-core" }

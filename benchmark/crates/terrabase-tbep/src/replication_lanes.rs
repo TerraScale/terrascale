@@ -38,7 +38,7 @@
 //! feeding it the `[replication] peers` list the server configuration
 //! enumerates is the member-composition step that lands with S-09.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use terrabase::engine::ReplicatedRecord;
 use terrabase::streaming::ChangeCheckpoint;
@@ -80,6 +80,10 @@ pub const MAX_FILTERED_PAGE_SCANS: usize = 8;
 /// (the apply replays them idempotently).
 pub const FRAME_EXPIRY_TICKS: u64 = 64;
 
+/// The bounded history used to distinguish a delayed duplicate report from a
+/// report fabricated for a message identity this link never issued.
+const MAX_RETIRED_MESSAGE_IDS: usize = MAX_INFLIGHT_FRAMES * 8;
+
 /// One frame the link holds in flight toward its peer.
 struct InFlightFrame {
     /// The journal cursor after this frame's records: the cursor the link
@@ -91,6 +95,10 @@ struct InFlightFrame {
     acknowledged: bool,
     /// The tenant bound to the frame, used to authenticate its report.
     tenant: LaneTenantId,
+    /// The exact ordered operation identities carried by the frame. An ack
+    /// is meaningful only when it repeats this list byte-for-byte: the
+    /// correlation id alone does not prove which operations were durable.
+    expected_operations: Vec<OperationId>,
 }
 
 /// The outcome of one outbound shipping tick.
@@ -118,6 +126,7 @@ pub struct RegionLink {
     peer: MemberId,
     cursor: Option<ChangeCheckpoint>,
     in_flight: BTreeMap<u64, InFlightFrame>,
+    retired_message_ids: BTreeSet<u64>,
     next_message_id: u64,
 }
 
@@ -134,6 +143,7 @@ impl RegionLink {
             peer: member_id(peer)?,
             cursor: None,
             in_flight: BTreeMap::new(),
+            retired_message_ids: BTreeSet::new(),
             next_message_id: 1,
         })
     }
@@ -164,6 +174,7 @@ impl RegionLink {
     pub fn set_cursor(&mut self, cursor: Option<ChangeCheckpoint>) {
         self.cursor = cursor;
         self.in_flight.clear();
+        self.retired_message_ids.clear();
     }
 
     /// The frames this link currently holds in flight.
@@ -239,6 +250,16 @@ impl RegionLink {
             tenant.as_str(),
             &records,
         )?;
+        let expected_operations = records[..shipped]
+            .iter()
+            .map(|(_, write)| {
+                OperationId::try_new(&write.commit_ulid).map_err(|_| {
+                    HostingError::Invalid(
+                        "the replicated operation identity breaks the lane rules".into(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         match lane.send(&self.local, &self.peer, frame) {
             Ok(()) => {}
             // The lane's bounded queue is the peer-not-drained signal:
@@ -254,6 +275,7 @@ impl RegionLink {
                 expiry: now + FRAME_EXPIRY_TICKS,
                 acknowledged: false,
                 tenant,
+                expected_operations,
             },
         );
         Ok(ShipStep::Shipped(shipped))
@@ -373,10 +395,43 @@ impl RegionLink {
             reports.push((envelope.correlation_id, tenant, batch));
         }
         for (correlation, tenant, batch) in reports {
-            let Some(message_id) = correlation else { continue };
-            let Some(frame_state) = self.in_flight.get_mut(&message_id) else { continue };
+            let Some(message_id) = correlation else {
+                return Err(HostingError::Refused(
+                    "the acknowledgement has no in-flight frame correlation".into(),
+                ));
+            };
+            let Some(frame_state) = self.in_flight.get_mut(&message_id) else {
+                if self.retired_message_ids.contains(&message_id) {
+                    // A duplicate of a report already settled is harmless,
+                    // but an unknown correlation is not an acknowledgement.
+                    continue;
+                }
+                return Err(HostingError::Refused(
+                    "the acknowledgement names no in-flight frame".into(),
+                ));
+            };
             if tenant != frame_state.tenant {
                 return Err(HostingError::Refused("the report names another tenant".into()));
+            }
+            if batch.is_empty() || batch.len() != frame_state.expected_operations.len() {
+                return Err(HostingError::Refused(
+                    "the acknowledgement does not cover exactly one in-flight frame".into(),
+                ));
+            }
+            let mut seen = BTreeSet::new();
+            if batch.iter().any(|(operation, _)| !seen.insert(operation)) {
+                return Err(HostingError::Refused(
+                    "the acknowledgement repeats an operation identity".into(),
+                ));
+            }
+            if batch
+                .iter()
+                .zip(&frame_state.expected_operations)
+                .any(|((operation, _), expected)| operation != expected)
+            {
+                return Err(HostingError::Refused(
+                    "the acknowledgement operation identities do not match the frame".into(),
+                ));
             }
             // Any non-durable holding voids the frame's advance: the
             // sender treats the frame as lost and re-pulls its records.
@@ -402,7 +457,12 @@ impl RegionLink {
             .find(|(_, frame)| frame.expiry <= now && !frame.acknowledged)
             .map(|(message_id, _)| *message_id);
         if let Some(lost) = lost {
+            let retired: Vec<u64> =
+                self.in_flight.range(lost..).map(|(message_id, _)| *message_id).collect();
             self.in_flight.retain(|message_id, _| *message_id < lost);
+            for message_id in retired {
+                self.retire_message_id(message_id);
+            }
         }
         let mut advanced = 0;
         while let Some((_, frame)) = self.in_flight.first_key_value()
@@ -411,9 +471,18 @@ impl RegionLink {
             self.cursor = frame.checkpoint;
             let key = *self.in_flight.first_key_value().map(|(key, _)| key).expect("checked");
             self.in_flight.remove(&key);
+            self.retire_message_id(key);
             advanced += 1;
         }
         advanced
+    }
+
+    fn retire_message_id(&mut self, message_id: u64) {
+        self.retired_message_ids.insert(message_id);
+        while self.retired_message_ids.len() > MAX_RETIRED_MESSAGE_IDS {
+            let oldest = *self.retired_message_ids.first().expect("the set is nonempty");
+            self.retired_message_ids.remove(&oldest);
+        }
     }
 }
 

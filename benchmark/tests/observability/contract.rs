@@ -13,8 +13,8 @@ use terrabase::observability::{
     AdmissionReason, BackupMode, CLOCK_OFFSET_WRITE_REFUSAL_THRESHOLD_SECONDS, CommitResult,
     Component, EGRESS_KINDS, EGRESS_MONTHLY_ALERT_BYTES, EgressKind, HealthStatus,
     LOG_RETENTION_DAYS, LOG_SAMPLE_ABOVE_LINES_PER_SEC_PER_HOST, LogEvent, LogLevel, LogRecord,
-    MAX_CLOCK_SERIES, MAX_EGRESS_SERIES, MetricsRegistry, Operation, Outcome, PROMETHEUS_PATH,
-    Queue, Region, ServiceState, TaskOutcome, redact_diagnostic,
+    MAX_CLOCK_SERIES, MAX_EGRESS_SERIES, MAX_LOG_MESSAGE_BYTES, MetricsRegistry, Operation,
+    Outcome, PROMETHEUS_PATH, Queue, Region, ServiceState, TaskOutcome, redact_diagnostic,
 };
 use terrabase::types::CollectionName;
 use terrabase::usage::UsagePageRequest;
@@ -490,7 +490,9 @@ fn structured_log_schema_is_closed_and_redacted() {
         "replication queue depth high password=hunter2",
     );
     let line = record.to_log_line();
-    assert!(line.starts_with("ts=1757000000000 level=warn component=replication event=saturated "));
+    assert!(line.starts_with(
+        r#"{"ts":1757000000000,"level":"warn","component":"replication","event":"saturated","msg":""#
+    ));
     assert!(!line.contains("hunter2"));
 }
 
@@ -506,5 +508,135 @@ fn structured_log_line_escapes_line_breaks() {
     let line = record.to_log_line();
     assert!(!line.contains('\n'));
     assert!(!line.contains('\r'));
-    assert!(line.ends_with("msg=\"first\\nsecond\\rthird\""));
+    assert!(line.ends_with(r#""msg":"first\nsecond\rthird"}"#));
+}
+
+#[test]
+fn structured_log_is_valid_json_for_every_control_and_line_separator() {
+    let mut message = String::from("prefix ");
+    for codepoint in 0..=0x1f {
+        message.push(char::from_u32(codepoint).expect("C0 codepoint is valid"));
+    }
+    message.push('\u{7f}');
+    message.push('\u{85}');
+    message.push('\u{2028}');
+    message.push('\u{2029}');
+    message.push_str(" quote=\" backslash=\\ suffix");
+
+    let record =
+        LogRecord::new(42, LogLevel::Info, Component::Metrics, LogEvent::Progress, &message);
+    let line = record.to_log_line();
+    assert_json_log_line(&line, record.message());
+    assert!(!line.contains('\n'));
+    assert!(!line.contains('\r'));
+    for codepoint in 0..=0x1f {
+        let escaped = match codepoint {
+            8 => r#"\b"#.to_owned(),
+            9 => r#"\t"#.to_owned(),
+            10 => r#"\n"#.to_owned(),
+            12 => r#"\f"#.to_owned(),
+            13 => r#"\r"#.to_owned(),
+            codepoint => format!(r#"\u{codepoint:04x}"#),
+        };
+        assert!(line.contains(&escaped), "U+{codepoint:04x} was not escaped");
+    }
+    for escaped in [r#"\u007f"#, r#"\u0085"#, r#"\u2028"#, r#"\u2029"#] {
+        assert!(line.contains(escaped), "line separator escape {escaped} is missing");
+    }
+}
+
+#[test]
+fn structured_log_message_is_bounded_on_utf8_boundaries() {
+    let message = "🙂".repeat(MAX_LOG_MESSAGE_BYTES);
+    let record = LogRecord::new(1, LogLevel::Error, Component::Storage, LogEvent::Failed, &message);
+    assert!(record.message().len() <= MAX_LOG_MESSAGE_BYTES);
+    assert!(record.message().is_char_boundary(record.message().len()));
+    assert_json_log_line(&record.to_log_line(), record.message());
+}
+
+#[test]
+fn structured_log_json_encoding_round_trips_generated_utf8_messages() {
+    let mut state = 0x9e37_79b9_u32;
+    for _ in 0..256 {
+        let mut message = String::with_capacity(256);
+        for _ in 0..128 {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            message.push(match state % 12 {
+                0 => '\0',
+                1 => '\n',
+                2 => '\r',
+                3 => '\t',
+                4 => '"',
+                5 => '\\',
+                6 => '\u{85}',
+                7 => '\u{2028}',
+                8 => '\u{2029}',
+                9 => 'é',
+                10 => '🙂',
+                _ => 'x',
+            });
+        }
+        let record =
+            LogRecord::new(7, LogLevel::Warn, Component::Replication, LogEvent::Progress, &message);
+        let line = record.to_log_line();
+        assert_json_log_line(&line, record.message());
+    }
+}
+
+fn assert_json_log_line(line: &str, expected_message: &str) {
+    assert!(line.starts_with(r#"{"ts":"#));
+    assert!(line.ends_with('}'));
+    let fields = [
+        r#","level":"info","component":"metrics","event":"progress","msg":"#,
+        r#","level":"warn","component":"replication","event":"progress","msg":"#,
+        r#","level":"error","component":"storage","event":"failed","msg":"#,
+    ];
+    let msg_start = fields
+        .iter()
+        .find_map(|field| line.find(field).map(|offset| offset + field.len()))
+        .expect("closed JSON field prefix");
+    let raw = &line[msg_start..line.len() - 1];
+    let decoded = decode_json_string(raw).expect("message is one valid JSON string");
+    assert_eq!(decoded, expected_message);
+}
+
+fn decode_json_string(raw: &str) -> Option<String> {
+    let bytes = raw.as_bytes();
+    (bytes.first() == Some(&b'"') && bytes.last() == Some(&b'"')).then_some(())?;
+    let mut decoded = String::new();
+    let mut index = 1;
+    while index + 1 < bytes.len() {
+        if bytes[index] != b'\\' {
+            let character = raw[index..].chars().next()?;
+            if character.is_control()
+                || matches!(character, '"' | '\\' | '\u{7f}' | '\u{85}' | '\u{2028}' | '\u{2029}')
+            {
+                return None;
+            }
+            decoded.push(character);
+            index += character.len_utf8();
+            continue;
+        }
+        index += 1;
+        let escaped = *bytes.get(index)?;
+        match escaped {
+            b'"' => decoded.push('"'),
+            b'\\' => decoded.push('\\'),
+            b'/' => decoded.push('/'),
+            b'b' => decoded.push('\x08'),
+            b'f' => decoded.push('\x0c'),
+            b'n' => decoded.push('\n'),
+            b'r' => decoded.push('\r'),
+            b't' => decoded.push('\t'),
+            b'u' => {
+                let hex = std::str::from_utf8(bytes.get(index + 1..index + 5)?).ok()?;
+                let codepoint = u32::from_str_radix(hex, 16).ok()?;
+                decoded.push(char::from_u32(codepoint)?);
+                index += 4;
+            }
+            _ => return None,
+        }
+        index += 1;
+    }
+    (index == bytes.len() - 1).then_some(decoded)
 }

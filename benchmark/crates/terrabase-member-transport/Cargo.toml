@@ -19,40 +19,19 @@ publish = false
 # Own workspace root: stays out of the engine workspace without any
 # root-Cargo.toml edit until the integrator wires it in.
 
-[features]
-default = ["local-crypto"]
-local-crypto = ["dep:ring", "quinn/rustls-ring", "rustls/ring", "rcgen/ring"]
-production-fips = [
-  "dep:aws-lc-rs",
-  "aws-lc-rs/fips",
-  "quinn/rustls-aws-lc-rs-fips",
-  "rustls/fips",
-  "rcgen/fips",
-  "rcgen/aws_lc_rs",
-]
-
-[lints.rust]
-unsafe_code = "deny"
-missing_docs = "deny"
-
-[lints.clippy]
-pedantic = "warn"
-
 [dependencies]
-# The qualification lane keeps its pinned ring provider. The production
-# boundary selects AWS-LC FIPS explicitly and never relies on rustls' process
-# default. Both use the same quinn transport implementation.
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
-rustls = { version = "0.23", default-features = false, features = ["std"] }
-aws-lc-rs = { version = "1.18.0", default-features = false, optional = true }
-rcgen = { version = "0.13", default-features = false, features = ["pem"] }
+# Single non-FIPS crypto profile (D-41 defers FIPS builds past the first
+# customer): ring backs digests, TLS, and certificates on every build.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
 x509-parser = "0.18"
 # Content digest of every envelope payload (message-contract discipline).
 # `ring` is already in the QUIC closure; reusing its SHA-256 keeps the crate's
 # dependency tree at exactly the engine-socket set, with no second digest crate
 # (and no second `cpufeatures`) in the eventual unified workspace lock.
-ring = { version = "0.17", optional = true }
+ring = "0.17"
 
 [dev-dependencies]
 # Hostile decode probes re-sign corrupted frames with the crate's own

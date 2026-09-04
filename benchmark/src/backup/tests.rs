@@ -22,7 +22,13 @@ use crate::backup::{
     BackupError, BackupKind, BackupPlan, BackupSkipReason, BackupStep, load_recovery_point,
     run_backup, verify_latest_chain,
 };
+use crate::encryption::{
+    ArtifactCipher, ArtifactKind, Compression, DatabaseKey, DatabaseKeyLease, DatabaseKeyVersion,
+    EncryptionContext, KeyPurpose, KeyScope, ProviderMode,
+};
 use crate::engine::{CommitOutcome, Engine, EngineConfig};
+use crate::regions::RegionCode;
+use crate::storage::DatabaseOwner;
 use crate::types::{
     Cancellation, CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion,
     LocalDurability, OperationId, StorageSequence, TenantId, TenantScope,
@@ -44,6 +50,56 @@ fn open_engine(tag: &str) -> (PathBuf, Engine) {
     let engine =
         Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens");
     (dir, engine)
+}
+
+fn local_backup_encryption(
+    owner: &DatabaseOwner,
+    region: RegionCode,
+) -> crate::backup::BackupEncryption {
+    let scope = KeyScope::new_with_project(
+        owner.environment().as_str(),
+        owner.tenant(),
+        owner.project(),
+        owner.database(),
+        KeyPurpose::Backup,
+    )
+    .expect("backup scope");
+    let version = DatabaseKeyVersion::generate();
+    let context = EncryptionContext::for_artifact(
+        &scope,
+        ArtifactKind::Backup,
+        crate::identity::process_generator().generate(),
+        version,
+        3,
+        Compression::None,
+    )
+    .expect("backup context");
+    let cipher =
+        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([7; 32]), context)
+            .expect("local backup cipher");
+    crate::backup::BackupEncryption {
+        cipher: Arc::new(std::sync::Mutex::new(cipher)),
+        scope,
+        region,
+        key_version: version,
+    }
+}
+
+fn local_lease(owner: &DatabaseOwner, purpose: KeyPurpose) -> DatabaseKeyLease {
+    let scope = KeyScope::new_with_project(
+        owner.environment().as_str(),
+        owner.tenant(),
+        owner.project(),
+        owner.database(),
+        purpose,
+    )
+    .expect("key scope");
+    DatabaseKeyLease::new(
+        crate::encryption::KeyVersionMetadata::new(scope, DatabaseKeyVersion::generate()),
+        DatabaseKey::from_bytes([9; 32]),
+        std::time::Duration::from_secs(30),
+    )
+    .expect("local lease")
 }
 
 fn tenant(name: &str) -> TenantId {
@@ -130,6 +186,83 @@ fn committed(outcome: CommitOutcome) -> StorageSequence {
 }
 
 #[test]
+fn production_backup_capability_rejects_inactive_region_and_non_backup_keys() {
+    let owner = DatabaseOwner::local_development();
+    let inactive = RegionCode::from_text("JFK").expect("well-formed inactive Region");
+    assert!(matches!(
+        crate::backup::BackupEncryption::from_database_key_lease(
+            &local_lease(&owner, KeyPurpose::Backup),
+            inactive,
+            0,
+        ),
+        Err(crate::backup::BackupEncryptionError::InvalidRegion)
+    ));
+    assert!(matches!(
+        crate::backup::BackupEncryption::from_database_key_lease(
+            &local_lease(&owner, KeyPurpose::Data),
+            RegionCode::GRU,
+            0,
+        ),
+        Err(crate::backup::BackupEncryptionError::InvalidKeyPurpose)
+    ));
+    assert!(matches!(
+        crate::backup::BackupEncryption::from_database_key_lease(
+            &local_lease(&owner, KeyPurpose::Backup),
+            RegionCode::GRU,
+            0,
+        ),
+        Err(crate::backup::BackupEncryptionError::Encryption(
+            crate::encryption::EncryptionError::ProductionProviderUnavailable
+        ))
+    ));
+}
+
+#[test]
+fn backup_plan_refuses_a_key_from_another_residency_region() {
+    let owner = DatabaseOwner::local_development();
+    let dir = location("encryption-region");
+    let engine = Engine::open(
+        EngineConfig::durable(&dir).expect("durable location").with_owner(owner.clone()),
+    )
+    .expect("engine opens");
+    let destination = location("encryption-region-dest");
+    let result = run_backup(
+        &engine,
+        BackupPlan::full(local_backup_encryption(&owner, RegionCode::SFO)),
+        &destination,
+    );
+    assert_eq!(result, Err(crate::backup::BackupError::EncryptionScopeMismatch));
+    assert!(
+        std::fs::read_dir(&destination).expect("destination exists").all(|entry| !entry
+            .expect("directory entry")
+            .file_name()
+            .to_string_lossy()
+            .starts_with("rp-")),
+        "a residency mismatch cannot publish a recovery point"
+    );
+}
+
+#[test]
+fn an_explicit_database_key_produces_only_the_encrypted_manifest() {
+    let owner = DatabaseOwner::local_development();
+    let dir = location("encryption-manifest");
+    let engine = Engine::open(
+        EngineConfig::durable(&dir).expect("durable location").with_owner(owner.clone()),
+    )
+    .expect("engine opens");
+    let destination = location("encryption-manifest-dest");
+    let result = run_backup(
+        &engine,
+        BackupPlan::full(local_backup_encryption(&owner, RegionCode::GRU)),
+        &destination,
+    )
+    .expect("the explicit key permits the backup");
+    let point = destination.join(format!("rp-{}", result.manifest().identity()));
+    assert!(point.join("manifest.tbv3e").is_file());
+    assert!(!point.join("manifest.tbv2m").exists());
+}
+
+#[test]
 fn full_backup_writes_a_manifest_with_ordered_digests_and_counts() {
     let (_dir, engine) = open_engine("full-manifest");
     let destination = location("full-manifest-dest");
@@ -162,7 +295,8 @@ fn full_backup_writes_a_manifest_with_ordered_digests_and_counts() {
         LocalDurability::Synced,
     ));
 
-    let result = run_backup(&engine, BackupPlan::full(), &destination).expect("full backup runs");
+    let result = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("full backup runs");
 
     let manifest = result.manifest();
     assert_eq!(manifest.kind(), BackupKind::Full);
@@ -215,7 +349,8 @@ fn backup_includes_family_records_from_the_reserved_collection() {
     committed(put_family_record(&engine, "alpha", "op-family-1", "counters", "owner-a"));
     committed(put_family_record(&engine, "beta", "op-family-2", "attachments", "owner-b"));
 
-    let result = run_backup(&engine, BackupPlan::full(), &destination).expect("full backup runs");
+    let result = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("full backup runs");
     let manifest = result.manifest();
     assert_eq!(manifest.documents(), 1, "user documents count separately");
     assert_eq!(manifest.family_records(), 2, "reserved-collection records count as family records");
@@ -245,7 +380,8 @@ fn backup_progress_reports_skipped_items_without_hiding_loss() {
         LocalDurability::Synced,
     ));
     let base = {
-        let result = run_backup(&engine, BackupPlan::full(), &destination).expect("base full");
+        let result = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+            .expect("base full");
         result.manifest().boundary_sequence()
     };
 
@@ -265,9 +401,10 @@ fn backup_progress_reports_skipped_items_without_hiding_loss() {
     let observed: Arc<std::sync::Mutex<Vec<crate::backup::BackupProgress>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&observed);
-    let plan = BackupPlan::incremental_since(base).with_progress(Arc::new(move |progress| {
-        sink.lock().expect("progress sink lock").push(progress);
-    }));
+    let plan =
+        BackupPlan::local_test_incremental_since(base).with_progress(Arc::new(move |progress| {
+            sink.lock().expect("progress sink lock").push(progress);
+        }));
     let result = run_backup(&engine, plan, &destination).expect("incremental runs");
 
     assert_eq!(result.manifest().disclosures(), 1, "the disclosure is bound into the manifest");
@@ -289,7 +426,8 @@ fn backup_progress_reports_skipped_items_without_hiding_loss() {
     assert!(observed.iter().all(|p| p.skipped_items().len() as u64 <= p.skipped_total()));
 
     // A run with only Synced history reports no skips at all.
-    let clean = run_backup(&engine, BackupPlan::full(), &destination).expect("clean full");
+    let clean = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("clean full");
     assert_eq!(clean.skipped_total(), 0);
     assert!(clean.skipped_items().is_empty());
     assert_eq!(clean.manifest().disclosures(), 0);
@@ -313,7 +451,7 @@ fn backup_cancellation_leaves_no_usable_partial_recovery_point() {
     let fired = Arc::new(AtomicU64::new(0));
     let fired_probe = Arc::clone(&fired);
     let cancel_token = Arc::clone(&token);
-    let plan = BackupPlan::full()
+    let plan = BackupPlan::local_test_full_plaintext()
         .with_member_bound_bytes(4096)
         .with_cancellation(Arc::clone(&token))
         .with_progress(Arc::new(move |progress| {
@@ -373,7 +511,7 @@ fn backup_admits_one_job_and_rejects_a_concurrent_attempt_with_a_typed_error() {
                 }
             }
         });
-    let held_plan = BackupPlan::full().with_progress(Arc::clone(&observer));
+    let held_plan = BackupPlan::local_test_full_plaintext().with_progress(Arc::clone(&observer));
     let engine_for_job = Arc::clone(&engine);
     let job_destination = destination.clone();
     let job = thread::spawn(move || {
@@ -381,7 +519,7 @@ fn backup_admits_one_job_and_rejects_a_concurrent_attempt_with_a_typed_error() {
     });
 
     entered_rx.recv().expect("the first job is running");
-    let second = run_backup(&engine, BackupPlan::full(), &destination);
+    let second = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination);
     assert_eq!(
         second.err(),
         Some(BackupError::Throttled),
@@ -395,7 +533,7 @@ fn backup_admits_one_job_and_rejects_a_concurrent_attempt_with_a_typed_error() {
     assert!(result.archive().verify(&destination).is_ok());
 
     // Admission is per source: the slot frees after the first job finished.
-    let third = run_backup(&engine, BackupPlan::full(), &destination);
+    let third = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination);
     assert!(third.is_ok(), "the admission slot is released after completion");
 }
 
@@ -433,7 +571,9 @@ fn backup_throttling_limits_reads_without_reordering_or_dropping_records() {
     // belong to the benchmark and recovery lanes, not focused tests.
     let bounded = run_backup(
         &engine,
-        BackupPlan::full().with_read_ops_per_second(500).with_member_bound_bytes(4096),
+        BackupPlan::local_test_full_plaintext()
+            .with_read_ops_per_second(500)
+            .with_member_bound_bytes(4096),
         &destination,
     )
     .expect("throttled backup runs");
@@ -446,9 +586,12 @@ fn backup_throttling_limits_reads_without_reordering_or_dropping_records() {
         assert!(window[0].name() < window[1].name(), "member order is canonical");
     }
 
-    let unbounded =
-        run_backup(&engine, BackupPlan::full().with_member_bound_bytes(4096), &destination)
-            .expect("unbounded comparison run");
+    let unbounded = run_backup(
+        &engine,
+        BackupPlan::local_test_full_plaintext().with_member_bound_bytes(4096),
+        &destination,
+    )
+    .expect("unbounded comparison run");
     assert_eq!(unbounded.manifest().documents(), 10);
     assert_eq!(
         unbounded.manifest().identity(),
@@ -457,7 +600,11 @@ fn backup_throttling_limits_reads_without_reordering_or_dropping_records() {
     );
 
     // A zero bound throttles everything and fails closed before any read.
-    let zero = run_backup(&engine, BackupPlan::full().with_read_ops_per_second(0), &destination);
+    let zero = run_backup(
+        &engine,
+        BackupPlan::local_test_full_plaintext().with_read_ops_per_second(0),
+        &destination,
+    );
     assert_eq!(zero.err(), Some(BackupError::Throttled));
 }
 
@@ -474,7 +621,8 @@ fn manifest_validation_rejects_path_traversal_and_in_progress_manifests() {
         text("one"),
         LocalDurability::Synced,
     ));
-    let result = run_backup(&engine, BackupPlan::full(), &destination).expect("full backup runs");
+    let result = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("full backup runs");
     let identity = result.manifest().identity().to_owned();
 
     // A traversal member name is rejected by validation, whatever the
@@ -550,7 +698,8 @@ fn incremental_backup_appends_to_its_base_chain_with_the_journal_range_boundary(
         text("one"),
         LocalDurability::Synced,
     ));
-    let full = run_backup(&engine, BackupPlan::full(), &destination).expect("base full backup");
+    let full = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("base full backup");
     let base = full.manifest().boundary_sequence();
 
     let put_sequence = committed(put(
@@ -563,8 +712,9 @@ fn incremental_backup_appends_to_its_base_chain_with_the_journal_range_boundary(
         LocalDurability::Synced,
     ));
     committed(delete(&engine, "alpha", "op-3", "doc-1"));
-    let first_incremental = run_backup(&engine, BackupPlan::incremental_since(base), &destination)
-        .expect("first incremental");
+    let first_incremental =
+        run_backup(&engine, BackupPlan::local_test_incremental_since(base), &destination)
+            .expect("first incremental");
     let first = first_incremental.manifest();
     assert_eq!(first.kind(), BackupKind::Incremental { base });
     assert_eq!(first.base_sequence(), Some(base));
@@ -585,9 +735,12 @@ fn incremental_backup_appends_to_its_base_chain_with_the_journal_range_boundary(
         text("three"),
         LocalDurability::Synced,
     ));
-    let second =
-        run_backup(&engine, BackupPlan::incremental_since(first.boundary_sequence()), &destination)
-            .expect("second incremental appends to the chain");
+    let second = run_backup(
+        &engine,
+        BackupPlan::local_test_incremental_since(first.boundary_sequence()),
+        &destination,
+    )
+    .expect("second incremental appends to the chain");
 
     let chain = verify_latest_chain(&destination).expect("the chain verifies");
     assert_eq!(chain.len(), 3, "full -> incremental -> incremental");
@@ -615,7 +768,8 @@ fn incremental_chain_verification_rejects_a_missing_or_reordered_link() {
         text("one"),
         LocalDurability::Synced,
     ));
-    let full = run_backup(&engine, BackupPlan::full(), &destination).expect("full");
+    let full =
+        run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination).expect("full");
     let base = full.manifest().boundary_sequence();
     committed(put(
         &engine,
@@ -626,8 +780,8 @@ fn incremental_chain_verification_rejects_a_missing_or_reordered_link() {
         text("two"),
         LocalDurability::Synced,
     ));
-    let first =
-        run_backup(&engine, BackupPlan::incremental_since(base), &destination).expect("inc 1");
+    let first = run_backup(&engine, BackupPlan::local_test_incremental_since(base), &destination)
+        .expect("inc 1");
     committed(put(
         &engine,
         "alpha",
@@ -639,7 +793,7 @@ fn incremental_chain_verification_rejects_a_missing_or_reordered_link() {
     ));
     let second = run_backup(
         &engine,
-        BackupPlan::incremental_since(first.manifest().boundary_sequence()),
+        BackupPlan::local_test_incremental_since(first.manifest().boundary_sequence()),
         &destination,
     )
     .expect("inc 2");
@@ -679,7 +833,8 @@ fn tampered_member_bytes_fail_verification_with_checksum_mismatch() {
         text("two"),
         LocalDurability::Synced,
     ));
-    let result = run_backup(&engine, BackupPlan::full(), &destination).expect("full backup");
+    let result = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("full backup");
     assert!(result.archive().verify(&destination).is_ok());
 
     let point_dir = destination.join(format!("rp-{}", result.manifest().identity()));
@@ -724,7 +879,8 @@ fn truncated_and_missing_members_fail_verification_with_typed_errors() {
         text("two-value-two"),
         LocalDurability::Synced,
     ));
-    let result = run_backup(&engine, BackupPlan::full(), &destination).expect("full backup");
+    let result = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("full backup");
 
     let point_dir = destination.join(format!("rp-{}", result.manifest().identity()));
     let member_name = result.manifest().members()[0].name().to_owned();
@@ -779,7 +935,7 @@ fn incremental_with_an_unservable_base_fails_closed() {
 
     let beyond = run_backup(
         &engine,
-        BackupPlan::incremental_since(StorageSequence::new(u64::MAX / 2)),
+        BackupPlan::local_test_incremental_since(StorageSequence::new(u64::MAX / 2)),
         &destination,
     );
     assert_eq!(
@@ -816,7 +972,7 @@ fn snapshot_backup_pins_its_boundary_and_stays_self_contained() {
         LocalDurability::Synced,
     ));
 
-    let snapshot = run_backup(&engine, BackupPlan::snapshot_at(pinned), &destination)
+    let snapshot = run_backup(&engine, BackupPlan::local_test_snapshot_at(pinned), &destination)
         .expect("snapshot backup runs");
     let manifest = snapshot.manifest();
     assert_eq!(manifest.kind(), BackupKind::Snapshot);
@@ -830,7 +986,8 @@ fn snapshot_backup_pins_its_boundary_and_stays_self_contained() {
 
     // The same source at the latest boundary is a different kind with the
     // later boundary.
-    let full = run_backup(&engine, BackupPlan::full(), &destination).expect("full backup");
+    let full = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("full backup");
     assert_eq!(full.manifest().kind(), BackupKind::Full);
     assert!(full.manifest().boundary_sequence().get() > manifest.boundary_sequence().get());
     assert_eq!(full.manifest().documents(), 2);
@@ -869,7 +1026,8 @@ fn backup_preserves_tenant_scopes_in_per_tenant_counts() {
         LocalDurability::Synced,
     ));
 
-    let all = run_backup(&engine, BackupPlan::full(), &destination).expect("full backup");
+    let all = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("full backup");
     assert_eq!(all.manifest().tenants().len(), 2);
     let alpha =
         all.manifest().tenants().iter().find(|t| t.tenant().as_str() == "alpha").expect("alpha");
@@ -879,9 +1037,12 @@ fn backup_preserves_tenant_scopes_in_per_tenant_counts() {
     assert_eq!(beta.documents(), 2);
 
     // Item selection limits the backup to the selected tenant's scope only.
-    let selected =
-        run_backup(&engine, BackupPlan::full().with_tenants([tenant("beta")]), &destination)
-            .expect("selected backup");
+    let selected = run_backup(
+        &engine,
+        BackupPlan::local_test_full_plaintext().with_tenants([tenant("beta")]),
+        &destination,
+    )
+    .expect("selected backup");
     let tenants = selected.manifest().tenants();
     assert_eq!(tenants.len(), 1);
     assert_eq!(tenants[0].tenant().as_str(), "beta");
@@ -915,11 +1076,13 @@ fn repeated_backup_at_the_same_boundary_is_idempotent() {
         LocalDurability::Synced,
     ));
 
-    let first = run_backup(&engine, BackupPlan::full(), &first_destination).expect("first run");
-    let second =
-        run_backup(&engine, BackupPlan::full(), &first_destination).expect("same destination");
+    let first = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &first_destination)
+        .expect("first run");
+    let second = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &first_destination)
+        .expect("same destination");
     let elsewhere =
-        run_backup(&engine, BackupPlan::full(), &second_destination).expect("other destination");
+        run_backup(&engine, BackupPlan::local_test_full_plaintext(), &second_destination)
+            .expect("other destination");
 
     assert_eq!(
         first.manifest().identity(),
@@ -984,7 +1147,8 @@ fn a_torn_publish_orphan_is_repaired_by_the_identical_retry() {
 
     // Identity is content-derived, so a rehearsal run names the recovery
     // point the interrupted run was sealing.
-    let reference = run_backup(&engine, BackupPlan::full(), &rehearsal).expect("rehearsal run");
+    let reference = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &rehearsal)
+        .expect("rehearsal run");
     let identity = reference.manifest().identity().to_owned();
     let sealed_point = rehearsal.join(format!("rp-{identity}"));
 
@@ -1004,7 +1168,8 @@ fn a_torn_publish_orphan_is_repaired_by_the_identical_retry() {
 
     // The identical retry must succeed and seal that same point: the crash
     // window must not brick the destination against its own recovery point.
-    let retry = run_backup(&engine, BackupPlan::full(), &destination).expect("retry seals");
+    let retry = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("retry seals");
     assert_eq!(retry.manifest().identity(), identity);
     assert!(retry.archive().verify(&destination).is_ok(), "the retry's archive verifies");
     assert!(load_recovery_point(&destination, &identity).is_ok(), "the point reloads");
@@ -1024,7 +1189,8 @@ fn discovery_ignores_unsealed_orphan_directories() {
         text("one"),
         LocalDurability::Synced,
     ));
-    let sealed = run_backup(&engine, BackupPlan::full(), &destination).expect("seals a point");
+    let sealed = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("seals a point");
     let identity = sealed.manifest().identity().to_owned();
     let boundary = sealed.manifest().boundary_sequence();
 
@@ -1069,8 +1235,9 @@ fn discovery_ignores_unsealed_orphan_directories() {
         text("two"),
         LocalDurability::Synced,
     ));
-    let incremental = run_backup(&engine, BackupPlan::incremental_since(boundary), &destination)
-        .expect("anchors beside the orphan");
+    let incremental =
+        run_backup(&engine, BackupPlan::local_test_incremental_since(boundary), &destination)
+            .expect("anchors beside the orphan");
     assert_eq!(incremental.manifest().base_sequence(), Some(boundary));
     assert_eq!(verify_latest_chain(&destination).expect("chain verifies").len(), 2);
 }
@@ -1110,7 +1277,8 @@ fn tenants_with_interior_whitespace_round_trip_through_the_manifest() {
         LocalDurability::Synced,
     ));
 
-    let result = run_backup(&engine, BackupPlan::full(), &destination).expect("full backup runs");
+    let result = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("full backup runs");
     let manifest = result.manifest();
     assert_eq!(
         crate::backup::BackupManifest::decode(&manifest.encode()).expect("canonical round trip"),
@@ -1148,7 +1316,7 @@ fn tenants_with_interior_whitespace_round_trip_through_the_manifest() {
     ));
     let incremental = run_backup(
         &engine,
-        BackupPlan::incremental_since(manifest.boundary_sequence()),
+        BackupPlan::local_test_incremental_since(manifest.boundary_sequence()),
         &destination,
     )
     .expect("incremental runs");
@@ -1186,9 +1354,11 @@ fn record_frames_bind_the_commit_durability_into_the_archive_digest() {
     ));
 
     let synced =
-        run_backup(&engine_a, BackupPlan::full(), &synced_destination).expect("synced run");
+        run_backup(&engine_a, BackupPlan::local_test_full_plaintext(), &synced_destination)
+            .expect("synced run");
     let buffered =
-        run_backup(&engine_b, BackupPlan::full(), &buffered_destination).expect("buffered run");
+        run_backup(&engine_b, BackupPlan::local_test_full_plaintext(), &buffered_destination)
+            .expect("buffered run");
 
     assert_eq!(synced.manifest().documents(), 1);
     assert_eq!(buffered.manifest().documents(), 1);
@@ -1228,7 +1398,8 @@ fn progress_disclosures_are_bounded_while_the_total_stays_exact() {
         text("seed"),
         LocalDurability::Synced,
     ));
-    let full = run_backup(&engine, BackupPlan::full(), &destination).expect("base full");
+    let full = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("base full");
     let boundary = full.manifest().boundary_sequence();
 
     // More disclosed records than the progress window, in one tenant and one
@@ -1249,9 +1420,11 @@ fn progress_disclosures_are_bounded_while_the_total_stays_exact() {
     let observed: Arc<std::sync::Mutex<Vec<crate::backup::BackupProgress>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&observed);
-    let plan = BackupPlan::incremental_since(boundary).with_progress(Arc::new(move |progress| {
-        sink.lock().expect("progress sink lock").push(progress);
-    }));
+    let plan = BackupPlan::local_test_incremental_since(boundary).with_progress(Arc::new(
+        move |progress| {
+            sink.lock().expect("progress sink lock").push(progress);
+        },
+    ));
     let result = run_backup(&engine, plan, &destination).expect("incremental runs");
 
     let observed = observed.lock().expect("progress sink lock");
