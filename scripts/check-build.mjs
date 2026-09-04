@@ -23,6 +23,7 @@ const llmsGenerated = spawnSync(process.execPath, [join(root, "scripts", "genera
 });
 assert.equal(llmsGenerated.status, 0, llmsGenerated.stdout + llmsGenerated.stderr);
 const results = await runAll(stub ? "stub" : "remote");
+if (stub) console.warn("LOCAL-ONLY: stub snippets are smoke tests; remote launch qualification is not passed.");
 const heartbeat = Uint8Array.from([0x97, 0x02, 0x01, 0x00, 0x06, 0x00, 0x00, 0x90]);
 assert.equal(canonicalEnvelope(heartbeat).kind, "heartbeat", "canonical indexed heartbeat decodes");
 assert.throws(() => canonicalEnvelope(Uint8Array.from([0x81, 0xa1, 0x74, 0xa5, 0xa5, 0x64, 0x65, 0x6c, 0x74, 0x61])), /indexed envelope|trailing bytes/u, "legacy map frames fail closed");
@@ -59,6 +60,7 @@ assert.ok(!starterPage.includes(".from("), "starter does not use removed collect
 assert.ok(read("create-terrascale-app/template/package.json").includes('"@terrascale/sdk": "0.3.0"'), "starter pins the current SDK version");
 assert.ok(read("create-terrascale-app/template/terrascale.schema.json").includes('"historyRetentionDays": 7'), "starter schema uses canonical JSON shape");
 assert.ok(read("scripts/run-snippets.mjs").includes("TERRASCALE_API_KEY"), "remote runner is credential-gated");
+assert.ok(read("scripts/run-snippets.mjs").includes("launch gate not passed"), "missing real sandbox is an explicit failed launch gate");
 assert.ok(read("scripts/run-snippets.mjs").includes("x-terrascale-view-capability"), "reactive requests carry the view capability");
 assert.ok(!read("scripts/run-snippets.mjs").includes("frame.t"), "remote runner does not decode legacy JSON frame fields");
 

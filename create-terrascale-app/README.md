@@ -1,7 +1,7 @@
 # `create-terrascale-app` (P-8/D-56/D-74)
 
-Scaffold a Next.js + TerraScale app with a first live query in under
-5 minutes on a fresh machine.
+Scaffold a Next.js + TerraScale app with a first live query in under five
+minutes once Node, the Go CLI, and a TerraScale API key are available.
 
 ## Use it
 
@@ -9,6 +9,8 @@ Scaffold a Next.js + TerraScale app with a first live query in under
 npx create-terrascale-app@latest my-app
 cd my-app
 npm install
+cp .env.example .env.local
+terrascale dev <database> --watch=false --no-log-tail
 npm run dev
 ```
 
@@ -20,11 +22,17 @@ cd /path/to/ts-cli
 go install ./cmd/terrascale
 ```
 
-The current public CLI can create or reuse a cloud branch with
-`terrascale dev <database> --watch=false --no-log-tail`. Its `--seed`, log-tail,
-and codegen-watch flags are intentionally rejected until those public routes
-are published. The starter writes through `client.documents.put`, so no local
-engine or fake SDK is involved.
+`terrascale dev <database> --watch=false --no-log-tail` creates or reuses a
+cloud branch. It prints the branch name, source, and selected region, but not
+credentials or a database id. Use the dashboard/API response to obtain the
+branch database id, then put that id, the API URL, and a scoped API key in
+`.env.local`. Export the same key as `TERRASCALE_API_KEY` (or pass
+`--api-key`) for the CLI; `.env.local` is read by Next.js, not by the shell.
+Seed execution, log tailing, and codegen watch are separate CLI capabilities;
+use those flags only when the installed CLI release advertises their contracts.
+The starter attaches a typed SQL live query through the current reactive SDK;
+it does not invent a document-write helper while that public contract is
+pending. There is no local engine or fake SDK involved.
 
 - Sign in when prompted. A card is required at signup for fraud screening;
   you can continue on the free plan without subscribing, and your first paid
@@ -33,14 +41,14 @@ engine or fake SDK is involved.
   or local database process. `terrascale dev` gives you a personal cloud branch
   of your project's database, and dev and prod run the same engine in the same
   regions (D-18).
-- Open the app in two tabs. Add a post in one tab and both tabs update from the
-  same cloud-backed live result view.
+- Open the app in two tabs to attach the same cloud-backed live result view.
+  Seed execution remains blocked until its CLI contract is published.
 
 ## What it scaffolds (`template/`)
 
-- Next.js app with `app/page.tsx`: a schema-backed SQL builder, cloud document
-  write, and live `TerraScaleSyncV2Client.subscribe` query over CDN-backed HTTP
-  by default (WebSocket opt-in), scoped by `databaseId`.
+- Next.js app with `app/page.tsx`: a schema-backed SQL builder and live
+  `TerraScaleSyncV2Client.subscribe` query over CDN-backed HTTP by default
+  (WebSocket opt-in), scoped by `databaseId`.
 - `schema.ts`: the typed `defineSchema` source used by the SQL builder.
 - `terrascale.schema.json`: the contract `terrascale push` applies and
   codegen reads (typed `defineSchema` builder in your code emits it).
@@ -52,8 +60,9 @@ engine or fake SDK is involved.
 
 ## Status
 
-The template pins the current SDK surface (`@terrascale/sdk` 0.3.0: typed
-document operations, schema/SQL builders, and `TerraScaleSyncV2Client`). Tenant
-provisioning remains outside the starter until its owning contract is published.
+The template pins the current SDK surface (`@terrascale/sdk` 0.3.0: schema/SQL
+builders and `TerraScaleSyncV2Client`). Typed document writes and tenant
+provisioning remain outside the starter until their owning contracts are
+published.
 Full docs:
 https://docs.terrascale.tech/getting-started/

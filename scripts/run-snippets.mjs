@@ -182,8 +182,10 @@ function createRemoteSandbox() {
   const database = process.env.TERRASCALE_DATABASE_ID;
   if (!configuredBase || !key || !database) {
     throw new Error(
-      "remote sandbox needs TERRASCALE_SANDBOX_URL + TERRASCALE_API_KEY + " +
-        "TERRASCALE_DATABASE_ID (a cloud dev branch pre-filled with the reader's key; D-56).",
+      "launch gate not passed: the real cloud sandbox is unavailable. Set " +
+        "TERRASCALE_SANDBOX_URL + TERRASCALE_API_KEY + TERRASCALE_DATABASE_ID " +
+        "for a cloud dev branch pre-filled with the reader's key (D-56); " +
+        "the local stub is never substituted automatically.",
     );
   }
   const base = normalizeSandboxOrigin(configuredBase);

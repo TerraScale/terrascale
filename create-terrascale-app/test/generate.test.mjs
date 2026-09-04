@@ -47,15 +47,19 @@ test("scaffold is deterministic, cloud-only, and complete", async () => {
         assert.equal(firstText, secondText, `${file} should be deterministic`);
       }
       const page = await readFile(join(root, "first", "app/page.tsx"), "utf8");
-      assert.match(page, /client\.documents\.put/);
       assert.match(page, /TerraScaleSyncV2Client/);
       assert.match(page, /select\(posts\)/);
       assert.match(page, /parameters: queryParameters/);
+      assert.doesNotMatch(page, /client\.documents|client\.from|new TerraScale\(/iu);
+      assert.doesNotMatch(page, /production binding|local engine|emulator/iu);
       assert.doesNotMatch(page, /BroadcastChannel|localStorage|sqlite|node:sqlite/iu);
       const readme = await readFile(join(root, "first", "README.md"), "utf8");
       assert.match(readme, /no customer-run emulator/i);
       assert.match(readme, /local database\s+process/i);
       assert.doesNotMatch(readme, /local TerraBase|TerraBase emulator/i);
+      assert.match(readme, /cloud branch/i);
+      assert.match(readme, /typed Database API contract/i);
+      assert.match(readme, /pending/i);
       assert.match(await readFile(join(root, "first", "terrascale.schema.json"), "utf8"), /"historyRetentionDays": 7/);
       assert.match(await readFile(join(root, "first", "seed.ts"), "utf8"), /documents\.put/);
     } finally {
