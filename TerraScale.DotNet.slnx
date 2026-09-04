@@ -3,9 +3,6 @@
     <Project Path="src/TerraScale.EntityFrameworkCore/TerraScale.EntityFrameworkCore.csproj" />
     <Project Path="src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
   </Folder>
-  <Folder Name="/Samples/">
-    <Project Path="samples/TerraScale.Samples.Quickstart/TerraScale.Samples.Quickstart.csproj" />
-  </Folder>
   <Folder Name="/Tests/">
     <Project Path="tests/TerraScale.EntityFrameworkCore.Tests/TerraScale.EntityFrameworkCore.Tests.csproj" />
     <Project Path="tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj" />
