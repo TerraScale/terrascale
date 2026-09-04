@@ -27,7 +27,7 @@ test("npm contract evidence binds the reviewed descriptor and packed route bytes
     descriptorSha256: await fileSha256(
       path.join(repositoryRoot, "sdk-openapi-contract-descriptor.json"),
     ),
-    openApiSha256: "878e305177a79576ec4f6413071107d2906557d83217e123b193135b38781b38",
+    openApiSha256: "3566e1bf139f4bd6681b16374e097a99e45926cf049ec5aa6fdf421768b13c5c",
     routeManifestSha256: await fileSha256(path.join(repositoryRoot, "sdk-route-manifest.json")),
     routeCount: 60,
   });

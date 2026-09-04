@@ -176,14 +176,6 @@
                             "format": "ulid",
                             "type": "string"
                           }
-                        },
-                        "queuesDeleted": {
-                          "format": "int32",
-                          "pattern": "^-?(?:0|[1-9]\\d*)$",
-                          "type": [
-                            "integer",
-                            "string"
-                          ]
                         }
                       },
                       "required": [
@@ -192,7 +184,6 @@
                         "name",
                         "deleted",
                         "databasesDeleted",
-                        "queuesDeleted",
                         "physicalStorageDeleted"
                       ],
                       "type": "object"
@@ -254,14 +245,6 @@
                               "format": "ulid",
                               "type": "string"
                             }
-                          },
-                          "queuesDeleted": {
-                            "format": "int32",
-                            "pattern": "^-?(?:0|[1-9]\\d*)$",
-                            "type": [
-                              "integer",
-                              "string"
-                            ]
                           }
                         },
                         "required": [
@@ -270,7 +253,6 @@
                           "name",
                           "deleted",
                           "databasesDeleted",
-                          "queuesDeleted",
                           "physicalStorageDeleted"
                         ],
                         "type": "object"
@@ -309,14 +291,6 @@
                           "format": "ulid",
                           "type": "string"
                         }
-                      },
-                      "queuesDeleted": {
-                        "format": "int32",
-                        "pattern": "^-?(?:0|[1-9]\\d*)$",
-                        "type": [
-                          "integer",
-                          "string"
-                        ]
                       }
                     },
                     "required": [
@@ -325,7 +299,6 @@
                       "name",
                       "deleted",
                       "databasesDeleted",
-                      "queuesDeleted",
                       "physicalStorageDeleted"
                     ],
                     "type": "object"
@@ -23843,26 +23816,6 @@
                       "maxLength": 8000,
                       "minLength": 1,
                       "type": "string"
-                    },
-                    "repositoryId": {
-                      "oneOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "$ref": "#/components/schemas/Ulid",
-                          "siblings": {
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          },
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        }
-                      ]
                     }
                   },
                   "required": [
@@ -23883,32 +23836,6 @@
                         "maxLength": 8000,
                         "minLength": 1,
                         "type": "string"
-                      },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              },
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                }
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
                       }
                     },
                     "required": [
@@ -23930,20 +23857,6 @@
                     "maxLength": 8000,
                     "minLength": 1,
                     "type": "string"
-                  },
-                  "repositoryId": {
-                    "oneOf": [
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "$ref": "#/components/schemas/Ulid",
-                        "resolved": {
-                          "format": "ulid",
-                          "type": "string"
-                        }
-                      }
-                    ]
                   }
                 },
                 "required": [
@@ -23972,26 +23885,6 @@
                         "maxLength": 8000,
                         "minLength": 1,
                         "type": "string"
-                      },
-                      "repositoryId": {
-                        "oneOf": [
-                          {
-                            "type": "null"
-                          },
-                          {
-                            "$ref": "#/components/schemas/Ulid",
-                            "siblings": {
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            },
-                            "resolved": {
-                              "format": "ulid",
-                              "type": "string"
-                            }
-                          }
-                        ]
                       }
                     },
                     "required": [
@@ -24012,32 +23905,6 @@
                           "maxLength": 8000,
                           "minLength": 1,
                           "type": "string"
-                        },
-                        "repositoryId": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "$ref": "#/components/schemas/Ulid",
-                              "siblings": {
-                                "resolved": {
-                                  "format": "ulid",
-                                  "type": "string"
-                                },
-                                "siblings": {
-                                  "resolved": {
-                                    "format": "ulid",
-                                    "type": "string"
-                                  }
-                                }
-                              },
-                              "resolved": {
-                                "format": "ulid",
-                                "type": "string"
-                              }
-                            }
-                          ]
                         }
                       },
                       "required": [
@@ -24059,20 +23926,6 @@
                       "maxLength": 8000,
                       "minLength": 1,
                       "type": "string"
-                    },
-                    "repositoryId": {
-                      "oneOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "$ref": "#/components/schemas/Ulid",
-                          "resolved": {
-                            "format": "ulid",
-                            "type": "string"
-                          }
-                        }
-                      ]
                     }
                   },
                   "required": [
@@ -25797,7 +25650,7 @@
     }
   ],
   "sources": {
-    "openApiSha256": "878e305177a79576ec4f6413071107d2906557d83217e123b193135b38781b38",
+    "openApiSha256": "3566e1bf139f4bd6681b16374e097a99e45926cf049ec5aa6fdf421768b13c5c",
     "routeManifestSha256": "1e3ccb971f04e6cf39527af01147b63c65ac23d466c6fcde7148512c6713a142"
   }
 }
