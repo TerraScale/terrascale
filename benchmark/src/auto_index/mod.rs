@@ -886,6 +886,10 @@ pub enum LifecyclePhase {
 
 /// One durable lifecycle index view returned by the Engine.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "frozen D-31 lifecycle view; each bool is an independent planner proof and splitting it breaks the wire shape"
+)]
 pub struct LifecycleIndexView {
     /// Stable candidate/index identity.
     pub id: String,
@@ -999,9 +1003,9 @@ pub struct ShadowEvidence {
 }
 
 /// Engine-owned durable lifecycle state.  The event file is intentionally a
-/// small append-only journal beside the SQLite file; every mutation is framed
+/// small append-only journal beside the `SQLite` file; every mutation is framed
 /// with a length and BLAKE3 checksum, fsynced before the in-memory view is
-/// changed, and replayed at open.  SQLite publication remains the source of
+/// changed, and replayed at open.  `SQLite` publication remains the source of
 /// truth for document/index bytes; this journal carries only lifecycle
 /// metadata and therefore cannot make a stale segment visible after restart.
 #[derive(Debug)]
@@ -1290,10 +1294,10 @@ impl LifecycleStore {
         if forbidden {
             self.forbidden.insert(id.to_owned());
         }
-        if let Some(view) = self.indexes.get_mut(id) {
-            if forbidden {
-                view.forbidden = true;
-            }
+        if let Some(view) = self.indexes.get_mut(id)
+            && forbidden
+        {
+            view.forbidden = true;
         }
         let view = self.indexes.get(id).cloned();
         self.append(if forbidden { 2 } else { 1 }, view.as_ref(), id, at_millis, digest)?;
@@ -1321,6 +1325,10 @@ impl LifecycleStore {
     }
 
     /// Stores bounded shadow evidence and the digest that authorized it.
+    #[allow(
+        dead_code,
+        reason = "TODO E-4b: the shadow worker that records paired baseline/candidate samples is not built yet"
+    )]
     pub(crate) fn record_evidence(&mut self, evidence: ShadowEvidence) {
         self.evidence.insert(evidence.index_id.clone(), evidence);
     }
@@ -1356,7 +1364,7 @@ impl<'a> ByteCursor<'a> {
         String::from_utf8(self.take(len)?.to_vec()).map_err(|_| ())
     }
     fn array32(&mut self) -> Result<[u8; 32], ()> {
-        Ok(self.take(32)?.try_into().map_err(|_| ())?)
+        self.take(32)?.try_into().map_err(|_| ())
     }
     fn optional_u64(&mut self) -> Result<Option<u64>, ()> {
         Ok(match self.byte()? {

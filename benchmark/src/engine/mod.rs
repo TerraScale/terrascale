@@ -949,7 +949,7 @@ pub struct Engine {
     bulk_audit: Arc<crate::query::bulk::BulkAuditJournal>,
     /// Durable D-31 lifecycle journal and control state.  This metadata is
     /// intentionally separate from the planner catalog: after a restart a
-    /// lifecycle record never makes an index visible without a fresh SQLite
+    /// lifecycle record never makes an index visible without a fresh `SQLite`
     /// segment at the matching publication boundary.
     pub(crate) auto_index_lifecycle: Mutex<crate::auto_index::LifecycleStore>,
     /// Bounded literal-free execution observations used to rank D-31
@@ -1039,7 +1039,7 @@ impl Engine {
             .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
             .map_err(|_| EngineOpenError::StorageUnavailable)?;
         let auto_index_lifecycle = crate::auto_index::LifecycleStore::open(&location)
-            .map_err(|_| EngineOpenError::FormatMismatch)?;
+            .map_err(|()| EngineOpenError::FormatMismatch)?;
         let subscriptions = Arc::new(PublicationRegistry::new());
         // W4-CA-3: register the Engine-owned index catalog's sink through the
         // production registry so index maintenance observes every publication.
@@ -3031,6 +3031,12 @@ impl Engine {
     }
 
     /// Returns the durable D-31 lifecycle generation for one tenant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] when the tenant is foreign to
+    /// this Engine's durable owner, and [`EngineError::StorageFailure`] when
+    /// the lifecycle state cannot be locked.
     pub fn auto_index_lifecycle_generation(&self, tenant: &TenantId) -> Result<u64, EngineError> {
         self.validate_tenant(tenant)?;
         self.auto_index_lifecycle
@@ -3043,6 +3049,12 @@ impl Engine {
     /// planner catalog is joined only as a physical-segment observation; an
     /// entry is marked visible only when its durable lifecycle record says it
     /// is active, preserving the zero-stale-read invariant across restart.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] when the tenant is foreign to
+    /// this Engine's durable owner, and [`EngineError::StorageFailure`] when
+    /// the lifecycle state or the planner catalog cannot be read.
     pub fn auto_index_lifecycle_snapshot(
         &self,
         tenant: &TenantId,
@@ -3076,7 +3088,8 @@ impl Engine {
                         crate::auto_index::LifecyclePhase::Abandoned
                     }
                 };
-                let generation = entry.published().map_or(0, |value| value.generation());
+                let generation =
+                    entry.published().map_or(0, crate::query::ObservedGeneration::generation);
                 snapshot.indexes.push(crate::auto_index::LifecycleIndexView {
                     id: entry.namespace().name().to_owned(),
                     tenant: tenant.as_str().to_owned(),
@@ -3116,6 +3129,17 @@ impl Engine {
     /// measured execution observations.  Candidate identities are derived
     /// from the canonical field order, so retries and Regions agree without
     /// carrying query literals.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] when the tenant is foreign to
+    /// this Engine's durable owner, and [`EngineError::StorageFailure`] when
+    /// the lifecycle state, the observation sketch, or the collection names
+    /// cannot be read.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "ranking scores only; bounded counts and collection sizes stay far below 2^53"
+    )]
     pub fn auto_index_recommendations(
         &self,
         tenant: &TenantId,
@@ -3142,9 +3166,8 @@ impl Engine {
                     .map(|predicate| predicate.field.clone())
                     .chain(observation.template.ordering.iter().cloned())
                     .collect::<Vec<_>>();
-                let row = grouped
-                    .entry((observation.template.collection.clone(), fields))
-                    .or_default();
+                let row =
+                    grouped.entry((observation.template.collection.clone(), fields)).or_default();
                 row.0 = row.0.saturating_add(1);
                 row.1 += observation.cost.total() as f64;
             }
@@ -3223,6 +3246,14 @@ impl Engine {
     /// Applies one recommendation after an optimistic generation check.  The
     /// extracted columns are registered before the durable lifecycle event;
     /// the descriptor write path maintains them in every subsequent commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::Conflict`] when the generation is stale, the
+    /// candidate is unknown or forbidden, or the descriptor budget is
+    /// exhausted; [`EngineError::InvalidDocument`] when the collection name
+    /// is invalid; and [`EngineError::StorageFailure`] when durable state
+    /// cannot be read or written.
     pub fn auto_index_apply(
         &self,
         tenant: &TenantId,
@@ -3282,11 +3313,17 @@ impl Engine {
             .lock()
             .map_err(|_| EngineError::StorageFailure)?
             .install(view.clone(), at_millis, digest)
-            .map_err(|_| EngineError::StorageFailure)?;
+            .map_err(|()| EngineError::StorageFailure)?;
         Ok(view)
     }
 
     /// Pins one exact normalized template to an active candidate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::Conflict`] when the generation is stale or the
+    /// index is unknown or not active, and [`EngineError::StorageFailure`]
+    /// when durable state cannot be read or written.
     pub fn auto_index_pin_template(
         &self,
         tenant: &TenantId,
@@ -3316,12 +3353,19 @@ impl Engine {
                 Self::now_millis(),
                 *blake3::hash(template.as_bytes()).as_bytes(),
             )
-            .map_err(|_| EngineError::StorageFailure)?;
+            .map_err(|()| EngineError::StorageFailure)?;
         Ok(view)
     }
 
     /// Forbids one exact candidate shape and invalidates all optimistic
     /// generations.  It never disables automatic indexing for a collection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::Conflict`] when the generation is stale,
+    /// [`EngineError::InvalidDocument`] when the candidate or shape is empty,
+    /// and [`EngineError::StorageFailure`] when durable state cannot be read
+    /// or written.
     pub fn auto_index_forbid_shape(
         &self,
         tenant: &TenantId,
@@ -3344,11 +3388,17 @@ impl Engine {
                 Self::now_millis(),
                 *blake3::hash(shape.as_bytes()).as_bytes(),
             )
-            .map_err(|_| EngineError::StorageFailure)?;
+            .map_err(|()| EngineError::StorageFailure)?;
         self.auto_index_lifecycle_generation(tenant)
     }
 
     /// Retires one candidate after its lifecycle has made it invisible.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::Conflict`] when the generation is stale or the
+    /// index is unknown, and [`EngineError::StorageFailure`] when durable
+    /// state cannot be read or written.
     pub fn auto_index_retire(
         &self,
         tenant: &TenantId,
@@ -3369,7 +3419,7 @@ impl Engine {
             .ok_or(EngineError::Conflict)?;
         lifecycle
             .retire_index(index_id, at_millis, *blake3::hash(index_id.as_bytes()).as_bytes())
-            .map_err(|_| EngineError::StorageFailure)?;
+            .map_err(|()| EngineError::StorageFailure)?;
         let mut retired = view;
         retired.phase = crate::auto_index::LifecyclePhase::Abandoned;
         retired.visible = false;
@@ -3377,6 +3427,12 @@ impl Engine {
     }
 
     /// Returns bounded durable lifecycle audit entries.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] when the tenant is foreign to
+    /// this Engine's durable owner, and [`EngineError::StorageFailure`] when
+    /// the lifecycle state cannot be locked.
     pub fn auto_index_lifecycle_audit(
         &self,
         tenant: &TenantId,
@@ -3393,6 +3449,12 @@ impl Engine {
     /// Returns bounded shadow evidence.  Empty evidence is explicit: the
     /// candidate cannot be promoted by this read until the shadow worker has
     /// supplied the minimum paired samples.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::ScopeMismatch`] when the tenant is foreign to
+    /// this Engine's durable owner, and [`EngineError::StorageFailure`] when
+    /// the lifecycle state cannot be locked.
     pub fn auto_index_shadow_evidence(
         &self,
         tenant: &TenantId,

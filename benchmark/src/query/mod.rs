@@ -27,7 +27,6 @@
 #![allow(clippy::pedantic, reason = "query contract integration is still being assembled")]
 
 mod analyzer;
-pub(crate) mod auto_index_adapter;
 mod execute;
 pub mod includes;
 mod model;
@@ -111,6 +110,69 @@ use crate::{
     types::{ReadSnapshot, StorageSequence, TenantId},
 };
 use model::NormalizedQuery;
+
+/// Feeds one successful collection execution into the Engine-owned D-31
+/// observer. The template contains field names and predicate classes only;
+/// bound values and document bodies never cross this boundary.
+pub(crate) fn observe_auto_index_execution(
+    engine: &Engine,
+    query: &NormalizedQuery,
+    result: &QueryResult,
+) {
+    let Some(collection) = query.source().collection() else { return };
+    let mut predicates = Vec::new();
+    for condition in query.predicate().conditions() {
+        let (field, kind) = match condition {
+            QueryCondition::Equals { field, .. }
+            | QueryCondition::In { field, .. }
+            | QueryCondition::AllIn { field, .. }
+            | QueryCondition::Exists { field } => {
+                (field.as_str(), crate::auto_index::PredicateKind::Equality)
+            }
+            QueryCondition::GreaterThan { field, .. }
+            | QueryCondition::GreaterOrEqual { field, .. }
+            | QueryCondition::LessThan { field, .. }
+            | QueryCondition::LessOrEqual { field, .. }
+            | QueryCondition::Between { field, .. } => {
+                (field.as_str(), crate::auto_index::PredicateKind::Range)
+            }
+            QueryCondition::Search { field, .. } => {
+                (field.as_str(), crate::auto_index::PredicateKind::FullText)
+            }
+            QueryCondition::NotEquals { .. }
+            | QueryCondition::Missing { .. }
+            | QueryCondition::StartsWith { .. }
+            | QueryCondition::EndsWith { .. }
+            | QueryCondition::Contains { .. } => return,
+        };
+        predicates.push(crate::auto_index::Predicate { field: field.to_owned(), kind });
+    }
+    let projection = query.projection().selected().map(|fields| {
+        let mut fields = fields.to_vec();
+        fields.sort();
+        fields.dedup();
+        fields
+    });
+    let ordering = query.ordering().keys().iter().map(|key| key.field().to_owned()).collect();
+    let index =
+        result.index_generation().map(|generation| generation.namespace().name().to_owned());
+    let observation = crate::auto_index::Observation {
+        template: crate::auto_index::Template {
+            collection: collection.as_str().to_owned(),
+            predicates,
+            ordering,
+            projection,
+        },
+        // QueryStatistics::scanned is the exact number of candidates the
+        // executor evaluated. SQLite page counters are not available through
+        // rusqlite's safe API, so pages remain zero rather than fabricated.
+        cost: crate::auto_index::LogicalCost::new(0, result.statistics().scanned()),
+        rows_returned: u64::try_from(result.rows().len()).unwrap_or(u64::MAX),
+        index,
+        at_millis: Engine::now_millis(),
+    };
+    engine.record_auto_index_observation(observation);
+}
 
 /// Query planning or execution failures.
 ///
@@ -530,11 +592,15 @@ impl<'engine> QueryStore<'engine> {
             // EXPLAIN, whose result shape cannot be represented by the typed
             // document model.
             if plan.sql_execute_only_operator().is_none() {
-                return execute::execute(self.engine, &self.indexes, plan, snapshot);
+                let result = execute::execute(self.engine, &self.indexes, plan, snapshot)?;
+                observe_auto_index_execution(self.engine, plan.model(), &result);
+                return Ok(result);
             }
             return sql_execute::execute(self.engine, plan, runtime, snapshot);
         }
-        execute::execute(self.engine, &self.indexes, plan, snapshot)
+        let result = execute::execute(self.engine, &self.indexes, plan, snapshot)?;
+        observe_auto_index_execution(self.engine, plan.model(), &result);
+        Ok(result)
     }
 
     /// Explains the plan the optimizer would use for the same query: the
