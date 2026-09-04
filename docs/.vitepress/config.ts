@@ -27,6 +27,17 @@ export default defineConfig({
       },
       { text: 'Guides', link: '/guides/' },
       { text: 'Pricing & limits', link: '/pricing/' },
+      { text: 'Snippets', link: '/snippets' },
+      {
+        text: 'Blog',
+        items: [
+          { text: 'Why TerraScale runs on SQLite', link: '/blog/why-sqlite' },
+          { text: 'Reads are free: how', link: '/blog/reads-are-free' },
+          { text: 'Benchmarks', link: '/blog/benchmarks' },
+          { text: 'Replication design', link: '/blog/replication' },
+          { text: 'A database per customer', link: '/blog/database-per-customer' },
+        ],
+      },
       {
         text: 'Legal',
         items: [
@@ -65,6 +76,36 @@ export default defineConfig({
         {
           text: 'Pricing & limits',
           items: [{ text: 'Plans, quotas, and guards', link: '/pricing/' }],
+        },
+      ],
+      '/pricing': [
+        {
+          text: 'Pricing (L-1 draft, generated)',
+          items: [{ text: 'Generated pricing sheet', link: '/pricing' }],
+        },
+      ],
+      '/limits': [
+        {
+          text: 'Limits (generated)',
+          items: [{ text: 'Generated limits page', link: '/limits' }],
+        },
+      ],
+      '/snippets': [
+        {
+          text: 'Snippets',
+          items: [{ text: 'Runnable snippets', link: '/snippets' }],
+        },
+      ],
+      '/blog/': [
+        {
+          text: 'Launch posts (L-5 stubs)',
+          items: [
+            { text: 'Why TerraScale runs on SQLite', link: '/blog/why-sqlite' },
+            { text: 'Reads are free: how', link: '/blog/reads-are-free' },
+            { text: 'Benchmarks', link: '/blog/benchmarks' },
+            { text: 'Replication design', link: '/blog/replication' },
+            { text: 'A database per customer', link: '/blog/database-per-customer' },
+          ],
         },
       ],
       '/legal/': [

@@ -23,13 +23,20 @@ for (const [page, needles] of [
 
 // P-8: llms.txt lists every route.
 const llms = read("docs/public/llms.txt");
-for (const r of ["/pricing", "/limits", "/snippets", "/blog/why-sqlite", "/blog/database-per-customer"]) {
+for (const r of ["/pricing", "/limits", "/snippets", "/blog/why-sqlite", "/blog/database-per-customer", "/guides/", "/legal/", "/changelog", "/concepts/engines", "sync.api.terrascale.tech"]) {
   assert.ok(llms.includes(r), `llms.txt lists ${r}`);
 }
 
 // L-5: all five launch-post stubs exist.
 for (const slug of ["why-sqlite", "reads-are-free", "benchmarks", "replication", "database-per-customer"]) {
   assert.ok(existsSync(join(root, `docs/blog/${slug}.md`)), `blog/${slug}.md exists`);
+}
+
+// The hand-written pricing page (docs/pricing/index.md) must agree with the
+// generated L-1 draft source of truth on every published number.
+const pricingIndex = read("docs/pricing/index.md");
+for (const n of ["$1 per 1M", "$0.20 per GB-month", "100k writes", "1 GB", "crypto-shred", "billed once"]) {
+  assert.ok(pricingIndex.includes(n), `pricing/index.md agrees on "${n}"`);
 }
 
 console.log(`npm test: ${results.length} snippet(s) + static assertions passed.`);

@@ -1,5 +1,6 @@
-// Generates docs/public/llms.txt from the VitePress nav (P-8: llms.txt).
+// Generates docs/public/llms.txt (P-8: llms.txt).
 // Usage: node scripts/generate-llms.mjs [--check]
+// --check exits non-zero when the checked-in file differs from generated output.
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,11 +9,20 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outPath = join(root, "docs", "public", "llms.txt");
 const check = process.argv.includes("--check");
 
+const base = "https://docs.terrascale.tech";
 const routes = [
   ["/", "TerraScale docs home: what TerraScale is, 5-minute quickstart."],
-  ["/getting-started", "Quickstart: create-terrascale-app to first live query in < 5 minutes; runnable snippets."],
+  ["/getting-started", "Quickstart: create-terrascale-app to first live query in < 5 minutes."],
+  ["/getting-started/", "Quickstart (guides IA): cloud dev branch, seed, codegen, first live query."],
   ["/concepts", "Core concepts: documents, SQL-only queries (D-78), live queries vs collection sync (D-38), branches, tenants, placement."],
+  ["/concepts/engines", "The two engines: sync engine and replication engine."],
+  ["/concepts/replication", "Replication model: leaderless CRDT, causal+, RegionalDurable/GlobalDurable."],
+  ["/concepts/sync", "Sync model: shared views, immutable delta log, CDN delivery."],
+  ["/concepts/sql", "SQL: live subset, allow-list, typed builder, auto-indexing."],
+  ["/concepts/pricing-philosophy", "Pricing philosophy: writes + storage are the only billed dimensions."],
+  ["/guides/", "Guides overview."],
   ["/pricing", "Pricing (L-1 draft, generated from D-16/D-17/D-21/D-25/D-64): writes + storage billed, everything else free."],
+  ["/pricing/", "Pricing & limits: plans, quotas, guards, branch allowance."],
   ["/limits", "Limits and unbilled abuse guards (D-25/D-64), generated from the same source as pricing."],
   ["/snippets", "Runnable snippets: every snippet runs against a real sandbox branch pre-filled with the reader's key (D-56)."],
   ["/blog/why-sqlite", "Launch post stub (L-5): Why TerraScale runs on SQLite."],
@@ -20,18 +30,32 @@ const routes = [
   ["/blog/benchmarks", "Launch post stub (L-5): benchmarks."],
   ["/blog/replication", "Launch post stub (L-5): replication design."],
   ["/blog/database-per-customer", "Launch post stub (L-5): a database per customer."],
+  ["/legal/", "Legal overview: ToS, Privacy, DPA, security.txt, Support."],
+  ["/changelog", "Changelog."],
 ];
 
 const txt = `# TerraScale docs — llms.txt (P-8)
 
-> TerraScale is a multi-region document database: pay for writes and storage;
-> reads, egress, fan-out, and subscribers are free. SQL is the only query
-> language (D-78). Live queries and collection sync over CDN-backed HTTP
-> long-polling by default. This file lists the docs routes for LLM consumers.
+> TerraScale is a multi-region document database-as-a-service: leaderless
+> CRDT replication across regions (RF=2 inside a region), CDN-backed reactive
+> live queries, SQL over documents (SQLite dialect), per-document history
+> with deterministic conflict explanations, PITR/branching, and a database
+> per tenant. Pay only for writes (one write = one create/update/patch/delete
+> of <= 4 KiB, ceil(bytes/4 KiB); replicating to another selected region
+> costs +1 write per region) and storage (logical bytes x regions at
+> $/GB-month). Reads, queries, egress, CDN delivery, fan-out, subscribers,
+> WebSocket connections, webhook delivery, catch-up/replay, and TTL expiry
+> are free and unlimited; guards on free dimensions are unbilled abuse limits.
+> SQL is the only query language (D-78). A write is billed once regardless of
+> views/subscribers (D-22).
 
-${routes.map(([r, desc]) => `- https://docs.terrascale.tech${r}: ${desc}`).join("\n")}
+Base URL: ${base}
 
-## Pricing summary (L-1 draft; full tables in /pricing)
+## Docs map
+
+${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
+
+## Pricing summary (L-1 draft; full tables in /pricing and /pricing/)
 
 - Billed: writes (1 op <= 4 KiB; +1 per extra replicated region) and storage
   (logical bytes x regions at $/GB-month). Overage/PAYG: $1 per 1M writes,
@@ -46,6 +70,37 @@ ${routes.map(([r, desc]) => `- https://docs.terrascale.tech${r}: ${desc}`).join(
 - Stub mode (CI, no credentials): \`npm test\`.
 - Remote mode (real sandbox branch): TERRASCALE_SANDBOX_URL + TERRASCALE_API_KEY,
   \`npm test -- --sandbox=remote\`.
+
+## API entry points
+
+Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
+
+- REST first contact: https://api.terrascale.tech — routes to the nearest
+  healthy region hosting the database; returns 421 Misdirected Request with
+  X-TerraScale-Placement, after which the SDK pins REST (reads and writes).
+- Pinned regional REST: https://gru.api.terrascale.tech,
+  https://sfo.api.terrascale.tech, https://fra.api.terrascale.tech
+- Regions list: GET https://api.terrascale.tech/regions
+- Reactive HTTP (live queries; CDN-backed long-polling, capability header):
+  https://sync.api.terrascale.tech
+- SQL (read-only; JSON or MessagePack):
+  POST /api/v1/databases/{id}/sql
+- Reactive views (create/attach; returns view id, snapshot chunk URLs, log
+  URL, checkpoint, view capability):
+  POST /api/v1/reactive/views
+- Reactive log (shared cache key; offset = revision):
+  GET /api/v1/reactive/views/{view}/{generation}/log?offset={revision}
+- Export (lossless bundle or JSONL):
+  POST /api/v1/databases/{id}/exports
+- Status: https://status.terrascale.tech
+
+## SDKs
+
+TypeScript (@terrascale/sdk), C#, Go, Rust — all generated from a pinned
+contract with the same surface: document CRUD, typed SQL builder, raw
+parameterized SQL, subscribe/execute, checkpoints and typed resets, region
+pinning, tenants, management. Framework adapters (React, TanStack, Better
+Auth) are TypeScript.
 `;
 
 if (check) {
