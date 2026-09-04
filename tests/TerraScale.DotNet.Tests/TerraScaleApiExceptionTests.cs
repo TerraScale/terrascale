@@ -12,8 +12,12 @@ public sealed class TerraScaleApiExceptionTests
         var retryAt = DateTimeOffset.UtcNow.AddMinutes(2);
         using var handler = new ErrorHandler(_ =>
         {
-            var response = ErrorResponse("{\"error\":{\"code\":\"overloaded\",\"message\":\"Try later.\"}}");
+            var response = ErrorResponse("{\"error\":{\"code\":\"overloaded\",\"message\":\"Try later.\",\"fix\":\"wait for capacity\"}}");
             response.Headers.RetryAfter = new RetryConditionHeaderValue(retryAt);
+            response.Headers.TryAddWithoutValidation("X-Request-Id", "request-429");
+            response.Headers.TryAddWithoutValidation("X-TerraScale-Region", "SFO");
+            response.Headers.TryAddWithoutValidation("X-TerraScale-Placement", "GRU,SFO");
+            response.Headers.TryAddWithoutValidation("X-TerraScale-Route-Mode", "preferred-failover");
             return response;
         });
         using var httpClient = new HttpClient(handler);
@@ -25,6 +29,13 @@ public sealed class TerraScaleApiExceptionTests
         await Assert.That(failure).IsNotNull();
         var exception = failure ?? throw new InvalidOperationException("The overload response did not produce a typed failure.");
         await Assert.That(exception.ErrorCode).IsEqualTo("overloaded");
+        await Assert.That(exception.Fix).IsEqualTo("wait for capacity");
+        await Assert.That(exception.RequestId).IsEqualTo("request-429");
+        await Assert.That(exception.Placement).IsEqualTo("GRU,SFO");
+        await Assert.That(exception.Routing).IsNotNull();
+        await Assert.That(exception.Routing!.ServingRegion).IsEqualTo("SFO");
+        await Assert.That(exception.Routing.RouteMode).IsEqualTo(TerraScaleRouteMode.PreferredFailover);
+        await Assert.That(exception.Routing.IsDegraded).IsTrue();
         await Assert.That(exception.RetryAfter).IsNotNull();
         await Assert.That(exception.RetryAfter!.Value).IsGreaterThan(TimeSpan.FromSeconds(90));
         await Assert.That(exception.RetryAfter!.Value).IsLessThanOrEqualTo(TimeSpan.FromMinutes(2));
@@ -47,6 +58,108 @@ public sealed class TerraScaleApiExceptionTests
         await Assert.That(exception.ErrorCode).IsNull();
         await Assert.That(exception.Message).Contains("HTTP 429");
         await Assert.That(exception.ResponseBody).IsEqualTo("{not-json");
+        await Assert.That(exception.Fix).IsNull();
+    }
+
+    [Test]
+    public async Task MissingPublishedFixRemainsAbsent()
+    {
+        using var handler = new ErrorHandler(_ => ErrorResponse("{\"error\":{\"code\":\"not_found\",\"message\":\"Missing.\"}}"));
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.GetAsync("orders", "items", "item-a"));
+
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.ErrorCode).IsEqualTo("not_found");
+        await Assert.That(failure.Message).IsEqualTo("Missing.");
+        await Assert.That(failure.Fix).IsNull();
+    }
+
+    [Test]
+    public async Task OlderTopLevelErrorShapeRemainsBackwardCompatible()
+    {
+        using var handler = new ErrorHandler(_ => ErrorResponse(
+            "{\"code\":\"legacy_error\",\"message\":\"Legacy failure.\",\"fix\":\"upgrade the client\"}"));
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.GetAsync("orders", "items", "item-a"));
+
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.ErrorCode).IsEqualTo("legacy_error");
+        await Assert.That(failure.Message).IsEqualTo("Legacy failure.");
+        await Assert.That(failure.Fix).IsEqualTo("upgrade the client");
+    }
+
+    [Test]
+    public async Task OlderNestedErrorAliasRemainsBackwardCompatible()
+    {
+        using var handler = new ErrorHandler(_ => ErrorResponse(
+            "{\"error\":{\"code\":\"legacy_error\",\"error\":\"Legacy failure.\"}}"));
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.GetAsync("orders", "items", "item-a"));
+
+        await Assert.That(failure).IsNotNull();
+        await Assert.That(failure!.ErrorCode).IsEqualTo("legacy_error");
+        await Assert.That(failure.Message).IsEqualTo("Legacy failure.");
+    }
+
+    [Test]
+    public async Task SuccessfulResponseDoesNotCreateAnApiException()
+    {
+        using var handler = new SuccessHandler();
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var document = await client.Documents.GetAsync("orders", "items", "item-a");
+
+        await Assert.That(document.Data.GetProperty("ok").GetBoolean()).IsTrue();
+        await Assert.That(handler.Attempts).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CapturedErrorBodyRedactsSecretFields()
+    {
+        const string apiSecret = "api-secret-must-not-escape";
+        const string sessionSecret = "session-secret-must-not-escape";
+        using var handler = new ErrorHandler(_ => ErrorResponse(
+            $"{{\"error\":{{\"code\":\"invalid_request\",\"message\":\"Bad request.\",\"fix\":\"retry safely\"}},\"apiKey\":\"{apiSecret}\",\"details\":{{\"session\":\"{sessionSecret}\"}}}}"));
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.GetAsync("orders", "items", "item-a"));
+
+        await Assert.That(failure).IsNotNull();
+        var exception = failure ?? throw new InvalidOperationException("The secret-bearing response did not produce a typed failure.");
+        await Assert.That(exception.ResponseBody).Contains("[REDACTED]");
+        await Assert.That(exception.ResponseBody).DoesNotContain(apiSecret);
+        await Assert.That(exception.ResponseBody).DoesNotContain(sessionSecret);
+        await Assert.That(exception.Fix).IsEqualTo("retry safely");
+    }
+
+    [Test]
+    public async Task MalformedCredentialTextDoesNotLeakMultiTokenSecrets()
+    {
+        const string secret = "credential-must-not-escape";
+        using var handler = new ErrorHandler(_ => ErrorResponse(
+            $"authorization: Bearer {secret}\nretry later"));
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Documents.GetAsync("orders", "items", "item-a"));
+
+        await Assert.That(failure).IsNotNull();
+        var exception = failure ?? throw new InvalidOperationException("The malformed credential response did not produce a typed failure.");
+        await Assert.That(exception.ResponseBody).DoesNotContain(secret);
+        await Assert.That(exception.Message).DoesNotContain(secret);
     }
 
     [Test]
@@ -122,6 +235,24 @@ public sealed class TerraScaleApiExceptionTests
         {
             Attempts++;
             return Task.FromResult(responseFactory(request));
+        }
+    }
+
+    private sealed class SuccessHandler : HttpMessageHandler
+    {
+        public int Attempts { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Attempts++;
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"ok\":true}", Encoding.UTF8, "application/json")
+            };
+            response.Headers.TryAddWithoutValidation("ETag", "\"revision-1\"");
+            return Task.FromResult(response);
         }
     }
 
