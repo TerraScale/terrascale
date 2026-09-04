@@ -1855,13 +1855,13 @@ mod tests {
             collection: "a\"b".into(),
             id: "1".into(),
             version: 3,
-            canonical_json: br#"{\"x\":true}"#.to_vec(),
+            canonical_json: br#"{"x":true}"#.to_vec(),
         }])
         .expect("jsonl");
         assert!(history.is_empty());
         assert_eq!(
             std::str::from_utf8(&documents).expect("utf8"),
-            r#"{\"collection\":\"a\\\"b\",\"id\":\"1\",\"version\":3,\"value\":{\"x\":true}}\n"#
+            "{\"collection\":\"a\\\"b\",\"id\":\"1\",\"version\":3,\"value\":{\"x\":true}}\n"
         );
     }
 
