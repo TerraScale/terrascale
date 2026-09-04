@@ -2,24 +2,11 @@
   "name": "ts-docs",
   "version": "0.1.0",
   "private": true,
-  "description": "TerraScale product docs site source (runnable snippets, D-56).",
   "type": "module",
   "scripts": {
-    "docs:dev": "vitepress dev docs",
-    "docs:build": "vitepress build docs",
-    "prebuild": "node scripts/generate-pricing.mjs && node scripts/generate-llms.mjs",
-    "build": "npm run docs:build",
-    "pretest": "node scripts/generate-pricing.mjs --check && node scripts/generate-llms.mjs --check",
-    "test": "node scripts/test.mjs",
-    "check": "npm ci && npm run build && npm test"
-  },
-  "dependencies": {
-    "vue": "3.5.42"
-  },
-  "devDependencies": {
-    "vitepress": "1.6.4"
-  },
-  "engines": {
-    "node": ">=20"
+    "dev": "vitepress dev docs",
+    "build": "vitepress build docs",
+    "preview": "vitepress preview docs",
+    "test": "node scripts/check-build.mjs"
   }
 }
