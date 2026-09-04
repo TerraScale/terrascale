@@ -73,11 +73,21 @@ pub struct HookAvailability {
 impl HookAvailability {
     /// Validates that all D-31 hooks are installed.
     pub fn validate(self) -> Result<(), CoordinatorError> {
-        if !self.journal { return Err(CoordinatorError::MissingHook(HookKind::Journal)); }
-        if !self.publication_transaction { return Err(CoordinatorError::MissingHook(HookKind::PublicationTransaction)); }
-        if !self.planner { return Err(CoordinatorError::MissingHook(HookKind::Planner)); }
-        if !self.logical_cost { return Err(CoordinatorError::MissingHook(HookKind::LogicalCost)); }
-        if !self.backfill { return Err(CoordinatorError::MissingHook(HookKind::Backfill)); }
+        if !self.journal {
+            return Err(CoordinatorError::MissingHook(HookKind::Journal));
+        }
+        if !self.publication_transaction {
+            return Err(CoordinatorError::MissingHook(HookKind::PublicationTransaction));
+        }
+        if !self.planner {
+            return Err(CoordinatorError::MissingHook(HookKind::Planner));
+        }
+        if !self.logical_cost {
+            return Err(CoordinatorError::MissingHook(HookKind::LogicalCost));
+        }
+        if !self.backfill {
+            return Err(CoordinatorError::MissingHook(HookKind::Backfill));
+        }
         Ok(())
     }
 }
@@ -204,7 +214,11 @@ pub struct WorkloadSketch {
 
 impl Default for WorkloadSketch {
     fn default() -> Self {
-        Self { ring: VecDeque::with_capacity(OBSERVATION_CAPACITY), columns: BTreeMap::new(), capacity: OBSERVATION_CAPACITY }
+        Self {
+            ring: VecDeque::with_capacity(OBSERVATION_CAPACITY),
+            columns: BTreeMap::new(),
+            capacity: OBSERVATION_CAPACITY,
+        }
     }
 }
 
@@ -216,24 +230,37 @@ impl WorkloadSketch {
     /// Records an execution and evicts the oldest observation at the bound.
     pub fn observe(&mut self, observation: Observation) {
         self.ring.push_back(observation);
-        while self.ring.len() > self.capacity { self.ring.pop_front(); }
+        while self.ring.len() > self.capacity {
+            self.ring.pop_front();
+        }
     }
     /// Adds an already-extracted value to the per-column sketches.
     pub fn observe_value(&mut self, collection: &str, field: &str, value: &[u8]) {
         self.columns.entry((collection.to_owned(), field.to_owned())).or_default().observe(value);
     }
     /// Returns retained observations in chronological order.
-    pub fn observations(&self) -> impl Iterator<Item = &Observation> { self.ring.iter() }
+    pub fn observations(&self) -> impl Iterator<Item = &Observation> {
+        self.ring.iter()
+    }
     /// Returns a column sketch, if one has observed values.
     pub fn column(&self, collection: &str, field: &str) -> Option<&ColumnSketch> {
         self.columns.get(&(collection.to_owned(), field.to_owned()))
     }
     /// Compresses observations into the heaviest templates covering `share`.
-    pub fn compress(&self, now_millis: u64, window_millis: u64, share: f64) -> Vec<WeightedTemplate> {
-        if window_millis == 0 || !(0.0 < share && share <= 1.0) { return Vec::new(); }
+    pub fn compress(
+        &self,
+        now_millis: u64,
+        window_millis: u64,
+        share: f64,
+    ) -> Vec<WeightedTemplate> {
+        if window_millis == 0 || !(0.0 < share && share <= 1.0) {
+            return Vec::new();
+        }
         let mut weights: BTreeMap<Template, (u64, u64)> = BTreeMap::new();
         for observation in &self.ring {
-            if now_millis.saturating_sub(observation.at_millis) > window_millis { continue; }
+            if now_millis.saturating_sub(observation.at_millis) > window_millis {
+                continue;
+            }
             let row = weights.entry(observation.template.clone()).or_default();
             row.0 = row.0.saturating_add(1);
             row.1 = row.1.saturating_add(observation.cost.total());
@@ -241,21 +268,31 @@ impl WorkloadSketch {
         let mut by_collection: BTreeMap<String, Vec<WeightedTemplate>> = BTreeMap::new();
         for (template, (frequency, work)) in weights {
             let weight = (frequency as f64) * (work as f64 / frequency.max(1) as f64);
-            by_collection.entry(template.collection.clone()).or_default().push(WeightedTemplate { template, frequency, weight });
+            by_collection.entry(template.collection.clone()).or_default().push(WeightedTemplate {
+                template,
+                frequency,
+                weight,
+            });
         }
         let mut result = Vec::new();
         for (_, mut entries) in by_collection {
-            entries.sort_by(|a, b| b.weight.total_cmp(&a.weight).then_with(|| a.template.cmp(&b.template)));
+            entries.sort_by(|a, b| {
+                b.weight.total_cmp(&a.weight).then_with(|| a.template.cmp(&b.template))
+            });
             let total: f64 = entries.iter().map(|e| e.weight).sum();
             let target = total * share;
             let mut covered = 0.0;
             for item in entries {
-                if result.len() >= COMPRESSED_CAPACITY { break; }
+                if result.len() >= COMPRESSED_CAPACITY {
+                    break;
+                }
                 covered += item.weight;
                 result.push(item);
                 // Allow the exact 95% boundary despite decimal rounding of
                 // the frequency×cost product.
-                if covered + 1e-12 * total >= target { break; }
+                if covered + 1e-12 * total >= target {
+                    break;
+                }
             }
         }
         result
@@ -282,7 +319,9 @@ pub struct ColumnSketch {
 }
 
 impl Default for ColumnSketch {
-    fn default() -> Self { Self { registers: [0; 64], histogram: BTreeMap::new(), total: 0 } }
+    fn default() -> Self {
+        Self { registers: [0; 64], histogram: BTreeMap::new(), total: 0 }
+    }
 }
 
 impl ColumnSketch {
@@ -297,7 +336,13 @@ impl ColumnSketch {
             let next = self.histogram.get(value).copied().unwrap_or(0).saturating_add(1);
             self.histogram.insert(value.to_vec(), next);
             while self.histogram.len() > 128 {
-                if let Some(key) = self.histogram.iter().min_by_key(|(_, count)| **count).map(|(k, _)| k.clone()) { self.histogram.remove(&key); } else { break; }
+                if let Some(key) =
+                    self.histogram.iter().min_by_key(|(_, count)| **count).map(|(k, _)| k.clone())
+                {
+                    self.histogram.remove(&key);
+                } else {
+                    break;
+                }
             }
         }
     }
@@ -305,23 +350,30 @@ impl ColumnSketch {
     pub fn distinct(&self) -> f64 {
         let zero = self.registers.iter().filter(|r| **r == 0).count() as f64;
         let harmonic: f64 = self.registers.iter().map(|r| 2.0_f64.powi(-i32::from(*r))).sum();
-        if harmonic == 0.0 { return f64::INFINITY; }
+        if harmonic == 0.0 {
+            return f64::INFINITY;
+        }
         let raw = 0.673 * 4096.0 / harmonic;
         if raw <= 160.0 && zero > 0.0 { 64.0 * (64.0 / zero).ln() } else { raw }
     }
     /// Number of values observed.
-    pub const fn total(&self) -> u64 { self.total }
+    pub const fn total(&self) -> u64 {
+        self.total
+    }
 }
 
 fn fnv(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
-    for byte in bytes { hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3); }
+    for byte in bytes {
+        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
+    }
     hash
 }
 
 /// Candidate index kind.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum CandidateKind { /// SQLite B-tree index. 
+pub enum CandidateKind {
+    /// SQLite B-tree index.
     BTree,
     /// SQLite FTS5 virtual table.
     Fts,
@@ -345,24 +397,69 @@ pub struct Candidate {
 /// Derives equality → range → ordering → covering candidates, including FTS5.
 pub fn derive_candidates(template: &Template, extracted: &BTreeSet<String>) -> Vec<Candidate> {
     if template.has_full_text() {
-        return template.predicates.iter().find(|p| p.kind == PredicateKind::FullText).filter(|p| extracted.contains(&p.field)).map(|p| vec![Candidate { collection: template.collection.clone(), fields: vec![p.field.clone()], kind: CandidateKind::Fts, needs_descriptor: false, maintenance_cost: 1 }]).unwrap_or_default();
+        return template
+            .predicates
+            .iter()
+            .find(|p| p.kind == PredicateKind::FullText)
+            .filter(|p| extracted.contains(&p.field))
+            .map(|p| {
+                vec![Candidate {
+                    collection: template.collection.clone(),
+                    fields: vec![p.field.clone()],
+                    kind: CandidateKind::Fts,
+                    needs_descriptor: false,
+                    maintenance_cost: 1,
+                }]
+            })
+            .unwrap_or_default();
     }
     let mut fields = Vec::new();
     let mut needs_descriptor = false;
     for predicate in &template.predicates {
         if predicate.kind == PredicateKind::Equality || predicate.kind == PredicateKind::Range {
-            if !fields.contains(&predicate.field) { fields.push(predicate.field.clone()); needs_descriptor |= !extracted.contains(&predicate.field); }
-            if predicate.kind == PredicateKind::Range { break; }
+            if !fields.contains(&predicate.field) {
+                fields.push(predicate.field.clone());
+                needs_descriptor |= !extracted.contains(&predicate.field);
+            }
+            if predicate.kind == PredicateKind::Range {
+                break;
+            }
         }
     }
-    for field in &template.ordering { if !fields.contains(field) { fields.push(field.clone()); needs_descriptor |= !extracted.contains(field); } }
-    if fields.is_empty() { return Vec::new(); }
-    let base = Candidate { collection: template.collection.clone(), fields: fields.clone(), kind: CandidateKind::BTree, needs_descriptor, maintenance_cost: fields.len() as u64 };
+    for field in &template.ordering {
+        if !fields.contains(field) {
+            fields.push(field.clone());
+            needs_descriptor |= !extracted.contains(field);
+        }
+    }
+    if fields.is_empty() {
+        return Vec::new();
+    }
+    let base = Candidate {
+        collection: template.collection.clone(),
+        fields: fields.clone(),
+        kind: CandidateKind::BTree,
+        needs_descriptor,
+        maintenance_cost: fields.len() as u64,
+    };
     let mut result = vec![base];
     if let Some(projection) = &template.projection {
         let mut covering = fields;
-        for field in projection { if !covering.contains(field) { covering.push(field.clone()); } }
-        if covering.len() <= 40 { let maintenance_cost = covering.len() as u64; result.push(Candidate { collection: template.collection.clone(), fields: covering, kind: CandidateKind::BTree, needs_descriptor, maintenance_cost }); }
+        for field in projection {
+            if !covering.contains(field) {
+                covering.push(field.clone());
+            }
+        }
+        if covering.len() <= 40 {
+            let maintenance_cost = covering.len() as u64;
+            result.push(Candidate {
+                collection: template.collection.clone(),
+                fields: covering,
+                kind: CandidateKind::BTree,
+                needs_descriptor,
+                maintenance_cost,
+            });
+        }
     }
     result
 }
@@ -382,7 +479,8 @@ pub struct CandidateContext {
 
 /// Write-budget accounting for one collection.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct WriteBudget { /// Base write work. 
+pub struct WriteBudget {
+    /// Base write work.
     pub base_cost: f64,
     /// Current visible-index maintenance work.
     pub maintenance_cost: f64,
@@ -393,11 +491,18 @@ pub struct WriteBudget { /// Base write work.
 impl WriteBudget {
     /// Returns whether an index with `cost` may be activated.
     pub fn allows(self, cost: f64) -> bool {
-        self.base_cost.is_finite() && self.base_cost >= 0.0 && cost.is_finite() && cost >= 0.0 && self.visible_indexes < MAX_VISIBLE_INDEXES && self.maintenance_cost + cost <= self.base_cost * WRITE_BUDGET_MULTIPLE
+        self.base_cost.is_finite()
+            && self.base_cost >= 0.0
+            && cost.is_finite()
+            && cost >= 0.0
+            && self.visible_indexes < MAX_VISIBLE_INDEXES
+            && self.maintenance_cost + cost <= self.base_cost * WRITE_BUDGET_MULTIPLE
     }
     /// Accounts one activated index.
     pub fn account(&mut self, cost: f64) -> Result<(), CoordinatorError> {
-        if !self.allows(cost) { return Err(CoordinatorError::WriteBudgetExceeded); }
+        if !self.allows(cost) {
+            return Err(CoordinatorError::WriteBudgetExceeded);
+        }
         self.maintenance_cost += cost;
         self.visible_indexes += 1;
         Ok(())
@@ -405,18 +510,32 @@ impl WriteBudget {
 }
 
 /// Selects the highest uncertainty-weighted benefit candidate that fits.
-pub fn select_candidate<'a>(candidates: &'a [Candidate], contexts: &[CandidateContext], budget: WriteBudget) -> Result<Option<&'a Candidate>, CoordinatorError> {
-    if candidates.len() != contexts.len() { return Err(CoordinatorError::InvalidTransition); }
-    candidates.iter().zip(contexts).enumerate().filter(|(_, (candidate, _))| budget.allows(candidate.maintenance_cost as f64)).max_by(|(ia, (_, a)), (ib, (_, b))| {
-        let sa = a.benefit + a.uncertainty * (1.0 + a.selectivity.max(0.0));
-        let sb = b.benefit + b.uncertainty * (1.0 + b.selectivity.max(0.0));
-        sa.total_cmp(&sb).then_with(|| ib.cmp(ia))
-    }).map(|(_, (candidate, _))| candidate).map_or(Ok(None), |candidate| Ok(Some(candidate)))
+pub fn select_candidate<'a>(
+    candidates: &'a [Candidate],
+    contexts: &[CandidateContext],
+    budget: WriteBudget,
+) -> Result<Option<&'a Candidate>, CoordinatorError> {
+    if candidates.len() != contexts.len() {
+        return Err(CoordinatorError::InvalidTransition);
+    }
+    candidates
+        .iter()
+        .zip(contexts)
+        .enumerate()
+        .filter(|(_, (candidate, _))| budget.allows(candidate.maintenance_cost as f64))
+        .max_by(|(ia, (_, a)), (ib, (_, b))| {
+            let sa = a.benefit + a.uncertainty * (1.0 + a.selectivity.max(0.0));
+            let sb = b.benefit + b.uncertainty * (1.0 + b.selectivity.max(0.0));
+            sa.total_cmp(&sb).then_with(|| ib.cmp(ia))
+        })
+        .map(|(_, (candidate, _))| candidate)
+        .map_or(Ok(None), |candidate| Ok(Some(candidate)))
 }
 
 /// Exact disjoint plan for an invisible index's backfill tail.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct HybridPlan { /// Last sequence read from the index. 
+pub struct HybridPlan {
+    /// Last sequence read from the index.
     pub index_through: u64,
     /// First sequence read from the base collection.
     pub scan_from: u64,
@@ -426,7 +545,22 @@ pub struct HybridPlan { /// Last sequence read from the index.
 
 /// Lifecycle phase persisted for every candidate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Phase { Observing, Selected, Building, Shadowing, Active, Invisible, Abandoned }
+pub enum Phase {
+    /// Workload observation; initial phase for new index entries.
+    Observing,
+    /// Candidate chosen and awaiting an invisible build.
+    Selected,
+    /// Invisible backfill toward the snapshot target.
+    Building,
+    /// Fully covered build under shadow verification.
+    Shadowing,
+    /// Planner-visible serving index.
+    Active,
+    /// Hidden but physically retained for the drop grace period.
+    Invisible,
+    /// Terminal dropped or rejected index.
+    Abandoned,
+}
 
 /// Durable state of one candidate index.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -454,9 +588,15 @@ pub struct IndexState {
 impl IndexState {
     /// Returns a hybrid plan when the uncovered tail fits the scan cap.
     pub fn hybrid_plan(&self, scan_cap: u64) -> Option<HybridPlan> {
-        if self.phase != Phase::Building || self.covered >= self.target { return None; }
+        if self.phase != Phase::Building || self.covered >= self.target {
+            return None;
+        }
         let tail = self.target - self.covered;
-        (tail <= scan_cap).then(|| HybridPlan { index_through: self.covered, scan_from: self.covered.checked_add(1).unwrap_or(u64::MAX), scan_through: self.target })
+        (tail <= scan_cap).then(|| HybridPlan {
+            index_through: self.covered,
+            scan_from: self.covered.checked_add(1).unwrap_or(u64::MAX),
+            scan_through: self.target,
+        })
     }
 }
 
@@ -477,24 +617,69 @@ pub struct WelchEvidence {
 
 /// Shadow outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ShadowOutcome { Activate, ActivateWithPins, Abandon }
+pub enum ShadowOutcome {
+    /// Significant improvement without regression; make the index visible.
+    Activate,
+    /// Regression guard crossed; activate with baseline plan pins.
+    ActivateWithPins,
+    /// Insufficient evidence; do not activate.
+    Abandon,
+}
 
 /// Evaluates bounded logical-cost samples using a conservative Welch gate.
-pub fn verify_shadow(baseline: &[LogicalCost], candidate: &[LogicalCost]) -> Result<(ShadowOutcome, WelchEvidence), CoordinatorError> {
-    if baseline.len() < MIN_SHADOW_SAMPLES || candidate.len() < MIN_SHADOW_SAMPLES { return Err(CoordinatorError::InsufficientEvidence); }
-    let mean = |samples: &[LogicalCost]| samples.iter().map(|s| s.total() as f64).sum::<f64>() / samples.len() as f64;
-    let bm = mean(baseline); let cm = mean(candidate);
-    if !bm.is_finite() || !cm.is_finite() || bm <= 0.0 { return Err(CoordinatorError::InsufficientEvidence); }
-    let variance = |samples: &[LogicalCost], m: f64| samples.iter().map(|s| { let d = s.total() as f64 - m; d * d }).sum::<f64>() / (samples.len() - 1) as f64;
-    let se = variance(baseline, bm) / baseline.len() as f64 + variance(candidate, cm) / candidate.len() as f64;
-    let statistic = if se == 0.0 { if (bm - cm).abs() < f64::EPSILON { 0.0 } else { f64::INFINITY } } else { (bm - cm).abs() / se.sqrt() };
-    if !statistic.is_finite() && (bm - cm).abs() < f64::EPSILON { return Err(CoordinatorError::InsufficientEvidence); }
+pub fn verify_shadow(
+    baseline: &[LogicalCost],
+    candidate: &[LogicalCost],
+) -> Result<(ShadowOutcome, WelchEvidence), CoordinatorError> {
+    if baseline.len() < MIN_SHADOW_SAMPLES || candidate.len() < MIN_SHADOW_SAMPLES {
+        return Err(CoordinatorError::InsufficientEvidence);
+    }
+    let mean = |samples: &[LogicalCost]| {
+        samples.iter().map(|s| s.total() as f64).sum::<f64>() / samples.len() as f64
+    };
+    let bm = mean(baseline);
+    let cm = mean(candidate);
+    if !bm.is_finite() || !cm.is_finite() || bm <= 0.0 {
+        return Err(CoordinatorError::InsufficientEvidence);
+    }
+    let variance = |samples: &[LogicalCost], m: f64| {
+        samples
+            .iter()
+            .map(|s| {
+                let d = s.total() as f64 - m;
+                d * d
+            })
+            .sum::<f64>()
+            / (samples.len() - 1) as f64
+    };
+    let se = variance(baseline, bm) / baseline.len() as f64
+        + variance(candidate, cm) / candidate.len() as f64;
+    let statistic = if se == 0.0 {
+        if (bm - cm).abs() < f64::EPSILON { 0.0 } else { f64::INFINITY }
+    } else {
+        (bm - cm).abs() / se.sqrt()
+    };
+    if !statistic.is_finite() && (bm - cm).abs() < f64::EPSILON {
+        return Err(CoordinatorError::InsufficientEvidence);
+    }
     let improvement = (bm - cm) / bm;
-    let p95 = |samples: &[LogicalCost]| { let mut values: Vec<u64> = samples.iter().map(|s| s.total()).collect(); values.sort_unstable(); values[((values.len() - 1) * 95) / 100] as f64 };
-    let regression = cm > bm * (1.0 + REGRESSION_FRACTION) || p95(candidate) > p95(baseline) * (1.0 + REGRESSION_FRACTION);
-    let evidence = WelchEvidence { baseline_mean: bm, candidate_mean: cm, improvement, statistic, regression };
+    let p95 = |samples: &[LogicalCost]| {
+        let mut values: Vec<u64> = samples.iter().map(|s| s.total()).collect();
+        values.sort_unstable();
+        values[((values.len() - 1) * 95) / 100] as f64
+    };
+    let regression = cm > bm * (1.0 + REGRESSION_FRACTION)
+        || p95(candidate) > p95(baseline) * (1.0 + REGRESSION_FRACTION);
+    let evidence =
+        WelchEvidence { baseline_mean: bm, candidate_mean: cm, improvement, statistic, regression };
     let significant = statistic >= 2.0;
-    let outcome = if regression { ShadowOutcome::ActivateWithPins } else if significant && improvement >= MIN_IMPROVEMENT_FRACTION { ShadowOutcome::Activate } else { ShadowOutcome::Abandon };
+    let outcome = if regression {
+        ShadowOutcome::ActivateWithPins
+    } else if significant && improvement >= MIN_IMPROVEMENT_FRACTION {
+        ShadowOutcome::Activate
+    } else {
+        ShadowOutcome::Abandon
+    };
     Ok((outcome, evidence))
 }
 
@@ -527,7 +712,12 @@ pub trait StorageAdapter {
     /// Applies a bounded contiguous batch to an invisible index.
     fn backfill_batch(&mut self, index: &str, first: u64, last: u64) -> Result<(), HookError>;
     /// Catches up and verifies the final tail in the same write transaction.
-    fn catch_up_and_verify(&mut self, index: &str, covered: u64, target: u64) -> Result<u64, HookError>;
+    fn catch_up_and_verify(
+        &mut self,
+        index: &str,
+        covered: u64,
+        target: u64,
+    ) -> Result<u64, HookError>;
     /// Changes planner visibility in the same durable catalog.
     fn set_visible(&mut self, index: &str, visible: bool) -> Result<(), HookError>;
     /// Drops physical pages after the invisible grace period.
@@ -535,45 +725,91 @@ pub trait StorageAdapter {
     /// Installs/removes a template-specific baseline plan pin.
     fn set_plan_pin(&mut self, template: &str, index: &str, pinned: bool) -> Result<(), HookError>;
     /// Records logical pages/rows for a normalized template.
-    fn record_logical_cost(&mut self, template: &Template, cost: LogicalCost) -> Result<(), HookError>;
+    fn record_logical_cost(
+        &mut self,
+        template: &Template,
+        cost: LogicalCost,
+    ) -> Result<(), HookError>;
     /// Runs a hypothetical compile check without mutating the live schema.
-    fn compile_hypothetical(&mut self, template: &Template, candidate: &Candidate) -> Result<bool, HookError>;
+    fn compile_hypothetical(
+        &mut self,
+        template: &Template,
+        candidate: &Candidate,
+    ) -> Result<bool, HookError>;
 }
 
 /// A coordinator with durable lifecycle replay and fail-closed transitions.
-pub struct Coordinator<A> { adapter: A, states: BTreeMap<String, IndexState>, next_sequence: u64 }
+pub struct Coordinator<A> {
+    adapter: A,
+    states: BTreeMap<String, IndexState>,
+    next_sequence: u64,
+}
 
 impl<A: StorageAdapter> Coordinator<A> {
-    /// Recovers state from durable events. Reordered or conflicting events
-    /// fail closed before any adapter mutation.
-    pub fn recover(mut adapter: A) -> Result<Self, CoordinatorError> {
-        let events = adapter.load_lifecycle().map_err(CoordinatorError::Hook)?;
-        let mut coordinator = Self { adapter, states: BTreeMap::new(), next_sequence: 1 };
-        for event in events { coordinator.apply_event(event)?; }
-        Ok(coordinator)
+    /// Refuses an unqualified recovery.  Callers must use
+    /// [`Self::recover_with_hooks`] so a deployment cannot accidentally make
+    /// an in-memory-only coordinator authoritative.
+    pub fn recover(_adapter: A) -> Result<Self, CoordinatorError> {
+        Err(CoordinatorError::MissingHook(HookKind::Journal))
     }
     /// Recovers only when the member explicitly reports every required hook.
-    pub fn recover_with_hooks(adapter: A, hooks: HookAvailability) -> Result<Self, CoordinatorError> {
+    pub fn recover_with_hooks(
+        adapter: A,
+        hooks: HookAvailability,
+    ) -> Result<Self, CoordinatorError> {
         hooks.validate()?;
-        Self::recover(adapter)
+        let mut adapter = adapter;
+        let events = adapter.load_lifecycle().map_err(CoordinatorError::Hook)?;
+        let mut coordinator = Self { adapter, states: BTreeMap::new(), next_sequence: 1 };
+        for event in events {
+            coordinator.apply_event(event)?;
+        }
+        Ok(coordinator)
     }
     /// Returns the adapter for integration-owned maintenance work.
-    pub fn adapter_mut(&mut self) -> &mut A { &mut self.adapter }
+    pub fn adapter_mut(&mut self) -> &mut A {
+        &mut self.adapter
+    }
     /// Returns one recovered index state.
-    pub fn state(&self, index: &str) -> Option<&IndexState> { self.states.get(index) }
+    pub fn state(&self, index: &str) -> Option<&IndexState> {
+        self.states.get(index)
+    }
     /// Records planner use.  The timestamp is durable when the next journal
     /// event is written, so restart cannot make a rare query look unused.
     pub fn note_used(&mut self, index: &str, at_millis: u64) -> Result<(), CoordinatorError> {
         let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
-        if state.phase != Phase::Active || !state.visible { return Err(CoordinatorError::InvalidTransition); }
+        if state.phase != Phase::Active || !state.visible {
+            return Err(CoordinatorError::InvalidTransition);
+        }
         let covered = state.covered;
-        self.append(LifecycleEvent { sequence: 0, index: index.to_owned(), phase: Phase::Active, watermark: Some(covered), target: None, evidence_digest: [0; 32], at_millis })
+        self.append(LifecycleEvent {
+            sequence: 0,
+            index: index.to_owned(),
+            phase: Phase::Active,
+            watermark: Some(covered),
+            target: None,
+            evidence_digest: [0; 32],
+            at_millis,
+        })
     }
     /// Applies an event to memory after journal replay validation.
     fn apply_event(&mut self, event: LifecycleEvent) -> Result<(), CoordinatorError> {
-        if event.sequence != self.next_sequence { return Err(CoordinatorError::JournalConflict); }
-        self.next_sequence = self.next_sequence.checked_add(1).ok_or(CoordinatorError::JournalConflict)?;
-        let state = self.states.entry(event.index.clone()).or_insert_with(|| IndexState { id: event.index.clone(), collection: String::new(), phase: Phase::Observing, target: 0, covered: 0, visible: false, generation: 0, last_used_millis: 0, invisible_since_millis: None });
+        if event.sequence != self.next_sequence {
+            return Err(CoordinatorError::JournalConflict);
+        }
+        self.next_sequence =
+            self.next_sequence.checked_add(1).ok_or(CoordinatorError::JournalConflict)?;
+        let state = self.states.entry(event.index.clone()).or_insert_with(|| IndexState {
+            id: event.index.clone(),
+            collection: String::new(),
+            phase: Phase::Observing,
+            target: 0,
+            covered: 0,
+            visible: false,
+            generation: 0,
+            last_used_millis: 0,
+            invisible_since_millis: None,
+        });
         let legal = match (state.phase, event.phase) {
             (Phase::Observing, Phase::Selected)
             | (Phase::Selected, Phase::Building)
@@ -588,19 +824,31 @@ impl<A: StorageAdapter> Coordinator<A> {
             (from, to) if from == to => true,
             _ => false,
         };
-        if !legal { return Err(CoordinatorError::InvalidTransition); }
-        if let Some(target) = event.target { state.target = target; }
+        if !legal {
+            return Err(CoordinatorError::InvalidTransition);
+        }
+        if let Some(target) = event.target {
+            state.target = target;
+        }
         if let Some(watermark) = event.watermark {
-            if watermark < state.covered { return Err(CoordinatorError::InvalidWatermark); }
+            if watermark < state.covered {
+                return Err(CoordinatorError::InvalidWatermark);
+            }
             // A target-bearing Building event describes the snapshot boundary;
             // subsequent watermark events describe applied coverage.
-            if event.target.is_none() || event.phase != Phase::Building { state.covered = watermark; }
+            if event.target.is_none() || event.phase != Phase::Building {
+                state.covered = watermark;
+            }
             state.target = state.target.max(watermark);
         }
         state.phase = event.phase;
         state.visible = event.phase == Phase::Active;
-        if event.phase == Phase::Active { state.last_used_millis = state.last_used_millis.max(event.at_millis); }
-        if event.phase == Phase::Invisible { state.invisible_since_millis = Some(event.at_millis); }
+        if event.phase == Phase::Active {
+            state.last_used_millis = state.last_used_millis.max(event.at_millis);
+        }
+        if event.phase == Phase::Invisible {
+            state.invisible_since_millis = Some(event.at_millis);
+        }
         Ok(())
     }
     /// Appends an event, then applies it; a failed append leaves memory unchanged.
@@ -610,81 +858,235 @@ impl<A: StorageAdapter> Coordinator<A> {
         self.apply_event(event)
     }
     /// Starts an invisible build at a durable snapshot boundary.
-    pub fn start_build(&mut self, index: &str, target: u64, at_millis: u64, digest: [u8; 32]) -> Result<(), CoordinatorError> {
-        if target == 0 || self.states.get(index).is_some_and(|state| state.phase != Phase::Selected) { return Err(CoordinatorError::InvalidTransition); }
-        self.append(LifecycleEvent { sequence: 0, index: index.to_owned(), phase: Phase::Building, watermark: Some(target), target: Some(target), evidence_digest: digest, at_millis })
+    pub fn start_build(
+        &mut self,
+        index: &str,
+        target: u64,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), CoordinatorError> {
+        if target == 0 || self.states.get(index).is_some_and(|state| state.phase != Phase::Selected)
+        {
+            return Err(CoordinatorError::InvalidTransition);
+        }
+        self.append(LifecycleEvent {
+            sequence: 0,
+            index: index.to_owned(),
+            phase: Phase::Building,
+            watermark: Some(target),
+            target: Some(target),
+            evidence_digest: digest,
+            at_millis,
+        })
     }
     /// Applies one contiguous backfill batch and journals its watermark.
-    pub fn advance_backfill(&mut self, index: &str, last: u64, at_millis: u64, digest: [u8; 32]) -> Result<(), CoordinatorError> {
+    pub fn advance_backfill(
+        &mut self,
+        index: &str,
+        last: u64,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), CoordinatorError> {
         let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
-        if state.phase != Phase::Building || last <= state.covered || last > state.target { return Err(CoordinatorError::InvalidWatermark); }
+        if state.phase != Phase::Building || last <= state.covered || last > state.target {
+            return Err(CoordinatorError::InvalidWatermark);
+        }
         let first = state.covered.checked_add(1).ok_or(CoordinatorError::InvalidWatermark)?;
         self.adapter.backfill_batch(index, first, last).map_err(CoordinatorError::Hook)?;
-        self.append(LifecycleEvent { sequence: 0, index: index.to_owned(), phase: Phase::Building, watermark: Some(last), target: None, evidence_digest: digest, at_millis })
+        self.append(LifecycleEvent {
+            sequence: 0,
+            index: index.to_owned(),
+            phase: Phase::Building,
+            watermark: Some(last),
+            target: None,
+            evidence_digest: digest,
+            at_millis,
+        })
     }
     /// Moves a fully covered invisible build into shadow verification.
-    pub fn begin_shadow(&mut self, index: &str, at_millis: u64, digest: [u8; 32]) -> Result<(), CoordinatorError> {
+    pub fn begin_shadow(
+        &mut self,
+        index: &str,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), CoordinatorError> {
         let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
-        if state.phase != Phase::Building || state.covered != state.target { return Err(CoordinatorError::InvalidTransition); }
+        if state.phase != Phase::Building || state.covered != state.target {
+            return Err(CoordinatorError::InvalidTransition);
+        }
         let covered = state.covered;
-        self.append(LifecycleEvent { sequence: 0, index: index.to_owned(), phase: Phase::Shadowing, watermark: Some(covered), target: None, evidence_digest: digest, at_millis })
+        self.append(LifecycleEvent {
+            sequence: 0,
+            index: index.to_owned(),
+            phase: Phase::Shadowing,
+            watermark: Some(covered),
+            target: None,
+            evidence_digest: digest,
+            at_millis,
+        })
     }
     /// Performs the final same-transaction catch-up and publishes visibility.
-    pub fn activate(&mut self, index: &str, at_millis: u64, digest: [u8; 32]) -> Result<(), CoordinatorError> {
+    pub fn activate(
+        &mut self,
+        index: &str,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), CoordinatorError> {
         let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
-        if state.phase != Phase::Shadowing || state.covered != state.target { return Err(CoordinatorError::InvalidTransition); }
-        let covered = self.adapter.catch_up_and_verify(index, state.covered, state.target).map_err(CoordinatorError::Hook)?;
-        if covered < state.target { return Err(CoordinatorError::InvalidWatermark); }
+        if state.phase != Phase::Shadowing || state.covered != state.target {
+            return Err(CoordinatorError::InvalidTransition);
+        }
+        let covered = self
+            .adapter
+            .catch_up_and_verify(index, state.covered, state.target)
+            .map_err(CoordinatorError::Hook)?;
+        if covered < state.target {
+            return Err(CoordinatorError::InvalidWatermark);
+        }
         self.adapter.set_visible(index, true).map_err(CoordinatorError::Hook)?;
-        self.append(LifecycleEvent { sequence: 0, index: index.to_owned(), phase: Phase::Active, watermark: Some(covered), target: None, evidence_digest: digest, at_millis })
+        self.append(LifecycleEvent {
+            sequence: 0,
+            index: index.to_owned(),
+            phase: Phase::Active,
+            watermark: Some(covered),
+            target: None,
+            evidence_digest: digest,
+            at_millis,
+        })
     }
     /// Installs a baseline pin for one exact normalized template.  Pins are
     /// planner state, never a global disable, and therefore cannot expose a
     /// regressed plan for an unrelated query.
     pub fn pin_template(&mut self, template: &str, index: &str) -> Result<(), CoordinatorError> {
         let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
-        if state.phase != Phase::Active || !state.visible { return Err(CoordinatorError::InvalidTransition); }
+        if state.phase != Phase::Active || !state.visible {
+            return Err(CoordinatorError::InvalidTransition);
+        }
         self.adapter.set_plan_pin(template, index, true).map_err(CoordinatorError::Hook)
     }
     /// Hides active indexes that have not been used for the retirement window.
     /// The physical drop remains delayed behind [`DROP_GRACE_MILLIS`].
     pub fn retire_unused(&mut self, now_millis: u64, digest: [u8; 32]) -> Vec<String> {
-        let candidates: Vec<String> = self.states.iter().filter(|(_, state)| state.phase == Phase::Active && state.visible && state.last_used_millis != 0 && now_millis.saturating_sub(state.last_used_millis) >= RETIREMENT_MILLIS).map(|(id, _)| id.clone()).collect();
+        let candidates: Vec<String> = self
+            .states
+            .iter()
+            .filter(|(_, state)| {
+                state.phase == Phase::Active
+                    && state.visible
+                    && state.last_used_millis != 0
+                    && now_millis.saturating_sub(state.last_used_millis) >= RETIREMENT_MILLIS
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
         let mut retired = Vec::new();
         for index in candidates {
-            if self.adapter.set_visible(&index, false).is_err() { continue; }
-            if self.append(LifecycleEvent { sequence: 0, index: index.clone(), phase: Phase::Invisible, watermark: self.states.get(&index).map(|state| state.covered), target: None, evidence_digest: digest, at_millis: now_millis }).is_ok() { retired.push(index); }
+            if self.adapter.set_visible(&index, false).is_err() {
+                continue;
+            }
+            if self
+                .append(LifecycleEvent {
+                    sequence: 0,
+                    index: index.clone(),
+                    phase: Phase::Invisible,
+                    watermark: self.states.get(&index).map(|state| state.covered),
+                    target: None,
+                    evidence_digest: digest,
+                    at_millis: now_millis,
+                })
+                .is_ok()
+            {
+                retired.push(index);
+            }
         }
         retired
     }
     /// Retires the narrow side of a verified prefix merge.  The caller must
     /// supply evidence from shadow replay; refusing weak evidence prevents a
     /// catalog-count optimization from becoming a query regression.
-    pub fn merge_prefix(&mut self, narrow: &str, wider: &str, read_improvement: f64, write_delta: f64, at_millis: u64, digest: [u8; 32]) -> Result<(), CoordinatorError> {
-        if narrow == wider || !read_improvement.is_finite() || !write_delta.is_finite() || read_improvement < REGRESSION_FRACTION || write_delta > REGRESSION_FRACTION { return Err(CoordinatorError::InvalidTransition); }
+    pub fn merge_prefix(
+        &mut self,
+        narrow: &str,
+        wider: &str,
+        read_improvement: f64,
+        write_delta: f64,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), CoordinatorError> {
+        if narrow == wider
+            || !read_improvement.is_finite()
+            || !write_delta.is_finite()
+            || read_improvement < REGRESSION_FRACTION
+            || write_delta > REGRESSION_FRACTION
+        {
+            return Err(CoordinatorError::InvalidTransition);
+        }
         let narrow_state = self.states.get(narrow).ok_or(CoordinatorError::InvalidTransition)?;
         let wider_state = self.states.get(wider).ok_or(CoordinatorError::InvalidTransition)?;
-        if narrow_state.phase != Phase::Active || wider_state.phase != Phase::Active || !narrow_state.visible || !wider_state.visible { return Err(CoordinatorError::InvalidTransition); }
+        if narrow_state.phase != Phase::Active
+            || wider_state.phase != Phase::Active
+            || !narrow_state.visible
+            || !wider_state.visible
+        {
+            return Err(CoordinatorError::InvalidTransition);
+        }
         let covered = narrow_state.covered;
         self.adapter.set_visible(narrow, false).map_err(CoordinatorError::Hook)?;
-        self.append(LifecycleEvent { sequence: 0, index: narrow.to_owned(), phase: Phase::Invisible, watermark: Some(covered), target: None, evidence_digest: digest, at_millis })
+        self.append(LifecycleEvent {
+            sequence: 0,
+            index: narrow.to_owned(),
+            phase: Phase::Invisible,
+            watermark: Some(covered),
+            target: None,
+            evidence_digest: digest,
+            at_millis,
+        })
     }
     /// Makes an active index invisible immediately and journals the rollback.
-    pub fn rollback(&mut self, index: &str, at_millis: u64, digest: [u8; 32]) -> Result<(), CoordinatorError> {
+    pub fn rollback(
+        &mut self,
+        index: &str,
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), CoordinatorError> {
         let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
-        if state.phase != Phase::Active { return Err(CoordinatorError::InvalidTransition); }
+        if state.phase != Phase::Active {
+            return Err(CoordinatorError::InvalidTransition);
+        }
         let covered = state.covered;
         self.adapter.set_visible(index, false).map_err(CoordinatorError::Hook)?;
-        self.append(LifecycleEvent { sequence: 0, index: index.to_owned(), phase: Phase::Invisible, watermark: Some(covered), target: None, evidence_digest: digest, at_millis })
+        self.append(LifecycleEvent {
+            sequence: 0,
+            index: index.to_owned(),
+            phase: Phase::Invisible,
+            watermark: Some(covered),
+            target: None,
+            evidence_digest: digest,
+            at_millis,
+        })
     }
     /// Drops an invisible index only after the 24-hour grace period.
-    pub fn retire(&mut self, index: &str, now_millis: u64, digest: [u8; 32]) -> Result<(), CoordinatorError> {
+    pub fn retire(
+        &mut self,
+        index: &str,
+        now_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), CoordinatorError> {
         let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
         let since = state.invisible_since_millis.ok_or(CoordinatorError::InvalidTransition)?;
-        if now_millis.saturating_sub(since) < DROP_GRACE_MILLIS { return Err(CoordinatorError::InvalidTransition); }
+        if now_millis.saturating_sub(since) < DROP_GRACE_MILLIS {
+            return Err(CoordinatorError::InvalidTransition);
+        }
         self.adapter.drop_physical(index).map_err(CoordinatorError::Hook)?;
         let covered = state.covered;
-        self.append(LifecycleEvent { sequence: 0, index: index.to_owned(), phase: Phase::Abandoned, watermark: Some(covered), target: None, evidence_digest: digest, at_millis: now_millis })
+        self.append(LifecycleEvent {
+            sequence: 0,
+            index: index.to_owned(),
+            phase: Phase::Abandoned,
+            watermark: Some(covered),
+            target: None,
+            evidence_digest: digest,
+            at_millis: now_millis,
+        })
     }
 }
 

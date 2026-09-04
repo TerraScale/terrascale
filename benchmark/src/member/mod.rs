@@ -150,9 +150,15 @@ pub enum RoutingDecision {
     /// The local member may serve this operation.
     ServeLocally,
     /// The request may be forwarded to this placement Region.
-    Forward { region: RegionCode },
+    Forward {
+        /// Target placement Region hosting the authoritative writer.
+        region: RegionCode,
+    },
     /// The database exists, but this member's Region does not host it (421).
-    Misdirected { placement: DatabasePlacement },
+    Misdirected {
+        /// Authoritative placement returned so the caller can redirect.
+        placement: DatabasePlacement,
+    },
     /// The database is not in the authoritative placement table (404).
     UnknownDatabase,
     /// A hosted write has no authoritative writer and must not be forwarded.
@@ -216,6 +222,14 @@ struct PrincipalCacheShard<P> {
 }
 
 impl<P> PrincipalCache<P> {
+    /// Hashes credential material for cache lookup without retaining it.
+    /// This is the same digest width used by the server key store; callers
+    /// should still perform credential shape validation before this helper.
+    #[must_use]
+    pub fn digest(credential: &str) -> [u8; 32] {
+        *blake3::hash(credential.as_bytes()).as_bytes()
+    }
+
     /// Creates a cache with a finite, exact aggregate capacity.
     pub fn try_new(capacity: usize) -> Result<Self, CacheError> {
         if capacity == 0 {
