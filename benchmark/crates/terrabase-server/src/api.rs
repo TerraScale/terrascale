@@ -480,11 +480,11 @@ pub struct ApiState {
     pub active_regions: usize,
 }
 
-/// Builds the public `/api/v1` router. Every route except
-/// [`PUBLIC_PATHS`] requires an admitted credential.
-#[must_use = "the returned router must be installed on a server"]
-pub fn router(state: Arc<ApiState>) -> Router {
-    let (router, openapi_document) = OpenApiRouter::new()
+/// The served route table as an OpenAPI router: the single source of both
+/// the running axum router and the published contract document, so the two
+/// can never drift apart.
+fn openapi_router() -> OpenApiRouter {
+    OpenApiRouter::new()
         .routes(routes!(health))
         .routes(routes!(regions))
         .routes(routes!(list_databases, create_database))
@@ -508,7 +508,27 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .routes(routes!(list_backups))
         .routes(routes!(restore_backup))
         .routes(routes!(list_branches, create_branch))
-        .split_for_parts();
+}
+
+/// Renders the served OpenAPI document: exactly the bytes
+/// `GET /api/v1/openapi.json` serves. `make contracts` (E-1) writes this to
+/// `contracts/openapi.json`; consumers pin it via `CONTRACT_VERSION`.
+#[must_use = "the contract document is only useful when written out"]
+pub fn openapi_json() -> String {
+    let (_router, openapi_document) = openapi_router().split_for_parts();
+    openapi_document.to_json().expect("OpenAPI must serialize")
+}
+
+/// Builds the public `/api/v1` router. Every route except
+/// [`PUBLIC_PATHS`] requires an admitted credential.
+///
+/// # Panics
+///
+/// Panics if the generated OpenAPI document fails to serialize (a static
+/// schema — a build regression, never a runtime input).
+#[must_use = "the returned router must be installed on a server"]
+pub fn router(state: Arc<ApiState>) -> Router {
+    let (router, openapi_document) = openapi_router().split_for_parts();
     let openapi_json = Arc::new(openapi_document.to_json().expect("OpenAPI must serialize"));
     router
         .route("/api/v1/openapi.json", get(openapi))
@@ -581,7 +601,7 @@ async fn regions(State(state): State<Arc<ApiState>>) -> Response {
     response
 }
 
-/// Serves the OpenAPI contract generated while registering the routes.
+/// Serves the `OpenAPI` contract generated while registering the routes.
 async fn openapi(Extension(body): Extension<Arc<String>>) -> Response {
     let mut response = body.as_str().to_owned().into_response();
     response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -1317,7 +1337,7 @@ pub(crate) fn document_host(
         return Err(ApiError::control_unavailable());
     };
     catalog.host_for(&state.scope.0, &state.scope.1, name).map_err(|error| {
-        eprintln!("document_host: host_for refused {name}: {:?}", error);
+        eprintln!("document_host: host_for refused {name}: {error:?}");
         ApiError::database_not_found(name)
     })
 }
@@ -1518,8 +1538,7 @@ fn invalid_at(detail: &str) -> Response {
 fn unix_now_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 /// Creates or replaces one document; the `ETag` of the result names the new
@@ -2047,7 +2066,7 @@ async fn restore_backup(
     Path(name): Path<String>,
     body: String,
 ) -> Response {
-    restore_or_branch(state, name, body, RestoreFlavor::Restore).await
+    restore_or_branch(state, name, body, RestoreFlavor::Restore)
 }
 
 /// `POST /databases/{name}/branches` — restore plus register with parent
@@ -2058,7 +2077,7 @@ async fn create_branch(
     Path(name): Path<String>,
     body: String,
 ) -> Response {
-    restore_or_branch(state, name, body, RestoreFlavor::Branch).await
+    restore_or_branch(state, name, body, RestoreFlavor::Branch)
 }
 
 /// Whether the new database registers plain or as a branch.
@@ -2071,7 +2090,7 @@ enum RestoreFlavor {
 /// restore the file into the target's catalog location, and answer the
 /// record. A failed restore soft-deletes the record it just made so no
 /// half-born database lingers as live.
-async fn restore_or_branch(
+fn restore_or_branch(
     state: Arc<ApiState>,
     name: String,
     body: String,

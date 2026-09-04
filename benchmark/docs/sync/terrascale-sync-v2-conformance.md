@@ -5,7 +5,7 @@
 > `docs/sync/terrascale-sync-v2.md`; its new corpus generation must not reuse
 > these vectors as current conformance evidence.
 
-Status: implementation record for the SE-05 packet (issue #7),
+Status: implementation record for the SE-05 packet,
 2026-08-26. Authority: charter PD-2026-08-26-12 D1/D4 (native clients,
 no wasm/C-ABI embeddings; SE-05 is the conformance kit),
 PD-2026-08-26-13 D1/D3 (bytes-on-wire budgets; trigger events); the SE

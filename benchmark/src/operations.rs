@@ -190,37 +190,43 @@ impl DocumentWriteRequest {
     }
 }
 
-/// Validated bounded TQL query text.
+/// Validated bounded read-only SQL query text (D-78/D-54).
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TqlQueryText(String);
+pub struct SqlQueryText(String);
 
-/// The maximum accepted TQL query text length.
+/// The maximum accepted SQL query text length.
 ///
-/// The bound keeps parsing cost proportional to a bounded input before the
+/// The bound keeps validation cost proportional to a bounded input before the
 /// text reaches the public constructor.
-pub const MAX_QUERY_TEXT_BYTES: usize = 16 * 1024;
+pub const MAX_SQL_TEXT_BYTES: usize = 16 * 1024;
 
-impl TqlQueryText {
-    /// Creates validated TQL query text.
+/// The maximum accepted query text length: the SQL bound under its
+/// canonical name.
+pub const MAX_QUERY_TEXT_BYTES: usize = MAX_SQL_TEXT_BYTES;
+
+impl SqlQueryText {
+    /// Creates validated read-only SQL query text.
     ///
-    /// The text must be non-empty, at most [`MAX_QUERY_TEXT_BYTES`] bytes,
-    /// and use only the supported first-release TQL grammar. Anything else is a
-    /// typed [`QueryInputError`] and never reaches the compile seam.
+    /// The text must be non-empty, at most [`MAX_SQL_TEXT_BYTES`] bytes,
+    /// and shaped as read-only SQL (`SELECT`, `WITH`, or `EXPLAIN` first
+    /// keyword; no DDL, DML, pragma, attachment, or multi-statement text).
+    /// Anything else is a typed [`QueryInputError`] and never reaches the
+    /// compile seam. Full planning belongs to track item E-4.
     ///
     /// # Errors
     ///
     /// Returns [`QueryInputError::EmptyText`] for empty text,
     /// [`QueryInputError::UnsupportedGrammar`] for text that is too long or
-    /// does not use the supported grammar, and
+    /// not read-only SQL, and
     /// [`QueryInputError::InvalidIdentifier`] for invalid identifiers.
     pub fn try_new(text: &str) -> Result<Self, QueryInputError> {
         if text.is_empty() {
             return Err(QueryInputError::EmptyText);
         }
-        if text.len() > MAX_QUERY_TEXT_BYTES {
+        if text.len() > MAX_SQL_TEXT_BYTES {
             return Err(QueryInputError::UnsupportedGrammar);
         }
-        crate::query::validate_tql_text(text)?;
+        crate::query::validate_sql_text(text)?;
         Ok(Self(text.to_owned()))
     }
 
@@ -233,16 +239,16 @@ impl TqlQueryText {
 /// One of the two accepted query input forms.
 #[derive(Clone, Debug, PartialEq)]
 pub enum QueryInput {
-    /// A typed query specification.
+    /// A typed query specification (the SQL AST surface).
     Typed(QuerySpec),
-    /// TQL query text.
-    Tql(TqlQueryText),
-    /// TQL query text with a caller-supplied deadline and
+    /// Read-only SQL text (planned by E-4).
+    Sql(SqlQueryText),
+    /// Read-only SQL text with a caller-supplied deadline and
     /// cancellation signal: the serving seam binds control to the
-    /// grammar's otherwise unbound query (P4's cancellation surface).
-    TqlBounded {
+    /// otherwise unbound text (P4's cancellation surface).
+    SqlBounded {
         /// The validated text.
-        text: TqlQueryText,
+        text: SqlQueryText,
         /// The execution deadline.
         deadline: Deadline,
         /// The cancellation signal.
@@ -256,15 +262,15 @@ impl QueryInput {
         Self::Typed(spec)
     }
 
-    /// Wraps validated TQL query text.
-    pub fn tql(text: TqlQueryText) -> Self {
-        Self::Tql(text)
+    /// Wraps validated read-only SQL text.
+    pub fn sql(text: SqlQueryText) -> Self {
+        Self::Sql(text)
     }
 
-    /// Wraps validated TQL text with execution control.
+    /// Wraps validated SQL text with execution control.
     #[must_use]
-    pub fn tql_bounded(text: TqlQueryText, deadline: Deadline, cancellation: Cancellation) -> Self {
-        Self::TqlBounded { text, deadline, cancellation }
+    pub fn sql_bounded(text: SqlQueryText, deadline: Deadline, cancellation: Cancellation) -> Self {
+        Self::SqlBounded { text, deadline, cancellation }
     }
 }
 
@@ -282,7 +288,7 @@ impl QueryOperation {
     ///
     /// Both input forms arrive pre-validated — the typed specification
     /// through [`QuerySpec::try_new`](crate::query::QuerySpec::try_new) and
-    /// TQL text through [`TqlQueryText::try_new`], so this
+    /// SQL text through [`SqlQueryText::try_new`], so this
     /// constructor repeats only the bounded liveness checks. The optional
     /// operation identity is a stable retry identity, not a liveness bound.
     ///

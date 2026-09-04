@@ -13,9 +13,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 /// The database file Litestream streams, inside one engine location.
+#[must_use]
 pub fn database_file(location: &Path) -> PathBuf {
     terrabase::engine::database_file(location)
 }
@@ -48,6 +49,7 @@ pub const DEFAULT_PLAN: &str = "free";
 
 impl BackupStreams {
     /// Starts a fleet that shells out to the given Litestream binary.
+    #[must_use]
     pub fn new(litestream: PathBuf) -> Self {
         Self {
             litestream,
@@ -58,11 +60,16 @@ impl BackupStreams {
 
     /// The member's fleet: the packaged Litestream when present, else a
     /// fleet that refuses every operation (backups off, never degraded).
+    #[must_use]
     pub fn open_member() -> Self {
-        Self::new(Self::discover().unwrap_or_else(|| PathBuf::new()))
+        Self::new(Self::discover().unwrap_or_else(PathBuf::new))
     }
 
     /// Whether a stream child runs for the database.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stream registry lock is poisoned.
     pub fn attached(&self, database: &str) -> bool {
         self.streams.lock().expect("the stream lock is not poisoned").contains_key(database)
     }
@@ -72,6 +79,10 @@ impl BackupStreams {
     /// Unknown plans are returned as stored — the retention maps
     /// ([`retention_days_for_plan`], [`retention_for_plan`]) fail those
     /// closed to Free, so a typo never widens a window.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the plan lock is poisoned.
     pub fn plan_for(&self, database: &str) -> String {
         self.plans
             .lock()
@@ -85,6 +96,10 @@ impl BackupStreams {
     /// post-M1; the API create/restore paths record the fleet default).
     /// The name canonicalizes to lowercase; an empty name resets to
     /// [`DEFAULT_PLAN`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the plan lock is poisoned.
     pub fn set_plan(&self, database: &str, plan: &str) {
         let normalized = plan.trim().to_ascii_lowercase();
         let normalized = if normalized.is_empty() { DEFAULT_PLAN.to_owned() } else { normalized };
@@ -104,6 +119,12 @@ impl BackupStreams {
     /// configures the stream with the matching retention window. This is
     /// the attach path the API create/restore routes use; [`Self::attach`]
     /// stays as the raw-retention primitive the tests drive directly.
+    ///
+    /// # Errors
+    ///
+    /// Returns the refusal from [`Self::attach`] when the stream cannot
+    /// start (no Litestream on `PATH`, an unwritable replica directory, or
+    /// a stream already running for the database).
     pub fn attach_with_plan(
         &self,
         database: &str,
@@ -117,22 +138,31 @@ impl BackupStreams {
 
     /// Finds Litestream on `PATH`: the pinned 0.5.x the operator packaged.
     /// `None` means backups are simply off (every attach then refuses).
+    #[must_use]
     pub fn discover() -> Option<PathBuf> {
         let path = std::env::var_os("PATH")?;
         std::env::split_paths(&path).map(|dir| dir.join("litestream")).find(|candidate| {
             candidate.is_file()
-                && std::fs::metadata(candidate)
-                    .and_then(|meta| {
-                        use std::os::unix::fs::PermissionsExt;
-                        Ok(meta.permissions().mode() & 0o111 != 0)
-                    })
-                    .unwrap_or(false)
+                && std::fs::metadata(candidate).is_ok_and(|meta| {
+                    use std::os::unix::fs::PermissionsExt;
+                    meta.permissions().mode() & 0o111 != 0
+                })
         })
     }
 
     /// Attaches one database: writes its per-database config (retention per
     /// plan) and starts `litestream replicate` for it. Re-attaching an
     /// already-streamed database refuses — detach first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the replica directory or config cannot be
+    /// written, the Litestream child cannot start, or a stream already
+    /// runs for the database.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stream registry lock is poisoned.
     pub fn attach(
         &self,
         database: &str,
@@ -170,6 +200,10 @@ impl BackupStreams {
 
     /// Readiness from artifacts: some generation directory holds a
     /// non-empty snapshot of the database file. Never asks the child.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stream registry lock is poisoned.
     pub fn is_ready(&self, database: &str) -> bool {
         let streams = self.streams.lock().expect("the stream lock is not poisoned");
         streams.get(database).is_some_and(|stream| snapshot_artifact(&stream.replica_dir).is_some())
@@ -192,6 +226,11 @@ impl BackupStreams {
     /// (`format`, ownership) are initialized by the engine itself, that
     /// initializer closes, and the restored bytes replace the empty file.
     /// The next engine open serves the restored state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RestoreError::Spawn`] when the location refuses to
+    /// initialize, and the [`Self::restore`] refusal otherwise.
     pub fn restore_to_location(
         &self,
         database: &str,
@@ -217,6 +256,16 @@ impl BackupStreams {
     /// Restores the database (at a point in time when given) to `out`,
     /// which must not exist. Runs to completion; Litestream's stderr tail
     /// rides the error so failures are diagnosable.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RestoreError::NotStreamed`] without a stream,
+    /// [`RestoreError::Spawn`] when Litestream cannot run, and
+    /// [`RestoreError::Litestream`] when it runs and fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stream registry lock is poisoned.
     pub fn restore(&self, database: &str, at: Option<u64>, out: &Path) -> Result<(), RestoreError> {
         let replica_url = {
             let streams = self.streams.lock().expect("the stream lock is not poisoned");
@@ -240,7 +289,7 @@ impl BackupStreams {
         }
         let mut tail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         if tail.is_empty() {
-            tail = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            String::from_utf8_lossy(&output.stdout).trim().clone_into(&mut tail);
         }
         if tail.len() > 400 {
             tail.truncate(400);
@@ -252,6 +301,10 @@ impl BackupStreams {
     /// them). Absent databases are a no-op. The plan entry drops with
     /// the stream, so a later re-attach starts from the fleet default
     /// until the billing lane re-supplies the plan.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stream registry or plan lock is poisoned.
     pub fn detach(&self, database: &str) {
         if let Some(mut stream) =
             self.streams.lock().expect("the stream lock is not poisoned").remove(database)
@@ -263,6 +316,10 @@ impl BackupStreams {
     }
 
     /// Stops every stream (member shutdown).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stream registry or plan lock is poisoned.
     pub fn detach_all(&self) {
         let streams: Vec<String> =
             self.streams.lock().expect("the stream lock is not poisoned").keys().cloned().collect();
@@ -343,7 +400,7 @@ struct CachedAt {
 pub struct TimeTravelRead {
     /// The document's value as of the requested moment.
     pub value: terrabase::types::DocumentValue,
-    /// The revision the value carried then (the live read's ETag shape).
+    /// The revision the value carried then (the live read's `ETag` shape).
     pub revision: String,
 }
 
@@ -363,7 +420,7 @@ impl TimeTravelCache {
     /// Opens a cache whose throwaway restores land under a fresh directory
     /// inside `root` (one directory per cache instance, so dropping one
     /// cache never sweeps another's restores).
-    pub fn new(streams: Arc<BackupStreams>, root: PathBuf) -> Self {
+    pub fn new(streams: Arc<BackupStreams>, root: &Path) -> Self {
         static NEXT_CACHE: AtomicU64 = AtomicU64::new(1);
         let number = NEXT_CACHE.fetch_add(1, Ordering::Relaxed);
         let process = std::process::id();
@@ -374,6 +431,16 @@ impl TimeTravelCache {
     /// Reads one document as of unix seconds: a cached restore serves,
     /// else the stream restores once and the result caches. `None` means
     /// the document did not exist then (the live 404's shape).
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`Self::restore`] refusal when the throwaway restore
+    /// cannot run, and [`RestoreError::Spawn`] when the restored database
+    /// refuses to serve.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the time-travel cache lock is poisoned.
     pub fn read_at(
         &self,
         database: &str,
@@ -394,10 +461,10 @@ impl TimeTravelCache {
             }
             match open_restored(&location) {
                 Ok(engine) => {
-                    if entries.len() >= TIMETRAVEL_MAX_ENTRIES {
-                        if let Some((_, evicted)) = entries.pop_first() {
-                            let _ = std::fs::remove_dir_all(&evicted.location);
-                        }
+                    if entries.len() >= TIMETRAVEL_MAX_ENTRIES
+                        && let Some((_, evicted)) = entries.pop_first()
+                    {
+                        let _ = std::fs::remove_dir_all(&evicted.location);
                     }
                     entries.insert(key.clone(), CachedAt { engine, location });
                 }
@@ -465,7 +532,7 @@ fn read_document(
     let document = transaction.read_in_collection(collection, id).map_err(|_| stale("read"))?;
     Ok(document.map(|document| TimeTravelRead {
         value: document.value().clone(),
-        revision: revision.to_string(),
+        revision: revision.clone(),
     }))
 }
 
@@ -477,15 +544,15 @@ fn snapshot_artifact(replica_dir: &Path) -> Option<PathBuf> {
     snapshots
         .flatten()
         .map(|entry| entry.path())
-        .find(|path| std::fs::metadata(path).map(|meta| meta.len() > 0).unwrap_or(false))
+        .find(|path| std::fs::metadata(path).is_ok_and(|meta| meta.len() > 0))
 }
 
 /// Counts the WAL segments shipped so far (LTX level 0) — tests wait on
 /// this to know a write has actually left the building.
+#[cfg(test)]
 fn wal_segment_count(replica_dir: &Path) -> usize {
     std::fs::read_dir(replica_dir.join("ltx").join("0"))
-        .map(|segments| segments.flatten().count())
-        .unwrap_or(0)
+        .map_or(0, |segments| segments.flatten().count())
 }
 
 /// Renders unix seconds as RFC3339 UTC (Litestream's `-timestamp` format).
@@ -515,7 +582,7 @@ fn civil_from_days(days: i64) -> (i64, u64, u64) {
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    (if m <= 2 { y + 1 } else { y }, m as u64, d as u64)
+    (if m <= 2 { y + 1 } else { y }, m.cast_unsigned(), d.cast_unsigned())
 }
 
 #[cfg(test)]
@@ -523,6 +590,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use terrabase::engine::{BulkIngestRequest, CommitOutcome, IngestConflictMode};
     use terrabase::types::{
@@ -637,12 +705,13 @@ mod tests {
 
     /// The last kilobyte of the stream's log, for failed-shipping diagnosis.
     fn litestream_log_tail(replica_dir: &Path) -> String {
-        std::fs::read_to_string(replica_dir.join("litestream.log"))
-            .map(|log| {
+        std::fs::read_to_string(replica_dir.join("litestream.log")).map_or_else(
+            |_| "<no log>".to_owned(),
+            |log| {
                 let start = log.len().saturating_sub(1_000);
                 log[start..].to_owned()
-            })
-            .unwrap_or_else(|_| "<no log>".to_owned())
+            },
+        )
     }
 
     /// The done-when journey: write, wait, write, restore to between the
@@ -781,7 +850,7 @@ mod tests {
     }
 
     fn unix_now() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|elapsed| elapsed.as_secs()).unwrap_or(0)
+        SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs())
     }
 
     /// Retention honors the plan windows (D-25): Free 1 / Starter 7 /
@@ -832,7 +901,7 @@ mod tests {
         use terrabase::types::{CollectionName, DocumentId, TenantId};
         let fleet = BackupStreams::new(PathBuf::from("/nonexistent-litestream"));
         let root = TestLocation::new("timetravel-nostream");
-        let cache = TimeTravelCache::new(Arc::new(fleet), root.path().to_path_buf());
+        let cache = TimeTravelCache::new(Arc::new(fleet), root.path());
         let tenant = TenantId::try_new("tenant-a").expect("the tenant parses");
         let collection = CollectionName::try_new("orders").expect("the collection parses");
         let id = DocumentId::try_new("orders/first").expect("the document id parses");
