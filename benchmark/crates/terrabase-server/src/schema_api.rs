@@ -799,7 +799,7 @@ pub struct ApplySchemaRequest {
 }
 
 /// Worker progress update for a resumable backfill.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct BackfillProgress {
     /// Schema target.
     pub target: SchemaTarget,

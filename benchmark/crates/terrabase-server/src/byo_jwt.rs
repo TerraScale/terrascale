@@ -632,16 +632,16 @@ where
         let algorithm = parsed.algorithm.ok_or(JwtAuthenticationError::AlgorithmRejected)?;
         let document = self.jwks(&config, generation, parsed.kid.as_str(), now, false).await?;
         let key = match document.key(&parsed.kid, algorithm) {
-            Ok(key) => key,
+            Ok(key) => key.clone(),
             Err(JwtAuthenticationError::UnknownKey) => {
                 let fresh = self.jwks(&config, generation, parsed.kid.as_str(), now, true).await?;
-                fresh.key(&parsed.kid, algorithm)?
+                fresh.key(&parsed.kid, algorithm)?.clone()
             }
             Err(error) => return Err(error),
         };
         let verified = self.verifier.verify(
             algorithm,
-            key,
+            &key,
             parsed.signing_input.as_bytes(),
             &parsed.signature,
         );

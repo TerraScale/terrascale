@@ -1012,7 +1012,7 @@ async fn serve_socket(
                 .await;
             return;
         }
-        view_permit.views.insert(view_id);
+        view_permit.views.insert(view_id.clone());
         if let Ok(snapshot) = store().read_snapshot(&view_id, 1, response.offset) {
             let _ = socket.send(Message::Binary(snapshot.bytes.to_vec().into())).await;
         }

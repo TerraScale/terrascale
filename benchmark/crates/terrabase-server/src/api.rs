@@ -2481,10 +2481,8 @@ async fn get_document(
         }
         return response;
     }
-    if session.is_some() {
-        drop(transaction);
-    }
     let document = if let Some(session) = &mut session {
+        drop(transaction);
         match session.load(&collection, &id) {
             Ok(Some(document)) => document,
             Ok(None) => {

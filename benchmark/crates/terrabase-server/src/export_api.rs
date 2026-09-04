@@ -61,7 +61,7 @@ mod region_code_serde {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<RegionCode, D::Error> {
         let text = String::deserialize(deserializer)?;
-        RegionCode::from_str(&text).map_err(serde::de::Error::custom)
+        RegionCode::from_str(&text).map_err(|error| serde::de::Error::custom(format!("{error:?}")))
     }
 }
 
@@ -83,7 +83,10 @@ mod region_vec_serde {
         let values = Vec::<String>::deserialize(deserializer)?;
         values
             .into_iter()
-            .map(|text| RegionCode::from_str(&text).map_err(serde::de::Error::custom))
+            .map(|text| {
+                RegionCode::from_str(&text)
+                    .map_err(|error| serde::de::Error::custom(format!("{error:?}")))
+            })
             .collect()
     }
 }
