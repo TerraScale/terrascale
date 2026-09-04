@@ -33,7 +33,8 @@ pub use reactive::{
 };
 pub use regions::{RegionAffinity, RegionCode};
 pub use schema::{
-    CollectionSchema, Document as DocumentSchema, FieldDef, FieldType, SchemaBuilder,
+    CollectionSchema, Document as DocumentSchema, FieldDef, FieldType, IndexDef, MergePolicy,
+    SchemaBuilder, SchemaDocument, SchemaError, SchemaJsonError, TtlDef,
 };
 pub use sql::{Direction, Query, SelectBuilder, SqlClient, SqlRows};
 pub use tenants::{CreateTenant, Tenant, TenantApiKey, TenantBranch, TenantsClient};

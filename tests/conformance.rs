@@ -174,7 +174,10 @@ fn schema_builder_and_derive_stub() {
     let schema = terrascale::CollectionSchema::new("users")
         .field(FieldDef::required("name", FieldType::String).indexed())
         .field(FieldDef::optional("age", FieldType::Integer));
-    let built = terrascale::SchemaBuilder::new().collection(schema).build();
+    let built = terrascale::SchemaBuilder::new()
+        .collection(schema)
+        .build()
+        .expect("valid schema");
     assert_eq!(built.len(), 1);
     assert_eq!(built[0].fields.len(), 2);
     assert!(built[0].fields[0].indexed);
@@ -362,6 +365,29 @@ async fn subscribe_attaches_with_checkpoint_and_hint() {
     assert_eq!(request.route_name, "reactive.subscribe");
     assert!(request.url.starts_with("https://sfo.api.terrascale.tech"));
     assert!(request.url.contains("/reactive/views"));
+}
+
+#[tokio::test]
+async fn reactive_methods_reject_invalid_queries_before_transport() {
+    let mock = Mock::new(vec![]);
+    let sdk = client(Arc::clone(&mock));
+    let invalid = Query::raw("DROP TABLE users", vec![]);
+
+    let error = sdk
+        .reactive()
+        .subscribe(&scope(), &invalid, SubscribeOptions::new())
+        .await
+        .expect_err("invalid subscription query");
+    assert_eq!(error.kind, ErrorKind::Validation);
+    assert!(mock.recorded.lock().expect("mock mutex").is_empty());
+
+    let error = sdk
+        .reactive()
+        .execute(&scope(), &invalid)
+        .await
+        .expect_err("invalid reactive execute query");
+    assert_eq!(error.kind, ErrorKind::Validation);
+    assert!(mock.recorded.lock().expect("mock mutex").is_empty());
 }
 
 #[tokio::test]

@@ -382,6 +382,7 @@ impl ReactiveClient {
         query: &Query,
         options: SubscribeOptions,
     ) -> Result<AttachedView> {
+        query.validate()?;
         let url = format!(
             "{}/reactive/views",
             self.shared.database_root_in(scope, options.region_hint)?
@@ -404,6 +405,7 @@ impl ReactiveClient {
 
     /// Execute a live query once and return its rows ("subscribe once").
     pub async fn execute(&self, scope: &DatabaseScope, query: &Query) -> Result<SqlRows> {
+        query.validate()?;
         let url = format!("{}/sql", self.shared.database_root(scope)?);
         let body = serde_json::json!({
             "statement": query.sql(),

@@ -2,7 +2,7 @@
 name = "terrascale-derive"
 version = "0.1.0"
 edition = "2021"
-description = "Derive macros for the TerraScale Rust SDK (stub)"
+description = "Schema derive macro for the TerraScale Rust SDK"
 license = "Apache-2.0"
 
 [lib]
