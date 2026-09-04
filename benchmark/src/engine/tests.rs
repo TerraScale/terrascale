@@ -16,7 +16,7 @@ use std::{
 
 use crate::engine::{
     CommitError, CommitOutcome, Engine, EngineConfig, EngineConfigError, EngineError,
-    EngineOpenError, MAX_SNAPSHOT_RECORD_PAGE,
+    EngineOpenError, MAX_SNAPSHOT_RECORD_PAGE, ReplicatedRecord,
 };
 use crate::storage::FaultPoint;
 use crate::types::{
@@ -55,6 +55,15 @@ fn document_id(name: &str) -> DocumentId {
 
 fn operation(name: &str) -> OperationId {
     OperationId::try_new(name).expect("valid identifier")
+}
+
+fn context(origin: &str, sequence: u64) -> Vec<u8> {
+    let mut bytes = vec![1];
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&(origin.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(origin.as_bytes());
+    bytes.extend_from_slice(&sequence.to_le_bytes());
+    bytes
 }
 
 fn document(id: &str, collection: &str, text: &str) -> Document {
@@ -115,6 +124,87 @@ fn read_document(engine: &Engine, tenant_name: &str, id: &str) -> Option<Documen
     let snapshot = engine.read_snapshot(&scope).expect("snapshot");
     let transaction = engine.begin(&scope, snapshot, operation("read-probe")).expect("begins");
     transaction.read(&document_id(id)).expect("reads")
+}
+
+#[test]
+fn raw_document_body_read_returns_storage_bytes_without_document_materialization() {
+    let (dir, engine) = open_engine("raw-body-read");
+    let scope = tenant_scope(&engine, "raw-body-tenant");
+    let committed = commit_put(
+        &engine,
+        "raw-body-tenant",
+        "raw-body-op",
+        "raw-body-doc",
+        "opaque",
+        ExpectedVersion::New,
+        LocalDurability::Written,
+    );
+    let sequence = match committed {
+        CommitOutcome::Committed(receipt) => receipt.sequence(),
+        other => panic!("expected commit, got {other:?}"),
+    };
+    let body = engine
+        .raw_document_body_in_collection_at(
+            &scope,
+            sequence,
+            &CollectionName::try_new("users").expect("collection"),
+            &document_id("raw-body-doc"),
+        )
+        .expect("raw body read")
+        .expect("body exists");
+    assert!(!body.is_empty());
+    assert!(body.starts_with(b"{\"$collection\":"));
+    assert_eq!(
+        engine.raw_document_body_in_collection_at(
+            &scope,
+            sequence,
+            &CollectionName::try_new("users").expect("collection"),
+            &document_id("missing"),
+        ),
+        Ok(None)
+    );
+    drop(engine);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn replicated_context_gives_causal_precedence_over_hlc_order() {
+    let (dir, engine) = open_engine("replication-context");
+    let scope = tenant_scope(&engine, "replication-context-tenant");
+    let collection = CollectionName::try_new("users").expect("collection");
+    let id = document_id("replicated-context-doc");
+    let first = ReplicatedRecord {
+        collection: collection.clone(),
+        id: id.clone(),
+        body: DocumentValue::String("first".into()),
+        deleted: false,
+        commit_ulid: "context-first".into(),
+        hlc: 100,
+        origin: "peer-a".into(),
+        origin_sequence: 1,
+        context: Vec::new(),
+    };
+    engine.apply_replicated(&scope, &first).expect("first apply");
+    let second = ReplicatedRecord {
+        collection: collection.clone(),
+        id: id.clone(),
+        body: DocumentValue::String("causally-later".into()),
+        deleted: false,
+        commit_ulid: "context-second".into(),
+        hlc: 1,
+        origin: "peer-a".into(),
+        origin_sequence: 2,
+        context: context("peer-a", 1),
+    };
+    engine.apply_replicated(&scope, &second).expect("causal apply");
+    assert_eq!(
+        read_document(&engine, "replication-context-tenant", "replicated-context-doc")
+            .expect("document")
+            .value(),
+        &DocumentValue::String("causally-later".into())
+    );
+    drop(engine);
+    std::fs::remove_dir_all(dir).ok();
 }
 
 fn committed(outcome: CommitOutcome) -> crate::engine::CommitReceipt {
@@ -738,6 +828,7 @@ fn production_owner_rejects_forged_tenant_without_side_effects() {
         hlc: 1,
         origin: "peer-a".into(),
         origin_sequence: 1,
+        context: Vec::new(),
     };
     assert_eq!(
         engine.apply_replicated(&forged_scope, &replicated),
