@@ -70,6 +70,7 @@ impl DurableSplitState {
         bytes.extend_from_slice(&self.target_applied_through.to_be_bytes());
         bytes.extend_from_slice(&self.acked_through.to_be_bytes());
         bytes.push(self.phase as u8);
+        debug_assert_eq!(bytes.len(), 1 + 4 + self.split_key.len() + 8 + 8 + 8 + 1);
         bytes
     }
 
@@ -93,7 +94,11 @@ impl DurableSplitState {
             return Err(SplitStateError::Truncated);
         }
         let key_len = u32::from_be_bytes(bytes[1..5].try_into().expect("length checked")) as usize;
-        let tail = 4 + 8 + 8 + 8 + 1;
+        // Trailing fixed fields: source (8) + target (8) + acked (8) + phase (1) = 25.
+        // The 4-byte key-len prefix lives in bytes[1..5], so it must not be
+        // counted again here.
+        let tail = 8 + 8 + 8 + 1;
+        debug_assert_eq!(tail, 25);
         let end = 5usize.checked_add(key_len).ok_or(SplitStateError::Malformed)?;
         if bytes.len() != end.saturating_add(tail) {
             return Err(SplitStateError::Malformed);
