@@ -18,7 +18,7 @@ const npmTreeDigestDomain = "terrascale/npm-cli-tree/v1";
 const nodeVersions = { 22: "v22.23.2", 24: "v24.20.0" } as const;
 
 test("release qualification mode requires its exact clean two-runtime contract", async () => {
-  const qualifier = path.join(repositoryRoot, "scripts", "qualify-npm-artifact.mjs");
+  const qualifier = path.join(repositoryRoot, "scripts", "qualify-npm-artifact.ts");
   await assert.rejects(
     run("node", [qualifier, "--release", "--allow-dirty"]),
     /--allow-dirty cannot be combined with --release/u,
@@ -483,7 +483,7 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
 
   async function verify(environment: NodeJS.ProcessEnv = process.env): Promise<void> {
     await run("node", [
-      path.join(checkout, "scripts", "promote-npm-candidate.mjs"),
+      path.join(checkout, "scripts", "promote-npm-candidate.ts"),
       "--build-receipt", buildReceiptPath,
       "--artifacts", candidateDirectory,
       "--registry", "https://registry.npmjs.org/",
@@ -516,7 +516,7 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
 async function verifyIsolatedPublish(fixture: CandidateFixture, workspace: string): Promise<void> {
   const { availabilityRecord, publishRecord } = fixture.reviewedNpm;
   await run("node", [
-    path.join(fixture.checkout, "scripts", "promote-npm-candidate.mjs"),
+    path.join(fixture.checkout, "scripts", "promote-npm-candidate.ts"),
     "--build-receipt", fixture.buildReceiptPath,
     "--artifacts", fixture.candidateDirectory,
     "--registry", "https://registry.npmjs.org/",

@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const loader = import(
-  pathToFileURL(path.join(repositoryRoot, "scripts", "npm-contract-evidence.mjs")).href
+  pathToFileURL(path.join(repositoryRoot, "scripts", "npm-contract-evidence.ts")).href
 ) as Promise<{
   loadNpmContractEvidence(
     root: string,

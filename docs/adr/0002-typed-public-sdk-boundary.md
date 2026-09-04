@@ -37,6 +37,6 @@ clients are deleted; the data path returns with the Rust public API.
 ## Evidence and follow-up
 
 `src/public-boundary.test.ts`, `src/public-schema-parity.test.ts`,
-`scripts/check-forbidden-surface.mjs`, and
-`scripts/generate-client-route-manifest.mjs` enforce the package boundary.
+`the retired forbidden-surface gate`, and
+`scripts/generate-client-route-manifest.ts` enforce the package boundary.
 Cross-repository contract evidence remains required before production.

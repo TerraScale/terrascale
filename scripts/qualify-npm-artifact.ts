@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { loadNpmContractEvidence } from "./npm-contract-evidence.mjs";
-import { inspectNpmCli } from "./npm-cli-evidence.mjs";
-import { npmReleasePolicy, qualificationFilename } from "./npm-release-policy.mjs";
-import { inspectReleaseSource } from "./npm-release-source.mjs";
+import { loadNpmContractEvidence } from "./npm-contract-evidence.ts";
+import { inspectNpmCli } from "./npm-cli-evidence.ts";
+import { npmReleasePolicy, qualificationFilename } from "./npm-release-policy.ts";
+import { inspectReleaseSource } from "./npm-release-source.ts";
 
 const execute = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -75,7 +75,7 @@ try {
   await mkdir(consumer);
   await writeFile(path.join(consumer, "package.json"), JSON.stringify({ private: true, type: "module" }));
   await runNpm(npmCli, ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], consumer);
-  const journey = path.join(consumer, "qualify.mjs");
+  const journey = path.join(consumer, "qualify.ts");
   await writeFile(journey, consumerJourney);
 
   const runtimes = [];

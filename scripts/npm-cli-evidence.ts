@@ -4,8 +4,8 @@ import { access, lstat, readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
-import { npmReleasePolicy } from "./npm-release-policy.mjs";
-import { parseStrictJson } from "./strict-json.mjs";
+import { npmReleasePolicy } from "./npm-release-policy.ts";
+import { parseStrictJson } from "./strict-json.ts";
 
 const execute = promisify(execFile);
 

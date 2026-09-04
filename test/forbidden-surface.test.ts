@@ -1,5 +1,5 @@
 // Forbidden SDK surface gate (Vitest port of
-// scripts/check-forbidden-surface.mjs, D-47). Scans the SDK source (plus
+// the retired check-forbidden-surface gate, D-47). Scans the SDK source (plus
 // the README and the committed route manifest) for retired auth, payment,
 // billing, pricing, and security surface. Test files and the capture
 // harness that pins the public client shape are exempt.

@@ -185,7 +185,7 @@ test("release paths clean-install, build, test, and pack the SDK independently",
 });
 
 test("release E2E configuration guard fails closed before skip-capable tests", async () => {
-  const guard = path.join(repositoryRoot, "scripts", "require-release-e2e-config.mjs");
+  const guard = path.join(repositoryRoot, "scripts", "require-release-e2e-config.ts");
   const environment = {
     PATH: process.env.PATH ?? "",
     TERRASCALE_API_BASE_URL: "https://api.example.test",
@@ -219,7 +219,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
     await run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: checkout });
     await run("npm", ["run", "build"], { cwd: checkout });
     await run("npx", ["vitest", "run", "src/public-schema-parity.test.ts"], { cwd: checkout });
-    await run("node", ["scripts/generate-client-route-manifest.mjs", "--check"], { cwd: checkout });
+    await run("node", ["scripts/generate-client-route-manifest.ts", "--check"], { cwd: checkout });
     const packed = await run("npm", ["pack", "--pack-destination", packages], { cwd: checkout });
     const tarball = path.join(packages, packed.stdout.trim().split("\n").at(-1)!);
     const listing = await run("tar", ["-tf", tarball]);
@@ -272,7 +272,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       );
     }
     await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], { cwd: consumer });
-    const journey = path.join(consumer, "packed-journey.mjs");
+    const journey = path.join(consumer, "packed-journey.ts");
     await writeFile(journey, packedConsumerJourney);
     await run("node", [journey], { cwd: consumer });
     await run(

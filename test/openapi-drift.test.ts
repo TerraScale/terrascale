@@ -1,4 +1,4 @@
-// OpenAPI drift gate (Vitest port of scripts/check-openapi-drift.mjs, D-47).
+// OpenAPI drift gate (Vitest port of the retired check-openapi-drift gate, D-47).
 // The committed sdk-openapi-contract-descriptor.json must equal what the
 // generator produces from the committed route manifest plus the
 // owner-published Dashboard OpenAPI snapshot. Regeneration fails on any
@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "vitest";
 
-import { canonicalDashboardOpenApiSpec } from "../scripts/openapi-contract-paths.mjs";
+import { canonicalDashboardOpenApiSpec } from "../scripts/openapi-contract-paths.ts";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const descriptorPath = path.join(repositoryRoot, "sdk-openapi-contract-descriptor.json");
@@ -29,7 +29,7 @@ describe("OpenAPI drift", () => {
     "committed descriptor matches regeneration from the manifest and owner spec",
     async () => {
       const { generateOpenApiContractDescriptor } = await import(
-        "../scripts/openapi-contract-descriptor.mjs"
+        "../scripts/openapi-contract-descriptor.ts"
       );
       const descriptor = await generateOpenApiContractDescriptor({ manifestPath, specPath: canonicalDashboardOpenApiSpec });
       const committed = JSON.parse(await readFile(descriptorPath, "utf8"));

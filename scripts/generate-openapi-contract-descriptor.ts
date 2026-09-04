@@ -3,8 +3,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateOpenApiContractDescriptor, writeOpenApiContractDescriptor } from "./openapi-contract-descriptor.mjs";
-import { canonicalDashboardOpenApiSpec } from "./openapi-contract-paths.mjs";
+import { generateOpenApiContractDescriptor, writeOpenApiContractDescriptor } from "./openapi-contract-descriptor.ts";
+import { canonicalDashboardOpenApiSpec } from "./openapi-contract-paths.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputPath = path.join(root, "sdk-openapi-contract-descriptor.json");

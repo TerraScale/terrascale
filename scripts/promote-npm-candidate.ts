@@ -7,15 +7,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { loadNpmContractEvidence } from "./npm-contract-evidence.mjs";
-import { inspectNpmCli } from "./npm-cli-evidence.mjs";
+import { loadNpmContractEvidence } from "./npm-contract-evidence.ts";
+import { inspectNpmCli } from "./npm-cli-evidence.ts";
 import {
   npmReleasePolicy,
   qualificationFilename,
   tarballFilename,
-} from "./npm-release-policy.mjs";
-import { gitTreeDigest, inspectReleaseSource } from "./npm-release-source.mjs";
-import { parseStrictJson, requireExactKeys } from "./strict-json.mjs";
+} from "./npm-release-policy.ts";
+import { gitTreeDigest, inspectReleaseSource } from "./npm-release-source.ts";
+import { parseStrictJson, requireExactKeys } from "./strict-json.ts";
 
 const execute = promisify(execFile);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,14 +25,14 @@ delete process.env.NPM_TOKEN;
 
 if (options.checkAvailability) {
   if (options.package === undefined || options.version === undefined || options.registry === undefined) {
-    console.error("Usage: node scripts/promote-npm-candidate.mjs --check-availability --package <name> --version <version> --registry <url>");
+    console.error("Usage: node scripts/promote-npm-candidate.ts --check-availability --package <name> --version <version> --registry <url>");
     process.exitCode = 2;
   } else {
     const { npmCli } = await inspectPromotionToolchain();
     await ensureVersionAvailable(options.package, options.version, options.registry, npmCli);
   }
 } else if (options.buildReceipt === undefined || options.artifacts === undefined || options.registry === undefined) {
-  console.error("Usage: node scripts/promote-npm-candidate.mjs --build-receipt <path> --artifacts <path> --registry <url> [--verify-only]");
+  console.error("Usage: node scripts/promote-npm-candidate.ts --build-receipt <path> --artifacts <path> --registry <url> [--verify-only]");
   process.exitCode = 2;
 } else {
   const candidate = await verifyCandidate(options);

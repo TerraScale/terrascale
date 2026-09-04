@@ -6,8 +6,8 @@ import { appendFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { inspectNpmCli } from "./npm-cli-evidence.mjs";
-import { npmReleasePolicy } from "./npm-release-policy.mjs";
+import { inspectNpmCli } from "./npm-cli-evidence.ts";
+import { npmReleasePolicy } from "./npm-release-policy.ts";
 
 const execute = promisify(execFile);
 const runnerTemporary = process.env.RUNNER_TEMP?.trim() || tmpdir();

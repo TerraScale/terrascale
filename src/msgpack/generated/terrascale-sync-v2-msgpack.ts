@@ -1,17 +1,17 @@
 // GENERATED FILE - DO NOT EDIT.
 //
 // Source of authority: src/msgpack/manifest/terrascale.sync.v2.msgpack.json
-// Generator: scripts/generate-msgpack-protocol.mjs (ADR 0025: the public
+// Generator: scripts/generate-msgpack-protocol.ts (ADR 0025: the public
 // terrascale.sync.v2.msgpack WebSocket protocol is generated from one
 // checked-in versioned manifest; this TypeScript half provides codecs,
 // exact-shape validators, and public types for @terrascale/sdk).
 //
 // manifest sha256:   90baa4a1f566fd3270ce29d11d103017e343ccfc68235c3f7f5ec29b0cce05ab
-// generator sha256:  9c0a2c65e331a1ca8a012b3394df927d3c807797fc4ed04d09a38996c1692ee0
+// generator sha256:  5f9616af597a127442b7885278721d32d1184f2901010727e031f953ae803e25
 //
-// Regenerate: node scripts/generate-msgpack-protocol.mjs
-// Drift gate:  node scripts/generate-msgpack-protocol.mjs --check
-// Drift test:  npm test (test/msgpack-manifest-drift.test.mjs)
+// Regenerate: node scripts/generate-msgpack-protocol.ts
+// Drift gate:  node scripts/generate-msgpack-protocol.ts --check
+// Drift test:  npm test (test/msgpack-manifest-drift.test.ts)
 
 import {
   MsgpackReader,

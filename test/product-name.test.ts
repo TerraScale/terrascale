@@ -1,4 +1,4 @@
-// Retired product-name gate (Vitest port of scripts/check-product-name.mjs,
+// Retired product-name gate (Vitest port of the retired check-product-name gate,
 // D-47). Tracked files must be free of retired TerraBase-style name
 // variants except for the fingerprinted allowlist entries in
 // docs/rename/legacy-name-allowlist.tsv. The fingerprint binding means an

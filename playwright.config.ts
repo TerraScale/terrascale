@@ -19,7 +19,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "node scripts/serve-browser-tests.mjs",
+    command: "node scripts/serve-browser-tests.ts",
     url: "http://127.0.0.1:4173/browser-tests/fixture.html",
     reuseExistingServer: false,
   },

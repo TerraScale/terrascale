@@ -1,5 +1,5 @@
 // Public contract fixture gate (Vitest port of
-// scripts/check-public-contract-fixture.mjs, D-47). The committed
+// the retired check-public-contract-fixture gate, D-47). The committed
 // saved-queries-and-branches fixture must equal the normalization of the
 // owner-published Dashboard OpenAPI snapshot, so owner-side contract
 // changes surface as test failures instead of silent SDK drift.
@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "vitest";
 
-import { canonicalDashboardOpenApiSpec } from "../scripts/openapi-contract-paths.mjs";
+import { canonicalDashboardOpenApiSpec } from "../scripts/openapi-contract-paths.ts";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixturePath = path.join(repositoryRoot, "test", "fixtures", "public-contracts", "saved-queries-and-branches.json");

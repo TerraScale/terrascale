@@ -22,7 +22,7 @@ SDK enforces the 1 MiB document ceiling over their aggregate size in a result
 item and does not transcode them into nested MessagePack values. SDK-2 parses
 each delivered value at most once with the browser's native `JSON.parse`.
 
-`scripts/generate-msgpack-protocol.mjs` validates that manifest and emits the
+`scripts/generate-msgpack-protocol.ts` validates that manifest and emits the
 TypeScript types, validators, encoder, and decoder. Generated files are never
 edited by hand. INT-3 must make the Database API's Go codec check the same JSON
 manifest.

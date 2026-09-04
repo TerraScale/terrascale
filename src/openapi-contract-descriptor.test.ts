@@ -7,7 +7,7 @@ import { test } from "vitest";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const generator = import(pathToFileURL(path.join(root, "scripts", "openapi-contract-descriptor.mjs")).href) as Promise<{ generateOpenApiContractDescriptor(input: { manifestPath: string; specPath: string }): Promise<unknown> }>;
+const generator = import(pathToFileURL(path.join(root, "scripts", "openapi-contract-descriptor.ts")).href) as Promise<{ generateOpenApiContractDescriptor(input: { manifestPath: string; specPath: string }): Promise<unknown> }>;
 const capture = import(pathToFileURL(path.join(root, "dist", "client-route-capture.js")).href) as Promise<{ canonicalContractHeaders(headers: Headers): readonly { readonly name: string; readonly value: string }[] }>;
 
 test("capture pins only allowlisted values and canonical single-valued Fetch headers", async () => {

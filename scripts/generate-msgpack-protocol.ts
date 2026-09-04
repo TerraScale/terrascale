@@ -4,9 +4,9 @@
 // emits the TypeScript codecs, exact-shape validators, and public types.
 // Generated files are committed but are never authority — the manifest is.
 //
-//   node scripts/generate-msgpack-protocol.mjs            # regenerate in place
-//   node scripts/generate-msgpack-protocol.mjs --check    # fail on drift
-//   node scripts/generate-msgpack-protocol.mjs --out DIR  # emit into DIR
+//   node scripts/generate-msgpack-protocol.ts            # regenerate in place
+//   node scripts/generate-msgpack-protocol.ts --check    # fail on drift
+//   node scripts/generate-msgpack-protocol.ts --out DIR  # emit into DIR
 //
 // The output is fully deterministic (no timestamps, no environment): re-running
 // the generator over an unchanged manifest and generator must be byte-identical
@@ -718,7 +718,7 @@ function generate(manifestText, manifestSha256, generatorSha256) {
     "// GENERATED FILE - DO NOT EDIT.",
     "//",
     "// Source of authority: src/msgpack/manifest/terrascale.sync.v2.msgpack.json",
-    "// Generator: scripts/generate-msgpack-protocol.mjs (ADR 0025: the public",
+    "// Generator: scripts/generate-msgpack-protocol.ts (ADR 0025: the public",
     "// terrascale.sync.v2.msgpack WebSocket protocol is generated from one",
     "// checked-in versioned manifest; this TypeScript half provides codecs,",
     "// exact-shape validators, and public types for @terrascale/sdk).",
@@ -726,9 +726,9 @@ function generate(manifestText, manifestSha256, generatorSha256) {
     `// manifest sha256:   ${manifestSha256}`,
     `// generator sha256:  ${generatorSha256}`,
     "//",
-    "// Regenerate: node scripts/generate-msgpack-protocol.mjs",
-    "// Drift gate:  node scripts/generate-msgpack-protocol.mjs --check",
-    "// Drift test:  npm test (test/msgpack-manifest-drift.test.mjs)",
+    "// Regenerate: node scripts/generate-msgpack-protocol.ts",
+    "// Drift gate:  node scripts/generate-msgpack-protocol.ts --check",
+    "// Drift test:  npm test (test/msgpack-manifest-drift.test.ts)",
     "",
   );
 
@@ -1325,7 +1325,7 @@ async function main() {
       console.error(
         `msgpack protocol drift: ${path.relative(repositoryRoot, outputPath)} differs from the generator output`,
       );
-      console.error("regenerate with: node scripts/generate-msgpack-protocol.mjs");
+      console.error("regenerate with: node scripts/generate-msgpack-protocol.ts");
       process.exitCode = 1;
       return;
     }

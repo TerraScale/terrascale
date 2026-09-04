@@ -35,7 +35,7 @@ regular file in the npm package tree. `.tools/` is explicitly ignored and
 recorded as workflow tooling; it is never classified as candidate source.
 
 The generated public MessagePack binding is qualified inside the single
-Vitest suite (`test/msgpack-*-test.mjs` and the result-view suites). `npm
+Vitest suite (`test/msgpack-*.test.ts` and the result-view suites). `npm
 test` and both protected Node runtime lanes run the whole suite, so drift,
 hostile decoding, corpus round trips, and result-view semantics cannot be
 omitted from a candidate test run.

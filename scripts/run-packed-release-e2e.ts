@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import "./require-release-e2e-config.mjs";
+import "./require-release-e2e-config.ts";
 
 const execute = promisify(execFile);
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -43,8 +43,8 @@ try {
   if (installedManifest.name !== "@terrascale/sdk") {
     throw new Error("Packed release E2E did not install @terrascale/sdk.");
   }
-  const journey = path.join(consumer, "release-e2e.mjs");
-  await copyFile(path.join(scriptDirectory, "packed-release-e2e-journey.mjs"), journey);
+  const journey = path.join(consumer, "release-e2e.ts");
+  await copyFile(path.join(scriptDirectory, "packed-release-e2e-journey.ts"), journey);
   await execute(process.execPath, [journey], {
     cwd: consumer,
     env: process.env,
@@ -57,7 +57,7 @@ try {
 
 function parseArguments(arguments_) {
   if (arguments_.length !== 2 || arguments_[0] !== "--tarball" || arguments_[1].startsWith("--")) {
-    throw new Error("Usage: node scripts/run-packed-release-e2e.mjs --tarball <candidate.tgz>");
+    throw new Error("Usage: node scripts/run-packed-release-e2e.ts --tarball <candidate.tgz>");
   }
   return arguments_[1];
 }

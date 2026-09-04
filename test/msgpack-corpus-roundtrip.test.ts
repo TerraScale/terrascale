@@ -12,7 +12,7 @@ import {
   validateTerrascaleSyncV2MsgpackProjectedField,
   validateTerrascaleSyncV2MsgpackResultItem,
 } from "../src/msgpack/generated/terrascale-sync-v2-msgpack.js";
-import { encodeReferenceMessagePack } from "./support/reference-msgpack.mjs";
+import { encodeReferenceMessagePack } from "./support/reference-msgpack.ts";
 
 const encoder = new TextEncoder();
 const field = (path, value) => ({ path, value: encoder.encode(value) });

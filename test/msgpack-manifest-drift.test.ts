@@ -19,7 +19,7 @@ import { spawnSync } from "node:child_process";
 import { describe, test } from "vitest";
 
 const repositoryRoot = new URL("..", import.meta.url).pathname;
-const generatorPath = path.join(repositoryRoot, "scripts", "generate-msgpack-protocol.mjs");
+const generatorPath = path.join(repositoryRoot, "scripts", "generate-msgpack-protocol.ts");
 const manifestPath = path.join(
   repositoryRoot,
   "src",
@@ -51,7 +51,7 @@ describe("msgpack manifest drift", () => {
     assert.equal(
       regenerated,
       committed,
-      "the committed generated module differs from the generator output; run node scripts/generate-msgpack-protocol.mjs",
+      "the committed generated module differs from the generator output; run node scripts/generate-msgpack-protocol.ts",
     );
   });
 
