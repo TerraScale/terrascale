@@ -20,7 +20,7 @@ public sealed class TerraScaleApiExceptionTests
         var client = CreateClient(httpClient);
 
         var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            client.Documents.GetAsync("repository-a", "document-a"));
+            client.Documents.GetAsync("orders", "items", "item-a"));
 
         await Assert.That(failure).IsNotNull();
         var exception = failure ?? throw new InvalidOperationException("The overload response did not produce a typed failure.");
@@ -39,7 +39,7 @@ public sealed class TerraScaleApiExceptionTests
         var client = CreateClient(httpClient);
 
         var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            client.Documents.GetAsync("repository-a", "document-a"));
+            client.Documents.GetAsync("orders", "items", "item-a"));
 
         await Assert.That(failure).IsNotNull();
         var exception = failure ?? throw new InvalidOperationException("The malformed response did not produce a typed failure.");
@@ -58,7 +58,7 @@ public sealed class TerraScaleApiExceptionTests
         var client = CreateClient(httpClient);
 
         var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            client.Documents.GetAsync("repository-a", "document-a"));
+            client.Documents.GetAsync("orders", "items", "item-a"));
 
         await Assert.That(failure).IsNotNull();
         var captured = failure?.ResponseBody
@@ -76,7 +76,7 @@ public sealed class TerraScaleApiExceptionTests
         var client = CreateClient(httpClient);
 
         var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            client.Documents.GetAsync("repository-a", "document-a"));
+            client.Documents.GetAsync("orders", "items", "item-a"));
 
         await Assert.That(failure).IsNotNull();
         await Assert.That(failure!.ResponseBody).IsEqualTo(body);
@@ -94,7 +94,7 @@ public sealed class TerraScaleApiExceptionTests
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            client.Documents.GetAsync("repository-a", "document-a", cancellationToken: cancellation.Token));
+            client.Documents.GetAsync("orders", "items", "item-a", cancellationToken: cancellation.Token));
         await Assert.That(handler.Attempts).IsEqualTo(1);
     }
 

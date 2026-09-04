@@ -1,4 +1,6 @@
 using TerraScale.DotNet;
+using System.Net;
+using System.Text.Json;
 
 namespace TerraScale.DotNet.Tests;
 
@@ -85,5 +87,74 @@ public sealed class TerraScaleSqlTests
         });
         await Assert.That(TerraScaleSqlQuery.TryRaw("DROP TABLE users", [], out var rejected)).IsFalse();
         await Assert.That(rejected).IsNull();
+    }
+
+    [Test]
+    public async Task NamedBindingsAndMetadataFollowTheSqlContract()
+    {
+        var parameters = TerraScaleSqlParameters.Named([
+            new TerraScaleSqlParameter("status", "paid"),
+            new TerraScaleSqlParameter("minimum", 10),
+        ]);
+        var query = TerraScaleSqlQuery.Raw(
+            "SELECT _id, body FROM orders WHERE status = :status AND total > :minimum",
+            parameters);
+        await Assert.That(query.Bindings.Keys).IsEquivalentTo(new[] { "status", "minimum" });
+
+        var metadataQuery = TerraScaleSql.Select(new TerraScaleSqlSchema("orders"))
+            .Column(TerraScaleSqlFields.Id)
+            .OrderBy(TerraScaleSqlFields.Updated)
+            .Build();
+        await Assert.That(metadataQuery.Sql).IsEqualTo("SELECT _id FROM orders ORDER BY _updated ASC");
+    }
+
+    [Test]
+    public async Task SqlBuilder_EnforcesServerBounds()
+    {
+        var schema = new TerraScaleSqlSchema("users");
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => { TerraScaleSql.Select(schema).Limit(0); await Task.CompletedTask; });
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => { TerraScaleSql.Select(schema).Limit(1025); await Task.CompletedTask; });
+        await Assert.ThrowsAsync<ArgumentException>(async () => { TerraScaleSqlQuery.Raw(new string('x', 16 * 1024 + 1)); await Task.CompletedTask; });
+    }
+
+    [Test]
+    public async Task SqlClient_SendsContractRequestAndReadsRows()
+    {
+        using var handler = new SqlHandler();
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleClient(httpClient, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://api.example.invalid/"),
+            ApiKey = "test-key",
+        });
+        var result = await client.Sql.ExecuteAsync(
+            "database/a", TerraScaleSqlQuery.Raw("SELECT * FROM users WHERE id = $1", "doc-1"),
+            new TerraScaleSqlExecuteOptions { TimeoutMs = 5000 });
+        await Assert.That(handler.RequestUri).IsEqualTo("https://api.example.invalid/api/v1/databases/database%2Fa/sql");
+        await Assert.That(handler.Method).IsEqualTo(HttpMethod.Post);
+        using var body = JsonDocument.Parse(handler.Body!);
+        await Assert.That(body.RootElement.GetProperty("sql").GetString()).IsEqualTo("SELECT * FROM users WHERE id = $1");
+        await Assert.That(body.RootElement.GetProperty("parameters").GetProperty("1").GetString()).IsEqualTo("doc-1");
+        await Assert.That(body.RootElement.GetProperty("timeout_ms").GetInt32()).IsEqualTo(5000);
+        await Assert.That(result.Matched).IsEqualTo(1);
+        await Assert.That(result.Rows[0].Id).IsEqualTo("doc-1");
+    }
+
+    private sealed class SqlHandler : HttpMessageHandler
+    {
+        public string? RequestUri { get; private set; }
+        public HttpMethod? Method { get; private set; }
+        public string? Body { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestUri = request.RequestUri?.ToString();
+            Method = request.Method;
+            Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"matched\":1,\"rows\":[{\"id\":\"doc-1\",\"value\":{\"name\":\"Alice\"}}]}")
+            };
+        }
     }
 }

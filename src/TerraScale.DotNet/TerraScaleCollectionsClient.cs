@@ -1,8 +1,9 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace TerraScale.DotNet;
 
-/// <summary>
-/// Client for TerraScale database collection endpoints.
-/// </summary>
+/// <summary>Client for TerraScale database collection endpoints.</summary>
 public sealed class TerraScaleCollectionsClient
 {
     private readonly TerraScaleClient client;
@@ -12,21 +13,31 @@ public sealed class TerraScaleCollectionsClient
         this.client = client;
     }
 
-    /// <summary>
-    /// Lists collections for a TerraScale database.
-    /// </summary>
-    public Task<IReadOnlyList<TerraScaleCollectionSummary>> ListAsync(
-        string databaseId,
+    /// <summary>Lists the distinct collection names occupied by a database.</summary>
+    public async Task<IReadOnlyList<string>> ListAsync(
+        string database,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        return client.SendAsync<IReadOnlyList<TerraScaleCollectionSummary>>(
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        var response = await client.SendAsync<TerraScaleCollectionsResponse>(
             HttpMethod.Get,
-            $"/api/v1/databases/{Escape(databaseId)}/collections",
+            $"/api/v1/databases/{Escape(database)}/collections",
             body: null,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        return response.Collections;
     }
 
     private static string Escape(string value) =>
         Uri.EscapeDataString(value.Trim());
+}
+
+internal sealed record TerraScaleCollectionsResponse([property: JsonRequired] IReadOnlyList<string> Collections) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (Collections is null || Collections.Any(static collection => string.IsNullOrWhiteSpace(collection)))
+        {
+            throw new JsonException("TerraScale collection lists require nonblank collection names.");
+        }
+    }
 }

@@ -1,338 +1,54 @@
-using System.Net;
+using System.Text.Json.Serialization;
+
+#pragma warning disable CS1591
 
 namespace TerraScale.DotNet;
 
-/// <summary>
-/// Client for project database backup and restore endpoints.
-/// </summary>
+/// <summary>Client for the published database backup endpoints.</summary>
 public sealed class TerraScaleBackupsClient
 {
     private readonly TerraScaleClient client;
 
-    internal TerraScaleBackupsClient(TerraScaleClient client)
+    internal TerraScaleBackupsClient(TerraScaleClient client) => this.client = client;
+
+    /// <summary>Returns Litestream readiness for a database.</summary>
+    public Task<TerraScaleBackupReadiness> ListAsync(string database, CancellationToken cancellationToken = default)
     {
-        this.client = client;
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        return client.SendAsync<TerraScaleBackupReadiness>(
+            HttpMethod.Get,
+            $"/api/v1/databases/{Escape(database)}/backups",
+            body: null,
+            cancellationToken);
     }
 
-    /// <summary>
-    /// Configures a backup policy for a project database.
-    /// </summary>
-    public Task<TerraScaleBackupPolicy> ConfigurePolicyAsync(
-        string projectId,
-        string databaseId,
-        TerraScaleConfigureBackupPolicyRequest request,
+    /// <summary>Restores a backup into a new database.</summary>
+    public Task<TerraScaleDatabaseRecord> RestoreAsync(
+        string database,
+        TerraScaleRestoreRequest request,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.FullBackupCron);
-        return client.SendAsync<TerraScaleBackupPolicy>(
-            HttpMethod.Put,
-            TerraScaleApiRoutes.BackupPolicyConfigure(projectId, databaseId),
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
+        return client.SendAsync<TerraScaleDatabaseRecord>(
+            HttpMethod.Post,
+            $"/api/v1/databases/{Escape(database)}/backups/restore",
             request,
             cancellationToken);
     }
 
-    /// <summary>
-    /// Plans a confirmed on-demand backup for a project database.
-    /// </summary>
-    public Task<TerraScaleBackupConfirmationPlan> PlanAsync(
-        string projectId,
-        string databaseId,
-        TerraScaleBackupConfirmationPlanRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.OperationSessionId);
-        if (request.OperationSessionId.Length > 128)
-        {
-            throw new ArgumentException("Operation session ID must not exceed 128 characters.", nameof(request));
-        }
-
-        return client.SendAsync<TerraScaleBackupConfirmationPlan>(
-            HttpMethod.Post,
-            TerraScaleApiRoutes.BackupsPlan(projectId, databaseId),
-            request,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Executes a previously confirmed on-demand backup for a project database.
-    /// </summary>
-    public Task<TerraScaleBackupExecution> ExecuteAsync(
-        string projectId,
-        string databaseId,
-        TerraScaleBackupConfirmationExecuteRequest request,
-        string idempotencyKey,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.OperationSessionId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.ConfirmationToken);
-        if (request.OperationSessionId.Length > 128)
-        {
-            throw new ArgumentException("Operation session ID must not exceed 128 characters.", nameof(request));
-        }
-
-        if (request.ConfirmationToken.Length > 8192)
-        {
-            throw new ArgumentException("Confirmation token must not exceed 8192 characters.", nameof(request));
-        }
-
-        ArgumentException.ThrowIfNullOrWhiteSpace(idempotencyKey);
-
-        var normalizedIdempotencyKey = idempotencyKey.Trim();
-        if (normalizedIdempotencyKey.Length > 128)
-        {
-            throw new ArgumentException("Idempotency key must not exceed 128 characters.", nameof(idempotencyKey));
-        }
-
-        return client.SendAsync<TerraScaleBackupJob, TerraScaleBackupExecution>(
-            HttpMethod.Post,
-            TerraScaleApiRoutes.BackupsExecute(projectId, databaseId),
-            request,
-            preferredRegion: null,
-            configureRequest: message =>
-            {
-                message.Headers.Remove("Idempotency-Key");
-                message.Headers.TryAddWithoutValidation("Idempotency-Key", normalizedIdempotencyKey);
-            },
-            responseFactory: static (job, response) => new TerraScaleBackupExecution(
-                job,
-                response.StatusCode,
-                response.Headers.TryGetValues("Idempotency-Replayed", out var values) &&
-                bool.TryParse(values.FirstOrDefault(), out var replayed) &&
-                replayed),
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Lists backup jobs for a project database.
-    /// </summary>
-    public Task<IReadOnlyList<TerraScaleBackupJob>> ListAsync(
-        string projectId,
-        string databaseId,
-        int skip = 0,
-        int take = 100,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        TerraScalePagination.Validate(skip, take);
-        return client.SendAsync<IReadOnlyList<TerraScaleBackupJob>>(
-            HttpMethod.Get,
-            TerraScaleApiRoutes.BackupsList(projectId, databaseId, skip, take),
-            body: null,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Gets one backup job by id.
-    /// </summary>
-    public Task<TerraScaleBackupJob> GetAsync(
-        string projectId,
-        string databaseId,
-        string backupId,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(backupId);
-        return client.SendAsync<TerraScaleBackupJob>(
-            HttpMethod.Get,
-            TerraScaleApiRoutes.BackupGet(projectId, databaseId, backupId),
-            body: null,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Lists restore points visible for a project database.
-    /// </summary>
-    public Task<IReadOnlyList<TerraScaleRestorePoint>> ListRestorePointsAsync(
-        string projectId,
-        string databaseId,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        return client.SendAsync<IReadOnlyList<TerraScaleRestorePoint>>(
-            HttpMethod.Get,
-            TerraScaleApiRoutes.RestorePointsList(projectId, databaseId),
-            body: null,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Starts a restore from a backup into a logical restored database.
-    /// </summary>
-    public Task<TerraScaleRestoreJob> StartRestoreAsync(
-        string projectId,
-        string databaseId,
-        string backupId,
-        string? idempotencyKey = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(backupId);
-        return client.SendAsync<TerraScaleRestoreJob>(
-            HttpMethod.Post,
-            TerraScaleApiRoutes.RestoresCreate(projectId, databaseId),
-            new TerraScaleStartRestoreRequest(backupId.Trim(), idempotencyKey),
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Lists restore jobs for a project database.
-    /// </summary>
-    public Task<IReadOnlyList<TerraScaleRestoreJob>> ListRestoresAsync(
-        string projectId,
-        string databaseId,
-        int skip = 0,
-        int take = 100,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        TerraScalePagination.Validate(skip, take);
-        return client.SendAsync<IReadOnlyList<TerraScaleRestoreJob>>(
-            HttpMethod.Get,
-            TerraScaleApiRoutes.RestoresList(projectId, databaseId, skip, take),
-            body: null,
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Gets one restore job by id.
-    /// </summary>
-    public Task<TerraScaleRestoreJob> GetRestoreAsync(
-        string projectId,
-        string databaseId,
-        string restoreId,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(restoreId);
-        return client.SendAsync<TerraScaleRestoreJob>(
-            HttpMethod.Get,
-            TerraScaleApiRoutes.RestoreGet(projectId, databaseId, restoreId),
-            body: null,
-            cancellationToken);
-    }
+    private static string Escape(string value) => Uri.EscapeDataString(value.Trim());
 }
 
-/// <summary>
-/// Request body for configuring a project database backup policy.
-/// </summary>
-public sealed record TerraScaleConfigureBackupPolicyRequest(
-    string FullBackupCron,
-    string? IncrementalBackupCron = null,
-    int RetentionDays = 30,
-    bool Disabled = false);
+/// <summary>Litestream readiness for one database.</summary>
+public sealed record TerraScaleBackupReadiness(
+    [property: JsonRequired] bool Ready,
+    [property: JsonRequired] bool Streaming);
 
-/// <summary>
-/// Request body for planning a confirmed project database backup.
-/// </summary>
-public sealed record TerraScaleBackupConfirmationPlanRequest(string OperationSessionId);
+/// <summary>Request to restore a backup into a new database.</summary>
+public sealed record TerraScaleRestoreRequest(
+    [property: JsonRequired] string Name,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? At = null);
 
-/// <summary>
-/// Request body for executing a confirmed project database backup.
-/// </summary>
-public sealed record TerraScaleBackupConfirmationExecuteRequest(
-    string OperationSessionId,
-    string ConfirmationToken);
-
-/// <summary>
-/// Confirmation required before executing a project database backup.
-/// </summary>
-public sealed record TerraScaleBackupConfirmationPlan(
-    string Action,
-    string ProjectId,
-    string DatabaseId,
-    string DatabaseName,
-    string RequestDigest,
-    string ConfirmationToken,
-    DateTimeOffset ExpiresAt);
-
-/// <summary>
-/// Result of executing a confirmed backup, including idempotency replay metadata.
-/// </summary>
-public sealed record TerraScaleBackupExecution(
-    TerraScaleBackupJob Job,
-    HttpStatusCode StatusCode,
-    bool IdempotencyReplayed);
-
-internal sealed record TerraScaleStartRestoreRequest(
-    string BackupId,
-    string? IdempotencyKey);
-
-/// <summary>
-/// Backup policy configured for a project database.
-/// </summary>
-public sealed record TerraScaleBackupPolicy(
-    string BackupPolicyId,
-    string ProjectId,
-    string DatabaseId,
-    string DatabaseName,
-    string FullBackupCron,
-    string? IncrementalBackupCron,
-    int RetentionDays,
-    bool Disabled,
-    string DestinationType,
-    string Status,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
-
-/// <summary>
-/// Backup job returned by TerraScale.
-/// </summary>
-public sealed record TerraScaleBackupJob(
-    string BackupId,
-    string ProjectId,
-    string DatabaseId,
-    string DatabaseName,
-    string Policy,
-    string Retention,
-    string Status,
-    string DestinationType,
-    bool HasRestorePoint,
-    string RequestedBy,
-    DateTimeOffset RequestedAt,
-    DateTimeOffset UpdatedAt,
-    DateTimeOffset? CompletedAt,
-    string? ErrorMessage);
-
-/// <summary>
-/// Restore point returned by TerraScale.
-/// </summary>
-public sealed record TerraScaleRestorePoint(
-    string Name,
-    string? BackupId,
-    DateTimeOffset CreatedAt,
-    bool IsSnapshotRestore,
-    bool IsEncrypted,
-    bool IsIncremental,
-    int FilesToRestore);
-
-/// <summary>
-/// Restore job returned by TerraScale.
-/// </summary>
-public sealed record TerraScaleRestoreJob(
-    string RestoreId,
-    string ProjectId,
-    string DatabaseId,
-    string BackupId,
-    string RestoredDatabaseId,
-    string RestoredDatabaseName,
-    string Status,
-    string RequestedBy,
-    DateTimeOffset RequestedAt,
-    DateTimeOffset UpdatedAt,
-    DateTimeOffset? CompletedAt,
-    string? ErrorMessage);
+#pragma warning restore CS1591

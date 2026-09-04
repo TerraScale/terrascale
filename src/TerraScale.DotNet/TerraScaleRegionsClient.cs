@@ -2,6 +2,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 
+#pragma warning disable CS1591
+
 namespace TerraScale.DotNet;
 
 /// <summary>
@@ -16,18 +18,16 @@ public sealed class TerraScaleRegionsClient
         this.client = client;
     }
 
-    /// <summary>
-    /// Lists canonical TerraScale deployment regions.
-    /// </summary>
-    public async Task<IReadOnlyList<TerraScaleRegion>> ListAsync(CancellationToken cancellationToken = default)
+    /// <summary>Returns the serving member's region and health.</summary>
+    public async Task<TerraScaleRegionHealth> ListAsync(CancellationToken cancellationToken = default)
     {
-        var response = await client.SendAnonymousJsonAsync<TerraScaleRegionListResponse>(
+        var response = await client.SendAnonymousJsonAsync<TerraScaleRegionHealth>(
             HttpMethod.Get,
-            TerraScaleApiRoutes.RegionsList(),
+            "/api/v1/regions",
             body: null,
             cancellationToken).ConfigureAwait(false);
-
-        return response.Regions;
+        TerraScaleRegionCodes.ValidateResponse(response.Region);
+        return response;
     }
 
     /// <summary>
@@ -38,11 +38,7 @@ public sealed class TerraScaleRegionsClient
         CancellationToken cancellationToken = default)
     {
         TerraScaleRegionCodes.Validate(regionCode, nameof(regionCode));
-        return client.SendAnonymousJsonAsync(
-            HttpMethod.Get,
-            TerraScaleApiRoutes.RegionGet(regionCode),
-            TypeInfo<TerraScaleRegionDetails>(),
-            cancellationToken);
+        return Task.FromException<TerraScaleRegionDetails>(new TerraScaleContractGapException("regions.get"));
     }
 
     private static JsonTypeInfo<T> TypeInfo<T>() =>
@@ -50,14 +46,15 @@ public sealed class TerraScaleRegionsClient
         ?? throw new InvalidOperationException($"JSON metadata for {typeof(T)} is not available in the regions context.");
 }
 
-internal sealed record TerraScaleRegionListResponse(
-    [property: JsonRequired] IReadOnlyList<TerraScaleRegion> Regions) : IJsonOnDeserialized
+public sealed record TerraScaleRegionHealth(
+    [property: JsonRequired] string Region,
+    [property: JsonRequired] bool Healthy) : IJsonOnDeserialized
 {
     void IJsonOnDeserialized.OnDeserialized()
     {
-        if (Regions is null)
+        if (Region is null)
         {
-            throw new JsonException("TerraScale region lists require a non-null regions field.");
+            throw new JsonException("TerraScale region responses require a non-null region field.");
         }
     }
 }
@@ -86,3 +83,5 @@ public sealed record TerraScaleRegionDetails(
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, NumberHandling = JsonNumberHandling.AllowReadingFromString)]
 [JsonSerializable(typeof(TerraScaleRegionDetails))]
 internal partial class TerraScaleRegionsJsonContext : JsonSerializerContext;
+
+#pragma warning restore CS1591

@@ -16,10 +16,11 @@ public sealed class TerraScaleRestPinningTests
                 BearerToken = "caller-token"
             });
 
-        _ = await client.Documents.GetAsync("repository-a", "document-a");
+        _ = await client.Documents.GetAsync("orders", "items", "item-1");
         _ = await client.Documents.UpsertAsync(
-            "repository-a",
-            "document-a",
+            "orders",
+            "items",
+            "item-1",
             new { status = "paid" });
 
         await Assert.That(handler.Requests.Count).IsEqualTo(2);
@@ -41,9 +42,9 @@ public sealed class TerraScaleRestPinningTests
                 BearerToken = "caller-token"
             });
 
-        var document = await client.Documents.GetAsync("repository-a", "document-a");
+        var document = await client.Documents.GetAsync("orders", "items", "item-1");
 
-        await Assert.That(document.Id).IsEqualTo("document-a");
+        await Assert.That(document.Id).IsEqualTo("item-1");
         await Assert.That(handler.Requests.Count).IsEqualTo(2);
         await Assert.That(handler.Requests[0].Host).IsEqualTo("api.terrascale.tech");
         await Assert.That(handler.Requests[1].Host).IsEqualTo("fra.api.terrascale.tech");
@@ -64,7 +65,7 @@ public sealed class TerraScaleRestPinningTests
             });
 
         var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            client.Documents.GetAsync("repository-a", "document-a"));
+            client.Documents.GetAsync("orders", "items", "item-1"));
 
         await Assert.That(exception).IsNotNull();
         await Assert.That(exception?.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
@@ -99,9 +100,11 @@ public sealed class TerraScaleRestPinningTests
 
             var response = new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(
-                    "{\"repositoryId\":\"repository-a\",\"repository\":\"repository-a\",\"id\":\"document-a\",\"data\":{},\"lastModified\":null,\"changeToken\":null,\"sessionConsistencyToken\":null}")
+                Content = new StringContent(request.Method == HttpMethod.Put
+                    ? "{\"revision\":\"r1\"}"
+                    : "{\"status\":\"paid\"}")
             };
+            response.Headers.TryAddWithoutValidation("ETag", "\"r1\"");
             response.Headers.TryAddWithoutValidation("X-TerraScale-Region", "SFO");
             return Task.FromResult(response);
         }

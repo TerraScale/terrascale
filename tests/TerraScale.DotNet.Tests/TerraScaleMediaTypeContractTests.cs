@@ -15,9 +15,8 @@ public sealed class TerraScaleMediaTypeContractTests
 
         _ = await client.Databases.ListAsync();
         _ = await client.Regions.ListAsync();
-        _ = await client.Regions.GetAsync(TerraScaleRegions.Gru);
 
-        await Assert.That(handler.Requests).Count().IsEqualTo(3);
+        await Assert.That(handler.Requests).Count().IsEqualTo(2);
         await Assert.That(handler.Requests.All(static request =>
                 request.Accept.SequenceEqual(["application/json"], StringComparer.OrdinalIgnoreCase)))
             .IsTrue();
@@ -48,12 +47,8 @@ public sealed class TerraScaleMediaTypeContractTests
 
             var responseBody = requestUri.AbsolutePath switch
             {
-                "/api/v1/databases" => "[]",
-                "/api/v1/projects/project-a/access/team-members" =>
-                    "{\"items\":[],\"totalCount\":0,\"nextCursor\":null}",
-                "/api/v1/regions" => "{\"regions\":[]}",
-                "/api/v1/regions/GRU" =>
-                    "{\"code\":\"GRU\",\"name\":\"Sao Paulo\",\"country\":\"BR\",\"latitude\":\"-23.5475\",\"longitude\":\"-46.6361\",\"available\":true}",
+                "/api/v1/databases" => "{\"databases\":[]}",
+                "/api/v1/regions" => "{\"region\":\"GRU\",\"healthy\":true}",
                 "/api/v1/repositories/repository-a/events" =>
                     "event: document\ndata: {\"repositoryId\":\"repository-a\",\"repository\":\"orders\",\"collection\":\"orders\",\"id\":\"document-a\",\"type\":\"put\",\"changeToken\":null,\"observedAt\":\"2026-08-30T00:00:00Z\"}\n\n",
                 _ => throw new InvalidOperationException($"Unexpected media-type fixture route '{requestUri.AbsolutePath}'.")

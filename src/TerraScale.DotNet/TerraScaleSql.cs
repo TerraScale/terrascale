@@ -1,6 +1,10 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Net.Http;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace TerraScale.DotNet;
 
@@ -23,6 +27,115 @@ public enum TerraScaleSqlFieldType
     Bytes,
     /// <summary>Timestamp value.</summary>
     Timestamp,
+}
+
+/// <summary>A named SQL binding before it is encoded in a request.</summary>
+public sealed record TerraScaleSqlParameter(string Name, object? Value);
+
+/// <summary>Canonical named/ordinal parameter object for SQL requests.</summary>
+public sealed class TerraScaleSqlParameters : IReadOnlyDictionary<string, JsonElement>
+{
+    private readonly IReadOnlyDictionary<string, JsonElement> values;
+
+    /// <summary>Creates named bindings from CLR values.</summary>
+    public TerraScaleSqlParameters(IEnumerable<KeyValuePair<string, object?>> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        var copy = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var pair in values)
+        {
+            TerraScaleSqlValidation.ValidateParameterName(pair.Key);
+            if (!copy.TryAdd(pair.Key, ToJsonValue(pair.Value)))
+            {
+                throw new ArgumentException($"SQL parameter '{pair.Key}' is repeated.", nameof(values));
+            }
+        }
+
+        this.values = new ReadOnlyDictionary<string, JsonElement>(copy);
+    }
+
+    /// <summary>Creates an empty binding object.</summary>
+    public TerraScaleSqlParameters() : this(Array.Empty<KeyValuePair<string, object?>>()) { }
+
+    /// <summary>Creates named bindings from parameter records.</summary>
+    public static TerraScaleSqlParameters Named(IEnumerable<TerraScaleSqlParameter> values) =>
+        new(values.Select(static value => new KeyValuePair<string, object?>(value.Name, value.Value)));
+
+    /// <summary>Creates named bindings from key-value pairs.</summary>
+    public static TerraScaleSqlParameters Named(IEnumerable<KeyValuePair<string, object?>> values) => new(values);
+
+    /// <summary>Creates decimal-named bindings for ordinal SQL markers.</summary>
+    public static TerraScaleSqlParameters Ordinal(IEnumerable<object?> values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        return Named(values.Select((value, index) =>
+            new KeyValuePair<string, object?>((index + 1).ToString(CultureInfo.InvariantCulture), value)));
+    }
+
+    /// <summary>Creates decimal-named bindings for ordinal SQL markers.</summary>
+    public static TerraScaleSqlParameters FromOrdinal(params object?[] values) => Ordinal(values);
+
+    /// <summary>Returns a binding by canonical name.</summary>
+    public JsonElement this[string key] => values[key];
+    /// <summary>Returns canonical binding names.</summary>
+    public IEnumerable<string> Keys => values.Keys;
+    /// <summary>Returns canonical binding values.</summary>
+    public IEnumerable<JsonElement> Values => values.Values;
+    /// <summary>Returns the number of bindings.</summary>
+    public int Count => values.Count;
+    /// <summary>Checks for one binding.</summary>
+    public bool ContainsKey(string key) => values.ContainsKey(key);
+    /// <summary>Gets one binding when present.</summary>
+    public bool TryGetValue(string key, out JsonElement value) => values.TryGetValue(key, out value);
+    /// <inheritdoc />
+    public IEnumerator<KeyValuePair<string, JsonElement>> GetEnumerator() => values.GetEnumerator();
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+    internal static JsonElement ToJsonValue(object? value)
+    {
+        if (value is JsonElement element) return element.Clone();
+        try { return JsonSerializer.SerializeToElement(value, TerraScaleSqlJson.Options); }
+        catch (Exception exception) when (exception is JsonException or NotSupportedException or InvalidOperationException)
+        {
+            throw new ArgumentException("SQL parameter values must be JSON values.", nameof(value), exception);
+        }
+    }
+}
+
+/// <summary>Metadata columns exposed on every SQL collection.</summary>
+public static class TerraScaleSqlFields
+{
+    /// <summary>Stable document identifier.</summary>
+    public static TerraScaleSqlField Id { get; } = new("_id", TerraScaleFieldType.String, true, true);
+    /// <summary>Document revision.</summary>
+    public static TerraScaleSqlField Revision { get; } = new("_rev", TerraScaleFieldType.String, true, true);
+    /// <summary>Hybrid logical clock.</summary>
+    public static TerraScaleSqlField Hlc { get; } = new("_hlc", TerraScaleFieldType.String, true, true);
+    /// <summary>Creation timestamp.</summary>
+    public static TerraScaleSqlField Created { get; } = new("_created", TerraScaleFieldType.Timestamp, true, true);
+    /// <summary>Update timestamp.</summary>
+    public static TerraScaleSqlField Updated { get; } = new("_updated", TerraScaleFieldType.Timestamp, true, true);
+    /// <summary>Metadata descriptors in contract order.</summary>
+    public static IReadOnlyList<TerraScaleSqlField> Metadata { get; } =
+        new ReadOnlyCollection<TerraScaleSqlField>([Id, Revision, Hlc, Created, Updated]);
+    internal static bool IsMetadata(string name) => Metadata.Any(field => field.Name == name);
+}
+
+/// <summary>Alias grouping the metadata descriptors for discoverability.</summary>
+public static class TerraScaleSqlMetadataFields
+{
+    /// <inheritdoc cref="TerraScaleSqlFields.Id" />
+    public static TerraScaleSqlField Id => TerraScaleSqlFields.Id;
+    /// <inheritdoc cref="TerraScaleSqlFields.Revision" />
+    public static TerraScaleSqlField Revision => TerraScaleSqlFields.Revision;
+    /// <inheritdoc cref="TerraScaleSqlFields.Hlc" />
+    public static TerraScaleSqlField Hlc => TerraScaleSqlFields.Hlc;
+    /// <inheritdoc cref="TerraScaleSqlFields.Created" />
+    public static TerraScaleSqlField Created => TerraScaleSqlFields.Created;
+    /// <inheritdoc cref="TerraScaleSqlFields.Updated" />
+    public static TerraScaleSqlField Updated => TerraScaleSqlFields.Updated;
+    /// <inheritdoc cref="TerraScaleSqlFields.Metadata" />
+    public static IReadOnlyList<TerraScaleSqlField> All => TerraScaleSqlFields.Metadata;
 }
 
 /// <summary>A field descriptor used by the schema-bound SQL builder.</summary>
@@ -116,10 +229,11 @@ public enum TerraScaleSqlComparisonOperator
 /// <summary>A validated read-only SQL statement and its separately bound values.</summary>
 public sealed class TerraScaleSqlQuery
 {
-    private TerraScaleSqlQuery(string sql, IReadOnlyList<object?> parameters)
+    private TerraScaleSqlQuery(string sql, IReadOnlyList<object?> parameters, TerraScaleSqlParameters bindings)
     {
         Sql = sql;
         Parameters = parameters;
+        Bindings = bindings;
     }
 
     /// <summary>Starts a schema-bound SELECT query.</summary>
@@ -134,11 +248,25 @@ public sealed class TerraScaleSqlQuery
         ArgumentNullException.ThrowIfNull(sql);
         var values = new ReadOnlyCollection<object?>((parameters ?? []).ToArray());
         TerraScaleSqlValidation.ValidateSql(sql, values);
-        return new TerraScaleSqlQuery(sql, values);
+        return new TerraScaleSqlQuery(sql, values, TerraScaleSqlParameters.Ordinal(values));
     }
 
     /// <summary>Creates and validates raw parameterized SQL.</summary>
     public static TerraScaleSqlQuery Raw(string sql, params object?[] parameters) => Raw(sql, (IEnumerable<object?>)parameters);
+
+    /// <summary>Creates and validates SQL with named contract bindings.</summary>
+    public static TerraScaleSqlQuery Raw(string sql, TerraScaleSqlParameters parameters)
+    {
+        ArgumentNullException.ThrowIfNull(sql);
+        ArgumentNullException.ThrowIfNull(parameters);
+        TerraScaleSqlValidation.ValidateNamedSql(sql, parameters);
+        var values = new ReadOnlyCollection<object?>(parameters.Values.Select(static value => (object?)value.Clone()).ToArray());
+        return new TerraScaleSqlQuery(sql, values, parameters);
+    }
+
+    /// <summary>Creates and validates SQL with named CLR bindings.</summary>
+    public static TerraScaleSqlQuery Raw(string sql, IReadOnlyDictionary<string, object?> parameters) =>
+        Raw(sql, TerraScaleSqlParameters.Named(parameters));
 
     /// <summary>Alias for <see cref="Raw(string, IEnumerable{object?})"/>.</summary>
     public static TerraScaleSqlQuery CreateRaw(string sql, IEnumerable<object?>? parameters = null) => Raw(sql, parameters);
@@ -161,6 +289,7 @@ public sealed class TerraScaleSqlQuery
         }
     }
 
+
     /// <summary>The statement text, containing positional placeholders.</summary>
     public string Sql { get; }
 
@@ -176,8 +305,14 @@ public sealed class TerraScaleSqlQuery
     /// <summary>Alias for <see cref="Parameters"/> used by query adapters.</summary>
     public IReadOnlyList<object?> QueryParameters => Parameters;
 
+    /// <summary>Canonical named bindings for the HTTP SQL contract.</summary>
+    public TerraScaleSqlParameters Bindings { get; }
+
+    /// <summary>Alias for <see cref="Bindings"/>.</summary>
+    public TerraScaleSqlParameters NamedParameters => Bindings;
+
     /// <summary>Re-validates this statement before an adapter sends it.</summary>
-    public void Validate() => TerraScaleSqlValidation.ValidateSql(Sql, Parameters);
+    public void Validate() => TerraScaleSqlValidation.ValidateNamedSql(Sql, Bindings);
 
     /// <summary>Builds the descriptor for one execute operation.</summary>
     public TerraScaleSqlExecuteDescriptor ExecuteDescriptor() => new(this);
@@ -221,6 +356,9 @@ public sealed record TerraScaleSqlExecuteDescriptor(TerraScaleSqlQuery Query)
 
     /// <summary>Alias for <see cref="Sql"/>.</summary>
     public string Statement => Sql;
+
+    /// <summary>Canonical named bindings for the HTTP request.</summary>
+    public TerraScaleSqlParameters Bindings => Query.Bindings;
 }
 
 /// <summary>Statement and parameters for a live subscription.</summary>
@@ -237,7 +375,159 @@ public sealed record TerraScaleSqlSubscribeDescriptor(TerraScaleSqlQuery Query)
 
     /// <summary>Alias for <see cref="Sql"/>.</summary>
     public string Statement => Sql;
+
+    /// <summary>Canonical named bindings for the HTTP request.</summary>
+    public TerraScaleSqlParameters Bindings => Query.Bindings;
 }
+
+/// <summary>Options for one SQL execute request.</summary>
+public sealed record TerraScaleSqlExecuteOptions
+{
+    /// <summary>Requests the server's lowered plan.</summary>
+    public bool Explain { get; init; }
+    /// <summary>Requests cancellation before execution.</summary>
+    public bool Cancelled { get; init; }
+    /// <summary>Optional server deadline, in milliseconds.</summary>
+    public int? TimeoutMs { get; init; }
+    /// <summary>Alias for <see cref="TimeoutMs"/>.</summary>
+    [JsonIgnore]
+    public int? TimeoutMilliseconds { get => TimeoutMs; init => TimeoutMs = value; }
+    internal void Validate()
+    {
+        if (TimeoutMs is < 1 or > 30_000)
+            throw new ArgumentOutOfRangeException(nameof(TimeoutMs), "SQL timeout must be between 1 and 30000 milliseconds.");
+    }
+}
+
+/// <summary>One row in a SQL response.</summary>
+public sealed record TerraScaleSqlRow(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("value")] JsonElement Value);
+
+/// <summary>Result returned by the read-only SQL endpoint.</summary>
+public sealed record TerraScaleSqlResult
+{
+    /// <summary>Creates an execute result or an explain response.</summary>
+    [JsonConstructor]
+    public TerraScaleSqlResult(
+        long matched = 0,
+        IReadOnlyList<TerraScaleSqlRow>? rows = null,
+        string? dialect = null,
+        string? collection = null,
+        IReadOnlyList<TerraScaleSqlOrderKey>? order = null,
+        string? access = null)
+    {
+        Matched = matched;
+        Rows = new ReadOnlyCollection<TerraScaleSqlRow>((rows ?? []).ToArray());
+        Dialect = dialect;
+        Collection = collection;
+        Order = new ReadOnlyCollection<TerraScaleSqlOrderKey>((order ?? []).ToArray());
+        Access = access;
+    }
+
+    /// <summary>Number of matching documents.</summary>
+    [JsonPropertyName("matched")]
+    public long Matched { get; }
+
+    /// <summary>Rows included in an execute response.</summary>
+    [JsonPropertyName("rows")]
+    public IReadOnlyList<TerraScaleSqlRow> Rows { get; }
+
+    /// <summary>Dialect marker included by an explain response.</summary>
+    [JsonPropertyName("dialect")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Dialect { get; }
+
+    /// <summary>Collection identified by an explain response.</summary>
+    [JsonPropertyName("collection")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Collection { get; }
+
+    /// <summary>Ordering keys identified by an explain response.</summary>
+    [JsonPropertyName("order")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public IReadOnlyList<TerraScaleSqlOrderKey> Order { get; }
+
+    /// <summary>Access strategy identified by an explain response.</summary>
+    [JsonPropertyName("access")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Access { get; }
+
+    /// <summary>Whether this response is an explain plan.</summary>
+    [JsonIgnore]
+    public bool IsExplain => Dialect is not null;
+
+    /// <summary>Number of returned rows.</summary>
+    public int Count => Rows.Count;
+}
+
+/// <summary>Ordering key in an explain-plan response.</summary>
+public sealed record TerraScaleSqlOrderKey(
+    [property: JsonPropertyName("field")] string Field,
+    [property: JsonPropertyName("direction")] string Direction);
+
+/// <summary>Client for <c>POST /api/v1/databases/{name}/sql</c>.</summary>
+public sealed class TerraScaleSqlClient
+{
+    private readonly TerraScaleClient client;
+
+    /// <summary>Creates a SQL client over a configured TerraScale client.</summary>
+    public TerraScaleSqlClient(TerraScaleClient client) => this.client = client ?? throw new ArgumentNullException(nameof(client));
+
+    /// <summary>Executes one validated query.</summary>
+    public Task<TerraScaleSqlResult> ExecuteAsync(
+        string databaseName,
+        TerraScaleSqlQuery query,
+        TerraScaleSqlExecuteOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(databaseName);
+        ArgumentNullException.ThrowIfNull(query);
+        var executeOptions = options ?? new TerraScaleSqlExecuteOptions();
+        executeOptions.Validate();
+        query.Validate();
+        var request = new TerraScaleSqlRequest(
+            query.Sql,
+            query.Bindings.Count == 0 ? null : query.Bindings,
+            executeOptions.Explain ? true : null,
+            executeOptions.Cancelled ? true : null,
+            executeOptions.TimeoutMs);
+        return client.SendJsonAsync(
+            HttpMethod.Post,
+            $"/api/v1/databases/{Uri.EscapeDataString(databaseName.Trim())}/sql",
+            request,
+            TerraScaleSqlJsonContext.Default.TerraScaleSqlRequest,
+            TerraScaleSqlJsonContext.Default.TerraScaleSqlResult,
+            cancellationToken);
+    }
+
+    /// <summary>Executes SQL with named bindings.</summary>
+    public Task<TerraScaleSqlResult> ExecuteAsync(
+        string databaseName,
+        string sql,
+        TerraScaleSqlParameters? parameters = null,
+        TerraScaleSqlExecuteOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        ExecuteAsync(databaseName, TerraScaleSqlQuery.Raw(sql, parameters ?? new TerraScaleSqlParameters()), options, cancellationToken);
+
+    /// <summary>Executes SQL with ordinal bindings.</summary>
+    public Task<TerraScaleSqlResult> ExecuteAsync(
+        string databaseName,
+        string sql,
+        IEnumerable<object?> parameters,
+        TerraScaleSqlExecuteOptions? options = null,
+        CancellationToken cancellationToken = default) =>
+        ExecuteAsync(databaseName, TerraScaleSqlQuery.Raw(sql, parameters), options, cancellationToken);
+}
+
+/// <summary>Wire request for the SQL endpoint.</summary>
+public sealed record TerraScaleSqlRequest(
+    [property: JsonPropertyName("sql")] string Sql,
+    [property: JsonPropertyName("parameters"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyDictionary<string, JsonElement>? Parameters = null,
+    [property: JsonPropertyName("explain"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Explain = null,
+    [property: JsonPropertyName("cancelled"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Cancelled = null,
+    [property: JsonPropertyName("timeout_ms"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TimeoutMs = null);
 
 /// <summary>Entry points for schema-bound SQL and raw SQL.</summary>
 public static class TerraScaleSql
@@ -256,6 +546,12 @@ public static class TerraScaleSql
     /// <summary>Creates and validates raw parameterized SQL.</summary>
     public static TerraScaleSqlQuery Raw(string sql, params object?[] parameters) => TerraScaleSqlQuery.Raw(sql, parameters);
 
+    /// <summary>Creates SQL with named contract bindings.</summary>
+    public static TerraScaleSqlQuery Raw(string sql, TerraScaleSqlParameters parameters) => TerraScaleSqlQuery.Raw(sql, parameters);
+
+    /// <summary>Creates SQL with named CLR bindings.</summary>
+    public static TerraScaleSqlQuery Raw(string sql, IReadOnlyDictionary<string, object?> parameters) => TerraScaleSqlQuery.Raw(sql, parameters);
+
     /// <summary>Builds an execute descriptor without selecting a transport route.</summary>
     public static TerraScaleSqlExecuteDescriptor Execute(TerraScaleSqlQuery query) =>
         (query ?? throw new ArgumentNullException(nameof(query))).ExecuteDescriptor();
@@ -268,9 +564,13 @@ public static class TerraScaleSql
     public static bool TryRaw(string sql, IEnumerable<object?>? parameters, out TerraScaleSqlQuery? query) =>
         TerraScaleSqlQuery.TryRaw(sql, parameters, out query);
 
+
     /// <summary>Validates raw read-only SQL and its positional bindings.</summary>
     public static void Validate(string sql, IEnumerable<object?>? parameters = null) =>
         TerraScaleSqlValidation.ValidateSql(sql, new ReadOnlyCollection<object?>((parameters ?? []).ToArray()));
+
+    /// <summary>Validates SQL with named contract bindings.</summary>
+    public static void Validate(string sql, TerraScaleSqlParameters parameters) => TerraScaleSqlValidation.ValidateNamedSql(sql, parameters);
 }
 
 /// <summary>Public entry point for validating raw read-only SQL.</summary>
@@ -278,6 +578,23 @@ public static class TerraScaleSqlValidator
 {
     /// <summary>Validates SQL text and its positional bindings.</summary>
     public static void Validate(string sql, IEnumerable<object?>? parameters = null) => TerraScaleSql.Validate(sql, parameters);
+
+    /// <summary>Validates SQL with named contract bindings.</summary>
+    public static void Validate(string sql, TerraScaleSqlParameters parameters) => TerraScaleSql.Validate(sql, parameters);
+
+    /// <summary>Attempts named SQL validation without throwing.</summary>
+    public static bool TryValidate(string sql, TerraScaleSqlParameters parameters)
+    {
+        try
+        {
+            Validate(sql, parameters);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
 
     /// <summary>Attempts validation without throwing.</summary>
     public static bool TryValidate(string sql, IEnumerable<object?>? parameters = null)
@@ -469,9 +786,9 @@ public sealed class TerraScaleSqlSelectBuilder
     /// <summary>Sets a maximum row count. The value is bound as a parameter.</summary>
     public TerraScaleSqlSelectBuilder Limit(int value)
     {
-        if (value < 0)
+        if (value is < 1 or > TerraScaleSqlValidation.MaxPageLimit)
         {
-            throw new ArgumentOutOfRangeException(nameof(value), "LIMIT cannot be negative.");
+            throw new ArgumentOutOfRangeException(nameof(value), $"LIMIT must be between 1 and {TerraScaleSqlValidation.MaxPageLimit}.");
         }
 
         limit = value;
@@ -589,7 +906,7 @@ public sealed class TerraScaleSqlSelectBuilder
     {
         ArgumentNullException.ThrowIfNull(field);
         TerraScaleSqlValidation.ValidateIdentifier(field.Name, context);
-        if (!schema.Fields.Any(declared => declared == field))
+        if (!schema.Fields.Any(declared => declared == field) && !TerraScaleSqlFields.IsMetadata(field.Name))
         {
             throw new ArgumentException($"The {context} field is not declared by this collection.", nameof(field));
         }
@@ -600,6 +917,8 @@ public sealed class TerraScaleSqlSelectBuilder
 
 internal static class TerraScaleSqlValidation
 {
+    internal const int MaxSqlTextBytes = 16 * 1024;
+    internal const int MaxPageLimit = 1024;
     private static readonly HashSet<string> Forbidden = new(StringComparer.OrdinalIgnoreCase)
     {
         "attach", "alter", "analyze", "begin", "commit", "create", "delete", "detach", "drop", "end",
@@ -640,6 +959,16 @@ internal static class TerraScaleSqlValidation
         }
     }
 
+    internal static void ValidateParameterName(string value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > 255 ||
+            !(char.IsAsciiLetter(value[0]) || char.IsAsciiDigit(value[0]) || value[0] == '_') ||
+            value.Skip(1).Any(static character => !(char.IsAsciiLetterOrDigit(character) || character == '_')))
+        {
+            throw new ArgumentException("SQL parameter names must be plain identifiers or decimal ordinals.", nameof(value));
+        }
+    }
+
     internal static string ValidateJsonPath(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
@@ -659,11 +988,67 @@ internal static class TerraScaleSqlValidation
 
     internal static void ValidateSql(string text, IReadOnlyList<object?> parameters)
     {
-        if (Encoding.UTF8.GetByteCount(text) > 1_048_576)
-        {
-            throw SqlError("SQL exceeds the 1 MiB query text limit.");
-        }
+        var tokens = ValidateSqlShape(text);
+        ValidateBindings(tokens, parameters.Count);
+        ValidateLiteralPagingBounds(tokens);
+    }
 
+    internal static void ValidateNamedSql(string text, TerraScaleSqlParameters parameters)
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+        var tokens = ValidateSqlShape(text);
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        var next = 1;
+        foreach (var token in tokens)
+        {
+            string? name = null;
+            if (token == "?")
+            {
+                while (parameters.ContainsKey(next.ToString(CultureInfo.InvariantCulture))) next++;
+                name = next++.ToString(CultureInfo.InvariantCulture);
+            }
+            else if (token.StartsWith("?") && token.Length > 1)
+            {
+                name = token[1..];
+                if (!int.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out _))
+                    throw SqlError("Only ? or numbered ?n parameters are allowed.");
+            }
+            else if (token.StartsWith("$") || token.StartsWith(":") || token.StartsWith("@"))
+            {
+                name = token[1..];
+            }
+            if (name is null) continue;
+            ValidateParameterName(name);
+            if (!parameters.ContainsKey(name)) throw SqlError($"SQL parameter '{name}' was not supplied.");
+            used.Add(name);
+        }
+        foreach (var name in parameters.Keys)
+            if (!used.Contains(name)) throw SqlError($"SQL parameter '{name}' is not used by the statement.");
+        ValidateLiteralPagingBounds(tokens);
+    }
+
+    private static void ValidateLiteralPagingBounds(IReadOnlyList<string> tokens)
+    {
+        for (var index = 0; index + 1 < tokens.Count; index++)
+        {
+            if (!tokens[index].Equals("limit", StringComparison.OrdinalIgnoreCase) &&
+                !tokens[index].Equals("offset", StringComparison.OrdinalIgnoreCase)) continue;
+            var value = tokens[index + 1];
+            if (value == "-") throw SqlError("LIMIT and OFFSET cannot be negative.");
+            if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)) continue;
+            if (number < 0 || (tokens[index].Equals("limit", StringComparison.OrdinalIgnoreCase) &&
+                (number == 0 || number > MaxPageLimit)))
+                throw SqlError($"{tokens[index].ToUpperInvariant()} is outside the supported bounds.");
+        }
+    }
+
+    private static List<string> ValidateSqlShape(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (Encoding.UTF8.GetByteCount(text) > MaxSqlTextBytes)
+        {
+            throw SqlError($"SQL exceeds the {MaxSqlTextBytes} byte query text limit.");
+        }
         var tokens = Tokenize(text);
         if (tokens.Count == 0)
         {
@@ -726,7 +1111,7 @@ internal static class TerraScaleSqlValidation
             }
         }
 
-        ValidateBindings(tokens, parameters.Count);
+        return tokens;
     }
 
     private static List<string> Tokenize(string text)
@@ -793,17 +1178,21 @@ internal static class TerraScaleSqlValidation
                 continue;
             }
 
-            if (current == '$' || current == '?')
+            if (current is ':' or '@' or '$' or '?')
             {
                 var start = index++;
-                while (index < text.Length && char.IsAsciiDigit(text[index]))
+                while (index < text.Length && (char.IsAsciiLetterOrDigit(text[index]) || text[index] == '_'))
                 {
                     index++;
                 }
 
-                if (index == start + 1 && current == '$')
+                if (index == start + 1 && current is ('$' or ':' or '@'))
                 {
-                    throw SqlError("Only numbered $n parameters are allowed.");
+                    throw SqlError("SQL parameter markers must name a binding.");
+                }
+                if (current == '?' && index > start + 1 && text[(start + 1)..index].Any(static character => !char.IsAsciiDigit(character)))
+                {
+                    throw SqlError("Only ? or numbered ?n parameters are allowed.");
                 }
 
                 tokens.Add(text[start..index]);
@@ -857,6 +1246,8 @@ internal static class TerraScaleSqlValidation
             }
             else
             {
+                if (token.StartsWith(":") || token.StartsWith("@"))
+                    throw SqlError("Named SQL parameters require a TerraScaleSqlParameters object.");
                 continue;
             }
 
@@ -876,4 +1267,16 @@ internal static class TerraScaleSqlValidation
     }
 
     private static ArgumentException SqlError(string message) => new(message, "sql");
+}
+
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(TerraScaleSqlRequest))]
+[JsonSerializable(typeof(TerraScaleSqlResult))]
+[JsonSerializable(typeof(TerraScaleSqlRow))]
+[JsonSerializable(typeof(TerraScaleSqlOrderKey))]
+internal partial class TerraScaleSqlJsonContext : JsonSerializerContext;
+
+internal static class TerraScaleSqlJson
+{
+    internal static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
 }

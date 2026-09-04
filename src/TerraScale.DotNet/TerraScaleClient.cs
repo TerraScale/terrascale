@@ -16,6 +16,10 @@ namespace TerraScale.DotNet;
 /// </summary>
 public sealed class TerraScaleClient
 {
+    private const int MaxOperationBytes = 1_048_576;
+    private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(30);
+
     private static readonly JsonSerializerOptions DefaultJsonOptions = new(JsonSerializerDefaults.Web)
     {
         NumberHandling = JsonNumberHandling.AllowReadingFromString
@@ -59,6 +63,26 @@ public sealed class TerraScaleClient
         SavedQueries = new TerraScaleSavedQueriesClient(this);
         ApiKeys = new TerraScaleApiKeysClient(this);
         Backups = new TerraScaleBackupsClient(this);
+        Management = new TerraScaleManagementClient(this);
+        Tenants = new TerraScaleTenantsClient(this);
+        Sql = new TerraScaleSqlClient(this);
+        Reactive = new TerraScaleReactiveHttpClient(
+            httpClient,
+            new TerraScaleReactiveHttpClientOptions
+            {
+                BaseAddress = ResolveReactiveBaseAddress(optionSnapshot.BaseAddress),
+                ApiBaseAddress = optionSnapshot.BaseAddress,
+                // Public API keys use the same bearer scheme on REST and sync.
+                BearerToken = !string.IsNullOrWhiteSpace(optionSnapshot.ApiKey)
+                    ? optionSnapshot.ApiKey.Trim()
+                    : optionSnapshot.BearerToken,
+                BearerTokenProvider = string.IsNullOrWhiteSpace(optionSnapshot.ApiKey)
+                    ? optionSnapshot.BearerTokenProvider
+                    : null,
+                MaxRetryAttempts = optionSnapshot.MaxRetryAttempts,
+                RetryDelay = optionSnapshot.RetryDelay,
+                RegionHint = optionSnapshot.PreferredRegion,
+            });
     }
 
     /// <summary>
@@ -105,6 +129,18 @@ public sealed class TerraScaleClient
     /// Project database backup, restore point, and restore operations.
     /// </summary>
     public TerraScaleBackupsClient Backups { get; }
+
+    /// <summary>The composed management surface over this client.</summary>
+    public TerraScaleManagementClient Management { get; }
+
+    /// <summary>Database-per-tenant lifecycle operations over this client.</summary>
+    public TerraScaleTenantsClient Tenants { get; }
+
+    /// <summary>Typed-builder and raw parameterized read-only SQL operations.</summary>
+    public TerraScaleSqlClient Sql { get; }
+
+    /// <summary>CDN-first HTTP reactive view operations over this client.</summary>
+    public TerraScaleReactiveHttpClient Reactive { get; }
 
 
 
@@ -287,7 +323,7 @@ public sealed class TerraScaleClient
         {
             var resolvedRequestTypeInfo = requestTypeInfo
                 ?? throw new InvalidOperationException("A request JSON type descriptor is required when a request body is present.");
-            contentFactory = () => JsonContent.Create(body, resolvedRequestTypeInfo);
+            contentFactory = CreateJsonContentFactory(body, resolvedRequestTypeInfo);
         }
 
         using var response = await SendWithRetriesAsync(
@@ -764,6 +800,9 @@ public sealed class TerraScaleClient
         string? idempotencyKeyOverride = null,
         bool allowUnkeyedPutRetry = true)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(RequestDeadline);
+        var requestCancellationToken = deadline.Token;
         var requestId = CreateRequestId();
         var idempotencyKey = idempotencyKeyOverride ?? CreateIdempotencyKey(method);
         var attempt = 0;
@@ -779,14 +818,14 @@ public sealed class TerraScaleClient
                 configureRequest,
                 requestId,
                 idempotencyKey,
-                cancellationToken).ConfigureAwait(false);
+                requestCancellationToken).ConfigureAwait(false);
 
             try
             {
                 var response = await httpClient.SendAsync(
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken).ConfigureAwait(false);
+                    requestCancellationToken).ConfigureAwait(false);
 
                 if (response.StatusCode == HttpStatusCode.MisdirectedRequest &&
                     !repairedRestPin &&
@@ -806,13 +845,13 @@ public sealed class TerraScaleClient
                 var delay = GetRetryDelay(response, attempt);
                 AddRetryEvent(activity, attempt + 1, delay, $"HTTP {(int)response.StatusCode}");
                 response.Dispose();
-                await DelayRetryAsync(delay, cancellationToken).ConfigureAwait(false);
+                await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
             }
             catch (HttpRequestException exception) when (CanRetry(method, idempotencyKey, attempt, allowUnkeyedPutRetry))
             {
                 var delay = GetRetryDelay(response: null, attempt);
                 AddRetryEvent(activity, attempt + 1, delay, exception.GetType().Name);
-                await DelayRetryAsync(delay, cancellationToken).ConfigureAwait(false);
+                await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
             }
 
             attempt++;
@@ -963,10 +1002,53 @@ public sealed class TerraScaleClient
     private static bool IsRegion(string region) =>
         region is TerraScaleRegions.Gru or TerraScaleRegions.Sfo or TerraScaleRegions.Fra;
 
-    private Func<HttpContent?> CreateJsonContentFactory(object? body) =>
-        body is null
-            ? static () => null
-            : () => JsonContent.Create(body, options: jsonOptions);
+    private static Uri ResolveReactiveBaseAddress(Uri restBaseAddress)
+    {
+        if (string.Equals(restBaseAddress.Host, "api.terrascale.tech", StringComparison.OrdinalIgnoreCase) ||
+            RegionFromHost(restBaseAddress.Host) is not null)
+        {
+            return new Uri("https://sync.api.terrascale.tech", UriKind.Absolute);
+        }
+
+        return restBaseAddress;
+    }
+
+    private Func<HttpContent?> CreateJsonContentFactory(object? body)
+    {
+        if (body is null)
+        {
+            return static () => null;
+        }
+
+        var payload = JsonSerializer.SerializeToUtf8Bytes(body, jsonOptions);
+        ValidateOperationSize(payload.Length);
+        return () => CreateJsonContent(payload);
+    }
+
+    private static Func<HttpContent?> CreateJsonContentFactory<TRequest>(TRequest body, JsonTypeInfo<TRequest> typeInfo)
+    {
+        ArgumentNullException.ThrowIfNull(typeInfo);
+        var payload = JsonSerializer.SerializeToUtf8Bytes(body, typeInfo);
+        ValidateOperationSize(payload.Length);
+        return () => CreateJsonContent(payload);
+    }
+
+    private static HttpContent CreateJsonContent(byte[] payload)
+    {
+        var content = new ByteArrayContent(payload);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        return content;
+    }
+
+    private static void ValidateOperationSize(int bytes)
+    {
+        if (bytes > MaxOperationBytes)
+        {
+            throw new ArgumentException(
+                $"The serialized TerraScale operation exceeds the {MaxOperationBytes} byte limit.",
+                "body");
+        }
+    }
 
     private sealed class GuardedServerSentEventEnumerable<TEvent>(
         IAsyncEnumerable<TEvent> inner) : IAsyncEnumerable<TEvent>
@@ -1022,9 +1104,9 @@ public sealed class TerraScaleClient
         }
 
         var normalized = idempotencyKey.Trim();
-        if (normalized.Length > 128)
+        if (System.Text.Encoding.UTF8.GetByteCount(normalized) > 128)
         {
-            throw new InvalidOperationException("IdempotencyKeyFactory must return at most 128 characters.");
+            throw new InvalidOperationException("IdempotencyKeyFactory must return at most 128 UTF-8 bytes.");
         }
 
         return normalized;
@@ -1047,7 +1129,7 @@ public sealed class TerraScaleClient
     {
         if (!string.IsNullOrWhiteSpace(options.ApiKey))
         {
-            request.Headers.TryAddWithoutValidation("X-TerraScale-Auth-Key", options.ApiKey.Trim());
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.ApiKey.Trim());
             return;
         }
 
@@ -1274,17 +1356,19 @@ public sealed class TerraScaleClient
     {
         if (response.Headers.RetryAfter?.Delta is { } delta)
         {
-            return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
+            return BoundRetryAfter(delta);
         }
 
         if (response.Headers.RetryAfter?.Date is { } date)
         {
-            var delay = date - DateTimeOffset.UtcNow;
-            return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
+            return BoundRetryAfter(date - DateTimeOffset.UtcNow);
         }
 
         return null;
     }
+
+    private static TimeSpan BoundRetryAfter(TimeSpan delay) =>
+        delay <= TimeSpan.Zero ? TimeSpan.Zero : delay > MaxRetryAfter ? MaxRetryAfter : delay;
 
     private static Task DelayRetryAsync(TimeSpan delay, CancellationToken cancellationToken) =>
         delay == TimeSpan.Zero ? Task.CompletedTask : Task.Delay(delay, cancellationToken);

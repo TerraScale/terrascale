@@ -7,144 +7,67 @@ namespace TerraScale.DotNet.Tests;
 public sealed class TerraScaleBackupConfirmationRequestTests
 {
     [Test]
-    public async Task PlanAsync_SendsExpectedRouteAndBody()
+    public async Task ListAsync_UsesDirectDatabaseReadinessRouteAndBody()
     {
-        using var handler = new RecordingHandler("""
-            {"action":"backup.execute","projectId":"project-a","databaseId":"database-a","databaseName":"orders","requestDigest":"digest","confirmationToken":"token","expiresAt":"2026-08-05T12:00:00+00:00"}
-            """);
+        using var handler = new RecordingHandler("{\"ready\":true,\"streaming\":false}");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        await client.Backups.PlanAsync(
-            "project-a",
-            "database-a",
-            new TerraScaleBackupConfirmationPlanRequest("session-a"));
+        var status = await client.Backups.ListAsync("orders");
 
-        var planRequest = handler.Request
-            ?? throw new InvalidOperationException("The backup plan request fixture is missing.");
-        await Assert.That(planRequest.Method).IsEqualTo(HttpMethod.Post);
-        await Assert.That(planRequest.Uri).IsEqualTo("https://api.example.invalid/api/v1/projects/project-a/databases/database-a/backups:plan");
-        await Assert.That(planRequest.Body).IsEqualTo("{\"operationSessionId\":\"session-a\"}");
-        await Assert.That(planRequest.IdempotencyKey).IsNull();
+        await Assert.That(handler.Request).IsEqualTo(new RecordedRequest(
+            HttpMethod.Get,
+            "https://api.example.invalid/api/v1/databases/orders/backups",
+            null));
+        await Assert.That(status.Ready).IsTrue();
+        await Assert.That(status.Streaming).IsFalse();
     }
 
     [Test]
-    public async Task ExecuteAsync_SendsExpectedRouteBodyCallerIdempotencyKeyAndResponseMetadata()
+    public async Task RestoreAsync_UsesDirectRouteAndRestoreToNewDatabaseBody()
     {
-        using var handler = new RecordingHandler("""
-            {"backupId":"backup-a","projectId":"project-a","databaseId":"database-a","databaseName":"orders","policy":"on-demand","retention":"default","status":"queued","destinationType":"object-storage","hasRestorePoint":false,"requestedBy":"owner@example.com","requestedAt":"2026-08-05T12:00:00+00:00","updatedAt":"2026-08-05T12:00:00+00:00","completedAt":null,"errorMessage":null}
-            """, HttpStatusCode.Accepted, idempotencyReplayed: true);
+        using var handler = new RecordingHandler("{\"name\":\"orders-copy\",\"placement\":\"GRU\",\"residency\":\"br-only\",\"deleted\":false,\"created_at\":1,\"parent\":\"orders\"}", HttpStatusCode.Created);
         using var httpClient = new HttpClient(handler);
-        var client = CreateClient(httpClient, () => "factory-key");
-
-        var execution = await client.Backups.ExecuteAsync(
-            "project-a",
-            "database-a",
-            new TerraScaleBackupConfirmationExecuteRequest("session-a", "confirmation-a"),
-            " caller-key ");
-
-        var executeRequest = handler.Request
-            ?? throw new InvalidOperationException("The backup execute request fixture is missing.");
-        await Assert.That(executeRequest.Method).IsEqualTo(HttpMethod.Post);
-        await Assert.That(executeRequest.Uri).IsEqualTo("https://api.example.invalid/api/v1/projects/project-a/databases/database-a/backups:execute");
-        await Assert.That(executeRequest.Body).IsEqualTo("{\"operationSessionId\":\"session-a\",\"confirmationToken\":\"confirmation-a\"}");
-        await Assert.That(executeRequest.IdempotencyKey).IsEqualTo("caller-key");
-        await Assert.That(execution.Job.BackupId).IsEqualTo("backup-a");
-        await Assert.That(execution.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
-        await Assert.That(execution.IdempotencyReplayed).IsTrue();
-    }
-
-    [Test]
-    public async Task BackupsClient_DoesNotExposeLegacyTriggerAsync()
-    {
-        await Assert.That(typeof(TerraScaleBackupsClient).GetMethod("TriggerAsync")).IsNull();
-    }
-
-    [Test]
-    public async Task ConfirmationRequests_RejectMissingRequiredArguments()
-    {
-        using var httpClient = new HttpClient(new RecordingHandler("{}"));
         var client = CreateClient(httpClient);
 
-        var planException = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.PlanAsync(
-            "project-a",
-            "database-a",
-            new TerraScaleBackupConfirmationPlanRequest(" ")));
-        var executeException = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.ExecuteAsync(
-            "project-a",
-            "database-a",
-            new TerraScaleBackupConfirmationExecuteRequest("session-a", "confirmation-a"),
-            " "));
+        var restored = await client.Backups.RestoreAsync("orders", new TerraScaleRestoreRequest("orders-copy", 1_735_689_600_000));
 
-        await Assert.That(planException).IsNotNull();
-        await Assert.That(executeException).IsNotNull();
+        await Assert.That(handler.Request).IsEqualTo(new RecordedRequest(
+            HttpMethod.Post,
+            "https://api.example.invalid/api/v1/databases/orders/backups/restore",
+            "{\"name\":\"orders-copy\",\"at\":1735689600000}"));
+        await Assert.That(restored.Name).IsEqualTo("orders-copy");
     }
 
     [Test]
-    public async Task ConfirmationRequests_RejectValuesBeyondServerLimits()
+    public async Task RestoreAsync_RejectsMissingNameWithoutSendingARequest()
     {
-        using var httpClient = new HttpClient(new RecordingHandler("{}"));
+        using var handler = new RecordingHandler("{}");
+        using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var planException = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.PlanAsync(
-            "project-a",
-            "database-a",
-            new TerraScaleBackupConfirmationPlanRequest(new string('s', 129))));
-        var operationSessionException = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.ExecuteAsync(
-            "project-a",
-            "database-a",
-            new TerraScaleBackupConfirmationExecuteRequest(new string('s', 129), "confirmation-a"),
-            "caller-key"));
-        var confirmationTokenException = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.ExecuteAsync(
-            "project-a",
-            "database-a",
-            new TerraScaleBackupConfirmationExecuteRequest("session-a", new string('t', 8193)),
-            "caller-key"));
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.RestoreAsync("orders", new TerraScaleRestoreRequest(" ")));
 
-        await Assert.That(planException).IsNotNull();
-        await Assert.That(operationSessionException).IsNotNull();
-        await Assert.That(confirmationTokenException).IsNotNull();
+        await Assert.That(exception).IsNotNull();
+        await Assert.That(handler.Request).IsNull();
     }
 
-    private static TerraScaleClient CreateClient(HttpClient httpClient, Func<string>? idempotencyKeyFactory = null) =>
-        new(httpClient, new TerraScaleClientOptions
-        {
-            BaseAddress = new Uri("https://api.example.invalid/"),
-            ApiKey = "test-key",
-            IdempotencyKeyFactory = idempotencyKeyFactory
-        });
+    private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
+    {
+        BaseAddress = new Uri("https://api.example.invalid/"),
+        ApiKey = "test-key"
+    });
 
-    private sealed class RecordingHandler(
-        string responseBody,
-        HttpStatusCode statusCode = HttpStatusCode.OK,
-        bool idempotencyReplayed = false) : HttpMessageHandler
+    private sealed class RecordingHandler(string responseBody, HttpStatusCode statusCode = HttpStatusCode.OK) : HttpMessageHandler
     {
         public RecordedRequest? Request { get; private set; }
 
-        protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            var requestUri = request.RequestUri
-                ?? throw new InvalidOperationException("The request URI fixture is missing.");
-            Request = new RecordedRequest(
-                request.Method,
-                requestUri.ToString(),
-                request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken),
-                request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.Single() : null);
-            var response = new HttpResponseMessage(statusCode)
-            {
-                Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
-            };
-
-            if (idempotencyReplayed)
-            {
-                response.Headers.Add("Idempotency-Replayed", "true");
-            }
-
-            return response;
+            Request = new RecordedRequest(request.Method, request.RequestUri?.ToString() ?? throw new InvalidOperationException(), request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken));
+            return new HttpResponseMessage(statusCode) { Content = new StringContent(responseBody, Encoding.UTF8, "application/json") };
         }
     }
 
-    private sealed record RecordedRequest(HttpMethod Method, string Uri, string? Body, string? IdempotencyKey);
+    private sealed record RecordedRequest(HttpMethod Method, string Uri, string? Body);
 }

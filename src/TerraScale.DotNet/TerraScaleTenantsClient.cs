@@ -3,286 +3,190 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 
+#pragma warning disable CS1591
+
 namespace TerraScale.DotNet;
 
-/// <summary>
-/// Client for database-per-tenant lifecycle endpoints.
-/// </summary>
+/// <summary>Database-per-tenant lifecycle operations.</summary>
+/// <remarks>
+/// D-51 is not present in the pinned TerraBase OpenAPI document. Methods
+/// validate locally and then return a typed contract gap; no draft route is
+/// ever requested.
+/// </remarks>
 public sealed class TerraScaleTenantsClient
 {
     private const int MaximumTenantKeyBytes = 64;
+    private const int MaximumPlacementRegions = 20;
 
-    private readonly TerraScaleClient client;
+    internal TerraScaleTenantsClient(TerraScaleClient client) => _ = client;
 
-    internal TerraScaleTenantsClient(TerraScaleClient client)
+    public Task<TerraScaleTenant> CreateAsync(TerraScaleCreateTenantRequest request, CancellationToken cancellationToken = default)
     {
-        this.client = client;
+        ValidateCreate(request);
+        return Gap<TerraScaleTenant>("tenants.create", cancellationToken);
     }
 
-    /// <summary>
-    /// Provisions a database for one tenant.
-    /// </summary>
-    /// <remarks>
-    /// A tenant inherits placement and key policy from the selected template.
-    /// Explicit regions are checked here so a client cannot submit a duplicate
-    /// or non-launch region to the placement lock.
-    /// </remarks>
-    public Task<TerraScaleTenant> CreateAsync(
-        TerraScaleCreateTenantRequest request,
-        CancellationToken cancellationToken = default)
+    public Task<TerraScaleTenant> CreateAsync(string key, string? template = null, object? placementLock = null, CancellationToken cancellationToken = default) =>
+        CreateAsync(new TerraScaleCreateTenantRequest(key, template, placementLock), cancellationToken);
+
+    public Task<TerraScaleTenant> GetAsync(string tenantKey, CancellationToken cancellationToken = default)
     {
-        ValidateCreateRequest(request);
-        return client.SendJsonAsync(
-            HttpMethod.Post,
-            "/api/v1/tenants",
-            request,
-            TypeInfo<TerraScaleCreateTenantRequest>(),
-            TypeInfo<TerraScaleTenant>(),
-            cancellationToken);
+        ValidateKey(tenantKey, nameof(tenantKey));
+        return Gap<TerraScaleTenant>("tenants.get", cancellationToken);
     }
 
-    /// <summary>
-    /// Provisions a database for one tenant using a tenant key and optional template.
-    /// </summary>
-    public Task<TerraScaleTenant> CreateAsync(
-        string key,
-        string? template = null,
-        IReadOnlyList<string>? regions = null,
-        CancellationToken cancellationToken = default) =>
-        CreateAsync(new TerraScaleCreateTenantRequest(key, template, regions), cancellationToken);
-
-    /// <summary>
-    /// Provisions a tenant with no template or explicit placement.
-    /// </summary>
-    public Task<TerraScaleTenant> CreateAsync(string key, CancellationToken cancellationToken) =>
-        CreateAsync(key, template: null, regions: null, cancellationToken: cancellationToken);
-
-    /// <summary>
-    /// Gets one tenant by its tenant key.
-    /// </summary>
-    public Task<TerraScaleTenant> GetAsync(
-        string tenantKey,
-        CancellationToken cancellationToken = default)
-    {
-        ValidateTenantKey(tenantKey, nameof(tenantKey));
-        return client.SendJsonAsync(
-            HttpMethod.Get,
-            $"/api/v1/tenants/{Escape(tenantKey)}",
-            TypeInfo<TerraScaleTenant>(),
-            cancellationToken);
-    }
-
-    /// <summary>
-    /// Lists tenants using the contract's opaque cursor.
-    /// </summary>
-    public Task<TerraScaleTenantPage> ListAsync(
-        int limit = 100,
-        string? cursor = null,
-        CancellationToken cancellationToken = default)
+    public Task<TerraScaleTenantPage> ListAsync(int limit = 100, string? cursor = null, CancellationToken cancellationToken = default)
     {
         TerraScalePagination.ValidateLimit(limit);
-        var requestUri = $"/api/v1/tenants?limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
-        if (!string.IsNullOrWhiteSpace(cursor))
-        {
-            requestUri += $"&cursor={Uri.EscapeDataString(cursor.Trim())}";
-        }
-
-        return client.SendJsonAsync(
-            HttpMethod.Get,
-            requestUri,
-            TypeInfo<TerraScaleTenantPage>(),
-            cancellationToken);
+        return Gap<TerraScaleTenantPage>("tenants.list", cancellationToken);
     }
 
-    /// <summary>
-    /// Lists tenants from the first page.
-    /// </summary>
-    public Task<TerraScaleTenantPage> ListAsync(CancellationToken cancellationToken) =>
-        ListAsync(100, cursor: null, cancellationToken: cancellationToken);
-
-    /// <summary>
-    /// Deletes one tenant database after acknowledging its tenant key.
-    /// </summary>
-    public async Task<TerraScaleDeletedTenant> DeleteAsync(
-        string tenantKey,
-        CancellationToken cancellationToken = default)
+    public Task<TerraScaleDeletedTenant> DeleteAsync(string tenantKey, TerraScaleDeleteTenantOptions options, CancellationToken cancellationToken = default)
     {
-        ValidateTenantKey(tenantKey, nameof(tenantKey));
-        var confirmation = tenantKey.Trim();
-        try
-        {
-            return await client.SendAsync<TerraScaleDeletedTenant>(
-                HttpMethod.Delete,
-                $"/api/v1/tenants/{Escape(tenantKey)}",
-                body: null,
-                request => request.Headers.TryAddWithoutValidation(
-                    "X-TerraScale-Delete-Confirmation",
-                    confirmation),
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (TerraScaleApiException exception) when (exception.StatusCode == System.Net.HttpStatusCode.NoContent)
-        {
-            // The draft contract permits a 204 response for a successful delete.
-            return new TerraScaleDeletedTenant(confirmation, string.Empty, Deleted: true);
-        }
+        ValidateKey(tenantKey, nameof(tenantKey));
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Confirm) throw new ArgumentException("Tenant deletion requires Confirm to be true.", nameof(options));
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.IdempotencyKey, nameof(options));
+        if (Encoding.UTF8.GetByteCount(options.IdempotencyKey.Trim()) > 128)
+            throw new ArgumentException("Idempotency keys must be at most 128 UTF-8 bytes.", nameof(options));
+        return Gap<TerraScaleDeletedTenant>("tenants.delete", cancellationToken);
     }
 
-    /// <summary>
-    /// Mints a tenant-scoped API key from the tenant template.
-    /// </summary>
-    public Task<TerraScaleTenantApiKey> CreateKeyAsync(
-        string tenantKey,
-        CancellationToken cancellationToken = default)
+    public Task<TerraScaleTenantApiKey> CreateKeyAsync(string tenantKey, CancellationToken cancellationToken = default)
     {
-        ValidateTenantKey(tenantKey, nameof(tenantKey));
-        return client.SendJsonAsync(
-            HttpMethod.Post,
-            $"/api/v1/tenants/{Escape(tenantKey)}/keys",
-            new TerraScaleEmptyTenantRequest(),
-            TypeInfo<TerraScaleEmptyTenantRequest>(),
-            TypeInfo<TerraScaleTenantApiKey>(),
-            cancellationToken);
+        ValidateKey(tenantKey, nameof(tenantKey));
+        return Gap<TerraScaleTenantApiKey>("tenants.keys.create", cancellationToken);
     }
 
-    /// <summary>
-    /// Mints a tenant-scoped API key. This name mirrors the management vocabulary.
-    /// </summary>
-    public Task<TerraScaleTenantApiKey> MintKeyAsync(
-        string tenantKey,
-        CancellationToken cancellationToken = default) =>
-        CreateKeyAsync(tenantKey, cancellationToken);
-
-    /// <summary>
-    /// Opens a support branch for one tenant.
-    /// </summary>
-    public Task<TerraScaleTenantBranch> CreateBranchAsync(
-        string tenantKey,
-        CancellationToken cancellationToken = default)
+    public Task<TerraScaleTenantBranch> CreateBranchAsync(string tenantKey, CancellationToken cancellationToken = default)
     {
-        ValidateTenantKey(tenantKey, nameof(tenantKey));
-        return client.SendJsonAsync(
-            HttpMethod.Post,
-            $"/api/v1/tenants/{Escape(tenantKey)}/branches",
-            new TerraScaleEmptyTenantRequest(),
-            TypeInfo<TerraScaleEmptyTenantRequest>(),
-            TypeInfo<TerraScaleTenantBranch>(),
-            cancellationToken);
+        ValidateKey(tenantKey, nameof(tenantKey));
+        return Gap<TerraScaleTenantBranch>("tenants.branches.create", cancellationToken);
     }
 
-    /// <summary>
-    /// Opens a support branch for one tenant.
-    /// </summary>
-    public Task<TerraScaleTenantBranch> CreateSupportBranchAsync(
-        string tenantKey,
-        CancellationToken cancellationToken = default) =>
-        CreateBranchAsync(tenantKey, cancellationToken);
-
-    private static void ValidateCreateRequest(TerraScaleCreateTenantRequest request)
+    private static void ValidateCreate(TerraScaleCreateTenantRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ValidateTenantKey(request.Key, nameof(request));
+        ValidateKey(request.Key, nameof(request));
         if (request.Template is not null && string.IsNullOrWhiteSpace(request.Template))
-        {
             throw new ArgumentException("Tenant template must not be blank when supplied.", nameof(request));
-        }
+        ValidateLock(request.PlacementLock, nameof(request));
+    }
 
-        if (request.Regions is null)
+    private static void ValidateLock(object? value, string parameterName)
+    {
+        if (value is null) return;
+        if (value is string lockName)
         {
+            if (lockName is not ("eu-only" or "br-only"))
+                throw new ArgumentException("Placement lock must be eu-only, br-only, or a region list.", parameterName);
             return;
         }
-
-        if (request.Regions.Count == 0)
+        if (value is IEnumerable<string> regions)
         {
-            throw new ArgumentException("Explicit tenant placement must name at least one region.", nameof(request));
-        }
-
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var region in request.Regions)
-        {
-            TerraScaleRegionCodes.Validate(region, nameof(request));
-            if (!seen.Add(region))
+            var list = regions.ToArray();
+            if (list.Length is < 1 or > MaximumPlacementRegions)
+                throw new ArgumentException($"Placement lock must contain between 1 and {MaximumPlacementRegions} regions.", parameterName);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var region in list)
             {
-                throw new ArgumentException(
-                    $"Tenant placement region '{region}' is listed more than once.",
-                    nameof(request));
+                TerraScaleRegionCodes.Validate(region, parameterName);
+                if (!seen.Add(region)) throw new ArgumentException($"Placement lock region '{region}' is duplicated.", parameterName);
             }
+            return;
         }
+        throw new ArgumentException("Placement lock must be eu-only, br-only, or a region list.", parameterName);
     }
 
-    private static void ValidateTenantKey(string tenantKey, string parameterName)
+    private static void ValidateKey(string value, string parameterName)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(tenantKey, parameterName);
-        if (Encoding.UTF8.GetByteCount(tenantKey.Trim()) > MaximumTenantKeyBytes)
-        {
-            throw new ArgumentException(
-                $"Tenant keys must be at most {MaximumTenantKeyBytes} UTF-8 bytes.",
-                parameterName);
-        }
+        ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
+        var key = value.Trim();
+        if (key.Any(char.IsControl) || Encoding.UTF8.GetByteCount(key) > MaximumTenantKeyBytes)
+            throw new ArgumentException($"Tenant keys must be printable and at most {MaximumTenantKeyBytes} UTF-8 bytes.", parameterName);
     }
 
-    private static string Escape(string value) => Uri.EscapeDataString(value.Trim());
-
-    private static JsonTypeInfo<T> TypeInfo<T>() =>
-        TerraScaleTenantsJsonContext.Default.GetTypeInfo(typeof(T)) as JsonTypeInfo<T>
-        ?? throw new InvalidOperationException($"JSON metadata for {typeof(T)} is not available in the tenants context.");
+    private static Task<T> Gap<T>(string operation, CancellationToken cancellationToken) =>
+        cancellationToken.IsCancellationRequested
+            ? Task.FromCanceled<T>(cancellationToken)
+            : Task.FromException<T>(new TerraScaleContractGapException(operation));
 }
 
-/// <summary>
-/// Request body for provisioning one tenant database.
-/// </summary>
 public sealed record TerraScaleCreateTenantRequest(
     string Key,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Template = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Regions = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] object? PlacementLock = null);
 
-/// <summary>
-/// A provisioned tenant database.
-/// </summary>
+public sealed record TerraScaleDeleteTenantOptions(bool Confirm, string IdempotencyKey);
+
 public sealed record TerraScaleTenant(
-    string Key,
-    string DatabaseId,
-    IReadOnlyList<string> Regions,
-    DateTimeOffset? CreatedAt = null);
+    [property: JsonRequired] string Key,
+    [property: JsonRequired] string DatabaseId,
+    string? Template = null,
+    object? PlacementLock = null,
+    IReadOnlyList<string>? Regions = null,
+    DateTimeOffset? CreatedAt = null) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (string.IsNullOrWhiteSpace(Key) || string.IsNullOrWhiteSpace(DatabaseId))
+            throw new JsonException("Tenant responses require non-blank key and databaseId fields.");
+        if (PlacementLock is string lockName && lockName is not ("eu-only" or "br-only"))
+            throw new JsonException("Tenant response placementLock names an unknown residency lock.");
+        if (Regions is null) return;
+        if (Regions.Count is < 1 or > 20)
+            throw new JsonException("Tenant response regions must contain between 1 and 20 items.");
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var region in Regions)
+        {
+            TerraScaleRegionCodes.ValidateResponse(region);
+            if (!seen.Add(region)) throw new JsonException("Tenant response regions must not contain duplicates.");
+        }
+    }
+}
 
-/// <summary>
-/// A page of tenant databases.
-/// </summary>
 public sealed record TerraScaleTenantPage(
-    IReadOnlyList<TerraScaleTenant> Tenants,
-    string? NextCursor = null);
+    [property: JsonRequired] IReadOnlyList<TerraScaleTenant> Tenants,
+    string? NextCursor = null) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (Tenants is null) throw new JsonException("Tenant lists require a non-null tenants field.");
+    }
+}
 
-/// <summary>
-/// Result of deleting a tenant database.
-/// </summary>
 public sealed record TerraScaleDeletedTenant(
-    string Key,
-    string DatabaseId,
-    bool Deleted);
+    [property: JsonRequired] string Key,
+    [property: JsonRequired] string DatabaseId,
+    [property: JsonRequired] bool Deleted) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (string.IsNullOrWhiteSpace(Key) || string.IsNullOrWhiteSpace(DatabaseId))
+            throw new JsonException("Delete responses require non-blank key and databaseId fields.");
+    }
+}
 
-/// <summary>
-/// A tenant-scoped API key. The token is returned only when the key is minted.
-/// </summary>
 public sealed record TerraScaleTenantApiKey(
-    string KeyId,
+    [property: JsonRequired] string KeyId,
     string? Token,
-    string TenantKey);
+    [property: JsonRequired] string TenantKey) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (string.IsNullOrWhiteSpace(KeyId) || string.IsNullOrWhiteSpace(TenantKey))
+            throw new JsonException("Tenant key responses require non-blank keyId and tenantKey fields.");
+    }
+}
 
-/// <summary>
-/// A support branch belonging to a tenant.
-/// </summary>
 public sealed record TerraScaleTenantBranch(
-    string BranchId,
-    string TenantKey,
-    string? Status = null);
-
-internal sealed record TerraScaleEmptyTenantRequest;
-
-[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
-[JsonSerializable(typeof(TerraScaleCreateTenantRequest))]
-[JsonSerializable(typeof(TerraScaleTenant))]
-[JsonSerializable(typeof(TerraScaleTenantPage))]
-[JsonSerializable(typeof(TerraScaleDeletedTenant))]
-[JsonSerializable(typeof(TerraScaleTenantApiKey))]
-[JsonSerializable(typeof(TerraScaleTenantBranch))]
-[JsonSerializable(typeof(TerraScaleEmptyTenantRequest))]
-internal partial class TerraScaleTenantsJsonContext : JsonSerializerContext;
+    [property: JsonRequired] string BranchId,
+    [property: JsonRequired] string TenantKey,
+    string? Status = null) : IJsonOnDeserialized
+{
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        if (string.IsNullOrWhiteSpace(BranchId) || string.IsNullOrWhiteSpace(TenantKey))
+            throw new JsonException("Tenant branch responses require non-blank branchId and tenantKey fields.");
+    }
+}
