@@ -193,7 +193,8 @@ impl WalHeader {
 /// pairs, continuing from `state`. The word order follows the WAL magic.
 fn wal_checksum(big_endian: bool, data: &[u8], state: (u32, u32)) -> (u32, u32) {
     let mut pair = state;
-    for chunk in data.chunks_exact(8) {
+    let (chunks, _) = data.as_chunks::<8>();
+    for chunk in chunks {
         let words = if big_endian {
             (
                 u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
