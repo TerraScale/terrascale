@@ -1,16 +1,18 @@
 ---
 title: Pricing & limits
-description: TerraScale plans, quotas, write and storage definitions, abuse guards, and limits. Pay for writes and storage; reads, queries, egress, and delivery are free.
+description: TerraScale plans, quotas, write and storage definitions, abuse guards, and limits. Pay for writes and storage; reads, queries, egress, and delivery are free and unbilled.
 ---
 
 # Pricing & limits
 
-> **Draft.** These numbers are generated from the workspace GOAL. They are
-> confirmed by the owner before anything is published (O-6), and every
-> published number must have a measured unit cost behind it (D-61).
+> **Draft.** The generated [pricing sheet](/pricing) and [limits page](/limits)
+> are sourced from `data/pricing.json`. The values must be confirmed by the
+> owner before publication (O-6), and every published number must have a
+> measured unit cost behind it (D-61).
 
-TerraScale bills exactly two dimensions: **writes and storage**. Everything
-else on the request path is free and unmetered.
+TerraScale bills exactly two dimensions: **writes and storage**. Reads,
+queries, and direct member read egress are free and unbilled, but are metered
+for abuse guards and cost attribution. The guards are limits, never charges.
 
 ## What counts as a write
 
@@ -19,8 +21,9 @@ counted as `ceil(bytes / 4 KiB)` — a 5 KiB update is 2 writes.
 
 **Replicated writes cost one write per region.** A write to a database
 selected in 3 regions is billed as 3 writes. This is the per-region
-replication cost, shown up front. Delivering that write to any number of
-subscribers is free.
+replication cost, shown up front. We never claim infrastructure is free:
+replication across your selected regions is priced as writes, above.
+Delivering that write to any number of subscribers is free.
 
 ## What counts as storage
 
@@ -28,7 +31,11 @@ Storage = **logical bytes × regions**, at $/GB-month: the canonical bytes of
 current documents plus retained history, TTL-aware, measured in byte-seconds.
 Indexes, WAL, and backups are not billed.
 
-## Free, unlimited, and unbilled
+## Free and unbilled
+
+These dimensions are never billed. Reads, queries, and direct member read
+egress are metered for abuse guards and cost attribution; the limits below
+apply where a guard exists. CDN-delivered reactive data has no bandwidth guard.
 
 - reads
 - queries
@@ -92,6 +99,13 @@ guard.** Subscribers per view are unlimited on every plan.
 - Max document size: **1 MiB**
 - History retention: default 7 days, configurable per collection 1–30 days,
   plan-capped at the PITR figure, billed as storage
+- **Placement lock (residency):** a database's bytes at rest exist only in
+  its selected regions. A placement lock (`eu-only`, `br-only`, or an
+  explicit region list) is set at creation and cannot be widened; it is
+  enforced at placement, replication, backup, restore, export, and
+  branching. Cloudflare's edge decrypts reactive traffic at the PoP nearest
+  the reader worldwide as a sub-processor under its DPA; we do not promise
+  in-region edge processing at launch.
 
 ## The free tier, stated honestly
 
@@ -113,3 +127,5 @@ prices.
 See [pricing philosophy](/concepts/pricing-philosophy) for why the model looks
 like this. Billing is live from day one of the waitlist beta, with $50 credits
 per beta account.
+
+Generated detail: [pricing sheet](/pricing) · [limits](/limits).

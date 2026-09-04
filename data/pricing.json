@@ -2,7 +2,8 @@
   "$comment": "L-1 draft source of truth. Generated pages (docs/pricing.md, docs/limits.md) must match this file. Values mirror GOAL.md D-16/D-17/D-21/D-25/D-64. A write is billed once regardless of views/subscribers (D-22); infrastructure is never claimed free.",
   "billingDimensions": {
     "billed": ["writes", "storage"],
-    "freeUnlimitedUnbilled": [
+    "meteredForGuards": ["reads", "queries", "direct member read egress"],
+    "freeUnbilled": [
       "reads",
       "queries",
       "egress",

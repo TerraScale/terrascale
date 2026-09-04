@@ -9,7 +9,9 @@
 > costs +1 write per region) and storage (logical bytes x regions at
 > $/GB-month). Reads, queries, egress, CDN delivery, fan-out, subscribers,
 > WebSocket connections, webhook delivery, catch-up/replay, and TTL expiry
-> are free and unlimited; guards on free dimensions are unbilled abuse limits.
+> are free and unlimited; reads, queries, and direct member read egress are
+> metered for unbilled abuse guards, while CDN-delivered reactive data has no
+> bandwidth guard.
 > SQL is the only query language (D-78). A write is billed once regardless of
 > views/subscribers (D-22).
 
@@ -30,13 +32,18 @@ Base URL: https://docs.terrascale.tech
 - Pricing (L-1 draft, generated from D-16/D-17/D-21/D-25/D-64): writes + storage billed, everything else free.: https://docs.terrascale.tech/pricing
 - Pricing & limits: plans, quotas, guards, branch allowance.: https://docs.terrascale.tech/pricing/
 - Limits and unbilled abuse guards (D-25/D-64), generated from the same source as pricing.: https://docs.terrascale.tech/limits
-- Runnable snippets: every snippet runs against a real sandbox branch pre-filled with the reader's key (D-56).: https://docs.terrascale.tech/snippets
-- Launch post stub (L-5): Why TerraScale runs on SQLite.: https://docs.terrascale.tech/blog/why-sqlite
-- Launch post stub (L-5): Reads are free — how.: https://docs.terrascale.tech/blog/reads-are-free
-- Launch post stub (L-5): benchmarks.: https://docs.terrascale.tech/blog/benchmarks
-- Launch post stub (L-5): replication design.: https://docs.terrascale.tech/blog/replication
-- Launch post stub (L-5): a database per customer.: https://docs.terrascale.tech/blog/database-per-customer
+- Runnable snippets: CRUD, SQL, live subscriptions, and tenants run against a real sandbox branch pre-filled with the reader's key (D-56).: https://docs.terrascale.tech/snippets
+- Launch post draft (L-5): Why TerraScale runs on SQLite.: https://docs.terrascale.tech/blog/why-sqlite
+- Launch post draft (L-5): Reads are free — how.: https://docs.terrascale.tech/blog/reads-are-free
+- Launch post draft (L-5): benchmarks.: https://docs.terrascale.tech/blog/benchmarks
+- Launch post draft (L-5): replication design.: https://docs.terrascale.tech/blog/replication
+- Launch post draft (L-5): a database per customer.: https://docs.terrascale.tech/blog/database-per-customer
 - Legal overview: ToS, Privacy, DPA, security.txt, Support.: https://docs.terrascale.tech/legal/
+- Terms of Service: https://docs.terrascale.tech/legal/terms
+- Privacy Policy: https://docs.terrascale.tech/legal/privacy
+- Data Processing Addendum: https://docs.terrascale.tech/legal/dpa
+- Security disclosures: https://docs.terrascale.tech/legal/security
+- Support policy: https://docs.terrascale.tech/legal/support
 - Changelog.: https://docs.terrascale.tech/changelog
 
 ## Pricing summary (L-1 draft; full tables in /pricing and /pricing/)
@@ -45,15 +52,18 @@ Base URL: https://docs.terrascale.tech
   (logical bytes x regions at $/GB-month). Overage/PAYG: $1 per 1M writes,
   $0.20 per GB-month per region.
 - Free/unbilled: reads, queries, egress, CDN delivery, fan-out, subscribers,
-  WebSocket connections, webhooks, catch-up/replay, TTL expiry.
+  WebSocket connections, webhooks, catch-up/replay, TTL expiry. Reads, queries,
+  and direct member read egress are metered for unbilled abuse guards; none is
+  billed.
 - A write is billed once regardless of views/subscribers (D-22).
 
 ## Snippet harness
 
-- Snippet sources: docs/snippets/*.ts. Each exports `run(sandbox)`.
-- Stub mode (CI, no credentials): `npm test`.
-- Remote mode (real sandbox branch): TERRASCALE_SANDBOX_URL + TERRASCALE_API_KEY,
-  `npm test -- --sandbox=remote`.
+- Snippet sources: docs/snippets/*.ts. Runnable snippets export `run(sandbox)`.
+- Remote mode (the default, fail-closed): set TERRASCALE_SANDBOX_URL,
+  TERRASCALE_API_KEY, and TERRASCALE_DATABASE_ID, then run `npm test`.
+- Explicit local stub mode (no credentials): `npm run test:stub`. This does
+  not qualify the remote contract.
 
 ## API entry points
 

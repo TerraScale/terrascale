@@ -2,8 +2,9 @@
 # Pricing
 
 > **Pay for writes and storage; everything else is free.** Reads, queries,
-> egress, CDN delivery, fan-out, subscribers, and webhook delivery are free,
-> unlimited, and unbilled. A write is billed once no matter how many views or
+> egress, CDN delivery, fan-out, subscribers, and webhook delivery are free
+> and unbilled. Reads, queries, and direct member read egress are metered for
+> abuse guards and cost attribution; a guard is never a charge. A write is billed once no matter how many views or
 > subscribers it reaches (D-22). We never claim infrastructure is free:
 > replicating a write to another selected region costs +1 write per region,
 > shown up front.
@@ -13,7 +14,8 @@
 - **Writes.** One create/update/patch/delete of <= 4 KiB (ceil(bytes / 4 KiB)). Replicating a write to another selected region = +1 write per region, shown up front.
 - **Storage.** Logical bytes (canonical bytes of current documents + retained history, TTL-aware, measured in byte-seconds) x regions, at $/GB-month.
 - Not billed as storage: indexes, WAL, backups.
-- Free, unlimited, unbilled: reads, queries, egress, CDN delivery, fan-out, concurrent subscribers, WebSocket connections, webhook delivery, catch-up and replay, TTL expiry.
+- Free and unbilled: reads, queries, egress, CDN delivery, fan-out, concurrent subscribers, WebSocket connections, webhook delivery, catch-up and replay, TTL expiry.
+- Metered for abuse guards and cost attribution (never billed): reads, queries, direct member read egress.
 
 ## Plans
 

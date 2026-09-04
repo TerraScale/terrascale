@@ -24,13 +24,18 @@ const routes = [
   ["/pricing", "Pricing (L-1 draft, generated from D-16/D-17/D-21/D-25/D-64): writes + storage billed, everything else free."],
   ["/pricing/", "Pricing & limits: plans, quotas, guards, branch allowance."],
   ["/limits", "Limits and unbilled abuse guards (D-25/D-64), generated from the same source as pricing."],
-  ["/snippets", "Runnable snippets: every snippet runs against a real sandbox branch pre-filled with the reader's key (D-56)."],
-  ["/blog/why-sqlite", "Launch post stub (L-5): Why TerraScale runs on SQLite."],
-  ["/blog/reads-are-free", "Launch post stub (L-5): Reads are free — how."],
-  ["/blog/benchmarks", "Launch post stub (L-5): benchmarks."],
-  ["/blog/replication", "Launch post stub (L-5): replication design."],
-  ["/blog/database-per-customer", "Launch post stub (L-5): a database per customer."],
+  ["/snippets", "Runnable snippets: CRUD, SQL, live subscriptions, and tenants run against a real sandbox branch pre-filled with the reader's key (D-56)."],
+  ["/blog/why-sqlite", "Launch post draft (L-5): Why TerraScale runs on SQLite."],
+  ["/blog/reads-are-free", "Launch post draft (L-5): Reads are free — how."],
+  ["/blog/benchmarks", "Launch post draft (L-5): benchmarks."],
+  ["/blog/replication", "Launch post draft (L-5): replication design."],
+  ["/blog/database-per-customer", "Launch post draft (L-5): a database per customer."],
   ["/legal/", "Legal overview: ToS, Privacy, DPA, security.txt, Support."],
+  ["/legal/terms", "Terms of Service"],
+  ["/legal/privacy", "Privacy Policy"],
+  ["/legal/dpa", "Data Processing Addendum"],
+  ["/legal/security", "Security disclosures"],
+  ["/legal/support", "Support policy"],
   ["/changelog", "Changelog."],
 ];
 
@@ -45,7 +50,9 @@ const txt = `# TerraScale docs — llms.txt (P-8)
 > costs +1 write per region) and storage (logical bytes x regions at
 > $/GB-month). Reads, queries, egress, CDN delivery, fan-out, subscribers,
 > WebSocket connections, webhook delivery, catch-up/replay, and TTL expiry
-> are free and unlimited; guards on free dimensions are unbilled abuse limits.
+> are free and unlimited; reads, queries, and direct member read egress are
+> metered for unbilled abuse guards, while CDN-delivered reactive data has no
+> bandwidth guard.
 > SQL is the only query language (D-78). A write is billed once regardless of
 > views/subscribers (D-22).
 
@@ -61,15 +68,18 @@ ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
   (logical bytes x regions at $/GB-month). Overage/PAYG: $1 per 1M writes,
   $0.20 per GB-month per region.
 - Free/unbilled: reads, queries, egress, CDN delivery, fan-out, subscribers,
-  WebSocket connections, webhooks, catch-up/replay, TTL expiry.
+  WebSocket connections, webhooks, catch-up/replay, TTL expiry. Reads, queries,
+  and direct member read egress are metered for unbilled abuse guards; none is
+  billed.
 - A write is billed once regardless of views/subscribers (D-22).
 
 ## Snippet harness
 
-- Snippet sources: docs/snippets/*.ts. Each exports \`run(sandbox)\`.
-- Stub mode (CI, no credentials): \`npm test\`.
-- Remote mode (real sandbox branch): TERRASCALE_SANDBOX_URL + TERRASCALE_API_KEY,
-  \`npm test -- --sandbox=remote\`.
+- Snippet sources: docs/snippets/*.ts. Runnable snippets export \`run(sandbox)\`.
+- Remote mode (the default, fail-closed): set TERRASCALE_SANDBOX_URL,
+  TERRASCALE_API_KEY, and TERRASCALE_DATABASE_ID, then run \`npm test\`.
+- Explicit local stub mode (no credentials): \`npm run test:stub\`. This does
+  not qualify the remote contract.
 
 ## API entry points
 

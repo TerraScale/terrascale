@@ -11,7 +11,8 @@ Databases per org: Free 1 / Starter 5 / Pro 25 / Scale soft-unlimited.
 
 ## Abuse guards (unbilled, enforced, no upsell UI)
 
-Unbilled, enforced, no upsell UI (D-64). CDN-delivered reactive data has no bandwidth guard. Subscribers per view are unlimited on every plan. Exceeding one returns a typed error with the fix; nothing is billed.
+Unbilled, enforced, no upsell UI (D-64). CDN-delivered reactive data has no bandwidth guard. Subscribers per view are unlimited on every plan. Reads, queries, and direct member read egress are metered for abuse guards and cost attribution;
+exceeding one returns a typed error with the fix, and nothing is billed.
 
 | Guard (per database) | Free | Starter | Pro | Scale |
 | --- | --- | --- | --- | --- |

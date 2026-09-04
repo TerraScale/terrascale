@@ -1,6 +1,6 @@
 // Runnable snippet: live query subscribe (D-14/D-38).
 // Real transport: CDN-backed HTTP long-polling on sync.api. by default,
-// WebSocket opt-in. Here the stub delivers the same delta contract in-process.
+// WebSocket opt-in. The explicit local stub mirrors this delta contract.
 import { strict as assert } from "node:assert";
 
 type Sandbox = {

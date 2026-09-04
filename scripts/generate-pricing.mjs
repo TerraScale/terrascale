@@ -22,8 +22,9 @@ const pricingMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pri
 # Pricing
 
 > **Pay for writes and storage; everything else is free.** Reads, queries,
-> egress, CDN delivery, fan-out, subscribers, and webhook delivery are free,
-> unlimited, and unbilled. A write is billed once no matter how many views or
+> egress, CDN delivery, fan-out, subscribers, and webhook delivery are free
+> and unbilled. Reads, queries, and direct member read egress are metered for
+> abuse guards and cost attribution; a guard is never a charge. A write is billed once no matter how many views or
 > subscribers it reaches (D-22). We never claim infrastructure is free:
 > replicating a write to another selected region costs +1 write per region,
 > shown up front.
@@ -33,7 +34,8 @@ const pricingMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pri
 - **Writes.** ${d.writeUnit.definition} ${d.writeUnit.replication}
 - **Storage.** ${d.storage.definition}
 - Not billed as storage: ${d.storage.notBilled.join(", ")}.
-- Free, unlimited, unbilled: ${d.billingDimensions.freeUnlimitedUnbilled.join(", ")}.
+- Free and unbilled: ${d.billingDimensions.freeUnbilled.join(", ")}.
+- Metered for abuse guards and cost attribution (never billed): ${d.billingDimensions.meteredForGuards.join(", ")}.
 
 ## Plans
 
@@ -75,7 +77,8 @@ Databases per org: Free ${d.limits.databasesPerOrg.Free} / Starter ${d.limits.da
 
 ## Abuse guards (unbilled, enforced, no upsell UI)
 
-${g._note} Exceeding one returns a typed error with the fix; nothing is billed.
+${g._note} Reads, queries, and direct member read egress are metered for abuse guards and cost attribution;
+exceeding one returns a typed error with the fix, and nothing is billed.
 
 | Guard (per database) | ${planNames.join(" | ")} |
 | --- | ${planNames.map(() => "---").join(" | ")} |

@@ -17,7 +17,8 @@ Effective [EFFECTIVE DATE].
 
 Customers store application data in TerraScale databases. For that content,
 we act as processor; the customer is the controller. Account and billing
-data are processed under our [Privacy Policy](./privacy.md).
+data (processed via Stripe, with Stripe Tax on from day one) are processed
+under our [Privacy Policy](./privacy.md).
 
 ## Sub-processors
 

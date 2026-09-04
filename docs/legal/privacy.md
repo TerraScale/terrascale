@@ -18,7 +18,8 @@ This Privacy Policy explains how [LEGAL ENTITY NAME — O-5],
 - **Account identity**: your email, credentials, and organization membership,
   managed by our identity provider and stored in our control-plane database.
 - **Usage and billing records**: writes and storage metered per database,
-  invoices and payments (processed by Stripe).
+  invoices and payments (processed by Stripe; Stripe Tax applies from day
+  one so every invoice is tax-correct).
 - **Audit logs**: administrative actions and access in our systems.
 - **Your application data**: whatever you store in your databases. It is
   yours; we process it only to provide the service.

@@ -1,7 +1,7 @@
 # TerraScale docs (`ts-docs`)
 
 Product docs site source: runnable snippets (D-56), `llms.txt`, launch-post
-stubs (L-5), and the pricing/limits pages generated from D-16/D-17/D-21/D-25/D-64 (L-1 draft).
+drafts (L-5), and the pricing/limits pages generated from D-16/D-17/D-21/D-25/D-64 (L-1 draft).
 
 Single authority for product decisions is the workspace-root `GOAL.md`; this
 repo holds docs source only.
@@ -10,20 +10,27 @@ repo holds docs source only.
 
 ```bash
 npm ci
-npm run docs:dev
+npm run dev
 ```
 
 ## Verify (`make check`)
 
 ```bash
-npm ci && npm run build && npm test
+npm ci && npm run build
 ```
 
-`npm test` runs the snippet harness in stub-sandbox mode (no credentials
-needed). Against a real sandbox branch:
+`npm test` runs runnable snippets against a real sandbox branch and fails
+closed when its credentials are missing. Set the URL, API key, and database ID:
 
 ```bash
 TERRASCALE_SANDBOX_URL=https://<branch>.<region>.api.terrascale.tech \
 TERRASCALE_API_KEY=ts_... \
-npm test -- --sandbox=remote
+TERRASCALE_DATABASE_ID=db_... \
+npm test
+```
+
+For the deterministic local harness, use the explicit stub mode:
+
+```bash
+npm run test:stub
 ```

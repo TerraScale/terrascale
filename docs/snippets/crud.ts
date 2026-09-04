@@ -1,6 +1,7 @@
 // Runnable snippet: document CRUD.
 // Runs against a sandbox branch pre-filled with the reader's key (D-56).
-// In CI it runs against the stub sandbox (same interface, no credentials).
+// An explicit local test run may use the stub sandbox; the docs runner defaults
+// to the real cloud branch and fails closed when credentials are absent.
 import { strict as assert } from "node:assert";
 
 export const title = "Document CRUD";

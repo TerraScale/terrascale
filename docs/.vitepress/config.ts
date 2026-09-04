@@ -31,11 +31,11 @@ export default defineConfig({
       {
         text: 'Blog',
         items: [
-          { text: 'Why TerraScale runs on SQLite', link: '/blog/why-sqlite' },
-          { text: 'Reads are free: how', link: '/blog/reads-are-free' },
-          { text: 'Benchmarks', link: '/blog/benchmarks' },
-          { text: 'Replication design', link: '/blog/replication' },
-          { text: 'A database per customer', link: '/blog/database-per-customer' },
+          { text: 'Why TerraScale runs on SQLite (draft)', link: '/blog/why-sqlite' },
+          { text: 'Reads are free: how (draft)', link: '/blog/reads-are-free' },
+          { text: 'Benchmarks (draft)', link: '/blog/benchmarks' },
+          { text: 'Replication design (draft)', link: '/blog/replication' },
+          { text: 'A database per customer (draft)', link: '/blog/database-per-customer' },
         ],
       },
       {
@@ -98,13 +98,13 @@ export default defineConfig({
       ],
       '/blog/': [
         {
-          text: 'Launch posts (L-5 stubs)',
+          text: 'Launch posts (L-5 drafts)',
           items: [
-            { text: 'Why TerraScale runs on SQLite', link: '/blog/why-sqlite' },
-            { text: 'Reads are free: how', link: '/blog/reads-are-free' },
-            { text: 'Benchmarks', link: '/blog/benchmarks' },
-            { text: 'Replication design', link: '/blog/replication' },
-            { text: 'A database per customer', link: '/blog/database-per-customer' },
+            { text: 'Why TerraScale runs on SQLite (draft)', link: '/blog/why-sqlite' },
+            { text: 'Reads are free: how (draft)', link: '/blog/reads-are-free' },
+            { text: 'Benchmarks (draft)', link: '/blog/benchmarks' },
+            { text: 'Replication design (draft)', link: '/blog/replication' },
+            { text: 'A database per customer (draft)', link: '/blog/database-per-customer' },
           ],
         },
       ],

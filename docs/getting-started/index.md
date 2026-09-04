@@ -6,9 +6,10 @@ database, and dev and prod run the same engine in the same regions.
 
 ::: warning Pre-launch
 TerraScale is in waitlist beta. Billing is real from day one, with $50 of
-credits per beta account. When the docs site is live, every snippet on it runs
-against a real sandbox branch pre-filled with your key — that runner is part of
-the launch work and not wired yet, so treat snippets here as drafts until then.
+credits per beta account. Every snippet runs against a real cloud sandbox branch
+pre-filled with the reader's key; if that branch or its credentials are
+unavailable, the runner fails closed rather than substituting a local result.
+See [Runnable snippets](/snippets).
 :::
 
 ## 1. Create an app
@@ -106,3 +107,4 @@ is the metric we hold ourselves to: under five minutes on a fresh machine.
 - [Sync model](/concepts/sync) — shared views, the immutable delta log, the CDN
 - [SQL](/concepts/sql) — the live subset, `execute`-only queries, codegen
 - [Pricing philosophy](/concepts/pricing-philosophy) — why only writes and storage are billed
+- [Runnable snippets](/snippets) — CRUD, SQL, live subscriptions, and tenants

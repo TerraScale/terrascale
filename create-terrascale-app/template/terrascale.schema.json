@@ -1,0 +1,14 @@
+{
+  "collections": {
+    "posts": {
+      "fields": {
+        "title": { "type": "string" },
+        "authorId": { "type": "string" },
+        "publishedAt": { "type": "timestamp" }
+      },
+      "indexes": {
+        "byAuthor": ["authorId"]
+      }
+    }
+  }
+}

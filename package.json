@@ -8,7 +8,8 @@
     "dev": "vitepress dev docs",
     "build": "vitepress build docs",
     "preview": "vitepress preview docs",
-    "test": "node scripts/test.mjs"
+    "test": "node scripts/check-build.mjs",
+    "test:stub": "node scripts/check-build.mjs --sandbox=stub"
   },
   "dependencies": {
     "vue": "3.5.42"

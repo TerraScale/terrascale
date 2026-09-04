@@ -93,6 +93,16 @@ yourself, without a support ticket, via the dashboard or CLI. Deleting your
 account destroys your databases' encryption keys (crypto-shred), rendering
 all your data unreadable.
 
+## Sub-processors
+
+We process customer data on Oracle Cloud Infrastructure (hosting, storage,
+backups, email delivery) and deliver authorized reactive data over
+Cloudflare (DNS, TLS, WAF, CDN; edge decryption at the PoP nearest the
+reader worldwide under Cloudflare's DPA). Billing and tax processing is
+handled by Stripe (Stripe Tax on from day one). See [Privacy
+Policy](./privacy.md) and [DPA](./dpa.md) for the full sub-processor list
+and security measures.
+
 ## Free-tier reaper
 
 Free-tier databases with no request for 30 days are paused (kept, not

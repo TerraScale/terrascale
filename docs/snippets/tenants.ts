@@ -1,5 +1,7 @@
 // Runnable snippet: database-per-tenant (D-51).
 // ts.tenants.create(key) -> a database inheriting the tenant template.
+// Runs in the stub harness; remote uses POST /api/v1/tenants and fails
+// closed when the contract is unavailable.
 import { strict as assert } from "node:assert";
 
 type Sandbox = {
