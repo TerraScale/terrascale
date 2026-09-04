@@ -24,25 +24,6 @@ public sealed class TerraScaleMediaTypeContractTests
             .IsTrue();
     }
 
-    [Test]
-    public async Task ServerSentEvents_KeepTheirPublishedEventStreamMediaType()
-    {
-        using var handler = new RecordingHandler();
-        using var httpClient = new HttpClient(handler);
-        var client = CreateClient(httpClient);
-
-        TerraScaleRepositoryChange? observed = null;
-        await foreach (var change in client.Changes.SubscribeRepositoryAsync("repository-a", limit: 1))
-        {
-            observed = change;
-            break;
-        }
-
-        await Assert.That(observed?.Id).IsEqualTo("document-a");
-        await Assert.That(handler.Requests).Count().IsEqualTo(1);
-        await Assert.That(handler.Requests[0].Accept)
-            .IsEquivalentTo(["text/event-stream"]);
-    }
 
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
     {

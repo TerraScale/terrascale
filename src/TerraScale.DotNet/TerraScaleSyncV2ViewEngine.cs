@@ -270,7 +270,7 @@ public sealed class TerraScaleSyncV2ViewEngine
     }
 
     /// <summary>
-    /// Opens the bounded TQL view subscription: <c>Authenticated</c>
+    /// Opens the bounded view subscription: <c>Authenticated</c>
     /// becomes <c>Subscribing</c>. The subscription's identity is the
     /// server's business; the engine tracks only what it delivers.
     /// </summary>

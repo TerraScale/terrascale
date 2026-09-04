@@ -19,7 +19,7 @@ public enum TerraScaleViewSessionState
     /// <summary>The connection is authenticated; the principal is known.</summary>
     Authenticated,
 
-    /// <summary>A bounded TQL view subscription is being opened.</summary>
+    /// <summary>A bounded view subscription is being opened.</summary>
     Subscribing,
 
     /// <summary>An authorized snapshot is being assembled chunk by chunk.</summary>

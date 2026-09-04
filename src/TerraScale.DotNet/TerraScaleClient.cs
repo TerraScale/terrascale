@@ -54,9 +54,7 @@ public sealed class TerraScaleClient
         Databases = new TerraScaleDatabasesClient(this);
         Collections = new TerraScaleCollectionsClient(this);
         Documents = new TerraScaleDocumentsClient(this);
-        Tql = new TerraScaleTqlClient(this);
         Schemas = new TerraScaleSchemasClient(this);
-        Changes = new TerraScaleChangesClient(this);
         Billing = new TerraScaleBillingClient(this);
         Onboarding = new TerraScaleOnboardingClient(this);
         Organizations = new TerraScaleOrganizationsClient(this);
@@ -92,19 +90,9 @@ public sealed class TerraScaleClient
     public TerraScaleDocumentsClient Documents { get; }
 
     /// <summary>
-    /// TerraScale Query Language operations.
-    /// </summary>
-    public TerraScaleTqlClient Tql { get; }
-
-    /// <summary>
     /// Repository schema operations.
     /// </summary>
     public TerraScaleSchemasClient Schemas { get; }
-
-    /// <summary>
-    /// Real-time repository change subscriptions.
-    /// </summary>
-    public TerraScaleChangesClient Changes { get; }
 
     /// <summary>
     /// Organization billing, invoices, checkout, and customer portal operations.

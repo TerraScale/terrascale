@@ -207,8 +207,6 @@ internal static class TerraScaleApiRoutes
     public static TerraScaleBoundRoute DocumentDelete(string repositoryId, string documentId) =>
         new TerraScaleBoundRoute($"/api/v1/repositories/{Escape(repositoryId)}/documents/{EscapeDocumentId(documentId)}");
 
-    public static TerraScaleBoundRoute QueryExecute(string repositoryId) =>
-        new TerraScaleBoundRoute($"/api/v1/repositories/{Escape(repositoryId)}/tql");
 
     public static TerraScaleBoundRoute SchemaGet(string repositoryId) =>
         new TerraScaleBoundRoute($"/api/v1/repositories/{Escape(repositoryId)}/schema");
