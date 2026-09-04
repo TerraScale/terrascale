@@ -571,8 +571,9 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(restore_backup))
         .routes(routes!(create_export))
         .routes(routes!(list_branches, create_branch))
-        .routes(routes!(attach_view))
-        .routes(routes!(view_log))
+        .routes(routes!(crate::reactive_api::attach_view))
+        .routes(routes!(crate::reactive_api::snapshot))
+        .routes(routes!(crate::reactive_api::view_log))
 }
 
 /// Adds the parts of the contract that cannot be inferred from axum extractors.
@@ -711,6 +712,23 @@ fn enrich_openapi(raw: String) -> String {
                         }));
                     }
                 }
+                if matches!(operation_id.as_str(), "snapshot" | "view_log") {
+                    if let Some(response) = operation
+                        .get_mut("responses")
+                        .and_then(serde_json::Value::as_object_mut)
+                        .and_then(|responses| responses.get_mut("200"))
+                        .and_then(serde_json::Value::as_object_mut)
+                    {
+                        response.insert(
+                            "content".to_owned(),
+                            serde_json::json!({
+                                "application/msgpack": {
+                                    "schema": { "$ref": "#/components/schemas/ReactiveEnvelope" }
+                                }
+                            }),
+                        );
+                    }
+                }
             }
         }
     }
@@ -791,6 +809,10 @@ fn add_route_parameters(operation: &mut serde_json::Map<String, serde_json::Valu
             add_parameter(operation, "offset", "query", true, "integer");
             add_parameter(operation, "x-terrascale-view-capability", "header", true, "string");
             set_parameter_format(operation, "offset", "query", "int64");
+        }
+        "snapshot" => {
+            add_parameter(operation, "cut", "query", false, "integer");
+            set_parameter_format(operation, "cut", "query", "int64");
         }
         _ => {}
     }
@@ -936,8 +958,7 @@ fn request_schema(operation_id: &str) -> Option<(&'static str, bool)> {
         "put_document" | "patch_document" => ("JsonValue", true),
         "execute_sql" => ("SqlRequest", true),
         "create_webhook" => ("WebhookRequest", true),
-        // The pending handler accepts an empty body and uses the unnamed view.
-        "attach_view" => ("AttachViewRequest", false),
+        "attach_view" => ("AttachViewRequest", true),
         "restore_backup" | "create_branch" => ("RestoreRequest", true),
         "poll" => ("ReactivePollRequest", true),
         _ => return None,
@@ -962,6 +983,7 @@ fn success_schema(operation_id: &str) -> Option<&'static str> {
         "execute_sql" => Some("SqlResultResponse"),
         "list_backups" => Some("BackupStatusResponse"),
         "poll" => Some("ReactiveFramesResponse"),
+        "attach_view" => Some("AttachViewResponse"),
         _ => None,
     }
 }
@@ -977,8 +999,6 @@ fn pending_operation(operation_id: &str) -> bool {
             | "list_webhooks"
             | "create_webhook"
             | "delete_webhook"
-            | "attach_view"
-            | "view_log"
             | "create_export"
     )
 }
@@ -1026,7 +1046,8 @@ fn openapi_schemas() -> serde_json::Value {
             { "type": "object", "required": ["url"], "properties": { "url": { "type": "string", "format": "uri" } } },
             { "type": "object", "required": ["id"], "properties": { "id": { "type": "string" } } }
         ] },
-        "AttachViewRequest": { "type": "object", "properties": { "view": { "type": "string" }, "name": { "type": "string" }, "id": { "type": "string" } } },
+        "AttachViewRequest": { "type": "object", "required": ["databaseId", "statement"], "properties": { "databaseId": { "type": "string" }, "statement": { "type": "string" }, "parameters": { "type": "string", "description": "Base64 encoded SQL parameter bytes" }, "checkpoint": { "type": ["string", "null"], "description": "Base64 encoded opaque resume checkpoint" }, "subscription": { "type": ["string", "null"] }, "entitlement_epoch": { "type": "integer", "format": "int64" } } },
+        "AttachViewResponse": { "type": "object", "required": ["view", "generation", "snapshot_chunks", "log", "checkpoint", "capability", "capability_header", "offset"], "properties": { "view": { "type": "string" }, "generation": { "type": "integer", "format": "int64" }, "snapshot_chunks": { "type": "array", "items": { "type": "string" } }, "log": { "type": "string" }, "checkpoint": { "type": "string" }, "capability": { "type": "string" }, "capability_header": { "type": "string" }, "offset": { "type": "integer", "format": "int64" } } },
         "ReactivePollRequest": { "type": "object", "required": ["op"], "properties": { "op": { "type": "string", "enum": ["subscribe", "poll", "unsubscribe"] }, "collection": { "type": "string" }, "conditions": { "type": "array", "items": { "type": "object" } }, "projection": { "type": "array", "items": { "type": "string" } }, "subscription": { "type": "integer", "format": "int64" }, "resume": { "type": "object" } } },
         "ReactiveFramesResponse": { "type": "array", "description": "MessagePack frames; projected bodies are canonical JSON strings.", "items": { "type": "object", "additionalProperties": true } }
     });
@@ -3066,66 +3087,6 @@ async fn delete_webhook(
     ApiError::pending_surface("webhooks", "change streams → webhooks (S-07)").into_response()
 }
 
-/// Attaches to (or creates) a shared reactive view and issues its view
-/// capability (D-14): pending until the sync engine's view-attach lane
-/// (E-5) lands. Fails closed — no ad-hoc view key is minted here.
-#[utoipa::path(post, path = "/api/v1/reactive/views", responses((status = 201, description = "View attached")))]
-async fn attach_view(State(state): State<Arc<ApiState>>, body: String) -> Response {
-    let view = attach_view_name_of(&body);
-    // The distinct-view count is enforced here (D-64, E-10) so the budget
-    // is real before the E-5 lane lands.
-    if let Err(rejection) = state.guards.attach_view("reactive-views", &view) {
-        state.metrics.record_admission_rejection(
-            terrabase::observability::Operation::Subscribe,
-            terrabase::observability::AdmissionReason::Capacity,
-        );
-        return ApiError::abuse_guard(&rejection).into_response();
-    }
-    // The attach lane is still pending, so no shared-view resource owns this
-    // slot. Release it on every failed attach; otherwise retries eventually
-    // exhaust the quota even though no view was created.
-    state.guards.detach_view("reactive-views", &view);
-    ApiError::pending_surface(
-        "shared reactive view attach",
-        "the sync engine view-attach lane (E-5)",
-    )
-    .into_response()
-}
-
-/// Parses one shared view name out of an attach body (`view`, `name`, or
-/// `id`), defaulting to the single unnamed view.
-fn attach_view_name_of(body: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|request| {
-            request
-                .get("view")
-                .or_else(|| request.get("name"))
-                .or_else(|| request.get("id"))
-                .and_then(serde_json::Value::as_str)
-                .map(|name| name.trim().to_owned())
-        })
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "default".to_owned())
-}
-
-/// Serves one shared view generation's immutable delta log at an offset
-/// (D-14/D-55): pending with the attach lane (E-5).
-#[utoipa::path(get, path = "/api/v1/reactive/views/{view}/{generation}/log", responses((status = 200, description = "View log")))]
-async fn view_log(
-    State(state): State<Arc<ApiState>>,
-    Path((_view, _generation)): Path<(String, String)>,
-) -> Response {
-    // Reads of the log ride the read/query rate guard like every other read.
-    if let Err(error) =
-        check_read_guard(&state, "reactive-views", terrabase::observability::Operation::Read)
-    {
-        return error.into_response();
-    }
-    ApiError::pending_surface("the shared view log", "the sync engine view-attach lane (E-5)")
-        .into_response()
-}
-
 /// Exports one database's logical contents as a versioned bundle (D-60):
 /// schemas, index definitions, current documents, retained history, branch
 /// metadata, a manifest, and checksums, plus the current-data JSONL form.
@@ -3568,6 +3529,7 @@ mod tests {
             ("/api/v1/databases/{name}/reactive", "get"),
             ("/api/v1/databases/{name}/reactive/poll", "post"),
             ("/api/v1/reactive/views", "post"),
+            ("/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}", "get"),
             ("/api/v1/reactive/views/{view}/{generation}/log", "get"),
         ] {
             assert!(
@@ -3649,8 +3611,6 @@ mod tests {
             "list_webhooks",
             "create_webhook",
             "delete_webhook",
-            "attach_view",
-            "view_log",
             "create_export",
         ];
         let mut operation_count = 0;
@@ -3676,8 +3636,7 @@ mod tests {
                         .get("requestBody")
                         .and_then(serde_json::Value::as_object)
                         .expect("request body");
-                    let expected_required =
-                        if id == "attach_view" { Some(false) } else { Some(true) };
+                    let expected_required = Some(true);
                     assert_eq!(
                         body.get("required").and_then(serde_json::Value::as_bool),
                         expected_required,
@@ -3737,7 +3696,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(operation_count, 35, "registered route count changed");
+        assert_eq!(operation_count, 36, "registered route count changed");
     }
 
     #[tokio::test]

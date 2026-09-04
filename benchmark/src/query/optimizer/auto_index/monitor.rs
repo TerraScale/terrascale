@@ -23,6 +23,12 @@ pub(crate) enum MonitorDecision {
     Retire,
 }
 
+/// Port for logical-cost regression and unused-index monitoring.
+pub(crate) trait IndexMonitor {
+    /// Evaluates the active candidate for the current window.
+    fn inspect(&mut self, candidate: &Candidate) -> MonitorDecision;
+}
+
 /// Why a monitor action was produced.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MonitorReason {
@@ -297,13 +303,13 @@ impl MonitorConfig {
     /// Sets the maximum retained samples (zero is clamped to one).
     #[must_use]
     pub(crate) const fn with_max_samples(mut self, value: usize) -> Self {
-        self.max_samples = value.max(1);
+        self.max_samples = if value == 0 { 1 } else { value };
         self
     }
     /// Sets the minimum paired samples required for a decision.
     #[must_use]
     pub(crate) const fn with_min_samples(mut self, value: usize) -> Self {
-        self.min_samples = value.max(1);
+        self.min_samples = if value == 0 { 1 } else { value };
         self
     }
     /// Sets the write-cost cap and its absolute floor.
@@ -605,10 +611,15 @@ impl<C: MonitorClock> RollingIndexMonitor<C> {
             invisible_at: None,
             blocked_until: None,
         });
-        if state.status == CandidateStatus::Retired {
+        let status = state.status;
+        let blocked_until = state.blocked_until;
+        let invisible_at = state.invisible_at;
+        let last_used = state.last_used;
+        let first_seen = state.first_seen;
+        if status == CandidateStatus::Retired {
             return MonitorDecision::Keep;
         }
-        if let Some(until) = state.blocked_until {
+        if let Some(until) = blocked_until {
             if now < until {
                 self.audit(
                     identity,
@@ -622,10 +633,12 @@ impl<C: MonitorClock> RollingIndexMonitor<C> {
                 return MonitorDecision::Keep;
             }
         }
-        if state.status == CandidateStatus::Invisible {
-            if let Some(invisible_at) = state.invisible_at {
+        if status == CandidateStatus::Invisible {
+            if let Some(invisible_at) = invisible_at {
                 if now.duration_since(invisible_at) >= self.config.drop_grace {
-                    state.status = CandidateStatus::Retired;
+                    if let Some(state) = self.states.get_mut(&identity) {
+                        state.status = CandidateStatus::Retired;
+                    }
                     self.audit(
                         identity,
                         MonitorAction::Retire,
@@ -643,11 +656,14 @@ impl<C: MonitorClock> RollingIndexMonitor<C> {
         if let Some((reason, measured, threshold, template_keys)) =
             self.regression_evidence(&identity)
         {
-            state.status = CandidateStatus::Invisible;
-            state.invisible_at = Some(now);
-            state.blocked_until = Some(now + self.config.cooldown);
+            let blocked_until = now + self.config.cooldown;
+            if let Some(state) = self.states.get_mut(&identity) {
+                state.status = CandidateStatus::Invisible;
+                state.invisible_at = Some(now);
+                state.blocked_until = Some(blocked_until);
+            }
             for template in template_keys {
-                self.blocklist.insert((identity.clone(), template), now + self.config.cooldown);
+                self.blocklist.insert((identity.clone(), template), blocked_until);
             }
             self.audit(
                 identity,
@@ -660,16 +676,17 @@ impl<C: MonitorClock> RollingIndexMonitor<C> {
             );
             return MonitorDecision::MakeInvisible;
         }
-        if state.last_used.is_none()
-            && now.duration_since(state.first_seen) >= self.config.retire_after_unused
-        {
-            state.status = CandidateStatus::Invisible;
-            state.invisible_at = Some(now);
+        let unused_for = now.duration_since(first_seen);
+        if last_used.is_none() && unused_for >= self.config.retire_after_unused {
+            if let Some(state) = self.states.get_mut(&identity) {
+                state.status = CandidateStatus::Invisible;
+                state.invisible_at = Some(now);
+            }
             self.audit(
                 identity,
                 MonitorAction::MakeInvisible,
                 MonitorReason::Unused,
-                Some(now.duration_since(state.first_seen).as_secs_f64()),
+                Some(unused_for.as_secs_f64()),
                 Some(self.config.retire_after_unused.as_secs_f64()),
                 sequence,
                 now,
@@ -946,7 +963,7 @@ pub(crate) fn compatible_prefix(narrow: &Candidate, wide: &Candidate) -> bool {
         && narrow.kind() == CandidateKind::BTree
         && wide.kind() == CandidateKind::BTree
         && narrow.columns().len() < wide.columns().len()
-        && narrow.fields().iter().zip(wide.fields()).all(|(left, right)| left == right)
+        && narrow.fields().iter().zip(wide.fields()).all(|(left, right)| *left == right)
 }
 
 #[allow(

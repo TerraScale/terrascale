@@ -8,31 +8,11 @@
 __pycache__/
 *.pyc
 
-# Local benchmark and recovery output. Published receipts belong under the
-# explicitly reviewed evidence paths, after redaction. The reviewed
-# replication lane receipts under docs/evidence/replication/ are tracked
-# (integrator action W4-CA-12); the reviewed BK-01 focused-run recovery
-# receipts under docs/evidence/recovery/ are tracked (integrator action,
-# 2026-08-26); the reviewed SE-07 benchmark receipts under
-# docs/evidence/benchmarks/ are tracked (SE-07 ticket write scope names the
-# path; flagged for parent review); all other evidence output stays
-# local.
-/evidence/*
-!/evidence/replication/
-!/evidence/recovery/
-!/evidence/benchmarks/
-# The SE-11 ticket write scope names evidence records under docs/evidence/;
-# the sync tracer receipts under docs/evidence/sync/ are tracked (flagged
-# for parent review, same as the paths above).
-!/evidence/sync/
+# Local, generated runtime and benchmark output.
 /benches/results/
-
-# Fleet builder worktrees (never tracked)
-/.worktrees/
-deploy/release/sbom/target/
-.claude/
-.codex-worktrees/
-
-# E-15 local stack state: dev certs, bootstrap key, member data, logs.
-# Never commit; the binary never leaves our infrastructure (D-50).
 /.terrascale/stack/
+
+# Fleet builder worktrees (never tracked).
+/.worktrees/
+/.claude/
+.codex-worktrees/

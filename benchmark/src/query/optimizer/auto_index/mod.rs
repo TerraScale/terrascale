@@ -20,6 +20,8 @@ pub(crate) mod observe;
 pub(crate) mod persistence;
 pub(crate) mod shadow;
 
+pub(crate) use monitor::IndexMonitor;
+
 use self::bandit::{MeasuredReward, WriteBudget};
 use self::build::BuildWatermark;
 use self::lifecycle::LifecycleEvent;
@@ -39,7 +41,7 @@ struct StageContracts {
     _compiler: std::marker::PhantomData<fn() -> dyn candidates::HypotheticalCompiler>,
     _selector: std::marker::PhantomData<fn() -> dyn bandit::BanditSelector>,
     _builder: std::marker::PhantomData<fn() -> dyn build::InvisibleBuilder>,
-    _monitor: std::marker::PhantomData<fn() -> dyn monitor::IndexMonitor>,
+    _monitor: std::marker::PhantomData<fn() -> dyn IndexMonitor>,
     _journal: std::marker::PhantomData<fn() -> dyn persistence::LifecycleJournal>,
     _verifier: std::marker::PhantomData<fn() -> dyn shadow::ShadowVerifier>,
     _record: std::marker::PhantomData<fn(JournalRecord)>,
@@ -202,7 +204,7 @@ impl AutoIndexState {
 
     /// Reports whether this state may serve an index-backed plan.
     #[must_use]
-    pub(crate) const fn can_serve(&self) -> bool {
+    pub(crate) fn can_serve(&self) -> bool {
         matches!(self.phase, AutoIndexPhase::Active) && self.contracts.budget.allows()
     }
 }

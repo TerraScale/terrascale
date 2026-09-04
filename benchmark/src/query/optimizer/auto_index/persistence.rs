@@ -60,8 +60,8 @@ impl JournalRecord {
         }
         let mut payload = Vec::with_capacity(128);
         payload.push(self.operation.code());
-        payload.push(phase_code(self.from).ok_or(JournalError::InvalidRecord)?);
-        payload.push(phase_code(self.phase).ok_or(JournalError::InvalidRecord)?);
+        payload.push(phase_code(self.from));
+        payload.push(phase_code(self.phase));
         payload.push(u8::from(self.watermark.is_some()));
         payload.extend_from_slice(&self.identity.generation().to_le_bytes());
         payload.extend_from_slice(&self.identity.schema().to_le_bytes());
@@ -463,8 +463,26 @@ mod tests {
         let mut corrupt = journal.bytes().to_vec();
         let last = corrupt.len() - 1;
         corrupt[last] ^= 1;
-        assert_eq!(super::ReplayState::from_bytes(&corrupt), Err(JournalError::Corrupt));
+        assert!(matches!(super::ReplayState::from_bytes(&corrupt), Err(JournalError::Corrupt)));
         let truncated = &journal.bytes()[..journal.bytes().len() - 1];
-        assert_eq!(super::ReplayState::from_bytes(truncated), Err(JournalError::Truncated));
+        assert!(matches!(super::ReplayState::from_bytes(truncated), Err(JournalError::Truncated)));
+    }
+
+    #[test]
+    fn unknown_phase_code_refuses_replay_even_with_valid_checksum() {
+        let mut frame = record(
+            1,
+            LifecycleOperation::Observe,
+            AutoIndexPhase::Observing,
+            AutoIndexPhase::Observing,
+            None,
+        )
+        .encode()
+        .unwrap();
+        frame[super::HEADER_BYTES + 1] = 0;
+        let checksum = *blake3::hash(&frame[super::HEADER_BYTES..]).as_bytes();
+        frame[9..41].copy_from_slice(&checksum);
+
+        assert!(matches!(super::ReplayState::from_bytes(&frame), Err(JournalError::InvalidRecord)));
     }
 }

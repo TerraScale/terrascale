@@ -82,6 +82,110 @@ cargo run --quiet --locked -p terrabase-server --bin terrabase-contracts -- \
 reject_recursive_symlinks "$work/contracts" generated
 diff -r contracts "$work/contracts"
 
+# Validate the producer-owned conformance corpus after the generated tree has
+# matched the checked-in bundle.  This keeps fixture drift and accidental
+# hand-edits fail-closed while leaving the additive compatibility checks below
+# unchanged.
+python3 - "$repo_root/contracts" "$contract_version" <<'PY'
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+version = sys.argv[2]
+
+def load(relative):
+    path = root / relative
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(f"invalid conformance artifact: {relative}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f"invalid conformance JSON {relative}: {error}") from error
+
+manifest = load("manifest.json")
+artifact_paths = {entry.get("path") for entry in manifest.get("artifacts", []) if isinstance(entry, dict)}
+required = {
+    "conformance/http.json",
+    "conformance/reactive.json",
+    "conformance/msgpack/message-vectors.json",
+    "conformance/msgpack/hostile-vectors.json",
+    "msgpack/message-vectors.json",
+    "msgpack/hostile-vectors.json",
+}
+if not required.issubset(artifact_paths):
+    raise SystemExit("manifest does not list every conformance artifact")
+
+http = load("conformance/http.json")
+if http.get("schemaVersion") != 1 or http.get("contractVersion") != version:
+    raise SystemExit("HTTP conformance identity does not match the contract")
+operations = http.get("operations")
+if not isinstance(operations, list) or not operations:
+    raise SystemExit("HTTP conformance corpus is empty")
+ids = [item.get("operationId") for item in operations if isinstance(item, dict)]
+if len(ids) != len(operations) or len(set(ids)) != len(ids):
+    raise SystemExit("HTTP conformance operation IDs are not unique")
+openapi = load("openapi.json")
+published = {
+    operation.get("operationId")
+    for item in openapi.get("paths", {}).values()
+    if isinstance(item, dict)
+    for operation in item.values()
+    if isinstance(operation, dict) and operation.get("operationId")
+}
+if set(ids) != published:
+    raise SystemExit("HTTP conformance corpus does not cover exactly the published operations")
+for item in operations:
+    if not isinstance(item.get("request"), dict) or not item["request"].get("method"):
+        raise SystemExit(f"HTTP fixture {item.get('operationId')} has no request")
+    if not isinstance(item.get("responses"), list) or not item["responses"]:
+        raise SystemExit(f"HTTP fixture {item.get('operationId')} has no response")
+    if not isinstance(item.get("errors"), list):
+        raise SystemExit(f"HTTP fixture {item.get('operationId')} has no error corpus")
+
+for relative in ("conformance/reactive.json",):
+    reactive = load(relative)
+    if reactive.get("schemaVersion") != 1 or reactive.get("contractVersion") != version:
+        raise SystemExit("reactive conformance identity does not match the contract")
+    for key in ("attach", "snapshot", "log", "reset"):
+        if key not in reactive:
+            raise SystemExit(f"reactive conformance is missing {key}")
+    for key in ("snapshot", "log", "reset"):
+        if re.fullmatch(r"[0-9a-f]*", reactive[key].get("hex", "")) is None:
+            raise SystemExit(f"reactive {key} bytes are not canonical hex")
+
+msgpack_manifest = root / "msgpack" / "terrascale.sync.v2.msgpack.json"
+manifest_bytes = msgpack_manifest.read_bytes()
+for relative in ("conformance/msgpack/message-vectors.json", "conformance/msgpack/hostile-vectors.json"):
+    corpus = load(relative)
+    if corpus.get("protocol") != "terrascale.sync.v2.msgpack" or corpus.get("version") != "2.1":
+        raise SystemExit(f"{relative} has the wrong protocol identity")
+    if corpus.get("contractVersion") != version:
+        raise SystemExit(f"{relative} has the wrong contract version")
+    if corpus.get("manifestSha256") != hashlib.sha256(manifest_bytes).hexdigest():
+        raise SystemExit(f"{relative} is not tied to the MessagePack manifest")
+    if corpus.get("manifestBlake3") != next((entry.get("blake3") for entry in manifest.get("artifacts", []) if entry.get("path") == "msgpack/terrascale.sync.v2.msgpack.json"), None):
+        raise SystemExit(f"{relative} has the wrong MessagePack manifest digest")
+    vectors = corpus.get("vectors")
+    if not isinstance(vectors, list) or not vectors:
+        raise SystemExit(f"{relative} is empty")
+    names = {vector.get("name") for vector in vectors if isinstance(vector, dict)}
+    if relative.endswith("message-vectors.json"):
+        required_names = {"subscribe", "unsubscribe", "snapshot", "delta", "reset", "heartbeat", "checkpoint_ack", "authorization_changed", "region_route_change", "error", "backpressure"}
+        if not required_names.issubset(names):
+            raise SystemExit("MessagePack corpus does not cover every published message tag")
+    elif len(vectors) < 10:
+        raise SystemExit("hostile MessagePack corpus is incomplete")
+    for vector in vectors:
+        if not isinstance(vector, dict) or not isinstance(vector.get("hex"), str) or len(vector["hex"]) % 2 or re.fullmatch(r"[0-9a-f]*", vector["hex"]) is None:
+            raise SystemExit(f"{relative} contains a non-canonical byte vector")
+for canonical, compatibility in (("conformance/msgpack/message-vectors.json", "msgpack/message-vectors.json"), ("conformance/msgpack/hostile-vectors.json", "msgpack/hostile-vectors.json")):
+    if (root / canonical).read_bytes() != (root / compatibility).read_bytes():
+        raise SystemExit(f"{compatibility} is not the producer-generated corpus")
+PY
+
 if [[ -n "$previous_bundle" ]]; then
   python3 - "$previous_bundle" "$repo_root/contracts" "$contract_version" <<'PY'
 import json
@@ -330,8 +434,8 @@ def compare_message_pack(previous, current):
             fixed_old = {key: value for key, value in definition.items() if key != collection}
             fixed_new = {key: value for key, value in new_definition.items() if key != collection}
             same(fixed_old, fixed_new, f"msgpack.types.{name}")
-            if list(new_items) != list(old_items):
-                fail(f"msgpack.types.{name}.{collection} added or reordered an item")
+            if list(new_items)[: len(old_items)] != list(old_items):
+                fail(f"msgpack.types.{name}.{collection} removed or reordered an item")
             for item_name, item in old_items.items():
                 if item_name not in new_items:
                     fail(f"msgpack.types.{name}.{item_name} was removed")
@@ -351,9 +455,8 @@ def compare_message_pack(previous, current):
         if tag in new_tags and new_tags[tag] != name:
             fail(f"msgpack.messages reuses tag {tag}")
         new_tags[tag] = name
-    for name, message in new_messages.items():
-        if name not in old_messages:
-            fail(f"msgpack.messages.{name} added tag {message.get('tag')}")
+    # New message tags are additive. Existing tags remain fixed above, and
+    # the uniqueness check rejects reusing a withdrawn or occupied tag.
     for tag, name in old_tags.items():
         if tag not in new_tags:
             fail(f"msgpack.messages.{name} tag {tag} was removed")

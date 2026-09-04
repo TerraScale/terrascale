@@ -196,7 +196,7 @@ impl BanditSnapshot {
         if count > MAX_SNAPSHOT_ARMS {
             return Err(SnapshotError::MemoryBound);
         }
-        let mut arms = Vec::with_capacity(count);
+        let mut arms: Vec<ArmSnapshot> = Vec::with_capacity(count);
         for _ in 0..count {
             let key = CandidateKey::decode_from(&mut reader)?;
             let arm = ArmSnapshot {
@@ -665,10 +665,12 @@ impl ArmSnapshot {
 mod tests {
     use super::*;
     use crate::query::optimizer::auto_index::{
-        PredicateKind, Template, TemplatePredicate, candidates_for_template,
+        CompressConfig, LogicalCost, PredicateKind, Template, TemplatePredicate, TimedObservation,
+        candidates_for_template, tuned_workload,
     };
 
     fn candidates() -> Vec<Candidate> {
+        let now = std::time::Instant::now();
         let template = Template::try_new(
             "users",
             vec![TemplatePredicate::try_new("tenant", PredicateKind::Equality).unwrap()],
@@ -676,7 +678,14 @@ mod tests {
             Some(vec!["name".to_owned()]),
         )
         .unwrap();
-        candidates_for_template(&template, &BTreeMap::new(), &std::collections::BTreeSet::new())
+        let observations =
+            [TimedObservation::new(template, LogicalCost::new(10, 90), 1, None, now)];
+        let workload = tuned_workload(&observations, now, CompressConfig::default());
+        let weighted = workload
+            .get("users")
+            .and_then(|templates| templates.first())
+            .expect("observed template is retained");
+        candidates_for_template(weighted, &BTreeMap::new(), &std::collections::BTreeSet::new())
     }
 
     #[test]

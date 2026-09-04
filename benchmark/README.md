@@ -1,106 +1,44 @@
 # TerraBase
 
-TerraBase is TerraScale's multi-Region database engine and public API, written
-in Rust (D-34): one member process serves `/api/v1` over axum and hosts the
-engine; the private TBEP gRPC surface is control-only (placement, health,
-drain, faults).
+TerraBase is TerraScale's Rust multi-Region database engine and public API.
+Each member serves the REST and reactive APIs directly with axum and stores
+one customer database per SQLite file. SQL is the only query language; writes
+remain document operations, with canonical JSON bytes, extracted indexes,
+causal replication, live result views, and Litestream backup.
 
-This checkout is pre-production. Local tests establish implementation facts,
-not OCI qualification. `ts-orchestrator` owns native x86_64 and ARM64 runs,
-GRU/SFO/FRA topology tests, failure injection, the thirty-day soak, and
-promotion of the exact candidate. [GOAL.md](GOAL.md) records the exit gates and
-current blockers.
+The workspace [GOAL.md](../GOAL.md) is authoritative. This repository's
+[GOAL.md](GOAL.md) is only the pointer above, while [AGENTS.md](AGENTS.md)
+contains repository rules and [docs/adr/README.md](docs/adr/README.md) indexes
+durable local decisions. `GlobalDurable` is accepted only with at least two
+active selected Regions; a request with fewer Regions fails before
+acknowledgement.
 
 ## Runtime boundary
 
 ```text
 customer SDK / dashboard
-        -> public REST + reactive API over HTTPS (axum, D-34/D-44)
-        -> TerraBase engine (one SQLite file per database, D-27)
-orchestrator / CLI (control only)
-        -> private protobuf/gRPC TBEP over HTTP/2 and production mTLS
+        -> public REST + reactive API over HTTPS (axum)
+        -> TerraBase member (SQLite, sync, replication)
+orchestrator / CLI
+        -> private protobuf/gRPC TBEP over HTTP/2 and mTLS
 ```
 
-The public surface is the REST API (with the reactive WebSocket transport
-landing as S-04); TBEP carries no customer request path (D-02).
+TBEP is private control traffic. The member owns document storage, indexing,
+query execution, causality, CRDT merge, replication, repair, backup, restore,
+operations, reactive state, and usage facts. Cloud development uses the
+hosted branch workflow; the engine binary is not distributed for self-hosting.
 
-The engine owns SQLite storage and WAL, indexing, SQL query execution,
-causality, CRDT merge, replication, repair, membership acceptance, backup,
-restore, deletion, reactive state, and authoritative usage facts. A durable
-engine opens one filesystem location through `Engine::open` and
-`EngineConfig::durable`.
+## Development
 
-The production engine must run asynchronously across multiple threads and use
-all CPUs admitted to the Member. Independent storage, network, replication,
-and maintenance I/O must not block executor threads. Query execution,
-indexing, repair, encoding, and other CPU-heavy work must use
-bounded parallelism instead of serial hot paths or unbounded task spawning.
-Runtime limits must account for available CPUs, memory, storage, and network
-capacity while preserving deterministic results, durability, tenant
-isolation, fairness, and backpressure.
-
-Local commit acknowledgements mean:
-
-```text
-Buffered -> Written -> Synced
-```
-
-These states describe local storage progress. They do not imply Region-loss
-durability. `GlobalDurable` must fail closed unless at least two active Regions
-participate.
-
-## Repository map
-
-- `src/` contains the Rust engine.
-- `crates/terrabase-tbep/` owns the protobuf schema, gRPC server, private host
-  boundary, vectors, and transport qualification harness.
-- `crates/terrabase-server/` is the production daemon composition. It is a
-  release deliverable and remains unready until every configured security and
-  runtime bound is enforced and the complete clustered host replaces the
-  standalone engine host.
-- `bench/` is the benchmark driver. Markdown history under
-  `docs/evidence/benchmarks/` is the repository's comparison authority.
-- `deploy/observability/` contains the private Prometheus template, alert
-  rules, and canonical Grafana dashboard.
-- `docs/adr/` contains accepted architecture decisions.
-- `docs/evidence/` separates local lane facts from production qualification.
-
-## Development gates
-
-The root workspace:
+Use the repository check target for local verification:
 
 ```sh
-cargo fmt --all -- --check
-cargo check --workspace --locked
-cargo test --workspace --locked
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo doc --workspace --no-deps --locked
-cargo deny --all-features --locked check
+make check
 ```
 
-Standalone deliverables:
-
-```sh
-cargo test --manifest-path bench/Cargo.toml --locked
-```
-
-CI also checks protobuf generation drift, hostile input handling, architecture
-rules, dashboard queries, benchmark-history drift, licenses, and advisories.
-See [docs/development.md](docs/development.md) before changing code or evidence.
-Performance-sensitive changes must also prove multicore scaling and report CPU
-utilization, executor delay, queue depth, throughput, latency, and resource
-use under the decision-grade policy in ADR 0026.
-
-## Production evidence
-
-The initial topology uses `GRU`, `SFO`, and `FRA`, with two active Members per
-selected Region and Partition. Production TCP requires TLS 1.3 and mutual
-workload authentication. Prometheus and Grafana remain private. Production
-encryption uses OCI Vault and the key lifecycle in ADR 0030; local generated
-keys are development-only and can never satisfy a production gate.
-
-Do not turn a loopback test, synthetic benchmark, skipped live test, or local
-fixture into a production claim. Candidate evidence must name the source,
-artifact, configuration, topology, command, result, and known limits.
+It runs formatting, Clippy, workspace tests, protobuf lint, contract checks,
+and the `terrabase-go` client checks when that client is present. Run
+`make contracts` when changing the published contract. See
+[docs/development.md](docs/development.md) for the contributor workflow.
 
 TerraBase is licensed under the [MIT License](LICENSE.md).

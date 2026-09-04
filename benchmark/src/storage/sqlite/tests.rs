@@ -11,6 +11,7 @@ use std::{
         Arc, Barrier,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use rusqlite::Connection;
@@ -655,6 +656,35 @@ fn retention_sweep_checkpoints_the_wal() {
         "a swept location still reads"
     );
     drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn row_model_pragmas_and_idle_hook_are_explicit() {
+    let (dir, storage) = sqlite_store("row-model-pragmas");
+    let connection = storage.raw_writer_connection();
+    let columns: Vec<String> = connection
+        .prepare("PRAGMA table_xinfo(documents)")
+        .expect("document schema")
+        .query_map([], |row| row.get(1))
+        .expect("document columns")
+        .collect::<Result<_, _>>()
+        .expect("column names");
+    assert!(columns.iter().any(|column| column == "seq"), "D-42 exposes the canonical sequence");
+    assert!(columns.iter().any(|column| column == "dot"), "D-42 exposes the immutable dot");
+    let autocheckpoint: i64 = connection
+        .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))
+        .expect("autocheckpoint pragma");
+    assert_eq!(autocheckpoint, 0, "checkpoints stay off the commit path");
+    let synchronous: i64 = connection
+        .query_row("PRAGMA synchronous", [], |row| row.get(0))
+        .expect("synchronous pragma");
+    assert_eq!(synchronous, 1, "RF=2 files use synchronous NORMAL");
+    drop(connection);
+    assert!(!storage.close_idle(Duration::from_secs(60)), "a newly opened file is not idle");
+    std::thread::sleep(Duration::from_millis(2));
+    assert!(storage.close_idle(Duration::from_millis(1)), "idle hook reports a quiet file");
+    drop(storage);
     std::fs::remove_dir_all(&dir).ok();
 }
 

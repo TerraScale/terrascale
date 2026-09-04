@@ -302,7 +302,7 @@ impl AuditView {
     pub(crate) fn events(&self) -> impl Iterator<Item = &LifecycleEvent> {
         self.events.iter()
     }
-    pub(crate) const fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.events.len()
     }
 }

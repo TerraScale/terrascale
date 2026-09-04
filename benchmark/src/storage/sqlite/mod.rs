@@ -31,10 +31,10 @@
 //! plus a read pool; `commit_intents` runs one `BEGIN IMMEDIATE`
 //! transaction per batch, so a group commit is one fsync class.
 //!
-//! - **Synced** batches raise that one transaction to `synchronous=FULL`
-//!   (restored to `NORMAL` after), and the ledger records `synced` at write
-//!   time: a FULL commit is durable before it returns, so there is no
-//!   published-but-unsynced window for a crash to expose.
+//! - **Synced** batches use `synchronous=NORMAL` when an RF=2 follower is
+//!   configured (the follower's fsynced WAL frame is the witness). A
+//!   single-replica deployment opts into `synchronous=FULL` for the wave and
+//!   restores `NORMAL` afterward.
 //! - **Written** commits ride WAL + `synchronous=NORMAL`: the frames
 //!   survive process death but may be lost on OS crash — exactly the
 //!   bytes-written-no-fsync contract, never overstated.
@@ -94,8 +94,13 @@ mod tests;
 
 use std::{
     path::{Path, PathBuf},
-    sync::Mutex,
-    time::Duration,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, RecvTimeoutError, SyncSender},
+    },
+    thread::JoinHandle,
+    time::{Duration, Instant},
 };
 
 use rusqlite::types::Value;
@@ -137,6 +142,58 @@ fn unix_millis() -> i64 {
         .map_or(i64::MAX, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
 }
 
+fn monotonic_millis() -> u64 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    u64::try_from(START.get_or_init(Instant::now).elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn bounded_env_u64(name: &str, default: u64, minimum: u64, maximum: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(default, |value| value.clamp(minimum, maximum))
+}
+
+fn cache_kib() -> i64 {
+    i64::try_from(bounded_env_u64(
+        "TERRABASE_SQLITE_CACHE_KIB",
+        u64::try_from(DEFAULT_CACHE_KIB).unwrap_or(2048),
+        256,
+        64 * 1024,
+    ))
+    .unwrap_or(DEFAULT_CACHE_KIB)
+}
+
+fn mmap_bytes() -> i64 {
+    i64::try_from(bounded_env_u64(
+        "TERRABASE_SQLITE_MMAP_BYTES",
+        u64::try_from(DEFAULT_MMAP_BYTES).unwrap_or(8 * 1024 * 1024),
+        0,
+        1 << 34,
+    ))
+    .unwrap_or(DEFAULT_MMAP_BYTES)
+}
+
+fn rss_budget_bytes() -> usize {
+    usize::try_from(bounded_env_u64(
+        "TERRABASE_SQLITE_RSS_BUDGET_BYTES",
+        u64::try_from(DEFAULT_RSS_BUDGET_BYTES).unwrap_or(8 * 1024 * 1024),
+        64 * 1024,
+        1 << 30,
+    ))
+    .unwrap_or(DEFAULT_RSS_BUDGET_BYTES)
+}
+
+fn single_replica() -> bool {
+    std::env::var("TERRABASE_SQLITE_SINGLE_REPLICA")
+        .ok()
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE"))
+}
+
+fn cache_resident_bytes() -> usize {
+    usize::try_from(cache_kib()).unwrap_or(0).saturating_mul(1024)
+}
+
 /// The database file name inside one location directory.
 pub(super) const DATABASE_FILE: &str = "terrabase.sqlite3";
 
@@ -150,6 +207,29 @@ pub fn database_file(location: &Path) -> PathBuf {
 /// The read-pool width. Reads take `&self`, so the pool is what lets a
 /// future engine-side read-concurrency split use this backend unchanged.
 const READ_POOL_WIDTH: usize = 4;
+
+/// A commit wave is deliberately short and fixed. The committer waits this
+/// long after the first arrival, allowing concurrent callers to share one
+/// SQLite transaction without making a quiet single writer wait indefinitely.
+const COMMIT_WAVE_WAIT: Duration = Duration::from_millis(2);
+
+/// A pathological producer cannot grow one transaction without bound. The
+/// next wave starts with the remaining requests after this many intents.
+const COMMIT_WAVE_MAX_INTENTS: usize = 128;
+
+/// The default per-file SQLite page-cache budget. It is intentionally small:
+/// the open-file catalog may contain thousands of mostly idle databases.
+const DEFAULT_CACHE_KIB: i64 = 2 * 1024;
+
+/// The default mapped read window per file. SQLite may map less when the file
+/// is smaller; this is address space, not an RSS reservation.
+const DEFAULT_MMAP_BYTES: i64 = 8 * 1024 * 1024;
+
+/// The default total resident budget for pooled read connections of one file.
+const DEFAULT_RSS_BUDGET_BYTES: usize = 8 * 1024 * 1024;
+
+/// Idle connections are closed by the lifecycle hook after this quiet period.
+const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The busy timeout every connection applies (the production pairing the
 /// bench comparator pinned: WAL, `synchronous=NORMAL`, 60s busy timeout).
@@ -466,12 +546,47 @@ fn migrate_documents_idempotency(connection: &Connection) -> Result<(), ()> {
     }
     connection
         .execute_batch(
-            "CREATE UNIQUE INDEX IF NOT EXISTS documents_client_request_ulid
-             ON documents (tenant, client_request_ulid, commit_seq)
-             WHERE client_request_ulid <> '';
+            "DROP INDEX IF EXISTS documents_client_request_ulid;
              CREATE UNIQUE INDEX IF NOT EXISTS operation_facts_client_request_ulid
              ON operation_facts (tenant, client_request_ulid)
              WHERE client_request_ulid <> '';",
+        )
+        .map_err(|_| ())
+}
+
+/// Adds the canonical D-42 row aliases to files created by the early SQLite
+/// substrate. `commit_seq` remains readable for the in-repo compatibility
+/// queries, while `seq` is the row-model name and `dot` is the immutable
+/// origin dot derived from the provenance columns.
+fn migrate_documents_row_aliases(connection: &Connection) -> Result<(), ()> {
+    let mut statement = connection.prepare("PRAGMA table_xinfo(documents)").map_err(|_| ())?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    if !columns.iter().any(|column| column == "seq") {
+        connection
+            .execute(
+                "ALTER TABLE documents ADD COLUMN seq INTEGER GENERATED ALWAYS AS (commit_seq) VIRTUAL",
+                [],
+            )
+            .map_err(|_| ())?;
+    }
+    if !columns.iter().any(|column| column == "dot") {
+        connection
+            .execute(
+                "ALTER TABLE documents ADD COLUMN dot TEXT GENERATED ALWAYS AS (origin || ':' || origin_seq) VIRTUAL",
+                [],
+            )
+            .map_err(|_| ())?;
+    }
+    connection
+        .execute_batch(
+            "CREATE INDEX IF NOT EXISTS documents_seq_covering
+             ON documents (seq, tenant, collection, id, commit_ulid, dot, hlc,
+                           kind, revision, requested, deleted);",
         )
         .map_err(|_| ())
 }
@@ -696,6 +811,10 @@ CREATE TABLE IF NOT EXISTS documents (
     hlc         INTEGER NOT NULL DEFAULT 0,
     expires_at  INTEGER,
     client_request_ulid TEXT NOT NULL DEFAULT '',
+    -- Canonical D-42 names. The legacy aliases remain query-compatible while
+    -- old files migrate without rewriting their retained bodies.
+    seq         INTEGER GENERATED ALWAYS AS (commit_seq) VIRTUAL,
+    dot         TEXT GENERATED ALWAYS AS (origin || ':' || origin_seq) VIRTUAL,
     PRIMARY KEY (tenant, collection, id, commit_seq)
 ) WITHOUT ROWID;
 
@@ -983,48 +1102,278 @@ fn validate_database_binding(
 pub(crate) struct SqliteStorage {
     /// The location's database path, kept for pool overflow opens.
     database_path: PathBuf,
-    /// Stable origin identity for local origin commits.
-    local_origin: String,
     /// The single writer connection. One writer at a time is `SQLite`'s own
     /// WAL contract; the mutex is interior so a later engine read split can
     /// keep using this backend without restructuring.
-    writer: Mutex<Connection>,
+    writer: Arc<Mutex<Connection>>,
+    /// The one writer worker for this file. Every commit request enters this
+    /// queue, where a bounded 2 ms wave is formed and committed atomically.
+    committer: Committer,
+    /// A separate connection performs passive checkpoints between waves.
+    checkpointer: Checkpointer,
     /// Idle read connections, checked out last-in-first-out and returned on
     /// drop.
-    readers: Mutex<Vec<Connection>>,
+    readers: Arc<Mutex<ReaderPool>>,
     /// The extracted-column descriptor view (D-42), refreshed on
     /// registration and consulted by the write and scan paths.
-    extracted: Mutex<ExtractedState>,
+    extracted: Arc<Mutex<ExtractedState>>,
     /// The full-text descriptor view (S-02 slice D), refreshed on text
     /// registration and consulted by the write and search paths.
-    fts: Mutex<FtsState>,
+    fts: Arc<Mutex<FtsState>>,
     /// Served-read counters per database for abuse guards and cost
     /// attribution (E-9, D-16/D-44: reads are metered, never billed).
     /// In-memory only — guards need no durability — keyed by tenant text.
     reads: Mutex<std::collections::BTreeMap<String, u64>>,
+    /// Monotonic last-request marker used by open-file eviction.
+    last_activity: AtomicU64,
     /// The test-only fault plan (see [`StoragePort::arm_test_fault`]).
     #[cfg(test)]
-    faults: Mutex<FaultPlan>,
+    faults: Arc<Mutex<FaultPlan>>,
+}
+
+impl Drop for SqliteStorage {
+    fn drop(&mut self) {
+        // Stop auxiliary threads before their shared state and writer are
+        // dropped; this also closes a quiet file's checkpoint connection.
+        self.checkpointer.stop();
+        self.committer.stop();
+    }
+}
+
+/// A pooled reader and the instant at which it was returned to the pool.
+struct ReaderEntry {
+    connection: Connection,
+    returned_at: Instant,
+    /// Conservative estimate of the connection's resident cache footprint.
+    resident_bytes: usize,
+}
+
+/// Reader connections are bounded by an RSS estimate, not by a fixed count.
+struct ReaderPool {
+    entries: Vec<ReaderEntry>,
+    resident_bytes: usize,
+    budget_bytes: usize,
+    idle_timeout: Duration,
+}
+
+impl ReaderPool {
+    fn new(budget_bytes: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(READ_POOL_WIDTH),
+            resident_bytes: 0,
+            budget_bytes,
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
+        }
+    }
+
+    fn close_idle(&mut self, now: Instant) {
+        let timeout = self.idle_timeout;
+        let mut kept = Vec::with_capacity(self.entries.len());
+        for entry in self.entries.drain(..) {
+            if now.duration_since(entry.returned_at) >= timeout {
+                self.resident_bytes = self.resident_bytes.saturating_sub(entry.resident_bytes);
+            } else {
+                kept.push(entry);
+            }
+        }
+        self.entries = kept;
+    }
+
+    fn push(&mut self, connection: Connection, resident_bytes: usize) {
+        if resident_bytes > self.budget_bytes {
+            return;
+        }
+        while self.resident_bytes.saturating_add(resident_bytes) > self.budget_bytes {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, entry)| entry.returned_at)
+                .map(|(index, _)| index)
+            else {
+                break;
+            };
+            let entry = self.entries.swap_remove(oldest);
+            self.resident_bytes = self.resident_bytes.saturating_sub(entry.resident_bytes);
+        }
+        self.resident_bytes = self.resident_bytes.saturating_add(resident_bytes);
+        self.entries.push(ReaderEntry { connection, returned_at: Instant::now(), resident_bytes });
+    }
+
+    fn pop(&mut self) -> Option<ReaderEntry> {
+        let entry = self.entries.pop()?;
+        self.resident_bytes = self.resident_bytes.saturating_sub(entry.resident_bytes);
+        Some(entry)
+    }
+}
+
+/// One request handled by the file's dedicated committer.
+struct CommitRequest {
+    intents: Vec<CommitIntent>,
+    response: mpsc::SyncSender<Vec<CommitResult>>,
+}
+
+/// Immutable state the committer needs while owning the writer lock.
+#[derive(Clone)]
+struct CommitContext {
+    local_origin: String,
+    single_replica: bool,
+    extracted: Arc<Mutex<ExtractedState>>,
+    fts: Arc<Mutex<FtsState>>,
+    #[cfg(test)]
+    faults: Arc<Mutex<FaultPlan>>,
+}
+
+/// Dedicated per-file commit worker. Dropping it stops and joins the thread,
+/// which makes idle close and restart behavior deterministic.
+struct Committer {
+    sender: Option<SyncSender<CommitRequest>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Committer {
+    fn submit(&self, intents: Vec<CommitIntent>) -> Result<Vec<CommitResult>, ()> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .as_ref()
+            .ok_or(())?
+            .send(CommitRequest { intents, response: sender })
+            .map_err(|_| ())?;
+        receiver.recv().map_err(|_| ())
+    }
+
+    fn stop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        let _ = self.sender.take();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for Committer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Passive checkpoint worker. It never owns the writer connection and thus
+/// cannot extend a writer mutex hold or turn a checkpoint into commit work.
+struct Checkpointer {
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Checkpointer {
+    fn stop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for Checkpointer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn spawn_committer(writer: Arc<Mutex<Connection>>, context: CommitContext) -> Committer {
+    let (sender, receiver) = mpsc::sync_channel::<CommitRequest>(256);
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = Arc::clone(&stop);
+    let thread = std::thread::Builder::new()
+        .name("terrabase-sqlite-committer".to_owned())
+        .spawn(move || {
+            while !worker_stop.load(Ordering::Acquire) {
+                let first = match receiver.recv() {
+                    Ok(request) => request,
+                    Err(_) => break,
+                };
+                // Fixed bounded wave: collect concurrent arrivals for 2 ms,
+                // but never let one producer monopolize the transaction.
+                let deadline = Instant::now() + COMMIT_WAVE_WAIT;
+                let mut requests = vec![first];
+                let mut count = requests[0].intents.len();
+                while count < COMMIT_WAVE_MAX_INTENTS {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    match receiver.recv_timeout(remaining) {
+                        Ok(request) => {
+                            count = count.saturating_add(request.intents.len());
+                            requests.push(request);
+                        }
+                        Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                let lengths: Vec<usize> =
+                    requests.iter().map(|request| request.intents.len()).collect();
+                let mut intents = Vec::new();
+                for request in &mut requests {
+                    intents.append(&mut request.intents);
+                }
+                let results = match writer.lock() {
+                    Ok(mut connection) => context.commit_transaction(&mut connection, &intents),
+                    Err(_) => Err(()),
+                }
+                .unwrap_or_else(|_| {
+                    vec![CommitResult::Rejected(CommitRejection::Storage); intents.len()]
+                });
+                let mut offset: usize = 0;
+                for (request, length) in requests.into_iter().zip(lengths) {
+                    let end = offset.saturating_add(length);
+                    let _ = request.response.send(results[offset..end].to_vec());
+                    offset = end;
+                }
+            }
+        })
+        .expect("SQLite committer thread starts");
+    Committer { sender: Some(sender), stop, thread: Some(thread) }
+}
+
+fn spawn_checkpointer(path: PathBuf, readers: Arc<Mutex<ReaderPool>>) -> Checkpointer {
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = Arc::clone(&stop);
+    let thread = std::thread::Builder::new()
+        .name("terrabase-sqlite-checkpointer".to_owned())
+        .spawn(move || {
+            let Ok(connection) = open_connection(&path) else { return };
+            while !worker_stop.load(Ordering::Acquire) {
+                // PASSIVE never waits for readers and never runs on the
+                // committer's connection; a busy result is safe to retry.
+                let _ = connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+                if let Ok(mut pool) = readers.lock() {
+                    pool.close_idle(Instant::now());
+                }
+                std::thread::sleep(COMMIT_WAVE_WAIT);
+            }
+        })
+        .expect("SQLite checkpointer thread starts");
+    Checkpointer { stop, thread: Some(thread) }
 }
 
 /// One checked-out read connection, returned to the pool on drop.
 struct ReaderGuard<'a> {
-    pool: &'a Mutex<Vec<Connection>>,
-    connection: Option<Connection>,
+    pool: &'a Arc<Mutex<ReaderPool>>,
+    entry: Option<ReaderEntry>,
 }
 
 impl ReaderGuard<'_> {
     /// The checked-out connection.
     fn connection(&self) -> &Connection {
-        self.connection.as_ref().expect("checked-out connection")
+        &self.entry.as_ref().expect("checked-out connection").connection
     }
 }
 
 impl Drop for ReaderGuard<'_> {
     fn drop(&mut self) {
-        if let Some(connection) = self.connection.take() {
+        if let Some(entry) = self.entry.take() {
             let mut pool = self.pool.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            pool.push(connection);
+            pool.push(entry.connection, entry.resident_bytes);
         }
     }
 }
@@ -1092,6 +1441,7 @@ impl SqliteStorage {
             .map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_idempotency(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        migrate_documents_row_aliases(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_operation_facts(&mut writer).map_err(|()| StorageOpenError::Unavailable)?;
         validate_operation_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         // The SQLite schema is authoritative; the metadata table carries only
@@ -1112,60 +1462,83 @@ impl SqliteStorage {
         // is a cache of the folded rows, so a torn wave or a lost counter
         // row is rebuilt from the journal on open.
         reconcile_metering_db_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
-        let mut readers = Vec::with_capacity(READ_POOL_WIDTH);
+        let mut readers = ReaderPool::new(rss_budget_bytes());
         for _ in 0..READ_POOL_WIDTH {
-            readers.push(open_connection(&database_path)?);
+            let connection = open_connection(&database_path)?;
+            readers.push(connection, cache_resident_bytes());
         }
         let mut extracted = ExtractedState::default();
         load_extracted_state(&writer, &mut extracted)
             .map_err(|()| StorageOpenError::Unavailable)?;
         let mut fts = FtsState::default();
         load_fts_state(&writer, &mut fts).map_err(|()| StorageOpenError::Unavailable)?;
+        let writer = Arc::new(Mutex::new(writer));
+        let extracted = Arc::new(Mutex::new(extracted));
+        let fts = Arc::new(Mutex::new(fts));
+        #[cfg(test)]
+        let faults = Arc::new(Mutex::new(FaultPlan::empty()));
+        let context = CommitContext {
+            local_origin: local_origin.clone(),
+            single_replica: single_replica(),
+            extracted: Arc::clone(&extracted),
+            fts: Arc::clone(&fts),
+            #[cfg(test)]
+            faults: Arc::clone(&faults),
+        };
+        let committer = spawn_committer(Arc::clone(&writer), context);
+        let readers = Arc::new(Mutex::new(readers));
+        let checkpointer = spawn_checkpointer(database_path.clone(), Arc::clone(&readers));
         Ok(Self {
             database_path,
-            local_origin,
-            writer: Mutex::new(writer),
-            readers: Mutex::new(readers),
-            extracted: Mutex::new(extracted),
-            fts: Mutex::new(fts),
+            writer,
+            committer,
+            checkpointer,
+            readers,
+            extracted,
+            fts,
             reads: Mutex::new(std::collections::BTreeMap::new()),
+            last_activity: AtomicU64::new(monotonic_millis()),
             #[cfg(test)]
-            faults: Mutex::new(FaultPlan::empty()),
+            faults,
         })
     }
 
     /// Checks out one read connection, opening a fresh one when the pool is
     /// momentarily empty.
     fn reader(&self) -> ReaderGuard<'_> {
+        self.touch();
         let pooled = {
             let mut pool = self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            pool.close_idle(Instant::now());
             pool.pop()
         };
-        // ponytail: unbounded fallback opens; bound with checkout waiting
-        // only if a read-split engine ever exceeds the pool.
-        let connection = pooled.or_else(|| open_connection(&self.database_path).ok());
-        ReaderGuard { pool: &self.readers, connection }
+        let entry = pooled.or_else(|| {
+            open_connection(&self.database_path).ok().map(|connection| ReaderEntry {
+                connection,
+                returned_at: Instant::now(),
+                resident_bytes: cache_resident_bytes(),
+            })
+        });
+        ReaderGuard { pool: &self.readers, entry }
     }
 
-    /// Commits a batch of intents inside one `BEGIN IMMEDIATE` transaction.
-    fn commit_intents(&self, intents: &[CommitIntent]) -> Result<Vec<CommitResult>, ()> {
-        let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        // Durability is a batch-wide property here: one transaction, one
-        // commit. A single `Synced` intent raises the whole batch's commit
-        // to `synchronous=FULL`; every weaker request still lands at least
-        // `Written`, its honest floor under WAL + NORMAL.
-        let wants_full = intents.iter().any(|intent| intent.durability == LocalDurability::Synced);
-        if wants_full {
-            writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())?;
-        }
-        let result = self.commit_transaction(&mut writer, intents);
-        // Restore the steady-state pragma. A failed restore only leaves the
-        // connection more durable than requested, never less, so it is not
-        // a failure the caller can observe.
-        if wants_full {
-            let _ = writer.execute_batch("PRAGMA synchronous = NORMAL");
-        }
-        result
+    /// Marks activity for the open-file lifecycle. The catalog owner can use
+    /// [`close_idle`] to release all pooled read handles for a quiet file.
+    fn touch(&self) {
+        // A monotonic timestamp avoids wall-clock jumps in idle decisions.
+        self.last_activity.store(monotonic_millis(), Ordering::Relaxed);
+    }
+
+    /// Closes idle pooled readers and returns whether the file was idle. The
+    /// writer remains available for a request and is closed by `Drop`, which
+    /// keeps this hook safe to call from a catalog eviction pass.
+    pub(crate) fn close_idle(&self, idle: Duration) -> bool {
+        let now = Instant::now();
+        let mut readers = self.readers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        readers.idle_timeout = idle;
+        readers.close_idle(now);
+        monotonic_millis().saturating_sub(self.last_activity.load(Ordering::Relaxed))
+            >= idle.as_millis().try_into().unwrap_or(u64::MAX)
     }
 
     // ---- Journal-pruning lifecycle (TB-20's bounded-journal invariant) ---
@@ -1285,7 +1658,7 @@ impl SqliteStorage {
     }
 }
 
-impl SqliteStorage {
+impl CommitContext {
     /// The lock-held half of one batch: stage every intent, then commit.
     ///
     /// Any error path drops the transaction guard, whose rollback is the
@@ -1300,6 +1673,15 @@ impl SqliteStorage {
         writer: &mut Connection,
         intents: &[CommitIntent],
     ) -> Result<Vec<CommitResult>, ()> {
+        // RF=2 databases get their durability from the fsynced WAL follower,
+        // so NORMAL is the correct steady state. FULL is selected only for a
+        // configured single-replica database where SQLite itself is the
+        // durability witness.
+        let wants_full = self.single_replica
+            && intents.iter().any(|intent| intent.durability == LocalDurability::Synced);
+        if wants_full {
+            writer.execute_batch("PRAGMA synchronous = FULL").map_err(|_| ())?;
+        }
         let transaction =
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
@@ -1377,6 +1759,9 @@ impl SqliteStorage {
             }
         }
         transaction.commit().map_err(|_| ())?;
+        if wants_full {
+            let _ = writer.execute_batch("PRAGMA synchronous = NORMAL");
+        }
         Ok(results.into_iter().map(Option::unwrap).collect())
     }
 }
@@ -2542,7 +2927,9 @@ fn append_json_string(output: &mut Vec<u8>, value: &str) {
 fn append_json_value(output: &mut Vec<u8>, value: &DocumentValue) {
     match value {
         DocumentValue::Null => output.extend_from_slice(b"null"),
-        DocumentValue::Boolean(value) => output.extend_from_slice(if *value { b"true" } else { b"false" }),
+        DocumentValue::Boolean(value) => {
+            output.extend_from_slice(if *value { b"true" } else { b"false" })
+        }
         DocumentValue::Integer(value) => output.extend_from_slice(value.to_string().as_bytes()),
         DocumentValue::Number(value) if value.is_finite() => {
             output.extend_from_slice(value.to_string().as_bytes());
@@ -2627,11 +3014,26 @@ impl<'a> JsonParser<'a> {
                         output.push(self.bytes[self.position] as char);
                         self.position += 1;
                     }
-                    b'b' => { output.push('\u{8}'); self.position += 1; }
-                    b'f' => { output.push('\u{c}'); self.position += 1; }
-                    b'n' => { output.push('\n'); self.position += 1; }
-                    b'r' => { output.push('\r'); self.position += 1; }
-                    b't' => { output.push('\t'); self.position += 1; }
+                    b'b' => {
+                        output.push('\u{8}');
+                        self.position += 1;
+                    }
+                    b'f' => {
+                        output.push('\u{c}');
+                        self.position += 1;
+                    }
+                    b'n' => {
+                        output.push('\n');
+                        self.position += 1;
+                    }
+                    b'r' => {
+                        output.push('\r');
+                        self.position += 1;
+                    }
+                    b't' => {
+                        output.push('\t');
+                        self.position += 1;
+                    }
                     b'u' => {
                         self.position += 1;
                         let hex = self.bytes.get(self.position..self.position + 4)?;
@@ -2663,26 +3065,35 @@ impl<'a> JsonParser<'a> {
         self.whitespace();
         match self.bytes.get(self.position).copied()? {
             b'n' if self.bytes.get(self.position..self.position + 4) == Some(b"null") => {
-                self.position += 4; Some(DocumentValue::Null)
+                self.position += 4;
+                Some(DocumentValue::Null)
             }
             b't' if self.bytes.get(self.position..self.position + 4) == Some(b"true") => {
-                self.position += 4; Some(DocumentValue::Boolean(true))
+                self.position += 4;
+                Some(DocumentValue::Boolean(true))
             }
             b'f' if self.bytes.get(self.position..self.position + 5) == Some(b"false") => {
-                self.position += 5; Some(DocumentValue::Boolean(false))
+                self.position += 5;
+                Some(DocumentValue::Boolean(false))
             }
             b'"' => self.string().map(DocumentValue::String),
             b'[' => {
                 self.position += 1;
                 let mut values = Vec::new();
                 self.whitespace();
-                if self.bytes.get(self.position) == Some(&b']') { self.position += 1; return Some(DocumentValue::Array(values)); }
+                if self.bytes.get(self.position) == Some(&b']') {
+                    self.position += 1;
+                    return Some(DocumentValue::Array(values));
+                }
                 loop {
                     values.push(self.value(depth + 1)?);
                     self.whitespace();
                     match self.bytes.get(self.position).copied()? {
                         b',' => self.position += 1,
-                        b']' => { self.position += 1; break; }
+                        b']' => {
+                            self.position += 1;
+                            break;
+                        }
                         _ => return None,
                     }
                 }
@@ -2692,7 +3103,10 @@ impl<'a> JsonParser<'a> {
                 self.position += 1;
                 let mut fields = std::collections::BTreeMap::new();
                 self.whitespace();
-                if self.bytes.get(self.position) == Some(&b'}') { self.position += 1; return Some(DocumentValue::Object(fields)); }
+                if self.bytes.get(self.position) == Some(&b'}') {
+                    self.position += 1;
+                    return Some(DocumentValue::Object(fields));
+                }
                 loop {
                     let name = self.string()?;
                     self.consume(b':')?;
@@ -2700,7 +3114,10 @@ impl<'a> JsonParser<'a> {
                     self.whitespace();
                     match self.bytes.get(self.position).copied()? {
                         b',' => self.position += 1,
-                        b'}' => { self.position += 1; break; }
+                        b'}' => {
+                            self.position += 1;
+                            break;
+                        }
                         _ => return None,
                     }
                 }
@@ -2708,12 +3125,23 @@ impl<'a> JsonParser<'a> {
             }
             b'-' | b'0'..=b'9' => {
                 let start = self.position;
-                while self.bytes.get(self.position).is_some_and(|byte| byte.is_ascii_digit() || b"+-.eE".contains(byte)) { self.position += 1; }
+                while self
+                    .bytes
+                    .get(self.position)
+                    .is_some_and(|byte| byte.is_ascii_digit() || b"+-.eE".contains(byte))
+                {
+                    self.position += 1;
+                }
                 let text = std::str::from_utf8(&self.bytes[start..self.position]).ok()?;
                 if !text.contains(['.', 'e', 'E']) {
-                    if let Ok(value) = text.parse::<i64>() { return Some(DocumentValue::Integer(value)); }
+                    if let Ok(value) = text.parse::<i64>() {
+                        return Some(DocumentValue::Integer(value));
+                    }
                 }
-                text.parse::<f64>().ok().filter(|value| value.is_finite()).map(DocumentValue::Number)
+                text.parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite())
+                    .map(DocumentValue::Number)
             }
             _ => None,
         }
@@ -2726,12 +3154,25 @@ fn decode_document_body(bytes: &[u8]) -> Option<Document> {
     let mut parser = JsonParser::new(bytes);
     let DocumentValue::Object(mut fields) = parser.value(0)? else { return None };
     parser.whitespace();
-    if parser.position != bytes.len() { return None; }
-    let collection = match fields.remove("$collection")? { DocumentValue::String(value) => CollectionName::try_new(&value).ok()?, _ => return None };
-    let id = match fields.remove("$id")? { DocumentValue::String(value) => DocumentId::try_new(&value).ok()?, _ => return None };
-    let version = match fields.remove("$version")? { DocumentValue::Integer(value) if value >= 0 => u64::try_from(value).ok()?, _ => return None };
+    if parser.position != bytes.len() {
+        return None;
+    }
+    let collection = match fields.remove("$collection")? {
+        DocumentValue::String(value) => CollectionName::try_new(&value).ok()?,
+        _ => return None,
+    };
+    let id = match fields.remove("$id")? {
+        DocumentValue::String(value) => DocumentId::try_new(&value).ok()?,
+        _ => return None,
+    };
+    let version = match fields.remove("$version")? {
+        DocumentValue::Integer(value) if value >= 0 => u64::try_from(value).ok()?,
+        _ => return None,
+    };
     let value = fields.remove("$value")?;
-    if !fields.is_empty() { return None; }
+    if !fields.is_empty() {
+        return None;
+    }
     let mut document = Document::new(id, collection, value);
     document.set_version(version);
     Some(document)
@@ -2757,26 +3198,24 @@ fn open_connection(path: &Path) -> Result<Connection, StorageOpenError> {
 }
 
 /// Applies the production pairing to one connection: WAL, 60s busy timeout,
-/// foreign keys, and `synchronous=NORMAL`.
+/// foreign keys, `synchronous=NORMAL`, and the per-file resource budget.
 fn configure_connection(connection: &Connection) -> Result<(), StorageOpenError> {
     connection
         .query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))
         .map_err(|_| StorageOpenError::Unavailable)?;
     connection.busy_timeout(BUSY_TIMEOUT).map_err(|_| StorageOpenError::Unavailable)?;
-    // wal_autocheckpoint=0: auto-checkpoints fire inside the committing
-    // transaction and would put checkpoint latency on the write path. The
-    // group-commit leader checkpoints passively between waves instead
-    // (`flush_pending_flips`). cache_size and mmap_size stay at SQLite's
-    // defaults until the member budget exists (S-05) — a per-connection
-    // cache multiplied by the read pool would outweigh the RSS-sized
-    // catalog LRU.
-    // ponytail: member-budget pragmas when S-05 lands.
-    connection
-        .execute_batch(
-            "PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;
-             PRAGMA wal_autocheckpoint = 0; PRAGMA temp_store = MEMORY;",
-        )
-        .map_err(|_| StorageOpenError::Unavailable)?;
+    // wal_autocheckpoint=0 keeps checkpoint latency off the commit path. The
+    // dedicated checkpointer executes PASSIVE between waves. Negative
+    // cache_size is KiB (rather than pages), so the budget is stable across
+    // SQLite page-size choices; mmap is address space and capped separately.
+    let pragmas = format!(
+        "PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;
+         PRAGMA wal_autocheckpoint = 0; PRAGMA temp_store = MEMORY;
+         PRAGMA cache_size = -{}; PRAGMA mmap_size = {};",
+        cache_kib(),
+        mmap_bytes()
+    );
+    connection.execute_batch(&pragmas).map_err(|_| StorageOpenError::Unavailable)?;
     Ok(())
 }
 
@@ -2859,7 +3298,8 @@ impl StoragePort for SqliteStorage {
         // a no-op and the engine's witness handle is `None` for this
         // backend.
         let _ = defer_flips;
-        match self.commit_intents(&intents) {
+        self.touch();
+        match self.committer.submit(intents.clone()) {
             Ok(results) => results,
             // A rolled-back transaction definitely published nothing, so
             // every intent gets a definite refusal — the uncertain outcome

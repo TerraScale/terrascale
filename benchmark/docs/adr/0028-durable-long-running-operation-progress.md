@@ -1,168 +1,73 @@
 ---
-status: accepted
 date: 2026-08-29
 authority: ../../../GOAL.md
 ---
 
 # Durable long-running operations and progress
 
-## Scope
+## Decision
 
-Every TerraBase or TerraScale database action that can outlive an interactive
-request deadline, continues in the background, crosses a process restart, or
-has multiple durable phases is a long-running operation. It creates a durable
-operation resource before work begins.
+Any database or infrastructure action that outlives an interactive request,
+continues after a restart, or has multiple durable phases creates one durable
+operation resource before work begins. The resource is the shared model for
+Region changes, Member replacement, snapshot bootstrap, repair, restore,
+backup, PITR, index work, schema migration, export, re-encryption,
+rebalancing, and large deletion.
 
-This includes Region addition and removal, placement and Partition movement,
-Member replacement, snapshot bootstrap, repair, restore, backup, PITR,
-compaction, tier movement, index build and retirement, schema migration,
-relationship cascade, large deletion, export, re-encryption, rebalancing, and
-other bounded bulk work. A new feature cannot invent a separate job-status
-model.
+An operation has one ULID and one authoritative owner. Its durable record
+contains the operation kind and targets, tenant and database identities,
+request identity, state, progress generation, stage code, completed and
+optional total units, unit type, child summary, timestamps, cancellation
+capability, result reference, typed error, and placement generation when
+applicable. Region targets use registered uppercase `RegionCode` values;
+provider names do not enter the record.
 
-## Operation resource
+The states are `Queued`, `Running`, `Waiting`, `CancelRequested`, `Succeeded`,
+`Failed`, and `Canceled`. Only the last three are terminal. Progress is
+monotone within a generation and never exceeds a known total. Unknown totals
+show exact units and stage without an invented percentage or completion time.
+Changing a verified total increments the generation and publishes a complete
+replacement snapshot. Parent operations aggregate children by their work
+units.
 
-An operation has one ULID and one authoritative owner. The durable record
-contains:
+## Durability and fencing
 
-```text
-Operation {
-    operation_ulid
-    kind
-    owner
-    tenant_ulid
-    project_ulid
-    database_ulid?
-    target_ulids[]
-    target_region_codes[]
-    requested_by_principal
-    client_request_ulid
-    state
-    progress_generation
-    stage_code
-    completed_units
-    total_units?
-    unit
-    child_summary
-    created_at
-    started_at?
-    updated_at
-    heartbeat_deadline?
-    finished_at?
-    cancellable
-    result_reference?
-    typed_error?
-    placement_generation?
-}
-```
+The component that owns a mutation owns its operation record. TerraBase
+persists engine work with the same durable SQLite transaction and journal
+boundaries used by the engine; the Orchestrator owns cross-Region allocation
+and placement operations. State, progress, result, error, and the resumable
+checkpoint update atomically or through an idempotent sequence that recovery
+can reconcile.
 
-`target_region_codes` contains only registered uppercase airport codes under
-ADR 0033. Region operations never encode a Region as a ULID, OCI name, or
-provider alias. OCI placement details remain inside the Orchestrator adapter
-and internal deployment evidence.
+Retrying a submission with the same client-request ULID and request digest
+returns the same operation. Placement generation, replica-set epoch, and
+operation generation fence workers so stale workers cannot publish progress
+or results after ownership changes. Cancellation is a durable request: the
+owner stops at a declared safe point and reports `Canceled`, or completes and
+reports the actual result. Irreversible phases are non-cancellable or use a
+typed compensating operation.
 
-The closed states are `Queued`, `Running`, `Waiting`, `CancelRequested`,
-`Succeeded`, `Failed`, and `Canceled`. Only the last three are terminal. A
-typed waiting reason distinguishes resource admission, dependency, quorum,
-remote Region, customer action, and retry backoff. “Running” without a current
-stage and durable heartbeat is not valid progress.
+## API and delivery
 
-`completed_units` is monotone within one progress generation and never exceeds
-`total_units`. Percent is derived only when a stable total is known. Unknown or
-changing totals produce an indeterminate indicator with exact completed units,
-stage, and rate; the service never fabricates a percentage or completion time.
-If verified replanning changes the total or unit, it increments
-`progress_generation` and publishes a full replacement snapshot.
+After authentication, authorization, validation, admission, and idempotency
+resolution, a request that starts long work returns HTTP `202 Accepted` with
+`Location: /api/v1/operations/{operation-ulid}`, bounded `Retry-After`, and
+the initial operation resource. An authorized GET returns the current
+snapshot; DELETE requests cancellation only for cancellable operations.
+Completed work returns a typed result reference, and operation records honor
+an explicit retention policy.
 
-Stages use stable machine codes and optional localized display text. Units are
-typed, such as bytes, records, Partitions, indexes, chunks, or causal intervals.
-An ETA is optional, includes its confidence and observation time, and is never
-part of correctness. Parent progress aggregates children by real work units,
-not an unweighted average of percentages.
+Private TBEP sends typed operation snapshots and deltas to the Orchestrator
+and CLI. Each update carries the operation ULID, progress generation,
+monotone update sequence, state, stage, units, timestamps, and typed result or
+error. If history is unavailable, the owner sends a fresh snapshot. Public
+SDKs expose the same typed operation behavior for wait, observe, refresh, and
+conditional cancellation.
 
-## Durability, retry, and fencing
-
-The component that owns the mutation owns the operation journal. TerraBase
-persists engine work with its WAL and operation ledger. The Orchestrator owns
-cross-Region allocation and placement operations. `TerraScale.Database`
-projects authorized status but never invents progress or completion.
-
-State, stage, progress, result, error, and the work's durable checkpoint update
-atomically or through an idempotent sequence that recovery can reconcile.
-Process loss resumes from the recorded checkpoint or reaches an explicit
-terminal failure; it never starts a second logical operation. Retrying the
-submission with the same client-request ULID and digest returns the same
-operation.
-
-Workers use placement generation, replica-set epoch, and operation generation
-as fencing inputs. A stale worker cannot publish progress or a result after
-ownership changes. A lease or heartbeat helps detect stalled execution but is
-not authority to discard committed work.
-
-Cancellation is a durable request, not an immediate success. The owner stops
-at a declared safe point and reports `Canceled`, or completes and reports the
-actual result. Operations with irreversible committed phases declare
-`cancellable = false` or use a typed compensating operation. Partial durable
-outcomes are explicit and retain the identifiers and frontiers required for
-safe retry or repair.
-
-## Public API and reactive delivery
-
-After synchronous authentication, authorization, validation, admission, and
-idempotency resolution, a public request that starts long work returns HTTP
-`202 Accepted`. It includes:
-
-- `Location: /api/v1/operations/{operation-ulid}`;
-- `Retry-After` with bounded polling guidance; and
-- the initial typed operation resource.
-
-`GET /api/v1/operations/{operation-ulid}` returns the current authorized
-snapshot. `DELETE` requests cancellation only when the operation declares it.
-Completed creation may return a result reference; clients retrieve the result
-with an ordinary typed operation rather than replaying the original mutation.
-Operation records and results have an explicit retention and expiry response.
-
-Private TBEP gRPC sends typed operation snapshots and deltas to the
-orchestrator and CLI over the private control protocol.
-Each update carries the operation ULID, progress generation, monotone update
-sequence, state, stage, units, timestamps, and typed result or error.
-Unavailable history sends a fresh authorized operation snapshot. Public
-polling through the member's public API is a supported status fallback, not the engine's
-execution or correctness mechanism.
-
-Public SDKs expose the same typed `Operation<T>` behavior for wait, observe,
-refresh, and conditional cancellation. The private Studio reads the engine's
-typed operation state directly and displays indeterminate progress honestly.
-
-## Adding a Region
-
-Adding a Region is one parent operation with durable child operations for each
-database and Partition. Its stable stages are:
-
-1. validate catalog admission, capacity, identity, routing, and policy;
-2. allocate and attest two active Members and pooled Region links;
-3. select and pin verified source snapshots;
-4. transfer, authenticate, and verify snapshot chunks;
-5. stream and apply retained causal deltas;
-6. reach the required stored, applied, and reconciled frontiers;
-7. enter and complete the joint membership generation;
-8. prove reads, writes, repair, recovery, and resource isolation; and
-9. publish the Region as selectable and release temporary pins.
-
-Snapshot transfer reports verified bytes and chunks. Catch-up reports causal
-intervals and lag. Membership reports completed Partitions. The Region is not
-`Succeeded`, selectable, or included in a durability receipt until every
-required child succeeds and the final catalog decision is durable. Failure
-names the incomplete children and preserves safe resumable state.
-
-## Qualification
-
-Tests cover monotone progress, unknown totals, replanning generations,
-idempotent submission, duplicate and reordered updates, process and coordinator
-failure at every durable boundary, stale-worker fencing, cancellation races,
-partial results, authorization changes, reconnect and expired history, parent
-aggregation, retention expiry, hostile identifiers and lengths, slow clients,
-and noisy-tenant isolation.
-
-Every long-running feature's acceptance test asserts that an authorized user
-can observe truthful progress from admission through the exact terminal result.
+Adding a Region is one parent operation with child operations for each
+database. It validates policy and capacity, allocates two active Members,
+transfers and verifies a Litestream snapshot, tails causal deltas, reaches
+stored/applied/reconciled frontiers, joins membership, proves reads, writes,
+repair, recovery, and isolation, then publishes the Region as selectable.
+The Region is not selectable until all required children and the final catalog
+decision are durable.
