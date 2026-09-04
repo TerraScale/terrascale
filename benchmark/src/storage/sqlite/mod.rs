@@ -122,9 +122,10 @@ use crate::usage::{
 #[cfg(test)]
 use super::faults::FaultPlan;
 use super::{
-    BackfillProgress, DescriptorListing, DescriptorRegistration, IndexDescriptorError, JournalKind,
-    JournalProvenance, PublishedCommit, PublishedWrite, ScanFilter, ScanOp, SnapshotReadError,
-    StorageOpenError, StoragePort, StorageRootId, UsageFactPosition, UsageStorageError,
+    BackfillProgress, DescriptorListing, DescriptorRegistration, ExpiredTtlKey,
+    IndexDescriptorError, JournalKind, JournalProvenance, PublishedCommit, PublishedWrite,
+    ScanFilter, ScanOp, SnapshotReadError, StorageOpenError, StoragePort, StorageRootId,
+    UsageFactPosition, UsageStorageError,
 };
 use super::{
     codec,
@@ -222,9 +223,10 @@ struct ExtractedState {
 impl ExtractedState {
     /// Rebuilds the cached put INSERT for the current field set.
     ///
-    /// The base row carries fifteen placeholders — twelve originals plus the
-    /// three provenance columns (D-35: `kind`, `origin`, `hlc`) — so the
-    /// extracted columns start at placeholder 16.
+    /// The base row carries sixteen placeholders — twelve originals, the
+    /// three provenance columns (D-35: `kind`, `origin`, `hlc`), and the
+    /// TTL expiry column (S-02 slice D: `expires_at`) — so the extracted
+    /// columns start at placeholder 17.
     fn refresh_put_sql(&mut self) {
         let mut columns = String::new();
         let mut placeholders = String::new();
@@ -234,15 +236,15 @@ impl ExtractedState {
             columns.push_str(", ");
             columns.push_str(&quote_identifier(&numeric_column(field)));
             placeholders.push_str(", ?");
-            placeholders.push_str(&(16 + 2 * position).to_string());
-            placeholders.push_str(", ?");
             placeholders.push_str(&(17 + 2 * position).to_string());
+            placeholders.push_str(", ?");
+            placeholders.push_str(&(18 + 2 * position).to_string());
         }
         self.put_insert_sql = format!(
             "INSERT INTO documents
              (tenant, collection, id, commit_seq, commit_ulid, revision, requested,
-              digest, version, deleted, committed_at, body, kind, origin, hlc{columns})
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15{placeholders})"
+              digest, version, deleted, committed_at, body, kind, origin, hlc, expires_at{columns})
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16{placeholders})"
         );
     }
 
@@ -250,6 +252,18 @@ impl ExtractedState {
     fn is_active(&self, collection: &str, field: &str) -> bool {
         self.descriptors.get(&(collection.to_owned(), field.to_owned())).copied().unwrap_or(false)
     }
+}
+
+/// The write path's view of the full-text descriptors (S-02 slice D): the
+/// per-collection fields whose term streams the document INSERT maintains
+/// in `fts_docs`. Unlike value descriptors there are no stored columns and
+/// no column budget — the FTS5 table is the index — so the state is only
+/// the activity map.
+#[derive(Default)]
+struct FtsState {
+    /// Every registered text descriptor, keyed `(collection, field)`; the
+    /// flag reports its activity.
+    descriptors: std::collections::BTreeMap<(String, String), bool>,
 }
 
 /// Returns the text-column name of one extracted field: strings live here.
@@ -264,6 +278,56 @@ fn numeric_column(field: &str) -> String {
     format!("f:{field}#n")
 }
 
+/// Extracts one document's TTL expiry (S-02 slice D): the top-level
+/// `expires_at` field in Unix milliseconds. Integers ride as-is; finite
+/// numbers narrow the way embedding components do. Anything else —
+/// absence, booleans, strings, arrays, objects, non-finite numbers — is no
+/// expiry, never a refusal: TTL is advisory metadata on a schemaless body.
+///
+/// Family records are exempt: the reserved collection owns `expires_at`
+/// with lifecycle semantics of its own (visible-as-expired until its pass
+/// deletes the record), so the document-TTL layer never extracts, hides,
+/// or sweeps it.
+fn extract_expires_at(document: &Document) -> Option<i64> {
+    if document.collection().as_str() == RESERVED_FAMILY_COLLECTION {
+        return None;
+    }
+    let DocumentValue::Object(fields) = document.value() else { return None };
+    match fields.get("expires_at") {
+        Some(DocumentValue::Integer(millis)) => Some(*millis),
+        #[allow(clippy::cast_possible_truncation)]
+        Some(DocumentValue::Number(number)) if number.is_finite() => Some(*number as i64),
+        _ => None,
+    }
+}
+
+/// Extracts one full-text field's indexed term stream (S-02 slice D): the
+/// Standard-analyzer terms of a string value, or of every string element
+/// of an array value, joined for the FTS5 row. The walk mirrors
+/// [`extract_column_value`]'s dotted navigation; values with no string
+/// shape index nothing.
+fn extract_fts_text(document: &Document, field: &str) -> Option<String> {
+    let mut value = document.value();
+    for segment in field.split('.') {
+        let DocumentValue::Object(fields) = value else { return None };
+        value = fields.get(segment)?;
+    }
+    let mut terms = Vec::new();
+    match value {
+        DocumentValue::String(text) => {
+            terms.extend(crate::query::standard_terms(text));
+        }
+        DocumentValue::Array(elements) => {
+            for element in elements {
+                if let DocumentValue::String(text) = element {
+                    terms.extend(crate::query::standard_terms(text));
+                }
+            }
+        }
+        _ => return None,
+    }
+    (!terms.is_empty()).then(|| terms.join(" "))
+}
 /// Adds the replication provenance columns (D-35: `kind`, `origin`, `hlc`)
 /// to a location created before they existed — the extracted-columns ALTER
 /// precedent, idempotent through the schema probe: a fresh location already
@@ -286,6 +350,23 @@ fn migrate_documents_provenance(connection: &Connection) -> Result<(), ()> {
              ALTER TABLE documents ADD COLUMN hlc INTEGER NOT NULL DEFAULT 0;",
         )
         .map_err(|_| ())
+}
+
+/// Adds the TTL expiry column (S-02 slice D) to a location created before
+/// it existed — the extracted-columns ALTER precedent, idempotent through
+/// the schema probe.
+fn migrate_documents_ttl(connection: &Connection) -> Result<(), ()> {
+    let mut statement = connection.prepare("PRAGMA table_info(documents)").map_err(|_| ())?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    if columns.iter().any(|column| column == "expires_at") {
+        return Ok(());
+    }
+    connection.execute_batch("ALTER TABLE documents ADD COLUMN expires_at INTEGER;").map_err(|_| ())
 }
 
 /// Quotes one identifier for SQL, doubling embedded double quotes.
@@ -348,6 +429,7 @@ CREATE TABLE IF NOT EXISTS documents (
     kind        TEXT    NOT NULL DEFAULT 'origin',
     origin      TEXT    NOT NULL DEFAULT '',
     hlc         INTEGER NOT NULL DEFAULT 0,
+    expires_at  INTEGER,
     PRIMARY KEY (tenant, collection, id, commit_seq)
 ) WITHOUT ROWID;
 
@@ -397,6 +479,38 @@ CREATE TABLE IF NOT EXISTS index_descriptors (
     PRIMARY KEY (collection, field)
 ) WITHOUT ROWID;
 
+-- Full-text descriptors (S-02 slice D, D-39): one row per
+-- `(collection, field)` text auto-index. A field may carry both a value
+-- descriptor above and a text descriptor here; the two backfills advance
+-- independently. The indexed content lives in `fts_docs`, maintained by
+-- the Rust write path in the commit transaction (zero stale reads).
+CREATE TABLE IF NOT EXISTS fts_descriptors (
+    collection       TEXT    NOT NULL,
+    field            TEXT    NOT NULL,
+    state            INTEGER NOT NULL,
+    created_at       INTEGER NOT NULL,
+    backfill_below   INTEGER NOT NULL DEFAULT 0,
+    backfill_cursor  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (collection, field)
+) WITHOUT ROWID;
+
+-- The full-text index (S-02 slice D, D-39): one row per
+-- `(tenant, collection, field, doc_id)`, holding the field's
+-- Standard-analyzer term stream. A plain FTS5 table — deliberately not
+-- `contentless_delete`: a contentless table stores no column values at
+-- all, so the `UNINDEXED` partition columns could neither filter nor
+-- return rows (verified against the engine build). Crash consistency
+-- comes from the maintenance discipline instead: every `DELETE`+`INSERT`
+-- rides the committing transaction, so a crash can never leave the index
+-- ahead of or behind the documents.
+CREATE VIRTUAL TABLE IF NOT EXISTS fts_docs USING fts5(
+    tenant UNINDEXED,
+    collection UNINDEXED,
+    field UNINDEXED,
+    doc_id UNINDEXED,
+    text
+);
+
 CREATE TABLE IF NOT EXISTS usage_counters (
     key    TEXT    PRIMARY KEY,
     seq_hi INTEGER NOT NULL,
@@ -421,6 +535,9 @@ pub(crate) struct SqliteStorage {
     /// The extracted-column descriptor view (D-42), refreshed on
     /// registration and consulted by the write and scan paths.
     extracted: Mutex<ExtractedState>,
+    /// The full-text descriptor view (S-02 slice D), refreshed on text
+    /// registration and consulted by the write and search paths.
+    fts: Mutex<FtsState>,
     /// The test-only fault plan (see [`StoragePort::arm_test_fault`]).
     #[cfg(test)]
     faults: Mutex<FaultPlan>,
@@ -472,6 +589,7 @@ impl SqliteStorage {
         let writer = open_connection(&database_path)?;
         writer.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
         migrate_documents_provenance(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         // Seed the identity rows idempotently: `INSERT OR IGNORE` keeps an
         // existing location's root chain and format version untouched.
         let seed = format!(
@@ -493,11 +611,14 @@ impl SqliteStorage {
         let mut extracted = ExtractedState::default();
         load_extracted_state(&writer, &mut extracted)
             .map_err(|()| StorageOpenError::Unavailable)?;
+        let mut fts = FtsState::default();
+        load_fts_state(&writer, &mut fts).map_err(|()| StorageOpenError::Unavailable)?;
         Ok(Self {
             database_path,
             writer: Mutex::new(writer),
             readers: Mutex::new(readers),
             extracted: Mutex::new(extracted),
+            fts: Mutex::new(fts),
             #[cfg(test)]
             faults: Mutex::new(FaultPlan::empty()),
         })
@@ -688,13 +809,15 @@ impl SqliteStorage {
         // The extracted-column view of this wave: one snapshot under the
         // wave's own transaction, so a registration that commits between
         // waves is picked up whole and never mid-wave.
-        let (fields, put_sql, descriptors) = {
+        let (fields, put_sql, descriptors, fts_descriptors) = {
             let extracted =
                 self.extracted.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let fts = self.fts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             (
                 extracted.fields.clone(),
                 extracted.put_insert_sql.clone(),
                 extracted.descriptors.clone(),
+                fts.descriptors.clone(),
             )
         };
         for (index, intent) in intents.iter().enumerate() {
@@ -706,6 +829,7 @@ impl SqliteStorage {
                 &fields,
                 &put_sql,
                 &descriptors,
+                &fts_descriptors,
             )?);
         }
         // The wave's usage counter flush: one write per wave, never per
@@ -747,7 +871,11 @@ impl SqliteStorage {
 /// Stages one intent inside the open transaction
 /// `prepare_commit` order: validate, resolve a retried identity durably,
 /// conflict-check, then write documents, ledger row, and journal row.
-#[allow(clippy::too_many_lines, reason = "one intent's full publication order")]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "one intent's full publication order"
+)]
 fn stage_intent(
     transaction: &rusqlite::Transaction<'_>,
     watermark: &mut u64,
@@ -756,6 +884,7 @@ fn stage_intent(
     extracted_fields: &[String],
     put_insert_sql: &str,
     descriptors: &std::collections::BTreeMap<(String, String), bool>,
+    fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
 ) -> Result<CommitResult, ()> {
     // Step 1: validation never binds the identity.
     if intent.writes.is_empty() || codec::staged_writes_have_duplicate_targets(&intent.writes) {
@@ -914,6 +1043,7 @@ fn stage_intent(
                     extracted_fields,
                     put_insert_sql,
                     descriptors,
+                    fts_descriptors,
                 )?;
                 published_writes.push(PublishedWrite::Put { document: published });
             }
@@ -935,6 +1065,7 @@ fn stage_intent(
                             sequence,
                             version_at_delete,
                             &commit,
+                            fts_descriptors,
                         )?;
                     }
                     None => {
@@ -951,6 +1082,7 @@ fn stage_intent(
                                 sequence,
                                 0,
                                 &commit,
+                                fts_descriptors,
                             )?;
                         }
                     }
@@ -973,6 +1105,7 @@ fn stage_intent(
                     sequence,
                     version_at_delete,
                     &commit,
+                    fts_descriptors,
                 )?;
                 published_writes.push(PublishedWrite::Delete {
                     collection: Some(collection.clone()),
@@ -1111,7 +1244,9 @@ fn insert_rejection_row(
 /// Writes one document put row with its extracted index columns (D-42):
 /// the values the Rust write path extracted from the one write-time parse,
 /// in the same statement as the body — index maintenance in the same
-/// transaction is the zero-stale-reads rule.
+/// transaction is the zero-stale-reads rule. The TTL expiry rides the same
+/// statement, and the full-text term streams ride the same transaction
+/// through [`maintain_fts_rows`].
 #[allow(clippy::too_many_arguments, reason = "the folded row model's columns")]
 fn insert_put_row(
     transaction: &rusqlite::Transaction<'_>,
@@ -1124,9 +1259,10 @@ fn insert_put_row(
     extracted_fields: &[String],
     put_insert_sql: &str,
     descriptors: &std::collections::BTreeMap<(String, String), bool>,
+    fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
 ) -> Result<(), ()> {
     let committed_at = unix_millis();
-    let mut parameters: Vec<Value> = Vec::with_capacity(15 + 2 * extracted_fields.len());
+    let mut parameters: Vec<Value> = Vec::with_capacity(16 + 2 * extracted_fields.len());
     parameters.push(Value::Text(tenant.as_str().to_owned()));
     parameters.push(Value::Text(document.collection().as_str().to_owned()));
     parameters.push(Value::Text(document.id().as_str().to_owned()));
@@ -1142,6 +1278,10 @@ fn insert_put_row(
     parameters.push(Value::Text(commit.kind_text().to_owned()));
     parameters.push(Value::Text(commit.origin.to_owned()));
     parameters.push(Value::Integer(commit.hlc as i64));
+    parameters.push(match extract_expires_at(document) {
+        Some(millis) => Value::Integer(millis),
+        None => Value::Null,
+    });
     // One extracted scalar per registered field of this row's collection;
     // every other column binds NULL — the same shape a backfilled row
     // carries. Building descriptors extract too: every row the write path
@@ -1164,11 +1304,13 @@ fn insert_put_row(
         .prepare_cached(put_insert_sql)
         .and_then(|mut statement| statement.execute(rusqlite::params_from_iter(parameters.iter())))
         .map(|_| ())
-        .map_err(|_| ())
+        .map_err(|_| ())?;
+    maintain_fts_rows(transaction, tenant, document, fts_descriptors)
 }
 
 /// Writes one tombstone row (empty body, no extracted columns), stamped
-/// with the commit's provenance the same way a put row is.
+/// with the commit's provenance the same way a put row is. The key's
+/// full-text rows leave with it, in the same transaction.
 #[allow(clippy::too_many_arguments, reason = "the folded row model's columns")]
 fn insert_document_row(
     transaction: &rusqlite::Transaction<'_>,
@@ -1178,6 +1320,7 @@ fn insert_document_row(
     sequence: u64,
     version: u64,
     commit: &FoldedCommit<'_>,
+    fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
 ) -> Result<(), ()> {
     let committed_at = unix_millis();
     transaction
@@ -1207,7 +1350,88 @@ fn insert_document_row(
             ])
         })
         .map(|_| ())
-        .map_err(|_| ())
+        .map_err(|_| ())?;
+    clear_fts_rows(transaction, tenant, collection.as_str(), id.as_str(), fts_descriptors)
+}
+
+/// Maintains one put document's full-text rows in the committing
+/// transaction: every text descriptor of the document's collection loses
+/// its old row for this key and gains the analyzed term stream of the new
+/// body. Building descriptors maintain too, so the backfill's remaining
+/// work only ever shrinks — the same rule the value columns follow.
+fn maintain_fts_rows(
+    transaction: &rusqlite::Transaction<'_>,
+    tenant: &TenantId,
+    document: &Document,
+    fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
+) -> Result<(), ()> {
+    let collection = document.collection().as_str();
+    let id = document.id().as_str();
+    let mut fields: Vec<&String> = Vec::new();
+    for (owner, field) in fts_descriptors.keys() {
+        if owner == collection && !fields.contains(&field) {
+            fields.push(field);
+        }
+    }
+    for field in fields {
+        transaction
+            .prepare_cached(
+                "DELETE FROM fts_docs WHERE tenant = ?1 AND collection = ?2 AND field = ?3 AND doc_id = ?4",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![tenant.as_str(), collection, field, id])
+            })
+            .map(|_| ())
+            .map_err(|_| ())?;
+        if let Some(text) = extract_fts_text(document, field) {
+            transaction
+                .prepare_cached(
+                    "INSERT INTO fts_docs (tenant, collection, field, doc_id, text)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )
+                .and_then(|mut statement| {
+                    statement.execute(rusqlite::params![
+                        tenant.as_str(),
+                        collection,
+                        field,
+                        id,
+                        text
+                    ])
+                })
+                .map(|_| ())
+                .map_err(|_| ())?;
+        }
+    }
+    Ok(())
+}
+
+/// Clears one key's full-text rows in the committing transaction: the
+/// tombstone half of [`maintain_fts_rows`].
+fn clear_fts_rows(
+    transaction: &rusqlite::Transaction<'_>,
+    tenant: &TenantId,
+    collection: &str,
+    id: &str,
+    fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
+) -> Result<(), ()> {
+    let mut fields: Vec<&String> = Vec::new();
+    for (owner, field) in fts_descriptors.keys() {
+        if owner == collection && !fields.contains(&field) {
+            fields.push(field);
+        }
+    }
+    for field in fields {
+        transaction
+            .prepare_cached(
+                "DELETE FROM fts_docs WHERE tenant = ?1 AND collection = ?2 AND field = ?3 AND doc_id = ?4",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![tenant.as_str(), collection, field, id])
+            })
+            .map(|_| ())
+            .map_err(|_| ())?;
+    }
+    Ok(())
 }
 
 /// The per-commit facts every row of one commit carries (the D-42 fold):
@@ -1378,20 +1602,34 @@ fn version_at(
 ) -> Result<Option<u64>, ()> {
     // Resolve the newest row first, tombstone included: a tombstone hides
     // the key entirely, so the version below it must not survive as the
-    // key's observed version (a re-put restarts at version 1).
+    // key's observed version (a re-put restarts at version 1). An expired
+    // row hides the key the same way until the sweep tombstones it.
+    let now = unix_millis();
     transaction
         .prepare_cached(
-            "SELECT version, deleted FROM documents
+            "SELECT version, deleted, expires_at FROM documents
              WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
              ORDER BY commit_seq DESC LIMIT 1",
         )
         .and_then(|mut statement| {
             statement.query_row(
                 rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str(), at as i64],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                    ))
+                },
             )
         })
-        .map(|(version, deleted)| if deleted == 0 { u64::try_from(version).ok() } else { None })
+        .map(|(version, deleted, expires_at)| {
+            if row_is_live(deleted, expires_at, now, collection.as_str()) {
+                u64::try_from(version).ok()
+            } else {
+                None
+            }
+        })
         .or_else(|error| match error {
             rusqlite::Error::QueryReturnedNoRows => Ok(None),
             _ => Err(()),
@@ -1399,7 +1637,8 @@ fn version_at(
 }
 
 /// Returns the first collection, in canonical key order, holding a live copy
-/// of the identifier at or below `at`.
+/// of the identifier at or below `at`. Expired rows hold no collection:
+/// expiry hides the key the way a tombstone does.
 fn first_collection_of_id(
     transaction: &rusqlite::Transaction<'_>,
     tenant: &TenantId,
@@ -1410,12 +1649,20 @@ fn first_collection_of_id(
         .prepare_cached(
             "SELECT collection FROM documents
              WHERE tenant = ?1 AND id = ?2 AND commit_seq <= ?3 AND deleted = 0
+               AND (collection = ?4 OR expires_at IS NULL OR expires_at > ?5)
              GROUP BY collection ORDER BY collection LIMIT 1",
         )
         .and_then(|mut statement| {
-            statement.query_row(rusqlite::params![tenant.as_str(), id.as_str(), at as i64], |row| {
-                row.get::<_, String>(0)
-            })
+            statement.query_row(
+                rusqlite::params![
+                    tenant.as_str(),
+                    id.as_str(),
+                    at as i64,
+                    RESERVED_FAMILY_COLLECTION,
+                    unix_millis()
+                ],
+                |row| row.get::<_, String>(0),
+            )
         })
         .map(|collection| CollectionName::try_new(&collection).ok())
         .or_else(|error| match error {
@@ -1561,12 +1808,26 @@ fn verify_or_create_format(dir: &Path) -> Result<bool, StorageOpenError> {
     }
 }
 
+/// The reserved family collection, spelled as `spec.rs` spells it: family
+/// state (records, counters, series) lives here with lifecycle semantics
+/// of its own, and the document-TTL layer never touches it.
+const RESERVED_FAMILY_COLLECTION: &str = "terrabase.families";
+
 /// The raw columns one as-of scan maps each surviving row to.
-type ScanRow = (String, String, i64, Vec<u8>);
+type ScanRow = (String, String, i64, Option<i64>, Vec<u8>);
+
+/// Reports whether one row is live at `now`: not deleted and not past its
+/// TTL expiry (S-02 slice D). Expiry hides the key exactly like a tombstone
+/// until the sweep writes the tombstone itself. Family rows are exempt —
+/// see [`extract_expires_at`].
+fn row_is_live(deleted: i64, expires_at: Option<i64>, now: i64, collection: &str) -> bool {
+    deleted == 0
+        && (collection == RESERVED_FAMILY_COLLECTION || expires_at.is_none_or(|at| at > now))
+}
 
 /// Maps the rows of one as-of scan to their raw columns. `SQLite`'s
-/// bare-column rule puts `deleted` and `body` from each group's
-/// `MAX(commit_seq)` row, which is exactly the as-of state.
+/// bare-column rule puts `deleted`, `expires_at`, and `body` from each
+/// group's `MAX(commit_seq)` row, which is exactly the as-of state.
 fn scan_rows<P: rusqlite::Params>(
     statement: &mut rusqlite::CachedStatement<'_>,
     params: P,
@@ -1576,14 +1837,17 @@ fn scan_rows<P: rusqlite::Params>(
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, i64>(2)?,
-            row.get::<_, Vec<u8>>(3)?,
+            row.get::<_, Option<i64>>(3)?,
+            row.get::<_, Vec<u8>>(4)?,
         ))
     })?;
     rows.collect()
 }
 
 /// Collects one scan's live documents, dropping a body that does not
-/// decode or match its key.
+/// decode or match its key. Expired rows are dropped with the tombstones:
+/// read-time TTL filtering applies at every live read, so an un-swept
+/// expiry is already invisible.
 fn scan_documents(rows: Result<Vec<ScanRow>, rusqlite::Error>) -> Vec<Document> {
     collect_checked(rows).unwrap_or_default()
 }
@@ -1594,9 +1858,10 @@ fn collect_checked(
     rows: Result<Vec<ScanRow>, rusqlite::Error>,
 ) -> Result<Vec<Document>, SnapshotReadError> {
     let rows = rows.map_err(|_| SnapshotReadError::Integrity)?;
+    let now = unix_millis();
     let mut documents = Vec::with_capacity(rows.len());
-    for (collection, id, deleted, body) in rows {
-        if deleted != 0 {
+    for (collection, id, deleted, expires_at, body) in rows {
+        if !row_is_live(deleted, expires_at, now, collection.as_str()) {
             continue;
         }
         let document = decode_document_body(&body).ok_or(SnapshotReadError::Integrity)?;
@@ -1797,17 +2062,27 @@ impl StoragePort for SqliteStorage {
     ) -> Option<Document> {
         let reader = self.reader();
         let connection = reader.connection();
+        let now = unix_millis();
         connection
             .query_row(
-                "SELECT deleted, body, MAX(commit_seq) FROM documents
+                "SELECT collection, deleted, expires_at, body, MAX(commit_seq) FROM documents
                  WHERE tenant = ?1 AND id = ?2 AND commit_seq <= ?3
                  GROUP BY collection ORDER BY collection LIMIT 1",
                 rusqlite::params![tenant.as_str(), id.as_str(), sequence.get() as i64],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Vec<u8>>(3)?,
+                    ))
+                },
             )
             .ok()
-            .filter(|(deleted, _)| *deleted == 0)
-            .and_then(|(_, body)| decode_document_body(&body))
+            .filter(|(collection, deleted, expires_at, _)| {
+                row_is_live(*deleted, *expires_at, now, collection.as_str())
+            })
+            .and_then(|(_, _, _, body)| decode_document_body(&body))
     }
 
     fn read_document_in_collection_at(
@@ -1819,9 +2094,10 @@ impl StoragePort for SqliteStorage {
     ) -> Option<Document> {
         let reader = self.reader();
         let connection = reader.connection();
+        let now = unix_millis();
         connection
             .query_row(
-                "SELECT deleted, body FROM documents
+                "SELECT deleted, expires_at, body FROM documents
                  WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
                  ORDER BY commit_seq DESC LIMIT 1",
                 rusqlite::params![
@@ -1830,11 +2106,19 @@ impl StoragePort for SqliteStorage {
                     id.as_str(),
                     sequence.get() as i64
                 ],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
             )
             .ok()
-            .filter(|(deleted, _)| *deleted == 0)
-            .and_then(|(_, body)| decode_document_body(&body))
+            .filter(|(deleted, expires_at, _)| {
+                row_is_live(*deleted, *expires_at, now, collection.as_str())
+            })
+            .and_then(|(_, _, body)| decode_document_body(&body))
     }
 
     fn document_provenance_at(
@@ -1901,9 +2185,10 @@ impl StoragePort for SqliteStorage {
     ) -> Option<String> {
         let reader = self.reader();
         let connection = reader.connection();
+        let now = unix_millis();
         connection
             .query_row(
-                "SELECT deleted, revision FROM documents
+                "SELECT deleted, expires_at, revision FROM documents
                  WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
                  ORDER BY commit_seq DESC LIMIT 1",
                 rusqlite::params![
@@ -1912,18 +2197,26 @@ impl StoragePort for SqliteStorage {
                     id.as_str(),
                     sequence.get() as i64
                 ],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .ok()
-            .filter(|(deleted, _)| *deleted == 0)
-            .map(|(_, revision)| revision)
+            .filter(|(deleted, expires_at, _)| {
+                row_is_live(*deleted, *expires_at, now, collection.as_str())
+            })
+            .map(|(_, _, revision)| revision)
     }
 
     fn documents_at(&self, sequence: StorageSequence, tenant: &TenantId) -> Vec<Document> {
         let reader = self.reader();
         let Ok(mut statement) = connection_statement(
             reader.connection(),
-            "SELECT collection, id, deleted, body, MAX(commit_seq) FROM documents
+            "SELECT collection, id, deleted, expires_at, body, MAX(commit_seq) FROM documents
              WHERE tenant = ?1 AND commit_seq <= ?2
              GROUP BY collection, id ORDER BY collection, id",
         ) else {
@@ -1999,7 +2292,51 @@ impl StoragePort for SqliteStorage {
     }
 
     fn pump_index_backfills(&mut self, batch: u64) -> Result<Vec<BackfillProgress>, ()> {
-        self.pump_backfills(batch)
+        let mut progress = self.pump_backfills(batch)?;
+        // The text pass rides the same governed call: one host timer
+        // advances both value and text descriptors.
+        progress.extend(self.pump_fts_backfills(batch)?);
+        Ok(progress)
+    }
+
+    fn register_fts_descriptor(
+        &mut self,
+        collection: &CollectionName,
+        field: &str,
+    ) -> Result<DescriptorRegistration, IndexDescriptorError> {
+        self.register_fts_descriptor(collection, field)
+    }
+
+    fn fts_descriptor_state(&self, collection: &CollectionName, field: &str) -> Option<bool> {
+        self.fts_descriptor_state(collection.as_str(), field)
+    }
+
+    fn fts_match(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        field: &str,
+        query: &str,
+        match_any: bool,
+    ) -> Option<Result<Vec<(String, f64)>, SnapshotReadError>> {
+        self.fts_match(sequence, tenant, collection, field, query, match_any)
+    }
+
+    fn expired_ttl_keys(&self, now_millis: i64, batch: u32) -> Result<Vec<ExpiredTtlKey>, ()> {
+        use crate::storage::ExpiredTtlKey;
+        let mut keys = Vec::new();
+        for (tenant, collection, id) in self.expired_ttl_keys(now_millis, batch)? {
+            let (Some(tenant), Some(collection), Some(id)) = (
+                TenantId::try_new(&tenant).ok(),
+                CollectionName::try_new(&collection).ok(),
+                DocumentId::try_new(&id).ok(),
+            ) else {
+                continue;
+            };
+            keys.push(ExpiredTtlKey { tenant, collection, id });
+        }
+        Ok(keys)
     }
 
     fn read_documents_in_collection_at(
@@ -2017,9 +2354,10 @@ impl StoragePort for SqliteStorage {
             return Vec::new();
         };
         let mut documents: Vec<Document> = Vec::with_capacity(ids.len());
+        let now = unix_millis();
         for id in ids {
-            let Ok((deleted, body)) = transaction.query_row(
-                "SELECT deleted, body FROM documents
+            let Ok((deleted, expires_at, body)) = transaction.query_row(
+                "SELECT deleted, expires_at, body FROM documents
                  WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
                  ORDER BY commit_seq DESC LIMIT 1",
                 rusqlite::params![
@@ -2028,11 +2366,17 @@ impl StoragePort for SqliteStorage {
                     id.as_str(),
                     sequence.get() as i64
                 ],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
             ) else {
                 continue;
             };
-            if deleted == 0
+            if row_is_live(deleted, expires_at, now, collection.as_str())
                 && let Some(document) = decode_document_body(&body)
             {
                 documents.push(document);
@@ -2066,14 +2410,20 @@ impl StoragePort for SqliteStorage {
             .query_row(
                 "SELECT collection FROM documents
                  WHERE tenant = ?1 AND id = ?2 AND commit_seq <= ?3 AND deleted = 0
+                   AND (expires_at IS NULL OR expires_at > ?4)
                  GROUP BY collection ORDER BY collection LIMIT 1",
-                rusqlite::params![tenant.as_str(), after.as_str(), sequence.get() as i64],
+                rusqlite::params![
+                    tenant.as_str(),
+                    after.as_str(),
+                    sequence.get() as i64,
+                    unix_millis()
+                ],
                 |row| row.get::<_, String>(0),
             )
             .ok();
         let Ok(mut statement) = connection_statement(
             connection,
-            "SELECT collection, id, deleted, body, MAX(commit_seq) FROM documents
+            "SELECT collection, id, deleted, expires_at, body, MAX(commit_seq) FROM documents
              WHERE tenant = ?1 AND commit_seq <= ?2
                AND ((?3 IS NOT NULL AND (collection > ?3 OR (collection = ?3 AND id > ?4)))
                     OR (?3 IS NULL AND id >= ?4))
@@ -2106,7 +2456,7 @@ impl StoragePort for SqliteStorage {
             after.map_or(("", ""), |(collection, id)| (collection.as_str(), id.as_str()));
         let mut statement = connection_statement(
             connection,
-            "SELECT collection, id, deleted, body, MAX(commit_seq) FROM documents
+            "SELECT collection, id, deleted, expires_at, body, MAX(commit_seq) FROM documents
              WHERE tenant = ?1 AND commit_seq <= ?2
                AND (collection > ?3 OR (collection = ?3 AND id > ?4))
              GROUP BY collection, id ORDER BY collection, id LIMIT ?5",
@@ -2416,7 +2766,7 @@ impl SqliteStorage {
         let connection = reader.connection();
         let mut statement = connection
             .prepare_cached(
-                "SELECT id, deleted, body, MAX(commit_seq) FROM documents
+                "SELECT id, deleted, expires_at, body, MAX(commit_seq) FROM documents
                  WHERE tenant = ?1 AND collection = ?2 AND commit_seq <= ?3
                    AND id > COALESCE(?4, '')
                  GROUP BY id ORDER BY id LIMIT ?5",
@@ -2432,15 +2782,21 @@ impl SqliteStorage {
                     limit
                 ],
                 |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?))
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Vec<u8>>(3)?,
+                    ))
                 },
             )
             .map_err(|_| SnapshotReadError::Integrity)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| SnapshotReadError::Integrity)?;
+        let now = unix_millis();
         let mut documents = Vec::with_capacity(rows.len());
-        for (id, deleted, body) in rows {
-            if deleted != 0 {
+        for (id, deleted, expires_at, body) in rows {
+            if !row_is_live(deleted, expires_at, now, collection.as_str()) {
                 continue;
             }
             let document = decode_document_body(&body).ok_or(SnapshotReadError::Integrity)?;
@@ -2674,7 +3030,7 @@ impl SqliteStorage {
             return None;
         }
         let sql = format!(
-            "SELECT id, deleted, body, MAX(commit_seq) FROM documents
+            "SELECT id, deleted, expires_at, body, MAX(commit_seq) FROM documents
              WHERE tenant = ?1 AND collection = ?2 AND commit_seq <= ?3
                AND id > COALESCE(?4, '')
              GROUP BY id
@@ -2694,13 +3050,19 @@ impl SqliteStorage {
         let mut statement = connection.prepare_cached(&sql).ok()?;
         let rows = statement
             .query_map(rusqlite::params_from_iter(parameters.iter()), |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                ))
             })
             .ok()?;
         let rows = rows.collect::<Result<Vec<_>, _>>().ok()?;
+        let now = unix_millis();
         let mut documents = Vec::with_capacity(rows.len());
-        for (id, deleted, body) in rows {
-            if deleted != 0 {
+        for (id, deleted, expires_at, body) in rows {
+            if !row_is_live(deleted, expires_at, now, collection.as_str()) {
                 continue;
             }
             let Some(document) = decode_document_body(&body) else {
@@ -2938,6 +3300,23 @@ fn load_extracted_state(connection: &Connection, state: &mut ExtractedState) -> 
     Ok(())
 }
 
+/// Loads the full-text descriptor view from the durable table at open.
+fn load_fts_state(connection: &Connection, state: &mut FtsState) -> Result<(), ()> {
+    let mut statement = connection
+        .prepare("SELECT collection, field, state FROM fts_descriptors ORDER BY collection, field")
+        .map_err(|_| ())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+        })
+        .map_err(|_| ())?;
+    for row in rows {
+        let (collection, field, active) = row.map_err(|_| ())?;
+        state.descriptors.insert((collection, field), active == DESCRIPTOR_STATE_ACTIVE);
+    }
+    Ok(())
+}
+
 /// Creates the ordinary indexes covering one descriptor's stored columns.
 fn create_descriptor_indexes(connection: &Connection, field: &str) -> Result<(), rusqlite::Error> {
     let text_index = quote_identifier(&format!("i:{field}#t"));
@@ -3015,4 +3394,459 @@ fn backfill_collection_inline(
             .map_err(|_| ())?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Full-text search (S-02 slice D, D-39): text descriptors, the governed
+// text backfill, and the FTS5 candidate read.
+// ---------------------------------------------------------------------------
+
+/// Validates one text-descriptor field name: the same discipline as a
+/// value descriptor (D-42's stored-column rule).
+fn valid_fts_field(field: &str) -> bool {
+    !field.is_empty()
+        && field.len() <= MAX_DESCRIPTOR_FIELD_BYTES
+        && !field.chars().any(char::is_control)
+        && field == field.trim()
+}
+
+impl SqliteStorage {
+    /// Registers one full-text descriptor: the named field of the named
+    /// collection gains FTS5 rows written by the Rust write path from the
+    /// next commit on. Collections inside the inline cost cap backfill
+    /// synchronously and go active at once; larger collections stay
+    /// building until the governed text pass completes them, and search
+    /// conditions over a building field never narrow (a scan over a
+    /// half-indexed term stream would silently miss rows).
+    pub(crate) fn register_fts_descriptor(
+        &mut self,
+        collection: &CollectionName,
+        field: &str,
+    ) -> Result<DescriptorRegistration, IndexDescriptorError> {
+        if !valid_fts_field(field) {
+            return Err(IndexDescriptorError::Storage);
+        }
+        let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self
+            .fts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .descriptors
+            .contains_key(&(collection.as_str().to_owned(), field.to_owned()))
+        {
+            return Ok(DescriptorRegistration::Unchanged);
+        }
+        let transaction = writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| IndexDescriptorError::Storage)?;
+        let watermark =
+            durable_watermark(&transaction).map_err(|()| IndexDescriptorError::Storage)?;
+        let live_rows: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE collection = ?1 AND commit_seq <= ?2 AND deleted = 0",
+                rusqlite::params![collection.as_str(), watermark as i64],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| IndexDescriptorError::Storage)?;
+        let mut state = DescriptorRegistration::Building;
+        if u64::try_from(live_rows).unwrap_or(u64::MAX) <= INLINE_BACKFILL_ROW_CAP {
+            backfill_fts_inline(&transaction, collection, field, watermark)
+                .map_err(|()| IndexDescriptorError::Storage)?;
+            state = DescriptorRegistration::Active;
+        }
+        let (backfill_below, backfill_cursor) = if state == DescriptorRegistration::Active {
+            (watermark, watermark)
+        } else {
+            (watermark, 0)
+        };
+        transaction
+            .prepare_cached(
+                "INSERT INTO fts_descriptors
+                 (collection, field, state, created_at, backfill_below, backfill_cursor)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(collection, field) DO UPDATE SET
+                    state = excluded.state,
+                    backfill_below = excluded.backfill_below,
+                    backfill_cursor = excluded.backfill_cursor",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![
+                    collection.as_str(),
+                    field,
+                    if state == DescriptorRegistration::Active {
+                        DESCRIPTOR_STATE_ACTIVE
+                    } else {
+                        DESCRIPTOR_STATE_BUILDING
+                    },
+                    unix_millis(),
+                    backfill_below as i64,
+                    backfill_cursor as i64,
+                ])
+            })
+            .map_err(|_| IndexDescriptorError::Storage)?;
+        transaction.commit().map_err(|_| IndexDescriptorError::Storage)?;
+        self.fts.lock().unwrap_or_else(std::sync::PoisonError::into_inner).descriptors.insert(
+            (collection.as_str().to_owned(), field.to_owned()),
+            state == DescriptorRegistration::Active,
+        );
+        Ok(state)
+    }
+
+    /// Reports one field's text-descriptor state without registering
+    /// anything: `Some(true)` narrows, `Some(false)` is building, `None`
+    /// is absent.
+    pub(crate) fn fts_descriptor_state(&self, collection: &str, field: &str) -> Option<bool> {
+        self.fts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .descriptors
+            .get(&(collection.to_owned(), field.to_owned()))
+            .copied()
+    }
+
+    /// Advances every building text descriptor by one bounded batch of
+    /// rows, completing a descriptor when its cursor reaches its
+    /// registration watermark. Idempotent and resumable through the
+    /// durable cursor; sequence-atomic like the value pass.
+    pub(crate) fn pump_fts_backfills(&mut self, batch: u64) -> Result<Vec<BackfillProgress>, ()> {
+        let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let progress = pump_fts_backfills_on(&mut writer, batch)?;
+        let mut fts = self.fts.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for step in &progress {
+            if step.active {
+                fts.descriptors.insert((step.collection.clone(), step.field.clone()), true);
+            }
+        }
+        Ok(progress)
+    }
+
+    /// Reads the FTS5 candidate set of one search: the matching document
+    /// ids of one collection field with their relevance scores (higher
+    /// ranks first), or `None` when the index cannot narrow this read.
+    ///
+    /// `None` is the sound fallback for every non-narrowable shape — no
+    /// active descriptor, a snapshot behind the tip (the per-key FTS rows
+    /// track the tip, so an older snapshot must take the exact scan), a
+    /// vacuous or pure-exclusion query with no FTS5 spelling, or any
+    /// storage hiccup — and the caller falls back to the exact scan, which
+    /// re-checks every candidate through the same term space. A narrowing
+    /// can therefore only ever over-approximate; the executor's exact
+    /// predicate stays the filter.
+    pub(crate) fn fts_match(
+        &self,
+        sequence: StorageSequence,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        field: &str,
+        query: &str,
+        match_any: bool,
+    ) -> Option<Result<Vec<(String, f64)>, SnapshotReadError>> {
+        if self.fts_descriptor_state(collection.as_str(), field) != Some(true) {
+            return None;
+        }
+        let parsed = crate::query::parse_search_query(query, match_any);
+        if parsed.must().is_empty() && parsed.must_not().is_empty() {
+            // A vacuous query matches nothing exactly, so the empty set is
+            // the exact answer — no scan needed.
+            return Some(Ok(Vec::new()));
+        }
+        let matched = crate::query::sanitize_to_fts5_match(&parsed)?;
+        let reader = self.reader();
+        let connection = reader.connection();
+        // The tip guard: FTS rows track the newest version of each key, so
+        // only a tip snapshot may narrow through them.
+        let tip = connection
+            .query_row(
+                "SELECT COALESCE(MAX(commit_seq), 0) FROM documents WHERE tenant = ?1",
+                rusqlite::params![tenant.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .ok()
+            .and_then(|tip| u64::try_from(tip).ok())?;
+        if sequence.get() < tip {
+            return None;
+        }
+        let mut statement = connection
+            .prepare_cached(
+                "SELECT doc_id, bm25(fts_docs) FROM fts_docs
+                 WHERE fts_docs MATCH ?1 AND tenant = ?2 AND collection = ?3 AND field = ?4",
+            )
+            .ok()?;
+        let rows = statement
+            .query_map(
+                rusqlite::params![matched, tenant.as_str(), collection.as_str(), field],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
+            )
+            .ok()?
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        // `bm25` ranks ascending (lower is better); the reported score
+        // ascends with relevance so `order by score() desc` reads
+        // naturally.
+        let mut candidates = rows
+            .into_iter()
+            .map(|(id, rank)| {
+                let score = if rank.is_finite() { -rank } else { 0.0 };
+                (id, score)
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| {
+            right
+                .1
+                .partial_cmp(&left.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| left.0.cmp(&right.0))
+        });
+        Some(Ok(candidates))
+    }
+
+    /// Returns the live keys whose TTL expiry has passed, bounded by
+    /// `batch`: the sweep's work list. History rows, tombstones, and
+    /// unexpired keys never appear; the newest version of each key
+    /// decides, exactly as the live reads resolve it. Family records never
+    /// appear either: the reserved collection owns `expires_at` itself.
+    pub(crate) fn expired_ttl_keys(
+        &self,
+        now_millis: i64,
+        batch: u32,
+    ) -> Result<Vec<(String, String, String)>, ()> {
+        let reader = self.reader();
+        let mut statement = reader
+            .connection()
+            .prepare_cached(
+                "SELECT tenant, collection, id, MAX(commit_seq) FROM documents
+                 WHERE collection != ?3
+                 GROUP BY tenant, collection, id
+                 HAVING deleted = 0 AND expires_at IS NOT NULL AND expires_at <= ?1
+                 LIMIT ?2",
+            )
+            .map_err(|_| ())?;
+        let rows = statement
+            .query_map(
+                rusqlite::params![now_millis, i64::from(batch), RESERVED_FAMILY_COLLECTION],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .map_err(|_| ())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ())?;
+        Ok(rows)
+    }
+}
+
+/// Backfills one text descriptor over a collection's pre-registration rows,
+/// inside the registration transaction: per key, the newest row at or
+/// below the watermark decides — a live body contributes its term stream,
+/// a tombstone clears the key — and a key with a newer row anywhere is
+/// skipped, because the write path already maintains it.
+fn backfill_fts_inline(
+    transaction: &rusqlite::Transaction<'_>,
+    collection: &CollectionName,
+    field: &str,
+    watermark: u64,
+) -> Result<(), ()> {
+    let mut statement = transaction
+        .prepare_cached(
+            "SELECT tenant, id, MAX(commit_seq) FROM documents
+             WHERE collection = ?1 AND commit_seq <= ?2
+             GROUP BY tenant, id",
+        )
+        .map_err(|_| ())?;
+    let keys = statement
+        .query_map(rusqlite::params![collection.as_str(), watermark as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+        })
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    for (tenant, id, _) in keys {
+        backfill_fts_key(transaction, &tenant, collection.as_str(), field, &id, watermark)?;
+    }
+    Ok(())
+}
+
+/// Backfills one key's FTS row from the key's newest row at or below the
+/// descriptor's watermark. A newer row anywhere above the watermark means
+/// the write path already maintains the key and the backfill skips it:
+/// indexing the older body would clobber the newer term stream.
+fn backfill_fts_key(
+    transaction: &rusqlite::Transaction<'_>,
+    tenant: &str,
+    collection: &str,
+    field: &str,
+    id: &str,
+    watermark: u64,
+) -> Result<(), ()> {
+    let newer: i64 = transaction
+        .query_row(
+            "SELECT COUNT(*) FROM documents
+             WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq > ?4",
+            rusqlite::params![tenant, collection, id, watermark as i64],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|_| ())?;
+    if newer > 0 {
+        return Ok(());
+    }
+    let (deleted, body) = transaction
+        .query_row(
+            "SELECT deleted, body FROM documents
+             WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
+             ORDER BY commit_seq DESC LIMIT 1",
+            rusqlite::params![tenant, collection, id, watermark as i64],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+        )
+        .map_err(|_| ())?;
+    transaction
+        .prepare_cached(
+            "DELETE FROM fts_docs WHERE tenant = ?1 AND collection = ?2 AND field = ?3 AND doc_id = ?4",
+        )
+        .and_then(|mut statement| {
+            statement.execute(rusqlite::params![tenant, collection, field, id])
+        })
+        .map(|_| ())
+        .map_err(|_| ())?;
+    if deleted != 0 {
+        return Ok(());
+    }
+    let Some(body) = decode_document_body(&body) else { return Ok(()) };
+    if body.collection().as_str() != collection || body.id().as_str() != id {
+        return Err(());
+    }
+    if let Some(text) = extract_fts_text(&body, field) {
+        transaction
+            .prepare_cached(
+                "INSERT INTO fts_docs (tenant, collection, field, doc_id, text)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .and_then(|mut statement| {
+                statement.execute(rusqlite::params![tenant, collection, field, id, text])
+            })
+            .map(|_| ())
+            .map_err(|_| ())?;
+    }
+    Ok(())
+}
+
+/// Advances every building text descriptor by one bounded batch of keys.
+///
+/// Batches are sequence-atomic like the value pass: the frontier probe
+/// finds the batch-th row's sequence and the pass drains every key with a
+/// row at or below it, so the cursor only ever rests on a whole-sequence
+/// boundary and a half-indexed sequence can never go active.
+fn pump_fts_backfills_on(writer: &mut Connection, batch: u64) -> Result<Vec<BackfillProgress>, ()> {
+    let building = {
+        let transaction =
+            writer.transaction_with_behavior(TransactionBehavior::Deferred).map_err(|_| ())?;
+        let mut statement = transaction
+            .prepare(
+                "SELECT collection, field, backfill_below, backfill_cursor
+                 FROM fts_descriptors WHERE state = ?1 ORDER BY collection, field",
+            )
+            .map_err(|_| ())?;
+        let rows = statement
+            .query_map(rusqlite::params![DESCRIPTOR_STATE_BUILDING], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|_| ())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ())?;
+        drop(statement);
+        transaction.commit().map_err(|_| ())?;
+        rows
+    };
+    let mut progress = Vec::new();
+    for (collection_name, field, below, cursor) in building {
+        let below = u64::try_from(below).unwrap_or(0);
+        let mut cursor = u64::try_from(cursor).unwrap_or(0);
+        if below > cursor {
+            let transaction =
+                writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
+            cursor =
+                backfill_fts_batch(&transaction, &collection_name, &field, cursor, below, batch)?;
+            let active = cursor >= below;
+            transaction
+                .prepare_cached(
+                    "UPDATE fts_descriptors SET state = ?3, backfill_cursor = ?4
+                     WHERE collection = ?1 AND field = ?2",
+                )
+                .and_then(|mut statement| {
+                    statement.execute(rusqlite::params![
+                        collection_name,
+                        field,
+                        if active { DESCRIPTOR_STATE_ACTIVE } else { DESCRIPTOR_STATE_BUILDING },
+                        cursor as i64,
+                    ])
+                })
+                .map_err(|_| ())?;
+            transaction.commit().map_err(|_| ())?;
+        }
+        progress.push(BackfillProgress {
+            collection: collection_name,
+            field,
+            remaining: below.saturating_sub(cursor),
+            active: cursor >= below,
+        });
+    }
+    Ok(progress)
+}
+
+/// Backfills one bounded batch of a text descriptor's window and returns
+/// the advanced cursor.
+fn backfill_fts_batch(
+    transaction: &rusqlite::Transaction<'_>,
+    collection: &str,
+    field: &str,
+    cursor: u64,
+    below: u64,
+    batch: u64,
+) -> Result<u64, ()> {
+    let batch = batch.max(1);
+    let frontier: u64 = transaction
+        .query_row(
+            "SELECT commit_seq FROM documents
+             WHERE collection = ?1 AND commit_seq > ?2 AND commit_seq <= ?3
+             ORDER BY commit_seq LIMIT 1 OFFSET ?4",
+            rusqlite::params![
+                collection,
+                cursor as i64,
+                below as i64,
+                (batch.saturating_sub(1)) as i64,
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|_| ())?
+        .map_or(below, |sequence| u64::try_from(sequence).unwrap_or(below).min(below));
+    let frontier = frontier.max(cursor);
+    let mut statement = transaction
+        .prepare_cached(
+            "SELECT tenant, id, MAX(commit_seq) FROM documents
+             WHERE collection = ?1 AND commit_seq > ?2 AND commit_seq <= ?3
+             GROUP BY tenant, id",
+        )
+        .map_err(|_| ())?;
+    let keys = statement
+        .query_map(rusqlite::params![collection, cursor as i64, frontier as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+        })
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    for (tenant, id, _) in keys {
+        backfill_fts_key(transaction, &tenant, collection, field, &id, below)?;
+    }
+    Ok(frontier)
 }

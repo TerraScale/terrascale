@@ -23,6 +23,7 @@ use super::{
         SourceKind, TqlPath, TqlQuery,
     },
 };
+use crate::query::model::SearchRank;
 use crate::query::spec::{
     NullsPlacement, OrderDirection, OrderingKey, QueryCondition, QueryLoad, QueryOrdering,
     QueryPaging, QueryPredicate, QueryProjection, QuerySource, StalenessMode, StalenessPolicy,
@@ -36,6 +37,11 @@ use crate::types::{Cancellation, CollectionName, Deadline, DocumentValue, Tenant
 /// executes exactly like a hand-built typed query; execution parity is proved
 /// against that equivalence. The tenant claim, deadline, and cancellation are
 /// request context the TQL grammar does not carry and the caller supplies.
+///
+/// A query ordered by `score()` has no specification spelling — the rank
+/// travels beside the plan, not inside it — so this entry fails closed on
+/// one and the plan-level [`compile`] is the only lowering for ranked
+/// queries.
 ///
 /// # Errors
 ///
@@ -64,6 +70,21 @@ fn lower_inner(
     cancellation: Cancellation,
 ) -> Result<QuerySpec, TqlError> {
     let clauses = lower_clauses(query, parameters)?;
+    if clauses.search_rank.is_some() {
+        return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "score", query.span));
+    }
+    build_spec(query, clauses, tenant_claim, deadline, cancellation)
+}
+
+/// Builds the typed specification from lowered clauses: the one body
+/// shared by the specification entry and the plan-level compile.
+fn build_spec(
+    query: &TqlQuery,
+    clauses: LoweredClauses,
+    tenant_claim: TenantId,
+    deadline: Deadline,
+    cancellation: Cancellation,
+) -> Result<QuerySpec, TqlError> {
     let staleness = StalenessPolicy::try_new(StalenessMode::Strict, Vec::new())
         .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))?;
     let spec = QuerySpec::try_new(
@@ -98,6 +119,10 @@ pub(in crate::query) struct LoweredClauses {
     pub(in crate::query) projection: QueryProjection,
     /// The lowered page bounds.
     pub(in crate::query) paging: QueryPaging,
+    /// The score-rank request of an `order by score()` query, when present.
+    /// The rank travels beside the plan: [`lower_to_spec`] fails closed on
+    /// one, and [`compile`] binds it onto the plan it returns.
+    pub(in crate::query) search_rank: Option<SearchRank>,
 }
 
 /// Lowers every clause of one checked TQL query onto the seam's typed form.
@@ -126,10 +151,14 @@ pub(in crate::query) fn lower_clauses(
         return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "include", include.span));
     }
     let predicate = lower_predicate(query, source_alias, parameters)?;
-    let ordering = lower_ordering(query, source_alias)?;
+    let (ordering, score_order) = lower_ordering(query, source_alias)?;
+    let search_rank = match score_order {
+        None => None,
+        Some(direction) => Some(lower_search_rank(&predicate, direction, query)?),
+    };
     let projection = lower_projection(query, source_alias, &loads)?;
     let paging = lower_paging(query, parameters)?;
-    Ok(LoweredClauses { source, loads, predicate, ordering, projection, paging })
+    Ok(LoweredClauses { source, loads, predicate, ordering, projection, paging, search_rank })
 }
 
 /// Lowers the `load` clause into reference-resolution bindings. A load path
@@ -152,9 +181,12 @@ fn lower_loads(query: &TqlQuery, source_alias: Option<&str>) -> Result<Vec<Query
 
 /// Lowers and compiles one checked TQL query through the one compile seam.
 ///
+/// This is the only lowering that serves `order by score()`: the rank
+/// travels beside the plan, past the specification that cannot carry it.
+///
 /// # Errors
 ///
-/// Returns the lowering errors of [`lower_to_spec`] plus
+/// Returns the lowering errors of [`lower_clauses`] plus
 /// [`TqlErrorClass::InvalidRequest`] when the seam rejects the compiled
 /// specification.
 pub fn compile(
@@ -165,10 +197,18 @@ pub fn compile(
     deadline: Deadline,
     cancellation: Cancellation,
 ) -> Result<QueryPlan, TqlError> {
-    let spec = lower_to_spec(query, parameters, tenant_claim, deadline, cancellation)?;
-    store.compile(QueryInput::typed(spec)).map_err(|_| {
+    let clauses = lower_clauses(query, parameters)
+        .map_err(|error| error.with_version(query.grammar_version))?;
+    let rank = clauses.search_rank;
+    let spec = build_spec(query, clauses, tenant_claim, deadline, cancellation)
+        .map_err(|error| error.with_version(query.grammar_version))?;
+    let plan = store.compile(QueryInput::typed(spec)).map_err(|_| {
         TqlError::plain(TqlErrorClass::InvalidRequest, query.span)
             .with_version(query.grammar_version)
+    })?;
+    Ok(match rank {
+        Some(rank) => plan.with_search_rank(rank),
+        None => plan,
     })
 }
 
@@ -279,6 +319,9 @@ fn lower_condition(
                 _ => QueryCondition::Contains { field, value: pattern },
             })
         }
+        ExpressionKind::Call(call) if call.name == "search" => {
+            lower_search(call, source_alias, parameters)
+        }
         ExpressionKind::Between { expr, low, high } => {
             let field =
                 simple_field(expr, source_alias).ok_or_else(|| unsupported_expression(expr))?;
@@ -328,6 +371,44 @@ fn pattern_arguments(
             TqlError::at(TqlErrorClass::UnsupportedForPlanning, "call", conjunct.span)
         })?;
     Ok((field, pattern))
+}
+
+/// Lowers one `search(field, query[, combiner])` call into its seam
+/// condition: a top-level field with a bound string query. The registry
+/// checks the call's arity; this resolves its values. A non-string query,
+/// an over-long or empty one, or a combiner outside `and`/`or` is a typed
+/// invalid argument naming `search`; a nested field path has no seam
+/// field and fails closed like every other nested path.
+fn lower_search(
+    call: &super::ast::FunctionCall,
+    source_alias: Option<&str>,
+    parameters: &TqlParameters,
+) -> Result<QueryCondition, TqlError> {
+    let invalid = || TqlError::at(TqlErrorClass::InvalidArgument, "search", call.span);
+    if call.args.len() < 2 || call.args.len() > 3 {
+        return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "search", call.span));
+    }
+    let field =
+        call.args.first().and_then(|argument| simple_field(argument, source_alias)).ok_or_else(
+            || TqlError::at(TqlErrorClass::UnsupportedForPlanning, "search", call.span),
+        )?;
+    let DocumentValue::String(query) =
+        literal_or_bound(&call.args[1], parameters).map_err(|_| invalid())?
+    else {
+        return Err(invalid());
+    };
+    if crate::query::spec::validate_search_query(&query).is_err() {
+        return Err(invalid());
+    }
+    let match_any = match call.args.get(2) {
+        None => false,
+        Some(combiner) => match literal_or_bound(combiner, parameters).map_err(|_| invalid())? {
+            DocumentValue::String(combiner) if combiner == "and" => false,
+            DocumentValue::String(combiner) if combiner == "or" => true,
+            _ => return Err(invalid()),
+        },
+    };
+    Ok(QueryCondition::Search { field, query, match_any })
 }
 
 /// Resolves one expression to the seam's top-level field form: a bare member
@@ -405,9 +486,34 @@ fn literal_or_bound(
 }
 
 /// Lowers the ordering keys and their explicit nulls placement.
-fn lower_ordering(query: &TqlQuery, source_alias: Option<&str>) -> Result<QueryOrdering, TqlError> {
+///
+/// A bare `score()` key is not a field ordering: it is returned beside the
+/// field ordering as the rank direction, and [`lower_clauses`] binds it
+/// onto the plan with the query's single `search` condition. `score()`
+/// beside field keys, or twice, has no ranking spelling and fails closed.
+fn lower_ordering(
+    query: &TqlQuery,
+    source_alias: Option<&str>,
+) -> Result<(QueryOrdering, Option<OrderDirection>), TqlError> {
     let mut keys = Vec::new();
+    let mut score_order: Option<OrderDirection> = None;
     for key in &query.ordering {
+        if let ExpressionKind::Call(call) = &key.expr.kind
+            && call.name == "score"
+            && call.args.is_empty()
+        {
+            if score_order.is_some() || !keys.is_empty() {
+                return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "score", key.span));
+            }
+            score_order = Some(match key.direction {
+                None | Some(Direction::Ascending) => OrderDirection::Ascending,
+                Some(Direction::Descending) => OrderDirection::Descending,
+            });
+            continue;
+        }
+        if score_order.is_some() {
+            return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "score", key.span));
+        }
         let field = simple_field(&key.expr, source_alias)
             .ok_or_else(|| unsupported_expression(&key.expr))?;
         let direction = match key.direction {
@@ -429,8 +535,31 @@ fn lower_ordering(query: &TqlQuery, source_alias: Option<&str>) -> Result<QueryO
         .map_err(|_| TqlError::at(TqlErrorClass::InvalidIdentifier, &field, key.span))?;
         keys.push(ordering_key);
     }
-    QueryOrdering::try_new(keys)
-        .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))
+    let ordering = QueryOrdering::try_new(keys)
+        .map_err(|_| TqlError::plain(TqlErrorClass::UnsupportedForPlanning, query.span))?;
+    Ok((ordering, score_order))
+}
+
+/// Binds one `order by score()` direction to the query's single `search`
+/// condition. Zero or several `search` conjuncts leave the rank ambiguous
+/// and fail closed with the same unsupported error every other unlowerable
+/// shape reports: a ranking without exactly one searched field has nothing
+/// well-defined to rank by.
+fn lower_search_rank(
+    predicate: &QueryPredicate,
+    direction: OrderDirection,
+    query: &TqlQuery,
+) -> Result<SearchRank, TqlError> {
+    let mut searches = Vec::new();
+    for condition in predicate.conditions() {
+        if let QueryCondition::Search { .. } = condition {
+            searches.push(());
+        }
+    }
+    if searches.len() != 1 {
+        return Err(TqlError::at(TqlErrorClass::UnsupportedForPlanning, "score", query.span));
+    }
+    Ok(SearchRank::new(direction))
 }
 
 /// Lowers the projection: the whole document, or a top-level field subset

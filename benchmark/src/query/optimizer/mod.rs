@@ -880,6 +880,11 @@ pub(crate) fn demand_of(query: &NormalizedQuery) -> QueryDemand {
             | super::QueryCondition::LessThan { .. }
             | super::QueryCondition::LessOrEqual { .. }
             | super::QueryCondition::Between { .. } => IndexCapability::Ordering,
+            // A full-text predicate is served by its own text auto-index
+            // (S-02 slice D), never by a value btree: it contributes no
+            // value demand, and a pure-search query keeps the pure
+            // collection-scan record.
+            super::QueryCondition::Search { .. } => continue,
         };
         demand_field(&mut fields, condition.field(), capability);
     }

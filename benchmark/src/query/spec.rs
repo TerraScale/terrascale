@@ -44,6 +44,26 @@ pub const MAX_STALENESS_INDEXES: usize = 8;
 /// The maximum page limit. `None` still means "no limit".
 pub const MAX_PAGE_LIMIT: u32 = 1024;
 
+/// The maximum byte length of one full-text search query string.
+///
+/// The bound keeps the FTS5 `MATCH` text and its in-memory exact evaluation
+/// proportional to a bounded input; anything larger is a typed refusal, never
+/// a truncation.
+pub const MAX_SEARCH_QUERY_BYTES: usize = 1024;
+
+/// Validates one full-text search query string: non-empty, at most
+/// [`MAX_SEARCH_QUERY_BYTES`] bytes, and free of control characters (phrases
+/// in double quotes, `-term` exclusions, and `term*` prefixes ride inside).
+pub(crate) fn validate_search_query(query: &str) -> Result<(), RequestValidationError> {
+    if query.is_empty() {
+        return Err(RequestValidationError::InvalidQuery);
+    }
+    if query.len() > MAX_SEARCH_QUERY_BYTES || query.chars().any(char::is_control) {
+        return Err(RequestValidationError::InvalidQuery);
+    }
+    Ok(())
+}
+
 /// Validates one query field name: non-empty, at most [`MAX_FIELD_BYTES`]
 /// bytes, no control characters, and no surrounding whitespace.
 pub(crate) fn validate_field_name(field: &str) -> Result<(), RequestValidationError> {
@@ -304,6 +324,20 @@ pub enum QueryCondition {
         /// The non-empty substring pattern.
         value: String,
     },
+    /// The text field matches the full-text query: terms, double-quoted
+    /// phrases, `-term` exclusions, and `term*` prefixes over the field's
+    /// analyzed terms (S-02 slice D, D-39). The query string travels bound
+    /// as data, never parsed as raw FTS syntax: anything outside the small
+    /// documented subset is treated as literal text.
+    Search {
+        /// The searched field name (top-level in slice D).
+        field: String,
+        /// The bounded query string.
+        query: String,
+        /// Whether any positive clause suffices (`or` combiner) instead of
+        /// requiring every positive clause (`and`, the default).
+        match_any: bool,
+    },
 }
 
 impl QueryCondition {
@@ -324,6 +358,7 @@ impl QueryCondition {
             | Self::AllIn { field, .. }
             | Self::StartsWith { field, .. }
             | Self::EndsWith { field, .. }
+            | Self::Search { field, .. }
             | Self::Contains { field, .. } => field,
         }
     }
@@ -365,6 +400,9 @@ impl QueryPredicate {
                     if value.is_empty() =>
                 {
                     return Err(RequestValidationError::InvalidQuery);
+                }
+                QueryCondition::Search { query, .. } => {
+                    validate_search_query(query)?;
                 }
                 _ => {}
             }

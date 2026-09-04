@@ -66,20 +66,29 @@ pub use analyzer::{
     MAX_TOKENS_PER_FIELD, TermOffset, TermVector, TermVectorEntry, TermVectorMode, TokenFilterKind,
     TokenizerKind,
 };
+// The full-text search term space (S-02 slice D): the storage write path,
+// the FTS5 narrowing, and the exact in-memory check share one vocabulary,
+// so the three can never disagree on what a term is.
+pub(crate) use analyzer::{
+    parse_search_query, sanitize_to_fts5_match, satisfied_positive_clauses, standard_terms,
+};
 pub use includes::{
     CounterInclude, DocumentInclude, INCLUDE_READ_WINDOW, IncludeClause, IncludePath, IncludeSet,
     IncludedCounters, IncludedTimeSeries, MAX_INCLUDE_COUNTER_NAMES, MAX_INCLUDE_DEPTH,
     MAX_INCLUDE_DOCUMENTS, MAX_INCLUDE_PATH_SEGMENTS, MAX_INCLUDES, TimeSeriesInclude,
 };
 pub use result::{
-    CounterQueryRow, FamilyQueryRow, IndexGenerationRef, ObservedGeneration, QueryResult, QueryRow,
-    SeriesPageCursor, StaleIndexObservation, StalenessReport, TimeSeriesQueryRow,
+    CounterQueryRow, ExplainAccess, ExplainIndex, ExplainIndexKind, ExplainIndexState,
+    ExplainOrder, FamilyQueryRow, IndexGenerationRef, ObservedGeneration, QueryExplanation,
+    QueryResult, QueryRow, SeriesPageCursor, StaleIndexObservation, StalenessReport,
+    TimeSeriesQueryRow,
 };
 pub use spec::{
     IndexNamespace, MAX_CONDITIONS, MAX_FIELD_BYTES, MAX_IN_VALUES, MAX_LOADS, MAX_ORDERING_KEYS,
-    MAX_PAGE_LIMIT, MAX_PROJECTION_FIELDS, MAX_STALENESS_INDEXES, NullsPlacement, OrderDirection,
-    OrderingKey, QueryCondition, QueryLoad, QueryOrdering, QueryPaging, QueryPredicate,
-    QueryProjection, QuerySource, QuerySourceKind, QuerySpec, StalenessMode, StalenessPolicy,
+    MAX_PAGE_LIMIT, MAX_PROJECTION_FIELDS, MAX_SEARCH_QUERY_BYTES, MAX_STALENESS_INDEXES,
+    NullsPlacement, OrderDirection, OrderingKey, QueryCondition, QueryLoad, QueryOrdering,
+    QueryPaging, QueryPredicate, QueryProjection, QuerySource, QuerySourceKind, QuerySpec,
+    StalenessMode, StalenessPolicy,
 };
 // The GAP-F04 window values a time-series source query binds (GAP-Q19):
 // re-exported beside the seam that consumes them so callers reach the
@@ -169,6 +178,12 @@ impl QueryPlan {
     /// only plan constructor.
     pub(crate) fn new(query: NormalizedQuery) -> Self {
         Self { query }
+    }
+
+    /// Binds the score-rank request of a lowered `search(...)` query.
+    /// Crate-only: the TQL lowering is the only producer.
+    pub(crate) fn with_search_rank(self, rank: model::SearchRank) -> Self {
+        Self { query: self.query.with_search_rank(rank) }
     }
 
     /// Returns the plan's model. Crate-only planner surface.
@@ -347,8 +362,13 @@ impl<'engine> QueryStore<'engine> {
         text: &str,
         control: Option<(Deadline, Cancellation)>,
     ) -> Result<QueryPlan, QueryError> {
-        let query =
-            tql::parse(GrammarVersion::CURRENT, text, &TqlParameters::new()).map_err(tql_error)?;
+        let query = tql::parse_with(
+            GrammarVersion::CURRENT,
+            text,
+            &TqlParameters::new(),
+            &tql::engine_capabilities(),
+        )
+        .map_err(tql_error)?;
         let clauses = tql::lower_clauses(&query, &TqlParameters::new()).map_err(tql_error)?;
         let staleness = StalenessPolicy::try_new(StalenessMode::Strict, Vec::new())
             .map_err(|_| QueryError::InvalidSpec)?;
@@ -361,6 +381,10 @@ impl<'engine> QueryStore<'engine> {
             staleness,
         )
         .with_loads(clauses.loads);
+        let model = match clauses.search_rank {
+            Some(rank) => model.with_search_rank(rank),
+            None => model,
+        };
         let model = match control {
             Some((deadline, cancellation)) => model.with_control(deadline, cancellation),
             None => model,
@@ -424,6 +448,24 @@ impl<'engine> QueryStore<'engine> {
     ) -> Result<QueryResult, QueryError> {
         execute::execute(self.engine, &self.indexes, plan, snapshot)
     }
+
+    /// Explains the plan the optimizer would use for the same query: the
+    /// serving access, the logical indexes with their states, the ordering,
+    /// and the shapes whose building descriptors would refuse execution
+    /// with the retryable not-ready error. Explaining never executes and
+    /// never names a storage internal.
+    ///
+    /// # Errors
+    ///
+    /// Returns the binding errors of [`QueryStore::execute`] without
+    /// touching any document.
+    pub fn explain(
+        &self,
+        plan: &QueryPlan,
+        snapshot: &ReadSnapshot,
+    ) -> Result<QueryExplanation, QueryError> {
+        execute::explain(self.engine, plan, snapshot)
+    }
 }
 
 /// Maps one typed TQL failure of the full parser onto the compile error:
@@ -439,8 +481,10 @@ fn tql_error(_error: tql::TqlError) -> QueryError {
 /// [`TqlQueryText`](crate::operations::TqlQueryText) constructor delegates
 /// to: the text must parse and statically check under `tql/1.0` with no
 /// parameters bound (a `$name` reference is unbound exactly as it is at
-/// compile time on that path). Gated predicates — `search`, `vector.*` —
-/// fail closed until an engine reports the capability.
+/// compile time on that path). The check runs under the engine's
+/// capabilities ([`tql::engine_capabilities`](tql::engine_capabilities)),
+/// so a gated predicate the engine ships validates here and one it does
+/// not fails closed.
 ///
 /// # Errors
 ///
@@ -452,7 +496,12 @@ pub(crate) fn validate_tql_text(text: &str) -> Result<(), QueryInputError> {
     if text.trim().is_empty() {
         return Err(QueryInputError::EmptyText);
     }
-    let Err(error) = tql::parse(GrammarVersion::CURRENT, text, &TqlParameters::new()) else {
+    let Err(error) = tql::parse_with(
+        GrammarVersion::CURRENT,
+        text,
+        &TqlParameters::new(),
+        &tql::engine_capabilities(),
+    ) else {
         return Ok(());
     };
     Err(match error.class() {

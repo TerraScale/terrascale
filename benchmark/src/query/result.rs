@@ -483,3 +483,142 @@ impl QueryResult {
         &self.statistics
     }
 }
+
+/// How the planner would serve one query: the `explain` answer (S-02 slice
+/// D). The plan names logical index kinds and descriptor states, never
+/// storage internals: no table, column, or engine names cross this seam.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QueryExplanation {
+    collection: String,
+    access: ExplainAccess,
+    indexes: Vec<ExplainIndex>,
+    order: ExplainOrder,
+    limit: Option<u32>,
+    offset: u64,
+    building: Vec<String>,
+    ttl_filtered: bool,
+}
+
+/// The serving access one query would take.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExplainAccess {
+    /// A full collection scan: no pushed filter narrows the read.
+    FullScan,
+    /// A scan narrowed by pushed extracted-column filters.
+    FilteredScan,
+    /// A full-text candidate read over the query's single searched field.
+    TextSearch,
+}
+
+/// One logical index the plan would consult.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExplainIndex {
+    /// The indexed field path.
+    pub field: String,
+    /// The index kind: an extracted-column ordering index or a text index.
+    pub kind: ExplainIndexKind,
+    /// Whether conditions over the field serve (`Active`) or refuse with
+    /// the retryable not-ready error (`Building`).
+    pub state: ExplainIndexState,
+}
+
+/// The kind of one logical index.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExplainIndexKind {
+    /// An extracted-column value index.
+    Value,
+    /// A full-text term index.
+    Text,
+}
+
+/// The serving state of one logical index.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExplainIndexState {
+    /// Conditions over the field serve.
+    Active,
+    /// Conditions over the field refuse until the governed backfill
+    /// completes the descriptor.
+    Building,
+}
+
+/// How the plan orders the matches.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExplainOrder {
+    /// Source order: no ordering keys and no rank.
+    Input,
+    /// The field ordering, applied as a sort.
+    Sorted,
+    /// The full-text relevance rank, highest first unless ascending.
+    ScoreRanked,
+}
+
+impl QueryExplanation {
+    /// Assembles one explanation. Crate-only: the planner is the only
+    /// producer.
+    #[allow(clippy::too_many_arguments, reason = "the explanation's fixed dimensions")]
+    pub(crate) fn new(
+        collection: String,
+        access: ExplainAccess,
+        indexes: Vec<ExplainIndex>,
+        order: ExplainOrder,
+        limit: Option<u32>,
+        offset: u64,
+        building: Vec<String>,
+        ttl_filtered: bool,
+    ) -> Self {
+        Self { collection, access, indexes, order, limit, offset, building, ttl_filtered }
+    }
+
+    /// Returns the queried collection name.
+    #[must_use]
+    pub fn collection(&self) -> &str {
+        &self.collection
+    }
+
+    /// Returns the serving access the plan would take.
+    #[must_use]
+    pub const fn access(&self) -> ExplainAccess {
+        self.access
+    }
+
+    /// Returns the logical indexes the plan would consult, in field order.
+    #[must_use]
+    pub fn indexes(&self) -> &[ExplainIndex] {
+        &self.indexes
+    }
+
+    /// Returns how the plan orders the matches.
+    #[must_use]
+    pub const fn order(&self) -> ExplainOrder {
+        self.order
+    }
+
+    /// Returns the page limit, or `None` when the query requests no limit.
+    #[must_use]
+    pub const fn limit(&self) -> Option<u32> {
+        self.limit
+    }
+
+    /// Returns the page offset.
+    #[must_use]
+    pub const fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// Returns the `collection.field` shapes whose descriptors are still
+    /// building: executing the same query refuses with the retryable
+    /// not-ready error until the governed backfill completes them. Empty
+    /// means the query serves now.
+    #[must_use]
+    pub fn building(&self) -> &[String] {
+        &self.building
+    }
+
+    /// Reports whether expired TTL keys are filtered from the read. Always
+    /// true: every live read filters expiries, so the plan never serves an
+    /// expired document whether or not the sweep has tombstoned it yet.
+    #[must_use]
+    pub const fn ttl_filtered(&self) -> bool {
+        self.ttl_filtered
+    }
+}

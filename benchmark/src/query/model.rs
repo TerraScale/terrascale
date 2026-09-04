@@ -8,6 +8,7 @@
 
 use std::cmp::Ordering;
 
+use super::analyzer;
 use super::includes::IncludeClause;
 use super::spec::{
     NullsPlacement, OrderDirection, QueryCondition, QueryLoad, QueryOrdering, QueryPaging,
@@ -15,6 +16,36 @@ use super::spec::{
 };
 use crate::families::{TimeSeriesPaging, TimeSeriesRange};
 use crate::types::{Cancellation, Deadline, Document, DocumentValue, TenantId};
+
+/// The score-rank request of one full-text search query (S-02 slice D,
+/// D-39): the direction `order by score()` ranks the matches.
+///
+/// The rank travels beside the plan, never inside the typed specification:
+/// the specification is the frozen multi-entry seam, while the rank only
+/// exists for queries the TQL layer lowered from a `search(...)` filter
+/// with a `score()` ordering key. The ranked field and query string live
+/// in the predicate's single `search` condition; the rank only says which
+/// way relevance orders the matches.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SearchRank {
+    direction: OrderDirection,
+}
+
+impl SearchRank {
+    /// Creates one rank request.
+    pub(crate) const fn new(direction: OrderDirection) -> Self {
+        Self { direction }
+    }
+
+    /// Returns the ranking direction.
+    #[allow(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "the rank travels beside the plan by reference at every call site"
+    )]
+    pub(crate) const fn direction(&self) -> OrderDirection {
+        self.direction
+    }
+}
 
 /// The validated internal query model both input forms normalize into.
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +62,7 @@ pub(crate) struct NormalizedQuery {
     tenant_claim: Option<TenantId>,
     deadline: Option<Deadline>,
     cancellation: Option<Cancellation>,
+    search_rank: Option<SearchRank>,
 }
 
 impl NormalizedQuery {
@@ -63,6 +95,7 @@ impl NormalizedQuery {
             tenant_claim: Some(tenant_claim),
             deadline: Some(deadline),
             cancellation: Some(cancellation),
+            search_rank: None,
         }
     }
 
@@ -92,6 +125,7 @@ impl NormalizedQuery {
             tenant_claim: None,
             deadline: None,
             cancellation: None,
+            search_rank: None,
         }
     }
 
@@ -188,6 +222,20 @@ impl NormalizedQuery {
     #[allow(dead_code, reason = "kept for the later wire adapter that observes the bound")]
     pub(crate) fn cancellation(&self) -> Option<Cancellation> {
         self.cancellation.clone()
+    }
+
+    /// Binds the score-rank request of a lowered `search(...)` query with a
+    /// `score()` ordering key. Crate-only: the TQL lowering is the only
+    /// producer; the typed specification path never ranks.
+    pub(crate) fn with_search_rank(mut self, rank: SearchRank) -> Self {
+        self.search_rank = Some(rank);
+        self
+    }
+
+    /// Returns the score-rank request, when the query was lowered from a
+    /// `search(...)` filter ordered by `score()`.
+    pub(crate) const fn search_rank(&self) -> Option<&SearchRank> {
+        self.search_rank.as_ref()
     }
 }
 
@@ -288,6 +336,9 @@ fn matches_condition(condition: &QueryCondition, present: Option<&DocumentValue>
         QueryCondition::Contains { value, .. } => {
             matches_pattern(present, |text| text.contains(value.as_str()))
         }
+        QueryCondition::Search { query, match_any, .. } => {
+            matches_search(present, query, *match_any)
+        }
     }
 }
 
@@ -313,6 +364,19 @@ fn matches_pattern(present: Option<&DocumentValue>, predicate: impl Fn(&str) -> 
             .any(|element| matches!(element, DocumentValue::String(text) if predicate(text))),
         _ => false,
     }
+}
+
+/// Evaluates one full-text search condition against one optionally present
+/// field value: a string matches when its Standard-analyzer term stream
+/// satisfies the parsed query; an array matches when any string element
+/// does; anything else (including absence) never matches. This is the exact
+/// predicate the FTS5 narrowing refines: a candidate the index names still
+/// passes through here before it reaches a result.
+fn matches_search(present: Option<&DocumentValue>, query: &str, match_any: bool) -> bool {
+    let parsed = analyzer::parse_search_query(query, match_any);
+    matches_pattern(present, |text| {
+        analyzer::search_terms_match(&analyzer::standard_terms(text), &parsed)
+    })
 }
 
 /// Evaluates one inclusive range with V1's null-bound rule

@@ -2234,9 +2234,10 @@ impl Engine {
             .map_or(i64::MAX, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX));
         let keys = {
             let storage = self.lock_storage()?;
-            storage.port.expired_ttl_keys(now_millis, batch.max(1)).map_err(|()| {
-                EngineError::StorageFailure
-            })?
+            storage
+                .port
+                .expired_ttl_keys(now_millis, batch.max(1))
+                .map_err(|()| EngineError::StorageFailure)?
         };
         if keys.is_empty() {
             return Ok(0);
@@ -2251,10 +2252,9 @@ impl Engine {
             let tenant = group[0].tenant.clone();
             let scope = self.scope_for(&tenant);
             let snapshot = self.read_snapshot(&scope)?;
-            let operation = OperationId::try_new(
-                &crate::identity::process_generator().generate().to_text(),
-            )
-            .map_err(|_| EngineError::StorageFailure)?;
+            let operation =
+                OperationId::try_new(&crate::identity::process_generator().generate().to_text())
+                    .map_err(|_| EngineError::StorageFailure)?;
             let mut transaction = self.begin(&scope, snapshot, operation)?;
             for key in &group {
                 transaction.delete_in_collection(

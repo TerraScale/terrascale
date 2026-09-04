@@ -907,6 +907,231 @@ impl TermVector {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Full-text search queries (S-02 slice D, D-39).
+// ---------------------------------------------------------------------------
+//
+// The term stream below IS the `TerraBaseStandardAnalyzer` stream — the
+// Standard tokenizer's maximal-alphanumeric runs lowercased — reused through
+// the private `tokenize` walk, so the write path, the FTS5 rows, and the
+// exact in-memory check can never disagree on what a term is. It skips the
+// engine bounds of `Analyzer::analyze` deliberately: the callers' inputs are
+// already bounded (document bodies by the codec limits, query strings by
+// `MAX_SEARCH_QUERY_BYTES`), and a search must degrade to a scan, never to
+// a refusal, when analysis would otherwise fail.
+
+/// Returns the ordered Standard-analyzer term stream of one text value.
+#[must_use]
+pub(crate) fn standard_terms(value: &str) -> Vec<String> {
+    tokenize(TokenizerKind::Standard, value)
+        .into_iter()
+        .map(|(start, end)| value[start..end].to_lowercase())
+        .filter(|term| !term.is_empty())
+        .collect()
+}
+
+/// One positive or exclusion clause of a parsed `search(field, $q)` query.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SearchClause {
+    /// One analyzed term must occur.
+    Term(String),
+    /// The analyzed terms must occur consecutively, in order.
+    Phrase(Vec<String>),
+    /// One analyzed term must carry the prefix.
+    Prefix(String),
+}
+
+/// One parsed `search(field, $q)` query string: the small documented subset
+/// of FTS syntax (terms, double-quoted phrases, `-term` exclusions, `term*`
+/// prefixes). Anything else in `$q` is treated as literal text: bare words
+/// such as `and`, `or`, `NOT`, or `NEAR` are ordinary terms, never
+/// operators.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ParsedSearchQuery {
+    must: Vec<SearchClause>,
+    must_not: Vec<SearchClause>,
+    match_any: bool,
+}
+
+impl ParsedSearchQuery {
+    /// Returns the positive clauses.
+    pub(crate) fn must(&self) -> &[SearchClause] {
+        &self.must
+    }
+
+    /// Returns the exclusion clauses.
+    pub(crate) fn must_not(&self) -> &[SearchClause] {
+        &self.must_not
+    }
+}
+
+/// Parses one raw `search` query string into its clauses.
+///
+/// `match_any` is the third-argument combiner (`or` when true, `and`
+/// otherwise). The parse never fails: unrepresentable input yields no
+/// clauses, and an empty clause set matches nothing (see
+/// [`search_terms_match`]).
+pub(crate) fn parse_search_query(raw: &str, match_any: bool) -> ParsedSearchQuery {
+    let mut must = Vec::new();
+    let mut must_not = Vec::new();
+    let mut characters = raw.chars().peekable();
+    while characters.peek().is_some() {
+        while characters.peek().is_some_and(|character| character.is_whitespace()) {
+            characters.next();
+        }
+        let excluded = if characters.peek() == Some(&'-') {
+            characters.next();
+            true
+        } else {
+            false
+        };
+        if characters.peek() == Some(&'"') {
+            characters.next();
+            let mut phrase = String::new();
+            for character in characters.by_ref() {
+                if character == '"' {
+                    break;
+                }
+                phrase.push(character);
+            }
+            let mut terms = standard_terms(&phrase);
+            if terms.len() == 1 {
+                push_clause(
+                    &mut must,
+                    &mut must_not,
+                    excluded,
+                    SearchClause::Term(terms.remove(0)),
+                );
+            } else if !terms.is_empty() {
+                push_clause(&mut must, &mut must_not, excluded, SearchClause::Phrase(terms));
+            }
+            continue;
+        }
+        let mut token = String::new();
+        while let Some(&character) = characters.peek() {
+            if character.is_whitespace() || character == '"' {
+                break;
+            }
+            token.push(character);
+            characters.next();
+        }
+        if token.is_empty() {
+            continue;
+        }
+        let (word, prefix) = match token.strip_suffix('*') {
+            Some(word) => (word, true),
+            None => (token.as_str(), false),
+        };
+        let mut terms = standard_terms(word);
+        if prefix {
+            if terms.len() == 1 {
+                push_clause(
+                    &mut must,
+                    &mut must_not,
+                    excluded,
+                    SearchClause::Prefix(terms.remove(0)),
+                );
+            }
+        } else if terms.len() == 1 {
+            push_clause(&mut must, &mut must_not, excluded, SearchClause::Term(terms.remove(0)));
+        } else if !terms.is_empty() {
+            push_clause(&mut must, &mut must_not, excluded, SearchClause::Phrase(terms));
+        }
+    }
+    ParsedSearchQuery { must, must_not, match_any }
+}
+
+/// Pushes one analyzed clause onto the positive or exclusion list.
+fn push_clause(
+    must: &mut Vec<SearchClause>,
+    must_not: &mut Vec<SearchClause>,
+    excluded: bool,
+    clause: SearchClause,
+) {
+    if excluded { &mut *must_not } else { &mut *must }.push(clause);
+}
+
+/// Reports whether one analyzed term stream satisfies one parsed query.
+///
+/// An empty clause set matches nothing: a query with no positive and no
+/// exclusion clause is vacuous, and failing closed (no match) is the safe
+/// side — the FTS narrowing agrees by construction (see
+/// [`sanitize_to_fts5_match`]).
+#[must_use]
+pub(crate) fn search_terms_match(terms: &[String], query: &ParsedSearchQuery) -> bool {
+    if query.must.is_empty() && query.must_not.is_empty() {
+        return false;
+    }
+    let positive = if query.match_any {
+        query.must.iter().any(|clause| clause_matches(terms, clause))
+    } else {
+        query.must.iter().all(|clause| clause_matches(terms, clause))
+    };
+    positive && !query.must_not.iter().any(|clause| clause_matches(terms, clause))
+}
+
+/// Counts how many positive clauses of one parsed query one analyzed term
+/// stream satisfies, ignoring exclusions. The scan fallback's deterministic
+/// relevance proxy when FTS5 scores are unavailable (an older snapshot, a
+/// pure-exclusion query, several searched fields): the match set stays
+/// exact, only the relevance order degrades to this count.
+#[must_use]
+pub(crate) fn satisfied_positive_clauses(terms: &[String], query: &ParsedSearchQuery) -> usize {
+    query.must().iter().filter(|clause| clause_matches(terms, clause)).count()
+}
+
+/// Reports whether one analyzed term stream satisfies one clause.
+fn clause_matches(terms: &[String], clause: &SearchClause) -> bool {
+    match clause {
+        SearchClause::Term(term) => terms.iter().any(|candidate| candidate == term),
+        SearchClause::Phrase(phrase) => {
+            terms.windows(phrase.len()).any(|window| window == phrase.as_slice())
+        }
+        SearchClause::Prefix(prefix) => terms.iter().any(|candidate| candidate.starts_with(prefix)),
+    }
+}
+
+/// Quotes one analyzed term as an FTS5 literal: the MATCH string carries
+/// terms, phrases, `NOT` exclusions, `*` prefixes, and the `OR` combiner
+/// only, so raw query text can never inject an FTS5 operator.
+fn quote_fts_term(term: &str) -> String {
+    format!("\"{}\"", term.replace('"', "\"\""))
+}
+
+/// Renders one parsed clause as its FTS5 spelling.
+fn render_fts_clause(clause: &SearchClause) -> String {
+    match clause {
+        SearchClause::Term(term) => quote_fts_term(term),
+        SearchClause::Phrase(terms) => quote_fts_term(&terms.join(" ")),
+        SearchClause::Prefix(prefix) => format!("{}*", quote_fts_term(prefix)),
+    }
+}
+
+/// Renders one parsed query as a safe FTS5 `MATCH` string, or `None` when
+/// the shape has no FTS5 spelling.
+///
+/// Every emitted token is a double-quoted literal produced from analyzed
+/// terms, so raw query text can never inject an FTS5 operator: the MATCH
+/// string carries terms, phrases, `NOT` exclusions, `*` prefixes, and the
+/// `OR` combiner only. `None` means "no narrowing": the caller falls back
+/// to the exact scan, which stays correct without the accelerator. That
+/// covers a vacuous query (exact evaluation matches nothing, so the caller
+/// short-circuits to empty without touching FTS) and a pure-exclusion
+/// query (whose leading-`NOT` shape has no portable FTS5 spelling).
+#[must_use]
+pub(crate) fn sanitize_to_fts5_match(query: &ParsedSearchQuery) -> Option<String> {
+    if query.must.is_empty() {
+        return None;
+    }
+    let separator = if query.match_any { " OR " } else { " " };
+    let mut rendered = query.must.iter().map(render_fts_clause).collect::<Vec<_>>().join(separator);
+    for exclusion in &query.must_not {
+        rendered.push_str(" NOT ");
+        rendered.push_str(&render_fts_clause(exclusion));
+    }
+    Some(rendered)
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::spec::MAX_FIELD_BYTES;
@@ -1367,5 +1592,77 @@ mod tests {
             Err(AnalyzerError::InvalidTermVector),
             "the total token mass, not one entry, is the bound"
         );
+    }
+
+    /// The analyzed terms of one text under the test's query.
+    fn matched(text: &str, query: &str, match_any: bool) -> bool {
+        let terms = standard_terms(text);
+        search_terms_match(&terms, &parse_search_query(query, match_any))
+    }
+
+    #[test]
+    fn the_standard_term_stream_lowercases_and_splits_words() {
+        assert_eq!(
+            standard_terms("Quick brown-fox O'Neill 42"),
+            ["quick", "brown", "fox", "o", "neill", "42"]
+        );
+        assert!(standard_terms("").is_empty());
+        assert!(standard_terms("  ...  ").is_empty());
+    }
+
+    #[test]
+    fn a_search_query_matches_terms_phrases_prefixes_and_exclusions() {
+        assert!(matched("the quick brown fox", "quick", false));
+        assert!(matched("the quick brown fox", "QUICK", false), "matching is case-insensitive");
+        assert!(!matched("the quick brown fox", "quickness", false));
+        assert!(matched("the quick brown fox", "quick brown", false));
+        assert!(matched("the quick brown fox", "\"quick brown\"", false));
+        assert!(!matched("the brown quick fox", "\"quick brown\"", false), "phrases order terms");
+        assert!(matched("the quick brown fox", "qui*", false));
+        assert!(!matched("the quick brown fox", "fox*ish", false));
+        assert!(!matched("the quick brown fox", "quick -fox", false), "exclusions reject");
+        assert!(matched("the quick brown fox", "quick -wolf", false));
+        assert!(
+            !matched("anything here", "-here", false),
+            "a pure exclusion still rejects its term"
+        );
+        assert!(matched("anything here", "-wolf", false), "a pure exclusion alone admits");
+    }
+
+    #[test]
+    fn the_or_combiner_treats_clauses_as_alternatives() {
+        assert!(!matched("the quick fox", "quick wolf", false));
+        assert!(matched("the quick fox", "quick wolf", true));
+        assert!(!matched("the quick fox", "wolf bear", true));
+    }
+
+    #[test]
+    fn non_syntax_in_a_search_query_is_literal_text() {
+        // Bare operator words are ordinary terms, never operators.
+        assert!(matched("and or not near", "and", false));
+        assert!(!matched("the quick fox", "and", false));
+        assert!(!matched("anything", "!!!", false), "a vacuous query matches nothing");
+        assert!(!matched("anything", "", false), "an empty query matches nothing");
+    }
+
+    #[test]
+    fn the_fts5_sanitizer_quotes_every_term() {
+        let query = parse_search_query("quick \"brown fox\" qui* -wolf", false);
+        assert_eq!(
+            sanitize_to_fts5_match(&query),
+            Some("\"quick\" \"brown fox\" \"qui\"* NOT \"wolf\"".to_owned())
+        );
+        let disjunction = parse_search_query("quick wolf", true);
+        assert_eq!(sanitize_to_fts5_match(&disjunction), Some("\"quick\" OR \"wolf\"".to_owned()));
+        assert_eq!(sanitize_to_fts5_match(&parse_search_query("!!!", false)), None);
+        assert_eq!(sanitize_to_fts5_match(&parse_search_query("-wolf", false)), None);
+    }
+
+    #[test]
+    fn the_clause_counter_counts_satisfied_positives() {
+        let terms = standard_terms("the quick brown fox");
+        assert_eq!(satisfied_positive_clauses(&terms, &parse_search_query("quick fox", false)), 2);
+        assert_eq!(satisfied_positive_clauses(&terms, &parse_search_query("quick wolf", false)), 1);
+        assert_eq!(satisfied_positive_clauses(&terms, &parse_search_query("!!!", false)), 0);
     }
 }

@@ -171,6 +171,20 @@ impl TqlCapabilities {
     }
 }
 
+/// The capabilities the production engine reports to the TQL parser.
+///
+/// Full-text search (`search`, `boost`, `score`) ships in slice D: the FTS5
+/// term index is maintained in the commit transaction, so the capability is
+/// on for every engine. Vector search (`vector.search`, `vector.of`) stays
+/// gated: the exact k-NN path serves the typed request seam, but no TQL
+/// operator reports it until the sqlite-vec follow-up lands (workspace
+/// goal D-40: vector is post-launch) — a gated vector call through TQL
+/// text fails closed with `CapabilityUnavailable`.
+#[must_use]
+pub const fn engine_capabilities() -> TqlCapabilities {
+    TqlCapabilities::none().with(Capability::Search)
+}
+
 /// The named, typed, out-of-band parameter bindings of one TQL artifact.
 ///
 /// Parameter values are data, never parsed text: a binding can never inject a

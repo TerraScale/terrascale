@@ -14,8 +14,12 @@ use std::{collections::BTreeMap, collections::BTreeSet, sync::Arc};
 
 use super::spec::{QueryCondition, StalenessPolicy};
 use super::{
-    GenerationView, NormalizedQuery, QueryError, QueryResult, QueryRow, StalenessMode, model,
-    result::{IndexGenerationRef, ObservedGeneration, StaleIndexObservation, StalenessReport},
+    GenerationView, NormalizedQuery, QueryError, QueryExplanation, QueryPlan, QueryResult,
+    QueryRow, StalenessMode, model,
+    result::{
+        ExplainAccess, ExplainIndex, ExplainIndexKind, ExplainIndexState, ExplainOrder,
+        IndexGenerationRef, ObservedGeneration, StaleIndexObservation, StalenessReport,
+    },
     statistics::{DiagnosticDuration, QueryStatistics, ResultEtag},
 };
 use crate::{
@@ -152,11 +156,15 @@ pub(crate) fn execute(
         // registration rides every dynamic query no matter which serving
         // path answers it, so the extracted-column coverage converges even
         // when the catalog segment serves. Refusal stays with the scan path,
-        // the only one a building descriptor could starve.
+        // the only one a building descriptor could starve. Text descriptors
+        // ride along the same way (S-02 slice D).
         if let (Some(collection), Some(filter)) =
             (plan.model().source().collection(), pushdown_filter(plan.model().predicate()))
         {
             register_pushdown_fields(engine, collection, &filter);
+        }
+        if let Some(collection) = plan.model().source().collection() {
+            register_fts_fields(engine, collection, &search_conditions(plan.model().predicate()));
         }
         super::optimizer::run(engine, indexes.as_ref(), plan, snapshot)?
     } else {
@@ -258,10 +266,16 @@ fn execute_with_index(
 
     // Loads and includes resolve identifiers across every collection of the
     // tenant — a reference is an id, not a collection-qualified pointer —
-    // through their own bounded resolution pass below.
+    // through their own bounded resolution pass below. A ranked
+    // (`order by score()`) query never takes the keyed path: its order
+    // comes from the relevance scores of the scan path's ranked branches,
+    // and a model-ordered window could evict the most relevant matches
+    // before the scores are even consulted.
+    let ranked = query.search_rank().is_some();
     let (ordered, matched_count, scanned, skipped) = if let (Some(collection), Some(ids)) =
         (query.source().collection(), indexed_ids.as_ref())
         && ids.len() <= KEYED_CANDIDATE_READS
+        && !ranked
     {
         // The keyed candidate fetch: the posting read above named a small,
         // bounded identifier set, and each candidate resolves by its exact
@@ -299,7 +313,9 @@ fn execute_with_index(
     // during the scan stops the query before the sort starts.
     check_bounds(query.deadline(), query.cancellation_signal())?;
     let mut ordered = ordered;
-    ordered.sort_by(|left, right| model::compare_documents(query.ordering(), left, right));
+    if query.search_rank().is_none() {
+        ordered.sort_by(|left, right| model::compare_documents(query.ordering(), left, right));
+    }
     let page_documents = page_documents(query, &ordered);
     let resolved_documents = resolve_references(engine, snapshot, query, &page_documents)?;
     let mut by_id: BTreeMap<&str, &Document> = BTreeMap::new();
@@ -350,6 +366,134 @@ fn execute_with_index(
         index_generation,
         includes,
         statistics,
+    ))
+}
+
+/// Explains the plan one query would use against one snapshot: the serving
+/// access, the logical indexes with their states, the ordering, and the
+/// shapes whose building descriptors would refuse execution.
+///
+/// The explanation reads only descriptor state (lock-light, in-memory) and
+/// the plan itself: it validates the tenant and snapshot bindings like
+/// execution does, then reports without touching any document.
+#[allow(clippy::too_many_lines, reason = "the explanation's fixed dimensions read together")]
+pub(crate) fn explain(
+    engine: &Engine,
+    plan: &QueryPlan,
+    snapshot: &ReadSnapshot,
+) -> Result<QueryExplanation, QueryError> {
+    let query: &NormalizedQuery = plan.model();
+    if let Some(claim) = query.tenant_claim()
+        && claim != snapshot.tenant()
+    {
+        return Err(QueryError::SnapshotTenantMismatch);
+    }
+    for namespace in query.staleness().indexes() {
+        if namespace.tenant() != snapshot.tenant() {
+            return Err(QueryError::TenantMismatch);
+        }
+    }
+    if snapshot.engine_identity() != engine.identity() {
+        return Err(QueryError::SnapshotEngineMismatch);
+    }
+    let collection = query
+        .source()
+        .collection()
+        .map(|collection| collection.as_str().to_owned())
+        .unwrap_or_default();
+    let mut indexes: Vec<ExplainIndex> = Vec::new();
+    let mut building: Vec<String> = Vec::new();
+    let mut pushed = false;
+    if let (Some(source), Some(filter)) =
+        (query.source().collection(), pushdown_filter(query.predicate()))
+    {
+        for condition in filter.conditions() {
+            let field = condition.field.as_str();
+            if indexes.iter().any(|index: &ExplainIndex| index.field == field) {
+                continue;
+            }
+            if let Some(active) = engine.pushdown_field_state(source, field) {
+                pushed = true;
+                if !active {
+                    building.push(format!("{}.{field}", source.as_str()));
+                }
+                indexes.push(ExplainIndex {
+                    field: field.to_owned(),
+                    kind: ExplainIndexKind::Value,
+                    state: if active {
+                        ExplainIndexState::Active
+                    } else {
+                        ExplainIndexState::Building
+                    },
+                });
+            }
+        }
+    }
+    let mut search_shapes: Vec<(&str, &str, bool)> = Vec::new();
+    for condition in query.predicate().conditions() {
+        if let QueryCondition::Search { field, query, match_any } = condition {
+            search_shapes.push((field.as_str(), query.as_str(), *match_any));
+        }
+    }
+    // A single searched field over an active text descriptor with an FTS5
+    // spelling narrows the read exactly the way execution narrows it.
+    let mut text_narrows = false;
+    if search_shapes.len() == 1
+        && let Some(source) = query.source().collection()
+    {
+        let (field, search_query, match_any) = search_shapes[0];
+        if engine.fts_field_state(source, field) == Some(true) {
+            let parsed = super::parse_search_query(search_query, match_any);
+            text_narrows = super::sanitize_to_fts5_match(&parsed).is_some();
+        }
+    }
+    if let Some(source) = query.source().collection() {
+        for (field, _, _) in &search_shapes {
+            if indexes.iter().any(|index: &ExplainIndex| index.field == *field) {
+                continue;
+            }
+            if let Some(active) = engine.fts_field_state(source, field) {
+                if !active {
+                    building.push(format!("{}.{field}", source.as_str()));
+                }
+                indexes.push(ExplainIndex {
+                    field: (*field).to_owned(),
+                    kind: ExplainIndexKind::Text,
+                    state: if active {
+                        ExplainIndexState::Active
+                    } else {
+                        ExplainIndexState::Building
+                    },
+                });
+            }
+        }
+    }
+    indexes.sort_by(|left, right| left.field.cmp(&right.field));
+    building.sort();
+    building.dedup();
+    let order = if query.search_rank().is_some() {
+        ExplainOrder::ScoreRanked
+    } else if query.ordering().keys().is_empty() && query.ordering().random_seed().is_none() {
+        ExplainOrder::Input
+    } else {
+        ExplainOrder::Sorted
+    };
+    let access = if search_shapes.len() == 1 && text_narrows {
+        ExplainAccess::TextSearch
+    } else if pushed {
+        ExplainAccess::FilteredScan
+    } else {
+        ExplainAccess::FullScan
+    };
+    Ok(QueryExplanation::new(
+        collection,
+        access,
+        indexes,
+        order,
+        query.paging().limit(),
+        query.paging().offset(),
+        building,
+        true,
     ))
 }
 
@@ -575,6 +719,18 @@ fn collect_matches(
 /// collections register inline and the same scan already pushes, while a
 /// field whose descriptor is still building fails the query closed with
 /// [`QueryError::IndexNotReady`] until the governed backfill completes it.
+///
+/// A single `search` condition takes the FTS5 candidate path instead: the
+/// index names matching ids with relevance scores, the executor loads
+/// them at the snapshot and re-checks the exact predicate, and a ranked
+/// query retains them in score order. Several `search` conjuncts, a
+/// vacuous or pure-exclusion query, or a snapshot behind the tip take the
+/// exact scan (with fallback scores when ranked): the match set stays
+/// exact everywhere, only the accelerator changes.
+#[allow(
+    clippy::too_many_lines,
+    reason = "the scan keeps its paging loop and result accounting together"
+)]
 fn scan_collection(
     engine: &Engine,
     scope: &TenantScope,
@@ -588,9 +744,36 @@ fn scan_collection(
     if let Some(filter) = filter.as_ref() {
         ensure_pushdown_fields(engine, collection, filter)?;
     }
+    let searches = search_conditions(query.predicate());
+    if !searches.is_empty() {
+        ensure_fts_fields(engine, collection, &searches)?;
+        if searches.len() == 1 {
+            let (field, fts_query, match_any) = searches[0];
+            if let Some(candidates) = engine
+                .snapshot_fts_match(scope, snapshot, collection, field, fts_query, match_any)
+                .map_err(|error| map_engine_error(&error))?
+            {
+                return scan_fts_candidates(
+                    engine,
+                    scope,
+                    snapshot,
+                    query,
+                    collection,
+                    &candidates,
+                    indexed_ids,
+                    retained_capacity,
+                );
+            }
+        }
+    }
     let mut pushdown = filter.is_some();
     let mut after = None;
+    let ranked = query.search_rank().is_some();
+    let rank_direction = query
+        .search_rank()
+        .map_or(super::spec::OrderDirection::Descending, model::SearchRank::direction);
     let mut matched = Vec::new();
+    let mut scored: Vec<(f64, Document)> = Vec::new();
     let mut retained_bytes = 0_usize;
     let mut matched_count = 0_u64;
     let mut scanned = 0_u64;
@@ -642,13 +825,30 @@ fn scan_collection(
                 if query.paging().limit().is_none() && matched_count > retained_capacity as u64 {
                     return Err(QueryError::CandidateBoundExceeded);
                 }
-                retain_candidate(
-                    query,
-                    &mut matched,
-                    &mut retained_bytes,
-                    document,
-                    retained_capacity,
-                )?;
+                if ranked {
+                    // The FTS narrowing missed (an older snapshot, several
+                    // searched fields, a pure-exclusion query): the match
+                    // set stays exact and the relevance order degrades to
+                    // the deterministic clause-count proxy.
+                    let relevance = fallback_score(document, query.predicate());
+                    retain_scored(
+                        query,
+                        &mut scored,
+                        &mut retained_bytes,
+                        document,
+                        relevance,
+                        rank_direction,
+                        retained_capacity,
+                    )?;
+                } else {
+                    retain_candidate(
+                        query,
+                        &mut matched,
+                        &mut retained_bytes,
+                        document,
+                        retained_capacity,
+                    )?;
+                }
             } else {
                 skipped = skipped.saturating_add(1);
             }
@@ -657,6 +857,9 @@ fn scan_collection(
             break;
         }
         after = page.last().map(|document| document.id().clone());
+    }
+    if ranked {
+        matched = scored.into_iter().map(|(_, document)| document).collect();
     }
     Ok((matched, matched_count, scanned, skipped))
 }
@@ -768,13 +971,239 @@ fn pushdown_filter(predicate: &super::spec::QueryPredicate) -> Option<ScanFilter
                 push(&mut conditions, field, ScanOp::GreaterOrEqual, low);
                 push(&mut conditions, field, ScanOp::LessOrEqual, high);
             }
-            // Presence, patterns, membership, and a range with a null
-            // upper bound have no extracted-column shape; the executor's
-            // predicate is their exact filter.
+            // Presence, patterns, membership, full-text search, and a range
+            // with a null upper bound have no extracted-column shape; the
+            // executor's predicate is their exact filter.
             _ => {}
         }
     }
     ScanFilter::try_new(conditions)
+}
+
+/// Collects the predicate's full-text conjuncts in declaration order: one
+/// `(field, query, match_any)` triple per `search` condition.
+fn search_conditions(predicate: &super::spec::QueryPredicate) -> Vec<(&str, &str, bool)> {
+    let mut searches = Vec::new();
+    for condition in predicate.conditions() {
+        if let QueryCondition::Search { field, query, match_any } = condition {
+            searches.push((field.as_str(), query.as_str(), *match_any));
+        }
+    }
+    searches
+}
+
+/// Applies the first-query text-index policy (S-02 slice D, D-31): every
+/// searched field is covered by an active text descriptor before the scan
+/// narrows. An absent field registers on the spot — a collection inside
+/// the inline cost cap goes active at once and the same query already
+/// narrows — while a field whose descriptor is still building fails the
+/// query closed with [`QueryError::IndexNotReady`] until the governed
+/// text pass completes it. A registration that leaves coverage unchanged
+/// degrades to the executor's exact scan instead.
+fn ensure_fts_fields(
+    engine: &Engine,
+    collection: &crate::types::CollectionName,
+    searches: &[(&str, &str, bool)],
+) -> Result<(), QueryError> {
+    register_fts_fields(engine, collection, searches);
+    for (field, _, _) in searches {
+        if engine.fts_field_state(collection, field) == Some(false) {
+            return Err(QueryError::IndexNotReady);
+        }
+    }
+    Ok(())
+}
+
+/// Registers the searched fields without refusing anything: absent fields
+/// derive their durable text descriptors (inline or building), every other
+/// outcome leaves serving to the caller.
+fn register_fts_fields(
+    engine: &Engine,
+    collection: &crate::types::CollectionName,
+    searches: &[(&str, &str, bool)],
+) {
+    for (field, _, _) in searches {
+        if engine.fts_field_state(collection, field).is_none() {
+            let _ = engine.register_fts_field(collection, field);
+        }
+    }
+}
+
+/// Serves one FTS5 candidate set: loads the named ids at the snapshot —
+/// tombstoned, expired, or concurrently vanished keys simply contribute
+/// nothing — re-checks the executor's exact predicate over each survivor,
+/// and retains the matches in score order when the query ranks, in model
+/// order otherwise. The index narrows; the predicate filters.
+#[allow(clippy::too_many_arguments, reason = "the scan path's context")]
+fn scan_fts_candidates(
+    engine: &Engine,
+    scope: &TenantScope,
+    snapshot: &ReadSnapshot,
+    query: &NormalizedQuery,
+    collection: &crate::types::CollectionName,
+    candidates: &[(String, f64)],
+    indexed_ids: Option<&BTreeSet<DocumentId>>,
+    retained_capacity: usize,
+) -> Result<(Vec<Document>, u64, u64, u64), QueryError> {
+    let ranked = query.search_rank().is_some();
+    let direction = query
+        .search_rank()
+        .map_or(super::spec::OrderDirection::Descending, model::SearchRank::direction);
+    let relevance_by_id: std::collections::BTreeMap<&str, f64> =
+        candidates.iter().map(|(id, score)| (id.as_str(), *score)).collect();
+    let mut matched: Vec<Document> = Vec::new();
+    let mut ranked_retained: Vec<(f64, Document)> = Vec::new();
+    let mut retained_bytes = 0_usize;
+    let mut matched_count = 0_u64;
+    let mut scanned = 0_u64;
+    let mut skipped = 0_u64;
+    for chunk in candidates.chunks(QUERY_SCAN_PAGE as usize) {
+        check_bounds(query.deadline(), query.cancellation_signal())?;
+        let ids: Vec<DocumentId> =
+            chunk.iter().filter_map(|(id, _)| DocumentId::try_new(id).ok()).collect();
+        let documents = engine
+            .snapshot_documents_by_ids(scope, snapshot, collection, &ids)
+            .map_err(|error| map_engine_error(&error))?;
+        for (position, document) in documents.iter().enumerate() {
+            if position % CHECKPOINT_INTERVAL == 0 {
+                check_bounds(query.deadline(), query.cancellation_signal())?;
+            }
+            if indexed_ids.is_some_and(|ids| !ids.contains(document.id())) {
+                continue;
+            }
+            scanned = scanned.saturating_add(1);
+            if model::matches(query.predicate(), document) {
+                matched_count = matched_count.saturating_add(1);
+                if query.paging().limit().is_none() && matched_count > retained_capacity as u64 {
+                    return Err(QueryError::CandidateBoundExceeded);
+                }
+                if ranked {
+                    let relevance =
+                        relevance_by_id.get(document.id().as_str()).copied().unwrap_or(0.0);
+                    retain_scored(
+                        query,
+                        &mut ranked_retained,
+                        &mut retained_bytes,
+                        document,
+                        relevance,
+                        direction,
+                        retained_capacity,
+                    )?;
+                } else {
+                    retain_candidate(
+                        query,
+                        &mut matched,
+                        &mut retained_bytes,
+                        document,
+                        retained_capacity,
+                    )?;
+                }
+            } else {
+                skipped = skipped.saturating_add(1);
+            }
+        }
+    }
+    if ranked {
+        matched = ranked_retained.into_iter().map(|(_, document)| document).collect();
+    }
+    Ok((matched, matched_count, scanned, skipped))
+}
+
+/// Retains one scored candidate in rank order: the rank direction first,
+/// document identity as the total tie-breaker. The window and byte bounds
+/// match [`retain_candidate`]'s, so a ranked query is bounded exactly like
+/// a model-ordered one.
+fn retain_scored(
+    query: &NormalizedQuery,
+    retained: &mut Vec<(f64, Document)>,
+    retained_bytes: &mut usize,
+    document: &Document,
+    score: f64,
+    direction: super::spec::OrderDirection,
+    capacity: usize,
+) -> Result<(), QueryError> {
+    check_bounds(query.deadline(), query.cancellation_signal())?;
+    let position = retained
+        .iter()
+        .position(|(other, id)| {
+            compare_scores(direction, score, document.id().as_str(), *other, id.id().as_str())
+                == std::cmp::Ordering::Less
+        })
+        .unwrap_or(retained.len());
+    *retained_bytes = (*retained_bytes).saturating_add(document_bytes(document));
+    retained.insert(position, (score, document.clone()));
+    if retained.len() > capacity
+        && let Some((_, removed)) = retained.pop()
+    {
+        *retained_bytes = (*retained_bytes).saturating_sub(document_bytes(&removed));
+    }
+    if *retained_bytes > MAX_RETAINED_CANDIDATE_BYTES {
+        return Err(QueryError::CandidateBoundExceeded);
+    }
+    Ok(())
+}
+
+/// Orders two scored candidates: the rank direction over the scores, then
+/// document identity ascending as the total tie-breaker so paging is
+/// stable. NaN scores sort last in either direction; stored scores are
+/// finite `-bm25` values, so the arm is unreachable defense.
+fn compare_scores(
+    direction: super::spec::OrderDirection,
+    left_score: f64,
+    left_id: &str,
+    right_score: f64,
+    right_id: &str,
+) -> std::cmp::Ordering {
+    let ordering = left_score
+        .partial_cmp(&right_score)
+        .unwrap_or_else(|| {
+            if left_score.is_nan() && right_score.is_nan() {
+                std::cmp::Ordering::Equal
+            } else if left_score.is_nan() {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        })
+        .then_with(|| left_id.cmp(right_id));
+    match direction {
+        super::spec::OrderDirection::Ascending => ordering,
+        super::spec::OrderDirection::Descending => ordering.reverse(),
+    }
+}
+
+/// Scores one document for the scan fallback's relevance order: the total
+/// count of satisfied positive search clauses over the field values the
+/// search conditions name. The exact predicate already admitted the
+/// document; this only orders survivors deterministically when FTS5
+/// scores are unavailable.
+fn fallback_score(document: &Document, predicate: &super::spec::QueryPredicate) -> f64 {
+    let mut hits = 0_usize;
+    for condition in predicate.conditions() {
+        let QueryCondition::Search { field, query, match_any } = condition else { continue };
+        let parsed = super::parse_search_query(query, *match_any);
+        let mut terms = Vec::new();
+        match model::field_of(document, field) {
+            Some(DocumentValue::String(text)) => {
+                terms.extend(super::standard_terms(text));
+            }
+            Some(DocumentValue::Array(elements)) => {
+                for element in elements {
+                    if let DocumentValue::String(text) = element {
+                        terms.extend(super::standard_terms(text));
+                    }
+                }
+            }
+            _ => {}
+        }
+        hits = hits.saturating_add(super::satisfied_positive_clauses(&terms, &parsed));
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "the clause count is bounded by the query's condition cap, far below 2^52"
+    )]
+    let relevance = hits as f64;
+    relevance
 }
 
 /// Retains only the best candidates for the requested order. Stable sorting

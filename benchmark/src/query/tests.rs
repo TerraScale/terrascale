@@ -3377,3 +3377,653 @@ fn large_collection_first_query_is_not_ready_until_the_governed_backfill_complet
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// ---------------------------------------------------------------------------
+// S-02 slice D: full-text search, TTL, explain, and the vector disposition
+// ---------------------------------------------------------------------------
+
+fn search(field: &str, query: &str) -> QueryCondition {
+    QueryCondition::Search { field: field.to_owned(), query: query.to_owned(), match_any: false }
+}
+
+fn search_any(field: &str, query: &str) -> QueryCondition {
+    QueryCondition::Search { field: field.to_owned(), query: query.to_owned(), match_any: true }
+}
+
+fn text_document(id: &str, collection: &str, field: &str, text: &str) -> Document {
+    object_document(id, collection, &[(field, DocumentValue::String(text.to_owned()))])
+}
+
+fn search_parameters(query: &str) -> TqlParameters {
+    TqlParameters::try_new(&[("q", DocumentValue::String(query.to_owned()))])
+        .expect("valid parameters")
+}
+
+fn compile_tql(
+    engine: &Engine,
+    text: &str,
+    parameters: &TqlParameters,
+    tenant_name: &str,
+) -> super::QueryPlan {
+    let store = engine.queries();
+    let parsed = tql::parse_artifact(Some("tql/1.0"), text, parameters, &engine.tql_capabilities())
+        .expect("the examples text parses");
+    tql::compile(&store, &parsed, parameters, tenant(tenant_name), deadline(), Cancellation::new())
+        .expect("the search text compiles")
+}
+
+#[test]
+fn search_matches_analyzed_terms_through_the_typed_seam() {
+    let (dir, engine) = open_engine("search-typed");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            text_document("doc-term", "articles", "body", "The Quick brown fox"),
+            text_document("doc-phrase", "articles", "body", "a quick brown dog naps"),
+            text_document("doc-excluded", "articles", "body", "quick wolf dinner"),
+            text_document("doc-number", "articles", "body", "entirely unrelated"),
+            object_document("doc-nostring", "articles", &[("body", DocumentValue::Integer(7))]),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let run = |condition| {
+        let plan = store
+            .compile(QueryInput::typed(spec(
+                "tenant-a",
+                "articles",
+                predicate(vec![condition]),
+                QueryOrdering::default(),
+                QueryProjection::whole_document(),
+                paging(0, None),
+                staleness(StalenessMode::Strict, Vec::new()),
+            )))
+            .expect("compiles");
+        row_ids(&store.execute(&plan, &snapshot).expect("executes"))
+    };
+    assert_eq!(run(search("body", "quick")), ["doc-excluded", "doc-phrase", "doc-term"]);
+    assert_eq!(run(search("body", "\"quick brown\"")), ["doc-phrase", "doc-term"]);
+    assert_eq!(run(search("body", "qu*")), ["doc-excluded", "doc-phrase", "doc-term"]);
+    assert_eq!(run(search("body", "quick -wolf")), ["doc-phrase", "doc-term"]);
+    assert_eq!(run(search("body", "fox wolf")), Vec::<String>::new());
+    assert_eq!(run(search_any("body", "fox wolf")), ["doc-excluded", "doc-term"]);
+    assert_eq!(run(search("body", "!!!")), Vec::<String>::new());
+    // A string array matches when any element does; a non-string never does.
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-2",
+        vec![
+            object_document(
+                "doc-array",
+                "articles",
+                &[(
+                    "body",
+                    DocumentValue::Array(vec![
+                        DocumentValue::String("nothing".to_owned()),
+                        DocumentValue::String("quick silver".to_owned()),
+                    ]),
+                )],
+            ),
+            object_document(
+                "doc-missing",
+                "articles",
+                &[("title", DocumentValue::String("quick".to_owned()))],
+            ),
+        ],
+    );
+    let fresh = engine.read_snapshot(&tenant_scope).expect("fresh snapshot");
+    let plan = store
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "articles",
+            predicate(vec![search("body", "quick")]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
+        .expect("compiles");
+    assert_eq!(
+        row_ids(&store.execute(&plan, &fresh).expect("executes")),
+        ["doc-array", "doc-excluded", "doc-phrase", "doc-term"]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn first_search_registers_a_text_descriptor_and_reads_its_own_writes() {
+    let (dir, engine) = open_engine("search-first-query");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            text_document("doc-1", "products", "description", "a red bicycle for city rides"),
+            text_document("doc-2", "products", "description", "a blue kayak for calm lakes"),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let plan = store
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "products",
+            predicate(vec![search("description", "bicycle")]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
+        .expect("compiles");
+    let result = store.execute(&plan, &snapshot).expect("executes");
+    assert_eq!(row_ids(&result), ["doc-1"]);
+    assert_eq!(
+        result.statistics().scanned(),
+        1,
+        "the first search registers inline and already narrows"
+    );
+    // Index maintenance rides the commit transaction: a delete in a later
+    // wave is invisible to the very next search — zero stale reads.
+    let delete_snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let mut transaction = engine
+        .begin(
+            &tenant_scope,
+            delete_snapshot,
+            OperationId::try_new("op-delete").expect("valid identifier"),
+        )
+        .expect("begins");
+    transaction.delete_in_collection(
+        &CollectionName::try_new("products").expect("valid collection"),
+        DocumentId::try_new("doc-1").expect("valid identifier"),
+        ExpectedVersion::Any,
+    );
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(_) => {}
+        other => panic!("delete did not commit: {other:?}"),
+    }
+    let after = engine.read_snapshot(&tenant_scope).expect("fresh snapshot");
+    assert!(
+        store.execute(&plan, &after).expect("executes").rows().is_empty(),
+        "the tombstone cleared the term index in its own transaction"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn search_with_score_orders_by_relevance_through_tql() {
+    let (dir, engine) = open_engine("search-ranked");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            text_document("doc-once", "products", "description", "apple zebra"),
+            text_document(
+                "doc-often",
+                "products",
+                "description",
+                "apple apple apple apple apple zebra",
+            ),
+            text_document("doc-never", "products", "description", "a zebra with no fruit"),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let parameters = search_parameters("apple");
+    let descending = compile_tql(
+        &engine,
+        "from products where search(description, $q) order by score() desc limit 10",
+        &parameters,
+        "tenant-a",
+    );
+    assert_eq!(
+        row_ids(&store.execute(&descending, &snapshot).expect("executes")),
+        ["doc-often", "doc-once"]
+    );
+    let ascending = compile_tql(
+        &engine,
+        "from products where search(description, $q) order by score() limit 10",
+        &parameters,
+        "tenant-a",
+    );
+    assert_eq!(
+        row_ids(&store.execute(&ascending, &snapshot).expect("executes")),
+        ["doc-once", "doc-often"]
+    );
+    // The unranked form serves the same match set in source order.
+    let unranked = compile_tql(
+        &engine,
+        "from products where search(description, $q)",
+        &parameters,
+        "tenant-a",
+    );
+    assert_eq!(
+        row_ids(&store.execute(&unranked, &snapshot).expect("executes")),
+        ["doc-often", "doc-once"]
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn large_collection_first_search_is_not_ready_until_the_text_backfill_completes() {
+    let (dir, engine) = open_engine("search-governed-backfill");
+    let tenant_scope = scope(&engine, "tenant-a");
+    // One wave past the inline cost cap, so the first search registers a
+    // building descriptor instead of an active one.
+    let bulk = (0..10_001u32)
+        .map(|index| {
+            let body = if index.is_multiple_of(1000) {
+                "a rare needle in the hay"
+            } else {
+                "plain bulk filler"
+            };
+            text_document(&format!("bulk-{index:05}"), "articles", "body", body)
+        })
+        .collect::<Vec<_>>();
+    commit_documents(&engine, &tenant_scope, "op-bulk", bulk);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let plan = store
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "articles",
+            predicate(vec![search("body", "needle")]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, Some(20)),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
+        .expect("compiles");
+    assert_eq!(
+        store.execute(&plan, &snapshot),
+        Err(QueryError::IndexNotReady),
+        "a building text descriptor fails the search closed — a scan over a \
+         half-indexed term stream would silently miss rows"
+    );
+    let explained = store.explain(&plan, &snapshot).expect("explains while building");
+    assert_eq!(explained.access(), super::ExplainAccess::FullScan);
+    assert_eq!(explained.building(), &["articles.body".to_owned()]);
+    let text =
+        explained.indexes().iter().find(|index| index.field == "body").expect("body indexed");
+    assert_eq!(text.kind, super::ExplainIndexKind::Text);
+    assert_eq!(text.state, super::ExplainIndexState::Building);
+    let mut active = false;
+    for _ in 0..10 {
+        let progress = engine.maintain_index_backfills().expect("the governed pass pumps");
+        if progress.iter().any(|step| step.active) {
+            active = true;
+            break;
+        }
+    }
+    assert!(active, "the bounded pass completes the text descriptor");
+    let fresh = engine.read_snapshot(&tenant_scope).expect("fresh snapshot");
+    // A client retries with a fresh query after `IndexBuilding`: recompile
+    // so the plan carries a live deadline past the backfill window.
+    let retry = store
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "articles",
+            predicate(vec![search("body", "needle")]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, Some(20)),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
+        .expect("compiles");
+    let result = store.execute(&retry, &fresh).expect("the search serves once active");
+    assert_eq!(result.matched(), 11);
+    assert_eq!(
+        result.statistics().scanned(),
+        11,
+        "the narrowed read touches exactly the live matches — zero stale reads"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn ttl_expiry_hides_documents_and_the_sweep_tombstones_them() {
+    let (dir, engine) = open_engine("ttl-sweep");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let now_millis = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("wall clock")
+            .as_millis(),
+    )
+    .unwrap_or(i64::MAX);
+    let live =
+        object_document("doc-live", "sessions", &[("user", DocumentValue::String("a".to_owned()))]);
+    let future = Document::new(
+        DocumentId::try_new("doc-future").expect("valid identifier"),
+        CollectionName::try_new("sessions").expect("valid identifier"),
+        DocumentValue::Object(
+            [
+                ("user".to_owned(), DocumentValue::String("b".to_owned())),
+                ("expires_at".to_owned(), DocumentValue::Integer(now_millis + 3_600_000)),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    let past = Document::new(
+        DocumentId::try_new("doc-past").expect("valid identifier"),
+        CollectionName::try_new("sessions").expect("valid identifier"),
+        DocumentValue::Object(
+            [
+                ("user".to_owned(), DocumentValue::String("c".to_owned())),
+                ("expires_at".to_owned(), DocumentValue::Integer(now_millis - 1)),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    commit_documents(&engine, &tenant_scope, "op-1", vec![live, future, past]);
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let plan =
+        store.compile(QueryInput::typed(simple_spec("tenant-a", "sessions"))).expect("compiles");
+    // Read-time filtering hides the elapsed key before any sweep runs.
+    assert_eq!(
+        row_ids(&store.execute(&plan, &snapshot).expect("executes")),
+        ["doc-future", "doc-live"]
+    );
+    // Point reads agree: the past is already gone.
+    let past_id = DocumentId::try_new("doc-past").expect("valid identifier");
+    let sessions = CollectionName::try_new("sessions").expect("valid identifier");
+    let transaction = engine
+        .begin(&tenant_scope, snapshot, OperationId::try_new("op-probe").expect("valid identifier"))
+        .expect("begins");
+    assert!(transaction.read_in_collection(&sessions, &past_id).expect("reads").is_none());
+    drop(transaction);
+    // The sweep writes the tombstone; the key stays hidden and gains history.
+    assert_eq!(engine.sweep_expired_ttl(256).expect("sweeps"), 1);
+    assert_eq!(engine.sweep_expired_ttl(256).expect("the second sweep owes nothing"), 0);
+    let fresh = engine.read_snapshot(&tenant_scope).expect("fresh snapshot");
+    assert_eq!(
+        row_ids(&store.execute(&plan, &fresh).expect("executes")),
+        ["doc-future", "doc-live"]
+    );
+    let history = engine
+        .document_history_in_collection(&tenant_scope, &sessions, &past_id, 10)
+        .expect("history reads");
+    assert!(history.iter().any(|entry| entry.deleted), "the sweep left a tombstone revision");
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn search_never_serves_an_expired_match() {
+    let (dir, engine) = open_engine("search-ttl");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let now_millis = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("wall clock")
+            .as_millis(),
+    )
+    .unwrap_or(i64::MAX);
+    let stale = Document::new(
+        DocumentId::try_new("doc-stale").expect("valid identifier"),
+        CollectionName::try_new("products").expect("valid identifier"),
+        DocumentValue::Object(
+            [
+                ("description".to_owned(), DocumentValue::String("red bicycle".to_owned())),
+                ("expires_at".to_owned(), DocumentValue::Integer(now_millis - 1)),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![stale, text_document("doc-fresh", "products", "description", "red bicycle")],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    let plan = store
+        .compile(QueryInput::typed(spec(
+            "tenant-a",
+            "products",
+            predicate(vec![search("description", "bicycle")]),
+            QueryOrdering::default(),
+            QueryProjection::whole_document(),
+            paging(0, None),
+            staleness(StalenessMode::Strict, Vec::new()),
+        )))
+        .expect("compiles");
+    assert_eq!(row_ids(&store.execute(&plan, &snapshot).expect("executes")), ["doc-fresh"]);
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn explain_reports_access_indexes_order_and_building() {
+    let (dir, engine) = open_engine("explain");
+    let tenant_scope = scope(&engine, "tenant-a");
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "op-1",
+        vec![
+            object_document(
+                "doc-1",
+                "orders",
+                &[
+                    ("status", DocumentValue::String("paid".to_owned())),
+                    ("note", DocumentValue::String("a quick note".to_owned())),
+                ],
+            ),
+            object_document(
+                "doc-2",
+                "orders",
+                &[
+                    ("status", DocumentValue::String("open".to_owned())),
+                    ("note", DocumentValue::String("another note".to_owned())),
+                ],
+            ),
+        ],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("snapshot");
+    let store = engine.queries();
+    // A bare scan explains as a full input-order scan.
+    let scan =
+        store.compile(QueryInput::typed(simple_spec("tenant-a", "orders"))).expect("compiles");
+    let explained = store.explain(&scan, &snapshot).expect("explains");
+    assert_eq!(explained.collection(), "orders");
+    assert_eq!(explained.access(), super::ExplainAccess::FullScan);
+    assert_eq!(explained.order(), super::ExplainOrder::Input);
+    assert!(explained.indexes().is_empty());
+    assert!(explained.building().is_empty());
+    assert!(explained.ttl_filtered());
+    // Running the value query first activates its descriptor, so the same
+    // query explains as a filtered, sorted scan over one active index.
+    let filtered = store
+        .compile(QueryInput::tql(
+            TqlQueryText::try_new("from orders where status = 'paid' order by status limit 5")
+                .expect("valid text"),
+        ))
+        .expect("compiles");
+    store.execute(&filtered, &snapshot).expect("the first query registers inline");
+    let explained = store.explain(&filtered, &snapshot).expect("explains");
+    assert_eq!(explained.access(), super::ExplainAccess::FilteredScan);
+    assert_eq!(explained.order(), super::ExplainOrder::Sorted);
+    assert_eq!(explained.limit(), Some(5));
+    assert_eq!(explained.offset(), 0);
+    assert!(explained.building().is_empty());
+    let index =
+        explained.indexes().iter().find(|index| index.field == "status").expect("status indexed");
+    assert_eq!(index.kind, super::ExplainIndexKind::Value);
+    assert_eq!(index.state, super::ExplainIndexState::Active);
+    // The ranked search explains as a text search with score order. The
+    // first execution registers the text descriptor inline, so explaining
+    // afterwards reports the active index the query already narrowed
+    // through.
+    let parameters = search_parameters("quick");
+    let ranked = compile_tql(
+        &engine,
+        "from orders where search(note, $q) order by score() desc limit 5",
+        &parameters,
+        "tenant-a",
+    );
+    assert_eq!(
+        row_ids(&store.execute(&ranked, &snapshot).expect("the first search registers")),
+        ["doc-1"]
+    );
+    let explained = store.explain(&ranked, &snapshot).expect("explains");
+    assert_eq!(explained.access(), super::ExplainAccess::TextSearch);
+    assert_eq!(explained.order(), super::ExplainOrder::ScoreRanked);
+    let text =
+        explained.indexes().iter().find(|index| index.field == "note").expect("note indexed");
+    assert_eq!(text.kind, super::ExplainIndexKind::Text);
+    assert_eq!(text.state, super::ExplainIndexState::Active);
+    // Nothing names a storage internal.
+    let rendered = format!("{explained:?}");
+    assert!(!rendered.contains("fts_docs") && !rendered.contains("sqlite"), "explain: {rendered}");
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn search_ships_while_the_vector_operator_stays_gated() {
+    let (dir, engine) = open_engine("capabilities");
+    let capabilities = engine.tql_capabilities();
+    assert!(capabilities.is_available(tql::Capability::Search));
+    assert!(!capabilities.is_available(tql::Capability::Vector));
+    let terms = TqlParameters::try_new(&[("q", DocumentValue::String("x".to_owned()))])
+        .expect("valid parameters");
+    assert!(
+        tql::parse_artifact(
+            Some("tql/1.0"),
+            "from p where search(body, $q)",
+            &terms,
+            &capabilities
+        )
+        .is_ok(),
+        "the engine reports search"
+    );
+    let vectors = TqlParameters::try_new(&[(
+        "v",
+        DocumentValue::Array(vec![DocumentValue::Number(0.5), DocumentValue::Number(0.25)]),
+    )])
+    .expect("valid parameters");
+    assert_eq!(
+        tql::parse_artifact(
+            Some("tql/1.0"),
+            "from p where vector.search(embedding, $v)",
+            &vectors,
+            &capabilities
+        )
+        .map(|_| ())
+        .map_err(|error| error.class()),
+        Err(tql::TqlErrorClass::CapabilityUnavailable),
+        "vector search through TQL stays fail-closed: the exact k-NN seam serves \
+         typed requests, and no TQL operator reports it until the sqlite-vec \
+         follow-up lands (workspace goal D-40: vector is post-launch)"
+    );
+    drop(engine);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn score_ranking_fails_closed_outside_the_plan_compile() {
+    let parameters = search_parameters("quick");
+    let parsed = tql::parse_artifact(
+        Some("tql/1.0"),
+        "from orders where search(note, $q) order by score() desc",
+        &parameters,
+        &tql::engine_capabilities(),
+    )
+    .expect("parses");
+    // The specification cannot carry the rank, so the specification entry
+    // fails closed and only the plan compile serves ranked queries.
+    assert_eq!(
+        tql::lower_to_spec(
+            &parsed,
+            &parameters,
+            tenant("tenant-a"),
+            deadline(),
+            Cancellation::new()
+        )
+        .map(|_| ())
+        .map_err(|error| (error.class(), error.construct().map(str::to_owned))),
+        Err((tql::TqlErrorClass::UnsupportedForPlanning, Some("score".to_owned())))
+    );
+}
+
+#[test]
+fn search_lowering_rejects_bad_queries_fail_closed() {
+    let case = |text: &str, parameters: &TqlParameters| {
+        tql::parse_artifact(Some("tql/1.0"), text, parameters, &tql::engine_capabilities())
+            .map_err(|error| (error.class(), error.construct().map(str::to_owned)))
+            .and_then(|parsed| {
+                tql::lower_to_spec(
+                    &parsed,
+                    parameters,
+                    tenant("tenant-a"),
+                    deadline(),
+                    Cancellation::new(),
+                )
+                .map(|_| ())
+                .map_err(|error| (error.class(), error.construct().map(str::to_owned)))
+            })
+    };
+    // A non-string query is an invalid search argument.
+    assert_eq!(
+        case(
+            "from p where search(body, 42)",
+            &TqlParameters::try_new(&[]).expect("valid parameters")
+        ),
+        Err((tql::TqlErrorClass::InvalidArgument, Some("search".to_owned())))
+    );
+    // A combiner outside and/or is an invalid search argument.
+    assert_eq!(
+        case("from p where search(body, $q, 'xor')", &search_parameters("quick")),
+        Err((tql::TqlErrorClass::InvalidArgument, Some("search".to_owned())))
+    );
+    // A nested field has no seam spelling and fails closed, like every
+    // other nested path.
+    assert_eq!(
+        case("from p where search(customer.note, $q)", &search_parameters("quick")),
+        Err((tql::TqlErrorClass::UnsupportedForPlanning, Some("search".to_owned())))
+    );
+    // Weighting has no slice-D spelling and fails closed.
+    assert_eq!(
+        case("from p where boost(search(body, $q), 3)", &search_parameters("quick")),
+        Err((tql::TqlErrorClass::UnsupportedForPlanning, Some("call".to_owned())))
+    );
+    // Several searched fields leave the rank ambiguous and fail closed.
+    let both = TqlParameters::try_new(&[
+        ("a", DocumentValue::String("quick".to_owned())),
+        ("b", DocumentValue::String("brown".to_owned())),
+    ])
+    .expect("valid parameters");
+    assert_eq!(
+        case("from p where search(title, $a) and search(body, $b) order by score() desc", &both),
+        Err((tql::TqlErrorClass::UnsupportedForPlanning, Some("score".to_owned())))
+    );
+    // A ranking without a search has nothing to rank by.
+    assert_eq!(
+        case(
+            "from p order by score() desc",
+            &TqlParameters::try_new(&[]).expect("valid parameters")
+        ),
+        Err((tql::TqlErrorClass::UnsupportedForPlanning, Some("score".to_owned())))
+    );
+    // An empty query string is an invalid search argument.
+    assert_eq!(
+        case("from p where search(body, $q)", &search_parameters("")),
+        Err((tql::TqlErrorClass::InvalidArgument, Some("search".to_owned())))
+    );
+}

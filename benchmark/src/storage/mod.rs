@@ -200,6 +200,20 @@ pub struct DocumentRevisionEntry {
     pub deleted: bool,
 }
 
+/// One live key whose TTL expiry has passed (S-02 slice D): the sweep's
+/// unit of work. The key is tenant-scoped; the sweep deletes it through
+/// the ordinary origin-tombstone path, so expiry replicates and merges
+/// like any other delete.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExpiredTtlKey {
+    /// The owning tenant.
+    pub tenant: TenantId,
+    /// The collection of the expired key.
+    pub collection: CollectionName,
+    /// The expired document's identifier.
+    pub id: DocumentId,
+}
+
 /// The durable progress of one governed backfill batch.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackfillProgress {
@@ -459,6 +473,64 @@ pub(crate) trait StoragePort: Send {
     ///
     /// Returns `Err(())` when the durable pass fails.
     fn pump_index_backfills(&mut self, _batch: u64) -> Result<Vec<BackfillProgress>, ()> {
+        Ok(Vec::new())
+    }
+
+    /// Registers one full-text descriptor (S-02 slice D, D-39): the named
+    /// field of the named collection gains FTS5 rows written by the Rust
+    /// write path from the next commit on, backfilled inline inside the
+    /// cost cap and governed beyond it — the same lifecycle as
+    /// [`StoragePort::register_index_descriptor`], over its own table, so
+    /// a field may carry both a value and a text descriptor.
+    ///
+    /// Registration is idempotent: an identical descriptor already on
+    /// record is a no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexDescriptorError::Storage`] when durable registration
+    /// fails. There is no column budget for text: the FTS5 table is the
+    /// index.
+    fn register_fts_descriptor(
+        &mut self,
+        _collection: &CollectionName,
+        _field: &str,
+    ) -> Result<DescriptorRegistration, IndexDescriptorError> {
+        Err(IndexDescriptorError::Storage)
+    }
+
+    /// Reports one field's text-descriptor state without registering
+    /// anything: `Some(true)` narrows, `Some(false)` is building, and
+    /// `None` is no descriptor (or a backend that does not report).
+    fn fts_descriptor_state(&self, _collection: &CollectionName, _field: &str) -> Option<bool> {
+        None
+    }
+
+    /// Returns the FTS5 candidate set of one search — the matching
+    /// document ids with relevance scores, higher first — or `None` when
+    /// this backend cannot narrow the read and the caller must take the
+    /// exact scan. The candidates are a sound narrowing, never an exact
+    /// filter: the caller still applies its full predicate.
+    fn fts_match(
+        &self,
+        _sequence: StorageSequence,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _field: &str,
+        _query: &str,
+        _match_any: bool,
+    ) -> Option<Result<Vec<(String, f64)>, SnapshotReadError>> {
+        None
+    }
+
+    /// Returns the live keys whose TTL expiry has passed, bounded by
+    /// `batch`: the sweep's work list (S-02 slice D). The default owes no
+    /// keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(())` when durable storage failed.
+    fn expired_ttl_keys(&self, _now_millis: i64, _batch: u32) -> Result<Vec<ExpiredTtlKey>, ()> {
         Ok(Vec::new())
     }
 
