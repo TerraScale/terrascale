@@ -138,16 +138,55 @@ function canonicalMessage(envelope) {
 
 export { canonicalEnvelope, canonicalMessage };
 
+const VIEW_CAPABILITY_HEADER = "x-terrascale-view-capability";
+const MAX_REACTIVE_URL_LENGTH = 4096;
+
+function normalizeSandboxOrigin(raw) {
+  if (typeof raw !== "string" || raw.trim().length === 0 || raw.length > MAX_REACTIVE_URL_LENGTH) {
+    throw new Error("remote sandbox URL is invalid");
+  }
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (error) {
+    throw new Error("remote sandbox URL is invalid", { cause: error });
+  }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin === "null" || parsed.username || parsed.password) {
+    throw new Error("remote sandbox URL must be an HTTP(S) origin without credentials");
+  }
+  return parsed.origin;
+}
+
+function resolveSandboxUrl(raw, sandboxOrigin, kind = "reactive") {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > MAX_REACTIVE_URL_LENGTH) {
+    throw new Error(`remote ${kind} URL is invalid`);
+  }
+  const origin = normalizeSandboxOrigin(sandboxOrigin);
+  let parsed;
+  try {
+    parsed = new URL(raw, origin);
+  } catch (error) {
+    throw new Error(`remote ${kind} URL is invalid`, { cause: error });
+  }
+  if (parsed.origin !== origin || parsed.username || parsed.password || parsed.hash) {
+    throw new Error(`remote ${kind} URL must use the configured sandbox origin`);
+  }
+  return parsed.toString();
+}
+
+export { normalizeSandboxOrigin, resolveSandboxUrl, VIEW_CAPABILITY_HEADER };
+
 function createRemoteSandbox() {
-  const base = process.env.TERRASCALE_SANDBOX_URL?.replace(/\/$/, "");
+  const configuredBase = process.env.TERRASCALE_SANDBOX_URL;
   const key = process.env.TERRASCALE_API_KEY;
   const database = process.env.TERRASCALE_DATABASE_ID;
-  if (!base || !key || !database) {
+  if (!configuredBase || !key || !database) {
     throw new Error(
       "remote sandbox needs TERRASCALE_SANDBOX_URL + TERRASCALE_API_KEY + " +
         "TERRASCALE_DATABASE_ID (a cloud dev branch pre-filled with the reader's key; D-56).",
     );
   }
+  const base = normalizeSandboxOrigin(configuredBase);
 
   let session;
   let writeNumber = 0;
@@ -240,7 +279,7 @@ function createRemoteSandbox() {
     while (!state.closed && Date.now() < deadline) {
       const url = new URL(state.logUrl);
       url.searchParams.set("offset", String(state.revision));
-      const response = await fetch(url, { headers: { ...headers, accept: "application/msgpack", "x-terrascale-capability": state.capability } });
+      const response = await fetch(url, { headers: { ...headers, accept: "application/msgpack", [VIEW_CAPABILITY_HEADER]: state.capability } });
       if (!response.ok) throw new Error(`remote GET ${url.pathname} failed: ${response.status}`);
       if (response.status !== 204 && response.status !== 304) {
         if (consume(state, new Uint8Array(await response.arrayBuffer()))) return;
@@ -299,15 +338,17 @@ function createRemoteSandbox() {
       const view = value?.viewId ?? value?.view_id ?? value?.view;
       const generation = value?.generation ?? value?.view_generation;
       const capability = value?.capability ?? value?.viewCapability ?? value?.view_capability;
-      const logUrl = value?.logUrl ?? value?.log_url ?? value?.log;
+      const rawLogUrl = value?.logUrl ?? value?.log_url ?? value?.log;
       const snapshots = value?.snapshotUrls ?? value?.snapshot_urls ?? value?.snapshotChunkUrls ?? value?.snapshot_chunks;
-      if (typeof view !== "string" || !Number.isInteger(Number(generation)) || typeof capability !== "string" || typeof logUrl !== "string" || !Array.isArray(snapshots)) {
+      if (typeof view !== "string" || !Number.isInteger(Number(generation)) || typeof capability !== "string" || typeof rawLogUrl !== "string" || !Array.isArray(snapshots)) {
         throw new Error("pending canonical reactive contract: attach response is missing canonical view metadata");
       }
+      const logUrl = resolveSandboxUrl(rawLogUrl, base, "reactive log");
+      const snapshotUrls = snapshots.map((snapshotUrl) => resolveSandboxUrl(snapshotUrl, base, "reactive snapshot"));
       const state = { collection: query.match(/FROM\s+([A-Za-z_][A-Za-z0-9_]*)/iu)?.[1], subscription, capability, logUrl, revision: 0, items: [], listeners: new Set(), closed: false };
       subscriptions.add(state);
-      for (const snapshotUrl of snapshots) {
-        const response = await fetch(snapshotUrl, { headers: { ...headers, accept: "application/msgpack", "x-terrascale-capability": capability } });
+      for (const snapshotUrl of snapshotUrls) {
+        const response = await fetch(snapshotUrl, { headers: { ...headers, accept: "application/msgpack", [VIEW_CAPABILITY_HEADER]: capability } });
         if (!response.ok) throw new Error(`remote snapshot failed: ${response.status}`);
         consume(state, new Uint8Array(await response.arrayBuffer()));
       }
