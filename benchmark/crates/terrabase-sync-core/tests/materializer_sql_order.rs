@@ -140,7 +140,6 @@ fn scalar_comparisons_with_null_do_not_admit_rows() {
 
 #[test]
 fn ordered_index_matches_recomputation_through_replacements_and_refills() {
-    use std::cmp::Ordering;
     use std::collections::BTreeMap;
 
     for descending in [false, true] {
@@ -205,39 +204,7 @@ fn ordered_index_matches_recomputation_through_replacements_and_refills() {
                 }
                 let mut eligible: Vec<_> =
                     source.values().filter(|row| plan.evaluate(row).is_some()).collect();
-                eligible.sort_by(|left, right| {
-                    let score = |row: &ExtractedRow| match row.values.get("score") {
-                        Some(Value::Number(value)) => Some(*value),
-                        _ => None,
-                    };
-                    let primary = match (score(left), score(right)) {
-                        (Some(a), Some(b)) => {
-                            if descending {
-                                b.total_cmp(&a)
-                            } else {
-                                a.total_cmp(&b)
-                            }
-                        }
-                        (None, None) => Ordering::Equal,
-                        (None, Some(_)) => {
-                            if nulls_last {
-                                Ordering::Greater
-                            } else {
-                                Ordering::Less
-                            }
-                        }
-                        (Some(_), None) => {
-                            if nulls_last {
-                                Ordering::Less
-                            } else {
-                                Ordering::Greater
-                            }
-                        }
-                    };
-                    primary
-                        .then_with(|| right.values["tie"].cmp(&left.values["tie"]))
-                        .then_with(|| left.identity.cmp(&right.identity))
-                });
+                eligible.sort_by(|left, right| oracle_order(left, right, descending, nulls_last));
                 let expected: Vec<_> =
                     eligible.iter().take(plan.limit).filter_map(|row| plan.evaluate(row)).collect();
                 assert_eq!(
@@ -312,4 +279,44 @@ fn candidate_byte_refusal_preserves_the_last_result() {
         Err(MaterializeError::ByteBudgetExceeded)
     );
     assert_eq!(materializer.result(), before);
+}
+
+fn oracle_order(
+    left: &ExtractedRow,
+    right: &ExtractedRow,
+    descending: bool,
+    nulls_last: bool,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let score = |row: &ExtractedRow| match row.values.get("score") {
+        Some(Value::Number(value)) => Some(*value),
+        _ => None,
+    };
+    let primary = match (score(left), score(right)) {
+        (Some(a), Some(b)) => {
+            if descending {
+                b.total_cmp(&a)
+            } else {
+                a.total_cmp(&b)
+            }
+        }
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => {
+            if nulls_last {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }
+        (Some(_), None) => {
+            if nulls_last {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        }
+    };
+    primary
+        .then_with(|| right.values["tie"].cmp(&left.values["tie"]))
+        .then_with(|| left.identity.cmp(&right.identity))
 }
