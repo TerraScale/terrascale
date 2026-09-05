@@ -4562,10 +4562,14 @@ impl StoragePort for SqliteStorage {
     ) -> Result<super::JournalBeforeImage, ()> {
         let reader = self.reader();
         let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
-        let pruned: Option<i64> = transaction.query_row(
-            "SELECT pruned_through FROM journal_pruning WHERE tenant = ?1", [tenant.as_str()],
-            |row| row.get(0),
-        ).optional().map_err(|_| ())?;
+        let pruned: Option<i64> = transaction
+            .query_row(
+                "SELECT pruned_through FROM journal_pruning WHERE tenant = ?1",
+                [tenant.as_str()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| ())?;
         let previous = transaction
             .query_row(
                 "SELECT deleted, body, commit_seq FROM documents
@@ -4584,7 +4588,9 @@ impl StoragePort for SqliteStorage {
         match previous {
             None if pruned.is_none() => Ok(super::JournalBeforeImage::Absent),
             None => Ok(super::JournalBeforeImage::Unknown),
-            Some((_, _, prior)) if pruned.is_some_and(|floor| prior <= floor) => Ok(super::JournalBeforeImage::Unknown),
+            Some((_, _, prior)) if pruned.is_some_and(|floor| prior <= floor) => {
+                Ok(super::JournalBeforeImage::Unknown)
+            }
             Some((1, _, _)) => Ok(super::JournalBeforeImage::Absent),
             Some((0, body, _)) => {
                 // Historical dispatch must not apply today's TTL filter: a

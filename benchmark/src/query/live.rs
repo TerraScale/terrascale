@@ -47,6 +47,21 @@ impl QueryPlan {
 }
 
 impl LiveQueryPlan {
+    /// Returns the compiled predicate for conservative dependency registration.
+    #[must_use]
+    pub fn predicate(&self) -> &super::QueryPredicate {
+        self.plan.model().predicate()
+    }
+
+    /// Resolves a dependency field with the snapshot executor's field semantics.
+    #[must_use]
+    pub fn dependency_value<'a>(
+        document: &'a Document,
+        field: &str,
+    ) -> Option<&'a crate::types::DocumentValue> {
+        model::field_of(document, field)
+    }
+
     /// Reuses this live query for a new maintenance operation with fresh bounds.
     #[must_use]
     pub fn with_execution_bounds(

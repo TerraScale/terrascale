@@ -21,6 +21,7 @@ use crate::view_capability::{
     ViewCapabilityClaims, ViewCapabilityIssuer, ViewCapabilityVerifier, hmac_sha256_hex,
 };
 
+mod dependencies;
 mod incremental;
 mod polling;
 mod socket;
@@ -297,6 +298,11 @@ impl View {
     }
 }
 
+struct RefreshBatch {
+    snapshot: terrabase::types::ReadSnapshot,
+    records: Option<Vec<Arc<terrabase::streaming::SyncJournalRecord>>>,
+}
+
 #[derive(Clone)]
 struct Materialization {
     revision: u64,
@@ -315,6 +321,7 @@ struct Materializer {
     incremental: Option<incremental::SqlMaterializer>,
     tenant: terrabase::types::TenantId,
     source: Option<Arc<source::JournalSource>>,
+    dependency: Option<Arc<source::Registration>>,
 }
 
 /// Process-wide canonical shared-view registry.
@@ -679,29 +686,57 @@ impl ViewStore {
         self.refresh_view_now(view_id)
     }
 
-    fn refresh_view_now(&self, view_id: &str) -> Result<(), ApiError> {
-        let (materializer, previous, generation, identity_digest, observed_sequence) = {
+    fn prepare_refresh(&self, view_id: &str) -> Result<Option<RefreshBatch>, ApiError> {
+        let (host, tenant, source, dependency, observed_sequence) = {
             let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
             let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
             view.prune(SystemTime::now());
+            let Some(materializer) = &view.materializer else { return Ok(None) };
             (
-                view.materializer.clone(),
-                view.items.clone(),
-                view.generation,
-                view.identity_digest.clone(),
+                Arc::clone(&materializer.host),
+                materializer.tenant.clone(),
+                Arc::clone(materializer.source.as_ref().ok_or_else(ApiError::storage_failure)?),
+                Arc::clone(materializer.dependency.as_ref().ok_or_else(ApiError::storage_failure)?),
                 view.observed_sequence,
             )
         };
-        let Some(mut materializer) = materializer else { return Ok(()) };
-        let snapshot = materializer
-            .host
+        let snapshot = host
             .engine()
-            .read_snapshot(&materializer.host.engine().scope_for(&materializer.tenant))
+            .read_snapshot(&host.engine().scope_for(&tenant))
             .map_err(|_| ApiError::storage_failure())?;
         if snapshot.sequence().get() <= observed_sequence {
-            return Ok(());
+            return Ok(None);
         }
-        let items = materializer.refresh_items(&snapshot, observed_sequence)?;
+        let records =
+            source.records_for(dependency.id(), observed_sequence, snapshot.sequence().get())?;
+        if records.as_ref().is_some_and(Vec::is_empty) {
+            let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
+            let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
+            view.observed_sequence = snapshot.sequence().get();
+            view.refresh_after = Some(tokio::time::Instant::now() + EMISSION_CADENCE);
+            return Ok(None);
+        }
+        Ok(Some(RefreshBatch { snapshot, records }))
+    }
+
+    fn refresh_view_now(&self, view_id: &str) -> Result<(), ApiError> {
+        // Match before cloning retained candidates or result rows. Irrelevant
+        // publications update only the source watermark, including for plans
+        // whose affected refresh still requires snapshot SQL.
+        let Some(RefreshBatch { snapshot, records }) = self.prepare_refresh(view_id)? else {
+            return Ok(());
+        };
+        let (mut materializer, previous, generation, identity_digest) = {
+            let views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
+            let view = views.get(view_id).ok_or_else(unknown_view)?;
+            (
+                view.materializer.clone().ok_or_else(ApiError::storage_failure)?,
+                view.items.clone(),
+                view.generation,
+                view.identity_digest.clone(),
+            )
+        };
+        let items = materializer.refresh_items(&snapshot, records.as_deref())?;
         let next_digest = digest_items(&items);
         let revision = snapshot.sequence().get();
         {
@@ -1271,6 +1306,7 @@ fn prepare_view(
             incremental,
             tenant,
             source: None,
+            dependency: None,
         }),
     })
 }
@@ -1285,6 +1321,7 @@ impl Materialization {
             .read_snapshot(&engine.scope_for(&source.tenant))
             .map_err(|_| ApiError::storage_failure())?;
         journal.start_at(snapshot.sequence().get())?;
+        source.dependency = Some(journal.register(&source.plan)?);
         source.source = Some(journal);
         value.items = if let Some(incremental) = &mut source.incremental {
             incremental.seed(engine, &snapshot)?;
@@ -1304,16 +1341,11 @@ impl Materializer {
     fn refresh_items(
         &mut self,
         snapshot: &terrabase::types::ReadSnapshot,
-        observed_sequence: u64,
+        records: Option<&[Arc<terrabase::streaming::SyncJournalRecord>]>,
     ) -> Result<Vec<terrabase_sync_core::wire::ResultItem>, ApiError> {
         let engine = self.host.engine();
         if let Some(incremental) = &mut self.incremental {
-            let records = self
-                .source
-                .as_ref()
-                .ok_or_else(ApiError::storage_failure)?
-                .records(observed_sequence, snapshot.sequence().get())?;
-            incremental.refresh_records(engine, snapshot, records.as_deref())
+            incremental.refresh_records(engine, snapshot, records)
         } else {
             Ok(result_items(
                 &engine

@@ -575,13 +575,13 @@ pub(crate) fn replay_view_journal(
             return Err(StreamError::Cancelled);
         }
         record.before = engine
-                .journal_before_image(
-                    scope.tenant(),
-                    record.collection(),
-                    record.document(),
-                    StorageSequence::new(record.storage_sequence()),
-                )
-                .map_err(|error| sources::map_engine_error(&error))?;
+            .journal_before_image(
+                scope.tenant(),
+                record.collection(),
+                record.document(),
+                StorageSequence::new(record.storage_sequence()),
+            )
+            .map_err(|error| sources::map_engine_error(&error))?;
     }
     Ok(batch)
 }

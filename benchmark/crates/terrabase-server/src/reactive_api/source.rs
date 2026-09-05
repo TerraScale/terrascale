@@ -44,6 +44,7 @@ impl Sources {
             tenant: tenant.clone(),
             changed,
             replay: Mutex::new(None),
+            dependencies: Mutex::new(super::dependencies::Dependencies::default()),
             _watch: watch,
         });
         sources.insert(key, Arc::downgrade(&source));
@@ -52,6 +53,7 @@ impl Sources {
 }
 
 pub(super) struct JournalSource {
+    dependencies: Mutex<super::dependencies::Dependencies>,
     host: Arc<MemberHost>,
     tenant: TenantId,
     pub(super) changed: Arc<Notify>,
@@ -60,6 +62,26 @@ pub(super) struct JournalSource {
 }
 
 impl JournalSource {
+    pub(super) fn register(
+        self: &Arc<Self>,
+        plan: &terrabase::query::QueryPlan,
+    ) -> Result<Arc<Registration>, ApiError> {
+        let live = plan.live_plan().map_err(|_| ApiError::storage_failure())?;
+        let id = self.dependencies.lock().map_err(|_| ApiError::storage_failure())?.register(&live);
+        Ok(Arc::new(Registration { source: Arc::clone(self), id }))
+    }
+
+    pub(super) fn records_for(
+        &self,
+        id: u64,
+        after: u64,
+        through: u64,
+    ) -> Result<Option<Vec<Arc<SyncJournalRecord>>>, ApiError> {
+        let Some(mut records) = self.records(after, through)? else { return Ok(None) };
+        let mut dependencies = self.dependencies.lock().map_err(|_| ApiError::storage_failure())?;
+        records.retain(|record| dependencies.affects(id, record));
+        Ok(Some(records))
+    }
     #[cfg(test)]
     pub(super) fn stats(&self) -> (usize, usize) {
         (
@@ -156,7 +178,7 @@ impl ReplayBuffer {
             {
                 self.reads += 1;
             }
-            let page = match engine.streams().replay_sync_journal(
+            let page = match engine.streams().replay_view_journal(
                 scope,
                 cursor,
                 PAGE_SIZE,
@@ -187,6 +209,12 @@ impl ReplayBuffer {
                     .saturating_add(record.operation_id().as_str().len())
                     .saturating_add(record.provenance().origin().len())
                     .saturating_add(record.provenance().context().len());
+                let size = size.saturating_add(match record.before_image() {
+                    terrabase::streaming::JournalBeforeImage::Document(document) => {
+                        terrabase::query::LiveQueryPlan::estimated_document_bytes(document)
+                    }
+                    _ => 0,
+                });
                 if size > MAX_BYTES {
                     pending.clear();
                     bytes = 0;
@@ -233,6 +261,23 @@ impl ReplayBuffer {
         self.bytes = 0;
         self.floor = through;
         self.through = through;
+    }
+}
+
+pub(super) struct Registration {
+    source: Arc<JournalSource>,
+    id: u64,
+}
+impl Registration {
+    pub(super) fn id(&self) -> u64 {
+        self.id
+    }
+}
+impl Drop for Registration {
+    fn drop(&mut self) {
+        if let Ok(mut dependencies) = self.source.dependencies.lock() {
+            dependencies.remove(self.id);
+        }
     }
 }
 
@@ -297,6 +342,157 @@ mod tests {
             terrabase::CommitOutcome::Committed(_)
         ));
         engine.read_snapshot(&scope).unwrap().sequence().get()
+    }
+
+    fn replace(
+        host: &MemberHost,
+        tenant: &TenantId,
+        id: &str,
+        value: Option<DocumentValue>,
+    ) -> u64 {
+        let engine = host.engine();
+        let scope = engine.scope_for(tenant);
+        let snapshot = engine.read_snapshot(&scope).unwrap();
+        let operation =
+            OperationId::try_new(&format!("replace-{id}-{}", snapshot.sequence().get())).unwrap();
+        let mut transaction = engine.begin(&scope, snapshot, operation).unwrap();
+        let collection = CollectionName::try_new("orders").unwrap();
+        let id = DocumentId::try_new(id).unwrap();
+        if let Some(value) = value {
+            transaction
+                .put(
+                    Document::new(
+                        id,
+                        collection,
+                        DocumentValue::Object([("payload".into(), value)].into()),
+                    ),
+                    ExpectedVersion::Any,
+                )
+                .unwrap();
+        } else {
+            transaction.delete_in_collection(&collection, id, ExpectedVersion::Any);
+        }
+        assert!(matches!(
+            transaction.commit(LocalDurability::Synced),
+            terrabase::CommitOutcome::Committed(_)
+        ));
+        engine.read_snapshot(&scope).unwrap().sequence().get()
+    }
+
+    fn register(source: &Arc<JournalSource>, condition: &str) -> Arc<Registration> {
+        use terrabase::operations::{QueryInput, SqlQueryText};
+        let plan = source
+            .host
+            .engine()
+            .queries()
+            .compile(QueryInput::sql(
+                SqlQueryText::try_new(&format!(
+                    "SELECT payload FROM orders WHERE {condition} LIMIT 10"
+                ))
+                .unwrap(),
+            ))
+            .unwrap();
+        source.register(&plan).unwrap()
+    }
+
+    #[test]
+    fn interval_dispatch_preserves_leaving_rows_deletes_and_large_integer_bounds() {
+        use terrabase::streaming::JournalBeforeImage;
+        let host = host("intervals");
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let sources = Sources::default();
+        let source = sources.get(&host, &tenant).unwrap();
+        let initial = replace(&host, &tenant, "one", Some(DocumentValue::String("old".into())));
+        source.start_at(initial).unwrap();
+        let old = register(&source, "payload = 'old'");
+        let new = register(&source, "payload = 'new'");
+        let unrelated = register(&source, "payload = 'unrelated'");
+        let updated = replace(&host, &tenant, "one", Some(DocumentValue::String("new".into())));
+        let rows = source.records_for(old.id(), initial, updated).unwrap().unwrap();
+        assert_eq!(rows.len(), 1, "leaving a predicate still reaches its old view");
+        assert!(matches!(rows[0].before_image(), JournalBeforeImage::Document(_)));
+        assert_eq!(source.records_for(new.id(), initial, updated).unwrap().unwrap().len(), 1);
+        assert!(source.records_for(unrelated.id(), initial, updated).unwrap().unwrap().is_empty());
+        let late = register(&source, "payload = 'old'");
+        assert_eq!(
+            source.records_for(late.id(), initial, updated).unwrap().unwrap().len(),
+            1,
+            "new registrations rematch already retained records"
+        );
+        let deleted = replace(&host, &tenant, "one", None);
+        assert_eq!(source.records_for(new.id(), updated, deleted).unwrap().unwrap().len(), 1);
+        assert!(source.records_for(old.id(), updated, deleted).unwrap().unwrap().is_empty());
+        let numeric = register(&source, "payload > 9007199254740992");
+        let cut =
+            replace(&host, &tenant, "one", Some(DocumentValue::Integer(9_007_199_254_740_993)));
+        assert_eq!(source.records_for(numeric.id(), deleted, cut).unwrap().unwrap().len(), 1);
+        assert!(matches!(
+            source.records(deleted, cut).unwrap().unwrap()[0].before_image(),
+            JournalBeforeImage::Absent
+        ));
+        let scope = host.engine().scope_for(&tenant);
+        let ordinary = host
+            .engine()
+            .streams()
+            .replay_sync_journal(
+                &scope,
+                Some(ChangeCheckpoint::after(initial, 0)),
+                16,
+                &Cancellation::new(),
+            )
+            .unwrap();
+        assert!(
+            ordinary
+                .records()
+                .iter()
+                .all(|record| matches!(record.before_image(), JournalBeforeImage::Unknown))
+        );
+    }
+
+    #[test]
+    fn before_images_do_not_confuse_expiry_or_pruning_with_absence() {
+        use terrabase::streaming::JournalBeforeImage;
+        let host = host("before-images");
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let initial = replace(&host, &tenant, "expired", Some(DocumentValue::String("old".into())));
+        let connection =
+            rusqlite::Connection::open(host.location().join("terrabase.sqlite3")).unwrap();
+        connection
+            .execute(
+                "UPDATE documents SET expires_at = 0 WHERE tenant = ?1 AND id = 'expired'",
+                [tenant.as_str()],
+            )
+            .unwrap();
+        replace(&host, &tenant, "expired", Some(DocumentValue::String("new".into())));
+        let scope = host.engine().scope_for(&tenant);
+        let page = host
+            .engine()
+            .streams()
+            .replay_view_journal(
+                &scope,
+                Some(ChangeCheckpoint::after(initial, 0)),
+                16,
+                &Cancellation::new(),
+            )
+            .unwrap();
+        assert_eq!(page.records()[0].published_document().unwrap().metadata().version(), 1);
+        assert!(
+            matches!(page.records()[0].before_image(), JournalBeforeImage::Document(_)),
+            "TTL version reset must not hide the predecessor from dependency routing"
+        );
+        connection
+            .execute(
+                "INSERT INTO journal_pruning (tenant, pruned_through) VALUES (?1, ?2)",
+                rusqlite::params![tenant.as_str(), i64::try_from(initial).unwrap()],
+            )
+            .unwrap();
+        let source = Sources::default().get(&host, &tenant).unwrap();
+        source.start_at(initial).unwrap();
+        let unrelated = register(&source, "payload = 'unrelated'");
+        let current = host.engine().read_snapshot(&scope).unwrap().sequence().get();
+        let rows = source.records_for(unrelated.id(), initial, current).unwrap().unwrap();
+        assert_eq!(rows.len(), 1, "unknown predecessors conservatively include the collection");
+        assert!(matches!(rows[0].before_image(), JournalBeforeImage::Unknown));
     }
 
     #[test]
