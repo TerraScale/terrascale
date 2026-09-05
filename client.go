@@ -573,11 +573,16 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	defer cancel()
 	attempt := 0
 	followed421 := false
+	recoveredPin := false
 	for {
 		base := c.currentBase()
 		globalFirstContact := c.isGlobalFirstContact(base)
 		status, headers, respBody, transportErr := c.roundTrip(requestCtx, method, base, path, query, payload, rc, idem)
 		if transportErr != nil {
+			if !recoveredPin && requestCtx.Err() == nil && canRecoverRead(method) && c.clearFailedPin(base) {
+				recoveredPin = true
+				continue
+			}
 			if idem != "" && attempt < c.cfg.MaxRetryAttempts {
 				if sleepErr := sleepContext(requestCtx, c.backoff(nil, attempt)); sleepErr != nil {
 					return sleepErr
@@ -607,6 +612,15 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			return decodeSuccess(out, respBody, headers.Get("Content-Type"))
 		}
 		apiErr := errorFromResponse(route, method, path, status, headers, respBody)
+		if !recoveredPin && canRecoverRead(method) && (status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
+			if c.clearFailedPin(base) {
+				if err := sleepContext(requestCtx, c.retryDelayFor(headers, 0)); err != nil {
+					return err
+				}
+				recoveredPin = true
+				continue
+			}
+		}
 		if idem != "" && attempt < c.cfg.MaxRetryAttempts && retryableStatuses[status] {
 			if sleepErr := sleepContext(requestCtx, c.retryDelayFor(headers, attempt)); sleepErr != nil {
 				return sleepErr
@@ -616,6 +630,23 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		}
 		return apiErr
 	}
+}
+
+func canRecoverRead(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
+}
+
+// clearFailedPin returns to first contact only for the failed canonical
+// regional origin. A concurrent request's newer pin must remain intact.
+// Custom endpoints and strict affinity retain their configured routing.
+func (c *Client) clearFailedPin(base string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cfg.Affinity != AffinityFailover || c.pinned == "" || base == c.cfg.APIBaseURL || base != regionalizeHost(c.cfg.APIBaseURL, c.pinned) {
+		return false
+	}
+	c.pinned = ""
+	return true
 }
 
 // isGlobalFirstContact reports whether base was selected without a learned or
