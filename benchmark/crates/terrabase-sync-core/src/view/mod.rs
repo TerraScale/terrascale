@@ -1683,13 +1683,53 @@ pub mod plan {
         }
     }
 
-    /// An incremental result over the supplied rows. Source rows remain in
-    /// memory for refill after deletions; the result and eligible boundary
-    /// window are limited by the plan. This does not bound source-row memory.
+    // Null placement is independent of direction. Every non-null part in
+    // one ordering column uses the same variant, so lexicographic ordering
+    // preserves SQL's multi-column order and the stable identity tiebreak.
+    #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+    enum RankPart {
+        NullFirst,
+        Ascending(Value),
+        Descending(std::cmp::Reverse<Value>),
+        NullLast,
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+    struct RankKey {
+        parts: Vec<RankPart>,
+        identity: String,
+    }
+
+    impl RankKey {
+        fn new(plan: &ViewPlan, row: &ExtractedRow) -> Self {
+            let parts = plan
+                .order
+                .iter()
+                .map(|key| {
+                    match row.values.get(&key.field).filter(|value| **value != Value::Null) {
+                        None if key.nulls_last => RankPart::NullLast,
+                        None => RankPart::NullFirst,
+                        Some(value) if key.descending => {
+                            RankPart::Descending(std::cmp::Reverse(value.clone()))
+                        }
+                        Some(value) => RankPart::Ascending(value.clone()),
+                    }
+                })
+                .collect();
+            Self { parts, identity: row.identity.clone() }
+        }
+    }
+
+    /// An incremental result over the supplied rows. Eligible rows have a
+    /// maintained ordering index, so a delta updates only its changed keys
+    /// and projects the first k rows without scanning or sorting the source.
+    /// Source rows and ordering keys remain in memory for refill after
+    /// deletions. This does not bound source-row memory.
     #[derive(Clone, Debug)]
     pub struct Materializer {
         plan: ViewPlan,
         rows: BTreeMap<String, ExtractedRow>,
+        eligible: BTreeSet<RankKey>,
         result: Vec<ResultItem>,
         boundary: usize,
     }
@@ -1698,16 +1738,23 @@ pub mod plan {
         #[must_use]
         pub fn new(plan: ViewPlan) -> Self {
             let boundary = plan.limit.saturating_mul(2).min(MAX_TOP_K_ITEMS);
-            Self { plan, rows: BTreeMap::new(), result: Vec::new(), boundary }
+            Self {
+                plan,
+                rows: BTreeMap::new(),
+                eligible: BTreeSet::new(),
+                result: Vec::new(),
+                boundary,
+            }
         }
         pub fn seed(&mut self, rows: impl IntoIterator<Item = ExtractedRow>) {
             self.rows.clear();
+            self.eligible.clear();
             for row in rows {
                 if row.collection == self.plan.collection {
-                    self.rows.insert(row.identity.clone(), row);
+                    self.insert(row);
                 }
             }
-            self.rebuild();
+            self.refresh_result();
         }
         /// Applies a Z-set delta and returns the deterministic result delta.
         pub fn apply(&mut self, delta: &ZSetDelta) -> Vec<crate::wire::ResultOperation> {
@@ -1717,12 +1764,12 @@ pub mod plan {
                     continue;
                 }
                 if entry.weight < 0 {
-                    self.rows.remove(&entry.row.identity);
+                    self.remove(&entry.row.identity);
                 } else if entry.weight > 0 {
-                    self.rows.insert(entry.row.identity.clone(), entry.row.clone());
+                    self.insert(entry.row.clone());
                 }
             }
-            self.rebuild();
+            self.refresh_result();
             diff(&before, &self.result)
         }
         #[must_use]
@@ -1731,54 +1778,29 @@ pub mod plan {
         }
         #[must_use]
         pub fn boundary_len(&self) -> usize {
-            self.rows.values().filter(|row| self.plan.matches(row)).take(self.boundary).count()
+            self.eligible.len().min(self.boundary)
         }
-        fn rebuild(&mut self) {
-            let mut rows: Vec<&ExtractedRow> =
-                self.rows.values().filter(|row| self.plan.matches(row)).collect();
-            rows.sort_by(|left, right| compare_rows(&self.plan, left, right));
-            rows.truncate(self.boundary);
-            self.result = rows
-                .into_iter()
-                .filter_map(|row| self.plan.evaluate(row))
-                .take(self.plan.limit)
-                .collect();
-        }
-    }
-
-    fn compare_rows(plan: &ViewPlan, left: &ExtractedRow, right: &ExtractedRow) -> Ordering {
-        for key in &plan.order {
-            let l = left.values.get(&key.field).filter(|value| **value != Value::Null);
-            let r = right.values.get(&key.field).filter(|value| **value != Value::Null);
-            let ordering = match (l, r) {
-                (None, None) => Ordering::Equal,
-                (None, Some(_)) => {
-                    if key.nulls_last {
-                        Ordering::Greater
-                    } else {
-                        Ordering::Less
-                    }
-                }
-                (Some(_), None) => {
-                    if key.nulls_last {
-                        Ordering::Less
-                    } else {
-                        Ordering::Greater
-                    }
-                }
-                (Some(l), Some(r)) => {
-                    if key.descending {
-                        r.cmp(l)
-                    } else {
-                        l.cmp(r)
-                    }
-                }
-            };
-            if ordering != Ordering::Equal {
-                return ordering;
+        fn remove(&mut self, identity: &str) {
+            if let Some(previous) = self.rows.remove(identity) {
+                self.eligible.remove(&RankKey::new(&self.plan, &previous));
             }
         }
-        left.identity.cmp(&right.identity)
+        fn insert(&mut self, row: ExtractedRow) {
+            self.remove(&row.identity);
+            if self.plan.matches(&row) {
+                self.eligible.insert(RankKey::new(&self.plan, &row));
+            }
+            self.rows.insert(row.identity.clone(), row);
+        }
+        fn refresh_result(&mut self) {
+            self.result = self
+                .eligible
+                .iter()
+                .take(self.plan.limit)
+                .filter_map(|key| self.rows.get(&key.identity))
+                .filter_map(|row| self.plan.evaluate(row))
+                .collect();
+        }
     }
 
     /// Classifies SQL text without pretending unsupported operators are live.

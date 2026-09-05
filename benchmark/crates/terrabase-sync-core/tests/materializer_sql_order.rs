@@ -137,3 +137,109 @@ fn scalar_comparisons_with_null_do_not_admit_rows() {
         assert!(!predicate.matches(&number));
     }
 }
+
+#[test]
+fn ordered_index_matches_recomputation_through_replacements_and_refills() {
+    use std::cmp::Ordering;
+    use std::collections::BTreeMap;
+
+    for descending in [false, true] {
+        for nulls_last in [false, true] {
+            let plan = ViewPlan::new(
+                "orders",
+                vec![Predicate {
+                    field: "status".into(),
+                    compare: Compare::Equal,
+                    value: Value::Text("paid".into()),
+                }],
+                vec!["score".into(), "status".into()],
+                Some(FtsPredicate { query: "needle".into() }),
+                vec![
+                    OrderKey { field: "score".into(), descending, nulls_last },
+                    OrderKey { field: "tie".into(), descending: true, nulls_last: false },
+                ],
+                7,
+            )
+            .unwrap();
+            let mut materializer = Materializer::new(plan.clone());
+            let mut source = BTreeMap::<String, ExtractedRow>::new();
+            let mut random = 17_u64;
+            for step in 0..1_000 {
+                random = random.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                let id = format!("row-{}", (random >> 32) % 120);
+                let mut next = row(&id, f64::from(step % 11))
+                    .with_value("tie", Value::Number(f64::from(step % 3)));
+                match step % 8 {
+                    0 => {
+                        next.values.remove("score");
+                    }
+                    1 => {
+                        next.values.insert("score".into(), Value::Null);
+                    }
+                    2 => {
+                        next.values.insert("status".into(), Value::Text("open".into()));
+                    }
+                    3 => {
+                        next.fts = "unrelated".into();
+                    }
+                    _ => {}
+                }
+                if step % 5 == 0 {
+                    source.remove(&id);
+                    materializer.apply(&ZSetDelta::remove(next));
+                } else {
+                    source.insert(id, next.clone());
+                    materializer.apply(&ZSetDelta::insert(next));
+                }
+                let mut eligible: Vec<_> =
+                    source.values().filter(|row| plan.evaluate(row).is_some()).collect();
+                eligible.sort_by(|left, right| {
+                    let score = |row: &ExtractedRow| match row.values.get("score") {
+                        Some(Value::Number(value)) => Some(*value),
+                        _ => None,
+                    };
+                    let primary = match (score(left), score(right)) {
+                        (Some(a), Some(b)) => {
+                            if descending {
+                                b.total_cmp(&a)
+                            } else {
+                                a.total_cmp(&b)
+                            }
+                        }
+                        (None, None) => Ordering::Equal,
+                        (None, Some(_)) => {
+                            if nulls_last {
+                                Ordering::Greater
+                            } else {
+                                Ordering::Less
+                            }
+                        }
+                        (Some(_), None) => {
+                            if nulls_last {
+                                Ordering::Less
+                            } else {
+                                Ordering::Greater
+                            }
+                        }
+                    };
+                    primary
+                        .then_with(|| right.values["tie"].cmp(&left.values["tie"]))
+                        .then_with(|| left.identity.cmp(&right.identity))
+                });
+                let expected: Vec<_> =
+                    eligible.iter().take(plan.limit).filter_map(|row| plan.evaluate(row)).collect();
+                assert_eq!(
+                    materializer.result(),
+                    expected,
+                    "step {step}, descending={descending}, nulls_last={nulls_last}"
+                );
+                assert_eq!(materializer.boundary_len(), eligible.len().min(14));
+                if step % 137 == 0 {
+                    // Reseeding must clear both row state and its ordering index.
+                    materializer.seed(source.values().cloned());
+                    assert_eq!(materializer.result(), expected);
+                }
+            }
+        }
+    }
+}
