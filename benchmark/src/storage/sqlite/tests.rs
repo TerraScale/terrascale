@@ -675,6 +675,7 @@ fn concurrent_writers_produce_one_continuous_journal() {
                 StorageSequence::new(0),
                 WRITERS as u32
             )
+            .expect("journal read")
             .len(),
         WRITERS,
         "the journal serves every published commit"
@@ -832,6 +833,59 @@ fn sqlite_store(tag: &str) -> (PathBuf, SqliteStorage) {
     let dir = location(tag);
     let storage = SqliteStorage::open(&dir).expect("sqlite backend opens");
     (dir, storage)
+}
+
+#[test]
+fn journal_replay_rejects_corrupt_rows_instead_of_serving_a_partial_commit() {
+    for mutation in [
+        "body = X'00'",
+        "body = 'not a blob'",
+        "requested = 99",
+        "kind = 'unknown'",
+        "origin_seq = -1",
+        "origin_seq = origin_seq + 1",
+        "commit_ulid = 'different-operation'",
+        "context = X'00'",
+        "collection = 'mismatched'",
+        "id = 'mismatched'",
+        "deleted = 2",
+        "version = -1",
+    ] {
+        let (dir, mut storage) = sqlite_store("corrupt-journal-page");
+        commit(
+            &mut storage,
+            "op-page",
+            vec![
+                put(document("a", "users", "first"), ExpectedVersion::New),
+                put(document("z", "users", "last"), ExpectedVersion::New),
+            ],
+        );
+        let tenant = scan_tenant();
+        let page = storage.tenant_commits(&tenant, StorageSequence::new(0), 10).unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].writes().len(), 2);
+        storage.writer.lock().unwrap().execute_batch(&format!(
+            "PRAGMA ignore_check_constraints = ON; UPDATE documents SET {mutation} WHERE id = 'z';"
+        )).unwrap();
+        assert!(
+            storage.tenant_commits(&tenant, StorageSequence::new(0), 10).is_err(),
+            "corruption must reject the entire page: {mutation}"
+        );
+        drop(storage);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn journal_replay_distinguishes_storage_failure_from_a_drained_journal() {
+    let (dir, storage) = sqlite_store("unavailable-journal-page");
+    let tenant = scan_tenant();
+    assert!(storage.tenant_commits(&tenant, StorageSequence::new(0), 10).unwrap().is_empty());
+    assert!(storage.tenant_commits(&tenant, StorageSequence::new(u64::MAX), 10).is_err());
+    storage.writer.lock().unwrap().execute_batch("DROP TABLE documents").unwrap();
+    assert!(storage.tenant_commits(&tenant, StorageSequence::new(0), 10).is_err());
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

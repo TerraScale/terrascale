@@ -1015,12 +1015,14 @@ pub(crate) trait StoragePort: Send {
 
     /// Returns one tenant's published commits after `after`, in global
     /// storage-sequence order, up to `limit` entries (W4-CA-4).
+    /// Storage failures or invalid rows reject the entire page; an empty
+    /// successful page means no retained commits matched the cursor.
     fn tenant_commits(
         &self,
         tenant: &TenantId,
         after: StorageSequence,
         limit: u32,
-    ) -> Vec<PublishedCommit>;
+    ) -> Result<Vec<PublishedCommit>, ()>;
 
     /// Returns one bounded page of retained journal rows. `after` is only a
     /// paging cursor in global storage order; reconciliation identities are

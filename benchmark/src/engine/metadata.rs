@@ -225,6 +225,7 @@ fn resolve_published(
         let commit = storage
             .port
             .tenant_commits(tenant, after, 1)
+            .map_err(|()| EngineError::StorageFailure)?
             .into_iter()
             .next()
             .filter(|commit| commit.sequence() == commit_sequence);

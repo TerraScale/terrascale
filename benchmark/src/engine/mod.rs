@@ -3887,7 +3887,7 @@ impl Engine {
     ) -> Result<Vec<PublishedCommit>, EngineError> {
         self.validate_tenant(tenant)?;
         let storage = self.lock_storage()?;
-        Ok(storage.port.tenant_commits(tenant, after, limit))
+        storage.port.tenant_commits(tenant, after, limit).map_err(|()| EngineError::StorageFailure)
     }
 
     /// Returns one bounded page of retained publication-journal rows for

@@ -5215,23 +5215,23 @@ impl StoragePort for SqliteStorage {
         tenant: &TenantId,
         after: StorageSequence,
         limit: u32,
-    ) -> Vec<PublishedCommit> {
+    ) -> Result<Vec<PublishedCommit>, ()> {
+        let after = i64::try_from(after.get()).map_err(|_| ())?;
         let reader = self.reader();
         let connection = reader.connection();
-        let Ok(mut statement) = connection.prepare_cached(
-            "SELECT commit_seq, commit_ulid, collection, id, deleted, version,
+        let mut statement = connection
+            .prepare_cached(
+                "SELECT commit_seq, commit_ulid, collection, id, deleted, version,
                     requested, body, kind, origin, origin_seq, hlc, context
              FROM documents WHERE tenant = ?1 AND commit_seq > ?2 AND commit_seq IN (
                  SELECT commit_seq FROM documents WHERE tenant = ?1 AND commit_seq > ?2
                  ORDER BY commit_seq LIMIT ?3
              )
              ORDER BY commit_seq, collection, id",
-        ) else {
-            return Vec::new();
-        };
-        let Ok(rows) = statement.query_map(
-            rusqlite::params![tenant.as_str(), after.get() as i64, i64::from(limit)],
-            |row| {
+            )
+            .map_err(|_| ())?;
+        let rows = statement
+            .query_map(rusqlite::params![tenant.as_str(), after, i64::from(limit)], |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -5247,17 +5247,15 @@ impl StoragePort for SqliteStorage {
                     row.get::<_, i64>(11)?,
                     row.get::<_, Vec<u8>>(12)?,
                 ))
-            },
-        ) else {
-            return Vec::new();
-        };
+            })
+            .map_err(|_| ())?;
         // Group the rows of one commit_seq into one PublishedCommit — the
-        // journal rebuilt from the folded rows. The inner LIMIT bounds
-        // commits (not rows), so no publication is ever served partial.
+        // journal rebuilt from the folded rows. The inner LIMIT selects
+        // rows, and the outer query retrieves their complete commits.
         // Every row of one commit carries the commit's provenance (D-35),
-        // so the first row of the group decides it.
+        // so every row must agree with the first row of its group.
         let mut commits: Vec<PublishedCommit> = Vec::new();
-        for row in rows.flatten() {
+        for row in rows {
             let (
                 sequence,
                 operation,
@@ -5272,45 +5270,55 @@ impl StoragePort for SqliteStorage {
                 origin_sequence,
                 hlc,
                 context,
-            ) = row;
-            let write = if deleted == 0 {
-                let Some(document) = decode_document_body(&body) else { continue };
-                PublishedWrite::Put { document }
-            } else {
-                let Some(collection) = CollectionName::try_new(&collection).ok() else { continue };
-                let Some(id) = DocumentId::try_new(&id).ok() else { continue };
-                PublishedWrite::Delete {
-                    collection: Some(collection),
-                    id,
-                    version_at_delete: u64::try_from(version).unwrap_or(0),
+            ) = row.map_err(|_| ())?;
+            let sequence = u64::try_from(sequence).map_err(|_| ())?;
+            if sequence == 0 {
+                return Err(());
+            }
+            let version = u64::try_from(version).map_err(|_| ())?;
+            let write = match deleted {
+                0 => {
+                    let document = decode_document_body(&body).ok_or(())?;
+                    if document.collection().as_str() != collection || document.id().as_str() != id
+                    {
+                        return Err(());
+                    }
+                    PublishedWrite::Put { document }
                 }
+                1 => PublishedWrite::Delete {
+                    collection: Some(CollectionName::try_new(&collection).map_err(|_| ())?),
+                    id: DocumentId::try_new(&id).map_err(|_| ())?,
+                    version_at_delete: version,
+                },
+                _ => return Err(()),
             };
-            let Some(sequence) = u64::try_from(sequence).ok() else { continue };
+            let durability =
+                u8::try_from(requested).ok().and_then(codec::durability_of).ok_or(())?;
+            let operation = OperationId::try_new(&operation).map_err(|_| ())?;
+            let kind = match kind.as_str() {
+                ROW_KIND_ORIGIN => JournalKind::Origin,
+                ROW_KIND_REPLICATED => JournalKind::Replicated,
+                _ => return Err(()),
+            };
+            let provenance = JournalProvenance::new(
+                kind,
+                origin,
+                u64::try_from(origin_sequence).map_err(|_| ())?,
+                u64::from_le_bytes(hlc.to_le_bytes()),
+            )
+            .with_context(context);
             match commits.last_mut() {
                 Some(last) if last.sequence().get() == sequence => {
+                    if last.operation_id() != &operation
+                        || last.durability() != durability
+                        || last.provenance() != &provenance
+                    {
+                        return Err(());
+                    }
                     let writes = last.writes_mut();
                     writes.push(write);
                 }
                 _ => {
-                    let Some(durability) =
-                        u8::try_from(requested).ok().and_then(codec::durability_of)
-                    else {
-                        continue;
-                    };
-                    let Some(operation) = OperationId::try_new(&operation).ok() else { continue };
-                    let kind = if kind == ROW_KIND_REPLICATED {
-                        JournalKind::Replicated
-                    } else {
-                        JournalKind::Origin
-                    };
-                    #[allow(clippy::cast_sign_loss)]
-                    let provenance = JournalProvenance::new(
-                        kind,
-                        origin,
-                        u64::try_from(origin_sequence).unwrap_or(0),
-                        u64::from_le_bytes(hlc.to_le_bytes()),
-                    )
-                    .with_context(context);
                     commits.push(PublishedCommit::new(
                         tenant.clone(),
                         operation,
@@ -5322,7 +5330,7 @@ impl StoragePort for SqliteStorage {
                 }
             }
         }
-        commits
+        Ok(commits)
     }
 
     fn journal_rows(
