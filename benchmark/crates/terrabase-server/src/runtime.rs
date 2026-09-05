@@ -185,7 +185,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     // it must happen before a listener is allowed to claim readiness.
     let bootstrap = crate::production::ProductionCatalogBootstrap::open(production)
         .map_err(|error| DaemonError::ProductionStartup(ProductionStartupError::Catalog(error)))?;
-    let mut parts = bootstrap.into_parts();
+    let parts = bootstrap.into_parts();
     let transport = match build_production_transport(production) {
         Ok(transport) => transport,
         Err(error) => {
@@ -433,11 +433,9 @@ async fn serve_public_api(
         control: Some(Arc::new(control)),
         catalog: Some(Arc::new(catalog)),
         scope: (tenant, project),
-        reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
         backups,
         backup_root,
         timetravel,
-        active_regions: public.active_regions,
         guards: Arc::new(crate::guards::AbuseGuards::default()),
         origin_proof_keys: Arc::new(origin_proof_keys),
         capability_keys: Arc::new(capability_keys),

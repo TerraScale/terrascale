@@ -1502,6 +1502,8 @@ impl Replay {
             // It must never mint admitted-request usage without authenticated
             // serving-boundary facts.
             usage_admission: None,
+            merge_conflict: None,
+            replication_fingerprint: None,
             hlc: 0,
             writes: batch.writes,
             operation,

@@ -265,7 +265,7 @@ write_config() {
     printf 'server_certificate = "%s/server.crt"\n' "$TLS_DIR"
     printf 'server_private_key = "%s/server.key"\n' "$TLS_DIR"
     printf 'client_ca = "%s/ca.crt"\n' "$TLS_DIR"
-    printf 'gateway_principals = ["spiffe://local/stack-gateway"]\n'
+    printf 'member_principals = ["spiffe://local/stack-member"]\n'
     printf 'max_message_bytes = 16777216\nmax_inflight = 128\n'
     printf 'request_timeout_millis = 30000\ntls_handshake_timeout_millis = 5000\nshutdown_grace_millis = 30000\n\n'
     printf '[observability]\nlisten = "127.0.0.1:%s"\n\n' "$obs"

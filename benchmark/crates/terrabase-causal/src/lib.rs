@@ -1691,11 +1691,9 @@ pub fn canonical_hash<T: CanonicalEncode>(
         return Err(HashError::InvalidDomain);
     }
     let mut hasher = blake3::Hasher::new();
-    // This prefix is a persisted causal-format identifier. Product renaming
-    // must not change hashes already stored in WALs, snapshots, repairs, or
-    // backups. A future prefix requires an activated codec major and reader
-    // migration under ADR 0031.
-    hasher.update(LEGACY_CANONICAL_HASH_PREFIX);
+    // The v1 causal format binds hashes to this prefix and codec version.
+    // Changing either after publication requires a new codec version.
+    hasher.update(CANONICAL_HASH_PREFIX);
     hasher.update(&[CODEC_VERSION]);
     hasher.update(&[domain_length]);
     hasher.update(domain.as_bytes());
@@ -1703,8 +1701,8 @@ pub fn canonical_hash<T: CanonicalEncode>(
     Ok(*hasher.finalize().as_bytes())
 }
 
-/// Persisted canonical-hash prefix retained from the pre-rename format.
-pub const LEGACY_CANONICAL_HASH_PREFIX: &[u8] = b"TerraBase\0";
+/// Canonical-hash prefix for the first public TerraBase format.
+pub const CANONICAL_HASH_PREFIX: &[u8] = b"TerraBase\0";
 
 /// A canonical hashing request failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1907,17 +1905,17 @@ mod tests {
         assert_eq!(
             canonical_hash("commit", &base).unwrap(),
             [
-                0x5c, 0x35, 0x81, 0x7d, 0x47, 0xd5, 0x62, 0x93, 0x3e, 0x66, 0x31, 0x01, 0x7d, 0x4b,
-                0xee, 0x22, 0x66, 0xb1, 0x44, 0x76, 0x49, 0x9f, 0xc0, 0xba, 0x9d, 0xac, 0x81, 0x1e,
-                0x80, 0xca, 0x7d, 0x4f,
+                0xf4, 0xd2, 0x25, 0xdc, 0xcc, 0x16, 0x80, 0x60, 0x0a, 0x00, 0x02, 0x90, 0x54, 0x80,
+                0x23, 0x30, 0xe0, 0x2f, 0xe7, 0xbc, 0xe2, 0xf3, 0x4f, 0x76, 0xd9, 0x91, 0x96, 0xab,
+                0x56, 0xdc, 0xa8, 0x49,
             ]
         );
         assert_eq!(canonical_hash("", &base), Err(HashError::InvalidDomain));
     }
 
     #[test]
-    fn product_rename_preserves_legacy_causal_hash_identity() {
-        assert_eq!(LEGACY_CANONICAL_HASH_PREFIX, b"TerraBase\0");
+    fn v1_causal_hash_identity_is_frozen() {
+        assert_eq!(CANONICAL_HASH_PREFIX, b"TerraBase\0");
         let commit = CommitId::new(
             DatabaseId::from_bytes([1; 16]),
             PartitionId::new(7),
@@ -1929,9 +1927,9 @@ mod tests {
         assert_eq!(
             canonical_hash("commit", &commit).unwrap(),
             [
-                0x5c, 0x35, 0x81, 0x7d, 0x47, 0xd5, 0x62, 0x93, 0x3e, 0x66, 0x31, 0x01, 0x7d, 0x4b,
-                0xee, 0x22, 0x66, 0xb1, 0x44, 0x76, 0x49, 0x9f, 0xc0, 0xba, 0x9d, 0xac, 0x81, 0x1e,
-                0x80, 0xca, 0x7d, 0x4f,
+                0xf4, 0xd2, 0x25, 0xdc, 0xcc, 0x16, 0x80, 0x60, 0x0a, 0x00, 0x02, 0x90, 0x54, 0x80,
+                0x23, 0x30, 0xe0, 0x2f, 0xe7, 0xbc, 0xe2, 0xf3, 0x4f, 0x76, 0xd9, 0x91, 0x96, 0xab,
+                0x56, 0xdc, 0xa8, 0x49,
             ]
         );
     }

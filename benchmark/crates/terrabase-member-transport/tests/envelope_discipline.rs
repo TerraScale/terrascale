@@ -13,8 +13,9 @@ use support::{bare_commit, frame_of, hostile_envelope, open_member};
 
 use terrabase_member_transport::{
     BUDGET_ENVELOPE_OVERHEAD_BYTES, CollectionName, DocumentId, ENVELOPE_SCHEMA,
-    ENVELOPE_VERSION_MINOR, EnvelopeError, FrameKind, FrameSelector, LaneInstant, MemberTransport,
-    Payload, ReplicatedWrite, decode, encode, peek_kind, peek_payload_len,
+    ENVELOPE_VERSION_MINOR, EnvelopeError, FrameKind, FrameSelector, InProcessLane, LaneInstant,
+    MAX_CONTEXT_BYTES, MemberTransport, Payload, ReplicatedWrite, decode, encode, peek_kind,
+    peek_payload_len,
 };
 
 fn base_envelope() -> terrabase_member_transport::Envelope {
@@ -36,6 +37,10 @@ fn base_envelope() -> terrabase_member_transport::Envelope {
 }
 
 fn replication_envelope() -> terrabase_member_transport::Envelope {
+    replication_envelope_with_context(Vec::new())
+}
+
+fn replication_envelope_with_context(context: Vec<u8>) -> terrabase_member_transport::Envelope {
     hostile_envelope(
         FrameKind::ReplicationBatch,
         "m-src",
@@ -52,6 +57,7 @@ fn replication_envelope() -> terrabase_member_transport::Envelope {
                 hlc: 1,
                 origin: "r-alpha".to_owned(),
                 origin_sequence: 1,
+                context,
             }],
         },
     )
@@ -171,7 +177,7 @@ fn encoded_frames_use_the_minimum_minor_for_their_kind() {
             },
             1,
         ),
-        (FrameKind::ReplicationBatch, replication_envelope().payload, 3),
+        (FrameKind::ReplicationBatch, replication_envelope().payload, 4),
     ];
     let minor_at = 1 + ENVELOPE_SCHEMA.len() + 2;
     for (kind, payload, expected_minor) in payloads {
@@ -182,7 +188,7 @@ fn encoded_frames_use_the_minimum_minor_for_their_kind() {
         assert_eq!(minor, expected_minor, "{kind:?} uses its minimum minor");
         assert_eq!(decode(&frame.bytes).expect("the frame decodes").0, envelope);
     }
-    assert_eq!(ENVELOPE_VERSION_MINOR, 3);
+    assert_eq!(ENVELOPE_VERSION_MINOR, 4);
 }
 
 #[test]
@@ -209,7 +215,9 @@ fn an_old_replication_batch_fails_with_an_explicit_version_error() {
     let version_at = 1 + ENVELOPE_SCHEMA.len();
     let payload_start = frame.bytes.len() - DIGEST_BYTES - frame.payload_len;
     let payload_len_at = payload_start - 4;
-    let old_payload_len = frame.payload_len - std::mem::size_of::<u64>();
+    // Minor 3 carries the source sequence but predates the context field.
+    // Remove the canonical context length prefix (empty in this fixture).
+    let old_payload_len = frame.payload_len - std::mem::size_of::<u32>();
     let mut legacy = frame.bytes;
     legacy.drain(payload_start + old_payload_len..payload_start + frame.payload_len);
     legacy[version_at + 2..version_at + 4].copy_from_slice(&2u16.to_le_bytes());
@@ -222,6 +230,62 @@ fn an_old_replication_batch_fails_with_an_explicit_version_error() {
 
     assert_eq!(decode(&legacy), Err(EnvelopeError::UnsupportedMinorVersion));
     assert_eq!(peek_kind(&legacy), Err(EnvelopeError::UnsupportedMinorVersion));
+}
+
+#[test]
+fn replication_context_has_a_canonical_golden_wire_suffix() {
+    use terrabase_member_transport::envelope::DIGEST_BYTES;
+
+    let context = vec![0x00, 0xff, 0x01];
+    let frame = frame_of(&replication_envelope_with_context(context.clone()));
+    let payload_start = frame.bytes.len() - DIGEST_BYTES - frame.payload_len;
+    let context_start = payload_start + frame.payload_len - context.len() - 4;
+    assert_eq!(&frame.bytes[context_start..context_start + 7], &[3, 0, 0, 0, 0, 0xff, 1]);
+    assert_eq!(
+        decode(&frame.bytes).expect("the frame decodes").0.payload,
+        replication_envelope_with_context(context).payload
+    );
+}
+
+#[test]
+fn replication_context_is_bounded_and_digest_bound() {
+    assert_eq!(
+        encode(&replication_envelope_with_context(vec![0; MAX_CONTEXT_BYTES + 1])),
+        Err(EnvelopeError::FieldTooLarge)
+    );
+
+    let context = vec![1, 2, 3];
+    let frame = frame_of(&replication_envelope_with_context(context.clone()));
+    let payload_start = frame.bytes.len() - 32 - frame.payload_len;
+    let context_start = payload_start + frame.payload_len - context.len();
+    let mut corrupted = frame.bytes;
+    corrupted[context_start] ^= 1;
+    assert_eq!(decode(&corrupted), Err(EnvelopeError::DigestMismatch));
+}
+
+#[test]
+fn reordered_replication_frames_preserve_opaque_context_bytes() {
+    let source = support::member_id("m-src");
+    let target = support::member_id("m-dst");
+    let mut lane = InProcessLane::new();
+    lane.link(&source, &target).reorder();
+    for (message_id, context) in [(1, vec![1]), (2, vec![2, 0xff])] {
+        let mut envelope = replication_envelope_with_context(context);
+        envelope.message_id = message_id;
+        lane.send(&source, &target, frame_of(&envelope)).expect("the frame sends");
+    }
+    lane.pump();
+    let received = lane.receive(&target, FrameSelector::All);
+    assert_eq!(received.len(), 2);
+    let mut contexts = received
+        .iter()
+        .map(|frame| match &decode(&frame.bytes).expect("the frame decodes").0.payload {
+            Payload::ReplicationBatch { records, .. } => records[0].context.clone(),
+            _ => unreachable!("the test only sends replication frames"),
+        })
+        .collect::<Vec<_>>();
+    contexts.sort();
+    assert_eq!(contexts, vec![vec![1], vec![2, 0xff]]);
 }
 
 #[test]

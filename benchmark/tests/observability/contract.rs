@@ -17,7 +17,7 @@ use terrabase::observability::{
     Outcome, PROMETHEUS_PATH, Queue, Region, ServiceState, TaskOutcome, redact_diagnostic,
 };
 use terrabase::types::CollectionName;
-use terrabase::usage::UsagePageRequest;
+use terrabase::usage::{UsageContinuation, UsagePageRequest};
 use terrabase::{
     CommitOutcome, Document, DocumentId, DocumentValue, Engine, EngineConfig, ExpectedVersion,
     LocalDurability, OperationId, TenantId,
@@ -234,7 +234,22 @@ fn real_engine_commit_wal_and_usage_export_share_one_registry() {
             )
             .is_err()
     );
+    assert_eq!(
+        metrics.snapshot().usage_export_failures(),
+        0,
+        "foreign scopes cannot alter export accounting"
+    );
+    let malformed = UsageContinuation::try_new(b"malformed".to_vec()).expect("bounded cursor");
+    assert!(
+        engine
+            .usage_page(
+                &scope,
+                UsagePageRequest::try_new(None, 16, Some(malformed)).expect("valid request shape"),
+            )
+            .is_err()
+    );
     assert_eq!(metrics.snapshot().usage_export_failures(), 1);
+    assert_eq!(metrics.snapshot().usage_export_frontier(), Some(page.snapshot_sequence().get()));
 
     drop(other);
     drop(engine);
@@ -384,46 +399,38 @@ fn unconfigured_optional_components_are_unknown_not_unhealthy() {
 }
 
 #[test]
-fn alert_rules_preserve_required_optional_and_selected_region_semantics() {
+fn alert_rules_page_only_on_region_scoped_slo_burn() {
     let rules = include_str!("../../deploy/observability/prometheus-rules.yml");
-    assert!(rules.contains(
-        r#"terrabase_component_health{component=~"storage|replication|membership"} <= 0"#
-    ));
-    assert!(
-        rules.contains(
-            r#"terrabase_component_health{component=~"control_plane|backup|metrics"} == 0"#
-        )
-    );
-    assert!(!rules.contains("expr: terrabase_component_health == 0\n"));
-    assert!(rules.contains(r#"terrabase_active_members{region!="unknown"} < 2"#));
+    let alerts: Vec<_> =
+        rules.lines().filter_map(|line| line.trim().strip_prefix("- alert: ")).collect();
+    assert_eq!(alerts, ["TerraBaseSLOBurnRateFast", "TerraBaseSLOBurnRateSlow"]);
+    for (alert, long, short, threshold, duration) in [
+        ("TerraBaseSLOBurnRateFast", "1h", "5m", "14.4", "2m"),
+        ("TerraBaseSLOBurnRateSlow", "6h", "30m", "6", "15m"),
+    ] {
+        let block = rules
+            .split(&format!("- alert: {alert}"))
+            .nth(1)
+            .expect("alert")
+            .split("- alert:")
+            .next()
+            .expect("alert block");
+        for window in [long, short] {
+            assert!(block.contains(&format!(
+                "terrabase:slo:api_burn_rate:{window}{{region!=\"unknown\"}} >= {threshold}"
+            )));
+        }
+        assert!(block.contains("and on (job, region)"));
+        assert!(block.contains(&format!("for: {duration}")));
+        assert!(block.contains("notification: page"));
+    }
+    assert!(rules.contains("sum by (job, region)"));
+    assert!(rules.contains("outcome=~\"success|error|timeout\""));
+    assert!(!rules.contains("outcome=~\"success|error|timeout|rejected\""));
+    for window in ["5m", "30m", "1h", "6h"] {
+        assert!(rules.contains(&format!("terrabase:slo:api_error_ratio:{window} / 0.001")));
+    }
     assert!(rules.contains("0.000000001"));
-    assert!(!rules.contains("clamp_min(sum(rate(terrabase_requests_total[5m])), 1)"));
-    for target_grouping in [
-        "sum by (job, instance, le, region, operation)",
-        "sum by (job, instance, operation, reason)",
-        "sum by (job, instance, mode)",
-    ] {
-        assert!(rules.contains(target_grouping), "alert dropped target labels: {target_grouping}");
-    }
-
-    for alert in [
-        "TerraBaseQueueSaturationHigh",
-        "TerraBaseWalFsyncErrors",
-        "TerraBaseCommitOutcomeUnknown",
-        "TerraBaseReplicationFrontierUnhealthy",
-        "TerraBaseContinuousBackupStale",
-        "TerraBaseUsageExportErrors",
-    ] {
-        assert_eq!(
-            rules.matches(&format!("alert: {alert}")).count(),
-            1,
-            "alert {alert} must appear once"
-        );
-    }
-    assert!(rules.contains(
-        "sum by (job, instance, region) (increase(terrabase_egress_bytes_total[1h])) * 730 > 8000000000000"
-    ));
-    assert!(!rules.contains("> 11111111111"));
 }
 
 #[test]

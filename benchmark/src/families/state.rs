@@ -784,6 +784,14 @@ fn decode_entry(encoded: &DocumentValue) -> Result<TimeSeriesAppend, FamilyError
         .iter()
         .map(|item| match item {
             DocumentValue::Number(number) => Some(*number),
+            // Canonical JSON has one number grammar. Integral floating-point
+            // samples therefore decode as `Integer`; recover the series'
+            // f64 wire type without changing the represented value.
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "series values are represented as f64; integral JSON samples are exact in the accepted range"
+            )]
+            DocumentValue::Integer(number) => Some(*number as f64),
             _ => None,
         })
         .collect::<Option<Vec<_>>>()

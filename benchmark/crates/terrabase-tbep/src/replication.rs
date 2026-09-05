@@ -47,6 +47,11 @@ pub fn pull_origin_records(
 /// tailer never accidentally commits progress it did not hand to its peer.
 /// This is the synchronous counterpart of the async member pump: callers can
 /// use the same signal to stop a retry loop without losing idempotent replay.
+///
+/// # Errors
+///
+/// Returns a hosting error for cancellation, invalid scope, unavailable
+/// durable storage, or a refused replication operation.
 pub fn pull_origin_records_with_cancellation(
     host: &EngineHost,
     scope: &BoundScope,
@@ -79,11 +84,9 @@ pub fn pull_origin_records_with_cancellation(
             hlc: provenance.hlc(),
             origin: provenance.origin().to_owned(),
             origin_sequence: provenance.origin_sequence(),
-            // JournalProvenance currently exposes the source dot but not the
-            // opaque context blob. The storage/streaming owner must add that
-            // accessor; until then an empty context is the only legacy-safe
-            // representation (and decodes as the empty frontier).
-            context: Vec::new(),
+            // Preserve the durable causal frontier exactly. Empty context is
+            // retained for legacy rows and decodes as the empty frontier.
+            context: provenance.context().to_vec(),
         });
     }
     Ok((records, batch.next_checkpoint()))
@@ -107,6 +110,11 @@ pub fn apply_records(
 /// Applies a bounded batch while observing cancellation between records.
 /// Already committed records remain safe to replay on a later retry because
 /// the engine binds the source operation identity durably.
+///
+/// # Errors
+///
+/// Returns a hosting error for cancellation, invalid scope, unavailable
+/// durable storage, or a refused replication operation.
 pub fn apply_records_with_cancellation(
     host: &EngineHost,
     scope: &BoundScope,
@@ -151,6 +159,11 @@ pub fn replicate_once(
 /// Ships every origin row past `cursor`, stopping at a cancellation boundary.
 /// The cursor is advanced only after a complete page has been handed to the
 /// target, so cancellation and transient transport failures are retry-safe.
+///
+/// # Errors
+///
+/// Returns a hosting error for cancellation, invalid scope, unavailable
+/// durable storage, or a refused replication operation.
 pub fn replicate_once_with_cancellation(
     source: &EngineHost,
     target: &EngineHost,

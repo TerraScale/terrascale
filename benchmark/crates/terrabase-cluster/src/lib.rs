@@ -9,3 +9,9 @@
 pub mod production;
 /// Physical SQLite WAL-frame replication for an in-Region RF=2 follower.
 pub mod wal_follower;
+/// Authenticated QUIC physical batch and durable receipt exchange.
+pub mod wal_quic;
+/// Authorized regional physical replication bindings.
+pub mod wal_route;
+/// Database-scoped physical WAL wire protocol.
+pub mod wal_wire;

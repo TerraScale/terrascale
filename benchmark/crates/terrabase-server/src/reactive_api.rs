@@ -1,7 +1,7 @@
 //! Canonical SQL result-view delivery (D-14/D-38/D-46/D-55).
 //!
 //! Views are keyed by the complete SQL attach input and authorization scope.
-//! Snapshot and log revisions are immutable MessagePack envelopes. Empty
+//! Snapshot and log revisions are immutable `MessagePack` envelopes. Empty
 //! long-polls are `204` and `no-store`; no client-visible numeric session is
 //! used by this transport.
 
@@ -18,11 +18,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
 use crate::api::{ApiError, ApiState};
-use crate::view_capability::{ViewCapabilityClaims, ViewCapabilityIssuer, ViewCapabilityVerifier};
+use crate::view_capability::{
+    ViewCapabilityClaims, ViewCapabilityIssuer, ViewCapabilityVerifier, hmac_sha256_hex,
+};
 
 /// Fixed capability header; it never appears in a URL or cache key.
 pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-View-Capability";
-/// MessagePack media type for snapshots, logs, resets, and protocol errors.
+/// `MessagePack` media type for snapshots, logs, resets, and protocol errors.
 pub const MSGPACK_MEDIA_TYPE: &str = "application/msgpack";
 /// Maximum SQL statement bytes accepted by view attach.
 pub const MAX_ATTACH_SQL_BYTES: usize = 262_144;
@@ -30,11 +32,9 @@ pub const MAX_ATTACH_SQL_BYTES: usize = 262_144;
 pub const MAX_ATTACH_BINARY_BYTES: usize = 1_048_576;
 /// Maximum HTTP long-poll duration.
 pub const LONG_POLL_WINDOW: Duration = Duration::from_secs(25);
-const RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const RETENTION: Duration = Duration::from_hours(168);
 const CAPABILITY_BUCKET: u64 = 600;
-const CAPABILITY_OVERLAP: u64 = 1_200;
 const CONFORMANCE_CAPABILITY_KEY: &[u8] = b"terrascale-reactive-capability-v1";
-const MATERIALIZATION_WINDOW: Duration = Duration::from_millis(100);
 
 /// Header emitted by the sync edge after it has authenticated and removed
 /// customer credentials.  It is deliberately bound to the complete request
@@ -85,6 +85,10 @@ impl CapabilityKeyRing {
     }
 
     /// Deterministic ring used by old conformance fixture generation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the compiled conformance key violates the key length limits.
     #[must_use]
     pub fn conformance() -> Self {
         Self::new(CONFORMANCE_CAPABILITY_KEY, None::<&[u8]>).expect("conformance key is valid")
@@ -158,7 +162,7 @@ pub fn verify_origin_proof(
         return false;
     };
     let fields = raw.split('.').collect::<Vec<_>>();
-    if fields.len() != 3 || fields[0] != "v1" || fields[1].len() == 0 || fields[2].len() != 64 {
+    if fields.len() != 3 || fields[0] != "v1" || fields[1].is_empty() || fields[2].len() != 64 {
         return false;
     }
     let Ok(bucket) = fields[1].parse::<u64>() else { return false };
@@ -253,12 +257,33 @@ struct View {
     identity_digest: String,
     items: Vec<terrabase_sync_core::wire::ResultItem>,
     digest: String,
-    last_emitted: Option<std::time::Instant>,
     head: u64,
+    observed_sequence: u64,
     floor: u64,
     snapshot: BTreeMap<u64, Frozen>,
     log: BTreeMap<u64, Frozen>,
     materializer: Option<Materializer>,
+}
+
+impl View {
+    /// Retains the current snapshot even for an idle view so reattachment can
+    /// always start from a complete result. Older cuts follow log retention.
+    fn prune(&mut self, now: SystemTime) {
+        while self.log.first_key_value().is_some_and(|(_, item)| {
+            now.duration_since(item.created).unwrap_or_default() > RETENTION
+        }) {
+            if let Some((revision, _)) = self.log.pop_first() {
+                self.floor = self.floor.max(revision);
+            }
+        }
+        while self.snapshot.len() > 1
+            && self.snapshot.first_key_value().is_some_and(|(_, item)| {
+                now.duration_since(item.created).unwrap_or_default() > RETENTION
+            })
+        {
+            self.snapshot.pop_first();
+        }
+    }
 }
 
 struct Materialization {
@@ -276,15 +301,138 @@ struct Materializer {
     host: Arc<terrabase_tbep::member_host::MemberHost>,
     plan: terrabase::query::QueryPlan,
     tenant: terrabase::types::TenantId,
+    changed: Arc<Notify>,
+    _watch: Arc<terrabase::engine::PublicationWatch>,
 }
 
 /// Process-wide canonical shared-view registry.
 pub struct ViewStore {
     views: Mutex<BTreeMap<String, View>>,
-    /// Origin singleflight: concurrent misses for one cadence window share
-    /// the same journal/snapshot refresh work.
+    /// Concurrent origin reads share journal/snapshot refresh work; the
+    /// stored revision prevents repeating work for the same durable cut.
     refreshing: Mutex<()>,
-    changed: Notify,
+    changed: Arc<Notify>,
+}
+
+fn attach_identity(
+    request: &AttachRequest,
+    scope: &str,
+    region: terrabase::regions::RegionCode,
+    materialization: Option<&Materialization>,
+) -> Result<Vec<u8>, ApiError> {
+    let parameters =
+        decode_base64(&request.parameters).map_err(|()| invalid_attach("parameters"))?;
+    if parameters.len() > MAX_ATTACH_BINARY_BYTES {
+        return Err(invalid_attach("parameters"));
+    }
+    let checkpoint = request
+        .checkpoint
+        .as_deref()
+        .map(decode_base64)
+        .transpose()
+        .map_err(|()| invalid_attach("checkpoint"))?;
+    if checkpoint.as_ref().is_some_and(|value| value.is_empty() || value.len() > 4096) {
+        return Err(invalid_attach("checkpoint"));
+    }
+    let statement = request.statement.trim();
+    if statement.is_empty() || statement.len() > MAX_ATTACH_SQL_BYTES {
+        return Err(invalid_attach("statement"));
+    }
+    let parsed = terrabase::query::sql::parse(statement, MAX_ATTACH_SQL_BYTES)
+        .map_err(|_| sql_error("the statement is not valid read-only SQL"))?;
+    if let terrabase::query::sql::LiveSubset::ExecuteOnly { operator } =
+        terrabase::query::sql::classify_live_subset(&parsed)
+    {
+        return Err(ApiError { status: StatusCode::UNPROCESSABLE_ENTITY, code: "not_subscribable", message: format!("the SQL statement is execute-only ({operator})"), fix: "subscribe a single-collection SELECT with scalar predicates, ORDER BY, LIMIT, or MATCH".into(), placement: None });
+    }
+    let canonical_statement = canonical_sql(statement);
+    let mut key = Vec::with_capacity(statement.len() + scope.len() + parameters.len() + 256);
+    put_identity(&mut key, b"database", request.database_id.as_bytes());
+    // A materialization identity is supplied by the engine path. The
+    // fallback remains deterministic for conformance fixtures.
+    if let Some(materialization) = &materialization {
+        put_identity(&mut key, b"engine", &materialization.identity);
+    }
+    put_identity(&mut key, b"sql", canonical_statement.as_bytes());
+    put_identity(&mut key, b"scope", scope.as_bytes());
+    put_identity(&mut key, b"parameters", &parameters);
+    put_identity(&mut key, b"entitlement", &request.entitlement_epoch.to_be_bytes());
+    put_identity(&mut key, b"region", region.as_bytes().as_ref());
+    Ok(key)
+}
+
+fn initial_view(
+    request: &AttachRequest,
+    scope: &str,
+    region: terrabase::regions::RegionCode,
+    materialization: Option<&Materialization>,
+    key: &[u8],
+    view_id: &str,
+) -> View {
+    let revision = materialization.as_ref().map_or(0, |value| value.revision);
+    let digest =
+        materialization.as_ref().map_or_else(|| digest_bytes(&[]), |value| value.digest.clone());
+    let identity_digest = blake3::hash(key).to_hex().to_string();
+    let bytes = materialization.as_ref().map_or_else(
+        || snapshot_envelope(view_id, 1, revision, checkpoint_bytes(view_id, 1, revision)),
+        |value| {
+            snapshot_envelope_with_items(
+                view_id,
+                1,
+                revision,
+                value.items.clone(),
+                digest.clone(),
+                checkpoint_bytes_with_identity(view_id, 1, revision, &identity_digest),
+            )
+        },
+    );
+    let mut snapshot = BTreeMap::new();
+    snapshot.insert(revision, Frozen { bytes: Arc::from(bytes), created: SystemTime::now() });
+    View {
+        id: view_id.to_owned(),
+        generation: 1,
+        scope: scope.to_owned(),
+        capability_scope: capability_scope(scope),
+        entitlement_epoch: request.entitlement_epoch,
+        region,
+        identity_digest,
+        items: materialization.as_ref().map_or_else(Vec::new, |value| value.items.clone()),
+        digest,
+        head: revision,
+        observed_sequence: revision,
+        floor: 0,
+        snapshot,
+        log: BTreeMap::new(),
+        materializer: materialization.as_ref().and_then(|value| value.materializer.clone()),
+    }
+}
+
+fn attach_response(view: &View, capability_keys: &CapabilityKeyRing) -> AttachResponse {
+    let offset = view.head;
+    let checkpoint =
+        checkpoint_bytes_with_identity(&view.id, view.generation, offset, &view.identity_digest);
+    let capability = capability_for_region(
+        &view.id,
+        view.generation,
+        &view.capability_scope,
+        view.entitlement_epoch,
+        view.region,
+        now_seconds(),
+        capability_keys,
+    );
+    AttachResponse {
+        view: view.id.clone(),
+        generation: view.generation,
+        snapshot_chunks: vec![format!(
+            "/api/v1/reactive/views/{}/{}/snapshot/0?cut={offset}",
+            view.id, view.generation
+        )],
+        log: format!("/api/v1/reactive/views/{}/{}/log?offset={offset}", view.id, view.generation),
+        checkpoint: encode_base64(&checkpoint),
+        capability,
+        capability_header: VIEW_CAPABILITY_HEADER,
+        offset,
+    }
 }
 
 impl ViewStore {
@@ -292,19 +440,30 @@ impl ViewStore {
         Self {
             views: Mutex::new(BTreeMap::new()),
             refreshing: Mutex::new(()),
-            changed: Notify::new(),
+            changed: Arc::new(Notify::new()),
         }
     }
 
     /// Attaches request metadata without resolving a database. The HTTP
     /// handler performs database existence and authorization checks first.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid-input, unsupported-SQL, view-identity, or storage errors.
     pub fn attach(
         &self,
         request: &AttachRequest,
         scope: &str,
     ) -> Result<(AttachResponse, String), ApiError> {
         let keys = CapabilityKeyRing::conformance();
-        self.attach_materialized(request, scope, terrabase::regions::RegionCode::GRU, None, &keys)
+        self.attach_materialized(
+            request,
+            scope,
+            terrabase::regions::RegionCode::GRU,
+            None,
+            &keys,
+            None,
+        )
     }
 
     /// Attaches one query-backed view. `materialization` is produced from a
@@ -316,98 +475,23 @@ impl ViewStore {
         request: &AttachRequest,
         scope: &str,
         region: terrabase::regions::RegionCode,
-        materialization: Option<Materialization>,
+        materialization: Option<&Materialization>,
         capability_keys: &CapabilityKeyRing,
+        guards: Option<&crate::guards::AbuseGuards>,
     ) -> Result<(AttachResponse, String), ApiError> {
-        let parameters =
-            decode_base64(&request.parameters).map_err(|_| invalid_attach("parameters"))?;
-        if parameters.len() > MAX_ATTACH_BINARY_BYTES {
-            return Err(invalid_attach("parameters"));
-        }
-        let checkpoint = request
-            .checkpoint
-            .as_deref()
-            .map(decode_base64)
-            .transpose()
-            .map_err(|_| invalid_attach("checkpoint"))?;
-        if checkpoint.as_ref().is_some_and(|value| value.is_empty() || value.len() > 4096) {
-            return Err(invalid_attach("checkpoint"));
-        }
-        let statement = request.statement.trim();
-        if statement.is_empty() || statement.len() > MAX_ATTACH_SQL_BYTES {
-            return Err(invalid_attach("statement"));
-        }
-        let parsed = terrabase::query::sql::parse(statement, MAX_ATTACH_SQL_BYTES)
-            .map_err(|_| sql_error("the statement is not valid read-only SQL"))?;
-        if let terrabase::query::sql::LiveSubset::ExecuteOnly { operator } =
-            terrabase::query::sql::classify_live_subset(&parsed)
-        {
-            return Err(ApiError { status: StatusCode::UNPROCESSABLE_ENTITY, code: "not_subscribable", message: format!("the SQL statement is execute-only ({operator})"), fix: "subscribe a single-collection SELECT with scalar predicates, ORDER BY, LIMIT, or MATCH".into(), placement: None });
-        }
-        let canonical_statement = canonical_sql(statement);
-        let mut key = Vec::with_capacity(statement.len() + scope.len() + parameters.len() + 256);
-        put_identity(&mut key, b"database", request.database_id.as_bytes());
-        // A materialization identity is supplied by the engine path. The
-        // fallback remains deterministic for conformance fixtures.
-        if let Some(materialization) = &materialization {
-            put_identity(&mut key, b"engine", &materialization.identity);
-        }
-        put_identity(&mut key, b"sql", canonical_statement.as_bytes());
-        put_identity(&mut key, b"scope", scope.as_bytes());
-        put_identity(&mut key, b"parameters", &parameters);
-        put_identity(&mut key, b"entitlement", &request.entitlement_epoch.to_be_bytes());
-        put_identity(&mut key, b"region", region.as_bytes().as_ref());
+        let key = attach_identity(request, scope, region, materialization)?;
         let view_id = format!("v-{}", blake3::hash(&key).to_hex());
-        let capability_scope = capability_scope(scope);
-        let mut views = self.views.lock().expect("reactive view lock is not poisoned");
-        let view = views.entry(view_id.clone()).or_insert_with(|| {
-            let revision = materialization.as_ref().map_or(0, |value| value.revision);
-            let digest = materialization
-                .as_ref()
-                .map_or_else(|| digest_bytes(&[]), |value| value.digest.clone());
-            let identity_digest = blake3::hash(&key).to_hex().to_string();
-            let bytes = materialization.as_ref().map_or_else(
-                || {
-                    snapshot_envelope(
-                        &view_id,
-                        1,
-                        revision,
-                        checkpoint_bytes(&view_id, 1, revision),
-                    )
-                },
-                |value| {
-                    snapshot_envelope_with_items(
-                        &view_id,
-                        1,
-                        revision,
-                        value.items.clone(),
-                        digest.clone(),
-                        checkpoint_bytes_with_identity(&view_id, 1, revision, &identity_digest),
-                    )
-                },
-            );
-            let mut snapshot = BTreeMap::new();
-            snapshot
-                .insert(revision, Frozen { bytes: Arc::from(bytes), created: SystemTime::now() });
-            View {
-                id: view_id.clone(),
-                generation: 1,
-                scope: scope.to_owned(),
-                capability_scope: capability_scope.clone(),
-                entitlement_epoch: request.entitlement_epoch,
-                region,
-                identity_digest,
-                items: materialization.as_ref().map_or_else(Vec::new, |value| value.items.clone()),
-                digest,
-                last_emitted: None,
-                head: revision,
-                floor: 0,
-                snapshot,
-                log: BTreeMap::new(),
-                materializer: materialization.as_ref().and_then(|value| value.materializer.clone()),
-            }
-        });
-        if view.scope != scope || view.entitlement_epoch != request.entitlement_epoch {
+        // Reattachment must publish changes through the same log as existing
+        // readers. Installing a newer snapshot directly would skip their delta.
+        let existing =
+            self.views.lock().map_err(|_| ApiError::storage_failure())?.contains_key(&view_id);
+        if existing {
+            self.refresh_view(&view_id)?;
+        }
+        let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
+        if views.get(&view_id).is_some_and(|view| {
+            view.scope != scope || view.entitlement_epoch != request.entitlement_epoch
+        }) {
             return Err(ApiError {
                 status: StatusCode::CONFLICT,
                 code: "view_identity_conflict",
@@ -416,72 +500,25 @@ impl ViewStore {
                 placement: None,
             });
         }
-        if let Some(value) = materialization.as_ref() {
-            if value.revision <= view.head {
-                let _ = value;
-            } else {
-                let bytes = snapshot_envelope_with_items(
-                    &view.id,
-                    view.generation,
-                    value.revision,
-                    value.items.clone(),
-                    value.digest.clone(),
-                    checkpoint_bytes_with_identity(
-                        &view.id,
-                        view.generation,
-                        value.revision,
-                        &view.identity_digest,
-                    ),
-                );
-                view.snapshot.insert(
-                    value.revision,
-                    Frozen { bytes: Arc::from(bytes), created: SystemTime::now() },
-                );
-                view.items.clone_from(&value.items);
-                view.digest.clone_from(&value.digest);
-                view.materializer = value.materializer.clone();
-                view.head = value.revision;
-            }
+        // Serialize quota admission and publication. A rejected request never
+        // installs a view and therefore never needs to delete a shared entry.
+        if let Some(guards) = guards {
+            guards
+                .attach_view(&request.database_id, &view_id)
+                .map_err(|error| ApiError::abuse_guard(&error))?;
         }
-        let offset = view.head;
-        let checkpoint = checkpoint_bytes_with_identity(
-            &view.id,
-            view.generation,
-            offset,
-            &view.identity_digest,
-        );
-        let capability = capability_for_region(
-            &view.id,
-            view.generation,
-            &view.capability_scope,
-            view.entitlement_epoch,
-            view.region,
-            now_seconds(),
-            capability_keys,
-        );
-        Ok((
-            AttachResponse {
-                view: view.id.clone(),
-                generation: view.generation,
-                snapshot_chunks: vec![format!(
-                    "/api/v1/reactive/views/{}/{}/snapshot/0?cut={offset}",
-                    view.id, view.generation
-                )],
-                log: format!(
-                    "/api/v1/reactive/views/{}/{}/log?offset={offset}",
-                    view.id, view.generation
-                ),
-                checkpoint: encode_base64(&checkpoint),
-                capability,
-                capability_header: VIEW_CAPABILITY_HEADER,
-                offset,
-            },
-            view.id.clone(),
-        ))
+        let view = views.entry(view_id.clone()).or_insert_with(|| {
+            initial_view(request, scope, region, materialization, &key, &view_id)
+        });
+        Ok((attach_response(view, capability_keys), view.id.clone()))
     }
 
-    /// Append one already encoded manifest message exactly once.
     /// Appends one canonical manifest message exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Returns an encoding, missing-view, or storage error. A retry must match
+    /// retained bytes at its revision; conflicting or expired retries are refused.
     pub fn append(
         &self,
         view_id: &str,
@@ -496,24 +533,28 @@ impl ViewStore {
                 message,
             })
             .map_err(|_| frame_error())?;
-        let mut views = self.views.lock().expect("reactive view lock is not poisoned");
+        let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
         let Some(view) = views.get_mut(view_id) else {
             return Err(unknown_view());
         };
+        view.prune(SystemTime::now());
         if revision <= view.head {
-            return Ok(());
+            return if view.log.get(&revision).is_some_and(|frozen| frozen.bytes.as_ref() == bytes) {
+                Ok(())
+            } else {
+                Err(ApiError {
+                    status: StatusCode::CONFLICT,
+                    code: "reactive_revision_conflict",
+                    message: "the revision cannot be verified against the retained log bytes"
+                        .into(),
+                    fix: "re-attach and resume from the current checkpoint".into(),
+                    placement: None,
+                })
+            };
         }
         let created = SystemTime::now();
         view.head = revision;
         view.log.insert(revision, Frozen { bytes: Arc::from(bytes), created });
-        while view.log.values().next().is_some_and(|item| {
-            created.duration_since(item.created).unwrap_or_default() > RETENTION
-        }) {
-            if let Some((&oldest, _)) = view.log.iter().next() {
-                view.floor = oldest;
-                view.log.remove(&oldest);
-            }
-        }
         drop(views);
         self.changed.notify_waiters();
         Ok(())
@@ -526,40 +567,41 @@ impl ViewStore {
         offset: u64,
     ) -> Result<ReadResult, ApiError> {
         self.refresh_view(view_id)?;
-        let mut views = self.views.lock().expect("reactive view lock is not poisoned");
+        let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
         let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
         if generation != view.generation {
             return Err(unknown_view());
         }
+        view.prune(SystemTime::now());
         if offset < view.floor {
             return Ok(ReadResult::Reset(reset_bytes(view)));
         }
         if offset > view.head {
             return Err(offset_gap());
         }
-        if let Some((revision, frozen)) = view.log.range((offset + 1)..).next() {
-            if view.last_emitted.is_some_and(|at| at.elapsed() < MATERIALIZATION_WINDOW) {
-                return Ok(ReadResult::Empty);
-            }
-            view.last_emitted = Some(std::time::Instant::now());
+        if let Some((revision, frozen)) =
+            view.log.range((std::ops::Bound::Excluded(offset), std::ops::Bound::Unbounded)).next()
+        {
             return Ok(ReadResult::Data { revision: *revision, frozen: frozen.clone() });
         }
         Ok(ReadResult::Empty)
     }
 
     /// Replays the current durable snapshot when the journal sequence moved
-    /// since the last materialization. One revision is emitted per cadence
-    /// window, and all readers observe the same frozen MessagePack bytes.
+    /// since the last materialization. Readers at the same durable cut
+    /// observe the same frozen `MessagePack` bytes.
     fn refresh_view(&self, view_id: &str) -> Result<(), ApiError> {
-        let _singleflight = self.refreshing.lock().expect("reactive refresh lock is not poisoned");
-        let (materializer, previous, generation, identity_digest) = {
-            let views = self.views.lock().expect("reactive view lock is not poisoned");
-            let view = views.get(view_id).ok_or_else(unknown_view)?;
+        let _singleflight = self.refreshing.lock().map_err(|_| ApiError::storage_failure())?;
+        let (materializer, previous, generation, identity_digest, observed_sequence) = {
+            let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
+            let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
+            view.prune(SystemTime::now());
             (
                 view.materializer.clone(),
                 view.items.clone(),
                 view.generation,
                 view.identity_digest.clone(),
+                view.observed_sequence,
             )
         };
         let Some(materializer) = materializer else { return Ok(()) };
@@ -568,7 +610,7 @@ impl ViewStore {
             .engine()
             .read_snapshot(&materializer.host.engine().scope_for(&materializer.tenant))
             .map_err(|_| ApiError::storage_failure())?;
-        if snapshot.sequence().get() == self.current_head(view_id)? {
+        if snapshot.sequence().get() <= observed_sequence {
             return Ok(());
         }
         let result = materializer
@@ -577,31 +619,16 @@ impl ViewStore {
             .queries()
             .execute(&materializer.plan, &snapshot)
             .map_err(ApiError::query)?;
-        let items = result
-            .rows()
-            .iter()
-            .map(|row| terrabase_sync_core::wire::ResultItem {
-                identity: row.document().id().as_str().to_owned(),
-                fields: row
-                    .projected()
-                    .iter()
-                    .map(|(path, value)| terrabase_sync_core::wire::ProjectedField {
-                        path: path.clone(),
-                        value: terrabase_tbep::reactive::canonical_json_bytes(value),
-                    })
-                    .collect(),
-            })
-            .collect::<Vec<_>>();
+        let items = result_items(&result);
         let next_digest = digest_items(&items);
         let revision = snapshot.sequence().get();
         {
-            let mut views = self.views.lock().expect("reactive view lock is not poisoned");
+            let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
             let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
             if next_digest == view.digest {
-                // The journal advanced for a write outside this view's
-                // predicate. Move the cut forward without fabricating a
-                // data-bearing delta.
-                view.head = revision;
+                // An irrelevant write advances the source watermark, not
+                // the published result revision or its immutable snapshot URL.
+                view.observed_sequence = revision;
                 return Ok(());
             }
         }
@@ -636,7 +663,7 @@ impl ViewStore {
                 },
             })
             .map_err(|_| frame_error())?;
-        let mut views = self.views.lock().expect("reactive view lock is not poisoned");
+        let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
         let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
         if revision <= view.head {
             return Ok(());
@@ -656,9 +683,11 @@ impl ViewStore {
                 created: SystemTime::now(),
             },
         );
+        view.observed_sequence = revision;
         view.items = items;
         view.digest = next_digest;
         view.head = revision;
+        view.prune(SystemTime::now());
         drop(views);
         self.changed.notify_waiters();
         Ok(())
@@ -667,24 +696,19 @@ impl ViewStore {
     fn current_head(&self, view_id: &str) -> Result<u64, ApiError> {
         self.views
             .lock()
-            .expect("reactive view lock is not poisoned")
+            .map_err(|_| ApiError::storage_failure())?
             .get(view_id)
             .map(|view| view.head)
             .ok_or_else(unknown_view)
     }
 
-    /// Removes a view that was materialized but rejected by an admission
-    /// guard before its attach response became visible to a client.
-    fn detach_view(&self, view_id: &str) {
-        self.views.lock().expect("reactive view lock is not poisoned").remove(view_id);
-    }
-
     fn read_snapshot(&self, view_id: &str, generation: u64, cut: u64) -> Result<Frozen, ApiError> {
-        let views = self.views.lock().expect("reactive view lock is not poisoned");
-        let view = views.get(view_id).ok_or_else(unknown_view)?;
+        let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
+        let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
         if generation != view.generation {
             return Err(unknown_view());
         }
+        view.prune(SystemTime::now());
         view.snapshot.get(&cut).cloned().ok_or_else(unknown_view)
     }
 
@@ -693,7 +717,7 @@ impl ViewStore {
         view_id: &str,
         generation: u64,
     ) -> Result<ViewCapabilityClaims, ApiError> {
-        let views = self.views.lock().expect("reactive view lock is not poisoned");
+        let views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
         let view = views.get(view_id).ok_or_else(unknown_view)?;
         if generation != view.generation {
             return Err(unknown_view());
@@ -726,6 +750,10 @@ pub fn empty_snapshot_bytes(view: &str, generation: u64, revision: u64) -> Vec<u
 }
 
 /// Appends one canonical server message to a shared view's immutable log.
+///
+/// # Errors
+///
+/// Returns the encoding, view, storage, or revision refusal from [`ViewStore::append`].
 pub fn append_message(
     view: &str,
     revision: u64,
@@ -768,28 +796,28 @@ pub async fn attach_view(
         Ok(materialization) => materialization,
         Err(error) => return error.into_response(),
     };
-    let (response, view_id) = match store().attach_materialized(
+    let (response, _) = match store().attach_materialized(
         &request,
         &scope,
         state.region,
-        Some(materialization),
+        Some(&materialization),
         &state.capability_keys,
+        Some(&state.guards),
     ) {
         Ok(result) => result,
-        Err(error) => return error.into_response(),
+        Err(error) => {
+            if error.code == "abuse_guard_exceeded" {
+                state.metrics.record_admission_rejection(
+                    terrabase::observability::Operation::Subscribe,
+                    terrabase::observability::AdmissionReason::Capacity,
+                );
+            }
+            return error.into_response();
+        }
     };
-    if let Err(rejection) = state.guards.attach_view(&request.database_id, &view_id) {
-        // The store insertion is shared and must be rolled back when the
-        // distinct-view budget rejects it; otherwise an attacker can fill
-        // the process-local registry with uncounted, unusable views.
-        store().detach_view(&view_id);
-        state.metrics.record_admission_rejection(
-            terrabase::observability::Operation::Subscribe,
-            terrabase::observability::AdmissionReason::Capacity,
-        );
-        return ApiError::abuse_guard(&rejection).into_response();
-    }
-    let mut body = serde_json::to_vec(&response).expect("attach response is serializable");
+    let Ok(mut body) = serde_json::to_vec(&response) else {
+        return frame_error().into_response();
+    };
     body.push(b'\n');
     let mut result = (StatusCode::CREATED, body).into_response();
     result
@@ -802,7 +830,7 @@ pub async fn attach_view(
 /// Serves an immutable snapshot chunk at an explicit journal cut.
 #[utoipa::path(get, path = "/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}", responses((status = 200, description = "Immutable view snapshot")))]
 pub async fn snapshot(
-    State(_state): State<Arc<ApiState>>,
+    State(state): State<Arc<ApiState>>,
     Path((view, generation, chunk)): Path<(String, u64, String)>,
     Query(query): Query<CutQuery>,
     headers: HeaderMap,
@@ -812,13 +840,13 @@ pub async fn snapshot(
         return unknown_view().into_response();
     }
     if let Err(error) =
-        verify_view_header(&headers, &view, generation, proof.is_some(), &_state.capability_keys)
+        verify_view_header(&headers, &view, generation, proof.is_some(), &state.capability_keys)
     {
         return error.into_response();
     }
     match store().read_snapshot(&view, generation, query.cut.unwrap_or(0)) {
         Ok(frozen) => {
-            immutable_response(frozen, format!("\"{view}-snapshot-{}\"", query.cut.unwrap_or(0)))
+            immutable_response(&frozen, &format!("\"{view}-snapshot-{}\"", query.cut.unwrap_or(0)))
         }
         Err(error) => error.into_response(),
     }
@@ -827,7 +855,7 @@ pub async fn snapshot(
 /// Serves the next immutable log revision, waiting at most 25 seconds.
 #[utoipa::path(get, path = "/api/v1/reactive/views/{view}/{generation}/log", responses((status = 200, description = "Immutable view delta")))]
 pub async fn view_log(
-    State(_state): State<Arc<ApiState>>,
+    State(state): State<Arc<ApiState>>,
     Path((view, generation)): Path<(String, u64)>,
     Query(query): Query<OffsetQuery>,
     headers: HeaderMap,
@@ -837,15 +865,28 @@ pub async fn view_log(
         return invalid_offset().into_response();
     };
     if let Err(error) =
-        verify_view_header(&headers, &view, generation, proof.is_some(), &_state.capability_keys)
+        verify_view_header(&headers, &view, generation, proof.is_some(), &state.capability_keys)
     {
         return error.into_response();
     }
+    let changed = {
+        let Ok(views) = store().views.lock() else {
+            return ApiError::storage_failure().into_response();
+        };
+        let Some(view) = views.get(&view) else { return unknown_view().into_response() };
+        view.materializer
+            .as_ref()
+            .map_or_else(|| Arc::clone(&store().changed), |source| Arc::clone(&source.changed))
+    };
     let started = tokio::time::Instant::now();
     loop {
+        // Register before checking the journal so a racing commit cannot be lost.
+        let notified = changed.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         match store().read_log(&view, generation, offset) {
             Ok(ReadResult::Data { revision, frozen }) => {
-                return immutable_response(frozen, format!("\"{view}-{generation}-{revision}\""));
+                return immutable_response(&frozen, &format!("\"{view}-{generation}-{revision}\""));
             }
             Ok(ReadResult::Reset(bytes)) => return reset_response(bytes),
             Ok(ReadResult::Empty) => {}
@@ -855,29 +896,10 @@ pub async fn view_log(
         if remaining.is_zero() {
             return empty_timeout();
         }
-        let notified = store().changed.notified();
         if tokio::time::timeout(remaining, notified).await.is_err() {
             return empty_timeout();
         }
     }
-}
-
-/// Retained migration symbol: old database-local JSON polling is retired.
-#[utoipa::path(post, path = "/api/v1/databases/{name}/reactive/poll", responses((status = 410, description = "Legacy polling retired")))]
-#[allow(clippy::unused_async)]
-pub async fn poll(
-    State(_state): State<Arc<ApiState>>,
-    Path(_name): Path<String>,
-    _body: String,
-) -> Response {
-    ApiError {
-        status: StatusCode::GONE,
-        code: "reactive_route_retired",
-        message: "database-local JSON reactive polling is retired".into(),
-        fix: "POST the canonical SQL statement to /api/v1/reactive/views".into(),
-        placement: None,
-    }
-    .into_response()
 }
 
 /// Optional WebSocket transport using the same indexed manifest envelopes.
@@ -925,14 +947,8 @@ async fn serve_socket(
     principal: crate::api_keys::Principal,
     _permit: WsPermit,
 ) {
-    // A socket may subscribe more than once. Keep every distinct view tied
-    // to the socket lifetime so disconnects release both the connection and
-    // distinct-view budgets, including malformed/failed frame paths.
-    let mut view_permit = WsViewPermit {
-        guards: Arc::clone(&state.guards),
-        database: database.clone(),
-        views: std::collections::BTreeSet::new(),
-    };
+    // Shared views outlive individual transports. Their quota stays charged
+    // while their snapshots and logs remain in the store.
     // Keep the upgraded transport alive for successive subscribe frames. A
     // WebSocket is a sustained transport; one initial snapshot must not turn
     // it into an expensive one-shot request.
@@ -993,8 +1009,9 @@ async fn serve_socket(
             &request,
             &scope,
             state.region,
-            Some(materialization),
+            Some(&materialization),
             &state.capability_keys,
+            Some(&state.guards),
         ) else {
             let _ = socket
                 .send(Message::Binary(
@@ -1003,32 +1020,8 @@ async fn serve_socket(
                 .await;
             return;
         };
-        if state.guards.attach_view(&database, &view_id).is_err() {
-            store().detach_view(&view_id);
-            let _ = socket
-                .send(Message::Binary(
-                    error_bytes(terrabase_sync_core::wire::ErrorCode::Unavailable).into(),
-                ))
-                .await;
-            return;
-        }
-        view_permit.views.insert(view_id.clone());
         if let Ok(snapshot) = store().read_snapshot(&view_id, 1, response.offset) {
             let _ = socket.send(Message::Binary(snapshot.bytes.to_vec().into())).await;
-        }
-    }
-}
-
-struct WsViewPermit {
-    guards: Arc<crate::guards::AbuseGuards>,
-    database: String,
-    views: std::collections::BTreeSet<String>,
-}
-
-impl Drop for WsViewPermit {
-    fn drop(&mut self) {
-        for view in &self.views {
-            self.guards.detach_view(&self.database, view);
         }
     }
 }
@@ -1053,7 +1046,7 @@ pub struct CutQuery {
     pub cut: Option<u64>,
 }
 
-fn immutable_response(frozen: Frozen, etag: String) -> Response {
+fn immutable_response(frozen: &Frozen, etag: &str) -> Response {
     let remaining = frozen
         .created
         .elapsed()
@@ -1066,7 +1059,7 @@ fn immutable_response(frozen: Frozen, etag: String) -> Response {
     if let Ok(value) = HeaderValue::from_str(&format!("public, max-age={remaining}, immutable")) {
         headers.insert("cloudflare-cdn-cache-control", value);
     }
-    if let Ok(value) = HeaderValue::from_str(&etag) {
+    if let Ok(value) = HeaderValue::from_str(etag) {
         headers.insert(axum::http::header::ETAG, value);
     }
     headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
@@ -1087,7 +1080,7 @@ fn materialize_view(
     let statement = terrabase::SqlQueryText::try_new(request.statement.trim())
         .map_err(|_| sql_error("the statement is not valid read-only SQL"))?;
     let parameter_bytes =
-        decode_base64(&request.parameters).map_err(|_| invalid_attach("parameters"))?;
+        decode_base64(&request.parameters).map_err(|()| invalid_attach("parameters"))?;
     let mut parameters = terrabase::query::sql::SqlParameters::new();
     if !parameter_bytes.is_empty() {
         let value: serde_json::Value =
@@ -1105,6 +1098,14 @@ fn materialize_view(
         .map_err(|_| ApiError::query(terrabase::QueryError::Deadline))?;
     let cancellation = terrabase::Cancellation::new();
     let engine = host.engine();
+    let changed = Arc::new(Notify::new());
+    let signal = Arc::clone(&changed);
+    let watch = Arc::new(
+        engine
+            .watch_publications(move || signal.notify_waiters())
+            .map_err(|_| ApiError::storage_failure())?,
+    );
+
     let plan = engine
         .queries()
         .compile(terrabase::QueryInput::sql_bounded_with_parameters(
@@ -1138,28 +1139,10 @@ fn materialize_view(
     let engine_scope = engine.scope_for(&tenant);
     let snapshot = engine.read_snapshot(&engine_scope).map_err(|_| ApiError::storage_failure())?;
     let result = engine.queries().execute(&plan, &snapshot).map_err(ApiError::query)?;
-    let mut items = Vec::with_capacity(result.rows().len());
-    for row in result.rows() {
-        let fields = row
-            .projected()
-            .iter()
-            .map(|(path, value)| terrabase_sync_core::wire::ProjectedField {
-                path: path.clone(),
-                value: terrabase_tbep::reactive::canonical_json_bytes(value),
-            })
-            .collect();
-        items.push(terrabase_sync_core::wire::ResultItem {
-            identity: row.document().id().as_str().to_owned(),
-            fields,
-        });
-    }
+    let items = result_items(&result);
     let digest = digest_items(&items);
     let mut identity = Vec::new();
-    put_identity(
-        &mut identity,
-        b"database-incarnation",
-        host.location().to_string_lossy().as_bytes(),
-    );
+    put_identity(&mut identity, b"database-incarnation", &engine.database_id().as_bytes());
     put_identity(
         &mut identity,
         b"normalized-sql",
@@ -1167,11 +1150,19 @@ fn materialize_view(
     );
     put_identity(&mut identity, b"parameters", &parameter_bytes);
     put_identity(&mut identity, b"schema-version", b"1");
-    put_identity(
-        &mut identity,
-        b"index-version",
-        format!("{:?}", engine.queries().registered_indexes(&tenant)).as_bytes(),
-    );
+    // Published generations and usage observations change on ordinary writes.
+    // Only catalog definitions/lifecycle state belong to the view identity.
+    let mut indexes = engine.queries().registered_indexes(&tenant);
+    indexes.sort_by(|left, right| left.name().cmp(right.name()));
+    for index in indexes {
+        put_identity(&mut identity, b"index-name", index.name().as_bytes());
+        put_identity(&mut identity, b"index-collection", index.collection().as_bytes());
+        put_identity(
+            &mut identity,
+            b"index-definition",
+            format!("{:?}:{:?}:{:?}", index.kind(), index.fields(), index.state()).as_bytes(),
+        );
+    }
     put_identity(&mut identity, b"rule-version", scope.as_bytes());
     put_identity(&mut identity, b"entitlement-version", &request.entitlement_epoch.to_be_bytes());
     put_identity(&mut identity, b"region", &state.region.as_bytes());
@@ -1180,8 +1171,34 @@ fn materialize_view(
         items,
         digest,
         identity,
-        materializer: Some(Materializer { host: Arc::clone(host), plan, tenant }),
+        materializer: Some(Materializer {
+            host: Arc::clone(host),
+            plan,
+            tenant,
+            changed,
+            _watch: watch,
+        }),
     })
+}
+
+fn result_items(
+    result: &terrabase::query::QueryResult,
+) -> Vec<terrabase_sync_core::wire::ResultItem> {
+    result
+        .rows()
+        .iter()
+        .map(|row| terrabase_sync_core::wire::ResultItem {
+            identity: row.document().id().as_str().to_owned(),
+            fields: row
+                .projected()
+                .iter()
+                .map(|(path, value)| terrabase_sync_core::wire::ProjectedField {
+                    path: path.clone(),
+                    value: terrabase_tbep::reactive::canonical_json_bytes(value),
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>()
 }
 
 fn document_value(value: &serde_json::Value) -> Option<terrabase::types::DocumentValue> {
@@ -1555,7 +1572,7 @@ fn decode_base64(input: &str) -> Result<Vec<u8>, ()> {
             _ => Err(()),
         })
         .collect::<Result<_, _>>()?;
-    if values.len() % 4 != 0 {
+    if !values.len().is_multiple_of(4) {
         return Err(());
     }
     let mut output = Vec::new();
@@ -1573,125 +1590,212 @@ fn decode_base64(input: &str) -> Result<Vec<u8>, ()> {
     }
     Ok(output)
 }
-fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
-    let mut block = [0u8; 64];
-    if key.len() > 64 {
-        block[..32].copy_from_slice(&sha256(key));
-    } else {
-        block[..key.len()].copy_from_slice(key);
-    }
-    let mut inner = [0u8; 64];
-    let mut outer = [0u8; 64];
-    for index in 0..64 {
-        inner[index] = block[index] ^ 0x36;
-        outer[index] = block[index] ^ 0x5c;
-    }
-    let mut input = inner.to_vec();
-    input.extend_from_slice(message);
-    let hash = sha256(&input);
-    let mut output = outer.to_vec();
-    output.extend_from_slice(&hash);
-    sha256(&output).iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
-    if left.len() != right.len() {
-        return false;
-    }
-    left.iter().zip(right).fold(0u8, |difference, (left, right)| difference | (left ^ right)) == 0
+    aws_lc_rs::constant_time::verify_slices_are_equal(left, right).is_ok()
 }
-fn sha256(input: &[u8]) -> [u8; 32] {
-    const K: [u32; 64] = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-        0xc67178f2,
-    ];
-    let mut data = input.to_vec();
-    data.push(0x80);
-    while data.len() % 64 != 56 {
-        data.push(0);
-    }
-    data.extend_from_slice(
-        &(u64::try_from(input.len()).unwrap_or(u64::MAX).saturating_mul(8)).to_be_bytes(),
-    );
-    let mut state = [
-        0x6a09e667u32,
-        0xbb67ae85,
-        0x3c6ef372,
-        0xa54ff53a,
-        0x510e527f,
-        0x9b05688c,
-        0x1f83d9ab,
-        0x5be0cd19,
-    ];
-    for chunk in data.chunks_exact(64) {
-        let mut words = [0u32; 64];
-        for (index, bytes) in chunk.chunks_exact(4).take(16).enumerate() {
-            words[index] = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        }
-        for index in 16..64 {
-            let s0 = words[index - 15].rotate_right(7)
-                ^ words[index - 15].rotate_right(18)
-                ^ (words[index - 15] >> 3);
-            let s1 = words[index - 2].rotate_right(17)
-                ^ words[index - 2].rotate_right(19)
-                ^ (words[index - 2] >> 10);
-            words[index] =
-                words[index - 16].wrapping_add(s0).wrapping_add(words[index - 7]).wrapping_add(s1);
-        }
-        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h) =
-            (state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7]);
-        for index in 0..64 {
-            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-            let ch = (e & f) ^ ((!e) & g);
-            let temp1 = h
-                .wrapping_add(s1)
-                .wrapping_add(ch)
-                .wrapping_add(K[index])
-                .wrapping_add(words[index]);
-            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-            let maj = (a & b) ^ (a & c) ^ (b & c);
-            let temp2 = s0.wrapping_add(maj);
-            h = g;
-            g = f;
-            f = e;
-            e = d.wrapping_add(temp1);
-            d = c;
-            c = b;
-            b = a;
-            a = temp1.wrapping_add(temp2);
-        }
-        state[0] = state[0].wrapping_add(a);
-        state[1] = state[1].wrapping_add(b);
-        state[2] = state[2].wrapping_add(c);
-        state[3] = state[3].wrapping_add(d);
-        state[4] = state[4].wrapping_add(e);
-        state[5] = state[5].wrapping_add(f);
-        state[6] = state[6].wrapping_add(g);
-        state[7] = state[7].wrapping_add(h);
-    }
-    let mut output = [0u8; 32];
-    for (index, word) in state.iter().enumerate() {
-        output[index * 4..index * 4 + 4].copy_from_slice(&word.to_be_bytes());
-    }
-    output
-}
-
-/// Compatibility holder retained until the owner removes the legacy field.
-#[derive(Default)]
-pub struct ReactiveSessions;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::{HeaderValue, Uri};
+
+    #[test]
+    fn retention_prunes_history_resets_old_readers_and_keeps_the_current_snapshot() {
+        let store = ViewStore::new();
+        let (_, id) = store
+            .attach(
+                &AttachRequest {
+                    database_id: "db".into(),
+                    statement: "SELECT * FROM users".into(),
+                    parameters: String::new(),
+                    checkpoint: None,
+                    subscription: None,
+                    entitlement_epoch: 0,
+                },
+                "tenant",
+            )
+            .expect("attach");
+        let now = SystemTime::now();
+        let expired = now - RETENTION - Duration::from_secs(1);
+        {
+            let mut views = store.views.lock().expect("views");
+            let view = views.get_mut(&id).expect("view");
+            view.head = 2;
+            view.snapshot.get_mut(&0).expect("initial cut").created = expired;
+            for (revision, created) in [(1, expired), (2, now)] {
+                let frozen = Frozen {
+                    bytes: Arc::from(vec![u8::try_from(revision).expect("small revision")]),
+                    created,
+                };
+                view.log.insert(revision, frozen.clone());
+                view.snapshot.insert(revision, frozen);
+            }
+        }
+        assert!(matches!(store.read_log(&id, 1, 0).expect("expired reader"), ReadResult::Reset(_)));
+        assert!(matches!(
+            store.read_log(&id, 1, 1).expect("at replay floor"),
+            ReadResult::Data { revision: 2, .. }
+        ));
+        assert!(store.read_snapshot(&id, 1, 0).is_err());
+        assert!(store.read_snapshot(&id, 1, 1).is_err());
+        let current = store.read_snapshot(&id, 1, 2).expect("current snapshot");
+        assert_eq!(current.bytes.as_ref(), &[2]);
+        {
+            let mut views = store.views.lock().expect("views");
+            let view = views.get_mut(&id).expect("view");
+            assert_eq!(view.floor, 1);
+            assert_eq!(view.snapshot.len(), 1);
+            view.prune(now + RETENTION + Duration::from_secs(1));
+            assert_eq!(view.floor, 2);
+            assert!(view.log.is_empty());
+            assert_eq!(view.snapshot.len(), 1, "idle views retain their latest snapshot");
+            assert_eq!(view.snapshot[&2].bytes, current.bytes);
+        }
+    }
+
+    #[test]
+    fn poisoned_view_state_returns_errors_without_recovering_partial_state() {
+        let store = ViewStore::new();
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _views = store.views.lock().expect("initial lock");
+            panic!("injected failure during a view mutation");
+        }));
+        assert!(poisoned.is_err());
+        let request = AttachRequest {
+            database_id: "db".into(),
+            statement: "SELECT * FROM users".into(),
+            parameters: String::new(),
+            checkpoint: None,
+            subscription: None,
+            entitlement_epoch: 0,
+        };
+        let errors = [
+            store.attach(&request, "tenant").err(),
+            store.current_head("view").err(),
+            store.read_snapshot("view", 1, 0).err(),
+            store.read_log("view", 1, 0).err(),
+            store.capability_claims("view", 1).err(),
+            store
+                .append(
+                    "view",
+                    1,
+                    terrabase_sync_core::wire::Message::Error {
+                        code: terrabase_sync_core::wire::ErrorCode::Unavailable,
+                        detail: None,
+                    },
+                )
+                .err(),
+        ];
+        for error in errors {
+            assert_eq!(error.expect("poisoned state is unavailable").code, "storage_failure");
+        }
+        assert!(store.views.is_poisoned());
+    }
+
+    #[test]
+    fn concurrent_admission_never_publishes_or_deletes_a_rejected_view() {
+        let store = ViewStore::new();
+        let guards = crate::guards::AbuseGuards::new();
+        guards.set_plan(
+            "db",
+            crate::guards::Plan::Custom(crate::guards::AbuseLimits {
+                read_query_rps: 100,
+                direct_read_bandwidth_bytes_per_month: 1000,
+                distinct_views: 1,
+                ws_connections: 10,
+                webhook_endpoints: 1,
+            }),
+        );
+        let keys = CapabilityKeyRing::conformance();
+        let barrier = std::sync::Barrier::new(16);
+        let results = std::thread::scope(|threads| {
+            let handles = (0..16)
+                .map(|index| {
+                    let store = &store;
+                    let guards = &guards;
+                    let keys = &keys;
+                    let barrier = &barrier;
+                    threads.spawn(move || {
+                        let request = AttachRequest {
+                            database_id: "db".into(),
+                            statement: format!("SELECT * FROM users WHERE n = {}", index % 2),
+                            parameters: String::new(),
+                            checkpoint: None,
+                            subscription: None,
+                            entitlement_epoch: 0,
+                        };
+                        barrier.wait();
+                        store.attach_materialized(
+                            &request,
+                            "tenant",
+                            terrabase::regions::RegionCode::GRU,
+                            None,
+                            keys,
+                            Some(guards),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles.into_iter().map(|handle| handle.join().expect("request")).collect::<Vec<_>>()
+        });
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 8);
+        assert_eq!(guards.view_count("db"), 1);
+        assert_eq!(store.views.lock().expect("views").len(), 1);
+        for result in results {
+            match result {
+                Ok((response, view)) => {
+                    assert!(
+                        store.read_snapshot(&view, response.generation, response.offset).is_ok()
+                    );
+                }
+                Err(error) => assert_eq!(error.code, "abuse_guard_exceeded"),
+            }
+        }
+    }
+
+    #[test]
+    fn immutable_log_retries_verify_bytes_and_maximum_offset_does_not_overflow() {
+        let store = ViewStore::new();
+        let (_, view) = store
+            .attach(
+                &AttachRequest {
+                    database_id: "db".into(),
+                    statement: "SELECT * FROM users".into(),
+                    parameters: String::new(),
+                    checkpoint: None,
+                    subscription: None,
+                    entitlement_epoch: 0,
+                },
+                "tenant",
+            )
+            .expect("attach");
+        let message = |detail| terrabase_sync_core::wire::Message::Error {
+            code: terrabase_sync_core::wire::ErrorCode::PermissionDenied,
+            detail: Some(detail),
+        };
+        store.append(&view, u64::MAX, message("original".into())).expect("append");
+        store.append(&view, u64::MAX, message("original".into())).expect("identical retry");
+        let original = store.views.lock().expect("views").get(&view).expect("view").log[&u64::MAX]
+            .bytes
+            .clone();
+        let error =
+            store.append(&view, u64::MAX, message("replacement".into())).expect_err("conflict");
+        assert_eq!(error.code, "reactive_revision_conflict");
+        assert!(matches!(store.read_log(&view, 1, u64::MAX).expect("at head"), ReadResult::Empty));
+        let ReadResult::Data { frozen, .. } = store.read_log(&view, 1, 0).expect("original data")
+        else {
+            panic!("original log entry must remain");
+        };
+        assert_eq!(frozen.bytes, original);
+        store.views.lock().expect("views").get_mut(&view).expect("view").log.clear();
+        assert_eq!(
+            store
+                .append(&view, u64::MAX, message("original".into()))
+                .expect_err("expired retry")
+                .code,
+            "reactive_revision_conflict"
+        );
+    }
 
     #[test]
     fn origin_proof_binds_log_target_and_rotation_overlap() {
@@ -1732,20 +1836,5 @@ mod tests {
             &keys,
             now,
         ));
-    }
-
-    #[test]
-    fn websocket_view_guard_is_released_on_task_drop() {
-        let guards = Arc::new(crate::guards::AbuseGuards::new());
-        guards.attach_view("db", "view").expect("view admission");
-        {
-            let _permit = WsViewPermit {
-                guards: Arc::clone(&guards),
-                database: "db".into(),
-                views: std::collections::BTreeSet::from(["view".into()]),
-            };
-            assert_eq!(guards.view_count("db"), 1);
-        }
-        assert_eq!(guards.view_count("db"), 0);
     }
 }

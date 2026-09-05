@@ -258,6 +258,22 @@ pub(crate) fn database_binding(location: &Path) -> Result<Option<String>, Owners
     Ok(Some(format!("owner-{:016x}", checksum(&record))))
 }
 
+/// Verifies the source record for the local-stack physical backup importer.
+pub(crate) fn validate_local_restore_source(source: &Path) -> Result<(), OwnershipError> {
+    let metadata = fs::symlink_metadata(source).map_err(|_| OwnershipError::InvalidLocation)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(OwnershipError::InvalidLocation);
+    }
+    // A running Litestream process may keep scratch files beside the database.
+    // Reading its owner record does not adopt or open those files.
+    let _ = database_binding(source)?.ok_or(OwnershipError::ForeignLocation)?;
+    let (_, mode) = read_record(&source.join(FILE_NAME))?;
+    if mode != OwnershipMode::LocalDevelopment {
+        return Err(OwnershipError::ModeMismatch);
+    }
+    Ok(())
+}
+
 fn validate_location(location: &Path) -> Result<(), OwnershipError> {
     let metadata = fs::symlink_metadata(location).map_err(|_| OwnershipError::InvalidLocation)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {

@@ -415,116 +415,6 @@ pub trait TbepHost: Send + Sync {
         Err(HostingError::Refused("replication.denials is not served by this host".into()))
     }
 
-    /// Configures the Storage Tier Mover's policy (P4, mutation).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HostingError::Refused`] unless a host serves tiers.
-    fn tier_configure(
-        &self,
-        scope: &BoundScope,
-        request: &crate::registry::TierConfigureRequest,
-        idempotency_key: &str,
-    ) -> Result<crate::registry::TierConfigureResponse, HostingError> {
-        let _ = (scope, request, idempotency_key);
-        Err(HostingError::Refused(
-            "tier.configure is served by the engine-backed host's tier administration".into(),
-        ))
-    }
-
-    /// Inspects the tier state (P4).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HostingError::Refused`] unless a host serves tiers.
-    fn tier_inspect(
-        &self,
-        scope: &BoundScope,
-    ) -> Result<crate::registry::TierInspectResponse, HostingError> {
-        let _ = scope;
-        Err(HostingError::Refused(
-            "tier.inspect is served by the engine-backed host's tier administration".into(),
-        ))
-    }
-
-    /// Explains the next mover pass as a dry receipt (P4).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HostingError::Refused`] unless a host serves tiers.
-    fn tier_explain(
-        &self,
-        scope: &BoundScope,
-    ) -> Result<crate::registry::TierExplainResponse, HostingError> {
-        let _ = scope;
-        Err(HostingError::Refused(
-            "tier.explain is served by the engine-backed host's tier administration".into(),
-        ))
-    }
-
-    /// Runs one dry mover pass (P4).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HostingError::Refused`] unless a host serves tiers.
-    fn tier_dry_run(
-        &self,
-        scope: &BoundScope,
-    ) -> Result<crate::registry::TierDryRunResponse, HostingError> {
-        let _ = scope;
-        Err(HostingError::Refused(
-            "tier.dry_run is served by the engine-backed host's tier administration".into(),
-        ))
-    }
-
-    /// Runs one bounded mover pass (P4, mutation).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HostingError::Refused`] unless a host serves tiers.
-    fn tier_run(
-        &self,
-        scope: &BoundScope,
-        idempotency_key: &str,
-    ) -> Result<crate::registry::TierRunResponse, HostingError> {
-        let _ = (scope, idempotency_key);
-        Err(HostingError::Refused(
-            "tier.run is served by the engine-backed host's tier administration".into(),
-        ))
-    }
-
-    /// Pauses mover runs (P4, mutation).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HostingError::Refused`] unless a host serves tiers.
-    fn tier_pause(
-        &self,
-        scope: &BoundScope,
-        idempotency_key: &str,
-    ) -> Result<crate::registry::TierPauseResponse, HostingError> {
-        let _ = (scope, idempotency_key);
-        Err(HostingError::Refused(
-            "tier.pause is served by the engine-backed host's tier administration".into(),
-        ))
-    }
-
-    /// Resumes mover runs (P4, mutation).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`HostingError::Refused`] unless a host serves tiers.
-    fn tier_resume(
-        &self,
-        scope: &BoundScope,
-        idempotency_key: &str,
-    ) -> Result<crate::registry::TierResumeResponse, HostingError> {
-        let _ = (scope, idempotency_key);
-        Err(HostingError::Refused(
-            "tier.resume is served by the engine-backed host's tier administration".into(),
-        ))
-    }
-
     /// Serves the admin status read.
     ///
     /// # Errors
@@ -834,7 +724,7 @@ impl SyncDeliveryHost {
             "{}\u{1f}{}\u{1f}{}\u{1f}{}",
             scope.tenant, scope.project, scope.database, authorization_scope
         );
-        self.lock().reactive.resume_scoped(view_scope, previous, revision, spec)
+        self.lock().reactive.resume_scoped(&view_scope, previous, revision, spec)
     }
 
     /// Whether the reader is the first attachment of its shared view.

@@ -170,6 +170,7 @@ pub struct ReactiveState {
 impl ReactiveState {
     /// Registers one subscription and opens its bounded delivery
     /// channel. The caller seeds it before the first pump.
+    #[cfg(test)]
     pub(crate) fn subscribe(&mut self, spec: SubscriptionSpec) -> (u64, Receiver<ReactiveFrame>) {
         self.subscribe_scoped(String::new(), spec)
     }
@@ -284,6 +285,7 @@ impl ReactiveState {
     }
 
     /// Number of materialized views, as opposed to attached readers.
+    #[cfg(test)]
     pub(crate) fn view_len(&self) -> usize {
         self.views.len()
     }
@@ -379,7 +381,7 @@ impl ReactiveState {
     /// is a reset, never a cross-scope replay.
     pub(crate) fn resume_scoped(
         &mut self,
-        scope: String,
+        scope: &str,
         previous: u64,
         revision: u64,
         spec: &SubscriptionSpec,
@@ -433,7 +435,7 @@ pub fn canonical_json_bytes(value: &DocumentValue) -> Vec<u8> {
         match value {
             DocumentValue::Null => out.extend_from_slice(b"null"),
             DocumentValue::Boolean(flag) => {
-                out.extend_from_slice(if *flag { b"true" } else { b"false" })
+                out.extend_from_slice(if *flag { b"true" } else { b"false" });
             }
             DocumentValue::Integer(number) => out.extend_from_slice(number.to_string().as_bytes()),
             DocumentValue::Number(number) => out.extend_from_slice(number.to_string().as_bytes()),

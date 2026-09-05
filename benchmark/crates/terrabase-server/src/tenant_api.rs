@@ -36,6 +36,10 @@ pub struct Identifier(String);
 impl Identifier {
     /// Validates and constructs an identifier. Identifiers are ASCII
     /// path-safe values; input is never normalized.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidInput("identifier")` for an empty, oversized, or invalid spelling.
     pub fn try_new(value: impl Into<String>) -> Result<Self, TenantApiError> {
         let value = value.into();
         if value.is_empty()
@@ -77,6 +81,11 @@ pub struct IdempotencyKey(String);
 
 impl IdempotencyKey {
     /// Validates and constructs an idempotency key.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidInput("idempotency_key")` for an empty or oversized key,
+    /// non-ASCII text, whitespace, or control bytes.
     pub fn try_new(value: impl Into<String>) -> Result<Self, TenantApiError> {
         let value = value.into();
         if value.is_empty()
@@ -103,6 +112,11 @@ pub struct PageCursor(String);
 impl PageCursor {
     /// Validates and constructs a cursor. Cursors are opaque and are never
     /// parsed or used as filesystem paths by this service.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidInput("cursor")` for an empty or oversized cursor,
+    /// non-ASCII text, whitespace, or control bytes.
     pub fn try_new(value: impl Into<String>) -> Result<Self, TenantApiError> {
         let value = value.into();
         if value.is_empty()
@@ -133,6 +147,10 @@ pub struct PageRequest {
 
 impl PageRequest {
     /// Builds a page request, refusing zero and unbounded page sizes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidInput("page_size")` unless the limit is in `1..=MAX_PAGE_SIZE`.
     pub fn try_new(limit: u16, cursor: Option<PageCursor>) -> Result<Self, TenantApiError> {
         if !(1..=MAX_PAGE_SIZE).contains(&limit) {
             return Err(TenantApiError::InvalidInput("page_size"));
@@ -178,13 +196,12 @@ impl PlacementLock {
             }
             seen.push(*region);
         }
-        if let Some(residency) = &self.residency {
-            if residency.is_empty()
+        if let Some(residency) = &self.residency
+            && (residency.is_empty()
                 || residency.len() > MAX_IDENTIFIER_BYTES
-                || !residency.is_ascii()
-            {
-                return Err(TenantApiError::InvalidInput("residency"));
-            }
+                || !residency.is_ascii())
+        {
+            return Err(TenantApiError::InvalidInput("residency"));
         }
         Ok(())
     }
@@ -421,6 +438,10 @@ pub enum AuthorizationError {
 /// The explicit durable authorization seam.
 pub trait AuthorizationPort: Send + Sync {
     /// Authorizes one exact operation and target tenant before data access.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Unauthorized`, `Forbidden`, or `Unavailable` when admission fails.
     fn authorize(
         &self,
         actor: &TenantActor,
@@ -500,43 +521,79 @@ pub struct MintedKey {
 /// Explicit durable database catalog and tenant/database operation port.
 pub trait DatabasePort: Send + Sync {
     /// Creates one database-per-tenant record idempotently.
+    ///
+    /// # Errors
+    ///
+    /// Returns a durable conflict, invalid request, unavailable provider, or write failure.
     fn create(&self, command: &DatabaseCreateCommand) -> Result<TenantDatabase, PortError>;
     /// Reads exactly one tenant/database.
+    ///
+    /// # Errors
+    ///
+    /// Returns a durable provider or decoding failure; an absent record is `None`.
     fn get(&self, tenant_id: &TenantId) -> Result<Option<TenantDatabase>, PortError>;
     /// Lists only the explicitly named tenant owner scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid cursor, unavailable provider, or durable read failure.
     fn list(
         &self,
         owner_tenant: &TenantId,
         page: &PageRequest,
     ) -> Result<Page<TenantDatabase>, PortError>;
     /// Deletes exactly one tenant/database idempotently.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing record, conflicting retry, unavailable provider, or deletion failure.
     fn delete(
         &self,
         tenant_id: &TenantId,
         idempotency_key: &IdempotencyKey,
     ) -> Result<(), PortError>;
     /// Creates a branch database idempotently.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing source, invalid placement, conflicting retry, or durable creation failure.
     fn create_branch(&self, command: &BranchCreateCommand) -> Result<TenantDatabase, PortError>;
 }
 
 /// Explicit durable control-plane template port.
 pub trait ControlPort: Send + Sync {
     /// Creates a template idempotently.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid request, conflicting retry, unavailable provider, or durable write failure.
     fn create_template(&self, command: &TemplateCreateCommand)
     -> Result<TenantTemplate, PortError>;
     /// Reads exactly one template in its owner scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns a durable provider or decoding failure; an absent template is `None`.
     fn get_template(
         &self,
         owner_tenant: &TenantId,
         template_id: &TenantTemplateId,
     ) -> Result<Option<TenantTemplate>, PortError>;
     /// Lists templates only for the explicitly named owner tenant.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid cursor, unavailable provider, or durable read failure.
     fn list_templates(
         &self,
         owner_tenant: &TenantId,
         page: &PageRequest,
     ) -> Result<Page<TenantTemplate>, PortError>;
     /// Deletes exactly one template idempotently.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing template, conflicting retry, unavailable provider, or deletion failure.
     fn delete_template(
         &self,
         owner_tenant: &TenantId,
@@ -550,12 +607,20 @@ pub trait ControlPort: Send + Sync {
 /// in the transient [`MintedKey`] result.
 pub trait ApiKeyPort: Send + Sync {
     /// Mints one tenant-scoped key from an inherited policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid policy, conflicting retry, unavailable provider, or key persistence failure.
     fn mint(&self, command: &KeyMintCommand) -> Result<MintedKey, PortError>;
 }
 
 /// Explicit durable usage-facts port.
 pub trait UsagePort: Send + Sync {
     /// Reads usage for one exact tenant/database and bounded time window.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing tenant, unavailable provider, or durable usage read failure.
     fn get(&self, tenant_id: &TenantId) -> Result<TenantUsage, PortError>;
 }
 
@@ -596,6 +661,10 @@ impl TenantService {
     /// should use: every operation has a durable implementation and an
     /// authorization decision, and no in-process catalogue can be selected by
     /// accident.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AdapterUnavailable` for the first missing required port.
     pub fn handler_ready(ports: TenantPorts) -> Result<Self, TenantApiError> {
         if ports.authorization.is_none() {
             return Err(TenantApiError::AdapterUnavailable("authorization"));
@@ -623,16 +692,21 @@ impl TenantService {
     }
 
     /// Creates a tenant template in one owner's scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation or authorization errors, missing-port or durable failures,
+    /// or a control-port failure if the returned identity or policy differs.
     pub fn create_template(
         &self,
         actor: &TenantActor,
-        command: TemplateCreateCommand,
+        command: &TemplateCreateCommand,
     ) -> Result<TenantTemplate, TenantApiError> {
         command.template.placement_lock.validate()?;
         command.template.key_policy.validate()?;
         validate_actor_target(actor, &command.template.owner_tenant)?;
         self.authorize(actor, TenantOperation::CreateTemplate, &command.template.owner_tenant)?;
-        let template = self.control()?.create_template(&command).map_err(map_port)?;
+        let template = self.control()?.create_template(command).map_err(map_port)?;
         // A durable adapter is part of the trust boundary.  Never expose a
         // row under a different owner or identity than the command that was
         // authorized, and never let it silently widen the lock/policy.
@@ -648,6 +722,11 @@ impl TenantService {
 
     /// Gets one template in one owner's scope. Inaccessible and absent
     /// templates intentionally produce the same bounded [`TenantApiError::NotFound`].
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, authorization, missing-port, or durable errors. An absent or
+    /// mismatched template returns `NotFound`.
     pub fn get_template(
         &self,
         actor: &TenantActor,
@@ -672,17 +751,22 @@ impl TenantService {
     }
 
     /// Lists templates only for one explicitly named owner tenant.
+    ///
+    /// # Errors
+    ///
+    /// Returns invalid pagination, authorization, missing-port, or durable errors,
+    /// or a port failure for an oversized or incorrectly scoped result.
     pub fn list_templates(
         &self,
         actor: &TenantActor,
         owner_tenant: &TenantId,
-        page: PageRequest,
+        page: &PageRequest,
     ) -> Result<Page<TenantTemplate>, TenantApiError> {
         page.validate()?;
         validate_actor_target(actor, owner_tenant)?;
         self.authorize(actor, TenantOperation::ListTemplates, owner_tenant)?;
-        let result = self.control()?.list_templates(owner_tenant, &page).map_err(map_port)?;
-        validate_page(&result, &page, |template| {
+        let result = self.control()?.list_templates(owner_tenant, page).map_err(map_port)?;
+        validate_page(&result, page, |template| {
             if template.owner_tenant != *owner_tenant
                 || template.placement_lock.validate().is_err()
                 || template.key_policy.validate().is_err()
@@ -695,23 +779,32 @@ impl TenantService {
     }
 
     /// Deletes one template in one owner scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, authorization, missing-port, or durable deletion errors.
     pub fn delete_template(
         &self,
         actor: &TenantActor,
         owner_tenant: &TenantId,
         template_id: &TenantTemplateId,
-        idempotency_key: IdempotencyKey,
+        idempotency_key: &IdempotencyKey,
     ) -> Result<(), TenantApiError> {
         validate_actor_target(actor, owner_tenant)?;
         self.authorize(actor, TenantOperation::DeleteTemplate, owner_tenant)?;
         self.control()?
-            .delete_template(owner_tenant, template_id, &idempotency_key)
+            .delete_template(owner_tenant, template_id, idempotency_key)
             .map_err(map_port)
     }
 
     /// Creates one tenant/database using exactly the selected template's
     /// placement and key policy. Caller-supplied placement is impossible in
     /// [`CreateTenant`].
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, authorization, missing-template, placement, policy, or durable
+    /// errors. A mismatched created database returns a database-port failure.
     pub fn create_tenant(
         &self,
         actor: &TenantActor,
@@ -758,6 +851,11 @@ impl TenantService {
     }
 
     /// Gets exactly one tenant/database after authorization.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, authorization, missing-port, or durable errors. An absent or
+    /// mismatched database returns `NotFound`.
     pub fn get_tenant(
         &self,
         actor: &TenantActor,
@@ -775,17 +873,22 @@ impl TenantService {
 
     /// Lists databases for one exact tenant owner scope. There is no
     /// cross-tenant or unscoped list method.
+    ///
+    /// # Errors
+    ///
+    /// Returns pagination, authorization, missing-port, or durable errors, or a port
+    /// failure for an oversized or incorrectly scoped result.
     pub fn list_tenants(
         &self,
         actor: &TenantActor,
         owner_tenant: &TenantId,
-        page: PageRequest,
+        page: &PageRequest,
     ) -> Result<Page<TenantDatabase>, TenantApiError> {
         page.validate()?;
         validate_actor_target(actor, owner_tenant)?;
         self.authorize(actor, TenantOperation::ListTenants, owner_tenant)?;
-        let result = self.database()?.list(owner_tenant, &page).map_err(map_port)?;
-        validate_page(&result, &page, |database| {
+        let result = self.database()?.list(owner_tenant, page).map_err(map_port)?;
+        validate_page(&result, page, |database| {
             if database.owner_tenant != *owner_tenant
                 || database.tenant_id.as_str().is_empty()
                 || database.template_id.as_str().is_empty()
@@ -800,18 +903,27 @@ impl TenantService {
 
     /// Deletes exactly one tenant/database. The durable port owns its
     /// deletion semantics (soft delete or purge) and idempotent replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, authorization, missing-port, or durable deletion errors.
     pub fn delete_tenant(
         &self,
         actor: &TenantActor,
         tenant_id: &TenantId,
-        idempotency_key: IdempotencyKey,
+        idempotency_key: &IdempotencyKey,
     ) -> Result<(), TenantApiError> {
         validate_actor_target(actor, tenant_id)?;
         self.authorize(actor, TenantOperation::DeleteTenant, tenant_id)?;
-        self.database()?.delete(tenant_id, &idempotency_key).map_err(map_port)
+        self.database()?.delete(tenant_id, idempotency_key).map_err(map_port)
     }
 
     /// Creates a support branch under the source tenant's immutable lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, authorization, missing-source, placement, branch-identity, or
+    /// durable errors. A mismatched created branch returns a database-port failure.
     pub fn create_branch(
         &self,
         actor: &TenantActor,
@@ -868,6 +980,12 @@ impl TenantService {
     /// The service checks the adapter's returned hash before exposing the
     /// plaintext result, ensuring a misbehaving adapter cannot claim it
     /// stored a secret hash when it did not.
+    /// Branches may narrow the template's placement while retaining its residency.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope or authorization failures, missing adapters or records,
+    /// invalid inherited placement or policy, provider errors, or invalid key material.
     pub fn mint_tenant_key(
         &self,
         actor: &TenantActor,
@@ -888,7 +1006,11 @@ impl TenantService {
             .ok_or(TenantApiError::NotFound)?;
         if template.owner_tenant != database.owner_tenant
             || template.id != database.template_id
-            || template.placement_lock != database.placement_lock
+            || if database.parent_tenant.is_some() {
+                template.placement_lock.child(Some(&database.placement_lock)).is_err()
+            } else {
+                template.placement_lock != database.placement_lock
+            }
             || template.placement_lock.validate().is_err()
             || template.key_policy.validate().is_err()
         {
@@ -920,6 +1042,11 @@ impl TenantService {
     }
 
     /// Reads usage facts for exactly one tenant/database.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, authorization, missing-port, or durable errors, or a usage-port
+    /// failure for mismatched tenant identity or an invalid time window.
     pub fn tenant_usage(
         &self,
         actor: &TenantActor,
@@ -1178,6 +1305,7 @@ mod tests {
 
     struct Database {
         seen: Mutex<Vec<String>>,
+        returned: Option<TenantDatabase>,
     }
     impl DatabasePort for Database {
         fn create(&self, command: &DatabaseCreateCommand) -> Result<TenantDatabase, PortError> {
@@ -1185,6 +1313,9 @@ mod tests {
             Ok(command.database.clone())
         }
         fn get(&self, tenant_id: &TenantId) -> Result<Option<TenantDatabase>, PortError> {
+            if let Some(database) = &self.returned {
+                return Ok(Some(database.clone()));
+            }
             Ok(Some(TenantDatabase {
                 owner_tenant: id("owner"),
                 tenant_id: tenant_id.clone(),
@@ -1234,7 +1365,7 @@ mod tests {
 
     fn service() -> TenantService {
         TenantService::new(TenantPorts {
-            database: Some(Arc::new(Database { seen: Mutex::new(Vec::new()) })),
+            database: Some(Arc::new(Database { seen: Mutex::new(Vec::new()), returned: None })),
             control: Some(Arc::new(Control { corrupt_create: false })),
             keys: Some(Arc::new(Keys)),
             usage: Some(Arc::new(Usage)),
@@ -1304,7 +1435,7 @@ mod tests {
         };
         let result = service.create_template(
             &actor("owner"),
-            TemplateCreateCommand {
+            &TemplateCreateCommand {
                 template,
                 idempotency_key: IdempotencyKey::try_new("template-1").expect("key"),
             },
@@ -1328,6 +1459,38 @@ mod tests {
             IdempotencyKey::try_new("branch-1").expect("key"),
         );
         assert_eq!(result, Err(TenantApiError::PlacementLockViolation));
+    }
+
+    #[test]
+    fn branch_keys_accept_narrowed_placement_but_refuse_widening_or_residency_changes() {
+        for (parent, region, residency, allowed) in [
+            (Some(id("source")), RegionCode::GRU, None, true),
+            (None, RegionCode::GRU, None, false),
+            (Some(id("source")), RegionCode::SFO, None, false),
+            (Some(id("source")), RegionCode::GRU, Some("changed".to_owned()), false),
+        ] {
+            let mut service = service();
+            service.ports.database = Some(Arc::new(Database {
+                seen: Mutex::new(Vec::new()),
+                returned: Some(TenantDatabase {
+                    owner_tenant: id("owner"),
+                    tenant_id: id("branch"),
+                    template_id: id("default"),
+                    placement_lock: PlacementLock { placement: vec![region], residency },
+                    parent_tenant: parent,
+                }),
+            }));
+            let result = service.mint_tenant_key(
+                &actor("branch"),
+                &id("branch"),
+                IdempotencyKey::try_new("key-1").expect("key"),
+            );
+            if allowed {
+                assert_eq!(result.expect("valid narrowed branch").secret, "tskey_secret_for_test");
+            } else {
+                assert_eq!(result, Err(TenantApiError::NotFound));
+            }
+        }
     }
 
     #[test]

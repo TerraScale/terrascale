@@ -24,7 +24,6 @@ use terrabase_server::reactive_api::{OriginProofKeyRing, origin_proof_for, verif
 use terrabase_server::{
     CapabilityError, CapabilityIssuer, CapabilityVerifier, ViewCapabilityClaims,
 };
-use tower::util::ServiceExt;
 
 use security_support::{Fixture, admin_registration, authenticated_request, send};
 
@@ -129,7 +128,11 @@ async fn database_and_global_scope_are_enforced_at_the_router_boundary() {
         authenticated_request(Method::GET, "/api/v1/databases/db-c", Body::empty(), ADMIN_KEY),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.status(),
+        StatusCode::MISDIRECTED_REQUEST,
+        "an admin key does not widen the database placement"
+    );
     assert_eq!(
         response.headers().get("x-terrascale-placement").and_then(|v| v.to_str().ok()),
         Some("FRA")
@@ -186,13 +189,13 @@ async fn hostile_jwt_claims_are_not_accepted_or_reflected() {
     .await;
     assert_eq!(
         response.status(),
-        StatusCode::NOT_IMPLEMENTED,
-        "BYO-JWT lane must fail closed, not parse hostile claims"
+        StatusCode::UNAUTHORIZED,
+        "unconfigured JWT authentication must reject the bearer"
     );
     let body = axum::body::to_bytes(response.into_body(), 16 * 1024).await.expect("body");
     let text = String::from_utf8_lossy(&body);
     assert!(
-        !text.contains("evil") && !text.contains("scope"),
+        !text.contains("evil") && !text.contains("\"scope\"") && !text.contains(token),
         "claims must not be reflected: {text}"
     );
 }

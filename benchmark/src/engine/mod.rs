@@ -22,6 +22,7 @@ mod ingest;
 pub(crate) mod merge;
 mod metadata;
 mod patch;
+mod physical_restore;
 
 #[cfg(test)]
 mod ingest_tests;
@@ -377,6 +378,87 @@ pub(crate) struct SubscriptionGuard {
     id: Option<u64>,
 }
 
+/// The engine has no free publication notification slots.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PublicationWatchFull;
+
+/// Physical capture could not acquire the engine's storage barriers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WalCaptureError;
+
+impl std::fmt::Display for WalCaptureError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the physical WAL capture barrier is unavailable")
+    }
+}
+
+impl std::error::Error for WalCaptureError {}
+
+/// A bounded publication notification subscription, detached when dropped.
+pub struct PublicationWatch {
+    _guard: SubscriptionGuard,
+}
+
+fn replication_operation_id(record: &ReplicatedRecord) -> Result<OperationId, EngineError> {
+    OperationId::try_new(&record.commit_ulid).map_err(|_| EngineError::InvalidDocument)?;
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"terrabase-replication-record-v1\0");
+    for component in [
+        record.origin.as_str(),
+        record.commit_ulid.as_str(),
+        record.collection.as_str(),
+        record.id.as_str(),
+    ] {
+        hash.update(
+            &u64::try_from(component.len())
+                .map_err(|_| EngineError::InvalidDocument)?
+                .to_be_bytes(),
+        );
+        hash.update(component.as_bytes());
+    }
+    OperationId::try_new(&format!("repl-{}", hash.finalize().to_hex()))
+        .map_err(|_| EngineError::InvalidDocument)
+}
+
+fn replication_fingerprint(record: &ReplicatedRecord) -> Result<[u8; 32], EngineError> {
+    let document = Document::new(record.id.clone(), record.collection.clone(), record.body.clone());
+    if !storage::document_within_limits(&document) {
+        return Err(EngineError::InvalidDocument);
+    }
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"terrabase-replication-content-v1\0");
+    hash.update(&storage::document_fingerprint(&document));
+    hash.update(&[u8::from(record.deleted)]);
+    hash.update(&record.hlc.to_be_bytes());
+    hash.update(&record.origin_sequence.to_be_bytes());
+    for bytes in [record.origin.as_bytes(), record.commit_ulid.as_bytes(), &record.context] {
+        hash.update(
+            &u64::try_from(bytes.len()).map_err(|_| EngineError::InvalidDocument)?.to_be_bytes(),
+        );
+        hash.update(bytes);
+    }
+    Ok(*hash.finalize().as_bytes())
+}
+
+impl Engine {
+    /// Registers a notification after a committed publication releases storage locks.
+    /// Callbacks must be brief and nonblocking; durable data is read separately.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PublicationWatchFull` when the publication registry is full.
+    pub fn watch_publications(
+        &self,
+        notify: impl Fn() + Send + Sync + 'static,
+    ) -> Result<PublicationWatch, PublicationWatchFull> {
+        let guard = self.subscriptions.subscribe(Arc::new(move |_| notify()));
+        if !guard.is_attached() {
+            return Err(PublicationWatchFull);
+        }
+        Ok(PublicationWatch { _guard: guard })
+    }
+}
+
 impl SubscriptionGuard {
     /// Reports whether the guarded sink is registered.
     ///
@@ -412,6 +494,8 @@ pub struct EngineConfig {
     location: PathBuf,
     lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds,
     owner: Option<crate::storage::DatabaseOwner>,
+    replication_origin: Option<RegionId>,
+    replication_clock: Arc<dyn ReplicationClock>,
 }
 
 impl EngineConfig {
@@ -440,6 +524,8 @@ impl EngineConfig {
             location,
             lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds::DEFAULT,
             owner: None,
+            replication_origin: None,
+            replication_clock: Arc::new(SystemReplicationClock),
         })
     }
 
@@ -451,6 +537,22 @@ impl EngineConfig {
     #[must_use]
     pub fn with_owner(mut self, owner: crate::storage::DatabaseOwner) -> Self {
         self.owner = Some(owner);
+        self
+    }
+
+    /// Pins the origin written into this database's durable replication journal.
+    /// Reopening with a different origin is refused.
+    #[must_use]
+    pub fn with_replication_origin(mut self, origin: RegionId) -> Self {
+        self.replication_origin = Some(origin);
+        self
+    }
+
+    /// Supplies the physical clock used by the origin HLC. This permits
+    /// deterministic fault qualification through the same commit path.
+    #[must_use]
+    pub fn with_replication_clock(mut self, clock: Arc<dyn ReplicationClock>) -> Self {
+        self.replication_clock = clock;
         self
     }
 
@@ -479,6 +581,23 @@ impl EngineConfig {
     /// them at open.
     pub(crate) fn lifecycle_thresholds(&self) -> crate::query::optimizer::LifecycleThresholds {
         self.lifecycle_thresholds
+    }
+}
+
+/// Physical clock used to assign origin-write HLC stamps.
+/// Implementations supply milliseconds since the Unix epoch; the engine
+/// supplies monotonic logical advancement and witnesses remote stamps.
+pub trait ReplicationClock: std::fmt::Debug + Send + Sync {
+    /// Returns the current physical milliseconds.
+    fn now_millis(&self) -> u64;
+}
+
+#[derive(Debug)]
+struct SystemReplicationClock;
+
+impl ReplicationClock for SystemReplicationClock {
+    fn now_millis(&self) -> u64 {
+        Engine::now_millis()
     }
 }
 
@@ -740,8 +859,8 @@ impl AppliedReplication {
     }
 
     /// Reports whether the record had already been applied: the
-    /// deterministic operation identity replayed the recorded publication
-    /// instead of double-writing.
+    /// deterministic operation identity replayed a recorded publication
+    /// or superseded decision.
     #[must_use]
     pub const fn replayed(&self) -> bool {
         self.replayed
@@ -922,6 +1041,7 @@ pub struct Engine {
     /// database. Origin commits tick it; replicated applies witness it.
     /// The deterministic merge compares `(hlc, origin)` totals.
     replication_clock: Mutex<crate::types::ReplicationClockStamp>,
+    physical_replication_clock: Arc<dyn ReplicationClock>,
     /// The host-fed clock safety input (D-69). The Engine cannot measure
     /// chrony/NTP itself; `None` is the explicit unknown or stale state.
     clock_offset_seconds: Mutex<Option<f64>>,
@@ -1035,10 +1155,35 @@ impl Engine {
         // locations open with the ownership tuple enforced but without
         // encryption at rest until M2-1 lands the per-database key on this
         // substrate.
-        let storage: Box<dyn storage::StoragePort> = storage::SqliteStorage::open(&location)
-            .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
-            .map_err(|_| EngineOpenError::StorageUnavailable)?;
-        let auto_index_lifecycle = crate::auto_index::LifecycleStore::open(&location)
+        let storage: Box<dyn storage::StoragePort> = storage::SqliteStorage::open_with_origin(
+            &location,
+            config.replication_origin.as_ref().map(RegionId::as_str),
+        )
+        .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
+        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+        let mut initial_clock =
+            ReplicationClockStamp::new(config.replication_clock.now_millis(), 0);
+        for tenant in storage.committed_tenants() {
+            for entry in storage
+                .durable_origin_prefixes(&tenant)
+                .map_err(|()| EngineOpenError::StorageUnavailable)?
+            {
+                let (ticks, counter) = unfold_stamp(entry.hlc);
+                if (ticks, counter) > (initial_clock.ticks(), initial_clock.counter()) {
+                    initial_clock = ReplicationClockStamp::new(ticks, counter);
+                }
+            }
+        }
+        // Retired sidecar state is outside the SQLite replication/restore
+        // contract. Refuse it rather than silently opening an empty catalog.
+        if location
+            .join("auto-index.lifecycle")
+            .try_exists()
+            .map_err(|_| EngineOpenError::StorageUnavailable)?
+        {
+            return Err(EngineOpenError::FormatMismatch);
+        }
+        let auto_index_lifecycle = crate::auto_index::LifecycleStore::open(storage.as_ref())
             .map_err(|()| EngineOpenError::FormatMismatch)?;
         let subscriptions = Arc::new(PublicationRegistry::new());
         // W4-CA-3: register the Engine-owned index catalog's sink through the
@@ -1052,7 +1197,8 @@ impl Engine {
             identity: EngineIdentity::next().0,
             durable_owner: owner,
             owner_scope_enforced: config.owner.is_some(),
-            replication_clock: Mutex::new(ReplicationClockStamp::new(Self::now_millis(), 0)),
+            replication_clock: Mutex::new(initial_clock),
+            physical_replication_clock: Arc::clone(&config.replication_clock),
             // Keep existing local/development callers usable until the host
             // starts feeding observations. Production wiring must publish a
             // real sample promptly; an explicit unknown/stale sample is
@@ -1082,6 +1228,32 @@ impl Engine {
     #[must_use]
     pub fn database_owner(&self) -> &crate::storage::DatabaseOwner {
         &self.durable_owner
+    }
+
+    /// Captures the physical database and WAL while commits and checkpoints pause.
+    /// The callback receives the owned database directory. It must only read
+    /// these files, must finish promptly, and must not call back into this engine.
+    /// Keep network I/O outside this callback; capture bytes locally first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WalCaptureError`] when storage locks are unavailable.
+    pub fn with_quiescent_wal<T>(
+        &self,
+        capture: impl FnOnce(&std::path::Path) -> T,
+    ) -> Result<T, WalCaptureError> {
+        let storage = self.storage.lock().map_err(|_| WalCaptureError)?;
+        let mut capture = Some(capture);
+        let mut result = None;
+        storage
+            .port
+            .with_quiescent_wal(&mut |location| {
+                if let Some(capture) = capture.take() {
+                    result = Some(capture(location));
+                }
+            })
+            .map_err(|()| WalCaptureError)?;
+        result.ok_or(WalCaptureError)
     }
 
     /// Returns the bounded registry shared with this Engine's storage path.
@@ -1470,7 +1642,11 @@ impl Engine {
         let epoch = self.session_epoch();
         let mut frontier = crate::session::SessionFrontier::new(epoch);
         let storage = self.lock_storage()?;
-        for entry in storage.port.applied_frontier(scope.tenant()) {
+        for entry in storage
+            .port
+            .durable_origin_prefixes(scope.tenant())
+            .map_err(|()| EngineError::StorageFailure)?
+        {
             let origin =
                 RegionId::try_new(&entry.origin).map_err(|_| EngineError::InvalidDocument)?;
             if entry.origin_sequence == 0 {
@@ -1729,6 +1905,8 @@ impl Engine {
             snapshot_sequence,
             operation,
             usage_admission: None,
+            merge_conflict: None,
+            replication_fingerprint: None,
             writes: Vec::new(),
         })
     }
@@ -1827,7 +2005,8 @@ impl Engine {
     /// Applies one replicated record from a peer region (D-35/D-36): an
     /// unconditional put or tombstone stamped `kind='replicated'` with its
     /// causal metadata, committed at [`LocalDurability::Written`] and bound
-    /// to the deterministic operation identity `repl-{commit_ulid}`.
+    /// to an operation identity derived from the source origin, commit,
+    /// collection, and document.
     ///
     /// The identity binding is the idempotency: a re-applied record — a
     /// re-pull after a crash, a duplicate delivery — replays the recorded
@@ -1853,7 +2032,7 @@ impl Engine {
     /// millis advance, ties increment the logical counter.
     fn tick_replication_clock(&self) -> u64 {
         let mut clock = self.replication_clock.lock().expect("the clock is not poisoned");
-        let ticks = Self::now_millis();
+        let ticks = self.physical_replication_clock.now_millis();
         let stamp = if ticks > clock.ticks() {
             *clock = ReplicationClockStamp::new(ticks, 0);
             ticks
@@ -1949,14 +2128,14 @@ impl Engine {
         Ok(storage.port.merge_kernels_for(scope.tenant(), collection, id))
     }
 
-    /// Records one deterministic conflict loser plus the per-field kernels
-    /// of a declared collection. Schema-free collections record the
-    /// conflict but store no kernels.
+    /// Records one deterministic conflict loser. Per-field metadata belongs
+    /// to the document transaction and must not be overwritten here.
     #[allow(clippy::too_many_arguments, reason = "the conflict record's fixed dimensions")]
-    fn record_conflict_and_kernels(
+    fn record_merge_conflict(
         &self,
         scope: &TenantScope,
         record: &ReplicatedRecord,
+        snapshot: &ReadSnapshot,
         winner_hlc: u64,
         winner_origin: &str,
         loser_commit: &str,
@@ -1966,9 +2145,7 @@ impl Engine {
         winner_commit: &str,
         policy: crate::storage::MergePolicy,
         explanation: &str,
-        kernel_fields: &[String],
-    ) {
-        let Ok(mut storage) = self.lock_storage() else { return };
+    ) -> Result<AppliedReplication, EngineError> {
         let conflict = crate::storage::MergeConflictEntry {
             loser_commit_ulid: loser_commit.to_owned(),
             loser_hlc,
@@ -1980,25 +2157,39 @@ impl Engine {
             policy: policy.as_str().to_owned(),
             explanation: explanation.to_owned(),
         };
-        let _ = storage.port.record_merge_conflict(
-            scope.tenant(),
-            &record.collection,
-            &record.id,
-            &conflict,
-        );
-        let has_schema = storage.port.merge_schema(&record.collection).is_some();
-        if has_schema {
-            for field in kernel_fields {
-                let _ = storage.port.upsert_merge_kernel(
-                    scope.tenant(),
-                    &record.collection,
-                    &record.id,
-                    field,
-                    winner_hlc,
-                    winner_origin,
-                );
-            }
-        }
+        self.record_superseded_replication(scope, record, snapshot, Some(conflict))
+    }
+
+    fn record_superseded_replication(
+        &self,
+        scope: &TenantScope,
+        record: &ReplicatedRecord,
+        snapshot: &ReadSnapshot,
+        conflict: Option<storage::MergeConflictEntry>,
+    ) -> Result<AppliedReplication, EngineError> {
+        let operation = replication_operation_id(record)?;
+        let intent = storage::SupersededReplication {
+            tenant: scope.tenant().clone(),
+            operation: operation.clone(),
+            fingerprint: replication_fingerprint(record)?,
+            snapshot_sequence: snapshot.sequence(),
+            collection: record.collection.clone(),
+            id: record.id.clone(),
+            conflict,
+        };
+        let replayed =
+            self.lock_storage()?.port.record_superseded_replication(intent).map_err(|reason| {
+                match reason {
+                    storage::CommitRejection::Conflict => EngineError::Conflict,
+                    storage::CommitRejection::OperationIdReuse => {
+                        EngineError::OperationIdReuse { operation_id: operation }
+                    }
+                    _ => EngineError::StorageFailure,
+                }
+            })?;
+        let mut applied = AppliedReplication::lost_merge();
+        applied.replayed = replayed;
+        Ok(applied)
     }
 
     /// Applies one replicated record with the deterministic merge
@@ -2033,19 +2224,43 @@ impl Engine {
         }
         let incoming_context =
             merge::decode_context(&record.context).ok_or(EngineError::InvalidDocument)?;
-        let operation = OperationId::try_new(&format!("repl-{}", record.commit_ulid))
-            .map_err(|_| EngineError::InvalidDocument)?;
-        // The clock always witnesses the remote stamp first.
-        self.witness_replication_clock(record.hlc);
-        // Idempotency first (D-35): a re-applied dot replays its recorded
-        // publication instead of re-merging. Replicated rows store the
-        // SOURCE commit identity, so the lookup uses it — not the `repl-`
-        // binding — exactly like the commit path's row-identity view.
+        let operation = replication_operation_id(record)?;
+        let fingerprint = replication_fingerprint(record)?;
+        let incoming_version = merge::DocumentVersion::new(
+            incoming_context,
+            merge::DocumentDot::new(record.origin.clone(), record.origin_sequence),
+        );
+        if !incoming_version.is_well_formed() {
+            return Err(EngineError::InvalidDocument);
+        }
+        // Source transactions can contain multiple document mutations. Replay
+        // binds the origin, source commit, collection, and document together;
+        // the source commit alone would discard every later document.
         {
             let storage = self.lock_storage().map_err(|_| EngineError::StorageFailure)?;
-            let source = OperationId::try_new(&record.commit_ulid)
-                .map_err(|_| EngineError::InvalidDocument)?;
-            if let Some(resolution) = storage.port.resolve_operation(scope.tenant(), &source) {
+            let bound = storage
+                .port
+                .replication_fingerprint(scope.tenant(), &operation)
+                .map_err(|()| EngineError::StorageFailure)?;
+            if bound.is_some_and(|expected| expected != fingerprint) {
+                return Err(EngineError::OperationIdReuse { operation_id: operation });
+            }
+            if storage
+                .port
+                .replication_was_superseded(scope.tenant(), &operation)
+                .map_err(|()| EngineError::StorageFailure)?
+            {
+                if bound.is_none() {
+                    return Err(EngineError::StorageFailure);
+                }
+                let mut applied = AppliedReplication::lost_merge();
+                applied.replayed = true;
+                return Ok(applied);
+            }
+            if let Some(resolution) = storage.port.resolve_operation(scope.tenant(), &operation) {
+                if bound.is_none() {
+                    return Err(EngineError::StorageFailure);
+                }
                 match resolution {
                     storage::OperationResolution::Committed { sequence, durability } => {
                         let receipt = CommitReceipt::new(operation, sequence, durability);
@@ -2063,50 +2278,29 @@ impl Engine {
                 }
             }
         }
+        self.witness_replication_clock(record.hlc);
         // The current merge input, read under one short lock.
-        let (current_state, schema, current_context) = {
+        let (current_state, schema, current_context, merge_snapshot) = {
             let storage = self.lock_storage().map_err(|_| EngineError::StorageFailure)?;
             let state =
                 storage.port.document_merge_state(scope.tenant(), &record.collection, &record.id);
             let schema = storage.port.merge_schema(&record.collection);
             let context =
                 storage.port.document_context(scope.tenant(), &record.collection, &record.id);
-            (state, schema, context)
+            let snapshot = ReadSnapshot::new(
+                self.identity,
+                scope.tenant().clone(),
+                storage.port.published_state().0,
+                IndexGenerationSet::default(),
+            );
+            (state, schema, context, snapshot)
         };
         let Some(current) = current_state else {
             // A clean apply writes bytes (D-36): no conflict, no loser.
-            let outcome = self.apply_replicated_clean(scope, record, &operation)?;
-            // Declared collections open their per-field kernels on the
-            // clean apply; schema-free collections store none.
-            if schema.is_some()
-                && !record.deleted
-                && let DocumentValue::Object(fields) = &record.body
-            {
-                let field_names: Vec<String> = fields.keys().cloned().collect();
-                if let Ok(mut storage) = self.lock_storage() {
-                    for field in &field_names {
-                        let _ = storage.port.upsert_merge_kernel(
-                            scope.tenant(),
-                            &record.collection,
-                            &record.id,
-                            field,
-                            record.hlc,
-                            &record.origin,
-                        );
-                    }
-                }
-            }
-            return Ok(outcome);
+            return self.apply_replicated_clean(scope, record, &operation, merge_snapshot);
         };
         let current_context = merge::decode_context(current_context.as_deref().unwrap_or_default())
             .ok_or(EngineError::StorageFailure)?;
-        let incoming_version = merge::DocumentVersion::new(
-            incoming_context.clone(),
-            merge::DocumentDot::new(record.origin.clone(), record.origin_sequence),
-        );
-        if !incoming_version.is_well_formed() {
-            return Err(EngineError::InvalidDocument);
-        }
         let current_version = merge::DocumentVersion::new(
             current_context.clone(),
             merge::DocumentDot::new(current.origin.clone(), current.origin_sequence),
@@ -2119,10 +2313,10 @@ impl Engine {
         // body without parsing either side; a dominated delivery is an
         // idempotent no-op.
         if incoming_version.context().contains(current_version.dot()) {
-            return self.apply_replicated_clean(scope, record, &operation);
+            return self.apply_replicated_clean(scope, record, &operation, merge_snapshot);
         }
         if current_version.context().contains(incoming_version.dot()) {
-            return Ok(AppliedReplication::lost_merge());
+            return self.record_superseded_replication(scope, record, &merge_snapshot, None);
         }
         // Tombstones merge at document level (D-36): remove-wins on ties.
         if record.deleted || current.deleted {
@@ -2131,7 +2325,7 @@ impl Engine {
                 record,
                 &operation,
                 &current,
-                &current_context,
+                merge_snapshot,
             );
         }
         // Both live: field-level merge when both bodies are objects.
@@ -2144,7 +2338,7 @@ impl Engine {
                 record,
                 &operation,
                 &current,
-                &current_context,
+                merge_snapshot,
             );
         };
         // Identical bytes need no new row, unless this is a duplicate
@@ -2152,9 +2346,9 @@ impl Engine {
         // the original receipt so the tailer counts it as a skip.
         if current.body.as_ref() == Some(&record.body) {
             if current.commit_ulid == record.commit_ulid {
-                return self.apply_replicated_clean(scope, record, &operation);
+                return self.apply_replicated_clean(scope, record, &operation, merge_snapshot);
             }
-            return Ok(AppliedReplication::lost_merge());
+            return self.record_superseded_replication(scope, record, &merge_snapshot, None);
         }
         let (merged, policy, explanation) = merge::merge_object_fields(
             current_fields,
@@ -2172,7 +2366,6 @@ impl Engine {
         if merged_value == current_value {
             // The current row wins every field: publish nothing, but the
             // loser joins history with its deterministic explanation.
-            let kernel_fields: Vec<String> = merged.keys().cloned().collect();
             let (winner_hlc, winner_origin) =
                 if merge::compare_stamps(current.hlc, &current.origin, record.hlc, &record.origin)
                     == std::cmp::Ordering::Greater
@@ -2181,10 +2374,11 @@ impl Engine {
                 } else {
                     (record.hlc, record.origin.clone())
                 };
-            // The kernels cover the surviving fields at the covering stamp.
-            self.record_conflict_and_kernels(
+            // Record the loser without changing the surviving document metadata.
+            return self.record_merge_conflict(
                 scope,
                 record,
+                &merge_snapshot,
                 winner_hlc,
                 &winner_origin,
                 &record.commit_ulid,
@@ -2194,9 +2388,7 @@ impl Engine {
                 &current.commit_ulid,
                 policy,
                 &explanation,
-                &kernel_fields,
             );
-            return Ok(AppliedReplication::lost_merge());
         }
         // The merge produced new bytes: publish them under the incoming
         // identity at the covering stamp, so both regions compute the same
@@ -2220,39 +2412,62 @@ impl Engine {
             origin_sequence: cover_origin_sequence,
             context: merge::encode_context(&current_version.joined_context(&incoming_version)),
         };
-        let kernel_fields: Vec<String> = merged.keys().cloned().collect();
-        let outcome = self.apply_replicated_clean(scope, &merged_record, &operation)?;
-        // The replaced row is the loser; the merged row is the winner.
-        self.record_conflict_and_kernels(
+        let conflict = storage::MergeConflictEntry {
+            loser_commit_ulid: current.commit_ulid.clone(),
+            loser_hlc: current.hlc,
+            loser_origin: current.origin.clone(),
+            loser_deleted: current.deleted,
+            winner_commit_ulid: record.commit_ulid.clone(),
+            winner_hlc: cover_hlc,
+            winner_origin: cover_origin,
+            policy: policy.as_str().to_owned(),
+            explanation,
+        };
+        self.apply_replicated_with_conflict(
             scope,
-            record,
-            cover_hlc,
-            &cover_origin,
-            &current.commit_ulid,
-            current.hlc,
-            &current.origin,
-            current.deleted,
-            &record.commit_ulid,
-            policy,
-            &explanation,
-            &kernel_fields,
-        );
-        Ok(outcome)
+            &merged_record,
+            fingerprint,
+            &operation,
+            Some(conflict),
+            merge_snapshot,
+        )
     }
 
     /// Applies one replicated record with no prior row, or one merged row
-    /// whose bytes must publish: the unconditional put or tombstone stamped
-    /// `kind='replicated'` and bound to `repl-{commit_ulid}`.
+    /// whose bytes must publish, checked against the merge snapshot and
+    /// bound to the per-record replay identity.
     fn apply_replicated_clean(
         &self,
         scope: &TenantScope,
         record: &ReplicatedRecord,
         operation: &OperationId,
+        merge_snapshot: ReadSnapshot,
     ) -> Result<AppliedReplication, EngineError> {
-        let snapshot = self.read_snapshot(scope)?;
+        self.apply_replicated_with_conflict(
+            scope,
+            record,
+            replication_fingerprint(record)?,
+            operation,
+            None,
+            merge_snapshot,
+        )
+    }
+
+    fn apply_replicated_with_conflict(
+        &self,
+        scope: &TenantScope,
+        record: &ReplicatedRecord,
+        fingerprint: [u8; 32],
+        operation: &OperationId,
+        conflict: Option<storage::MergeConflictEntry>,
+        snapshot: ReadSnapshot,
+    ) -> Result<AppliedReplication, EngineError> {
         let snapshot_sequence = snapshot.sequence();
         let mut transaction = self.begin(scope, snapshot, operation.clone())?;
         transaction.stage_replicated(record)?;
+        transaction.replication_fingerprint = Some(fingerprint);
+        transaction.merge_conflict =
+            conflict.map(|entry| (record.collection.clone(), record.id.clone(), entry));
         match transaction.commit(LocalDurability::Written) {
             CommitOutcome::Committed(receipt) => {
                 let replayed = receipt.sequence() <= snapshot_sequence;
@@ -2279,7 +2494,7 @@ impl Engine {
         record: &ReplicatedRecord,
         operation: &OperationId,
         current: &crate::storage::DocumentMergeState,
-        _current_context: &merge::DocumentContext,
+        merge_snapshot: ReadSnapshot,
     ) -> Result<AppliedReplication, EngineError> {
         let incoming = (record.hlc, record.origin.as_str());
         let current_stamp = (current.hlc, current.origin.as_str());
@@ -2309,9 +2524,10 @@ impl Engine {
                 current.hlc,
                 current.origin,
             );
-            self.record_conflict_and_kernels(
+            return self.record_merge_conflict(
                 scope,
                 record,
+                &merge_snapshot,
                 current.hlc,
                 &current.origin.clone(),
                 &record.commit_ulid,
@@ -2321,11 +2537,8 @@ impl Engine {
                 &current.commit_ulid.clone(),
                 policy,
                 &explanation,
-                &[],
             );
-            return Ok(AppliedReplication::lost_merge());
         }
-        let outcome = self.apply_replicated_clean(scope, record, operation)?;
         let policy = if incoming == current_stamp {
             crate::storage::MergePolicy::RemoveWins
         } else {
@@ -2343,21 +2556,25 @@ impl Engine {
             record.hlc,
             record.origin,
         );
-        self.record_conflict_and_kernels(
+        let conflict = storage::MergeConflictEntry {
+            loser_commit_ulid: current.commit_ulid.clone(),
+            loser_hlc: current.hlc,
+            loser_origin: current.origin.clone(),
+            loser_deleted: current.deleted,
+            winner_commit_ulid: record.commit_ulid.clone(),
+            winner_hlc: record.hlc,
+            winner_origin: record.origin.clone(),
+            policy: policy.as_str().to_owned(),
+            explanation,
+        };
+        self.apply_replicated_with_conflict(
             scope,
             record,
-            record.hlc,
-            &record.origin.clone(),
-            &current.commit_ulid.clone(),
-            current.hlc,
-            &current.origin.clone(),
-            current.deleted,
-            &record.commit_ulid.clone(),
-            policy,
-            &explanation,
-            &[],
-        );
-        Ok(outcome)
+            replication_fingerprint(record)?,
+            operation,
+            Some(conflict),
+            merge_snapshot,
+        )
     }
 
     /// Returns one document's current replication stamp: the newest row's
@@ -3041,20 +3258,15 @@ impl Engine {
         self.validate_tenant(tenant)?;
         self.auto_index_lifecycle
             .lock()
-            .map(|state| state.generation())
+            .map(|state| state.generation(tenant.as_str()))
             .map_err(|_| EngineError::StorageFailure)
     }
 
-    /// Returns a bounded, durable lifecycle snapshot.  The process-local
-    /// planner catalog is joined only as a physical-segment observation; an
-    /// entry is marked visible only when its durable lifecycle record says it
-    /// is active, preserving the zero-stale-read invariant across restart.
+    /// Returns a bounded snapshot of committed lifecycle records only.
     ///
     /// # Errors
-    ///
-    /// Returns [`EngineError::ScopeMismatch`] when the tenant is foreign to
-    /// this Engine's durable owner, and [`EngineError::StorageFailure`] when
-    /// the lifecycle state or the planner catalog cannot be read.
+    /// Returns [`EngineError::ScopeMismatch`] for a foreign tenant and
+    /// [`EngineError::StorageFailure`] when the lifecycle state cannot be read.
     pub fn auto_index_lifecycle_snapshot(
         &self,
         tenant: &TenantId,
@@ -3062,67 +3274,10 @@ impl Engine {
         limit: usize,
     ) -> Result<crate::auto_index::LifecycleSnapshot, EngineError> {
         self.validate_tenant(tenant)?;
-        let mut snapshot = self
-            .auto_index_lifecycle
+        self.auto_index_lifecycle
             .lock()
-            .map_err(|_| EngineError::StorageFailure)?
-            .snapshot(tenant.as_str(), collection, limit);
-        if snapshot.indexes.len() < limit {
-            let registered = self.indexes.definitions(tenant);
-            for entry in registered {
-                if entry.definition().kind() != crate::query::optimizer::IndexKind::Auto
-                    || collection
-                        .is_some_and(|name| entry.definition().collection().as_str() != name)
-                    || snapshot.indexes.iter().any(|item| item.id == entry.namespace().name())
-                {
-                    continue;
-                }
-                let phase = match entry.state() {
-                    crate::query::optimizer::IndexLifecycleState::Active => {
-                        crate::auto_index::LifecyclePhase::Active
-                    }
-                    crate::query::optimizer::IndexLifecycleState::Idle => {
-                        crate::auto_index::LifecyclePhase::Invisible
-                    }
-                    crate::query::optimizer::IndexLifecycleState::Retired => {
-                        crate::auto_index::LifecyclePhase::Abandoned
-                    }
-                };
-                let generation =
-                    entry.published().map_or(0, crate::query::ObservedGeneration::generation);
-                snapshot.indexes.push(crate::auto_index::LifecycleIndexView {
-                    id: entry.namespace().name().to_owned(),
-                    tenant: tenant.as_str().to_owned(),
-                    collection: entry.definition().collection().as_str().to_owned(),
-                    fields: entry
-                        .definition()
-                        .fields()
-                        .iter()
-                        .map(|field| field.name().to_owned())
-                        .collect(),
-                    phase,
-                    generation,
-                    covered_watermark: 0,
-                    target_watermark: None,
-                    visible: phase == crate::auto_index::LifecyclePhase::Active
-                        && entry.published().is_some(),
-                    pinned: false,
-                    forbidden: false,
-                    maintenance_cost: entry.definition().fields().len() as u64,
-                    last_used_millis: None,
-                    zero_stale_reads: phase == crate::auto_index::LifecyclePhase::Active
-                        && entry.published().is_some(),
-                    regression_free: phase == crate::auto_index::LifecyclePhase::Active,
-                });
-                if snapshot.indexes.len() >= limit {
-                    break;
-                }
-            }
-        }
-        snapshot.indexes.sort_by(|left, right| left.id.cmp(&right.id));
-        snapshot.truncated |= snapshot.indexes.len() > limit;
-        snapshot.indexes.truncate(limit);
-        Ok(snapshot)
+            .map(|state| state.snapshot(tenant.as_str(), collection, limit))
+            .map_err(|_| EngineError::StorageFailure)
     }
 
     /// Computes bounded recommendations from real query selection records and
@@ -3147,25 +3302,28 @@ impl Engine {
         limit: usize,
     ) -> Result<crate::auto_index::RecommendationSnapshot, EngineError> {
         self.validate_tenant(tenant)?;
-        let generation = self.auto_index_lifecycle_generation(tenant)?;
         let forbidden =
             self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        let generation = forbidden.generation(tenant.as_str());
         let mut grouped: BTreeMap<(String, Vec<String>), (u64, f64)> = BTreeMap::new();
         if let Ok(observations) = self.auto_index_observations.lock() {
             for observation in observations.observations() {
-                if collection.is_some_and(|name| observation.template.collection != name)
+                if observation.tenant != tenant.as_str()
+                    || collection.is_some_and(|name| observation.template.collection != name)
                     || (observation.template.predicates.is_empty()
                         && observation.template.ordering.is_empty())
                 {
                     continue;
                 }
-                let fields = observation
+                let mut fields = observation
                     .template
                     .predicates
                     .iter()
                     .map(|predicate| predicate.field.clone())
                     .chain(observation.template.ordering.iter().cloned())
                     .collect::<Vec<_>>();
+                let mut seen = std::collections::BTreeSet::new();
+                fields.retain(|field| seen.insert(field.clone()));
                 let row =
                     grouped.entry((observation.template.collection.clone(), fields)).or_default();
                 row.0 = row.0.saturating_add(1);
@@ -3186,7 +3344,6 @@ impl Engine {
             row.0 = row.0.saturating_add(1);
             row.1 += score;
         }
-        drop(forbidden);
         let mut recommendations = Vec::new();
         for ((collection_name, fields), (frequency, score)) in grouped {
             let definition_fields = fields
@@ -3208,12 +3365,7 @@ impl Engine {
                 continue;
             };
             let candidate_id = crate::query::optimizer::auto_index_name(&definition);
-            if self
-                .auto_index_lifecycle
-                .lock()
-                .map_err(|_| EngineError::StorageFailure)?
-                .is_forbidden(&candidate_id)
-            {
+            if forbidden.is_forbidden(tenant.as_str(), &candidate_id) {
                 continue;
             }
             let collection_key = crate::types::CollectionName::try_new(&collection_name)
@@ -3243,17 +3395,15 @@ impl Engine {
         Ok(crate::auto_index::RecommendationSnapshot { generation, truncated, recommendations })
     }
 
-    /// Applies one recommendation after an optimistic generation check.  The
-    /// extracted columns are registered before the durable lifecycle event;
-    /// the descriptor write path maintains them in every subsequent commit.
+    /// Durably selects one recommendation after an optimistic generation check.
+    /// The build worker must establish coverage and shadow evidence before
+    /// activation. Selection creates no descriptors or planner visibility.
     ///
     /// # Errors
     ///
     /// Returns [`EngineError::Conflict`] when the generation is stale, the
-    /// candidate is unknown or forbidden, or the descriptor budget is
-    /// exhausted; [`EngineError::InvalidDocument`] when the collection name
-    /// is invalid; and [`EngineError::StorageFailure`] when durable state
-    /// cannot be read or written.
+    /// candidate is unknown, forbidden, or already selected; and [`EngineError::StorageFailure`]
+    /// when durable state cannot be read or written.
     pub fn auto_index_apply(
         &self,
         tenant: &TenantId,
@@ -3271,49 +3421,36 @@ impl Engine {
             .into_iter()
             .find(|item| item.candidate_id == candidate_id)
             .ok_or(EngineError::Conflict)?;
-        let mut active = true;
-        let collection = crate::types::CollectionName::try_new(&recommendation.collection)
-            .map_err(|_| EngineError::InvalidDocument)?;
-        for field in &recommendation.fields {
-            match self.register_index_field(&collection, field) {
-                Ok(
-                    crate::storage::DescriptorRegistration::Active
-                    | crate::storage::DescriptorRegistration::Unchanged,
-                ) => {}
-                Ok(crate::storage::DescriptorRegistration::Building) => active = false,
-                Err(IndexRegistrationError::BudgetExceeded) => return Err(EngineError::Conflict),
-                Err(IndexRegistrationError::Storage | IndexRegistrationError::Closed) => {
-                    return Err(EngineError::StorageFailure);
-                }
-            }
+        let mut lifecycle =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        if lifecycle.generation(tenant.as_str()) != expected_generation {
+            return Err(EngineError::Conflict);
         }
-        let view = crate::auto_index::LifecycleIndexView {
+        if lifecycle.index(tenant.as_str(), candidate_id).is_some() {
+            return Err(EngineError::Conflict);
+        }
+        let mut view = crate::auto_index::LifecycleIndexView {
             id: recommendation.candidate_id.clone(),
             tenant: tenant.as_str().to_owned(),
             collection: recommendation.collection,
             fields: recommendation.fields,
-            phase: if active {
-                crate::auto_index::LifecyclePhase::Active
-            } else {
-                crate::auto_index::LifecyclePhase::Building
-            },
+            phase: crate::auto_index::LifecyclePhase::Selected,
             generation: current,
             covered_watermark: 0,
             target_watermark: None,
-            visible: active,
+            visible: false,
             pinned: false,
             forbidden: false,
             maintenance_cost: recommendation.maintenance_cost,
-            last_used_millis: Some(at_millis),
-            zero_stale_reads: active,
-            regression_free: active,
+            last_used_millis: None,
+            zero_stale_reads: false,
+            regression_free: false,
         };
         let digest = *blake3::hash(view.id.as_bytes()).as_bytes();
-        self.auto_index_lifecycle
-            .lock()
-            .map_err(|_| EngineError::StorageFailure)?
-            .install(view.clone(), at_millis, digest)
+        lifecycle
+            .install(self.lock_storage()?.port.as_mut(), view.clone(), at_millis, digest)
             .map_err(|()| EngineError::StorageFailure)?;
+        view.generation = lifecycle.generation(tenant.as_str());
         Ok(view)
     }
 
@@ -3331,29 +3468,28 @@ impl Engine {
         template: &str,
         expected_generation: u64,
     ) -> Result<crate::auto_index::LifecycleIndexView, EngineError> {
-        if self.auto_index_lifecycle_generation(tenant)? != expected_generation {
-            return Err(EngineError::Conflict);
-        }
+        self.validate_tenant(tenant)?;
         let mut lifecycle =
             self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
-        let mut view = lifecycle
-            .snapshot(tenant.as_str(), None, usize::MAX)
-            .indexes
-            .into_iter()
-            .find(|item| item.id == index_id)
-            .ok_or(EngineError::Conflict)?;
+        if lifecycle.generation(tenant.as_str()) != expected_generation {
+            return Err(EngineError::Conflict);
+        }
+        let mut view =
+            lifecycle.index(tenant.as_str(), index_id).cloned().ok_or(EngineError::Conflict)?;
         if view.phase != crate::auto_index::LifecyclePhase::Active {
             return Err(EngineError::Conflict);
         }
         view.pinned = true;
         lifecycle
             .control(
-                index_id,
+                self.lock_storage()?.port.as_mut(),
+                (tenant.as_str(), index_id),
                 false,
                 Self::now_millis(),
                 *blake3::hash(template.as_bytes()).as_bytes(),
             )
             .map_err(|()| EngineError::StorageFailure)?;
+        view.generation = lifecycle.generation(tenant.as_str());
         Ok(view)
     }
 
@@ -3373,23 +3509,25 @@ impl Engine {
         shape: &str,
         expected_generation: u64,
     ) -> Result<u64, EngineError> {
-        if self.auto_index_lifecycle_generation(tenant)? != expected_generation {
-            return Err(EngineError::Conflict);
-        }
+        self.validate_tenant(tenant)?;
         if candidate_id.is_empty() || shape.is_empty() {
             return Err(EngineError::InvalidDocument);
         }
-        self.auto_index_lifecycle
-            .lock()
-            .map_err(|_| EngineError::StorageFailure)?
+        let mut lifecycle =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        if lifecycle.generation(tenant.as_str()) != expected_generation {
+            return Err(EngineError::Conflict);
+        }
+        lifecycle
             .control(
-                candidate_id,
+                self.lock_storage()?.port.as_mut(),
+                (tenant.as_str(), candidate_id),
                 true,
                 Self::now_millis(),
                 *blake3::hash(shape.as_bytes()).as_bytes(),
             )
             .map_err(|()| EngineError::StorageFailure)?;
-        self.auto_index_lifecycle_generation(tenant)
+        Ok(lifecycle.generation(tenant.as_str()))
     }
 
     /// Retires one candidate after its lifecycle has made it invisible.
@@ -3397,7 +3535,7 @@ impl Engine {
     /// # Errors
     ///
     /// Returns [`EngineError::Conflict`] when the generation is stale or the
-    /// index is unknown, and [`EngineError::StorageFailure`] when durable
+    /// index is unknown, pinned, or not invisible, and [`EngineError::StorageFailure`] when durable
     /// state cannot be read or written.
     pub fn auto_index_retire(
         &self,
@@ -3406,27 +3544,35 @@ impl Engine {
         expected_generation: u64,
         at_millis: u64,
     ) -> Result<crate::auto_index::LifecycleIndexView, EngineError> {
-        if self.auto_index_lifecycle_generation(tenant)? != expected_generation {
-            return Err(EngineError::Conflict);
-        }
+        self.validate_tenant(tenant)?;
         let mut lifecycle =
             self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
-        let view = lifecycle
-            .snapshot(tenant.as_str(), None, usize::MAX)
-            .indexes
-            .into_iter()
-            .find(|item| item.id == index_id)
-            .ok_or(EngineError::Conflict)?;
+        if lifecycle.generation(tenant.as_str()) != expected_generation {
+            return Err(EngineError::Conflict);
+        }
+        let view =
+            lifecycle.index(tenant.as_str(), index_id).cloned().ok_or(EngineError::Conflict)?;
+        if view.pinned || view.phase != crate::auto_index::LifecyclePhase::Invisible {
+            return Err(EngineError::Conflict);
+        }
         lifecycle
-            .retire_index(index_id, at_millis, *blake3::hash(index_id.as_bytes()).as_bytes())
+            .retire_index(
+                self.lock_storage()?.port.as_mut(),
+                (tenant.as_str(), index_id),
+                at_millis,
+                *blake3::hash(index_id.as_bytes()).as_bytes(),
+            )
             .map_err(|()| EngineError::StorageFailure)?;
         let mut retired = view;
         retired.phase = crate::auto_index::LifecyclePhase::Abandoned;
         retired.visible = false;
+        retired.generation = lifecycle.generation(tenant.as_str());
         Ok(retired)
     }
 
-    /// Returns bounded durable lifecycle audit entries.
+    /// Returns bounded durable lifecycle audit entries for the tenant and
+    /// optional collection. Events without a collection appear only in the
+    /// database-wide audit. Scope filtering precedes the page limit.
     ///
     /// # Errors
     ///
@@ -3436,19 +3582,140 @@ impl Engine {
     pub fn auto_index_lifecycle_audit(
         &self,
         tenant: &TenantId,
+        collection: Option<&str>,
         index_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::auto_index::LifecycleAuditEntry>, EngineError> {
         self.validate_tenant(tenant)?;
         self.auto_index_lifecycle
             .lock()
-            .map(|state| state.audit(index_id, limit))
+            .map(|state| state.audit(tenant.as_str(), collection, index_id, limit))
             .map_err(|_| EngineError::StorageFailure)
     }
 
-    /// Returns bounded shadow evidence.  Empty evidence is explicit: the
-    /// candidate cannot be promoted by this read until the shadow worker has
-    /// supplied the minimum paired samples.
+    /// Starts an invisible physical build for a durably selected candidate.
+    /// Existing descriptors must be fully extracted. A failed lifecycle append
+    /// leaves the hidden build resumable by retrying this operation.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Conflict`] for a stale generation or mismatched
+    /// candidate, and [`EngineError::StorageFailure`] for a refused build or journal write.
+    pub fn begin_index_build(
+        &self,
+        tenant: &TenantId,
+        index_id: &str,
+        columns: &[crate::storage::InvisibleIndexColumn],
+        expected_generation: u64,
+        at_millis: u64,
+    ) -> Result<crate::auto_index::LifecycleIndexView, EngineError> {
+        self.validate_tenant(tenant)?;
+        let mut lifecycle =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        let mut view =
+            lifecycle.index(tenant.as_str(), index_id).cloned().ok_or(EngineError::Conflict)?;
+        if lifecycle.generation(tenant.as_str()) != expected_generation
+            || view.phase != crate::auto_index::LifecyclePhase::Selected
+            || view.forbidden
+            || !view
+                .fields
+                .iter()
+                .map(String::as_str)
+                .eq(columns.iter().map(|column| column.field.as_str()))
+        {
+            return Err(EngineError::Conflict);
+        }
+        let collection =
+            CollectionName::try_new(&view.collection).map_err(|_| EngineError::InvalidDocument)?;
+        let mut storage = self.lock_storage()?;
+        let progress = storage
+            .port
+            .begin_invisible_index(tenant, &collection, index_id, columns)
+            .map_err(|()| EngineError::StorageFailure)?;
+        view.target_watermark = Some(progress.target_sequence);
+        view.covered_watermark = if progress.complete { progress.target_sequence } else { 0 };
+        view.phase = if progress.complete {
+            crate::auto_index::LifecyclePhase::Shadowing
+        } else {
+            crate::auto_index::LifecyclePhase::Building
+        };
+        lifecycle
+            .install(storage.port.as_mut(), view.clone(), at_millis, [0; 32])
+            .map_err(|()| EngineError::StorageFailure)?;
+        view.generation = lifecycle.generation(tenant.as_str());
+        Ok(view)
+    }
+
+    /// Advances a hidden build by a bounded batch. Completion enters shadow
+    /// verification and never changes planner visibility.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::Conflict`] for stale or ineligible state and
+    /// [`EngineError::StorageFailure`] when backfill or durable publication fails.
+    pub fn advance_index_build(
+        &self,
+        tenant: &TenantId,
+        index_id: &str,
+        batch: u32,
+        expected_generation: u64,
+        at_millis: u64,
+    ) -> Result<crate::auto_index::LifecycleIndexView, EngineError> {
+        self.validate_tenant(tenant)?;
+        let mut lifecycle =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        let mut view =
+            lifecycle.index(tenant.as_str(), index_id).cloned().ok_or(EngineError::Conflict)?;
+        if lifecycle.generation(tenant.as_str()) != expected_generation
+            || view.phase != crate::auto_index::LifecyclePhase::Building
+            || view.forbidden
+        {
+            return Err(EngineError::Conflict);
+        }
+        let mut storage = self.lock_storage()?;
+        let progress = storage
+            .port
+            .advance_invisible_index(tenant, index_id, batch)
+            .map_err(|()| EngineError::StorageFailure)?;
+        if view.target_watermark != Some(progress.target_sequence) {
+            return Err(EngineError::StorageFailure);
+        }
+        if progress.complete {
+            view.phase = crate::auto_index::LifecyclePhase::Shadowing;
+            view.covered_watermark = progress.target_sequence;
+        }
+        lifecycle
+            .install(storage.port.as_mut(), view.clone(), at_millis, [0; 32])
+            .map_err(|()| EngineError::StorageFailure)?;
+        view.generation = lifecycle.generation(tenant.as_str());
+        Ok(view)
+    }
+
+    /// Measures ordinary and forced-index collection reads at one snapshot.
+    /// The counters are diagnostic VM/full-scan measurements and cannot by
+    /// themselves authorize activation or become page/row evidence.
+    ///
+    /// # Errors
+    /// Returns [`crate::storage::ShadowReadError`] for a foreign scope,
+    /// unavailable snapshot/index, invalid request, or exceeded work budget.
+    pub fn measure_index_shadow(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+        request: &crate::storage::ShadowReadRequest<'_>,
+    ) -> Result<crate::storage::ShadowReadComparison, crate::storage::ShadowReadError> {
+        use crate::storage::ShadowReadError;
+        if snapshot.engine_identity() != self.identity || snapshot.tenant() != scope.tenant() {
+            return Err(ShadowReadError::ScopeMismatch);
+        }
+        self.validate_scope(scope).map_err(|_| ShadowReadError::ScopeMismatch)?;
+        self.lock_storage().map_err(|_| ShadowReadError::Unavailable)?.port.shadow_filtered_page(
+            snapshot.sequence(),
+            scope.tenant(),
+            request,
+        )
+    }
+
+    /// Returns bounded durable shadow evidence, or `None` when no retained
+    /// measurement exists. Recording evidence does not promote a candidate.
     ///
     /// # Errors
     ///
@@ -3459,26 +3726,16 @@ impl Engine {
         &self,
         tenant: &TenantId,
         index_id: &str,
+        template_digest: [u8; 32],
         limit: usize,
-    ) -> Result<crate::auto_index::ShadowEvidence, EngineError> {
+    ) -> Result<Option<crate::auto_index::ShadowEvidence>, EngineError> {
         self.validate_tenant(tenant)?;
-        if let Some(evidence) = self
-            .auto_index_lifecycle
-            .lock()
-            .map_err(|_| EngineError::StorageFailure)?
-            .evidence(index_id, limit)
-        {
-            return Ok(evidence);
-        }
-        Ok(crate::auto_index::ShadowEvidence {
-            index_id: index_id.to_owned(),
-            generation: self.auto_index_lifecycle_generation(tenant)?,
-            baseline: Vec::new(),
-            candidate: Vec::new(),
-            improvement: 0.0,
-            regression: false,
-            digest: [0; 32],
-        })
+        Ok(self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?.evidence(
+            tenant.as_str(),
+            index_id,
+            template_digest,
+            limit,
+        ))
     }
 
     /// Records one literal-free execution observation for the D-31 bounded
@@ -3665,6 +3922,26 @@ impl Engine {
             .collect())
     }
 
+    /// Recovers contiguous origin prefixes from durable provenance and progress
+    /// saved atomically before pruning. Missing sequences cannot establish a prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns a scope error for a foreign tenant scope or a storage failure
+    /// if the durable provenance cannot be read or validated.
+    pub fn durable_origin_prefixes(
+        &self,
+        scope: &TenantScope,
+    ) -> Result<std::collections::BTreeMap<String, u64>, EngineError> {
+        self.validate_scope(scope)?;
+        let storage = self.lock_storage()?;
+        let entries = storage
+            .port
+            .durable_origin_prefixes(scope.tenant())
+            .map_err(|()| EngineError::StorageFailure)?;
+        Ok(entries.into_iter().map(|entry| (entry.origin, entry.origin_sequence)).collect())
+    }
+
     /// Returns every tenant that has at least one recorded published commit,
     /// in canonical tenant order (W4-CA-4).
     ///
@@ -3849,6 +4126,8 @@ pub struct Transaction<'engine> {
     snapshot_sequence: StorageSequence,
     operation: OperationId,
     usage_admission: Option<UsageAdmissionContext>,
+    merge_conflict: Option<(CollectionName, DocumentId, storage::MergeConflictEntry)>,
+    replication_fingerprint: Option<[u8; 32]>,
     writes: Vec<StagedWrite>,
 }
 
@@ -4170,6 +4449,8 @@ impl Transaction<'_> {
             snapshot_sequence: self.snapshot_sequence,
             durability,
             usage_admission,
+            merge_conflict: self.merge_conflict.clone(),
+            replication_fingerprint: self.replication_fingerprint,
             hlc,
             writes,
         };

@@ -11,6 +11,13 @@ use std::fmt;
 use std::sync::Arc;
 
 use serde::Serialize;
+use terrabase::engine::Engine;
+use terrabase::regions::RegionCode;
+use terrabase::types::TenantId;
+use terrabase::usage::{
+    MeasurementWindow, UsageCommandError, UsageContinuation, UsageFactId, UsageRecordMeter,
+    UsageRecordRequest,
+};
 
 /// The only billable meters in the public pricing contract.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -34,6 +41,10 @@ impl BillableMeter {
     }
 
     /// Resolves a wire key from the closed vocabulary.
+    ///
+    /// # Errors
+    ///
+    /// Returns `UnknownMeter` for any key other than writes or storage.
     pub fn from_key(key: &str) -> Result<Self, UsageApiError> {
         match key {
             "document_write_units" => Ok(Self::DocumentWriteUnits),
@@ -56,6 +67,10 @@ pub struct UsageAccess {
 
 impl UsageAccess {
     /// Creates an authenticated tenant/database authorization input.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-identifier error for malformed tenant or database identities.
     pub fn try_new(tenant_id: &str, database_id: &str) -> Result<Self, UsageApiError> {
         validate_identifier(tenant_id, "tenant_id")?;
         validate_identifier(database_id, "database_id")?;
@@ -86,6 +101,10 @@ pub struct UsageWindow {
 
 impl UsageWindow {
     /// Creates a non-empty half-open window.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidWindow` when the end is not strictly greater than the start.
     pub const fn try_new(start_millis: u64, end_millis: u64) -> Result<Self, UsageApiError> {
         if end_millis <= start_millis {
             return Err(UsageApiError::InvalidWindow);
@@ -107,18 +126,36 @@ pub struct UsagePageRequest {
 
 impl UsagePageRequest {
     /// Creates a validated page request.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidPageSize`, `InvalidWindow`, or `InvalidCursor` for
+    /// out-of-bounds pagination, an empty/reversed window, or an empty/oversized cursor.
     pub fn try_new(
         window: Option<UsageWindow>,
         page_size: u16,
         cursor: Option<String>,
     ) -> Result<Self, UsageApiError> {
-        if page_size == 0 || page_size > MAX_PAGE_SIZE {
+        let request = Self { window, page_size, cursor };
+        request.validate()?;
+        Ok(request)
+    }
+
+    fn validate(&self) -> Result<(), UsageApiError> {
+        if self.page_size == 0 || self.page_size > MAX_PAGE_SIZE {
             return Err(UsageApiError::InvalidPageSize);
         }
-        if cursor.as_ref().is_some_and(|value| value.len() > MAX_CURSOR_TEXT_BYTES) {
+        if let Some(window) = self.window {
+            UsageWindow::try_new(window.start_millis, window.end_millis)?;
+        }
+        if self
+            .cursor
+            .as_ref()
+            .is_some_and(|value| value.is_empty() || value.len() > MAX_CURSOR_TEXT_BYTES)
+        {
             return Err(UsageApiError::InvalidCursor);
         }
-        Ok(Self { window, page_size, cursor })
+        Ok(())
     }
 }
 
@@ -238,11 +275,20 @@ pub struct UsageSourcePage {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AppendOutcome {
     /// A new fact was durably appended.
-    Inserted { sequence: u64 },
+    Inserted {
+        /// Durable sequence assigned to the new observation.
+        sequence: u64,
+    },
     /// The exact same identity/content was already present.
-    AlreadyPresent { sequence: u64 },
+    AlreadyPresent {
+        /// Existing durable sequence for the idempotent observation.
+        sequence: u64,
+    },
     /// An append-only correction was durably accepted.
-    Reconciled { sequence: u64 },
+    Reconciled {
+        /// Durable sequence assigned to the correction.
+        sequence: u64,
+    },
 }
 
 /// Typed failures a real database source may return.
@@ -253,11 +299,17 @@ pub enum UsageSourceError {
     /// The source has not got an authoritative usage view for this database.
     NotReady,
     /// Persisted usage data failed integrity validation.
-    Corrupt { detail: String },
+    Corrupt {
+        /// Bounded diagnostic detail.
+        detail: String,
+    },
     /// The event identity was reused with different content.
     IdentityConflict,
     /// A correction failed source reconciliation policy.
-    ReconciliationRejected { detail: String },
+    ReconciliationRejected {
+        /// Bounded policy refusal detail.
+        detail: String,
+    },
     /// The source rejected the authorized scope.
     ScopeMismatch,
 }
@@ -291,6 +343,10 @@ impl std::error::Error for UsageSourceError {}
 /// must provide an atomic durable identity check, including after restart.
 pub trait UsageSource: Send + Sync + 'static {
     /// Takes an immutable high-water snapshot with authoritative totals.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, unavailable snapshot, storage, or reconciliation failures.
     fn snapshot(
         &self,
         access: &UsageAccess,
@@ -299,14 +355,415 @@ pub trait UsageSource: Send + Sync + 'static {
     ) -> Result<UsageSnapshot, UsageSourceError>;
 
     /// Reads rows strictly after `after` and no later than the snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, unavailable snapshot, invalid-page, or storage failures.
     fn page(&self, request: UsageSourcePage) -> Result<Vec<UsageEntry>, UsageSourceError>;
 
     /// Appends one billable observation with durable duplicate protection.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, storage, event-identity conflict, or reconciliation failures.
     fn append(
         &self,
         access: &UsageAccess,
         observation: UsageObservation,
     ) -> Result<AppendOutcome, UsageSourceError>;
+}
+
+/// The production usage source backed by one durable [`Engine`].
+///
+/// The source deliberately contains no accounting state of its own. Every
+/// observation and page is read from or appended to the Engine's `SQLite`
+/// ledger. The Engine owns write-unit minting, storage rollups (including TTL,
+/// retained history, and selected Region copies), restart reconciliation, and
+/// durable identity checks.
+pub struct EngineUsageSource {
+    engine: Arc<Engine>,
+    access: UsageAccess,
+    project_id: String,
+    partition_id: String,
+    region: RegionCode,
+}
+
+/// The descriptive production spelling for [`EngineUsageSource`].
+pub type ProductionUsageSource = EngineUsageSource;
+
+impl EngineUsageSource {
+    /// Binds a source to the owner tuple recovered from a durable Engine.
+    ///
+    /// The partition identity is supplied by placement because the current
+    /// Engine owner tuple has no partition field. It is metadata only: facts
+    /// returned by the Engine must still match the complete binding before the
+    /// adapter exposes them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-identifier error for the partition or recovered access binding.
+    pub fn new(engine: Arc<Engine>, partition_id: &str) -> Result<Self, UsageApiError> {
+        validate_identifier(partition_id, "partition_id")?;
+        let owner = engine.database_owner();
+        Ok(Self {
+            access: UsageAccess::try_new(&owner.tenant().to_text(), &owner.database().to_text())?,
+            project_id: owner.project().to_text(),
+            partition_id: partition_id.to_owned(),
+            region: owner.region(),
+            engine,
+        })
+    }
+
+    /// Returns the durable Engine used by this source.
+    #[must_use]
+    pub fn engine(&self) -> &Arc<Engine> {
+        &self.engine
+    }
+
+    /// Returns the source's authenticated tenant/database binding.
+    #[must_use]
+    pub fn access(&self) -> UsageAccess {
+        self.access.clone()
+    }
+
+    fn scope_for(&self, access: &UsageAccess) -> Result<terrabase::TenantScope, UsageSourceError> {
+        if access.tenant_id != self.access.tenant_id
+            || access.database_id != self.access.database_id
+        {
+            return Err(UsageSourceError::ScopeMismatch);
+        }
+        let tenant =
+            TenantId::try_new(access.tenant_id()).map_err(|_| UsageSourceError::ScopeMismatch)?;
+        Ok(self.engine.scope_for(&tenant))
+    }
+
+    fn engine_window(
+        window: Option<UsageWindow>,
+    ) -> Result<Option<MeasurementWindow>, UsageSourceError> {
+        window
+            .map(|window| {
+                MeasurementWindow::interval(window.start_millis, window.end_millis).map_err(|_| {
+                    UsageSourceError::Corrupt {
+                        detail: "the usage window could not be represented by the Engine".into(),
+                    }
+                })
+            })
+            .transpose()
+    }
+
+    fn engine_page(
+        &self,
+        scope: &terrabase::TenantScope,
+        window: Option<MeasurementWindow>,
+        continuation: Option<UsageContinuation>,
+    ) -> Result<terrabase::usage::UsagePage, UsageSourceError> {
+        let request = terrabase::usage::UsagePageRequest::try_new(
+            window,
+            terrabase::usage::MAX_USAGE_PAGE_SIZE,
+            continuation,
+        )
+        .map_err(|_| UsageSourceError::Corrupt {
+            detail: "the Engine rejected a structurally valid usage page request".into(),
+        })?;
+        self.engine.usage_page(scope, request).map_err(map_engine_usage_error)
+    }
+
+    fn map_fact(
+        &self,
+        access: &UsageAccess,
+        fact: &terrabase::usage::DurableUsageFact,
+    ) -> Result<UsageEntry, UsageSourceError> {
+        let value = fact.fact();
+        let scope = value.scope();
+        if scope.tenant_id().as_str() != access.tenant_id()
+            || scope.project_id().as_str() != self.project_id
+            || scope.database_id().as_str() != self.access.database_id
+            || scope.partition_id().as_str() != self.partition_id
+            || *scope.region_id() != self.region
+        {
+            return Err(UsageSourceError::Corrupt {
+                detail: "the Engine returned a usage fact outside the bound owner scope".into(),
+            });
+        }
+        let meter = match value.meter() {
+            terrabase::usage::MeterKind::DocumentWriteUnits => BillableMeter::DocumentWriteUnits,
+            terrabase::usage::MeterKind::StorageByteSeconds => BillableMeter::StorageByteSeconds,
+            _ => {
+                return Err(UsageSourceError::Corrupt {
+                    detail: "the Engine returned a non-billable usage meter".into(),
+                });
+            }
+        };
+        if fact.sequence() == 0 || value.delta() == 0 {
+            return Err(UsageSourceError::Corrupt {
+                detail: "the Engine returned an invalid durable usage fact".into(),
+            });
+        }
+        let window = value.window();
+        Ok(UsageEntry {
+            meter,
+            event_id: value.identity().id().as_str().to_owned(),
+            sequence: fact.sequence(),
+            integer_delta: value.delta(),
+            measurement_start_millis: window.start_millis(),
+            measurement_end_millis: window.end_millis(),
+        })
+    }
+
+    fn collect(
+        &self,
+        access: &UsageAccess,
+        window: Option<UsageWindow>,
+        snapshot_sequence: Option<u64>,
+        after: Option<&UsagePosition>,
+        limit: usize,
+    ) -> Result<(u64, Vec<UsageEntry>), UsageSourceError> {
+        if limit == 0 {
+            return Err(UsageSourceError::Corrupt {
+                detail: "the usage source page bound must be nonzero".into(),
+            });
+        }
+        let scope = self.scope_for(access)?;
+        let engine_window = Self::engine_window(window)?;
+        let mut continuation = None;
+        let mut snapshot = None;
+        let mut entries = Vec::with_capacity(limit.min(usize::from(MAX_PAGE_SIZE)));
+        loop {
+            let page = self.engine_page(&scope, engine_window, continuation)?;
+            let page_snapshot = page.snapshot_sequence().get();
+            if let Some(previous) = snapshot {
+                if page_snapshot != previous {
+                    return Err(UsageSourceError::Corrupt {
+                        detail: "the Engine changed the usage snapshot during a page walk".into(),
+                    });
+                }
+            } else {
+                snapshot = Some(page_snapshot);
+            }
+            if let Some(expected) = snapshot_sequence
+                && page_snapshot < expected
+            {
+                return Err(UsageSourceError::NotReady);
+            }
+            let mut crossed_snapshot = false;
+            for fact in page.facts() {
+                let entry = self.map_fact(access, fact)?;
+                if snapshot_sequence.is_some_and(|bound| entry.sequence > bound) {
+                    crossed_snapshot = true;
+                    break;
+                }
+                if after.is_none_or(|position| {
+                    UsagePosition { sequence: entry.sequence, event_id: entry.event_id.clone() }
+                        > *position
+                }) {
+                    entries.push(entry);
+                    if entries.len() == limit {
+                        return Ok((
+                            snapshot.expect("the first Engine page sets the snapshot"),
+                            entries,
+                        ));
+                    }
+                }
+            }
+            if crossed_snapshot {
+                break;
+            }
+            continuation = page
+                .continuation()
+                .map(|value| {
+                    UsageContinuation::try_new(value.as_bytes().to_vec()).map_err(|_| {
+                        UsageSourceError::Corrupt {
+                            detail: "the Engine returned an invalid usage continuation".into(),
+                        }
+                    })
+                })
+                .transpose()?;
+            if continuation.is_none() {
+                break;
+            }
+        }
+        Ok((snapshot.unwrap_or(0), entries))
+    }
+}
+
+impl UsageSource for EngineUsageSource {
+    fn snapshot(
+        &self,
+        access: &UsageAccess,
+        window: Option<UsageWindow>,
+        snapshot_sequence: Option<u64>,
+    ) -> Result<UsageSnapshot, UsageSourceError> {
+        let (snapshot, entries) =
+            self.collect(access, window, snapshot_sequence, None, usize::MAX)?;
+        let mut totals = UsageTotals::zero();
+        for entry in entries {
+            match entry.meter {
+                BillableMeter::DocumentWriteUnits => {
+                    totals.document_write_units = totals
+                        .document_write_units
+                        .checked_add(entry.integer_delta)
+                        .ok_or_else(|| UsageSourceError::Corrupt {
+                            detail: "document write totals overflowed the source range".into(),
+                        })?;
+                }
+                BillableMeter::StorageByteSeconds => {
+                    totals.storage_byte_seconds = totals
+                        .storage_byte_seconds
+                        .checked_add(entry.integer_delta)
+                        .ok_or_else(|| UsageSourceError::Corrupt {
+                            detail: "storage byte-second totals overflowed the source range".into(),
+                        })?;
+                }
+            }
+        }
+        let scope = self.scope_for(access)?;
+        Ok(UsageSnapshot {
+            snapshot_sequence: snapshot,
+            totals,
+            // The current Engine exposes one durable aggregate read counter;
+            // it is attribution-only and therefore never enters `totals`.
+            reads: ReadAttribution {
+                point_reads: self.engine.metering_read_count(&scope),
+                query_reads: 0,
+                reactive_reads: 0,
+            },
+        })
+    }
+
+    fn page(&self, request: UsageSourcePage) -> Result<Vec<UsageEntry>, UsageSourceError> {
+        let (_, entries) = self.collect(
+            &request.access,
+            request.window,
+            Some(request.snapshot_sequence),
+            request.after.as_ref(),
+            usize::from(request.limit),
+        )?;
+        Ok(entries)
+    }
+
+    fn append(
+        &self,
+        access: &UsageAccess,
+        observation: UsageObservation,
+    ) -> Result<AppendOutcome, UsageSourceError> {
+        let scope = self.scope_for(access)?;
+        if observation.meter == BillableMeter::StorageByteSeconds {
+            return Err(UsageSourceError::NotReady);
+        }
+        if observation.reconciliation_id.is_some() {
+            return Err(UsageSourceError::ReconciliationRejected {
+                detail: "the Engine accepts only its own durable write reconciliation identity"
+                    .into(),
+            });
+        }
+        if observation.measurement_start_millis != observation.measurement_end_millis {
+            return Err(UsageSourceError::ReconciliationRejected {
+                detail: "document write observations must be instant Engine events".into(),
+            });
+        }
+        let _tenant =
+            TenantId::try_new(access.tenant_id()).map_err(|_| UsageSourceError::ScopeMismatch)?;
+        let meter = match observation.meter {
+            BillableMeter::DocumentWriteUnits => UsageRecordMeter::DocumentWriteUnits,
+            BillableMeter::StorageByteSeconds => unreachable!("storage observations return above"),
+        };
+        let fact_id =
+            UsageFactId::try_new(&observation.event_id).map_err(|_| UsageSourceError::Corrupt {
+                detail: "the usage event identity could not be represented by the Engine".into(),
+            })?;
+        let request = UsageRecordRequest::try_new(
+            meter,
+            &self.project_id,
+            &self.access.database_id,
+            &self.partition_id,
+            self.region,
+            fact_id,
+            observation.measurement_start_millis,
+            1,
+            observation.integer_delta,
+        )
+        .map_err(|_| UsageSourceError::ReconciliationRejected {
+            detail: "the Engine rejected the bounded document write observation".into(),
+        })?;
+        let receipt = self.engine.record_usage(&scope, request).map_err(map_engine_usage_error)?;
+        ensure_sequence(receipt.sequence().get()).map_err(|_| UsageSourceError::Corrupt {
+            detail: "the Engine returned a zero usage sequence".into(),
+        })?;
+        Ok(if receipt.already_recorded() {
+            AppendOutcome::AlreadyPresent { sequence: receipt.sequence().get() }
+        } else {
+            AppendOutcome::Inserted { sequence: receipt.sequence().get() }
+        })
+    }
+}
+
+impl UsageService<EngineUsageSource> {
+    /// Constructs a handler-ready service over a durable Engine.
+    ///
+    /// The cursor key is caller-owned durable configuration and must remain
+    /// stable across restarts for exports that are allowed to resume.
+    ///
+    /// # Errors
+    ///
+    /// Returns the partition or access-binding validation failure from [`EngineUsageSource::new`].
+    pub fn from_engine(
+        engine: Arc<Engine>,
+        partition_id: &str,
+        cursor_key: [u8; 32],
+    ) -> Result<Self, UsageApiError> {
+        Ok(Self::new(Arc::new(EngineUsageSource::new(engine, partition_id)?), cursor_key))
+    }
+}
+
+/// Handler-ready production usage state.
+pub struct ProductionUsageState {
+    service: UsageService<EngineUsageSource>,
+}
+
+impl ProductionUsageState {
+    /// Opens the Engine-backed usage service used by request handlers.
+    ///
+    /// # Errors
+    ///
+    /// Returns the source-binding validation failure from [`UsageService::from_engine`].
+    pub fn new(
+        engine: Arc<Engine>,
+        partition_id: &str,
+        cursor_key: [u8; 32],
+    ) -> Result<Self, UsageApiError> {
+        Ok(Self { service: UsageService::from_engine(engine, partition_id, cursor_key)? })
+    }
+
+    /// Returns the immutable service handle for route composition.
+    #[must_use]
+    pub fn service(&self) -> &UsageService<EngineUsageSource> {
+        &self.service
+    }
+
+    /// Returns the mutable service owner for frameworks that need to store it.
+    #[must_use]
+    pub fn into_service(self) -> UsageService<EngineUsageSource> {
+        self.service
+    }
+}
+
+fn map_engine_usage_error(error: UsageCommandError) -> UsageSourceError {
+    match error {
+        UsageCommandError::ScopeMismatch => UsageSourceError::ScopeMismatch,
+        UsageCommandError::IdentityConflict => UsageSourceError::IdentityConflict,
+        UsageCommandError::UsageUnavailable => UsageSourceError::NotReady,
+        UsageCommandError::CorruptStorage => UsageSourceError::Corrupt {
+            detail: "the Engine reported corrupt durable usage storage".into(),
+        },
+        UsageCommandError::StorageUnavailable | UsageCommandError::RequiresSynced => {
+            UsageSourceError::Unavailable
+        }
+        UsageCommandError::InvalidRequest | UsageCommandError::IdentityMismatch => {
+            UsageSourceError::ReconciliationRejected {
+                detail: "the Engine rejected the usage command binding".into(),
+            }
+        }
+    }
 }
 
 /// A bounded response DTO suitable for the pending HTTP route.
@@ -371,9 +828,15 @@ pub struct UsageReceipt {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UsageApiError {
     /// Tenant/database input is missing or malformed.
-    InvalidScope { field: &'static str },
+    InvalidScope {
+        /// Scope field that failed validation.
+        field: &'static str,
+    },
     /// The meter key is outside the closed billable vocabulary.
-    UnknownMeter { key: String },
+    UnknownMeter {
+        /// Meter key supplied by the caller.
+        key: String,
+    },
     /// The request's source identity is too large or empty.
     InvalidEventId,
     /// An event amount is zero or outside the signed integer contract.
@@ -386,13 +849,24 @@ pub enum UsageApiError {
     /// to another scope/filter.
     InvalidCursor,
     /// Source data violates ordering or identity invariants.
-    CorruptSource { detail: String },
+    CorruptSource {
+        /// Bounded source diagnostic detail.
+        detail: String,
+    },
     /// The source is unavailable and no provisional answer exists.
-    SourceUnavailable { retryable: bool, detail: String },
+    SourceUnavailable {
+        /// Whether a retry can produce a different answer.
+        retryable: bool,
+        /// Bounded source diagnostic detail.
+        detail: String,
+    },
     /// Durable identity reuse with different content.
     IdentityConflict,
     /// Source reconciliation policy rejected a correction.
-    ReconciliationRejected { detail: String },
+    ReconciliationRejected {
+        /// Bounded policy refusal detail.
+        detail: String,
+    },
 }
 
 impl UsageApiError {
@@ -517,6 +991,11 @@ impl<S: UsageSource> UsageService<S> {
     }
 
     /// Records one bounded, billable observation for the authorized database.
+    ///
+    /// # Errors
+    ///
+    /// Returns observation validation errors, source failures, or a corrupt-source
+    /// error if the durable receipt is inconsistent.
     pub fn record(
         &self,
         access: &UsageAccess,
@@ -541,11 +1020,17 @@ impl<S: UsageSource> UsageService<S> {
     }
 
     /// Exports one immutable, tenant/database-authorized page.
+    ///
+    /// # Errors
+    ///
+    /// Returns request-validation or cursor-authentication errors before source
+    /// access, source failures, or errors for inconsistent snapshot/page facts.
     pub fn page(
         &self,
         access: &UsageAccess,
-        request: UsagePageRequest,
+        request: &UsagePageRequest,
     ) -> Result<UsageResponse, UsageApiError> {
+        request.validate()?;
         let cursor_state = request
             .cursor
             .as_deref()
@@ -587,7 +1072,7 @@ impl<S: UsageSource> UsageService<S> {
             request.cursor.as_deref(),
             &self.cursor_key,
             access,
-            &request,
+            request,
         )?;
         let has_more = entries.len() > usize::from(request.page_size);
         if has_more {
@@ -685,7 +1170,7 @@ impl CursorState {
     }
 
     fn decode(text: &str, key: &[u8; 32]) -> Result<Self, UsageApiError> {
-        if text.is_empty() || text.len() > MAX_CURSOR_TEXT_BYTES || text.len() % 2 != 0 {
+        if text.is_empty() || text.len() > MAX_CURSOR_TEXT_BYTES || !text.len().is_multiple_of(2) {
             return Err(UsageApiError::InvalidCursor);
         }
         let bytes = hex_decode(text).ok_or(UsageApiError::InvalidCursor)?;
@@ -881,9 +1366,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 fn hex_decode(text: &str) -> Option<Vec<u8>> {
     let bytes = text.as_bytes();
     let mut output = Vec::with_capacity(bytes.len() / 2);
-    for pair in bytes.chunks_exact(2) {
-        let high = char::from(pair[0]).to_digit(16)? as u8;
-        let low = char::from(pair[1]).to_digit(16)? as u8;
+    for pair in bytes.as_chunks::<2>().0 {
+        let high = u8::try_from(char::from(pair[0]).to_digit(16)?).ok()?;
+        let low = u8::try_from(char::from(pair[1]).to_digit(16)?).ok()?;
         output.push((high << 4) | low);
     }
     Some(output)
@@ -935,6 +1420,7 @@ mod tests {
     #[derive(Default)]
     struct MemorySource {
         entries: Mutex<Vec<UsageEntry>>,
+        snapshots: std::sync::atomic::AtomicUsize,
     }
 
     impl UsageSource for MemorySource {
@@ -944,6 +1430,7 @@ mod tests {
             _window: Option<UsageWindow>,
             _snapshot_sequence: Option<u64>,
         ) -> Result<UsageSnapshot, UsageSourceError> {
+            self.snapshots.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let entries = self.entries.lock().unwrap();
             Ok(UsageSnapshot {
                 snapshot_sequence: entries.last().map_or(1, |entry| entry.sequence.max(1)),
@@ -1015,6 +1502,70 @@ mod tests {
     }
 
     #[test]
+    fn invalid_page_literals_are_refused_before_source_access() {
+        let source = Arc::new(MemorySource::default());
+        let service = UsageService::new(source.clone(), [1; 32]);
+        for (request, expected) in [
+            (
+                UsagePageRequest { window: None, page_size: 0, cursor: None },
+                UsageApiError::InvalidPageSize,
+            ),
+            (
+                UsagePageRequest { window: None, page_size: MAX_PAGE_SIZE + 1, cursor: None },
+                UsageApiError::InvalidPageSize,
+            ),
+            (
+                UsagePageRequest {
+                    window: Some(UsageWindow { start_millis: 10, end_millis: 10 }),
+                    page_size: 1,
+                    cursor: None,
+                },
+                UsageApiError::InvalidWindow,
+            ),
+            (
+                UsagePageRequest {
+                    window: Some(UsageWindow { start_millis: 10, end_millis: 9 }),
+                    page_size: 1,
+                    cursor: None,
+                },
+                UsageApiError::InvalidWindow,
+            ),
+            (
+                UsagePageRequest { window: None, page_size: 1, cursor: Some(String::new()) },
+                UsageApiError::InvalidCursor,
+            ),
+            (
+                UsagePageRequest {
+                    window: None,
+                    page_size: 1,
+                    cursor: Some("a".repeat(MAX_CURSOR_TEXT_BYTES + 1)),
+                },
+                UsageApiError::InvalidCursor,
+            ),
+        ] {
+            assert_eq!(
+                UsagePageRequest::try_new(
+                    request.window,
+                    request.page_size,
+                    request.cursor.clone()
+                ),
+                Err(expected.clone())
+            );
+            assert_eq!(service.page(&access(), &request).expect_err("invalid request"), expected);
+        }
+        assert_eq!(source.snapshots.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert!(
+            service
+                .page(
+                    &access(),
+                    &UsagePageRequest::try_new(None, MAX_PAGE_SIZE, None).expect("bounded request")
+                )
+                .is_ok()
+        );
+        assert_eq!(source.snapshots.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
     fn only_closed_meter_keys_are_accepted() {
         assert_eq!(
             BillableMeter::from_key("document_write_units").unwrap().key(),
@@ -1057,11 +1608,11 @@ mod tests {
             )
             .unwrap();
         let first =
-            service.page(&access(), UsagePageRequest::try_new(None, 1, None).unwrap()).unwrap();
+            service.page(&access(), &UsagePageRequest::try_new(None, 1, None).unwrap()).unwrap();
         let cursor = first.next_cursor.unwrap();
         let restarted = UsageService::new(source, [9; 32]);
         let second = restarted
-            .page(&access(), UsagePageRequest::try_new(None, 1, Some(cursor.clone())).unwrap())
+            .page(&access(), &UsagePageRequest::try_new(None, 1, Some(cursor.clone())).unwrap())
             .unwrap();
         assert_eq!(second.entries.len(), 1);
         assert_eq!(second.entries[0].event_id, "fact-2");
@@ -1071,7 +1622,7 @@ mod tests {
         assert!(matches!(
             restarted.page(
                 &access(),
-                UsagePageRequest::try_new(None, 1, Some(String::from_utf8(forged).unwrap()))
+                &UsagePageRequest::try_new(None, 1, Some(String::from_utf8(forged).unwrap()))
                     .unwrap()
             ),
             Err(UsageApiError::InvalidCursor)
@@ -1113,9 +1664,92 @@ mod tests {
         let source = Arc::new(MemorySource::default());
         let service = UsageService::new(source, [2; 32]);
         let response =
-            service.page(&access(), UsagePageRequest::try_new(None, 1, None).unwrap()).unwrap();
+            service.page(&access(), &UsagePageRequest::try_new(None, 1, None).unwrap()).unwrap();
         assert_eq!(response.meters[0].meter, BillableMeter::DocumentWriteUnits);
         assert_eq!(response.meters[1].meter, BillableMeter::StorageByteSeconds);
         assert_eq!(response.reads.point_reads, 7);
+    }
+
+    #[test]
+    fn engine_source_is_durable_scoped_and_restart_safe() {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-server-usage-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let owner = terrabase::storage::DatabaseOwner::local_development();
+        let config = terrabase::EngineConfig::durable(&root)
+            .expect("durable location")
+            .with_owner(owner.clone());
+        let engine = Arc::new(terrabase::Engine::open(config).expect("engine opens"));
+        let source = Arc::new(EngineUsageSource::new(Arc::clone(&engine), "partition-a").unwrap());
+        let access = source.access();
+        let service = UsageService::new(Arc::clone(&source), [7; 32]);
+        let observation = UsageObservation {
+            meter: BillableMeter::DocumentWriteUnits,
+            event_id: "durable-fact".into(),
+            reconciliation_id: None,
+            integer_delta: 3,
+            measurement_start_millis: 1_000,
+            measurement_end_millis: 1_000,
+        };
+        assert!(!service.record(&access, observation.clone()).unwrap().already_recorded);
+        assert!(service.record(&access, observation).unwrap().already_recorded);
+        let page =
+            service.page(&access, &UsagePageRequest::try_new(None, 16, None).unwrap()).unwrap();
+        assert_eq!(page.meters[0].units, "3");
+        assert_eq!(page.entries.len(), 1);
+        assert_eq!(page.reads.query_reads, 0);
+        assert!(matches!(
+            service.record(
+                &access,
+                UsageObservation {
+                    meter: BillableMeter::StorageByteSeconds,
+                    event_id: "storage-rollup".into(),
+                    reconciliation_id: None,
+                    integer_delta: 1,
+                    measurement_start_millis: 1_000,
+                    measurement_end_millis: 2_000,
+                }
+            ),
+            Err(UsageApiError::SourceUnavailable { .. })
+        ));
+        let wrong_scope = UsageAccess::try_new(access.tenant_id(), "another-database").unwrap();
+        assert!(matches!(
+            service.page(&wrong_scope, &UsagePageRequest::try_new(None, 16, None).unwrap()),
+            Err(UsageApiError::SourceUnavailable { .. } | UsageApiError::InvalidScope { .. })
+        ));
+        drop(service);
+        drop(source);
+        drop(engine);
+
+        let reopened = Arc::new(
+            terrabase::Engine::open(
+                terrabase::EngineConfig::durable(&root)
+                    .expect("durable location")
+                    .with_owner(owner),
+            )
+            .expect("engine reopens"),
+        );
+        let reopened_source = Arc::new(EngineUsageSource::new(reopened, "partition-a").unwrap());
+        let reopened_service = UsageService::new(reopened_source, [7; 32]);
+        let receipt = reopened_service
+            .record(
+                &access,
+                UsageObservation {
+                    meter: BillableMeter::DocumentWriteUnits,
+                    event_id: "durable-fact".into(),
+                    reconciliation_id: None,
+                    integer_delta: 3,
+                    measurement_start_millis: 1_000,
+                    measurement_end_millis: 1_000,
+                },
+            )
+            .unwrap();
+        assert!(receipt.already_recorded);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

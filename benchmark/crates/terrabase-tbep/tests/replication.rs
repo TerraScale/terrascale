@@ -162,8 +162,8 @@ fn replicated_rows_fan_out_to_the_target_member_subscribers() {
     assert_eq!(delta.revision, 1, "the subscription's first revision");
 }
 
-/// Idempotency: the deterministic `repl-{commit_ulid}` operation identity
-/// binds the record's write set, so re-pulled records replay the recorded
+/// Idempotency: an operation identity derived from the source origin, commit,
+/// collection, and document binds each record, so re-pulled records replay the recorded
 /// publication instead of double-writing.
 #[test]
 fn a_re_pulled_record_replays_instead_of_double_writing() {

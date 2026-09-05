@@ -382,48 +382,27 @@ fn the_terrabase_lane_measures_deterministic_counters_per_workload() {
     lane.seed(32);
 
     let seeded_bytes = lane.durable_bytes();
-    assert!(seeded_bytes > 0, "seeding must write durable bytes");
+    assert!(seeded_bytes > 0, "seeding creates durable storage");
 
     let write = lane.run(Workload::DocumentWrite, 16);
     assert_eq!(write.operations, 16);
-    assert!(write.durable_bytes_written > 0, "each commit must append to the log");
+    assert_eq!(write.committed_revisions, 16, "each write publishes one revision");
     assert_eq!(write.documents_returned, 0);
 
     let read = lane.run(Workload::DocumentRead, 16);
     assert_eq!(read.operations, 16);
     assert_eq!(read.documents_returned, 16);
-    assert_eq!(read.durable_bytes_written, 0, "reads append nothing");
+    assert_eq!(read.committed_revisions, 0, "reads publish no revisions");
 
     let query = lane.run(Workload::IndexedQuery, 16);
     assert_eq!(query.operations, 16);
+    assert_eq!(query.committed_revisions, 0);
     assert!(query.documents_returned > 0, "the seeded equality query must match");
 
     let mixed = lane.run(Workload::Mixed, 10);
     assert_eq!(mixed.operations, 10);
 
     lane.remove();
-}
-
-/// Seeding the same document count twice through the same lane writes the
-/// same durable bytes both times — the counter is a fact about the
-/// operations, not about the machine or the moment.
-#[test]
-fn the_durable_byte_counter_is_reproducible() {
-    let first = {
-        let lane = TerraBaseLane::open("reproducible-a");
-        lane.seed(16);
-        let bytes = lane.durable_bytes();
-        lane.remove();
-        bytes
-    };
-    let second = {
-        let lane = TerraBaseLane::open("reproducible-b");
-        lane.seed(16);
-        let bytes = lane.durable_bytes();
-        lane.remove();
-        bytes
-    };
-    assert_eq!(first, second, "identical operation streams must write identical bytes");
 }
 
 /// The warm-up discipline: warm-up operations run before any measured sample
@@ -435,12 +414,12 @@ fn warm_up_runs_are_excluded_from_the_measurement() {
 
     let warmed = lane.warm_up(Workload::DocumentWrite, 8);
     assert_eq!(warmed.operations, 8);
-    let baseline = lane.durable_bytes();
+    let baseline = lane.published_revision();
 
     let measured = lane.run(Workload::DocumentWrite, 8);
     assert_eq!(measured.operations, 8);
-    assert!(measured.durable_bytes_written > 0);
-    assert!(lane.durable_bytes() > baseline, "the measured window must append after warm-up");
+    assert_eq!(measured.committed_revisions, 8);
+    assert_eq!(lane.published_revision(), baseline + 8);
 
     lane.remove();
 }
@@ -492,7 +471,7 @@ fn a_self_comparison_reads_as_parity() {
 /// it does not belong in every test run. Run it with
 /// `--ignored --nocapture`.
 ///
-/// These are counters, not timings: operations, durable bytes appended, and
+/// These are counters, not timings: operations, storage footprint change in bytes, and
 /// documents returned are exact facts about the operation stream. The
 /// wall-clock commissioning samples below them are engineering evidence
 /// only and support no verdict.
@@ -512,7 +491,7 @@ fn terrabase_lane_counter_characterization() {
         let seeded_bytes = lane.durable_bytes();
         let seed_count = f64::from(u32::try_from(seed_documents).unwrap_or(u32::MAX));
         println!(
-            "{:>6} seed {} documents: {} durable bytes ({:.1} bytes per seeded document)",
+            "{:>6} seed {} documents: {} storage footprint bytes ({:.1} footprint bytes per seeded document)",
             workload.as_str(),
             seed_documents,
             seeded_bytes,
@@ -522,21 +501,21 @@ fn terrabase_lane_counter_characterization() {
         let warmed = lane.warm_up(workload, warmup_operations);
         let after_warm_up = lane.durable_bytes();
         println!(
-            "{:>6} warm-up {} operations: {} operations, {} durable bytes appended, {} documents returned",
+            "{:>6} warm-up {} operations: {} operations, {} storage footprint change in bytes, {} documents returned",
             workload.as_str(),
             warmup_operations,
             warmed.operations,
-            after_warm_up - seeded_bytes,
+            i128::from(after_warm_up) - i128::from(seeded_bytes),
             warmed.documents_returned,
         );
 
         let commissioning = lane.commission(workload, samples, operations_per_sample);
         let measured = lane.run(workload, operations_per_sample);
         println!(
-            "{:>6} measured window of {} operations: {} durable bytes appended, {} documents returned",
+            "{:>6} measured window of {} operations: {} storage footprint change in bytes, {} documents returned",
             workload.as_str(),
             operations_per_sample,
-            measured.durable_bytes_written,
+            measured.storage_footprint_change_bytes,
             measured.documents_returned,
         );
         println!(

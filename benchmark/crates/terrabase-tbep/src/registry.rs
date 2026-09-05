@@ -88,8 +88,6 @@ pub enum ErrorCode {
     BackupClusterReadOnly,
     /// The `backup_cluster_immutable` row (code 20).
     BackupClusterImmutable,
-    /// The `cold_tier_unavailable` row (code 21).
-    ColdTierUnavailable,
     /// The `frontier_unreachable` row (code 22).
     FrontierUnreachable,
     /// The `usage_unavailable` row (code 23).
@@ -123,7 +121,6 @@ impl ErrorCode {
             Self::ProtocolVersionMismatch => 18,
             Self::BackupClusterReadOnly => 19,
             Self::BackupClusterImmutable => 20,
-            Self::ColdTierUnavailable => 21,
             Self::FrontierUnreachable => 22,
             Self::UsageUnavailable => 23,
             Self::UsageCorrupt => 24,
@@ -157,7 +154,6 @@ impl ErrorCode {
             18 => Some(Self::ProtocolVersionMismatch),
             19 => Some(Self::BackupClusterReadOnly),
             20 => Some(Self::BackupClusterImmutable),
-            21 => Some(Self::ColdTierUnavailable),
             22 => Some(Self::FrontierUnreachable),
             23 => Some(Self::UsageUnavailable),
             24 => Some(Self::UsageCorrupt),

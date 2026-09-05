@@ -1221,6 +1221,22 @@ impl<'engine> Session<'engine> {
         &self.session_token
     }
 
+    /// Opens one causal snapshot for external revision and document reads.
+    /// Enforces the incoming token before any lookup, including metadata-only
+    /// reads that may return absent or not-modified. The observed frontier is
+    /// sampled before the snapshot, so newly observed progress cannot run ahead
+    /// of that snapshot. This does not populate the session identity map.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stale-replica refusal when token coverage times out, or the
+    /// token or engine error when the frontier or snapshot cannot be read.
+    pub fn read_snapshot(&mut self) -> Result<ReadSnapshot, SessionError> {
+        self.enforce_read_consistency()?;
+        self.observe_read_frontier()?;
+        self.engine.read_snapshot(&self.scope).map_err(SessionError::from)
+    }
+
     /// Returns the encoded token suitable for a subsequent request or
     /// session, without exposing its causal fields to the caller.
     #[must_use]
@@ -1927,8 +1943,12 @@ impl<'engine> Session<'engine> {
         }
 
         // V1 batch order: deletes, then puts, then deferred commands.
-        for ((_, id), expected) in &deletes {
-            transaction.delete(id.clone(), *expected).map_err(SessionError::from)?;
+        for ((collection, id), expected) in &deletes {
+            // The session key includes the collection. Preserve it at the
+            // transaction seam so a delete of a pending/new document emits a
+            // durable collection-scoped tombstone and advances the causal
+            // frontier, without probing another collection that reuses the id.
+            transaction.delete_in_collection(collection, id.clone(), *expected);
         }
         for ((collection, id), (value, expected)) in &puts {
             transaction

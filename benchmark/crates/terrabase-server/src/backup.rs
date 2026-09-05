@@ -37,7 +37,7 @@ pub fn database_file(location: &Path) -> PathBuf {
 /// One attached stream: the child and where its artifacts land.
 struct Stream {
     child: Child,
-    spec: StreamSpec,
+    spec: Arc<StreamSpec>,
     restarts: u8,
 }
 
@@ -45,10 +45,10 @@ struct Stream {
 /// spawned a child.  Keeping this state in the registry closes the duplicate
 /// attach race without holding a mutex across filesystem or process I/O.
 enum StreamSlot {
-    Starting(StreamSpec),
+    Starting(Arc<StreamSpec>),
     Running(Stream),
-    Restarting(StreamSpec, u8),
-    Failed(StreamSpec, u8),
+    Restarting(Arc<StreamSpec>, u8),
+    Failed(Arc<StreamSpec>, u8),
 }
 
 #[derive(Clone)]
@@ -147,7 +147,7 @@ impl BackupDestination {
 /// The complete, validated input needed to attach one stream.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackupAttachConfig {
-    /// The live SQLite location being streamed.
+    /// The live `SQLite` location being streamed.
     pub location: PathBuf,
     /// Same-Region backup destination.
     pub destination: BackupDestination,
@@ -221,6 +221,11 @@ impl BackupStreams {
     /// catalog.  This is the startup seam for a Member composition; callers
     /// that need to report an attach refusal can fail startup on the returned
     /// error before exposing readiness.
+    ///
+    /// # Errors
+    ///
+    /// Returns the catalog entry validation, duplicate-stream, filesystem, or spawn
+    /// error. Streams started by this call are detached if a later entry fails.
     pub fn open_from_catalog<I>(litestream: PathBuf, catalog: I) -> io::Result<Self>
     where
         I: IntoIterator<Item = BackupCatalogEntry>,
@@ -365,13 +370,26 @@ impl BackupStreams {
     /// # Errors
     ///
     /// Returns a validation, filesystem, duplicate, or process-spawn error.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stream registry lock is poisoned.
     pub fn attach_with_config(
         &self,
         database: &str,
         placement_region: RegionCode,
         config: BackupAttachConfig,
     ) -> io::Result<()> {
-        let spec = self.spec_for(database, placement_region, config)?;
+        self.attach_reserved(database, placement_region, config).map(|_| ())
+    }
+
+    fn attach_reserved(
+        &self,
+        database: &str,
+        placement_region: RegionCode,
+        config: BackupAttachConfig,
+    ) -> io::Result<Arc<StreamSpec>> {
+        let spec = Arc::new(Self::spec_for(database, placement_region, config)?);
         {
             let mut streams = self.streams.lock().expect("the stream lock is not poisoned");
             if streams.contains_key(database) {
@@ -385,27 +403,39 @@ impl BackupStreams {
             streams.insert(database.to_owned(), StreamSlot::Starting(spec.clone()));
         }
 
-        let child = match self.spawn(&spec) {
-            Ok(child) => child,
-            Err(error) => {
-                self.streams.lock().expect("the stream lock is not poisoned").remove(database);
-                return Err(error);
-            }
-        };
+        let result = self.spawn(&spec);
+        self.finish_attach(database, Arc::clone(&spec), result)?;
+        Ok(spec)
+    }
+
+    /// Completes only the reservation that initiated this spawn.
+    fn finish_attach(
+        &self,
+        database: &str,
+        spec: Arc<StreamSpec>,
+        result: io::Result<Child>,
+    ) -> io::Result<()> {
         let mut streams = self.streams.lock().expect("the stream lock is not poisoned");
-        match streams.get_mut(database) {
-            Some(slot @ StreamSlot::Starting(_)) => {
-                *slot = StreamSlot::Running(Stream { child, spec, restarts: 0 });
-                Ok(())
-            }
-            // detach() may have won while spawn was outside the lock.  Never
-            // orphan the process in that case.
-            _ => {
-                drop(streams);
-                let mut child = child;
+        let current = matches!(streams.get(database), Some(StreamSlot::Starting(reserved)) if Arc::ptr_eq(reserved, &spec));
+        if !current {
+            drop(streams);
+            if let Ok(mut child) = result {
                 let _ = child.kill();
                 let _ = child.wait();
-                Err(io::Error::new(io::ErrorKind::Interrupted, "backup attach was cancelled"))
+            }
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "backup attach was cancelled"));
+        }
+        match result {
+            Ok(child) => {
+                streams.insert(
+                    database.to_owned(),
+                    StreamSlot::Running(Stream { child, spec, restarts: 0 }),
+                );
+                Ok(())
+            }
+            Err(error) => {
+                streams.remove(database);
+                Err(error)
             }
         }
     }
@@ -423,23 +453,48 @@ impl BackupStreams {
     where
         I: IntoIterator<Item = BackupCatalogEntry>,
     {
-        let mut attached: Vec<String> = Vec::new();
+        let mut attached = Vec::new();
         for entry in catalog {
-            if let Err(error) =
-                self.attach_with_config(&entry.database, entry.placement_region, entry.config)
-            {
-                for database in attached {
-                    self.detach(&database);
+            match self.attach_reserved(&entry.database, entry.placement_region, entry.config) {
+                Ok(spec) => attached.push((entry.database, spec)),
+                Err(error) => {
+                    for (database, spec) in attached {
+                        self.detach_reservation(&database, &spec);
+                    }
+                    return Err(error);
                 }
-                return Err(error);
             }
-            attached.push(entry.database);
         }
         Ok(())
     }
 
+    fn detach_reservation(&self, database: &str, reservation: &Arc<StreamSpec>) {
+        let removed = {
+            let mut streams = self.streams.lock().expect("the stream lock is not poisoned");
+            let matches = streams.get(database).is_some_and(|slot| {
+                let spec = match slot {
+                    StreamSlot::Starting(spec)
+                    | StreamSlot::Restarting(spec, _)
+                    | StreamSlot::Failed(spec, _) => spec,
+                    StreamSlot::Running(stream) => &stream.spec,
+                };
+                Arc::ptr_eq(spec, reservation)
+            });
+            if matches { streams.remove(database) } else { None }
+        };
+        if let Some(StreamSlot::Running(mut stream)) = removed {
+            let _ = stream.child.kill();
+            let _ = stream.child.wait();
+        }
+    }
+
     /// Alias for startup composition code that calls this operation an
     /// attach rather than a reattach.
+    ///
+    /// # Errors
+    ///
+    /// Returns the catalog entry validation, duplicate-stream, filesystem, or spawn
+    /// error. Streams started by this call are detached if a later entry fails.
     pub fn attach_catalog<I>(&self, catalog: I) -> io::Result<()>
     where
         I: IntoIterator<Item = BackupCatalogEntry>,
@@ -449,11 +504,21 @@ impl BackupStreams {
 
     /// Borrowed-catalog form for runtime composition that retains its typed
     /// catalog for other startup services.
+    ///
+    /// # Errors
+    ///
+    /// Returns the catalog entry validation, duplicate-stream, filesystem, or spawn
+    /// error. Streams started by this call are detached if a later entry fails.
     pub fn reattach_existing(&self, catalog: &[BackupCatalogEntry]) -> io::Result<()> {
         self.reattach_catalog(catalog.iter().cloned())
     }
 
     /// Startup-composition spelling of [`Self::reattach_catalog`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the catalog entry validation, duplicate-stream, filesystem, or spawn
+    /// error. Streams started by this call are detached if a later entry fails.
     pub fn start_from_catalog<I>(&self, catalog: I) -> io::Result<()>
     where
         I: IntoIterator<Item = BackupCatalogEntry>,
@@ -462,7 +527,6 @@ impl BackupStreams {
     }
 
     fn spec_for(
-        &self,
         database: &str,
         placement_region: RegionCode,
         config: BackupAttachConfig,
@@ -555,6 +619,10 @@ impl BackupStreams {
 
     /// Polls the stream child and reports whether a running child remains in
     /// the registry.  Readiness additionally requires a snapshot artifact.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stream registry lock is poisoned.
     #[must_use]
     pub fn check_liveness(&self, database: &str) -> bool {
         self.supervise(database);
@@ -613,47 +681,42 @@ impl BackupStreams {
         };
 
         let result = self.spawn(&spec);
+        self.finish_restart(database, spec, attempt, result);
+    }
+
+    /// A detached reservation cannot replace or remove a newer stream.
+    fn finish_restart(
+        &self,
+        database: &str,
+        spec: Arc<StreamSpec>,
+        attempt: u8,
+        result: io::Result<Child>,
+    ) {
         let mut streams = self.streams.lock().expect("the stream lock is not poisoned");
-        match result {
-            Ok(mut child) => {
-                // A process can exit between spawn and registry install.  Do
-                // not publish a dead replacement as a ready stream.
-                if !child.try_wait().is_ok_and(|status| status.is_none()) {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    if attempt >= MAX_RESTARTS {
-                        streams.remove(database);
-                    } else if streams.get(database).is_some_and(|slot| {
-                        matches!(slot, StreamSlot::Restarting(_, current) if *current == attempt)
-                    }) {
-                        if let Some(slot) = streams.get_mut(database) {
-                            *slot = StreamSlot::Failed(spec, attempt);
-                        }
-                    }
-                    return;
-                }
-                let install = streams.get_mut(database).is_some_and(|slot| {
-                    matches!(slot, StreamSlot::Restarting(_, current) if *current == attempt)
-                });
-                if install {
-                    if let Some(slot) = streams.get_mut(database) {
-                        *slot = StreamSlot::Running(Stream { child, spec, restarts: attempt });
-                    }
-                } else {
-                    let mut child = child;
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+        let current = matches!(streams.get(database), Some(StreamSlot::Restarting(reserved, current)) if Arc::ptr_eq(reserved, &spec) && *current == attempt);
+        if !current {
+            drop(streams);
+            if let Ok(mut child) = result {
+                let _ = child.kill();
+                let _ = child.wait();
             }
-            Err(_) => if attempt >= MAX_RESTARTS {
-                streams.remove(database);
-            } else if streams.get(database).is_some_and(
-                |slot| matches!(slot, StreamSlot::Restarting(_, current) if *current == attempt),
-            ) {
-                if let Some(slot) = streams.get_mut(database) {
-                    *slot = StreamSlot::Failed(spec, attempt);
-                }
-            },
+            return;
+        }
+        if let Ok(mut child) = result {
+            if child.try_wait().is_ok_and(|status| status.is_none()) {
+                streams.insert(
+                    database.to_owned(),
+                    StreamSlot::Running(Stream { child, spec, restarts: attempt }),
+                );
+                return;
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if attempt >= MAX_RESTARTS {
+            streams.remove(database);
+        } else {
+            streams.insert(database.to_owned(), StreamSlot::Failed(spec, attempt));
         }
     }
 
@@ -669,36 +732,57 @@ impl BackupStreams {
         true
     }
 
-    /// Restores into a LOCATION directory (S-06: a restore lands as a new
-    /// database, never under a live engine): the location's engine markers
-    /// (`format`, ownership) are initialized by the engine itself, that
-    /// initializer closes, and the restored bytes replace the empty file.
-    /// The next engine open serves the restored state.
+    /// Restores a verified backup into a fresh database location.
     ///
     /// # Errors
     ///
-    /// Returns [`RestoreError::Spawn`] when the location refuses to
-    /// initialize, and the [`Self::restore`] refusal otherwise.
+    /// Returns `NotStreamed` without a source stream, the Litestream failure
+    /// when download fails, or `Spawn` for an occupied target, an invalid backup,
+    /// or an ownership mismatch. Existing target bytes are never removed.
     pub fn restore_to_location(
         &self,
         database: &str,
         at: Option<u64>,
         location: &Path,
     ) -> Result<(), RestoreError> {
-        let file = database_file(location);
-        if !file.exists() {
-            let init = || {
-                let config = terrabase::EngineConfig::durable(location)
-                    .map_err(|_| io::Error::other("the location refused to initialize"))?;
-                let engine = terrabase::Engine::open(config)
-                    .map_err(|_| io::Error::other("the engine refused to initialize"))?;
-                drop(engine);
-                Ok::<(), io::Error>(())
-            };
-            init().map_err(RestoreError::Spawn)?;
+        let source = {
+            let streams = self.streams.lock().map_err(|_| {
+                RestoreError::Spawn(io::Error::other("stream registry unavailable"))
+            })?;
+            match streams.get(database) {
+                Some(StreamSlot::Running(stream)) => {
+                    stream.spec.file.parent().map(Path::to_path_buf)
+                }
+                _ => None,
+            }
+            .ok_or_else(|| RestoreError::NotStreamed(database.to_owned()))?
+        };
+        let config = terrabase::EngineConfig::durable(location)
+            .map_err(|_| RestoreError::Spawn(io::Error::other("restore target unavailable")))?;
+        if std::fs::read_dir(location).map_err(RestoreError::Spawn)?.next().is_some() {
+            return Err(RestoreError::Spawn(io::Error::other("restore target is not empty")));
         }
-        let _ = std::fs::remove_file(&file);
-        self.restore(database, at, &file)
+        let parent = location
+            .parent()
+            .ok_or_else(|| RestoreError::Spawn(io::Error::other("restore target has no parent")))?;
+        let download = parent.join(format!(
+            ".terrabase-backup-{}",
+            terrabase::identity::process_generator().generate().to_text()
+        ));
+        std::fs::create_dir(&download).map_err(RestoreError::Spawn)?;
+        let result = (|| {
+            let snapshot = download.join("backup.sqlite3");
+            self.restore(database, at, &snapshot)?;
+            terrabase::Engine::restore_local_sqlite_backup(&source, &snapshot, config).map_err(
+                |error| {
+                    RestoreError::Spawn(io::Error::other(format!(
+                        "backup import refused: {error:?}"
+                    )))
+                },
+            )
+        })();
+        let _ = std::fs::remove_dir_all(download);
+        result
     }
 
     /// Restores the database (at a point in time when given) to `out`,
@@ -1376,7 +1460,10 @@ mod tests {
         std::fs::create_dir_all(directory.path()).expect("the fake process directory creates");
         let binary = directory.path().join("litestream");
         let script = format!(
-            "#!/bin/sh\nMARKER={marker}\nprintf '%s\\n' \"$$\" >> \"$MARKER\"\nif [ \"{exit_mode}\" = \"always\" ] || ([ \"{exit_mode}\" = \"once\" ] && [ \"$(wc -l < \"$MARKER\")\" -eq 1 ]); then exit 23; fi\nexec sleep 1000\n"
+            "#!/bin/sh\nMARKER={}\nprintf '%s\\n' \"$$\" >> \"$MARKER\"\nif [ \"{}\" = \"always\" ] || ([ \"{}\" = \"once\" ] && [ \"$(wc -l < \"$MARKER\")\" -eq 1 ]); then exit 23; fi\nexec sleep 1000\n",
+            marker.display(),
+            exit_mode,
+            exit_mode,
         );
         std::fs::write(&binary, script).expect("the fake process writes");
         let mut permissions =
@@ -1470,6 +1557,106 @@ mod tests {
             .expect("the stream config is written");
         assert!(yaml.contains("encryption:") && yaml.contains("key-version:"));
         fleet.detach_all();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn catalog_rollback_preserves_concurrent_replacement() {
+        let marker = TestLocation::new("rollback-marker");
+        std::fs::create_dir_all(marker.path()).expect("marker directory");
+        let marker_path = marker.path().join("pids");
+        let (_binary_dir, binary) = fake_litestream("rollback-process", &marker_path, "never");
+        let location = TestLocation::new("rollback-location");
+        let replica = TestLocation::new("rollback-replica");
+        let fleet = BackupStreams::new(binary);
+        let config = explicit_config(location.path(), replica.path(), RegionCode::GRU);
+        let catalog = (0..3).map(|step| {
+            if step == 2 {
+                // Run between catalog entries, after both original attaches.
+                fleet.detach("database-a");
+                fleet
+                    .attach_with_config("database-a", RegionCode::GRU, config.clone())
+                    .expect("replacement attaches");
+                fleet.set_plan("database-a", "pro");
+            }
+            BackupCatalogEntry {
+                database: if step == 1 { "database-b" } else { "database-a" }.to_owned(),
+                placement_region: RegionCode::GRU,
+                config: config.clone(),
+            }
+        });
+        let error = fleet.reattach_catalog(catalog).expect_err("duplicate catalog entry");
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert!(fleet.attached("database-a"), "rollback must preserve the replacement");
+        assert_eq!(fleet.plan_for("database-a"), "pro");
+        assert!(!fleet.attached("database-b"), "rollback stops its own stream");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_spawn_completions_preserve_a_replacement_reservation() {
+        let marker = TestLocation::new("reservation-marker");
+        std::fs::create_dir_all(marker.path()).expect("marker directory");
+        let marker_path = marker.path().join("pids");
+        let (_binary_dir, binary) = fake_litestream("reservation-process", &marker_path, "never");
+        let location = TestLocation::new("reservation-location");
+        let replica = TestLocation::new("reservation-replica");
+        let fleet = BackupStreams::new(binary);
+        let old = Arc::new(
+            BackupStreams::spec_for(
+                "database-a",
+                RegionCode::GRU,
+                explicit_config(location.path(), replica.path(), RegionCode::GRU),
+            )
+            .expect("spec"),
+        );
+        // Identical configuration is still a distinct detach/reattach lifetime.
+        let replacement = Arc::new((*old).clone());
+        fleet
+            .streams
+            .lock()
+            .expect("registry")
+            .insert("database-a".into(), StreamSlot::Starting(Arc::clone(&replacement)));
+        let error = fleet
+            .finish_attach(
+                "database-a",
+                Arc::clone(&old),
+                Err(io::Error::other("old spawn failed")),
+            )
+            .expect_err("cancelled attach");
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        let child = fleet.spawn(&old).expect("old child");
+        let pid = child.id();
+        wait_for_marker(&marker_path);
+        fleet
+            .finish_attach("database-a", Arc::clone(&old), Ok(child))
+            .expect_err("old child discarded");
+        assert!(
+            !Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(Stdio::null())
+                .status()
+                .expect("probe")
+                .success(),
+            "the cancelled child is reaped"
+        );
+        assert!(
+            matches!(fleet.streams.lock().expect("registry").get("database-a"), Some(StreamSlot::Starting(spec)) if Arc::ptr_eq(spec, &replacement))
+        );
+        fleet.streams.lock().expect("registry").insert(
+            "database-a".into(),
+            StreamSlot::Restarting(Arc::clone(&replacement), MAX_RESTARTS),
+        );
+        fleet.finish_restart(
+            "database-a",
+            old,
+            MAX_RESTARTS,
+            Err(io::Error::other("old restart failed")),
+        );
+        assert!(
+            matches!(fleet.streams.lock().expect("registry").get("database-a"), Some(StreamSlot::Restarting(spec, attempt)) if Arc::ptr_eq(spec, &replacement) && *attempt == MAX_RESTARTS),
+            "an exhausted old restart cannot remove the replacement"
+        );
     }
 
     #[cfg(unix)]

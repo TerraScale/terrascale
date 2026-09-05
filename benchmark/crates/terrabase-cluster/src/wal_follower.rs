@@ -61,9 +61,9 @@
 //! It returns the follower alongside the [`WalCheckpoint`] the tailer passes
 //! to [`WalTail::resume`], so the tail continues past the snapshot instead of
 //! re-shipping it. The caller must invoke it with the writer quiescent (no
-//! commit wave or checkpoint in flight): the S-09 member composition takes
-//! that barrier at the member-composition boundary, and the orchestration
-//! that promotes or re-syncs a follower owns it in production.
+//! commit wave or checkpoint in flight). [`WalFollower::bootstrap_engine`]
+//! acquires the live engine's commit and checkpoint barrier for this copy.
+//! File-only callers must already own an equivalent quiescence boundary.
 //!
 //! ## What is deliberately M1
 //!
@@ -72,10 +72,11 @@
 //!   `[replication] peers` wiring the cross-region lanes already parse.
 //! - The fold is one `wal_checkpoint(TRUNCATE)` per adopted generation;
 //!   there is no pipelining across generations yet.
-//! - The tail reads the whole WAL file per poll; it is O(WAL) per tick
-//!   with the validation walk — fine at dev WAL sizes, replaced by a
-//!   seeked incremental read if it ever measures hot.
-//!   ponytail: whole-file poll; seeked reads when the WAL grows large.
+//! - The tail reads the header and seeks past its shipped prefix. It scans
+//!   for a complete transaction using bounded buffers, then sends at most
+//!   one MiB of frames per batch. An idle poll reads just the header.
+//!   A pending batch remains in memory until its durable acknowledgement.
+//!   Partial batches never acknowledge a transaction's commit prematurely.
 //!
 //! Promotion is opening the follower's location under a new replica
 //! epoch: `EngineHost::open` (or `MemberHost::open`) on the follower
@@ -83,7 +84,6 @@
 //! appended, and the engine serves the file. `tests/wal_follower.rs`
 //! pins exactly that.
 
-use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -96,6 +96,9 @@ const OWNER_FILE: &str = "owner.tbv1";
 
 /// The WAL file's fixed header size, in bytes.
 pub const WAL_HEADER_BYTES: usize = 32;
+
+/// Maximum frame payload held by one tail batch, excluding its fixed header.
+pub const MAX_WAL_BATCH_BYTES: usize = 1024 * 1024;
 
 /// One WAL frame's fixed header size, in bytes.
 pub const FRAME_HEADER_BYTES: usize = 24;
@@ -260,19 +263,23 @@ fn validate_frames(
 /// The writer-side tail of one `SQLite` location's WAL.
 pub struct WalTail {
     location: PathBuf,
+    acknowledged: WalCheckpoint,
+    pending: Option<Box<WalFrames>>,
     header: Option<WalHeader>,
     /// The frames already handed out of the current generation.
     shipped: usize,
     /// The chain state after `shipped` frames.
     chain: (u32, u32),
-    /// The chain state after each shipped commit frame (rollback points).
-    commit_chains: BTreeMap<usize, (u32, u32)>,
+    /// Source commit boundary confirmed by a bounded scan in this generation.
+    confirmed_through: usize,
+    /// The latest shipped commit and its checksum.
+    last_commit: Option<(usize, (u32, u32))>,
 }
 
 /// One poll of the writer's WAL.
 #[derive(Debug, Eq, PartialEq)]
 pub enum WalTailStep {
-    /// No newly validated frame since the last poll.
+    /// No new complete commit and no batch awaiting acknowledgment.
     UpToDate,
     /// Newly validated frames, ready to ship verbatim: the generation's
     /// header, the index of the first new frame, the count, the raw frame
@@ -286,7 +293,7 @@ pub enum WalTailStep {
 }
 
 /// One shippable batch of validated WAL frames.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WalFrames {
     /// The generation's 32-byte header.
     pub header: Vec<u8>,
@@ -305,12 +312,12 @@ pub struct WalFrames {
 /// snapshot instead of re-shipping it (the follower fails closed on a batch
 /// that does not continue its prefix). A live tail snapshots the same
 /// position with [`WalTail::checkpoint`] before a tailer restart.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct WalCheckpoint {
     header: Option<WalHeader>,
     shipped: usize,
     chain: (u32, u32),
-    commit_chains: BTreeMap<usize, (u32, u32)>,
+    last_commit: Option<(usize, (u32, u32))>,
 }
 
 impl WalTail {
@@ -319,24 +326,55 @@ impl WalTail {
     pub fn new(location: impl Into<PathBuf>) -> Self {
         Self {
             location: location.into(),
+            acknowledged: WalCheckpoint {
+                header: None,
+                shipped: 0,
+                chain: (0, 0),
+                last_commit: None,
+            },
+            pending: None,
+            confirmed_through: 0,
             header: None,
             shipped: 0,
             chain: (0, 0),
-            commit_chains: BTreeMap::new(),
+            last_commit: None,
         }
     }
 
     /// Snapshots this tail's position: the [`WalCheckpoint`] a restarted
     /// tailer passes to [`WalTail::resume`] to continue past what the
     /// follower already holds, without re-shipping the snapshot prefix.
+    /// Merely polling never advances this position; [`Self::acknowledge`]
+    /// must verify the follower's durable receipt first.
     #[must_use]
     pub fn checkpoint(&self) -> WalCheckpoint {
-        WalCheckpoint {
+        self.acknowledged.clone()
+    }
+
+    /// Advances the resumable position only after the pending batch is durable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an acknowledgment mismatch for another generation or prefix,
+    /// a non-durable receipt, or when no batch is awaiting acknowledgment.
+    pub fn acknowledge(&mut self, ack: FollowerAck) -> Result<(), WalFollowerError> {
+        if self.pending.is_none()
+            || !ack.fdatasynced
+            || Some(ack.header) != self.header
+            || ack.applied != self.shipped
+            || ack.chain != self.chain
+            || ack.committed_through != self.last_commit.map(|(frame, _)| frame)
+        {
+            return Err(WalFollowerError::AcknowledgmentMismatch);
+        }
+        self.acknowledged = WalCheckpoint {
             header: self.header,
             shipped: self.shipped,
             chain: self.chain,
-            commit_chains: self.commit_chains.clone(),
-        }
+            last_commit: self.last_commit,
+        };
+        self.pending = None;
+        Ok(())
     }
 
     /// Resumes a tail past a bootstrap's snapshot (or a stored checkpoint)
@@ -346,116 +384,191 @@ impl WalTail {
     pub fn resume(location: impl Into<PathBuf>, checkpoint: WalCheckpoint) -> Self {
         Self {
             location: location.into(),
+            acknowledged: checkpoint.clone(),
+            pending: None,
+            confirmed_through: checkpoint.shipped,
             header: checkpoint.header,
             shipped: checkpoint.shipped,
             chain: checkpoint.chain,
-            commit_chains: checkpoint.commit_chains,
+            last_commit: checkpoint.last_commit,
         }
     }
 
-    /// Polls the writer's WAL: validates every newly visible frame and
-    /// hands back the ones past the shipped prefix. A torn or corrupt
-    /// tail stops the batch at the last valid frame; a rewritten
-    /// uncommitted tail (the writer crashed and restarted its commit)
-    /// rolls the shipped prefix back to the last commit frame.
+    /// Captures a live engine's committed WAL while writes and checkpoints pause.
+    /// The engine must own this tail's location. Network delivery and waiting
+    /// for the follower's receipt happen after this method returns.
+    ///
+    /// # Errors
+    ///
+    /// Returns a capture-barrier, location-mismatch, filesystem, or WAL
+    /// validation error. A mismatched engine never advances the tail.
+    pub fn poll_engine(
+        &mut self,
+        engine: &terrabase::Engine,
+    ) -> Result<WalTailStep, WalFollowerError> {
+        engine
+            .with_quiescent_wal(|location| {
+                if std::fs::canonicalize(location)? != std::fs::canonicalize(&self.location)? {
+                    return Err(WalFollowerError::CaptureLocationMismatch);
+                }
+                self.poll()
+            })
+            .map_err(|_| WalFollowerError::CaptureUnavailable)?
+    }
+
+    /// Polls the writer's WAL through the last complete commit. Until
+    /// [`Self::acknowledge`] succeeds, polls return the identical pending
+    /// batch even if the writer has moved to another generation. Large
+    /// committed transactions span bounded batches. Uncommitted spill frames
+    /// remain on the writer and can be rewritten without diverging
+    /// the follower's prefix.
+    /// Live engine callers should use [`Self::poll_engine`] to exclude WAL
+    /// rotation during capture; file-only callers own that barrier themselves.
     ///
     /// # Errors
     ///
     /// Returns [`WalFollowerError`] when the WAL cannot be read or its
     /// header is malformed.
     pub fn poll(&mut self) -> Result<WalTailStep, WalFollowerError> {
-        let wal = read_wal(&self.location)?;
-        let Some(tracked) = self.header else {
-            if wal.len() < WAL_HEADER_BYTES {
-                return Ok(WalTailStep::UpToDate);
+        if let Some(batch) = &self.pending {
+            return Ok(WalTailStep::Frames(batch.clone()));
+        }
+        match File::open(self.location.join(wal_file_name())) {
+            Ok(mut file) => self.poll_reader(&mut file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(if self.header.is_some() {
+                    WalTailStep::GenerationChanged
+                } else {
+                    WalTailStep::UpToDate
+                })
             }
-            let header = match WalHeader::parse(&wal[..WAL_HEADER_BYTES]) {
-                Ok(header) => header,
-                // A torn header write is not a generation we can tail;
-                // the next poll sees the finished one.
-                Err(WalFollowerError::TruncatedHeader | WalFollowerError::HeaderChecksum) => {
-                    return Ok(WalTailStep::UpToDate);
-                }
-                Err(error) => return Err(error),
-            };
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn poll_reader(
+        &mut self,
+        reader: &mut (impl Read + Seek),
+    ) -> Result<WalTailStep, WalFollowerError> {
+        reader.rewind()?;
+        let mut header_bytes = Vec::with_capacity(WAL_HEADER_BYTES);
+        reader.take(WAL_HEADER_BYTES as u64).read_to_end(&mut header_bytes)?;
+        if header_bytes.len() < WAL_HEADER_BYTES {
+            return Ok(if self.header.is_some() {
+                WalTailStep::GenerationChanged
+            } else {
+                WalTailStep::UpToDate
+            });
+        }
+        let header = match WalHeader::parse(&header_bytes) {
+            Ok(header) => header,
+            Err(WalFollowerError::TruncatedHeader | WalFollowerError::HeaderChecksum)
+                if self.header.is_none() =>
+            {
+                return Ok(WalTailStep::UpToDate)
+            }
+            Err(error) => return Err(error),
+        };
+        if self.header.is_some_and(|tracked| tracked != header) {
+            return Ok(WalTailStep::GenerationChanged);
+        }
+        let length = usize::try_from(reader.seek(std::io::SeekFrom::End(0))?)
+            .map_err(|_| std::io::Error::other("WAL length exceeds the address space"))?;
+        let total = header.complete_frames(length);
+        if total < self.shipped {
+            return Ok(WalTailStep::GenerationChanged);
+        }
+        if self.header.is_none() {
             self.header = Some(header);
             self.chain = header.checksum;
-            return Ok(self.extend(&wal, header));
-        };
-        if wal.len() < WAL_HEADER_BYTES {
-            // The WAL was truncated away (a clean close checkpoints and
-            // deletes it): the next write opens a new generation.
+        }
+        if total == self.shipped {
+            return Ok(WalTailStep::UpToDate);
+        }
+        if total < self.confirmed_through {
             return Ok(WalTailStep::GenerationChanged);
         }
-        let header = WalHeader::parse(&wal[..WAL_HEADER_BYTES])?;
-        if header.salts != tracked.salts {
-            return Ok(WalTailStep::GenerationChanged);
+        let count = (total - self.shipped).min(MAX_WAL_BATCH_BYTES / header.frame_size());
+        let range = header.frame_range(self.shipped, self.shipped + count);
+        reader.seek(std::io::SeekFrom::Start(range.start as u64))?;
+        let mut bytes = vec![0; range.len()];
+        reader.read_exact(&mut bytes)?;
+        if self.confirmed_through <= self.shipped {
+            self.confirmed_through = self.find_commit(reader, &bytes, header, total)?;
         }
-        let total = header.complete_frames(wal.len());
-        if total < self.shipped {
-            // Same salts but fewer frames than we shipped: the writer
-            // rewound the WAL (a crash-recovered restart keeps the salts
-            // only if the file was not reset; either way our prefix is
-            // gone). Re-bootstrap.
-            return Ok(WalTailStep::GenerationChanged);
+        if self.confirmed_through <= self.shipped {
+            return Ok(WalTailStep::UpToDate);
         }
-        // The uncommitted tail we already shipped may have been rewritten
-        // by a recovered writer: re-validate it from the last commit
-        // boundary and roll back if the chain no longer holds.
-        if self.shipped > 0 {
-            let boundary = self.commit_chains.last_key_value().map_or(0, |(frame, _)| *frame);
-            let state =
-                self.commit_chains.last_key_value().map_or(header.checksum, |(_, chain)| *chain);
-            let (still_valid, chain) = validate_frames(
-                &header,
-                &wal[header.frame_range(boundary, self.shipped)],
-                self.shipped - boundary,
-                state,
-            );
-            let valid_count = boundary + still_valid.len();
-            if valid_count < self.shipped {
-                self.shipped = valid_count;
-                self.chain = chain;
-                self.commit_chains.retain(|frame, _| *frame <= self.shipped);
+        let send = count.min(self.confirmed_through - self.shipped);
+        bytes.truncate(send * header.frame_size());
+        self.extend(&header_bytes, &bytes, header)
+    }
+
+    /// Finds a commit without retaining the whole transaction. The first
+    /// chunk remains available for transmission once its commit is proven.
+    fn find_commit(
+        &self,
+        reader: &mut impl Read,
+        first: &[u8],
+        header: WalHeader,
+        total: usize,
+    ) -> Result<usize, WalFollowerError> {
+        let mut position = self.shipped;
+        let mut chain = self.chain;
+        let mut scratch = Vec::new();
+        let mut bytes = first;
+        loop {
+            let count = bytes.len() / header.frame_size();
+            let (frames, next_chain) = validate_frames(&header, bytes, count, chain);
+            if let Some(commit) = frames.iter().rposition(|frame| frame.commit) {
+                return Ok(position + commit + 1);
             }
+            position += frames.len();
+            if frames.len() != count || position == total {
+                return Ok(self.shipped);
+            }
+            chain = next_chain;
+            let next = (total - position).min(MAX_WAL_BATCH_BYTES / header.frame_size());
+            scratch.resize(next * header.frame_size(), 0);
+            reader.read_exact(&mut scratch)?;
+            bytes = &scratch;
         }
-        Ok(self.extend(&wal, header))
     }
 
     /// Validates frames past the shipped prefix and packs the batch.
-    fn extend(&mut self, wal: &[u8], header: WalHeader) -> WalTailStep {
-        let total = header.complete_frames(wal.len());
-        if total <= self.shipped {
-            return WalTailStep::UpToDate;
+    fn extend(
+        &mut self,
+        header_bytes: &[u8],
+        bytes: &[u8],
+        header: WalHeader,
+    ) -> Result<WalTailStep, WalFollowerError> {
+        let (frames, _) =
+            validate_frames(&header, bytes, bytes.len() / header.frame_size(), self.chain);
+        if frames.len() != bytes.len() / header.frame_size() || frames.is_empty() {
+            return Err(WalFollowerError::FrameChecksum);
         }
-        let (frames, chain) = validate_frames(
-            &header,
-            &wal[header.frame_range(self.shipped, total)],
-            total - self.shipped,
-            self.chain,
-        );
-        if frames.is_empty() {
-            return WalTailStep::UpToDate;
-        }
+        let chain = frames.last().expect("nonempty validated batch").checksum;
         let from = self.shipped;
         let shipped = from + frames.len();
         let mut committed_through = None;
         for (offset, frame) in frames.iter().enumerate() {
             let index = from + offset + 1;
             if frame.commit {
-                self.commit_chains.insert(index, frame.checksum);
+                self.last_commit = Some((index, frame.checksum));
                 committed_through = Some(index);
             }
         }
-        let bytes = wal[header.frame_range(from, shipped)].to_vec();
+        let bytes = bytes[..frames.len() * header.frame_size()].to_vec();
         self.shipped = shipped;
         self.chain = chain;
-        WalTailStep::Frames(Box::new(WalFrames {
-            header: wal[..WAL_HEADER_BYTES].to_vec(),
+        let batch = Box::new(WalFrames {
+            header: header_bytes.to_vec(),
             from_frame: from,
             bytes,
             committed_through,
-        }))
+        });
+        self.pending = Some(batch.clone());
+        Ok(WalTailStep::Frames(batch))
     }
 }
 
@@ -476,6 +589,9 @@ pub struct WalFollower {
 /// committed prefix, set only after the batch's `fdatasync` returned.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FollowerAck {
+    pub(crate) header: WalHeader,
+    pub(crate) applied: usize,
+    pub(crate) chain: (u32, u32),
     /// The frame count through the last commit frame the follower holds.
     pub committed_through: Option<usize>,
     /// Whether the follower's `fdatasync` completed — the fact
@@ -484,6 +600,63 @@ pub struct FollowerAck {
 }
 
 impl WalFollower {
+    /// Bootstraps from a live engine while its commits and checkpoints pause.
+    /// The destination has the same fresh-location requirements as [`Self::bootstrap`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a capture-barrier, snapshot-validation, or filesystem failure.
+    pub fn bootstrap_engine(
+        writer: &terrabase::Engine,
+        follower: &Path,
+    ) -> Result<(Self, WalCheckpoint), WalFollowerError> {
+        writer
+            .with_quiescent_wal(|location| Self::bootstrap(location, follower))
+            .map_err(|_| WalFollowerError::CaptureUnavailable)?
+    }
+
+    /// Reopens an existing replica after process restart without copying its writer.
+    /// The caller must exclusively own this location, with no SQLite reader,
+    /// writer, promoter, or other follower running against it.
+    ///
+    /// Rebuilds the checksum chain from complete frames, discards only a
+    /// trailing partial frame or valid uncommitted suffix, and synchronizes
+    /// the recovered files before returning a resumable writer checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O or integrity error for a missing database, malformed
+    /// WAL header, corrupt complete frame, or failed durability operation.
+    /// Validation failures leave the existing file contents untouched.
+    pub fn open_existing(location: &Path) -> Result<(Self, WalCheckpoint), WalFollowerError> {
+        let mut wal = open_wal(location)?;
+        let checkpoint = wal
+            .as_mut()
+            .map_or_else(|| Ok(WalCheckpoint::default()), |file| scan_wal(file, true))?;
+        verify_snapshot(location)?;
+        if let Some(header) = checkpoint.header {
+            let file = OpenOptions::new().write(true).open(location.join(wal_file_name()))?;
+            let prefix_bytes = header.frame_range(0, checkpoint.shipped).end;
+            file.set_len(u64::try_from(prefix_bytes).map_err(|_| WalFollowerError::FrameIo)?)?;
+            file.sync_all()?;
+        }
+        File::open(location.join(DATABASE_FILE))?.sync_all()?;
+        match File::open(location.join(OWNER_FILE)) {
+            Ok(file) => file.sync_all()?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        sync_directory(location)?;
+        let state = Self {
+            location: location.to_path_buf(),
+            header: checkpoint.header,
+            applied: checkpoint.shipped,
+            chain: checkpoint.chain,
+            committed_through: checkpoint.last_commit.map(|(frame, _)| frame),
+        };
+        Ok((state, checkpoint))
+    }
+
     /// Bootstraps a follower from the writer's at-rest file pair (the
     /// writer quiescent — see the module's bootstrap contract): copies the
     /// ownership record (`owner.tbv1`, when present), `terrabase.sqlite3`,
@@ -492,68 +665,67 @@ impl WalFollower {
     /// Returns the follower alongside the [`WalCheckpoint`] the tailer
     /// passes to [`WalTail::resume`]: the snapshot's committed prefix is
     /// already durable on the follower, so the tail continues past it.
+    /// The destination must be absent or empty. Re-bootstrap uses a fresh
+    /// location; the caller retires the old copy after switching to the new one.
+    /// Files are staged privately and published together by directory rename.
+    /// The destination's parent must already exist. SQLite integrity is verified
+    /// over the staged database and committed WAL before publication.
     ///
     /// # Errors
     ///
     /// Returns [`WalFollowerError`] when the pair cannot be read, the
-    /// WAL header is malformed, or the writes cannot be made durable.
+    /// WAL header is malformed, the destination is occupied or a symlink,
+    /// or the writes cannot be made durable. A failure before publication
+    /// leaves the destination untouched. If the final parent sync fails,
+    /// the installed snapshot remains available for recovery.
     pub fn bootstrap(
         writer: &Path,
         follower: &Path,
     ) -> Result<(Self, WalCheckpoint), WalFollowerError> {
-        std::fs::create_dir_all(follower)?;
-        let wal = read_wal(writer)?;
-        let mut state = Self {
+        require_empty_destination(follower)?;
+        let parent = follower
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        // The placement owner creates the parent. Do not create an unfenced
+        // directory tree as a side effect of installing a replica snapshot.
+        let staging = StagedFollower::new(parent)?;
+        let (mut state, checkpoint) = Self::bootstrap_into(writer, &staging.path)?;
+        verify_snapshot(&staging.path)?;
+        require_empty_destination(follower)?;
+        std::fs::rename(&staging.path, follower)?;
+        sync_directory(parent)?;
+        state.location = follower.to_path_buf();
+        Ok((state, checkpoint))
+    }
+
+    fn bootstrap_into(
+        writer: &Path,
+        follower: &Path,
+    ) -> Result<(Self, WalCheckpoint), WalFollowerError> {
+        let mut wal = open_wal(writer)?;
+        let checkpoint = wal
+            .as_mut()
+            .map_or_else(|| Ok(WalCheckpoint::default()), |file| scan_wal(file, false))?;
+        let state = Self {
             location: follower.to_path_buf(),
-            header: None,
-            applied: 0,
-            chain: (0, 0),
-            committed_through: None,
+            header: checkpoint.header,
+            applied: checkpoint.shipped,
+            chain: checkpoint.chain,
+            committed_through: checkpoint.last_commit.map(|(frame, _)| frame),
         };
-        let mut checkpoint = WalCheckpoint {
-            header: None,
-            shipped: 0,
-            chain: (0, 0),
-            commit_chains: BTreeMap::new(),
-        };
-        let mut wal_prefix: Vec<u8> = Vec::new();
-        if wal.len() >= WAL_HEADER_BYTES {
-            let header = WalHeader::parse(&wal[..WAL_HEADER_BYTES])?;
-            let total = header.complete_frames(wal.len());
-            let (frames, _) = validate_frames(
-                &header,
-                &wal[header.frame_range(0, total)],
-                total,
-                header.checksum,
-            );
-            // Only the prefix through the last commit frame is durable
-            // state; a trailing uncommitted tail stays behind.
-            let committed =
-                frames.iter().rposition(|frame| frame.commit).map_or(0, |position| position + 1);
-            let mut chain = header.checksum;
-            let mut commit_chains = BTreeMap::new();
-            for (offset, frame) in frames[..committed].iter().enumerate() {
-                chain = frame.checksum;
-                if frame.commit {
-                    commit_chains.insert(offset + 1, frame.checksum);
-                }
-            }
-            state.header = Some(header);
-            state.chain = chain;
-            state.applied = committed;
-            state.committed_through = (committed > 0).then_some(committed);
-            checkpoint =
-                WalCheckpoint { header: Some(header), shipped: committed, chain, commit_chains };
-            // The snapshot is the header plus the committed frames: the
-            // pair the follower's recovery replays on promotion.
-            wal_prefix = wal[..header.frame_range(0, committed).end].to_vec();
-        }
         copy_location_file(writer, follower, DATABASE_FILE)?;
         copy_location_file_optional(writer, follower, OWNER_FILE)?;
-        if state.header.is_some() {
-            let mut wal_file = File::create(follower.join(wal_file_name()))?;
-            wal_file.write_all(&wal_prefix)?;
-            wal_file.sync_all()?;
+        if let Some(header) = checkpoint.header {
+            let mut source = wal.expect("a parsed header has an open file");
+            source.rewind()?;
+            let length = header.frame_range(0, checkpoint.shipped).end as u64;
+            let mut target = File::create(follower.join(wal_file_name()))?;
+            let copied = std::io::copy(&mut source.take(length), &mut target)?;
+            if copied != length {
+                return Err(WalFollowerError::FrameIo);
+            }
+            target.sync_all()?;
         }
         sync_directory(follower)?;
         Ok((state, checkpoint))
@@ -580,6 +752,8 @@ impl WalFollower {
     ///
     /// # Errors
     ///
+    /// Refuses a disk prefix that differs from the acknowledged commit, or
+    /// a checksum or database-integrity failure, before SQLite can fold it.
     /// Returns [`WalFollowerError::CheckpointIncomplete`] when the
     /// checkpoint could not fold every frame (a reader holds the
     /// follower's file — no reader exists while the follower owns the
@@ -587,6 +761,7 @@ impl WalFollower {
     /// or [`WalFollowerError::Sqlite`] when the follower's database
     /// cannot be opened.
     pub fn fold_generation(&mut self) -> Result<(), WalFollowerError> {
+        self.verify_fold_prefix()?;
         let connection = rusqlite::Connection::open(self.location.join(DATABASE_FILE))?;
         let (busy, log_frames, checkpointed_frames): (i64, i64, i64) =
             connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
@@ -603,6 +778,36 @@ impl WalFollower {
         Ok(())
     }
 
+    /// SQLite recovery may ignore a damaged suffix. Never let checkpointing
+    /// silently change the durable prefix this follower has acknowledged.
+    fn verify_fold_prefix(&self) -> Result<(), WalFollowerError> {
+        let mut wal = open_wal(&self.location)?;
+        let length =
+            wal.as_ref().map_or(Ok(0), |file| file.metadata().map(|metadata| metadata.len()))?;
+        let Some(header) = self.header else {
+            if length != 0 {
+                return Err(WalFollowerError::CheckpointIncomplete);
+            }
+            return verify_snapshot(&self.location);
+        };
+        let Some(file) = wal.as_mut() else {
+            return Err(WalFollowerError::TruncatedHeader);
+        };
+        let checkpoint = scan_wal(file, true)?;
+        if checkpoint.header != Some(header) {
+            return Err(WalFollowerError::GenerationMismatch);
+        }
+        if length != header.frame_range(0, self.applied).end as u64
+            || self.committed_through.unwrap_or(0) != self.applied
+        {
+            return Err(WalFollowerError::CheckpointIncomplete);
+        }
+        if checkpoint.shipped != self.applied || checkpoint.chain != self.chain {
+            return Err(WalFollowerError::FrameChecksum);
+        }
+        verify_snapshot(&self.location)
+    }
+
     /// Applies one shipped batch: adopts its generation when fresh,
     /// re-validates every frame's salt and cumulative checksum against
     /// the follower's own chain, appends the valid bytes verbatim at the
@@ -616,78 +821,162 @@ impl WalFollower {
     /// # Errors
     ///
     /// Returns [`WalFollowerError`] on any validation failure or I/O
-    /// error; the follower's file is untouched on failure.
+    /// error. Validation failures leave the file untouched. An I/O failure may
+    /// leave a partial write, but never advances the acknowledged prefix.
     pub fn apply(&mut self, batch: &WalFrames) -> Result<FollowerAck, WalFollowerError> {
+        if batch.bytes.len() > MAX_WAL_BATCH_BYTES {
+            return Err(WalFollowerError::BatchTooLarge);
+        }
+        if batch.header.len() != WAL_HEADER_BYTES {
+            return Err(WalFollowerError::HeaderChecksum);
+        }
         let header = WalHeader::parse(&batch.header)?;
         if !batch.bytes.len().is_multiple_of(header.frame_size()) {
             return Err(WalFollowerError::FrameChecksum);
         }
-        let batch_end = batch.from_frame + batch.bytes.len() / header.frame_size();
-        match self.header {
-            None => {
-                if batch.from_frame != 0 {
-                    return Err(WalFollowerError::BatchNotContiguous);
-                }
-                let mut wal_file = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(self.location.join(wal_file_name()))?;
-                wal_file.write_all(&batch.header)?;
-                wal_file.sync_all()?;
-                sync_directory(&self.location)?;
-                self.header = Some(header);
-                self.chain = header.checksum;
-                self.applied = 0;
+        let count = batch.bytes.len() / header.frame_size();
+        let batch_end = batch.from_frame.checked_add(count).ok_or(WalFollowerError::FrameIo)?;
+        let offset = batch
+            .from_frame
+            .checked_mul(header.frame_size())
+            .and_then(|value| value.checked_add(WAL_HEADER_BYTES))
+            .and_then(|value| u64::try_from(value).ok())
+            .ok_or(WalFollowerError::FrameIo)?;
+        if let Some(tracked) = self.header {
+            if tracked != header {
+                return Err(WalFollowerError::GenerationMismatch);
             }
-            Some(tracked) => {
-                if tracked.salts != header.salts {
-                    return Err(WalFollowerError::GenerationMismatch);
+            if batch.from_frame != self.applied {
+                if batch_end <= self.applied {
+                    return self.reack(batch, offset);
                 }
-                if batch.from_frame != self.applied {
-                    // The whole batch sits inside the applied prefix: the
-                    // tailer re-shipped what the follower already holds
-                    // (a lost acknowledgement). Re-ack the durable state;
-                    // the file is untouched. Committed frames are never
-                    // rewritten inside a generation, so the ack stays
-                    // truthful whatever the re-shipped bytes hold. A
-                    // partial overlap fails closed below.
-                    if batch_end <= self.applied {
-                        return Ok(FollowerAck {
-                            committed_through: self.committed_through,
-                            fdatasynced: true,
-                        });
-                    }
-                    return Err(WalFollowerError::BatchNotContiguous);
-                }
+                return Err(WalFollowerError::BatchNotContiguous);
             }
+        } else if batch.from_frame != 0 {
+            return Err(WalFollowerError::BatchNotContiguous);
         }
-        let (frames, chain) =
-            validate_frames(&header, &batch.bytes, batch_end - batch.from_frame, self.chain);
-        if frames.len() != batch_end - batch.from_frame {
+        let initial_chain = if self.header.is_some() { self.chain } else { header.checksum };
+        let (frames, chain) = validate_frames(&header, &batch.bytes, count, initial_chain);
+        if frames.len() != count {
             return Err(WalFollowerError::FrameChecksum);
         }
-        let mut committed_through = self.committed_through;
-        for (offset, frame) in frames.iter().enumerate() {
-            if frame.commit {
-                committed_through = Some(batch.from_frame + offset + 1);
-            }
+        let batch_commit =
+            frames.iter().rposition(|frame| frame.commit).map(|index| batch.from_frame + index + 1);
+        if batch.committed_through != batch_commit {
+            return Err(WalFollowerError::FrameChecksum);
         }
-        let mut wal_file =
-            OpenOptions::new().write(true).open(self.location.join(wal_file_name()))?;
-        wal_file.seek(std::io::SeekFrom::Start(
-            u64::try_from(header.frame_range(batch.from_frame, batch_end).start)
-                .map_err(|_| WalFollowerError::FrameIo)?,
-        ))?;
+        // Validate the entire batch before creating or changing the WAL. State
+        // advances only after every durability operation succeeds, so an I/O
+        // failure can be retried at the same offset.
+        let fresh = self.header.is_none();
+        let mut wal_file = OpenOptions::new()
+            .write(true)
+            .create(fresh)
+            .truncate(fresh)
+            .open(self.location.join(wal_file_name()))?;
+        if fresh {
+            wal_file.write_all(&batch.header)?;
+        }
+        wal_file.seek(std::io::SeekFrom::Start(offset))?;
         wal_file.write_all(&batch.bytes)?;
-        // The acknowledgement's whole meaning is durability: the sync
-        // completes before the ack exists (D-35's RegionalDurable).
         wal_file.sync_data()?;
+        if fresh {
+            sync_directory(&self.location)?;
+        }
+        self.header = Some(header);
         self.applied = batch_end;
         self.chain = chain;
-        self.committed_through = committed_through;
-        Ok(FollowerAck { committed_through: self.committed_through, fdatasynced: true })
+        self.committed_through = batch_commit.or(self.committed_through);
+        Ok(FollowerAck {
+            header,
+            applied: self.applied,
+            chain: self.chain,
+            committed_through: self.committed_through,
+            fdatasynced: true,
+        })
     }
+
+    /// A retransmission must contain the exact bytes already made durable.
+    fn reack(&self, batch: &WalFrames, offset: u64) -> Result<FollowerAck, WalFollowerError> {
+        let mut file = File::open(self.location.join(wal_file_name()))?;
+        file.seek(std::io::SeekFrom::Start(offset))?;
+        let mut stored = vec![0; batch.bytes.len()];
+        file.read_exact(&mut stored)?;
+        if stored != batch.bytes {
+            return Err(WalFollowerError::FrameChecksum);
+        }
+        let header = self.header.ok_or(WalFollowerError::GenerationMismatch)?;
+        let batch_commit = stored
+            .chunks_exact(header.frame_size())
+            .rposition(|frame| be_u32(&frame[4..8]) != 0)
+            .map(|index| batch.from_frame + index + 1);
+        if batch.committed_through != batch_commit {
+            return Err(WalFollowerError::FrameChecksum);
+        }
+        Ok(FollowerAck {
+            header,
+            applied: self.applied,
+            chain: self.chain,
+            committed_through: self.committed_through,
+            fdatasynced: true,
+        })
+    }
+}
+
+/// Owns an unpublished snapshot and removes it after a failed installation.
+struct StagedFollower {
+    path: PathBuf,
+}
+
+impl StagedFollower {
+    fn new(parent: &Path) -> Result<Self, WalFollowerError> {
+        let path = parent
+            .join(format!(".terrabase-follower-{}", terrabase::identity::DatabaseUlid::generate()));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            builder.mode(0o700);
+        }
+        builder.create(&path)?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for StagedFollower {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+fn require_empty_destination(path: &Path) -> Result<(), WalFollowerError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => {
+            if std::fs::read_dir(path)?.next().transpose()?.is_none() {
+                return Ok(());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "a follower snapshot requires an empty, non-symlink destination",
+    )
+    .into())
+}
+
+fn verify_snapshot(location: &Path) -> Result<(), WalFollowerError> {
+    let connection = rusqlite::Connection::open_with_flags(
+        location.join(DATABASE_FILE),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let result: String = connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+    if result != "ok" {
+        return Err(WalFollowerError::SnapshotIntegrity);
+    }
+    Ok(())
 }
 
 /// The follower's WAL file name (`SQLite`'s own suffix rule).
@@ -703,9 +992,8 @@ fn copy_location_file(writer: &Path, follower: &Path, name: &str) -> Result<(), 
     let mut source = File::open(writer.join(name))?;
     let mut target = File::create(follower.join(name))?;
     std::io::copy(&mut source, &mut target)?;
+    target.set_permissions(permissions)?;
     target.sync_all()?;
-    drop(target);
-    std::fs::set_permissions(follower.join(name), permissions)?;
     Ok(())
 }
 
@@ -717,22 +1005,70 @@ fn copy_location_file_optional(
     name: &str,
 ) -> Result<(), WalFollowerError> {
     match std::fs::metadata(writer.join(name)) {
-        Ok(permissions) => {
-            let mut source = File::open(writer.join(name))?;
-            let mut target = File::create(follower.join(name))?;
-            std::io::copy(&mut source, &mut target)?;
-            target.sync_all()?;
-            drop(target);
-            std::fs::set_permissions(follower.join(name), permissions.permissions())?;
-            Ok(())
-        }
+        Ok(_) => copy_location_file(writer, follower, name),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
     }
 }
 
+fn open_wal(location: &Path) -> Result<Option<File>, WalFollowerError> {
+    match File::open(location.join(wal_file_name())) {
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Validates a file using at most one transfer buffer plus bounded checksum
+/// metadata. Strict recovery refuses any corrupt complete frame; snapshot
+/// capture may stop at stale frames beyond the writer's valid WAL prefix.
+fn scan_wal(
+    reader: &mut (impl Read + Seek),
+    strict: bool,
+) -> Result<WalCheckpoint, WalFollowerError> {
+    reader.rewind()?;
+    let mut header_bytes = Vec::with_capacity(WAL_HEADER_BYTES);
+    reader.take(WAL_HEADER_BYTES as u64).read_to_end(&mut header_bytes)?;
+    if header_bytes.is_empty() || (!strict && header_bytes.len() < WAL_HEADER_BYTES) {
+        return Ok(WalCheckpoint::default());
+    }
+    let header = WalHeader::parse(&header_bytes)?;
+    let length = usize::try_from(reader.seek(std::io::SeekFrom::End(0))?)
+        .map_err(|_| WalFollowerError::FrameIo)?;
+    let total = header.complete_frames(length);
+    reader.seek(std::io::SeekFrom::Start(WAL_HEADER_BYTES as u64))?;
+    let mut checkpoint =
+        WalCheckpoint { header: Some(header), chain: header.checksum, ..WalCheckpoint::default() };
+    let mut chain = header.checksum;
+    let mut position = 0;
+    let mut buffer = Vec::new();
+    while position < total {
+        let count = (total - position).min(MAX_WAL_BATCH_BYTES / header.frame_size());
+        buffer.resize(count * header.frame_size(), 0);
+        reader.read_exact(&mut buffer)?;
+        let (frames, next_chain) = validate_frames(&header, &buffer, count, chain);
+        for (offset, frame) in frames.iter().enumerate() {
+            if frame.commit {
+                checkpoint.shipped = position + offset + 1;
+                checkpoint.chain = frame.checksum;
+                checkpoint.last_commit = Some((checkpoint.shipped, frame.checksum));
+            }
+        }
+        if frames.len() != count {
+            if strict {
+                return Err(WalFollowerError::FrameChecksum);
+            }
+            break;
+        }
+        position += count;
+        chain = next_chain;
+    }
+    Ok(checkpoint)
+}
+
 /// Reads the writer location's WAL, tolerating its absence (an empty
 /// read is a checkpointed-and-closed writer).
+#[cfg(test)]
 fn read_wal(location: &Path) -> Result<Vec<u8>, WalFollowerError> {
     let path = location.join(wal_file_name());
     match File::open(&path) {
@@ -769,12 +1105,22 @@ pub enum WalFollowerError {
     GenerationMismatch,
     /// A batch does not continue the follower's applied prefix.
     BatchNotContiguous,
+    /// The frame payload exceeds the bounded transfer size.
+    BatchTooLarge,
     /// The underlying file I/O failed.
     Io(std::io::Error),
     /// The follower's database could not be opened or checkpointed.
     Sqlite(rusqlite::Error),
     /// The generation fold could not checkpoint every WAL frame.
     CheckpointIncomplete,
+    /// The staged database and WAL failed SQLite's integrity check.
+    SnapshotIntegrity,
+    /// A receipt does not prove the pending batch is durable.
+    AcknowledgmentMismatch,
+    /// The engine could not acquire its physical capture barrier.
+    CaptureUnavailable,
+    /// The engine capture barrier belongs to a different database location.
+    CaptureLocationMismatch,
     /// A frame-offset write failed to convert.
     FrameIo,
 }
@@ -792,6 +1138,7 @@ impl std::fmt::Display for WalFollowerError {
             Self::GenerationMismatch => {
                 formatter.write_str("the batch belongs to another WAL generation")
             }
+            Self::BatchTooLarge => formatter.write_str("the WAL batch exceeds the transfer limit"),
             Self::BatchNotContiguous => {
                 formatter.write_str("the batch does not continue the follower's prefix")
             }
@@ -802,7 +1149,17 @@ impl std::fmt::Display for WalFollowerError {
             Self::CheckpointIncomplete => {
                 formatter.write_str("the generation fold left WAL frames uncheckpointed")
             }
+            Self::SnapshotIntegrity => formatter.write_str("the follower snapshot is corrupt"),
+            Self::AcknowledgmentMismatch => {
+                formatter.write_str("the WAL acknowledgment does not match the pending batch")
+            }
             Self::FrameIo => formatter.write_str("a frame write failed"),
+            Self::CaptureUnavailable => {
+                formatter.write_str("the WAL capture barrier is unavailable")
+            }
+            Self::CaptureLocationMismatch => {
+                formatter.write_str("the capture engine does not own the WAL location")
+            }
         }
     }
 }
@@ -818,5 +1175,90 @@ impl From<std::io::Error> for WalFollowerError {
 impl From<rusqlite::Error> for WalFollowerError {
     fn from(error: rusqlite::Error) -> Self {
         Self::Sqlite(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct CountedReader {
+        bytes: std::io::Cursor<Vec<u8>>,
+        read: usize,
+        max_request: usize,
+    }
+
+    impl Read for CountedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.max_request = self.max_request.max(buffer.len());
+            let count = self.bytes.read(buffer)?;
+            self.read += count;
+            Ok(count)
+        }
+    }
+
+    impl Seek for CountedReader {
+        fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.bytes.seek(position)
+        }
+    }
+
+    #[test]
+    fn idle_poll_reads_only_header_and_catchup_reads_only_new_frames() {
+        let directory = std::env::temp_dir().join(format!(
+            "terrabase-wal-seek-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).expect("directory");
+        let connection =
+            rusqlite::Connection::open(directory.join(DATABASE_FILE)).expect("database");
+        connection
+            .execute_batch(
+                "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+             CREATE TABLE data (value BLOB); INSERT INTO data VALUES (zeroblob(1048576));",
+            )
+            .expect("large committed prefix");
+        let mut reader = CountedReader {
+            bytes: std::io::Cursor::new(read_wal(&directory).expect("WAL")),
+            read: 0,
+            max_request: 0,
+        };
+        let scanned = scan_wal(&mut reader, true).expect("bounded recovery scan");
+        assert!(reader.read > MAX_WAL_BATCH_BYTES, "fixture spans several scan chunks");
+        assert!(reader.max_request <= MAX_WAL_BATCH_BYTES, "scan reads are bounded");
+        let mut tail = WalTail::new(&directory);
+        while let WalTailStep::Frames(_) = tail.poll_reader(&mut reader).expect("initial capture") {
+            tail.acknowledge(FollowerAck {
+                header: tail.header.expect("header"),
+                applied: tail.shipped,
+                chain: tail.chain,
+                committed_through: tail.last_commit.map(|(frame, _)| frame),
+                fdatasynced: true,
+            })
+            .expect("acknowledge prefix");
+        }
+        assert_eq!(tail.checkpoint().shipped, scanned.shipped);
+        assert_eq!(tail.checkpoint().chain, scanned.chain);
+        reader.read = 0;
+        assert_eq!(tail.poll_reader(&mut reader).expect("idle"), WalTailStep::UpToDate);
+        assert_eq!(reader.read, WAL_HEADER_BYTES);
+        let from = tail.shipped;
+        connection.execute("INSERT INTO data VALUES (zeroblob(32))", []).expect("new commit");
+        reader.bytes = std::io::Cursor::new(read_wal(&directory).expect("extended WAL"));
+        reader.read = 0;
+        let WalTailStep::Frames(batch) =
+            tail.poll_reader(&mut reader).expect("incremental capture")
+        else {
+            panic!("new committed batch");
+        };
+        assert_eq!(batch.from_frame, from);
+        assert_eq!(reader.read, WAL_HEADER_BYTES + batch.bytes.len());
+        assert!(batch.bytes.len() < 65536, "catchup does not retransmit the megabyte prefix");
+        drop(connection);
+        std::fs::remove_dir_all(directory).expect("cleanup");
     }
 }

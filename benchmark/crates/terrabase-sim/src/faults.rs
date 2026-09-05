@@ -262,6 +262,11 @@ impl FaultPlan {
     /// first six entries are one each of the six controls; later entries cycle
     /// through the controls. Random endpoints, starts, durations, and
     /// parameters still make each seed's trace distinct.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a generated index or bounded clock offset cannot be represented
+    /// on the target platform. Supported 32- and 64-bit targets fit these bounds.
     #[must_use]
     pub fn generate(rng: &mut SimRng, regions: &[RegionId], steps: u64, max_faults: usize) -> Self {
         let mut plan = Self { horizon: steps, faults: Vec::new() };
@@ -399,11 +404,16 @@ impl FaultPlan {
     }
 
     /// Encodes this plan as a deterministic versioned trace.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal fault count exceeds `u32::MAX`. Constructors
+    /// enforce the stricter [`MAX_FAULTS`] limit.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(17 * self.faults.len() + 17);
-        bytes.extend_from_slice(b"TBSF");
-        bytes.push(1);
+        bytes.extend_from_slice(&TRACE_MAGIC);
+        bytes.push(TRACE_VERSION);
         bytes.extend_from_slice(&self.horizon.to_le_bytes());
         bytes.extend_from_slice(
             &u32::try_from(self.faults.len()).expect("bounded fault count fits").to_le_bytes(),
@@ -449,13 +459,18 @@ impl FaultPlan {
     }
 
     /// Decodes a trace produced by [`Self::to_bytes`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a decode error for invalid framing, unsupported versions,
+    /// excessive fault counts, invalid intervals, or trailing bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, FaultPlanDecodeError> {
         let mut reader = TraceReader::new(bytes);
-        if reader.take(4)? != b"TBSF" {
+        if reader.take(4)? != TRACE_MAGIC {
             return Err(FaultPlanDecodeError::InvalidMagic);
         }
         let version = reader.u8()?;
-        if version != 1 {
+        if version != TRACE_VERSION {
             return Err(FaultPlanDecodeError::UnsupportedVersion(version));
         }
         let horizon = reader.u64()?;
@@ -518,6 +533,11 @@ impl FaultPlan {
     }
 
     /// Alias for [`Self::from_bytes`] useful to replay readers.
+    ///
+    /// # Errors
+    ///
+    /// Returns a decode error for invalid framing, unsupported versions,
+    /// excessive fault counts, invalid intervals, or trailing bytes.
     pub fn deserialize(bytes: &[u8]) -> Result<Self, FaultPlanDecodeError> {
         Self::from_bytes(bytes)
     }
@@ -529,6 +549,11 @@ impl FaultPlan {
     }
 
     /// Alias for [`Self::from_bytes`] used by simulation replay readers.
+    ///
+    /// # Errors
+    ///
+    /// Returns a decode error for invalid framing, unsupported versions,
+    /// excessive fault counts, invalid intervals, or trailing bytes.
     pub fn replay(bytes: &[u8]) -> Result<Self, FaultPlanDecodeError> {
         Self::from_bytes(bytes)
     }

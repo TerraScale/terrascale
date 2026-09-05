@@ -10,7 +10,10 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 mod codec;
+mod counter;
 mod register;
 
 pub use codec::{CanonicalValue, DecodeError, DecodeLimits, RegisterCodec};
 pub use register::{Candidate, CausalIdentity, LwwRegister, MvRegister};
+
+pub use counter::{CounterError, MAX_COUNTER_ACTORS, PnCounter};

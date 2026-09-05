@@ -226,9 +226,8 @@ fn typed_fields_merge_with_kernels_only_on_declared_collections() {
         declare(host, "regs", &[("reg", MergeFieldKind::MvRegister)]);
     }
 
-    // The counter: A writes the smaller value with the later clock (it
-    // replicates first, so B witnesses it and ticks past it — B's next
-    // write carries the higher HLC). The typed max must still keep 7.
+    // B observes A before writing: the successor must replace the counter
+    // and preserve its declared field metadata without fabricating a conflict.
     put_object(
         &member_a,
         "metrics",
@@ -298,7 +297,7 @@ fn typed_fields_merge_with_kernels_only_on_declared_collections() {
     assert_eq!(
         count_a.get("count"),
         Some(&DocumentValue::Integer(7)),
-        "pn-counter keeps the highest value against the HLC order"
+        "the causally newer counter replaces its predecessor"
     );
 
     let tags_a = live_fields(&member_a, "tags", "t1").expect("A serves the sets");
@@ -339,14 +338,10 @@ fn typed_fields_merge_with_kernels_only_on_declared_collections() {
     assert_eq!(kernels.len(), 1, "the declared counter stored one kernel");
     assert_eq!(kernels[0].field, "count");
 
-    let history = engine_a
-        .document_history_in_collection(&scope_a, &metrics, &counter_id, 10)
-        .expect("history reads");
-    assert!(
-        history.iter().any(|entry| entry.policy == "pn-counter-max"),
-        "the counter history names its policy: {:?}",
-        history.iter().map(|entry| &entry.policy).collect::<Vec<_>>()
-    );
+    let conflicts = engine_a
+        .merge_conflicts_for(&scope_a, &metrics, &counter_id, 10)
+        .expect("counter conflicts read");
+    assert!(conflicts.is_empty(), "causal succession is not a concurrent conflict");
 }
 
 /// History explanations are deterministic: both regions record the same
@@ -420,4 +415,83 @@ fn history_explanations_are_deterministic_across_regions() {
         .merge_conflicts_for(&scope_a, &collection, &id, 10)
         .expect("A serves conflicts again");
     assert_eq!(conflicts_a, again_a, "history explanations are stable");
+}
+
+#[test]
+fn one_source_transaction_replicates_every_document_and_replays_after_restart() {
+    let (_source_location, source) = member("batch-source");
+    let (destination_location, destination) = member("batch-destination");
+    let tenant = TenantId::try_new("tenant-a").expect("tenant");
+    let engine = source.engine();
+    let engine_scope = engine.scope_for(&tenant);
+    let snapshot = engine.read_snapshot(&engine_scope).expect("snapshot");
+    let mut transaction = engine
+        .begin(
+            &engine_scope,
+            snapshot,
+            OperationId::try_new("shared-source-commit").expect("operation"),
+        )
+        .expect("transaction");
+    for (collection, id, value) in
+        [("orders", "same", 1), ("orders", "other", 2), ("customers", "same", 3)]
+    {
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new(id).expect("id"),
+                    CollectionName::try_new(collection).expect("collection"),
+                    DocumentValue::Object(BTreeMap::from([(
+                        "value".to_owned(),
+                        DocumentValue::Integer(value),
+                    )])),
+                ),
+                EngineVersion::New,
+            )
+            .expect("stage");
+    }
+    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    let mut cursor = None;
+    assert_eq!(
+        replicate_once(source.engine_host(), destination.engine_host(), &scope(), &mut cursor)
+            .expect("replicate batch"),
+        3
+    );
+    for (collection, id, value) in
+        [("orders", "same", 1), ("orders", "other", 2), ("customers", "same", 3)]
+    {
+        assert_eq!(
+            live_fields(&destination, collection, id).expect("replicated document").get("value"),
+            Some(&DocumentValue::Integer(value))
+        );
+    }
+    let sequence = destination.engine().published_sequence().expect("destination sequence");
+    drop(destination);
+    let destination = MemberHost::open(
+        destination_location.path(),
+        7,
+        "tenant-a",
+        "project-a",
+        "database-a",
+        MemberHostOptions::tb1a(),
+    )
+    .expect("reopen destination");
+    destination.bind_channel(&ChannelBindRequest { scope: scope() }).expect("bind");
+    let mut replay = None;
+    assert_eq!(
+        replicate_once(source.engine_host(), destination.engine_host(), &scope(), &mut replay)
+            .expect("replay batch"),
+        0
+    );
+    assert_eq!(destination.engine().published_sequence().expect("unchanged sequence"), sequence);
+    let history = destination
+        .engine()
+        .document_history_in_collection(
+            &destination.engine().scope_for(&tenant),
+            &CollectionName::try_new("orders").expect("collection"),
+            &DocumentId::try_new("other").expect("id"),
+            10,
+        )
+        .expect("source history");
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].commit_ulid, "shared-source-commit");
 }

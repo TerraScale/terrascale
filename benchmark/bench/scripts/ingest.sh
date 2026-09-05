@@ -30,7 +30,7 @@ case "$TOPOLOGY" in
 esac
 
 # These are hard admission checks, not defaults.  In particular, an old
-# 8cpu/8GiB lane must not accidentally publish a production-looking result.
+# A legacy oversized lane must not accidentally publish a production-looking result.
 if [[ "${TERRABASE_BENCH_INGEST_MEMBER_OCPU:-}" != "2" ]]; then
   echo "ingest: TERRABASE_BENCH_INGEST_MEMBER_OCPU=2 is required" >&2
   exit 2

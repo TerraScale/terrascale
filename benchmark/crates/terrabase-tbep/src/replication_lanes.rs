@@ -162,6 +162,7 @@ pub struct RegionLink {
     /// Equal sequence values are valid because one commit may contain more
     /// than one write; a jump is held until the missing sequence arrives.
     received_origin_sequences: BTreeMap<String, u64>,
+    received_scope: Option<BoundScope>,
     next_message_id: u64,
 }
 
@@ -181,6 +182,7 @@ impl RegionLink {
             retired_message_ids: BTreeSet::new(),
             pending_frames: VecDeque::new(),
             received_origin_sequences: BTreeMap::new(),
+            received_scope: None,
             next_message_id: 1,
         })
     }
@@ -214,6 +216,7 @@ impl RegionLink {
         self.retired_message_ids.clear();
         self.pending_frames.clear();
         self.received_origin_sequences.clear();
+        self.received_scope = None;
     }
 
     /// The frames this link currently holds in flight.
@@ -336,19 +339,30 @@ impl RegionLink {
         scope: &BoundScope,
         lane: &mut dyn MemberTransport,
     ) -> Result<usize, HostingError> {
+        let engine_scope = host.engine_scope_of(scope)?;
+        if self.received_scope.as_ref().is_some_and(|previous| previous != scope) {
+            return Err(HostingError::Refused("the receive link is bound to another scope".into()));
+        }
+        if self.received_scope.is_none() {
+            self.received_origin_sequences =
+                host.engine().durable_origin_prefixes(&engine_scope).map_err(|error| {
+                    HostingError::EngineFailure(format!(
+                        "the receive frontier could not be recovered: {error:?}"
+                    ))
+                })?;
+            self.received_scope = Some(scope.clone());
+        }
         // Include frames held from a previous pass before newly delivered
         // frames.  A scan may still bypass a blocked frame so an earlier
         // sequence that arrived later can unblock the queue.
-        let mut frames = self.pending_frames.drain(..).collect::<VecDeque<_>>();
+        let mut frames = std::mem::take(&mut self.pending_frames);
         frames.extend(lane.receive(&self.local, FrameSelector::Deliveries));
         let mut applied = 0;
         let mut deferred = VecDeque::new();
         let mut made_progress = true;
         while made_progress && !frames.is_empty() {
             made_progress = false;
-            let pass = frames.len();
-            for _ in 0..pass {
-                let frame = frames.pop_front().expect("the pass length came from the queue");
+            while let Some(frame) = frames.pop_front() {
                 match self.receive_frame(host, scope, lane, frame)? {
                     ReceiveFrame::Applied(count) => {
                         applied += count;
@@ -639,7 +653,10 @@ fn pull_origin_page(
                 hlc: provenance.hlc(),
                 origin: provenance.origin().to_owned(),
                 origin_sequence: provenance.origin_sequence(),
-                context: Vec::new(),
+                // The transport carries the durable frontier opaquely. Keep
+                // its canonical bytes unchanged until the receiving engine
+                // validates and joins them.
+                context: provenance.context().to_vec(),
             },
         ));
     }
@@ -724,6 +741,7 @@ fn replicated_write(record: &ReplicatedRecord) -> Result<ReplicatedWrite, Hostin
         hlc: record.hlc,
         origin: record.origin.clone(),
         origin_sequence: record.origin_sequence,
+        context: record.context.clone(),
     })
 }
 
@@ -743,7 +761,7 @@ fn replicated_record(write: &ReplicatedWrite) -> Result<ReplicatedRecord, Hostin
         hlc: write.hlc,
         origin: write.origin.clone(),
         origin_sequence: write.origin_sequence,
-        context: Vec::new(),
+        context: write.context.clone(),
     })
 }
 

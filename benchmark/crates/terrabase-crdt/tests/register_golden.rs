@@ -103,7 +103,7 @@ fn golden_lww_bytes_are_stable() {
         canonical,
         "010104010101010101010101010101010101010101010001010101010101010101010101010101010101010000070004026f6b"
     );
-    assert_eq!(hash, "866263f04a78d00f2577cf83c3483dfca0b2ccf24a27b11f1e5e8b7d176602ce");
+    assert_eq!(hash, "84fe76549934b639fe28f63aba81c11db518d85259c8e4ff81729ac01c8a6212");
     let vector = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/vectors/registers/lww-string.json"
@@ -126,7 +126,7 @@ fn golden_mv_bytes_are_stable() {
         canonical,
         "01020402020202020202020202020202020202020101000303030303030303030303030303030301010002010202020202020202020202020202020201010000080004056f746865720003030303030303030303030303030303010100000900"
     );
-    assert_eq!(hash, "38b09207ca08f5346519558cd5abe9cbd79258427af001661caa3bc8d0e5e9f8");
+    assert_eq!(hash, "151c7053c918c731b3087964be25898b9e8deeb376f9c50d186d8878a139006e");
     let vector = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/vectors/registers/mv-string-remove.json"

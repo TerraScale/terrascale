@@ -83,8 +83,10 @@ fn schema_violations(
                     !matches!(
                         (kind, value),
                         (SchemaFieldType::Boolean, DocumentValue::Boolean(_))
-                            | (SchemaFieldType::Integer, DocumentValue::Integer(_))
-                            | (SchemaFieldType::Number, DocumentValue::Integer(_))
+                            | (
+                                SchemaFieldType::Integer | SchemaFieldType::Number,
+                                DocumentValue::Integer(_)
+                            )
                             | (SchemaFieldType::Number, DocumentValue::Number(_))
                             | (SchemaFieldType::Text, DocumentValue::String(_))
                             | (SchemaFieldType::Object, DocumentValue::Object(_))
@@ -92,7 +94,7 @@ fn schema_violations(
                     )
                 }) =>
             {
-                result.push((field.to_owned(), ViolationKind::TypeMismatch))
+                result.push((field.to_owned(), ViolationKind::TypeMismatch));
             }
             SchemaRule::EnumValues { values, .. } => {
                 if let Some(value) = present
@@ -108,8 +110,15 @@ fn schema_violations(
                             || max.is_some_and(|bound| *number > bound)
                     }
                     Some(DocumentValue::Number(number)) => {
-                        min.is_some_and(|bound| *number < bound as f64)
-                            || max.is_some_and(|bound| *number > bound as f64)
+                        !number.is_finite()
+                            || min.is_some_and(|bound| {
+                                compare_number_to_integer(*number, bound)
+                                    == Some(std::cmp::Ordering::Less)
+                            })
+                            || max.is_some_and(|bound| {
+                                compare_number_to_integer(*number, bound)
+                                    == Some(std::cmp::Ordering::Greater)
+                            })
                     }
                     _ => false,
                 };
@@ -514,15 +523,9 @@ impl TbepHost for EngineHost {
                 EngineUsageRecordMeter::StorageByteSeconds
             }
             #[allow(deprecated)]
-            crate::registry::UsageRecordMeter::AdmittedRequestUnits => {
-                return Err(HostingError::Invalid("the usage meter is not billable".into()));
-            }
-            #[allow(deprecated)]
-            crate::registry::UsageRecordMeter::PublicEgressBytes => {
-                return Err(HostingError::Invalid("the usage meter is not billable".into()));
-            }
-            #[allow(deprecated)]
-            crate::registry::UsageRecordMeter::ActiveRegionSeats
+            crate::registry::UsageRecordMeter::AdmittedRequestUnits
+            | crate::registry::UsageRecordMeter::PublicEgressBytes
+            | crate::registry::UsageRecordMeter::ActiveRegionSeats
             | crate::registry::UsageRecordMeter::BackupByteHours
             | crate::registry::UsageRecordMeter::RestoreWork => {
                 return Err(HostingError::Invalid("the usage meter is not billable".into()));
@@ -929,6 +932,86 @@ impl EngineHost {
                 ));
             }
             after = last_sequence;
+        }
+    }
+}
+
+// Compare without rounding an integer bound to f64. The cast truncates only
+// after the range checks prove that the finite value fits in i64.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "range checked truncation is used with the fractional remainder"
+)]
+fn compare_number_to_integer(number: f64, bound: i64) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    const I64_UPPER_EXCLUSIVE: f64 = 9_223_372_036_854_775_808.0;
+    if number.is_nan() {
+        return None;
+    }
+    if number >= I64_UPPER_EXCLUSIVE {
+        return Some(Ordering::Greater);
+    }
+    if number < -I64_UPPER_EXCLUSIVE {
+        return Some(Ordering::Less);
+    }
+    match (number as i64).cmp(&bound) {
+        Ordering::Equal => number.fract().partial_cmp(&0.0),
+        ordering => Some(ordering),
+    }
+}
+
+#[cfg(test)]
+mod numeric_bound_tests {
+    use super::compare_number_to_integer;
+    use std::cmp::Ordering::{Equal, Greater, Less};
+
+    #[test]
+    fn floating_point_bounds_preserve_integer_precision() {
+        for (number, bound, expected) in [
+            (9_007_199_254_740_992.0, 9_007_199_254_740_993, Less),
+            (-9_007_199_254_740_992.0, -9_007_199_254_740_993, Greater),
+            (9_223_372_036_854_775_808.0, i64::MAX, Greater),
+            (-9_223_372_036_854_775_808.0, i64::MIN, Equal),
+            (-9_223_372_036_854_775_808.0, i64::MIN + 1, Less),
+            (0.5, 0, Greater),
+            (-0.5, 0, Less),
+            (-0.0, 0, Equal),
+            (42.0, 42, Equal),
+        ] {
+            assert_eq!(
+                compare_number_to_integer(number, bound),
+                Some(expected),
+                "{number:?}, {bound}"
+            );
+        }
+        assert_eq!(compare_number_to_integer(f64::NAN, 0), None);
+    }
+
+    #[test]
+    fn schema_range_rejects_rounded_bounds_and_nonfinite_values() {
+        use terrabase::families::{SchemaDefinition, SchemaRule, SchemaVersion, ViolationKind};
+        use terrabase::types::DocumentValue;
+
+        let schema = SchemaDefinition::try_new(
+            SchemaVersion::try_new(1).unwrap(),
+            vec![SchemaRule::NumberRange {
+                field: "amount".into(),
+                min: Some(9_007_199_254_740_993),
+                max: Some(i64::MAX),
+            }],
+        )
+        .unwrap();
+        for number in
+            [9_007_199_254_740_992.0, 9_223_372_036_854_775_808.0, f64::NAN, f64::INFINITY]
+        {
+            let value = DocumentValue::Object(std::collections::BTreeMap::from([(
+                "amount".into(),
+                DocumentValue::Number(number),
+            )]));
+            assert_eq!(
+                super::schema_violations(&schema, &value),
+                vec![("amount".into(), ViolationKind::NumberOutOfRange),]
+            );
         }
     }
 }

@@ -322,12 +322,12 @@ fn reject_symlink_components(root: &Path, components: &[&str]) -> Result<(), Cat
     let mut current = root.to_path_buf();
     for component in components {
         current.push(component);
-        if let Ok(metadata) = std::fs::symlink_metadata(&current) {
-            if metadata.file_type().is_symlink() {
-                return Err(CatalogError::OpenFailed(
-                    "the database placement contains a symlink".into(),
-                ));
-            }
+        if let Ok(metadata) = std::fs::symlink_metadata(&current)
+            && metadata.file_type().is_symlink()
+        {
+            return Err(CatalogError::OpenFailed(
+                "the database placement contains a symlink".into(),
+            ));
         }
     }
     Ok(())

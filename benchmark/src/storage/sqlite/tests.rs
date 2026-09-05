@@ -26,6 +26,46 @@ use crate::types::{
 
 use super::SqliteStorage;
 
+#[test]
+fn fts_key_migration_preserves_rows_and_transactional_deletes() {
+    let mut connection = Connection::open_in_memory().expect("database");
+    connection.execute_batch(super::SCHEMA).expect("legacy schema");
+    connection
+        .execute_batch(
+            "INSERT INTO fts_docs (rowid, tenant, collection, field, doc_id, text)
+             VALUES (42, 'a', 'docs', 'body', 'same', 'needle'),
+                    (99, 'b', 'docs', 'body', 'same', 'needle');",
+        )
+        .expect("legacy search rows");
+    super::migrate_fts_keys(&mut connection).expect("migrate");
+    super::migrate_fts_keys(&mut connection).expect("idempotent reopen");
+    let row_id: i64 = connection
+        .query_row("SELECT row_id FROM fts_keys WHERE tenant = 'a'", [], |row| row.get(0))
+        .expect("preserved key");
+    assert_eq!(row_id, 42);
+    {
+        let transaction = connection.transaction().expect("transaction");
+        transaction.execute("DELETE FROM fts_keys WHERE tenant = 'a'", []).expect("delete");
+        super::insert_fts_row(&transaction, "a", "docs", "body", "same", "replacement")
+            .expect("replace");
+        transaction.rollback().expect("rollback");
+    }
+    let count = |connection: &Connection| -> i64 {
+        connection
+            .query_row("SELECT count(*) FROM fts_docs WHERE fts_docs MATCH 'needle'", [], |row| {
+                row.get(0)
+            })
+            .expect("search")
+    };
+    assert_eq!(count(&connection), 2, "rollback restores both terms and keys");
+    connection.execute("DELETE FROM fts_keys WHERE tenant = 'a'", []).expect("delete");
+    assert_eq!(count(&connection), 1, "delete is tenant scoped");
+    let row_id: i64 = connection
+        .query_row("SELECT rowid FROM fts_docs", [], |row| row.get(0))
+        .expect("other tenant survives");
+    assert_eq!(row_id, 99);
+}
+
 fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -43,6 +83,43 @@ fn open_sqlite_engine(tag: &str) -> (PathBuf, Engine) {
 /// Reopens a `SQLite` location.
 fn reopen_sqlite_engine(dir: &PathBuf) -> Engine {
     Engine::open(EngineConfig::durable(dir).expect("durable location")).expect("engine reopens")
+}
+
+#[test]
+fn identifier_lookup_index_is_installed_on_existing_databases() {
+    let (dir, engine) = open_sqlite_engine("identifier-index");
+    drop(engine);
+    let path = dir.join("terrabase.sqlite3");
+    let connection = Connection::open(&path).expect("database");
+    connection.execute_batch("DROP INDEX documents_id").expect("simulate old schema");
+    drop(connection);
+
+    let engine = reopen_sqlite_engine(&dir);
+    let connection = Connection::open(&path).expect("database");
+    let mut statement = connection
+        .prepare(
+            "EXPLAIN QUERY PLAN
+             SELECT collection, deleted, expires_at, body, MAX(commit_seq)
+                 FROM documents INDEXED BY documents_id
+             WHERE tenant = ?1 AND id = ?2 AND commit_seq <= ?3
+             GROUP BY collection ORDER BY collection LIMIT 1",
+        )
+        .expect("lookup plan");
+    let details = statement
+        .query_map(rusqlite::params!["tenant-a", "absent-schema", 100], |row| {
+            row.get::<_, String>(3)
+        })
+        .expect("explain")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("plan rows");
+    assert!(
+        details.iter().any(|detail| detail.contains("tenant=? AND id=?")),
+        "identifier lookups must constrain both tenant and id: {details:?}"
+    );
+    drop(statement);
+    drop(connection);
+    drop(engine);
+    std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
 fn tenant_scope(engine: &Engine, tenant_name: &str) -> TenantScope {
@@ -679,7 +756,7 @@ fn row_model_pragmas_and_idle_hook_are_explicit() {
     let synchronous: i64 = connection
         .query_row("PRAGMA synchronous", [], |row| row.get(0))
         .expect("synchronous pragma");
-    assert_eq!(synchronous, 1, "RF=2 files use synchronous NORMAL");
+    assert_eq!(synchronous, 2, "direct durable mutations require FULL");
     drop(connection);
     assert!(!storage.close_idle(Duration::from_mins(1)), "a newly opened file is not idle");
     std::thread::sleep(Duration::from_millis(2));
@@ -715,6 +792,8 @@ fn intent(operation: &str, writes: Vec<StagedWrite>, durability: LocalDurability
         snapshot_sequence: StorageSequence::new(0),
         durability,
         usage_admission: None,
+        merge_conflict: None,
+        replication_fingerprint: None,
         hlc: 0,
         writes,
     }
@@ -1277,6 +1356,8 @@ fn commit_as(
         snapshot_sequence: storage.published_state().0,
         durability: LocalDurability::Written,
         usage_admission: None,
+        merge_conflict: None,
+        replication_fingerprint: None,
         hlc: 0,
         writes,
     };
@@ -1641,7 +1722,117 @@ fn filtered_scan_resolves_the_newest_version_and_hides_tombstones() {
         Some(0),
         "a deleted key never surfaces"
     );
+    let shipped = equals("status", DocumentValue::String("shipped".into()));
+    assert_eq!(filtered(&storage, seq_two, &shipped).unwrap().len(), 1);
+    assert!(filtered(&storage, seq_three, &shipped).unwrap().is_empty());
+    let seq_four = commit_object(
+        &mut storage,
+        &tenant,
+        "op-4",
+        object_document("doc", "users", &[("status", DocumentValue::String("paid".into()))]),
+    );
+    assert_eq!(filtered(&storage, seq_four, &paid).unwrap().len(), 1);
+    assert!(filtered(&storage, seq_three, &paid).unwrap().is_empty());
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn filtered_query_allows_a_candidate_index_seek_without_changing_snapshot_answers() {
+    use super::{filtered_page_sql, quote_identifier, text_column};
+    let (dir, mut storage) = sqlite_store("filtered-index-seek");
+    let users = scan_users();
+    let tenant = scan_tenant();
+    storage.register_index_descriptor(&users, "status").unwrap();
+    let mut sequence = 0;
+    for (operation, id, status) in [
+        ("a1", "a", "paid"),
+        ("b1", "b", "paid"),
+        ("a2", "a", "shipped"),
+        ("c1", "c", "paid"),
+        ("c2", "c", "paid"),
+    ] {
+        sequence = commit_object(
+            &mut storage,
+            &tenant,
+            operation,
+            object_document(id, "users", &[("status", DocumentValue::String(status.into()))]),
+        );
+    }
+    let sql = filtered_page_sql(&[format!("{} = ?", quote_identifier(&text_column("status")))]);
+    // A shadow execution must be able to force this candidate. This is a
+    // read-only planner hint, not a serving-plan activation.
+    let candidate = sql.replace(
+        "FROM documents AS current",
+        "FROM documents AS current INDEXED BY \"i:status#t\"",
+    );
+    let connection = storage.writer.lock().unwrap();
+    let sql_sequence = i64::try_from(sequence).unwrap();
+    let parameters =
+        rusqlite::params![tenant.as_str(), users.as_str(), sql_sequence, "", "paid", 1];
+    let details = connection
+        .prepare(&format!("EXPLAIN QUERY PLAN {candidate}"))
+        .unwrap()
+        .query_map(parameters, |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        details.iter().any(|detail| detail.contains("SEARCH current USING INDEX i:status#t")),
+        "candidate must seek rather than scan: {details:?}"
+    );
+    for after in ["", "b", "c"] {
+        let parameters =
+            rusqlite::params![tenant.as_str(), users.as_str(), sql_sequence, after, "paid", 1];
+        let read = |query: &str| {
+            connection
+                .prepare(query)
+                .unwrap()
+                .query_map(parameters, |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(read(&sql), read(&candidate));
+    }
+    drop(connection);
+    let filter = equals("status", DocumentValue::String("paid".into()));
+    let request = crate::storage::ShadowReadRequest {
+        collection: &users,
+        filter: &filter,
+        candidate_field: "status",
+        hidden_candidate: None,
+        after: None,
+        limit: 1000,
+        max_vm_steps: crate::storage::MAX_SHADOW_VM_STEPS,
+    };
+    let comparison =
+        storage.shadow_filtered_page(StorageSequence::new(sequence), &tenant, &request).unwrap();
+    assert_eq!(comparison.ordinary.rows, 2);
+    assert_eq!(comparison.ordinary.result_digest, comparison.candidate.result_digest);
+    assert!(comparison.ordinary.vm_steps > 0 && comparison.candidate.vm_steps > 0);
+    let foreign = TenantId::try_new("foreign").unwrap();
+    assert_eq!(
+        storage
+            .shadow_filtered_page(StorageSequence::new(sequence), &foreign, &request)
+            .unwrap()
+            .ordinary
+            .rows,
+        0
+    );
+    let over_budget = crate::storage::ShadowReadRequest { max_vm_steps: 1, ..request };
+    assert_eq!(
+        storage.shadow_filtered_page(StorageSequence::new(sequence), &tenant, &over_budget),
+        Err(crate::storage::ShadowReadError::BudgetExceeded)
+    );
+    let documents =
+        filtered(&storage, sequence, &equals("status", DocumentValue::String("paid".into())))
+            .unwrap();
+    assert_eq!(
+        documents.iter().map(|document| document.id().as_str()).collect::<Vec<_>>(),
+        ["b", "c"]
+    );
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -1848,4 +2039,1026 @@ fn governed_backfill_completes_a_building_descriptor_without_stranding_a_sequenc
         "every same-sequence row backfilled: no strand, no miss"
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn origin_progress_survives_pruning_and_reopen_atomically() {
+    let (dir, mut storage) = sqlite_store("origin-prefix-pruning");
+    for index in 1..=3 {
+        commit(
+            &mut storage,
+            &format!("prefix-{index}"),
+            vec![put(
+                document("doc", "users", &format!("v{index}")),
+                if index == 1 { ExpectedVersion::New } else { ExpectedVersion::Exact(index - 1) },
+            )],
+        );
+    }
+    backdate_all_rows(&storage);
+    storage.advance_consumer_frontier("replication", 3).unwrap();
+    {
+        let writer = storage.raw_writer_connection();
+        writer
+            .execute_batch(
+                "CREATE TRIGGER refuse_pruning BEFORE DELETE ON documents BEGIN
+             SELECT RAISE(ABORT, 'injected pruning failure'); END;",
+            )
+            .unwrap();
+    }
+    assert!(storage.prune_below_consumer_frontiers().is_err());
+    {
+        let writer = storage.raw_writer_connection();
+        let saved: i64 =
+            writer.query_row("SELECT COUNT(*) FROM origin_prefixes", [], |row| row.get(0)).unwrap();
+        assert_eq!(saved, 0, "failed pruning rolls back its frontier checkpoint");
+        writer.execute_batch("DROP TRIGGER refuse_pruning").unwrap();
+    }
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 2);
+    assert_eq!(storage.journal_records(), 1);
+    let before = storage.durable_origin_prefixes(&tenant()).unwrap();
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].origin_sequence, 3);
+    drop(storage);
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    let restored = storage.durable_origin_prefixes(&tenant()).unwrap();
+    assert_eq!(restored[0].origin_sequence, 3);
+    commit(
+        &mut storage,
+        "prefix-4",
+        vec![put(document("doc", "users", "v4"), ExpectedVersion::Exact(3))],
+    );
+    assert_eq!(storage.durable_origin_prefixes(&tenant()).unwrap()[0].origin_sequence, 4);
+    backdate_all_rows(&storage);
+    storage.advance_consumer_frontier("replication", 4).unwrap();
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 1);
+    drop(storage);
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    assert_eq!(storage.durable_origin_prefixes(&tenant()).unwrap()[0].origin_sequence, 4);
+    {
+        let writer = storage.raw_writer_connection();
+        writer
+            .execute("INSERT INTO collection_history (collection, days) VALUES ('users', 1)", [])
+            .unwrap();
+    }
+    storage.advance_consumer_frontier("replication", 5).unwrap();
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 1);
+    assert_eq!(storage.journal_records(), 0);
+    drop(storage);
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    commit(
+        &mut storage,
+        "prefix-after-empty-history",
+        vec![put(document("fresh", "users", "v5"), ExpectedVersion::New)],
+    );
+    assert_eq!(storage.durable_origin_prefixes(&tenant()).unwrap()[0].origin_sequence, 5);
+}
+
+#[test]
+fn pruning_preserves_a_gap_instead_of_promoting_the_maximum_sequence() {
+    let (dir, mut storage) = sqlite_store("origin-prefix-gap-pruning");
+    for index in 1..=3 {
+        commit(
+            &mut storage,
+            &format!("gap-{index}"),
+            vec![put(
+                document("doc", "users", &format!("v{index}")),
+                if index == 1 { ExpectedVersion::New } else { ExpectedVersion::Exact(index - 1) },
+            )],
+        );
+    }
+    {
+        let writer = storage.raw_writer_connection();
+        writer
+            .execute("UPDATE documents SET origin_seq = origin_seq + 1 WHERE origin_seq >= 2", [])
+            .unwrap();
+    }
+    backdate_all_rows(&storage);
+    storage.advance_consumer_frontier("replication", 3).unwrap();
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 2);
+    drop(storage);
+    let storage = SqliteStorage::open(&dir).unwrap();
+    assert_eq!(storage.durable_origin_prefixes(&tenant()).unwrap()[0].origin_sequence, 1);
+}
+
+#[test]
+fn json_storage_preserves_finite_float_variants_and_bits() {
+    for number in
+        [0.0_f64, -0.0, 42.0, -42.0, 0.125, f64::MIN_POSITIVE, f64::MAX, 9_007_199_254_740_992.0]
+    {
+        let original = Document::new(
+            DocumentId::try_new("number").unwrap(),
+            CollectionName::try_new("numbers").unwrap(),
+            DocumentValue::Number(number),
+        );
+        let bytes = super::encode_document_body(&original);
+        let restored = super::decode_document_body(&bytes).expect("stored JSON decodes");
+        let DocumentValue::Number(actual) = restored.value() else {
+            panic!("floating-point {number:?} changed its numeric variant");
+        };
+        assert_eq!(actual.to_bits(), number.to_bits());
+    }
+    let integer = Document::new(
+        DocumentId::try_new("integer").unwrap(),
+        CollectionName::try_new("numbers").unwrap(),
+        DocumentValue::Integer(42),
+    );
+    let restored = super::decode_document_body(&super::encode_document_body(&integer)).unwrap();
+    assert_eq!(restored.value(), &DocumentValue::Integer(42));
+}
+
+#[test]
+fn origin_prefix_preserves_unsigned_hlc_through_pruning() {
+    let (dir, mut storage) = sqlite_store("prefix-unsigned-hlc");
+    for index in 1..=3 {
+        commit(
+            &mut storage,
+            &format!("clock-{index}"),
+            vec![put(
+                document("doc", "users", &format!("v{index}")),
+                if index == 1 { ExpectedVersion::New } else { ExpectedVersion::Exact(index - 1) },
+            )],
+        );
+    }
+    {
+        let writer = storage.raw_writer_connection();
+        writer.execute("UPDATE documents SET hlc = CASE origin_seq WHEN 1 THEN 100 WHEN 2 THEN -1 ELSE -9223372036854775808 END", []).unwrap();
+    }
+    assert_eq!(storage.durable_origin_prefixes(&tenant()).unwrap()[0].hlc, u64::MAX);
+    backdate_all_rows(&storage);
+    storage.advance_consumer_frontier("replication", 3).unwrap();
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 2);
+    drop(storage);
+    let storage = SqliteStorage::open(&dir).unwrap();
+    let prefix = storage.durable_origin_prefixes(&tenant()).unwrap();
+    assert_eq!(prefix[0].origin_sequence, 3);
+    assert_eq!(prefix[0].hlc, u64::MAX);
+    storage.prune_below_consumer_frontiers().unwrap();
+    assert_eq!(storage.durable_origin_prefixes(&tenant()).unwrap()[0].hlc, u64::MAX);
+}
+
+#[test]
+fn merge_metadata_commits_rolls_back_and_reopens_with_its_document() {
+    let (dir, engine) = open_sqlite_engine("merge-metadata-atomicity");
+    let collection = CollectionName::try_new("users").expect("collection");
+    let id = DocumentId::try_new("typed").expect("id");
+    let schema = crate::storage::MergeSchema::try_new(std::collections::BTreeMap::from([(
+        "count".to_owned(),
+        crate::storage::MergeFieldKind::PnCounter,
+    )]))
+    .expect("schema");
+    engine
+        .declare_merge_schema(&tenant_scope(&engine, "tenant-a"), &collection, &schema)
+        .expect("declare");
+    let write = |engine: &Engine, name: &str, body: DocumentValue| {
+        let scope = tenant_scope(engine, "tenant-a");
+        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+        let mut transaction = engine.begin(&scope, snapshot, operation(name)).expect("transaction");
+        transaction
+            .put(Document::new(id.clone(), collection.clone(), body), ExpectedVersion::Any)
+            .expect("put");
+        transaction.commit(LocalDurability::Synced)
+    };
+    let body = DocumentValue::Object(std::collections::BTreeMap::from([
+        ("count".to_owned(), DocumentValue::Integer(7)),
+        ("plain".to_owned(), DocumentValue::Integer(9)),
+    ]));
+    committed_sequence(write(&engine, "initial", body.clone()));
+    let kernels = engine
+        .merge_kernels_for(&tenant_scope(&engine, "tenant-a"), &collection, &id)
+        .expect("kernels");
+    assert_eq!(kernels.len(), 1, "only the declared field stores merge metadata");
+    assert_eq!(kernels[0].field, "count");
+    engine.arm_storage_fault(FaultPoint::WalAppend);
+    assert!(matches!(
+        write(&engine, "faulted", DocumentValue::String("replace".into())),
+        CommitOutcome::Rejected(CommitError::StorageFailure)
+    ));
+    engine.shutdown().expect("shutdown");
+    let engine = Engine::open(EngineConfig::durable(&dir).expect("config")).expect("reopen");
+    let scope = tenant_scope(&engine, "tenant-a");
+    assert_eq!(
+        engine.merge_kernels_for(&scope, &collection, &id).expect("reopened kernels"),
+        kernels
+    );
+    assert_eq!(read_document(&engine, "tenant-a", "typed").expect("document").value(), &body);
+    committed_sequence(write(&engine, "replace", DocumentValue::String("scalar".into())));
+    assert!(
+        engine.merge_kernels_for(&scope, &collection, &id).expect("cleared kernels").is_empty()
+    );
+    committed_sequence(write(&engine, "restore-field", body));
+    assert_eq!(
+        engine.merge_kernels_for(&scope, &collection, &id).expect("restored kernels").len(),
+        1
+    );
+    committed_sequence(commit_delete(
+        &engine,
+        "tenant-a",
+        "delete",
+        "typed",
+        ExpectedVersion::Any,
+        LocalDurability::Synced,
+    ));
+    assert!(
+        engine.merge_kernels_for(&scope, &collection, &id).expect("deleted kernels").is_empty()
+    );
+    engine.shutdown().expect("close");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn waves_preserve_full_baseline_for_direct_durable_mutations() {
+    let (dir, mut storage) = sqlite_store("synced-wave-pragma");
+    storage
+        .raw_writer_connection()
+        .execute_batch(
+            "CREATE TEMP TABLE observed_sync (level INTEGER);
+         CREATE TEMP TRIGGER observe_document_sync AFTER INSERT ON main.documents BEGIN
+           INSERT INTO observed_sync SELECT synchronous FROM pragma_synchronous;
+         END;",
+        )
+        .unwrap();
+    for (index, durability, expected) in [
+        (1, LocalDurability::Written, 1),
+        (2, LocalDurability::Synced, 2),
+        (3, LocalDurability::Buffered, 1),
+    ] {
+        storage.raw_writer_connection().execute("DELETE FROM observed_sync", []).unwrap();
+        let intent = fresh_intent(
+            &mut storage,
+            &format!("sync-{index}"),
+            vec![put(document(&format!("doc-{index}"), "docs", "value"), ExpectedVersion::New)],
+            durability,
+        );
+        assert!(matches!(storage.commit(intent), CommitResult::Committed(_)));
+        let writer = storage.raw_writer_connection();
+        let observed: Vec<i64> = writer
+            .prepare("SELECT DISTINCT level FROM observed_sync")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(observed, vec![expected], "durability must hold during the write transaction");
+        assert_eq!(
+            writer.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0)).unwrap(),
+            2
+        );
+    }
+    storage.raw_writer_connection().execute("DELETE FROM observed_sync", []).unwrap();
+    let mixed = [LocalDurability::Written, LocalDurability::Synced]
+        .into_iter()
+        .enumerate()
+        .map(|(index, durability)| {
+            fresh_intent(
+                &mut storage,
+                &format!("mixed-{index}"),
+                vec![put(
+                    document(&format!("mixed-{index}"), "docs", "value"),
+                    ExpectedVersion::New,
+                )],
+                durability,
+            )
+        })
+        .collect();
+    assert!(
+        storage
+            .commit_batch(mixed, false)
+            .iter()
+            .all(|result| matches!(result, CommitResult::Committed(_)))
+    );
+    let levels: Vec<i64> = storage
+        .raw_writer_connection()
+        .prepare("SELECT level FROM observed_sync")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(levels, vec![2, 2], "a mixed wave must honor its strongest durability request");
+    storage.arm_test_fault(FaultPoint::WalAppend);
+    let intent = fresh_intent(
+        &mut storage,
+        "failed-written",
+        vec![put(document("failed", "docs", "value"), ExpectedVersion::New)],
+        LocalDurability::Written,
+    );
+    assert!(matches!(storage.commit(intent), CommitResult::Rejected(_)));
+    assert_eq!(
+        storage
+            .raw_writer_connection()
+            .query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn losing_replication_decisions_commit_with_full_sync() {
+    let (dir, mut storage) = sqlite_store("superseded-sync");
+    storage.raw_writer_connection().execute_batch(
+        "CREATE TEMP TABLE observed_sync (level INTEGER);
+         CREATE TEMP TRIGGER observe_superseded_sync AFTER INSERT ON main.replication_superseded BEGIN
+           INSERT INTO observed_sync SELECT synchronous FROM pragma_synchronous;
+         END;"
+    ).unwrap();
+    let intent = || crate::storage::SupersededReplication {
+        tenant: tenant(),
+        operation: OperationId::try_new("loser").unwrap(),
+        fingerprint: [7; 32],
+        snapshot_sequence: StorageSequence::new(0),
+        collection: CollectionName::try_new("docs").unwrap(),
+        id: DocumentId::try_new("doc").unwrap(),
+        conflict: None,
+    };
+    assert!(!storage.record_superseded_replication(intent()).unwrap());
+    assert!(storage.record_superseded_replication(intent()).unwrap());
+    let levels: Vec<i64> = storage
+        .raw_writer_connection()
+        .prepare("SELECT level FROM observed_sync")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(levels, vec![2], "only the first durable decision writes, under FULL");
+    drop(storage);
+    let reopened = SqliteStorage::open(&dir).unwrap();
+    assert!(
+        reopened
+            .replication_was_superseded(&tenant(), &OperationId::try_new("loser").unwrap())
+            .unwrap()
+    );
+    drop(reopened);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn checkpoint_notifications_coalesce_without_blocking_commits() {
+    let (dir, mut storage) = sqlite_store("checkpoint-notifications");
+    let gate = Arc::clone(&storage.checkpoint_gate);
+    let held = gate.lock().unwrap();
+    let mut coalesced = 0;
+    for _ in 0..1000 {
+        match storage.checkpointer.wake.try_send(()) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::TrySendError::Full(())) => coalesced += 1,
+            Err(std::sync::mpsc::TrySendError::Disconnected(())) => panic!("checkpointer stopped"),
+        }
+    }
+    assert!(coalesced >= 998, "at most one wake is executing and one is queued");
+    // The checkpoint worker cannot acquire its gate until this test lets go.
+    // The committer must still finish while its notification slot is full.
+    assert!(matches!(
+        commit(
+            &mut storage,
+            "while-checkpoint-blocked",
+            vec![put(document("doc", "docs", "value"), ExpectedVersion::New)]
+        ),
+        CommitResult::Committed(_)
+    ));
+    drop(held);
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn checkpoint_startup_refuses_missing_or_corrupt_database_without_creating_it() {
+    let dir = location("checkpoint-startup-failure");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("missing.sqlite3");
+    let readers = Arc::new(std::sync::Mutex::new(super::ReaderPool::new(1024)));
+    let gate = Arc::new(std::sync::Mutex::new(()));
+    assert!(matches!(
+        super::spawn_checkpointer(path.clone(), "expected", readers.clone(), gate.clone()),
+        Err(StorageOpenError::Unavailable)
+    ));
+    assert!(!path.exists(), "checkpoint startup must never create an empty replacement");
+    let corrupt = b"not a SQLite database";
+    std::fs::write(&path, corrupt).unwrap();
+    assert!(matches!(
+        super::spawn_checkpointer(path.clone(), "expected", readers, gate),
+        Err(StorageOpenError::Unavailable)
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), corrupt);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn reader_open_failure_uses_bound_writer_without_creating_a_database() {
+    let (dir, mut storage) = sqlite_store("reader-open-failure");
+    let committed = commit(
+        &mut storage,
+        "original",
+        vec![put(document("doc", "docs", "original"), ExpectedVersion::New)],
+    );
+    let sequence = StorageSequence::new(stored_sequence(&committed));
+    {
+        let mut readers = storage.readers.lock().unwrap();
+        while readers.pop().is_some() {}
+    }
+    let original_path = storage.database_path.clone();
+    let missing_path = dir.join("must-not-be-created.sqlite3");
+    storage.database_path.clone_from(&missing_path);
+    let reader = storage.reader();
+    assert!(matches!(reader, super::ReaderGuard::Writer(_)));
+    drop(reader);
+    let read = storage
+        .read_document_in_collection_at(
+            sequence,
+            &tenant(),
+            &CollectionName::try_new("docs").unwrap(),
+            &DocumentId::try_new("doc").unwrap(),
+        )
+        .unwrap();
+    assert_eq!(read.value(), &DocumentValue::String("original".into()));
+    assert!(
+        storage.resolve_operation(&tenant(), &OperationId::try_new("unknown").unwrap()).is_none(),
+        "the rejection fallback must reuse its guard rather than acquire the writer twice"
+    );
+    assert!(storage.open_sqlite_read_connection().is_err());
+    assert!(!missing_path.exists());
+    storage.database_path = original_path;
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn reader_refill_rejects_foreign_database_binding() {
+    let (dir, mut storage) = sqlite_store("reader-identity");
+    let (foreign_dir, mut foreign) = sqlite_store("reader-foreign");
+    let result = commit(
+        &mut storage,
+        "original",
+        vec![put(document("doc", "docs", "original"), ExpectedVersion::New)],
+    );
+    commit(
+        &mut foreign,
+        "foreign",
+        vec![put(document("doc", "docs", "foreign"), ExpectedVersion::New)],
+    );
+    let sequence = StorageSequence::new(stored_sequence(&result));
+    let foreign_path = foreign.database_path.clone();
+    drop(foreign);
+    let before = std::fs::read(&foreign_path).unwrap();
+    {
+        let mut pool = storage.readers.lock().unwrap();
+        while pool.pop().is_some() {}
+    }
+    let original_path = storage.database_path.clone();
+    storage.database_path = foreign_path.clone();
+    assert!(storage.open_sqlite_read_connection().is_err());
+    assert!(matches!(storage.reader(), super::ReaderGuard::Writer(_)));
+    let read = storage
+        .read_document_in_collection_at(
+            sequence,
+            &tenant(),
+            &CollectionName::try_new("docs").unwrap(),
+            &DocumentId::try_new("doc").unwrap(),
+        )
+        .unwrap();
+    assert_eq!(read.value(), &DocumentValue::String("original".into()));
+    assert!(matches!(
+        super::spawn_checkpointer(
+            foreign_path.clone(),
+            &storage.expected_binding,
+            storage.readers.clone(),
+            storage.checkpoint_gate.clone()
+        ),
+        Err(StorageOpenError::Unavailable)
+    ));
+    assert_eq!(std::fs::read(foreign_path).unwrap(), before);
+    storage.database_path = original_path;
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+    std::fs::remove_dir_all(foreign_dir).unwrap();
+}
+
+#[test]
+fn invisible_index_build_limit_bounds_all_tenant_triggers() {
+    use crate::storage::{InvisibleColumnKind, InvisibleIndexColumn};
+    let (dir, mut storage) = sqlite_store("invisible-global-limit");
+    let collection = scan_users();
+    storage.register_index_descriptor(&collection, "score").unwrap();
+    let columns =
+        [InvisibleIndexColumn { field: "score".into(), kind: InvisibleColumnKind::Numeric }];
+    for index in 0..32 {
+        let tenant = TenantId::try_new(&format!("tenant-{index}")).unwrap();
+        assert!(
+            storage
+                .begin_invisible_index(&tenant, &collection, "candidate", &columns)
+                .unwrap()
+                .complete
+        );
+    }
+    let overflow = TenantId::try_new("overflow").unwrap();
+    assert!(storage.begin_invisible_index(&overflow, &collection, "candidate", &columns).is_err());
+    let original = TenantId::try_new("tenant-0").unwrap();
+    assert!(
+        storage
+            .begin_invisible_index(&original, &collection, "candidate", &columns)
+            .unwrap()
+            .complete
+    );
+    let count: i64 = storage
+        .writer
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'trigger' AND name LIKE 'hidden_%'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 32 * 3);
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn invisible_index_build_resumes_and_tracks_transactional_writes() {
+    use crate::storage::{InvisibleColumnKind, InvisibleIndexColumn};
+    let (dir, mut storage) = sqlite_store("invisible-build");
+    let tenant = scan_tenant();
+    let users = scan_users();
+    for id in ["a", "b", "c", "d"] {
+        commit_object(
+            &mut storage,
+            &tenant,
+            id,
+            object_document(id, "users", &[("status", DocumentValue::String("paid".into()))]),
+        );
+    }
+    storage.register_index_descriptor(&users, "status").unwrap();
+    let columns =
+        vec![InvisibleIndexColumn { field: "status".into(), kind: InvisibleColumnKind::Text }];
+    let index_count = |storage: &SqliteStorage| {
+        storage.writer.lock().unwrap().query_row(
+        "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'documents'", [],
+        |row| row.get::<_, i64>(0)).unwrap()
+    };
+    let serving_indexes = index_count(&storage);
+    let initial = storage.begin_invisible_index(&tenant, &users, "candidate", &columns).unwrap();
+    assert!(!initial.complete);
+    assert_eq!(
+        storage.begin_invisible_index(&tenant, &users, "candidate", &columns).unwrap(),
+        initial
+    );
+    assert_eq!(index_count(&storage), serving_indexes);
+    let table =
+        super::quote_identifier(&super::invisible::table_name(tenant.as_str(), "candidate"));
+    let count = |storage: &SqliteStorage| {
+        storage
+            .writer
+            .lock()
+            .unwrap()
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get::<_, i64>(0))
+            .unwrap()
+    };
+    assert_eq!(count(&storage), 0);
+    assert!(!storage.advance_invisible_index(&tenant, "candidate", 1).unwrap().complete);
+    assert_eq!(count(&storage), 1);
+    storage
+        .writer
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TEMP TRIGGER reject_cursor BEFORE UPDATE ON invisible_index_builds
+         BEGIN SELECT RAISE(ABORT, 'cursor failure'); END;",
+        )
+        .unwrap();
+    assert!(storage.advance_invisible_index(&tenant, "candidate", 1).is_err());
+    assert_eq!(count(&storage), 1, "copied rows and cursor must roll back together");
+    storage.writer.lock().unwrap().execute_batch("DROP TRIGGER reject_cursor").unwrap();
+    let other = TenantId::try_new("tenant-b").unwrap();
+    assert!(storage.begin_invisible_index(&other, &users, "candidate", &columns).unwrap().complete);
+    for (operation, id) in
+        [("new-before", "0"), ("new-between", "aa"), ("new-after", "z"), ("update-a", "a")]
+    {
+        commit_object(
+            &mut storage,
+            &tenant,
+            operation,
+            object_document(id, "users", &[("status", DocumentValue::String("shipped".into()))]),
+        );
+    }
+    assert_eq!(count(&storage), 5, "new versions are copied inside their write transaction");
+    drop(storage);
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    let mut complete = false;
+    for _ in 0..16 {
+        let progress = storage.advance_invisible_index(&tenant, "candidate", 1).unwrap();
+        assert_eq!(progress.target_sequence, initial.target_sequence);
+        if progress.complete {
+            complete = true;
+            break;
+        }
+    }
+    assert!(complete);
+    assert_eq!(count(&storage), 8);
+    let writer = storage.writer.lock().unwrap();
+    let different: i64 = writer
+        .query_row(
+            &format!(
+                "SELECT COUNT(*) FROM (SELECT id, commit_seq, \"f:status#t\" FROM documents
+         WHERE tenant = ?1 AND collection = ?2 EXCEPT SELECT id, commit_seq, c0 FROM {table})"
+            ),
+            rusqlite::params![tenant.as_str(), users.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(different, 0);
+    let other_table =
+        super::quote_identifier(&super::invisible::table_name(other.as_str(), "candidate"));
+    assert_eq!(
+        writer
+            .query_row(&format!("SELECT COUNT(*) FROM {other_table}"), [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    writer
+        .execute_batch(&format!(
+            "CREATE TEMP TRIGGER reject_hidden BEFORE INSERT ON {table}
+        BEGIN SELECT RAISE(ABORT, 'maintenance failure'); END;"
+        ))
+        .unwrap();
+    drop(writer);
+    let before = storage.published_state();
+    let failed = commit(
+        &mut storage,
+        "rejected-hidden-write",
+        vec![StagedWrite::Put {
+            document: object_document(
+                "rejected",
+                "users",
+                &[("status", DocumentValue::String("paid".into()))],
+            ),
+            expected: ExpectedVersion::Any,
+        }],
+    );
+    assert!(matches!(failed, CommitResult::Rejected(_)));
+    assert_eq!(storage.published_state(), before);
+    assert_eq!(count(&storage), 8);
+    storage.writer.lock().unwrap().execute_batch("DROP TRIGGER reject_hidden").unwrap();
+    assert!(matches!(
+        commit(
+            &mut storage,
+            "delete-hidden-row",
+            vec![StagedWrite::Delete {
+                collection: Some(users.clone()),
+                id: DocumentId::try_new("b").unwrap(),
+                expected: ExpectedVersion::Any,
+            }]
+        ),
+        CommitResult::Committed(_)
+    ));
+    assert_eq!(count(&storage), 9, "tombstone versions are maintained too");
+    storage.writer.lock().unwrap().execute(
+        "DELETE FROM documents WHERE tenant = ?1 AND collection = ?2 AND id = 'a' AND commit_seq = 1",
+        rusqlite::params![tenant.as_str(), users.as_str()],
+    ).unwrap();
+    assert_eq!(count(&storage), 8, "pruned source versions release their hidden entries");
+    verify_hidden_shadow_results(&mut storage, &tenant, &users, &table);
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn verify_hidden_shadow_results(
+    storage: &mut SqliteStorage,
+    tenant: &TenantId,
+    collection: &CollectionName,
+    table: &str,
+) {
+    let filter = equals("status", DocumentValue::String("paid".into()));
+    let request = crate::storage::ShadowReadRequest {
+        collection,
+        filter: &filter,
+        candidate_field: "status",
+        hidden_candidate: Some("candidate"),
+        after: None,
+        limit: 1000,
+        max_vm_steps: crate::storage::MAX_SHADOW_VM_STEPS,
+    };
+    let sequence = storage.published_state().0;
+    let comparison = storage.shadow_filtered_page(sequence, tenant, &request).unwrap();
+    assert_eq!(comparison.ordinary.rows, 2);
+    assert_eq!(comparison.ordinary.result_digest, comparison.candidate.result_digest);
+    storage.writer.lock().unwrap().execute(&format!("DELETE FROM {table}"), []).unwrap();
+    assert_eq!(
+        storage.shadow_filtered_page(sequence, tenant, &request),
+        Err(crate::storage::ShadowReadError::ResultMismatch)
+    );
+}
+
+#[test]
+fn shadow_evidence_retains_each_template_and_refuses_capacity_without_eviction() {
+    use crate::auto_index::{
+        LifecycleIndexView, LifecyclePhase, LifecycleStore, LogicalCost, ShadowEvidence,
+    };
+    let (dir, mut storage) = sqlite_store("shadow-template-set");
+    let mut store = LifecycleStore::open(&storage).unwrap();
+    let view = LifecycleIndexView {
+        id: "candidate".into(),
+        tenant: "tenant".into(),
+        collection: "items".into(),
+        fields: vec!["score".into()],
+        phase: LifecyclePhase::Shadowing,
+        generation: 0,
+        covered_watermark: 10,
+        target_watermark: Some(10),
+        visible: false,
+        pinned: false,
+        forbidden: false,
+        maintenance_cost: 1,
+        last_used_millis: None,
+        zero_stale_reads: false,
+        regression_free: false,
+    };
+    store.install(&mut storage, view.clone(), 1, [1; 32]).unwrap();
+    let template = |index: u64| *blake3::hash(&index.to_le_bytes()).as_bytes();
+    let mut sample = ShadowEvidence {
+        index_id: "candidate".into(),
+        generation: 1,
+        template_digest: template(0),
+        baseline: vec![LogicalCost::new(0, 100); 20],
+        candidate: vec![LogicalCost::new(0, 150); 20],
+        improvement: 0.0,
+        regression: false,
+        digest: [0; 32],
+    };
+    let regressed = store.record_evidence(&mut storage, "tenant", sample.clone(), 2).unwrap();
+    assert!(regressed.regression);
+    sample.candidate = vec![LogicalCost::new(0, 50); 20];
+    for index in 1..256 {
+        sample.generation = store.generation("tenant");
+        sample.template_digest = template(index);
+        store.record_evidence(&mut storage, "tenant", sample.clone(), index + 2).unwrap();
+    }
+    assert_eq!(store.evidence("tenant", "candidate", template(0), 20), Some(regressed.clone()));
+    assert!(!store.evidence("tenant", "candidate", template(255), 20).unwrap().regression);
+    let generation = store.generation("tenant");
+    let audits = store.audit("tenant", None, None, 1000);
+    sample.generation = generation;
+    sample.template_digest = template(256);
+    assert!(store.record_evidence(&mut storage, "tenant", sample.clone(), 300).is_err());
+    assert_eq!(store.generation("tenant"), generation);
+    assert_eq!(store.audit("tenant", None, None, 1000), audits);
+    // The bound applies to every tenant together, and cannot evict regression evidence.
+    let mut foreign = view;
+    foreign.tenant = "foreign".into();
+    store.install(&mut storage, foreign, 301, [1; 32]).unwrap();
+    sample.generation = 1;
+    assert!(store.record_evidence(&mut storage, "foreign", sample.clone(), 302).is_err());
+    // Refreshing an already retained template remains possible at capacity.
+    sample.generation = generation;
+    sample.template_digest = template(255);
+    let refreshed = store.record_evidence(&mut storage, "tenant", sample, 303).unwrap();
+    drop(storage);
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    let mut restored = LifecycleStore::open(&storage).unwrap();
+    assert_eq!(restored.evidence("tenant", "candidate", template(0), 20), Some(regressed));
+    assert_eq!(restored.evidence("tenant", "candidate", template(255), 20), Some(refreshed));
+    assert!(restored.evidence("foreign", "candidate", template(0), 20).is_none());
+    restored.control(&mut storage, ("tenant", "candidate"), true, 304, [3; 32]).unwrap();
+    let reopened = LifecycleStore::open(&storage).unwrap();
+    for index in 0..256 {
+        assert!(restored.evidence("tenant", "candidate", template(index), 20).is_none());
+        assert!(reopened.evidence("tenant", "candidate", template(index), 20).is_none());
+    }
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn shadow_evidence_is_durable_scoped_and_atomic() {
+    use crate::auto_index::{
+        LifecycleIndexView, LifecyclePhase, LifecycleStore, LogicalCost, ShadowEvidence,
+    };
+    let dir = location("shadow-evidence");
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    let mut lifecycle = LifecycleStore::open(&storage).unwrap();
+    let view = LifecycleIndexView {
+        id: "candidate".into(),
+        tenant: "tenant".into(),
+        collection: "items".into(),
+        fields: vec!["score".into()],
+        phase: LifecyclePhase::Shadowing,
+        generation: 0,
+        covered_watermark: 10,
+        target_watermark: Some(10),
+        visible: false,
+        pinned: false,
+        forbidden: false,
+        maintenance_cost: 9,
+        last_used_millis: None,
+        zero_stale_reads: false,
+        regression_free: false,
+    };
+    lifecycle.install(&mut storage, view, 1, [1; 32]).unwrap();
+    let samples = ShadowEvidence {
+        index_id: "candidate".into(),
+        generation: 1,
+        template_digest: [7; 32],
+        baseline: vec![LogicalCost::new(10, 90); 20],
+        candidate: vec![LogicalCost::new(5, 45); 20],
+        // Supplied derived fields cannot authorize a decision.
+        improvement: f64::NAN,
+        regression: true,
+        digest: [0; 32],
+    };
+    let before = lifecycle.snapshot("tenant", None, 10);
+    assert!(lifecycle.record_evidence(&mut storage, "foreign", samples.clone(), 2).is_err());
+    for variant in 0..5 {
+        let mut invalid = samples.clone();
+        match variant {
+            0 => invalid.generation = 0,
+            1 => invalid.baseline.truncate(19),
+            2 => invalid.template_digest = [0; 32],
+            3 => invalid.baseline[0] = LogicalCost::new(u64::MAX, 1),
+            _ => {
+                invalid.baseline = vec![LogicalCost::new(10, 90); 4097];
+                invalid.candidate = invalid.baseline.clone();
+            }
+        }
+        assert!(lifecycle.record_evidence(&mut storage, "tenant", invalid, 2).is_err());
+    }
+    storage
+        .writer
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TEMP TRIGGER reject_evidence BEFORE INSERT ON index_lifecycle_events
+         BEGIN SELECT RAISE(ABORT, 'injected evidence failure'); END;",
+        )
+        .unwrap();
+    assert!(lifecycle.record_evidence(&mut storage, "tenant", samples.clone(), 2).is_err());
+    assert_eq!(lifecycle.snapshot("tenant", None, 10), before);
+    assert!(lifecycle.evidence("tenant", "candidate", [7; 32], 20).is_none());
+    assert_eq!(lifecycle.audit("tenant", None, None, 10).len(), 1);
+    storage.writer.lock().unwrap().execute_batch("DROP TRIGGER reject_evidence").unwrap();
+    let committed = lifecycle.record_evidence(&mut storage, "tenant", samples, 2).unwrap();
+    assert_eq!(committed.generation, 2);
+    assert!((committed.improvement - 0.5).abs() < f64::EPSILON);
+    assert!(!committed.regression);
+    assert_ne!(committed.digest, [0; 32]);
+    assert!(!lifecycle.index("tenant", "candidate").unwrap().visible);
+    assert_eq!(lifecycle.evidence("tenant", "candidate", [7; 32], 1).unwrap().baseline.len(), 1);
+    assert!(lifecycle.evidence("foreign", "candidate", [7; 32], 20).is_none());
+    let audit = lifecycle.audit("tenant", Some("items"), None, 1);
+    assert_eq!(audit[0].action, "evidence");
+    assert_eq!(audit[0].evidence_digest, Some(committed.digest));
+    drop(storage);
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    let mut restored = LifecycleStore::open(&storage).unwrap();
+    assert_eq!(restored.evidence("tenant", "candidate", [7; 32], 20), Some(committed.clone()));
+    assert_eq!(restored.snapshot("tenant", None, 10), lifecycle.snapshot("tenant", None, 10));
+    assert_eq!(restored.audit("tenant", Some("items"), None, 1), audit);
+    restored.control(&mut storage, ("tenant", "candidate"), true, 3, [3; 32]).unwrap();
+    assert!(restored.evidence("tenant", "candidate", [7; 32], 20).is_none());
+    assert!(
+        LifecycleStore::open(&storage)
+            .unwrap()
+            .evidence("tenant", "candidate", [7; 32], 20)
+            .is_none()
+    );
+    let mut forbidden = committed;
+    forbidden.generation = 3;
+    assert!(restored.record_evidence(&mut storage, "tenant", forbidden, 4).is_err());
+    // Even a payload with a valid storage checksum must match the evidence
+    // digest committed for the tenant, template, generation, and samples.
+    let writer = storage.writer.lock().unwrap();
+    let mut payload: Vec<u8> = writer
+        .query_row("SELECT payload FROM index_lifecycle_events WHERE sequence = 2", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    *payload.last_mut().unwrap() ^= 1;
+    let checksum = blake3::hash(&payload);
+    writer
+        .execute(
+            "UPDATE index_lifecycle_events SET payload = ?1, digest = ?2 WHERE sequence = 2",
+            rusqlite::params![payload, checksum.as_bytes().as_slice()],
+        )
+        .unwrap();
+    drop(writer);
+    assert!(LifecycleStore::open(&storage).is_err());
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn index_lifecycle_sqlite_replay_and_failed_mutations_are_atomic() {
+    use crate::auto_index::{LifecycleIndexView, LifecyclePhase, LifecycleStore};
+    let dir = location("index-lifecycle");
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    let mut lifecycle = LifecycleStore::open(&storage).unwrap();
+    let view = LifecycleIndexView {
+        id: "candidate".into(),
+        tenant: "tenant".into(),
+        collection: "items".into(),
+        fields: vec!["score".into(), "nested\u{1f}name".into()],
+        phase: LifecyclePhase::Shadowing,
+        generation: 0,
+        covered_watermark: 10,
+        target_watermark: Some(10),
+        visible: false,
+        pinned: false,
+        forbidden: false,
+        maintenance_cost: 9,
+        last_used_millis: None,
+        zero_stale_reads: false,
+        regression_free: false,
+    };
+    lifecycle.install(&mut storage, view, 1, [1; 32]).unwrap();
+    // Adjacent tenant keys and identical candidate IDs cannot cross scopes,
+    // either through a catalog page or a direct command lookup.
+    for tenant in ["tenan", "tenant", "tenant-z"] {
+        let mut scoped = lifecycle.index("tenant", "candidate").unwrap().clone();
+        scoped.id = "second".into();
+        scoped.tenant = tenant.into();
+        scoped.collection = "secondary".into();
+        lifecycle.install(&mut storage, scoped, 1, [1; 32]).unwrap();
+    }
+    assert!(lifecycle.index("tenant-z", "candidate").is_none());
+    assert_eq!(lifecycle.index("tenant-z", "second").unwrap().tenant, "tenant-z");
+    assert!(lifecycle.snapshot("ten", None, 10).indexes.is_empty());
+    let empty_page = lifecycle.snapshot("tenant", None, 0);
+    assert!(empty_page.indexes.is_empty());
+    assert!(empty_page.truncated);
+    let first_page = lifecycle.snapshot("tenant", None, 1);
+    assert_eq!(first_page.indexes[0].id, "candidate");
+    assert!(first_page.truncated);
+    let scoped_page = lifecycle.snapshot("tenant", Some("secondary"), 1);
+    assert_eq!(scoped_page.indexes[0].id, "second");
+    assert!(!scoped_page.truncated);
+    let tenant_page = lifecycle.snapshot("tenant", None, 10);
+    assert_eq!(tenant_page.indexes.len(), 2);
+    assert!(tenant_page.indexes.iter().all(|index| index.tenant == "tenant"));
+    let before = lifecycle.snapshot("tenant", None, 10);
+    storage
+        .writer
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TEMP TRIGGER reject_lifecycle BEFORE INSERT ON index_lifecycle_events
+         BEGIN SELECT RAISE(ABORT, 'injected lifecycle failure'); END;",
+        )
+        .unwrap();
+    let mut rejected = before.indexes[0].clone();
+    rejected.id = "rejected".into();
+    assert!(lifecycle.install(&mut storage, rejected, 2, [2; 32]).is_err());
+    assert!(lifecycle.control(&mut storage, ("tenant", "candidate"), false, 2, [2; 32]).is_err());
+    assert!(lifecycle.control(&mut storage, ("tenant", "candidate"), true, 2, [2; 32]).is_err());
+    assert!(lifecycle.retire_index(&mut storage, ("tenant", "candidate"), 2, [2; 32]).is_err());
+    assert_eq!(lifecycle.snapshot("tenant", None, 10), before);
+    assert!(!lifecycle.is_forbidden("tenant", "candidate"));
+    assert_eq!(lifecycle.audit("tenant", None, None, 10).len(), 2);
+    storage.writer.lock().unwrap().execute_batch("DROP TRIGGER reject_lifecycle").unwrap();
+    lifecycle.control(&mut storage, ("tenant", "candidate"), false, 2, [2; 32]).unwrap();
+    assert!(lifecycle.snapshot("tenant", None, 10).indexes[0].pinned);
+    assert_eq!(
+        LifecycleStore::open(&storage).unwrap().snapshot("tenant", None, 10),
+        lifecycle.snapshot("tenant", None, 10)
+    );
+    lifecycle.control(&mut storage, ("tenant", "candidate"), true, 3, [3; 32]).unwrap();
+    lifecycle.retire_index(&mut storage, ("tenant", "candidate"), 4, [4; 32]).unwrap();
+    // More than one replay page, including forbidden shapes without an index.
+    for id in 0..70 {
+        lifecycle
+            .control(&mut storage, ("tenant", &format!("shape-{id}")), true, 5, [5; 32])
+            .unwrap();
+    }
+    let collection_audit = lifecycle.audit("tenant", Some("items"), None, 10);
+    assert!(lifecycle.audit("tenant", Some(""), None, 100).is_empty());
+    assert_eq!(collection_audit.len(), 4);
+    assert_eq!(lifecycle.audit("tenant", Some("items"), None, 1), collection_audit[..1]);
+    // Historical events keep their original collection even if the current
+    // record is subsequently replaced with a different collection binding.
+    let mut replacement = lifecycle.snapshot("tenant", None, 1).indexes.remove(0);
+    replacement.collection = "other".into();
+    lifecycle.install(&mut storage, replacement, 6, [6; 32]).unwrap();
+    assert_eq!(lifecycle.audit("tenant", Some("items"), None, 10), collection_audit);
+    assert_eq!(lifecycle.audit("tenant", Some("other"), None, 10).len(), 1);
+    let expected = lifecycle.snapshot("tenant", None, 10);
+    let audit = lifecycle.audit("tenant", None, None, 100);
+    drop(storage);
+    let reopened = SqliteStorage::open(&dir).unwrap();
+    let restored = LifecycleStore::open(&reopened).unwrap();
+    assert_eq!(restored.snapshot("tenant", None, 10), expected);
+    assert_eq!(restored.audit("tenant", None, None, 100), audit);
+    assert_eq!(restored.audit("tenant", Some("items"), None, 10), collection_audit);
+    assert!(restored.audit("tenant", Some(""), None, 100).is_empty());
+    assert!(restored.is_forbidden("tenant", "shape-69"));
+    assert!(!dir.join("auto-index.lifecycle").exists());
+    reopened
+        .writer
+        .lock()
+        .unwrap()
+        .execute("UPDATE index_lifecycle_events SET digest = zeroblob(32) WHERE sequence = 1", [])
+        .unwrap();
+    assert!(LifecycleStore::open(&reopened).is_err());
+    drop(reopened);
+    std::fs::remove_dir_all(dir).unwrap();
 }

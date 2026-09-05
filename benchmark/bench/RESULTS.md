@@ -42,16 +42,17 @@ attempt failed, older complete attempts are superseded.
 
 | workload | side | status | ops/s | p50 us | p95 us | p99 us | wall ms |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| read | terrabase | diagnostic | 2651 | 2985 | 24259 | 49755 | 3772 |
+| read | terrabase | invalid | - | - | - | - | - |
 | read | postgresql | failed | - | - | - | - | - |
-| read | pg-fullstack | complete | 9873 | 1391 | 3021 | 4410 | 1013 |
-| read | ravendb | complete | 13330 | 600 | 3714 | 15195 | 750 |
+| read | pg-fullstack | invalid | - | - | - | - | - |
+| read | ravendb | invalid | - | - | - | - | - |
 | write | terrabase | missing | - | - | - | - | - |
 | write | postgresql | failed | - | - | - | - | - |
-| write | pg-fullstack | complete | 1818 | 7556 | 15281 | 24278 | 5501 |
-| write | ravendb | complete | 1470 | 7982 | 23598 | 72277 | 6802 |
+| write | pg-fullstack | invalid | - | - | - | - | - |
+| write | ravendb | invalid | - | - | - | - | - |
 
 <!-- E-13 point-ops END -->
+
 
 <!-- E-13 benchmark-history BEGIN -->
 

@@ -59,9 +59,9 @@
 //!
 //! ## Where the wall clock is admissible
 //!
-//! Nowhere in a verdict. The deterministic counters here (operations,
-//! durable bytes appended, documents returned) are reproducible facts about
-//! an operation stream, in the SE-07 lane's sense. Wall-clock samples are
+//! Nowhere in a verdict. Operation and returned-document counts describe
+//! the operation stream. Storage bytes sample file lengths, which depend on
+//! allocation and checkpoint state; they do not measure write I/O. Wall-clock samples are
 //! taken only by the commissioning sampler to prove the gate machinery, and
 //! they are rendered with the status and verdict both forced to
 //! `inconclusive`. The IX-04 class takes no wall-clock sample at all: with

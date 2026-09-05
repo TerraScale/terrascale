@@ -58,6 +58,7 @@ mod region_code_serde {
     use std::str::FromStr;
     use terrabase::regions::RegionCode;
 
+    #[allow(clippy::trivially_copy_pass_by_ref, reason = "serde with requires a borrowed field")]
     pub fn serialize<S: Serializer>(value: &RegionCode, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(value.as_str())
     }
@@ -103,6 +104,10 @@ pub struct PlacementLock {
 impl PlacementLock {
     /// Creates a non-empty lock.  Region validation is intentionally left to
     /// the durable placement catalog, which knows the active catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PlacementMismatch` when no Regions are supplied.
     pub fn new(regions: impl IntoIterator<Item = RegionCode>) -> Result<Self, ExportError> {
         let regions = regions.into_iter().collect::<BTreeSet<_>>();
         if regions.is_empty() {
@@ -284,8 +289,16 @@ impl std::error::Error for ExportSourceError {}
 /// honor its boundary on every subsequent page call.
 pub trait ExportSource: Send + Sync + 'static {
     /// Captures a fixed logical boundary and its metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns a source storage or metadata-validation failure.
     fn snapshot(&self, database: &str) -> Result<ExportSnapshot, ExportSourceError>;
     /// Returns one bounded page after the opaque adapter cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage failure or an invalid-page refusal for the requested boundary.
     fn page(
         &self,
         database: &str,
@@ -306,10 +319,18 @@ pub trait ExportSource: Send + Sync + 'static {
 /// whole database or by maintaining a second in-memory database.
 pub trait EngineExportReadPort: Send + Sync + 'static {
     /// Captures the fixed boundary and all logical metadata for one database.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage or metadata-validation failure from the engine adapter.
     fn snapshot(&self, database: &str) -> Result<ExportSnapshot, ExportSourceError>;
 
     /// Reads one bounded page at the pinned boundary.  `after` is an opaque
     /// adapter cursor; returned canonical bytes remain opaque to this crate.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage failure or an invalid-page refusal at the pinned boundary.
     fn page(
         &self,
         database: &str,
@@ -333,6 +354,10 @@ pub struct EngineExportSource {
 
 impl EngineExportSource {
     /// Constructs a source from the member's real Engine read adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DependencyUnavailable` when the read adapter is absent.
     pub fn try_new(read: Option<Arc<dyn EngineExportReadPort>>) -> Result<Self, ExportError> {
         Ok(Self {
             read: read.ok_or(ExportError::DependencyUnavailable)?,
@@ -345,6 +370,10 @@ impl EngineExportSource {
     /// still mandatory because bounded page, schema/index, history, and
     /// branch methods are currently exposed only at the Engine composition
     /// boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DependencyUnavailable` when the read adapter is absent.
     pub fn from_engine(
         engine: Arc<Engine>,
         read: Option<Arc<dyn EngineExportReadPort>>,
@@ -418,22 +447,35 @@ pub struct ArtifactFact {
 }
 
 /// A committed artifact writer.  `put` must be idempotent: an existing path
-/// is accepted only when it contains the exact same plaintext.
+/// is accepted only when it contains the exact same plaintext. Dropping a
+/// writer must preserve published staging members: a durable job cursor may
+/// already refer to them, and retries must verify and reuse those bytes.
 pub trait ArtifactWriter: Send {
     /// Publishes or verifies one encrypted member.
+    ///
+    /// # Errors
+    ///
+    /// Returns encryption, path, I/O, or conflicting-content errors.
     fn put(&mut self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError>;
     /// Returns facts for members already present in a resumable staging
     /// artifact.  A restart uses this to rebuild the manifest without
     /// retaining document bytes in the durable job state.  Ports that do not
     /// support restart recovery must fail closed rather than return an empty
     /// list for a non-empty staging artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O or verification failure, or `DependencyUnavailable`
+    /// when the port does not support recovery.
     fn existing_facts(&mut self) -> Result<Vec<ArtifactFact>, ExportError> {
         Err(ExportError::DependencyUnavailable)
     }
     /// Atomically publishes the completed bundle and its commit marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns a manifest-verification, publication, or durability failure.
     fn commit(self: Box<Self>, manifest: &ArtifactFact) -> Result<(), ExportError>;
-    /// Removes uncommitted staging state after a terminal failure.
-    fn abort(self: Box<Self>);
 }
 
 /// Destination/provider seam.  `open` must reject an absent key/provider.
@@ -441,6 +483,10 @@ pub trait ArtifactPort: Send + Sync + 'static {
     /// Returns provider/key metadata without exposing key material.
     fn attestation(&self) -> Option<EncryptionAttestation>;
     /// Opens a job-scoped resumable writer after placement validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a placement, provider, key, destination-validation, or I/O error.
     fn open(
         &self,
         job_id: &str,
@@ -497,16 +543,50 @@ pub enum JobStatus {
     Failed,
 }
 
+/// Exclusive job ownership, released when the guard is dropped.
+/// Implementations must retain ownership for the guard's entire lifetime;
+/// an expiring lease without fencing of artifact and state writes is insufficient.
+pub trait ExportJobLease: Send {}
+
+impl ExportJobLease for File {}
+impl ExportJobLease for ActiveJob {}
+
 /// Durable state store seam.
 pub trait ExportStore: Send + Sync + 'static {
+    /// Attempts exclusive worker ownership across every handle and process
+    /// sharing this store. Returns `None` when another worker owns the job.
+    /// Workers must hold the guard across all state and artifact operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an identity or storage error if ownership cannot be established.
+    fn acquire_job(&self, job_id: &str) -> Result<Option<Box<dyn ExportJobLease>>, ExportError>;
+
+    /// Atomically creates a job or returns the record that already owns its ID.
+    /// Existing progress must never be overwritten by concurrent admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns an identity, encoding, I/O, or durability error. Implementations
+    /// must not emulate this operation with an unprotected load followed by save.
+    fn create(&self, state: &ExportJobState) -> Result<ExportJobState, ExportError>;
     /// Loads a job, if present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-identity, I/O, or durable-record decoding error.
     fn load(&self, job_id: &str) -> Result<Option<ExportJobState>, ExportError>;
-    /// Atomically records a job state.
+    /// Atomically records a job state. Worker updates require the caller to
+    /// retain the job's exclusive [`ExportJobLease`] until this call finishes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-identity, encoding, I/O, or durability error.
     fn save(&self, state: &ExportJobState) -> Result<(), ExportError>;
 }
 
-/// Service failures.  Messages deliberately avoid paths, credentials, and
-/// document content.
+/// Service failures. Diagnostic details may include provider information;
+/// HTTP responses and durable status must use the bounded public message.
 #[derive(Debug)]
 pub enum ExportError {
     /// Required source, store, or artifact provider was not configured.
@@ -525,6 +605,22 @@ pub enum ExportError {
     IdempotencyConflict,
     /// The source violated its bounded-page contract.
     Source(ExportSourceError),
+}
+
+impl ExportError {
+    /// A bounded response message containing no provider-supplied text.
+    fn public_message(&self) -> &'static str {
+        match self {
+            Self::DependencyUnavailable => "export dependency unavailable",
+            Self::EncryptionUnavailable => "export encryption provider unavailable",
+            Self::PlacementMismatch => "export destination violates placement lock",
+            Self::DestinationUnavailable => "export destination unavailable",
+            Self::InvalidRequest(_) => "invalid export request or resume cursor",
+            Self::Io(_) => "export storage operation failed",
+            Self::IdempotencyConflict => "export idempotency conflict",
+            Self::Source(_) => "export source operation failed",
+        }
+    }
 }
 
 impl fmt::Display for ExportError {
@@ -590,6 +686,7 @@ pub struct ExportRequest {
 }
 
 /// The asynchronous export coordinator.
+#[derive(Clone)]
 pub struct ExportService {
     source: Arc<dyn ExportSource>,
     store: Arc<dyn ExportStore>,
@@ -601,6 +698,11 @@ pub struct ExportService {
 impl ExportService {
     /// Constructs a service. Missing source/store/port or encryption provider
     /// is rejected before any request can be admitted.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DependencyUnavailable` for a missing dependency or
+    /// `EncryptionUnavailable` for absent or invalid provider metadata.
     pub fn new(
         source: Option<Arc<dyn ExportSource>>,
         store: Option<Arc<dyn ExportStore>>,
@@ -625,6 +727,10 @@ impl ExportService {
     /// Returning an [`Arc`] makes the result directly usable with
     /// [`http_router`]. Every seam remains mandatory; this constructor has no
     /// local, echo, or in-memory production fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns the dependency or encryption refusal from [`Self::new`].
     pub fn handler_ready(
         source: Option<Arc<dyn ExportSource>>,
         store: Option<Arc<dyn ExportStore>>,
@@ -636,25 +742,32 @@ impl ExportService {
 
     /// Admits a job and schedules bounded work.  The initial state is durable
     /// before the worker is spawned, so a process crash cannot lose an accept.
+    ///
+    /// # Errors
+    ///
+    /// Returns request, placement, idempotency, source snapshot, durable store,
+    /// or worker-reservation failures before accepting the request. Returns
+    /// `DependencyUnavailable` if the blocking admission task fails.
     pub async fn submit(&self, request: ExportRequest) -> Result<ExportAccepted, ExportError> {
-        validate_request(&request)?;
-        let job_id = job_id(&request);
+        let service = self.clone();
+        tokio::task::spawn_blocking(move || service.submit_blocking(&request))
+            .await
+            .map_err(|_| ExportError::DependencyUnavailable)?
+    }
+
+    fn submit_blocking(&self, request: &ExportRequest) -> Result<ExportAccepted, ExportError> {
+        validate_request(request)?;
+        let job_id = job_id(request);
         if let Some(existing) = self.store.load(&job_id)? {
-            validate_state(&existing)?;
-            if existing.database != request.database
-                || existing.destination != request.destination
-                || existing.placement != request.placement.regions().collect::<Vec<_>>()
-            {
-                return Err(ExportError::IdempotencyConflict);
-            }
-            if existing.status != JobStatus::Complete {
-                self.spawn_worker(&job_id);
-            }
-            return Ok(accepted(&existing));
+            // Another admission may have linked this record just before its
+            // directory sync. The atomic create path also confirms durability
+            // when the record already exists, without replacing worker progress.
+            let existing = self.store.create(&existing)?;
+            return self.accept_admitted(request, &job_id, &existing);
         }
         let snapshot = self.source.snapshot(&request.database).map_err(ExportError::Source)?;
         validate_snapshot(&snapshot)?;
-        let mut state = ExportJobState {
+        let state = ExportJobState {
             job_id: job_id.clone(),
             database: request.database.clone(),
             destination: request.destination.clone(),
@@ -669,14 +782,36 @@ impl ExportService {
             manifest: None,
             error: None,
         };
-        self.store.save(&state)?;
-        self.spawn_worker(&job_id);
-        state.status = JobStatus::Accepted;
-        Ok(accepted(&state))
+        let admitted = self.store.create(&state)?;
+        self.accept_admitted(request, &job_id, &admitted)
     }
 
-    /// Polls a job.  This is intentionally cheap and reads only the durable
-    /// control record, so progress is visible well within five seconds.
+    fn accept_admitted(
+        &self,
+        request: &ExportRequest,
+        job_id: &str,
+        state: &ExportJobState,
+    ) -> Result<ExportAccepted, ExportError> {
+        validate_state(state)?;
+        if state.job_id != job_id
+            || state.database != request.database
+            || state.destination != request.destination
+            || state.placement != request.placement.regions().collect::<Vec<_>>()
+        {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        if state.status != JobStatus::Complete {
+            self.spawn_worker(job_id)?;
+        }
+        Ok(accepted(state))
+    }
+
+    /// Reads a job's durable control record synchronously. Async callers should
+    /// use [`Self::status_async`] to keep filesystem I/O off runtime threads.
+    ///
+    /// # Errors
+    ///
+    /// Returns a store read or invalid durable-state error.
     pub fn status(&self, job_id: &str) -> Result<Option<ExportStatus>, ExportError> {
         let Some(state) = self.store.load(job_id)? else { return Ok(None) };
         validate_state(&state)?;
@@ -698,12 +833,32 @@ impl ExportService {
             progress_basis_points,
             resume_cursor: state.resume_cursor,
             manifest: state.manifest,
-            error: state.error,
+            // Older records may contain raw provider errors. Never reflect
+            // those persisted diagnostics through the public status route.
+            error: state.error.map(|_| "export failed; retry with the latest resume cursor".into()),
         }))
+    }
+
+    /// Reads a job's durable control record on the blocking pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns a store read or invalid durable-state error, or
+    /// `DependencyUnavailable` if the blocking task fails.
+    pub async fn status_async(&self, job_id: &str) -> Result<Option<ExportStatus>, ExportError> {
+        let service = self.clone();
+        let job_id = job_id.to_owned();
+        tokio::task::spawn_blocking(move || service.status(&job_id))
+            .await
+            .map_err(|_| ExportError::DependencyUnavailable)?
     }
 
     /// Validates and decodes a caller cursor, returning its phase and source
     /// cursor.  Cursors are authenticated and scoped to one job.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidRequest` for malformed, unauthenticated, or wrong-job cursors.
     pub fn decode_resume_cursor(
         &self,
         job_id: &str,
@@ -714,7 +869,22 @@ impl ExportService {
 
     /// Explicitly retries/resumes a job using its authenticated opaque cursor.
     /// The cursor must be the latest cursor persisted for that job.
+    ///
+    /// # Errors
+    ///
+    /// Returns a store or state-validation error, an unknown-job or stale-cursor
+    /// refusal, failed cursor authentication, or worker-reservation failure.
+    /// Returns `DependencyUnavailable` if the blocking resume task fails.
     pub async fn resume(&self, job_id: &str, token: &str) -> Result<ExportStatus, ExportError> {
+        let service = self.clone();
+        let job_id = job_id.to_owned();
+        let token = token.to_owned();
+        tokio::task::spawn_blocking(move || service.resume_blocking(&job_id, &token))
+            .await
+            .map_err(|_| ExportError::DependencyUnavailable)?
+    }
+
+    fn resume_blocking(&self, job_id: &str, token: &str) -> Result<ExportStatus, ExportError> {
         let state = self.store.load(job_id)?.ok_or(ExportError::InvalidRequest("unknown job"))?;
         validate_state(&state)?;
         if state.resume_cursor != token {
@@ -722,7 +892,7 @@ impl ExportService {
         }
         let _ = self.decode_resume_cursor(job_id, token)?;
         if state.status != JobStatus::Complete {
-            self.spawn_worker(job_id);
+            self.spawn_worker(job_id)?;
         }
         self.status(job_id)?.ok_or(ExportError::InvalidRequest("unknown job"))
     }
@@ -733,16 +903,20 @@ impl ExportService {
             store: Arc::clone(&self.store),
             artifacts: Arc::clone(&self.artifacts),
             cursor_key: self.cursor_key,
-            active_jobs: Arc::clone(&self.active_jobs),
         }
     }
 
-    fn spawn_worker(&self, job_id: &str) {
+    fn spawn_worker(&self, job_id: &str) -> Result<(), ExportError> {
+        let Some(active) = ActiveJob::acquire(Arc::clone(&self.active_jobs), job_id)? else {
+            return Ok(());
+        };
         let worker = self.clone_for_worker();
         let job = job_id.to_owned();
-        tokio::spawn(async move {
-            let _ = tokio::task::spawn_blocking(move || worker.run(&job)).await;
+        tokio::task::spawn_blocking(move || {
+            let _active = active;
+            worker.run(&job)
         });
+        Ok(())
     }
 
     fn cursor(&self, job_id: &str, phase: ExportPhase, source_cursor: Option<&[u8]>) -> String {
@@ -755,7 +929,6 @@ struct Worker {
     store: Arc<dyn ExportStore>,
     artifacts: Arc<dyn ArtifactPort>,
     cursor_key: [u8; 32],
-    active_jobs: Arc<Mutex<BTreeSet<String>>>,
 }
 
 struct ActiveJob {
@@ -787,7 +960,7 @@ impl Drop for ActiveJob {
 
 impl Worker {
     fn run(&self, job_id: &str) -> Result<(), ExportError> {
-        let Some(_active) = ActiveJob::acquire(Arc::clone(&self.active_jobs), job_id)? else {
+        let Some(_lease) = self.store.acquire_job(job_id)? else {
             return Ok(());
         };
         let mut state =
@@ -799,13 +972,16 @@ impl Worker {
         state.status = JobStatus::Running;
         state.error = None;
         self.store.save(&state)?;
-        let placement = PlacementLock::new(state.placement.iter().copied())?;
-        let mut writer =
-            self.artifacts.open(job_id, &state.database, &state.destination, &placement)?;
-        let result = self.run_inner(&mut state, &mut writer);
+        let result: Result<ArtifactFact, ExportError> = (|| {
+            let placement = PlacementLock::new(state.placement.iter().copied())?;
+            let mut writer =
+                self.artifacts.open(job_id, &state.database, &state.destination, &placement)?;
+            let manifest = self.run_inner(&mut state, &mut writer)?;
+            writer.commit(&manifest)?;
+            Ok(manifest)
+        })();
         match result {
             Ok(manifest) => {
-                writer.commit(&manifest)?;
                 state.manifest = Some(manifest);
                 state.status = JobStatus::Complete;
                 state.phase = ExportPhase::Done;
@@ -815,9 +991,8 @@ impl Worker {
             }
             Err(error) => {
                 state.status = JobStatus::Failed;
-                state.error = Some(error.to_string());
+                state.error = Some(error.public_message().to_owned());
                 let _ = self.store.save(&state);
-                writer.abort();
                 Err(error)
             }
         }
@@ -1292,14 +1467,17 @@ fn hex_decode(text: &str) -> Result<Vec<u8>, ExportError> {
         return Err(ExportError::InvalidRequest("resume cursor encoding is invalid"));
     }
     let mut bytes = Vec::with_capacity(text.len() / 2);
-    for pair in text.as_bytes().chunks_exact(2) {
+    for pair in text.as_bytes().as_chunks::<2>().0 {
         let high = (pair[0] as char)
             .to_digit(16)
             .ok_or(ExportError::InvalidRequest("resume cursor encoding is invalid"))?;
         let low = (pair[1] as char)
             .to_digit(16)
             .ok_or(ExportError::InvalidRequest("resume cursor encoding is invalid"))?;
-        bytes.push(((high << 4) | low) as u8);
+        bytes.push(
+            u8::try_from((high << 4) | low)
+                .map_err(|_| ExportError::InvalidRequest("resume cursor encoding is invalid"))?,
+        );
     }
     Ok(bytes)
 }
@@ -1310,13 +1488,20 @@ fn safe_member_path(path: &str) -> bool {
         && path.components().all(|component| matches!(component, Component::Normal(_)))
 }
 
-/// A simple crash-safe filesystem control store.
+/// A crash-safe filesystem control store with OS-locked worker ownership.
+/// The root must be a trusted directory on a filesystem supporting exclusive
+/// file locks. Job lock files must never be removed while the store is in use.
 pub struct FileExportStore {
     root: PathBuf,
 }
 
 impl FileExportStore {
     /// Opens a store rooted at `root`, creating it if necessary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a filesystem error if creation or inspection fails, or refuses
+    /// a root containing a symbolic link.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, ExportError> {
         let root = root.into();
         fs::create_dir_all(&root).map_err(|error| ExportError::Io(error.to_string()))?;
@@ -1332,7 +1517,83 @@ impl FileExportStore {
     }
 }
 
+impl FileExportStore {
+    fn publish(&self, state: &ExportJobState, replace: bool) -> Result<bool, ExportError> {
+        let path = self.path(&state.job_id)?;
+        let tmp = path
+            .with_extension(format!("json.tmp.{}", terrabase::identity::DatabaseUlid::generate()));
+        let bytes =
+            serde_json::to_vec(state).map_err(|error| ExportError::Io(error.to_string()))?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp)
+            .map_err(|error| ExportError::Io(error.to_string()))?;
+        let result = (|| -> io::Result<bool> {
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            drop(file);
+            let created = if replace {
+                fs::rename(&tmp, &path)?;
+                true
+            } else {
+                match fs::hard_link(&tmp, &path) {
+                    Ok(()) => true,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
+                    Err(error) => return Err(error),
+                }
+            };
+            if !replace {
+                fs::remove_file(&tmp)?;
+            }
+            // The new contents and the directory entry must both survive
+            // a crash before the accepted state can be reported as durable.
+            sync_directory_ancestors(&self.root)?;
+            Ok(created)
+        })();
+        if result.is_err() {
+            // A rename followed by failed directory sync leaves the installed
+            // record intact; only this save's unpublished temporary is removed.
+            let _ = fs::remove_file(&tmp);
+        }
+        result.map_err(|error| ExportError::Io(error.to_string()))
+    }
+}
+
 impl ExportStore for FileExportStore {
+    fn acquire_job(&self, job_id: &str) -> Result<Option<Box<dyn ExportJobLease>>, ExportError> {
+        let path = self.path(job_id)?.with_extension("lock");
+        ensure_no_symlink_components(&path)?;
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // Linux O_NOFOLLOW also refuses a last-component symlink introduced
+            // between the path inspection and open. The store root is trusted.
+            options.mode(0o600).custom_flags(0o400_000);
+        }
+        let file = options.open(path).map_err(|error| ExportError::Io(error.to_string()))?;
+        if !file.metadata().map_err(|error| ExportError::Io(error.to_string()))?.is_file() {
+            return Err(ExportError::DestinationUnavailable);
+        }
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Box::new(file))),
+            Err(fs::TryLockError::WouldBlock) => Ok(None),
+            Err(fs::TryLockError::Error(error)) => Err(ExportError::Io(error.to_string())),
+        }
+        // Never unlink a lock file: a later opener must lock the same inode.
+    }
+
+    fn create(&self, state: &ExportJobState) -> Result<ExportJobState, ExportError> {
+        if self.publish(state, false)? {
+            Ok(state.clone())
+        } else {
+            self.load(&state.job_id)?
+                .ok_or_else(|| ExportError::Io("admitted job disappeared".into()))
+        }
+    }
+
     fn load(&self, job_id: &str) -> Result<Option<ExportJobState>, ExportError> {
         let path = self.path(job_id)?;
         match fs::read(path) {
@@ -1345,23 +1606,7 @@ impl ExportStore for FileExportStore {
     }
 
     fn save(&self, state: &ExportJobState) -> Result<(), ExportError> {
-        let path = self.path(&state.job_id)?;
-        let tmp =
-            path.with_extension(format!("json.tmp.{}", NEXT_JOB.fetch_add(1, Ordering::Relaxed)));
-        let bytes =
-            serde_json::to_vec(state).map_err(|error| ExportError::Io(error.to_string()))?;
-        // A crash between the temporary write and rename leaves the previous
-        // control state intact. Unique temporary names also keep concurrent
-        // process writers from deleting or truncating one another's state.
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&tmp)
-            .map_err(|error| ExportError::Io(error.to_string()))?;
-        file.write_all(&bytes)
-            .and_then(|()| file.sync_all())
-            .map_err(|error| ExportError::Io(error.to_string()))?;
-        fs::rename(tmp, path).map_err(|error| ExportError::Io(error.to_string()))
+        self.publish(state, true).map(|_| ())
     }
 }
 
@@ -1371,10 +1616,22 @@ impl ExportStore for FileExportStore {
 #[derive(Default)]
 pub struct MemoryExportStore {
     states: Mutex<std::collections::BTreeMap<String, ExportJobState>>,
+    jobs: Arc<Mutex<BTreeSet<String>>>,
 }
 
 #[cfg(test)]
 impl ExportStore for MemoryExportStore {
+    fn acquire_job(&self, job_id: &str) -> Result<Option<Box<dyn ExportJobLease>>, ExportError> {
+        Ok(ActiveJob::acquire(Arc::clone(&self.jobs), job_id)?
+            .map(|lease| Box::new(lease) as Box<dyn ExportJobLease>))
+    }
+
+    fn create(&self, state: &ExportJobState) -> Result<ExportJobState, ExportError> {
+        let mut states =
+            self.states.lock().map_err(|_| ExportError::Io("store lock poisoned".into()))?;
+        Ok(states.entry(state.job_id.clone()).or_insert_with(|| state.clone()).clone())
+    }
+
     fn load(&self, job_id: &str) -> Result<Option<ExportJobState>, ExportError> {
         Ok(self
             .states
@@ -1403,6 +1660,10 @@ pub struct EncryptedFileArtifactPort {
 impl EncryptedFileArtifactPort {
     /// Constructs a file port.  The caller must provide a cipher bound to the
     /// database export artifact context; no plaintext fallback exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EncryptionUnavailable` if the encryption attestation is invalid.
     pub fn new(
         root: impl Into<PathBuf>,
         cipher: ArtifactCipher,
@@ -1418,20 +1679,74 @@ struct EncryptedFileWriter {
     cipher: Arc<Mutex<ArtifactCipher>>,
 }
 
+/// Publishes immutable bytes without replacing a concurrent winner.
+fn publish_artifact(path: &Path, bytes: &[u8]) -> Result<bool, ExportError> {
+    let parent = path.parent().ok_or(ExportError::DestinationUnavailable)?;
+    ensure_no_symlink_components(parent)?;
+    fs::create_dir_all(parent).map_err(|error| ExportError::Io(error.to_string()))?;
+    ensure_no_symlink_components(parent)?;
+    let tmp =
+        path.with_extension(format!("{}.part", terrabase::identity::DatabaseUlid::generate()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(|error| ExportError::Io(error.to_string()))?;
+    let result = (|| -> io::Result<bool> {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        let created = match fs::hard_link(&tmp, path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => false,
+            Err(error) => return Err(error),
+        };
+        fs::remove_file(&tmp)?;
+        sync_directory_ancestors(parent)?;
+        Ok(created)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result.map_err(|error| ExportError::Io(error.to_string()))
+}
+
+fn sync_directory_ancestors(directory: &Path) -> io::Result<()> {
+    // Includes newly created documents/history and job directories, so a
+    // durable cursor can never outlive the directory entry containing its page.
+    for ancestor in fs::canonicalize(directory)?.ancestors() {
+        File::open(ancestor)?.sync_all()?;
+    }
+    Ok(())
+}
+
+impl EncryptedFileWriter {
+    fn verify_member(&self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError> {
+        let target = self.directory.join(path);
+        ensure_no_symlink_components(&target)?;
+        let encrypted = fs::read(&target).map_err(|error| ExportError::Io(error.to_string()))?;
+        let cipher =
+            self.cipher.lock().map_err(|_| ExportError::Io("cipher lock poisoned".into()))?;
+        if cipher.open(&encrypted).map_err(|_| ExportError::IdempotencyConflict)? != plaintext {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        sync_directory_ancestors(target.parent().ok_or(ExportError::DestinationUnavailable)?)
+            .map_err(|error| ExportError::Io(error.to_string()))?;
+        Ok(fact(path, &encrypted))
+    }
+}
+
 impl ArtifactWriter for EncryptedFileWriter {
     fn put(&mut self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError> {
         if !safe_member_path(path) || plaintext.len() > MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) {
             return Err(ExportError::InvalidRequest("artifact member is unsafe or too large"));
         }
         let target = self.directory.join(path);
-        if let Ok(encrypted) = fs::read(&target) {
-            let mut cipher =
-                self.cipher.lock().map_err(|_| ExportError::Io("cipher lock poisoned".into()))?;
-            let existing = cipher.open(&encrypted).map_err(|_| ExportError::IdempotencyConflict)?;
-            if existing != plaintext {
-                return Err(ExportError::IdempotencyConflict);
-            }
-            return Ok(fact(path, &encrypted));
+        ensure_no_symlink_components(&target)?;
+        match fs::symlink_metadata(&target) {
+            Ok(_) => return self.verify_member(path, plaintext),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(ExportError::Io(error.to_string())),
         }
         let encrypted = self
             .cipher
@@ -1439,16 +1754,11 @@ impl ArtifactWriter for EncryptedFileWriter {
             .map_err(|_| ExportError::Io("cipher lock poisoned".into()))?
             .seal(plaintext)
             .map_err(|error| ExportError::Io(error.to_string()))?;
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| ExportError::Io(error.to_string()))?;
+        if publish_artifact(&target, &encrypted)? {
+            Ok(fact(path, &encrypted))
+        } else {
+            self.verify_member(path, plaintext)
         }
-        let tmp = target.with_extension("part");
-        let mut file = File::create(&tmp).map_err(|error| ExportError::Io(error.to_string()))?;
-        file.write_all(&encrypted)
-            .and_then(|()| file.sync_all())
-            .map_err(|error| ExportError::Io(error.to_string()))?;
-        fs::rename(tmp, target).map_err(|error| ExportError::Io(error.to_string()))?;
-        Ok(fact(path, &encrypted))
     }
 
     fn existing_facts(&mut self) -> Result<Vec<ArtifactFact>, ExportError> {
@@ -1479,6 +1789,8 @@ impl ArtifactWriter for EncryptedFileWriter {
                     .strip_prefix(&self.directory)
                     .map_err(|_| ExportError::DestinationUnavailable)?;
                 let member = relative.to_str().ok_or(ExportError::DestinationUnavailable)?;
+                // Publication temporaries use this exact, case-sensitive suffix.
+                #[allow(clippy::case_sensitive_file_extension_comparisons)]
                 if member.ends_with(".part") || !safe_member_path(member) {
                     continue;
                 }
@@ -1502,21 +1814,28 @@ impl ArtifactWriter for EncryptedFileWriter {
         if manifest.path != "manifest.json" {
             return Err(ExportError::IdempotencyConflict);
         }
-        let marker = self.directory.join("COMMITTED");
-        let bytes = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
-        if let Ok(existing) = fs::read(&marker) {
-            if existing == bytes.as_bytes() {
-                return Ok(());
-            }
+        let manifest_path = self.directory.join(&manifest.path);
+        ensure_no_symlink_components(&manifest_path)?;
+        let encrypted =
+            fs::read(&manifest_path).map_err(|error| ExportError::Io(error.to_string()))?;
+        if fact(&manifest.path, &encrypted) != *manifest {
             return Err(ExportError::IdempotencyConflict);
         }
-        let tmp = marker.with_extension("part");
-        fs::write(&tmp, bytes).map_err(|error| ExportError::Io(error.to_string()))?;
-        fs::rename(tmp, marker).map_err(|error| ExportError::Io(error.to_string()))
-    }
-
-    fn abort(self: Box<Self>) {
-        let _ = fs::remove_dir_all(self.directory);
+        self.cipher
+            .lock()
+            .map_err(|_| ExportError::Io("cipher lock poisoned".into()))?
+            .open(&encrypted)
+            .map_err(|_| ExportError::IdempotencyConflict)?;
+        let marker = self.directory.join("COMMITTED");
+        ensure_no_symlink_components(&marker)?;
+        let bytes = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
+        if !publish_artifact(&marker, bytes.as_bytes())?
+            && fs::read(&marker).map_err(|error| ExportError::Io(error.to_string()))?
+                != bytes.as_bytes()
+        {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        Ok(())
     }
 }
 
@@ -1596,9 +1915,9 @@ pub async fn create_export_http(
     match request {
         Ok(request) => match service.submit(request).await {
             Ok(accepted) => json_response(StatusCode::ACCEPTED, &accepted),
-            Err(error) => http_error(error_status(&error), &error.to_string()),
+            Err(error) => http_error(error_status(&error), error.public_message()),
         },
-        Err(error) => http_error(StatusCode::UNPROCESSABLE_ENTITY, &error.to_string()),
+        Err(error) => http_error(StatusCode::UNPROCESSABLE_ENTITY, error.public_message()),
     }
 }
 
@@ -1607,10 +1926,10 @@ pub async fn export_status_http(
     State(service): State<Arc<ExportService>>,
     AxumPath(job_id): AxumPath<String>,
 ) -> impl IntoResponse {
-    match service.status(&job_id) {
+    match service.status_async(&job_id).await {
         Ok(Some(status)) => json_response(StatusCode::OK, &status),
         Ok(None) => http_error(StatusCode::NOT_FOUND, "export job not found"),
-        Err(error) => http_error(error_status(&error), &error.to_string()),
+        Err(error) => http_error(error_status(&error), error.public_message()),
     }
 }
 
@@ -1678,6 +1997,94 @@ fn json_quote(value: &str) -> String {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn file_store_reopens_saved_state_and_cleans_failed_publication() {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-export-store-{}",
+            terrabase::identity::DatabaseUlid::generate()
+        ));
+        let store = FileExportStore::open(&root).expect("store");
+        let state = stored_job(&root);
+        store.save(&state).expect("durable save");
+        drop(store);
+        let store = FileExportStore::open(&root).expect("reopen");
+        assert_eq!(store.load(&state.job_id).expect("load"), Some(state.clone()));
+        let path = store.path(&state.job_id).expect("job path");
+        fs::remove_file(&path).expect("prepare rename failure");
+        fs::create_dir(&path).expect("occupied destination");
+        fs::write(path.join("sentinel"), b"preserve").expect("sentinel");
+        assert!(store.save(&state).is_err());
+        assert_eq!(fs::read(path.join("sentinel")).expect("destination survives"), b"preserve");
+        assert_eq!(
+            fs::read_dir(&root).expect("store entries").count(),
+            1,
+            "failed publication removes only its temporary file"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    fn stored_job(root: &Path) -> ExportJobState {
+        ExportJobState {
+            job_id: "a".repeat(32),
+            database: "db".into(),
+            destination: ExportDestination::File {
+                root: root.join("artifacts"),
+                region: RegionCode::GRU,
+            },
+            placement: vec![RegionCode::GRU],
+            snapshot: Source { pages: Mutex::new(Vec::new()) }.snapshot("db").expect("snapshot"),
+            phase: ExportPhase::Documents,
+            source_cursor: None,
+            records: 0,
+            pages: 0,
+            status: JobStatus::Accepted,
+            resume_cursor: "cursor".into(),
+            manifest: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn concurrent_file_admission_preserves_one_snapshot_and_existing_progress() {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-export-admission-{}",
+            terrabase::identity::DatabaseUlid::generate()
+        ));
+        FileExportStore::open(&root).expect("store");
+        let barrier = std::sync::Barrier::new(8);
+        let admitted = std::thread::scope(|threads| {
+            let handles = (0..8)
+                .map(|boundary| {
+                    let root = &root;
+                    let barrier = &barrier;
+                    threads.spawn(move || {
+                        let store = FileExportStore::open(root).expect("independent store");
+                        let mut proposed = stored_job(root);
+                        proposed.snapshot.boundary = boundary;
+                        barrier.wait();
+                        store.create(&proposed).expect("atomic admission")
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles.into_iter().map(|handle| handle.join().expect("submitter")).collect::<Vec<_>>()
+        });
+        assert!(admitted.iter().all(|state| state == &admitted[0]), "every caller uses the winner");
+        let store = FileExportStore::open(&root).expect("reopen winner");
+        let mut running = admitted[0].clone();
+        running.status = JobStatus::Running;
+        running.pages = 4;
+        running.records = 100;
+        store.save(&running).expect("worker progress");
+        assert_eq!(store.create(&stored_job(&root)).expect("late admission"), running);
+        assert_eq!(store.load(&running.job_id).expect("durable progress"), Some(running));
+        assert_eq!(
+            fs::read_dir(&root).expect("entries").count(),
+            1,
+            "temporary records are cleaned"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
 
     struct ReadPort;
 
@@ -1765,7 +2172,6 @@ mod tests {
             self.committed.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
-        fn abort(self: Box<Self>) {}
     }
     struct Port {
         writer: Arc<Mutex<Option<Writer>>>,
@@ -1798,6 +2204,372 @@ mod tests {
             [9; 32],
         )
         .expect("service")
+    }
+
+    #[test]
+    fn failed_export_resumes_without_losing_persisted_pages() {
+        use terrabase::encryption::{Compression, DatabaseKey, EncryptionContext, ProviderMode};
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-export-resume-{}",
+            terrabase::identity::DatabaseUlid::generate()
+        ));
+        let state = stored_job(&root);
+        let page = |id: &str, done| ExportPage {
+            records: vec![ExportRecord::Document {
+                collection: "docs".into(),
+                id: id.into(),
+                version: 1,
+                canonical_json: br#"{"n":1}"#.to_vec(),
+            }],
+            next_cursor: if done { None } else { Some(vec![1]) },
+            done,
+        };
+        let source = Arc::new(Source { pages: Mutex::new(vec![page("first", false)]) });
+        let store = Arc::new(MemoryExportStore::default());
+        store.create(&state).expect("admit");
+        let context = EncryptionContext::new(
+            "local",
+            "tenant",
+            "db",
+            "export",
+            "job",
+            "v1",
+            1,
+            Compression::None,
+        )
+        .expect("encryption context");
+        let cipher =
+            ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([7; 32]), context)
+                .expect("cipher");
+        let port = Arc::new(
+            EncryptedFileArtifactPort::new(
+                root.join("artifacts"),
+                cipher,
+                EncryptionAttestation { provider: "local-file".into(), key_version: "v1".into() },
+            )
+            .expect("artifact port"),
+        );
+        let worker = Worker {
+            source: source.clone(),
+            store: store.clone(),
+            artifacts: port,
+            cursor_key: [9; 32],
+        };
+        assert!(worker.run(&state.job_id).is_err(), "source fails after its first page");
+        let failed = store.load(&state.job_id).expect("load").expect("job");
+        assert_eq!(failed.status, JobStatus::Failed);
+        assert_eq!(failed.error.as_deref(), Some("export source operation failed"));
+        assert_eq!((failed.pages, failed.records), (1, 1));
+        assert_eq!(failed.source_cursor, Some(vec![1]));
+        let directory = root.join("artifacts/db").join(&state.job_id);
+        let first_path = directory.join("documents/000000000000.jsonl");
+        let first = fs::read(&first_path).expect("persisted page survives failure");
+        let premature = worker
+            .artifacts
+            .open(
+                &state.job_id,
+                &state.database,
+                &state.destination,
+                &PlacementLock::single(RegionCode::GRU),
+            )
+            .expect("reopen staging");
+        let fabricated =
+            ArtifactFact { path: "manifest.json".into(), length: 0, checksum: "0".repeat(64) };
+        assert!(premature.commit(&fabricated).is_err(), "a missing manifest cannot be committed");
+        assert!(!directory.join("COMMITTED").exists());
+
+        source.pages.lock().expect("source").push(page("second", true));
+        worker.run(&state.job_id).expect("resume");
+        let complete = store.load(&state.job_id).expect("load").expect("job");
+        assert_eq!(complete.status, JobStatus::Complete);
+        assert_eq!((complete.pages, complete.records), (2, 2));
+        assert_eq!(fs::read(first_path).expect("original page"), first);
+        assert!(directory.join("documents/000000000001.jsonl").is_file());
+        assert!(directory.join("COMMITTED").is_file());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn concurrent_artifact_publication_never_replaces_the_winner() {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-artifact-publish-{}",
+            terrabase::identity::DatabaseUlid::generate()
+        ));
+        let target = root.join("nested/page.jsonl");
+        let barrier = std::sync::Barrier::new(8);
+        let outcomes = std::thread::scope(|threads| {
+            let handles = (0u8..8)
+                .map(|byte| {
+                    let target = &target;
+                    let barrier = &barrier;
+                    threads.spawn(move || {
+                        barrier.wait();
+                        (byte, publish_artifact(target, &[byte]).expect("publication"))
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles.into_iter().map(|handle| handle.join().expect("publisher")).collect::<Vec<_>>()
+        });
+        let winners = outcomes.iter().filter(|(_, created)| *created).collect::<Vec<_>>();
+        assert_eq!(winners.len(), 1);
+        assert_eq!(fs::read(&target).expect("winning bytes"), vec![winners[0].0]);
+        assert!(!publish_artifact(&target, b"replacement").expect("later publisher"));
+        assert_eq!(fs::read(&target).expect("still immutable"), vec![winners[0].0]);
+        assert_eq!(fs::read_dir(target.parent().expect("parent")).expect("entries").count(), 1);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    const SENSITIVE_PROVIDER_DETAIL: &str =
+        "credential=private-token path=/private/customer/database";
+
+    struct SensitiveSource;
+    impl ExportSource for SensitiveSource {
+        fn snapshot(&self, _database: &str) -> Result<ExportSnapshot, ExportSourceError> {
+            Err(ExportSourceError::Storage(SENSITIVE_PROVIDER_DETAIL.into()))
+        }
+        fn page(
+            &self,
+            _database: &str,
+            _snapshot: &ExportSnapshot,
+            _phase: ExportPhase,
+            _after: Option<&[u8]>,
+            _limit: usize,
+        ) -> Result<ExportPage, ExportSourceError> {
+            Err(ExportSourceError::Storage(SENSITIVE_PROVIDER_DETAIL.into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn export_http_redacts_provider_errors_and_legacy_job_diagnostics() {
+        let mut service = service(
+            Source { pages: Mutex::new(Vec::new()) },
+            Port { writer: Arc::new(Mutex::new(None)), opens: AtomicUsize::new(0) },
+        );
+        service.source = Arc::new(SensitiveSource);
+        let mut state = stored_job(Path::new("/tmp/export-redaction"));
+        state.status = JobStatus::Failed;
+        state.error = Some(SENSITIVE_PROVIDER_DETAIL.into());
+        service.store.save(&state).expect("legacy status");
+        let service = Arc::new(service);
+        let request = serde_json::json!({"destination": state.destination, "placement": ["GRU"]});
+        let response =
+            create_export_http(State(service.clone()), AxumPath("db".into()), request.to_string())
+                .await
+                .into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("response");
+        let text = std::str::from_utf8(&body).expect("JSON");
+        assert!(text.contains("export source operation failed"));
+        assert!(!text.contains("private-token") && !text.contains("/private/customer"));
+        let response =
+            export_status_http(State(service), AxumPath(state.job_id)).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("status");
+        let text = std::str::from_utf8(&body).expect("JSON");
+        assert!(text.contains("export failed; retry with the latest resume cursor"));
+        assert!(!text.contains("private-token") && !text.contains("/private/customer"));
+    }
+
+    #[derive(Default)]
+    struct CountingStore {
+        inner: MemoryExportStore,
+        loads: AtomicUsize,
+    }
+
+    impl ExportStore for CountingStore {
+        fn acquire_job(
+            &self,
+            job_id: &str,
+        ) -> Result<Option<Box<dyn ExportJobLease>>, ExportError> {
+            self.inner.acquire_job(job_id)
+        }
+        fn create(&self, state: &ExportJobState) -> Result<ExportJobState, ExportError> {
+            self.inner.create(state)
+        }
+        fn load(&self, job_id: &str) -> Result<Option<ExportJobState>, ExportError> {
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            self.inner.load(job_id)
+        }
+        fn save(&self, state: &ExportJobState) -> Result<(), ExportError> {
+            self.inner.save(state)
+        }
+    }
+
+    struct ThreadCheckedStore {
+        runtime_thread: std::thread::ThreadId,
+        loads: AtomicUsize,
+    }
+
+    impl ExportStore for ThreadCheckedStore {
+        fn acquire_job(
+            &self,
+            _job_id: &str,
+        ) -> Result<Option<Box<dyn ExportJobLease>>, ExportError> {
+            panic!("the failing source must prevent admission");
+        }
+        fn create(&self, _state: &ExportJobState) -> Result<ExportJobState, ExportError> {
+            panic!("the failing source must prevent admission");
+        }
+
+        fn load(&self, _job_id: &str) -> Result<Option<ExportJobState>, ExportError> {
+            assert_ne!(std::thread::current().id(), self.runtime_thread);
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            Ok(None)
+        }
+
+        fn save(&self, _state: &ExportJobState) -> Result<(), ExportError> {
+            panic!("the failing source must prevent admission");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn export_requests_keep_store_io_off_the_runtime_thread() {
+        let mut service = service(
+            Source { pages: Mutex::new(Vec::new()) },
+            Port { writer: Arc::new(Mutex::new(None)), opens: AtomicUsize::new(0) },
+        );
+        let store = Arc::new(ThreadCheckedStore {
+            runtime_thread: std::thread::current().id(),
+            loads: AtomicUsize::new(0),
+        });
+        service.store = store.clone();
+        service.source = Arc::new(SensitiveSource);
+        let state = stored_job(Path::new("/tmp/export-runtime"));
+        assert!(matches!(
+            service
+                .submit(ExportRequest {
+                    database: state.database,
+                    destination: state.destination,
+                    placement: PlacementLock::single(RegionCode::GRU),
+                    idempotency_key: None,
+                })
+                .await,
+            Err(ExportError::Source(_))
+        ));
+        assert!(matches!(
+            service.resume(&state.job_id, "cursor").await,
+            Err(ExportError::InvalidRequest("unknown job"))
+        ));
+        let response = export_status_http(State(Arc::new(service)), AxumPath(state.job_id))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(store.loads.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn file_job_ownership_survives_contention_and_releases_on_process_death() {
+        const CHILD_ROOT: &str = "TERRABASE_EXPORT_LEASE_TEST_ROOT";
+        struct Child(std::process::Child);
+        impl Drop for Child {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        let job_id = "a".repeat(32);
+        if let Some(root) = std::env::var_os(CHILD_ROOT) {
+            let root = PathBuf::from(root);
+            let store = FileExportStore::open(&root).expect("child store");
+            let _lease = store.acquire_job(&job_id).expect("child lock").expect("unowned job");
+            fs::write(root.join("ready"), b"locked").expect("signal ownership");
+            loop {
+                std::thread::park();
+            }
+        }
+
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-export-lease-{}",
+            terrabase::identity::DatabaseUlid::generate()
+        ));
+        let store = FileExportStore::open(&root).expect("parent store");
+        let mut child = Child(
+            std::process::Command::new(std::env::current_exe().expect("test binary"))
+                .args([
+                    "--exact",
+                    "export_api::tests::file_job_ownership_survives_contention_and_releases_on_process_death",
+                ])
+                .env(CHILD_ROOT, &root)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .expect("child worker"),
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !root.join("ready").exists() {
+            assert!(child.0.try_wait().expect("child status").is_none(), "child exited early");
+            assert!(std::time::Instant::now() < deadline, "child failed to acquire ownership");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(store.acquire_job(&job_id).expect("contending lock").is_none());
+        let other = store.acquire_job(&"b".repeat(32)).expect("different job");
+        assert!(other.is_some(), "ownership is job-scoped");
+        drop(child);
+        let lease = store.acquire_job(&job_id).expect("after crash").expect("released by OS");
+        let reopened = FileExportStore::open(&root).expect("independent handle");
+        assert!(reopened.acquire_job(&job_id).expect("same-process contender").is_none());
+        drop(lease);
+        assert!(root.join(format!("{job_id}.lock")).is_file(), "lock inode must remain");
+        assert!(reopened.acquire_job(&job_id).expect("after drop").is_some());
+        drop(other);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn worker_does_not_read_or_mutate_a_job_owned_by_another_worker() {
+        let mut service = service(
+            Source { pages: Mutex::new(Vec::new()) },
+            Port { writer: Arc::new(Mutex::new(None)), opens: AtomicUsize::new(0) },
+        );
+        let store = Arc::new(CountingStore::default());
+        service.store = store.clone();
+        let lease = store.acquire_job("job").expect("lock").expect("unowned");
+        let worker = service.clone_for_worker();
+        worker.run("job").expect("another worker owns the job");
+        assert_eq!(store.loads.load(Ordering::SeqCst), 0);
+        drop(lease);
+        assert!(worker.run("job").is_err(), "unowned missing job is read and refused");
+        assert_eq!(store.loads.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn duplicate_jobs_reserve_before_entering_a_busy_worker_pool() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .expect("runtime");
+        let mut service = service(
+            Source { pages: Mutex::new(Vec::new()) },
+            Port { writer: Arc::new(Mutex::new(None)), opens: AtomicUsize::new(0) },
+        );
+        let store = Arc::new(CountingStore::default());
+        service.store = store.clone();
+        runtime.block_on(async {
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                started_tx.send(()).expect("pool occupied");
+                let _ = release_rx.recv();
+            });
+            started_rx.recv().expect("blocking worker started");
+            for _ in 0..128 {
+                service.spawn_worker("same-job").expect("schedule duplicate");
+            }
+            release_tx.send(()).expect("release pool");
+            blocker.await.expect("blocker finished");
+            tokio::task::spawn_blocking(|| {}).await.expect("queued workers drained");
+            assert_eq!(
+                store.loads.load(Ordering::SeqCst),
+                1,
+                "only one worker may execute for the queued job"
+            );
+            // The missing durable job makes the worker fail. Its reservation
+            // must still be released so a subsequent attempt can execute.
+            service.spawn_worker("same-job").expect("retry failed job");
+            tokio::task::spawn_blocking(|| {}).await.expect("retry drained");
+            assert_eq!(store.loads.load(Ordering::SeqCst), 2);
+        });
     }
 
     #[test]
@@ -1870,8 +2642,8 @@ mod tests {
         let snapshot = ExportSnapshot {
             boundary: 1,
             database_id: "db".into(),
-            schemas: vec![MetadataMember { name: "same.json".into(), bytes: br#"{}"#.to_vec() }],
-            indexes: vec![MetadataMember { name: "same.json".into(), bytes: br#"{}"#.to_vec() }],
+            schemas: vec![MetadataMember { name: "same.json".into(), bytes: br"{}".to_vec() }],
+            indexes: vec![MetadataMember { name: "same.json".into(), bytes: br"{}".to_vec() }],
             branches: Vec::new(),
             estimated_records: None,
         };

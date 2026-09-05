@@ -60,6 +60,7 @@ terrabase-sync-core = { path = "../terrabase-sync-core" }
 # The engine this host serves (P4): the real durable engine behind the
 # document spine.
 terrabase = { path = "../..", default-features = false }
+terrabase-cluster = { path = "../terrabase-cluster" }
 # The member-transport seam (E-6, ADR 0044 D-35/D-45): the cross-region
 # lanes drive the journal tailer's pull/apply path over fault-injectable
 # MemberTransport lanes.

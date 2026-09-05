@@ -15,10 +15,8 @@
 //! small so a storage failure cannot be mistaken for a successful lifecycle
 //! transition.
 
+use crate::storage::StoragePort;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
 
 /// Maximum templates retained by one database observer.
 pub const OBSERVATION_CAPACITY: usize = 4096;
@@ -34,6 +32,8 @@ pub const WRITE_BUDGET_MULTIPLE: f64 = 2.0;
 pub const REGRESSION_FRACTION: f64 = 0.05;
 /// Minimum shadow samples per side for common templates.
 pub const MIN_SHADOW_SAMPLES: usize = 20;
+/// Maximum samples retained and evaluated per side of a shadow comparison.
+pub const MAX_SHADOW_SAMPLES: usize = 4096;
 /// Minimum improvement required for activation.
 pub const MIN_IMPROVEMENT_FRACTION: f64 = 0.20;
 /// Retention before a hidden physical index is dropped.
@@ -205,6 +205,8 @@ impl Template {
 /// A bounded execution observation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Observation {
+    /// Tenant whose validated read produced this observation.
+    pub tenant: String,
     /// Normalized SQL template.
     pub template: Template,
     /// Logical `SQLite` work.
@@ -267,6 +269,7 @@ impl WorkloadSketch {
     #[allow(clippy::cast_precision_loss, reason = "compression weight; rounding is noise")]
     pub fn compress(
         &self,
+        tenant: &str,
         now_millis: u64,
         window_millis: u64,
         share: f64,
@@ -276,7 +279,9 @@ impl WorkloadSketch {
         }
         let mut weights: BTreeMap<Template, (u64, u64)> = BTreeMap::new();
         for observation in &self.ring {
-            if now_millis.saturating_sub(observation.at_millis) > window_millis {
+            if observation.tenant != tenant
+                || now_millis.saturating_sub(observation.at_millis) > window_millis
+            {
                 continue;
             }
             let row = weights.entry(observation.template.clone()).or_default();
@@ -680,8 +685,8 @@ pub enum ShadowOutcome {
 /// # Errors
 ///
 /// Returns [`CoordinatorError::InsufficientEvidence`] when either side has
-/// fewer than [`MIN_SHADOW_SAMPLES`] samples, when a mean is non-finite or
-/// non-positive, or when a zero-variance tie leaves no decision.
+/// fewer than [`MIN_SHADOW_SAMPLES`] or more than [`MAX_SHADOW_SAMPLES`]
+/// samples, a sample's total overflows, or the baseline mean is zero.
 #[allow(
     clippy::cast_precision_loss,
     reason = "bounded logical counters; precision is below measurement noise"
@@ -690,13 +695,17 @@ pub fn verify_shadow(
     baseline: &[LogicalCost],
     candidate: &[LogicalCost],
 ) -> Result<(ShadowOutcome, WelchEvidence), CoordinatorError> {
-    if baseline.len() < MIN_SHADOW_SAMPLES || candidate.len() < MIN_SHADOW_SAMPLES {
+    if !(MIN_SHADOW_SAMPLES..=MAX_SHADOW_SAMPLES).contains(&baseline.len())
+        || !(MIN_SHADOW_SAMPLES..=MAX_SHADOW_SAMPLES).contains(&candidate.len())
+        || baseline
+            .iter()
+            .chain(candidate)
+            .any(|sample| sample.pages_read.checked_add(sample.rows_examined).is_none())
+    {
         return Err(CoordinatorError::InsufficientEvidence);
     }
     let mean = |samples: &[LogicalCost]| {
-        // Saturating: shadow samples are bounded; the fallback keeps the mean
-        // total for oversized inputs.
-        let count = f64::from(u32::try_from(samples.len()).unwrap_or(u32::MAX));
+        let count = samples.len() as f64;
         samples.iter().map(|s| s.total() as f64).sum::<f64>() / count
     };
     let bm = mean(baseline);
@@ -705,9 +714,7 @@ pub fn verify_shadow(
         return Err(CoordinatorError::InsufficientEvidence);
     }
     let variance = |samples: &[LogicalCost], m: f64| {
-        // Saturating: shadow samples are bounded; the fallback keeps the
-        // variance total for oversized inputs.
-        let count = f64::from(u32::try_from(samples.len()).unwrap_or(u32::MAX));
+        let count = samples.len() as f64;
         samples
             .iter()
             .map(|s| {
@@ -717,10 +724,8 @@ pub fn verify_shadow(
             .sum::<f64>()
             / (count - 1.0)
     };
-    // Saturating: shadow samples are bounded; the fallback keeps the
-    // standard-error total for oversized inputs.
-    let baseline_count = f64::from(u32::try_from(baseline.len()).unwrap_or(u32::MAX));
-    let candidate_count = f64::from(u32::try_from(candidate.len()).unwrap_or(u32::MAX));
+    let baseline_count = baseline.len() as f64;
+    let candidate_count = candidate.len() as f64;
     let se = variance(baseline, bm) / baseline_count + variance(candidate, cm) / candidate_count;
     let statistic = if se == 0.0 {
         if (bm - cm).abs() < f64::EPSILON { 0.0 } else { f64::INFINITY }
@@ -731,13 +736,9 @@ pub fn verify_shadow(
         return Err(CoordinatorError::InsufficientEvidence);
     }
     let improvement = (bm - cm) / bm;
-    let p95 = |samples: &[LogicalCost]| {
-        let mut values: Vec<u64> = samples.iter().map(|s| s.total()).collect();
-        values.sort_unstable();
-        values[((values.len() - 1) * 95) / 100] as f64
-    };
-    let regression = cm > bm * (1.0 + REGRESSION_FRACTION)
-        || p95(candidate) > p95(baseline) * (1.0 + REGRESSION_FRACTION);
+    let regression = metric_regresses(baseline, candidate, LogicalCost::total)
+        || metric_regresses(baseline, candidate, |sample| sample.pages_read)
+        || metric_regresses(baseline, candidate, |sample| sample.rows_examined);
     let evidence =
         WelchEvidence { baseline_mean: bm, candidate_mean: cm, improvement, statistic, regression };
     let significant = statistic >= 2.0;
@@ -749,6 +750,26 @@ pub fn verify_shadow(
         ShadowOutcome::Abandon
     };
     Ok((outcome, evidence))
+}
+
+/// Exact five-percent guards for bounded integer measurements. A reduction
+/// in rows cannot hide increased page work, or vice versa. At 4096 samples,
+/// cross-multiplied sums fit in u128 even for `u64::MAX` measurements.
+fn metric_regresses(
+    baseline: &[LogicalCost],
+    candidate: &[LogicalCost],
+    metric: fn(LogicalCost) -> u64,
+) -> bool {
+    let sum = |samples: &[LogicalCost]| {
+        samples.iter().map(|sample| u128::from(metric(*sample))).sum::<u128>()
+    };
+    let p95 = |samples: &[LogicalCost]| {
+        let mut values: Vec<u64> = samples.iter().map(|sample| metric(*sample)).collect();
+        values.sort_unstable();
+        u128::from(values[(values.len() * 95).div_ceil(100) - 1])
+    };
+    sum(candidate) * baseline.len() as u128 * 100 > sum(baseline) * candidate.len() as u128 * 105
+        || p95(candidate) * 100 > p95(baseline) * 105
 }
 
 /// A durable lifecycle event.  The adapter must append it before the caller
@@ -990,6 +1011,8 @@ pub struct ShadowEvidence {
     pub index_id: String,
     /// Generation the evidence belongs to.
     pub generation: u64,
+    /// Digest of the exact normalized template measured by the shadow worker.
+    pub template_digest: [u8; 32],
     /// Baseline logical samples `(pages, rows)`.
     pub baseline: Vec<LogicalCost>,
     /// Candidate logical samples `(pages, rows)`.
@@ -1002,67 +1025,61 @@ pub struct ShadowEvidence {
     pub digest: [u8; 32],
 }
 
-/// Engine-owned durable lifecycle state.  The event file is intentionally a
-/// small append-only journal beside the `SQLite` file; every mutation is framed
-/// with a length and BLAKE3 checksum, fsynced before the in-memory view is
-/// changed, and replayed at open.  `SQLite` publication remains the source of
-/// truth for document/index bytes; this journal carries only lifecycle
-/// metadata and therefore cannot make a stale segment visible after restart.
+/// Engine-owned lifecycle state replayed from the database WAL-backed journal.
 #[derive(Debug)]
 pub(crate) struct LifecycleStore {
-    path: PathBuf,
-    generation: u64,
+    generations: BTreeMap<String, u64>,
     next_sequence: u64,
-    indexes: BTreeMap<String, LifecycleIndexView>,
-    forbidden: BTreeSet<String>,
-    audits: VecDeque<LifecycleAuditEntry>,
-    evidence: BTreeMap<String, ShadowEvidence>,
+    indexes: BTreeMap<(String, String), LifecycleIndexView>,
+    forbidden: BTreeSet<(String, String)>,
+    audits: VecDeque<(String, String, LifecycleAuditEntry)>,
+    evidence: BTreeMap<(String, String, [u8; 32]), ShadowEvidence>,
 }
 
-const LIFECYCLE_MAGIC: &[u8; 4] = b"TBAI";
 const LIFECYCLE_MAX_FRAME: usize = 512 * 1024;
 const LIFECYCLE_MAX_AUDIT: usize = 4096;
+/// Database-wide evidence bound, independent of the number of tenants.
+const LIFECYCLE_MAX_EVIDENCE: usize = 256;
+
+#[derive(Clone, Copy)]
+enum LifecycleDetail<'a> {
+    Install,
+    Forbid,
+    Retire,
+    Evidence(&'a ShadowEvidence),
+}
+
+impl LifecycleDetail<'_> {
+    fn kind(&self) -> u8 {
+        match self {
+            Self::Install => 1,
+            Self::Forbid => 2,
+            Self::Retire => 3,
+            Self::Evidence(_) => 4,
+        }
+    }
+}
 
 impl LifecycleStore {
     /// Opens and replays the lifecycle journal for one durable location.
-    pub(crate) fn open(location: &Path) -> Result<Self, ()> {
-        let path = location.join("auto-index.lifecycle");
+    pub(crate) fn open(storage: &dyn StoragePort) -> Result<Self, ()> {
         let mut store = Self {
-            path,
-            generation: 0,
+            generations: BTreeMap::new(),
             next_sequence: 1,
             indexes: BTreeMap::new(),
             forbidden: BTreeSet::new(),
             audits: VecDeque::new(),
             evidence: BTreeMap::new(),
         };
-        let mut file = match File::open(&store.path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(store),
-            Err(_) => return Err(()),
-        };
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map_err(|_| ())?;
-        let mut offset = 0;
-        while offset < bytes.len() {
-            let end_header = offset.checked_add(4 + 4 + 32).ok_or(())?;
-            let header = bytes.get(offset..end_header).ok_or(())?;
-            if &header[..4] != LIFECYCLE_MAGIC {
-                return Err(());
+        loop {
+            let page = storage.index_lifecycle_events(store.next_sequence, 64)?;
+            if page.is_empty() {
+                return Ok(store);
             }
-            let length = u32::from_le_bytes(header[4..8].try_into().map_err(|_| ())?) as usize;
-            if length > LIFECYCLE_MAX_FRAME {
-                return Err(());
+            for payload in page {
+                store.replay(&payload)?;
             }
-            let end = end_header.checked_add(length).ok_or(())?;
-            let payload = bytes.get(end_header..end).ok_or(())?;
-            if blake3::hash(payload).as_bytes() != &header[8..40] {
-                return Err(());
-            }
-            store.replay(payload)?;
-            offset = end;
         }
-        Ok(store)
     }
 
     fn replay(&mut self, payload: &[u8]) -> Result<(), ()> {
@@ -1074,69 +1091,93 @@ impl LifecycleStore {
         self.next_sequence = sequence.checked_add(1).ok_or(())?;
         let kind = cursor.byte()?;
         let generation = cursor.u64()?;
-        self.generation = self.generation.max(generation);
         let tenant = cursor.string()?;
         let id = cursor.string()?;
+        if tenant.is_empty()
+            || id.is_empty()
+            || self.generation(&tenant).checked_add(1) != Some(generation)
+        {
+            return Err(());
+        }
+        self.generations.insert(tenant.clone(), generation);
+        let key = (tenant.clone(), id.clone());
         let collection = cursor.string()?;
-        let fields: Vec<String> = cursor
-            .string()?
-            .split('\u{1f}')
-            .filter(|field| !field.is_empty())
-            .map(str::to_owned)
-            .collect();
+        let count = usize::from(u16::from_le_bytes(cursor.take(2)?.try_into().map_err(|_| ())?));
+        let mut fields = Vec::new();
+        for _ in 0..count {
+            fields.push(cursor.string()?);
+        }
         let at_millis = cursor.u64()?;
         let digest = cursor.array32()?;
         match kind {
             1 => {
-                let phase = phase_from_byte(cursor.byte()?)?;
-                let covered = cursor.u64()?;
-                let target = cursor.optional_u64()?;
-                let pinned = cursor.byte()? != 0;
-                let forbidden = cursor.byte()? != 0;
-                let maintenance_cost = fields.len() as u64;
                 self.indexes.insert(
-                    id.clone(),
-                    LifecycleIndexView {
-                        id: id.clone(),
-                        tenant,
-                        collection,
+                    key.clone(),
+                    cursor.lifecycle_view(
+                        (tenant.clone(), id.clone(), collection.clone()),
                         fields,
-                        phase,
                         generation,
-                        covered_watermark: covered,
-                        target_watermark: target,
-                        visible: phase == LifecyclePhase::Active,
-                        pinned,
-                        forbidden,
-                        maintenance_cost,
-                        last_used_millis: Some(at_millis),
-                        zero_stale_reads: true,
-                        regression_free: true,
-                    },
+                    )?,
                 );
             }
             2 => {
-                self.forbidden.insert(id.clone());
+                self.forbidden.insert(key.clone());
+                if let Some(view) = self.indexes.get_mut(&key) {
+                    view.forbidden = true;
+                    view.generation = generation;
+                }
             }
             3 => {
-                self.indexes.remove(&id);
+                let view = self.indexes.get_mut(&key).ok_or(())?;
+                view.phase = LifecyclePhase::Abandoned;
+                view.visible = false;
+                view.generation = generation;
+            }
+            4 => {
+                let template_digest = cursor.array32()?;
+                let baseline = cursor.samples()?;
+                let candidate = cursor.samples()?;
+                let view = self.indexes.get(&key).ok_or(())?;
+                if view.collection != collection || view.fields != fields {
+                    return Err(());
+                }
+                validate_evidence_view(view)?;
+                let evidence =
+                    make_evidence(&tenant, &id, generation, template_digest, baseline, candidate)?;
+                if evidence.digest != digest {
+                    return Err(());
+                }
+                let evidence_key = self.evidence_key(&tenant, &id, template_digest)?;
+                self.evidence.insert(evidence_key, evidence);
+                self.indexes.get_mut(&key).ok_or(())?.generation = generation;
             }
             _ => return Err(()),
         }
-        self.audits.push_back(LifecycleAuditEntry {
-            sequence,
-            index_id: (!id.is_empty()).then_some(id),
-            action: match kind {
-                1 => "transition",
-                2 => "forbid",
-                3 => "retire",
-                _ => return Err(()),
-            }
-            .to_owned(),
-            generation,
-            evidence_digest: Some(digest),
-            at_millis,
-        });
+        if cursor.offset != payload.len() {
+            return Err(());
+        }
+        if kind != 4 {
+            self.invalidate_evidence(&key.0, &key.1);
+        }
+        self.audits.push_back((
+            tenant,
+            collection,
+            LifecycleAuditEntry {
+                sequence,
+                index_id: (!id.is_empty()).then_some(id),
+                action: match kind {
+                    1 => "transition",
+                    2 => "forbid",
+                    3 => "retire",
+                    4 => "evidence",
+                    _ => return Err(()),
+                }
+                .to_owned(),
+                generation,
+                evidence_digest: Some(digest),
+                at_millis,
+            },
+        ));
         while self.audits.len() > LIFECYCLE_MAX_AUDIT {
             self.audits.pop_front();
         }
@@ -1145,19 +1186,28 @@ impl LifecycleStore {
 
     fn append(
         &mut self,
-        kind: u8,
+        storage: &mut dyn StoragePort,
+        detail: LifecycleDetail<'_>,
         view: Option<&LifecycleIndexView>,
-        id: &str,
+        identity: (&str, &str),
         at_millis: u64,
         digest: [u8; 32],
     ) -> Result<u64, ()> {
+        let (tenant, id) = identity;
+        let kind = detail.kind();
+        if tenant.is_empty()
+            || id.is_empty()
+            || view.is_some_and(|view| view.tenant != tenant || view.id != id)
+        {
+            return Err(());
+        }
         let sequence = self.next_sequence;
-        let generation = self.generation;
-        let (tenant, collection, phase, covered, target, pinned, forbidden) = view.map_or_else(
-            || ("", "", LifecyclePhase::Observing, 0, None, false, true),
+        let generation = self.generation(tenant).checked_add(1).ok_or(())?;
+        let next_sequence = sequence.checked_add(1).ok_or(())?;
+        let (collection, phase, covered, target, pinned, forbidden) = view.map_or_else(
+            || ("", LifecyclePhase::Observing, 0, None, false, true),
             |view| {
                 (
-                    view.tenant.as_str(),
                     view.collection.as_str(),
                     view.phase,
                     view.covered_watermark,
@@ -1167,7 +1217,6 @@ impl LifecycleStore {
                 )
             },
         );
-        let fields_owned = view.map_or_else(String::new, |value| value.fields.join("\u{1f}"));
         let mut payload = Vec::new();
         payload.extend_from_slice(&sequence.to_le_bytes());
         payload.push(kind);
@@ -1175,7 +1224,11 @@ impl LifecycleStore {
         put_string(&mut payload, tenant)?;
         put_string(&mut payload, id)?;
         put_string(&mut payload, collection)?;
-        put_string(&mut payload, &fields_owned)?;
+        let fields = view.map_or(&[][..], |view| view.fields.as_slice());
+        payload.extend_from_slice(&u16::try_from(fields.len()).map_err(|_| ())?.to_le_bytes());
+        for field in fields {
+            put_string(&mut payload, field)?;
+        }
         payload.extend_from_slice(&at_millis.to_le_bytes());
         payload.extend_from_slice(&digest);
         if kind == 1 {
@@ -1190,32 +1243,52 @@ impl LifecycleStore {
             }
             payload.push(u8::from(pinned));
             payload.push(u8::from(forbidden));
-        }
-        let length = u32::try_from(payload.len()).map_err(|_| ())?;
-        let mut frame = Vec::with_capacity(40 + payload.len());
-        frame.extend_from_slice(LIFECYCLE_MAGIC);
-        frame.extend_from_slice(&length.to_le_bytes());
-        frame.extend_from_slice(blake3::hash(&payload).as_bytes());
-        frame.extend_from_slice(&payload);
-        let mut file =
-            OpenOptions::new().create(true).append(true).open(&self.path).map_err(|_| ())?;
-        file.write_all(&frame).map_err(|_| ())?;
-        file.sync_data().map_err(|_| ())?;
-        self.next_sequence = sequence.checked_add(1).ok_or(())?;
-        self.audits.push_back(LifecycleAuditEntry {
-            sequence,
-            index_id: (!id.is_empty()).then_some(id.to_owned()),
-            action: match kind {
-                1 => "transition",
-                2 => "forbid",
-                3 => "retire",
-                _ => "unknown",
+            let view = view.ok_or(())?;
+            payload.extend_from_slice(&view.maintenance_cost.to_le_bytes());
+            match view.last_used_millis {
+                Some(value) => {
+                    payload.push(1);
+                    payload.extend_from_slice(&value.to_le_bytes());
+                }
+                None => payload.push(0),
             }
-            .to_owned(),
-            generation,
-            evidence_digest: Some(digest),
-            at_millis,
-        });
+            payload.push(u8::from(view.visible));
+            payload.push(u8::from(view.zero_stale_reads));
+            payload.push(u8::from(view.regression_free));
+        }
+        if let LifecycleDetail::Evidence(evidence) = detail {
+            payload.extend_from_slice(&evidence.template_digest);
+            put_samples(&mut payload, &evidence.baseline)?;
+            put_samples(&mut payload, &evidence.candidate)?;
+        }
+        if payload.len() > LIFECYCLE_MAX_FRAME {
+            return Err(());
+        }
+        storage.append_index_lifecycle_event(sequence, &payload)?;
+        if kind != 4 {
+            self.invalidate_evidence(tenant, id);
+        }
+        self.next_sequence = next_sequence;
+        self.generations.insert(tenant.to_owned(), generation);
+        self.audits.push_back((
+            tenant.to_owned(),
+            collection.to_owned(),
+            LifecycleAuditEntry {
+                sequence,
+                index_id: (!id.is_empty()).then_some(id.to_owned()),
+                action: match kind {
+                    1 => "transition",
+                    2 => "forbid",
+                    3 => "retire",
+                    4 => "evidence",
+                    _ => "unknown",
+                }
+                .to_owned(),
+                generation,
+                evidence_digest: Some(digest),
+                at_millis,
+            },
+        ));
         while self.audits.len() > LIFECYCLE_MAX_AUDIT {
             self.audits.pop_front();
         }
@@ -1223,8 +1296,8 @@ impl LifecycleStore {
     }
 
     /// Returns the current durable lifecycle generation.
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
+    pub(crate) fn generation(&self, tenant: &str) -> u64 {
+        self.generations.get(tenant).copied().unwrap_or(0)
     }
 
     /// Returns a bounded tenant/collection snapshot.
@@ -1236,34 +1309,75 @@ impl LifecycleStore {
     ) -> LifecycleSnapshot {
         let mut indexes: Vec<_> = self
             .indexes
-            .values()
-            .filter(|index| {
-                index.tenant == tenant && collection.is_none_or(|name| index.collection == name)
-            })
+            .range((tenant.to_owned(), String::new())..)
+            .take_while(|((owner, _), _)| owner == tenant)
+            .map(|(_, index)| index)
+            .filter(|index| collection.is_none_or(|name| index.collection == name))
+            .take(limit.saturating_add(1))
             .cloned()
             .collect();
         let truncated = indexes.len() > limit;
         indexes.truncate(limit);
-        LifecycleSnapshot { generation: self.generation, truncated, indexes }
+        LifecycleSnapshot { generation: self.generation(tenant), truncated, indexes }
+    }
+
+    /// Looks up one tenant-owned record without allocating a catalog snapshot.
+    pub(crate) fn index(&self, tenant: &str, index_id: &str) -> Option<&LifecycleIndexView> {
+        self.indexes.get(&(tenant.to_owned(), index_id.to_owned()))
     }
 
     /// Returns a bounded durable audit page.
-    pub(crate) fn audit(&self, index_id: Option<&str>, limit: usize) -> Vec<LifecycleAuditEntry> {
+    pub(crate) fn audit(
+        &self,
+        tenant: &str,
+        collection: Option<&str>,
+        index_id: Option<&str>,
+        limit: usize,
+    ) -> Vec<LifecycleAuditEntry> {
         self.audits
             .iter()
-            .filter(|entry| index_id.is_none_or(|id| entry.index_id.as_deref() == Some(id)))
+            .filter(|(owner, event_collection, entry)| {
+                owner == tenant
+                    && collection
+                        .is_none_or(|name| !event_collection.is_empty() && event_collection == name)
+                    && index_id.is_none_or(|id| entry.index_id.as_deref() == Some(id))
+            })
             .rev()
             .take(limit)
-            .cloned()
+            .map(|(_, _, entry)| entry.clone())
             .collect()
     }
 
     /// Returns retained evidence, if a shadow worker has recorded it.
-    pub(crate) fn evidence(&self, index_id: &str, limit: usize) -> Option<ShadowEvidence> {
-        let mut evidence = self.evidence.get(index_id)?.clone();
+    pub(crate) fn evidence(
+        &self,
+        tenant: &str,
+        index_id: &str,
+        template_digest: [u8; 32],
+        limit: usize,
+    ) -> Option<ShadowEvidence> {
+        let mut evidence =
+            self.evidence.get(&(tenant.to_owned(), index_id.to_owned(), template_digest))?.clone();
         evidence.baseline.truncate(limit);
         evidence.candidate.truncate(limit);
         Some(evidence)
+    }
+
+    fn invalidate_evidence(&mut self, tenant: &str, id: &str) {
+        self.evidence.retain(|(owner, candidate, _), _| owner != tenant || candidate != id);
+    }
+
+    fn evidence_key(
+        &self,
+        tenant: &str,
+        id: &str,
+        template: [u8; 32],
+    ) -> Result<(String, String, [u8; 32]), ()> {
+        let key = (tenant.to_owned(), id.to_owned(), template);
+        if self.evidence.len() >= LIFECYCLE_MAX_EVIDENCE && !self.evidence.contains_key(&key) {
+            return Err(());
+        }
+        Ok(key)
     }
 
     /// Persists and installs one lifecycle view after the caller has checked
@@ -1271,72 +1385,190 @@ impl LifecycleStore {
     /// mutation, so a failed fsync cannot report a successful transition.
     pub(crate) fn install(
         &mut self,
+        storage: &mut dyn StoragePort,
         mut view: LifecycleIndexView,
         at_millis: u64,
         digest: [u8; 32],
     ) -> Result<(), ()> {
-        self.generation = self.generation.checked_add(1).ok_or(())?;
-        view.generation = self.generation;
-        self.append(1, Some(&view), &view.id, at_millis, digest)?;
-        self.indexes.insert(view.id.clone(), view);
+        view.generation = self.generation(&view.tenant).checked_add(1).ok_or(())?;
+        self.append(
+            storage,
+            LifecycleDetail::Install,
+            Some(&view),
+            (&view.tenant, &view.id),
+            at_millis,
+            digest,
+        )?;
+        self.indexes.insert((view.tenant.clone(), view.id.clone()), view);
         Ok(())
     }
 
     /// Persists a pin or forbidden-shape control mutation.
     pub(crate) fn control(
         &mut self,
-        id: &str,
+        storage: &mut dyn StoragePort,
+        identity: (&str, &str),
         forbidden: bool,
         at_millis: u64,
         digest: [u8; 32],
     ) -> Result<(), ()> {
-        self.generation = self.generation.checked_add(1).ok_or(())?;
+        let key = (identity.0.to_owned(), identity.1.to_owned());
+        let mut view = self.indexes.get(&key).cloned();
+        if let Some(view) = &mut view {
+            view.generation = self.generation(&view.tenant).checked_add(1).ok_or(())?;
+            if forbidden {
+                view.forbidden = true;
+            } else {
+                view.pinned = true;
+            }
+        } else if !forbidden {
+            return Err(());
+        }
+        self.append(
+            storage,
+            if forbidden { LifecycleDetail::Forbid } else { LifecycleDetail::Install },
+            view.as_ref(),
+            identity,
+            at_millis,
+            digest,
+        )?;
         if forbidden {
-            self.forbidden.insert(id.to_owned());
+            self.forbidden.insert(key.clone());
         }
-        if let Some(view) = self.indexes.get_mut(id)
-            && forbidden
-        {
-            view.forbidden = true;
+        if let Some(view) = view {
+            self.indexes.insert(key, view);
         }
-        let view = self.indexes.get(id).cloned();
-        self.append(if forbidden { 2 } else { 1 }, view.as_ref(), id, at_millis, digest)?;
         Ok(())
     }
 
     /// Persists an index retirement and removes it from the serving view.
     pub(crate) fn retire_index(
         &mut self,
-        id: &str,
+        storage: &mut dyn StoragePort,
+        identity: (&str, &str),
         at_millis: u64,
         digest: [u8; 32],
     ) -> Result<(), ()> {
-        self.generation = self.generation.checked_add(1).ok_or(())?;
-        if let Some(view) = self.indexes.get_mut(id) {
-            view.phase = LifecyclePhase::Abandoned;
-            view.visible = false;
-            view.generation = self.generation;
-        } else {
-            return Err(());
-        }
-        let view = self.indexes.get(id).cloned();
-        self.append(3, view.as_ref(), id, at_millis, digest)?;
+        let key = (identity.0.to_owned(), identity.1.to_owned());
+        let mut view = self.indexes.get(&key).cloned().ok_or(())?;
+        view.phase = LifecyclePhase::Abandoned;
+        view.visible = false;
+        view.generation = self.generation(&view.tenant).checked_add(1).ok_or(())?;
+        self.append(storage, LifecycleDetail::Retire, Some(&view), identity, at_millis, digest)?;
+        self.indexes.insert(key, view);
         Ok(())
     }
 
-    /// Stores bounded shadow evidence and the digest that authorized it.
+    /// Commits bounded measurements without changing planner visibility.
+    /// The caller supplies the observed generation; derived fields and the
+    /// evidence digest are recomputed from the measurements before persistence.
     #[allow(
         dead_code,
         reason = "TODO E-4b: the shadow worker that records paired baseline/candidate samples is not built yet"
     )]
-    pub(crate) fn record_evidence(&mut self, evidence: ShadowEvidence) {
-        self.evidence.insert(evidence.index_id.clone(), evidence);
+    pub(crate) fn record_evidence(
+        &mut self,
+        storage: &mut dyn StoragePort,
+        tenant: &str,
+        evidence: ShadowEvidence,
+        at_millis: u64,
+    ) -> Result<ShadowEvidence, ()> {
+        if evidence.generation != self.generation(tenant) {
+            return Err(());
+        }
+        let key = (tenant.to_owned(), evidence.index_id.clone());
+        let evidence_key =
+            self.evidence_key(tenant, &evidence.index_id, evidence.template_digest)?;
+        let mut view = self.indexes.get(&key).cloned().ok_or(())?;
+        validate_evidence_view(&view)?;
+        let generation = evidence.generation.checked_add(1).ok_or(())?;
+        let evidence = make_evidence(
+            tenant,
+            &evidence.index_id,
+            generation,
+            evidence.template_digest,
+            evidence.baseline,
+            evidence.candidate,
+        )?;
+        self.append(
+            storage,
+            LifecycleDetail::Evidence(&evidence),
+            Some(&view),
+            (tenant, &evidence.index_id),
+            at_millis,
+            evidence.digest,
+        )?;
+        view.generation = generation;
+        self.indexes.insert(key.clone(), view);
+        self.evidence.insert(evidence_key, evidence.clone());
+        Ok(evidence)
     }
 
     /// Returns whether a shape has been forbidden by customer control.
-    pub(crate) fn is_forbidden(&self, id: &str) -> bool {
-        self.forbidden.contains(id)
+    pub(crate) fn is_forbidden(&self, tenant: &str, id: &str) -> bool {
+        self.forbidden.contains(&(tenant.to_owned(), id.to_owned()))
     }
+}
+
+fn validate_evidence_view(view: &LifecycleIndexView) -> Result<(), ()> {
+    if view.phase != LifecyclePhase::Shadowing
+        || view.visible
+        || view.forbidden
+        || view.target_watermark != Some(view.covered_watermark)
+    {
+        return Err(());
+    }
+    Ok(())
+}
+
+fn make_evidence(
+    tenant: &str,
+    index_id: &str,
+    generation: u64,
+    template_digest: [u8; 32],
+    baseline: Vec<LogicalCost>,
+    candidate: Vec<LogicalCost>,
+) -> Result<ShadowEvidence, ()> {
+    if template_digest == [0; 32]
+        || baseline.len() != candidate.len()
+        || baseline.len() > MAX_SHADOW_SAMPLES
+        || baseline
+            .iter()
+            .chain(&candidate)
+            .any(|sample| sample.pages_read.checked_add(sample.rows_examined).is_none())
+    {
+        return Err(());
+    }
+    let (_, verified) = verify_shadow(&baseline, &candidate).map_err(|_| ())?;
+    let mut bytes = b"terrabase-shadow-evidence-v1".to_vec();
+    put_string(&mut bytes, tenant)?;
+    put_string(&mut bytes, index_id)?;
+    bytes.extend_from_slice(&generation.to_le_bytes());
+    bytes.extend_from_slice(&template_digest);
+    put_samples(&mut bytes, &baseline)?;
+    put_samples(&mut bytes, &candidate)?;
+    Ok(ShadowEvidence {
+        index_id: index_id.to_owned(),
+        generation,
+        template_digest,
+        baseline,
+        candidate,
+        improvement: verified.improvement,
+        regression: verified.regression,
+        digest: *blake3::hash(&bytes).as_bytes(),
+    })
+}
+
+fn put_samples(out: &mut Vec<u8>, samples: &[LogicalCost]) -> Result<(), ()> {
+    if samples.len() > MAX_SHADOW_SAMPLES {
+        return Err(());
+    }
+    out.extend_from_slice(&u16::try_from(samples.len()).map_err(|_| ())?.to_le_bytes());
+    for sample in samples {
+        out.extend_from_slice(&sample.pages_read.to_le_bytes());
+        out.extend_from_slice(&sample.rows_examined.to_le_bytes());
+    }
+    Ok(())
 }
 
 struct ByteCursor<'a> {
@@ -1344,6 +1576,31 @@ struct ByteCursor<'a> {
     offset: usize,
 }
 impl<'a> ByteCursor<'a> {
+    fn lifecycle_view(
+        &mut self,
+        (tenant, id, collection): (String, String, String),
+        fields: Vec<String>,
+        generation: u64,
+    ) -> Result<LifecycleIndexView, ()> {
+        Ok(LifecycleIndexView {
+            id,
+            tenant,
+            collection,
+            fields,
+            phase: phase_from_byte(self.byte()?)?,
+            generation,
+            covered_watermark: self.u64()?,
+            target_watermark: self.optional_u64()?,
+            pinned: self.boolean()?,
+            forbidden: self.boolean()?,
+            maintenance_cost: self.u64()?,
+            last_used_millis: self.optional_u64()?,
+            visible: self.boolean()?,
+            zero_stale_reads: self.boolean()?,
+            regression_free: self.boolean()?,
+        })
+    }
+
     fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, offset: 0 }
     }
@@ -1356,6 +1613,13 @@ impl<'a> ByteCursor<'a> {
     fn byte(&mut self) -> Result<u8, ()> {
         Ok(*self.take(1)?.first().ok_or(())?)
     }
+    fn boolean(&mut self) -> Result<bool, ()> {
+        match self.byte()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(()),
+        }
+    }
     fn u64(&mut self) -> Result<u64, ()> {
         Ok(u64::from_le_bytes(self.take(8)?.try_into().map_err(|_| ())?))
     }
@@ -1365,6 +1629,13 @@ impl<'a> ByteCursor<'a> {
     }
     fn array32(&mut self) -> Result<[u8; 32], ()> {
         self.take(32)?.try_into().map_err(|_| ())
+    }
+    fn samples(&mut self) -> Result<Vec<LogicalCost>, ()> {
+        let count = usize::from(u16::from_le_bytes(self.take(2)?.try_into().map_err(|_| ())?));
+        if count > MAX_SHADOW_SAMPLES {
+            return Err(());
+        }
+        (0..count).map(|_| Ok(LogicalCost::new(self.u64()?, self.u64()?))).collect()
     }
     fn optional_u64(&mut self) -> Result<Option<u64>, ()> {
         Ok(match self.byte()? {
@@ -1470,12 +1741,20 @@ impl<A: StorageAdapter> Coordinator<A> {
     }
     /// Applies an event to memory after journal replay validation.
     fn apply_event(&mut self, event: &LifecycleEvent) -> Result<(), CoordinatorError> {
+        let (state, next_sequence) = self.prepare_event(event)?;
+        self.states.insert(event.index.clone(), state);
+        self.next_sequence = next_sequence;
+        Ok(())
+    }
+
+    /// Validates a prospective event without changing memory or storage.
+    fn prepare_event(&self, event: &LifecycleEvent) -> Result<(IndexState, u64), CoordinatorError> {
         if event.sequence != self.next_sequence {
             return Err(CoordinatorError::JournalConflict);
         }
-        self.next_sequence =
+        let next_sequence =
             self.next_sequence.checked_add(1).ok_or(CoordinatorError::JournalConflict)?;
-        let state = self.states.entry(event.index.clone()).or_insert_with(|| IndexState {
+        let mut state = self.states.get(&event.index).cloned().unwrap_or_else(|| IndexState {
             id: event.index.clone(),
             collection: String::new(),
             phase: Phase::Observing,
@@ -1501,11 +1780,29 @@ impl<A: StorageAdapter> Coordinator<A> {
         if !legal {
             return Err(CoordinatorError::InvalidTransition);
         }
+        if matches!(event.phase, Phase::Shadowing | Phase::Active)
+            && (state.target == 0 || state.covered != state.target)
+        {
+            return Err(CoordinatorError::InvalidWatermark);
+        }
         if let Some(target) = event.target {
+            if event.phase != Phase::Building
+                || target == 0
+                || event.watermark != Some(target)
+                || state.covered != 0
+                || (state.phase == Phase::Building && target != state.target)
+            {
+                return Err(CoordinatorError::InvalidWatermark);
+            }
             state.target = target;
         }
+        if event.phase == Phase::Building && state.target == 0 {
+            return Err(CoordinatorError::InvalidWatermark);
+        }
         if let Some(watermark) = event.watermark {
-            if watermark < state.covered {
+            if watermark < state.covered
+                || (event.phase == Phase::Building && watermark > state.target)
+            {
                 return Err(CoordinatorError::InvalidWatermark);
             }
             // A target-bearing Building event describes the snapshot boundary;
@@ -1515,6 +1812,11 @@ impl<A: StorageAdapter> Coordinator<A> {
             }
             state.target = state.target.max(watermark);
         }
+        if matches!(event.phase, Phase::Shadowing | Phase::Active)
+            && (state.target == 0 || state.covered != state.target)
+        {
+            return Err(CoordinatorError::InvalidWatermark);
+        }
         state.phase = event.phase;
         state.visible = event.phase == Phase::Active;
         if event.phase == Phase::Active {
@@ -1523,9 +1825,11 @@ impl<A: StorageAdapter> Coordinator<A> {
         if event.phase == Phase::Invisible {
             state.invisible_since_millis = Some(event.at_millis);
         }
-        Ok(())
+        Ok((state, next_sequence))
     }
-    /// Appends an event, then applies it; a failed append leaves memory unchanged.
+    /// Validates an event, durably appends it, then installs the prepared state.
+    /// Validation and append failures leave memory unchanged; invalid events
+    /// never reach the journal.
     ///
     /// # Errors
     ///
@@ -1534,8 +1838,11 @@ impl<A: StorageAdapter> Coordinator<A> {
     /// or [`CoordinatorError::InvalidWatermark`] when replay validation fails.
     pub fn append(&mut self, mut event: LifecycleEvent) -> Result<(), CoordinatorError> {
         event.sequence = self.next_sequence;
+        let (state, next_sequence) = self.prepare_event(&event)?;
         self.adapter.append_lifecycle(&event).map_err(CoordinatorError::Hook)?;
-        self.apply_event(&event)
+        self.states.insert(event.index, state);
+        self.next_sequence = next_sequence;
+        Ok(())
     }
     /// Starts an invisible build at a durable snapshot boundary.
     ///
@@ -1550,7 +1857,7 @@ impl<A: StorageAdapter> Coordinator<A> {
         at_millis: u64,
         digest: [u8; 32],
     ) -> Result<(), CoordinatorError> {
-        if target == 0 || self.states.get(index).is_some_and(|state| state.phase != Phase::Selected)
+        if target == 0 || self.states.get(index).is_none_or(|state| state.phase != Phase::Selected)
         {
             return Err(CoordinatorError::InvalidTransition);
         }
@@ -1799,6 +2106,9 @@ impl<A: StorageAdapter> Coordinator<A> {
         digest: [u8; 32],
     ) -> Result<(), CoordinatorError> {
         let state = self.states.get(index).ok_or(CoordinatorError::InvalidTransition)?;
+        if state.phase != Phase::Invisible || state.visible {
+            return Err(CoordinatorError::InvalidTransition);
+        }
         let since = state.invisible_since_millis.ok_or(CoordinatorError::InvalidTransition)?;
         if now_millis.saturating_sub(since) < DROP_GRACE_MILLIS {
             return Err(CoordinatorError::InvalidTransition);

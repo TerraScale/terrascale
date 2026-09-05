@@ -388,10 +388,10 @@ fn a_killed_member_restarts_and_catches_up() {
     // The kill: region B's member drops; region A keeps writing. A's
     // frames sit undelivered (its window and expiry churn against the
     // absent receiver).
-    let killed = mesh.b;
-    let _ = killed;
+    let Mesh { lane, scope: bound_scope, link_a, .. } = mesh;
+    drop(b);
     for round in 0..10 {
-        put(mesh.a, &format!("orders/down-{round}"), round + 10);
+        put(&a, &format!("orders/down-{round}"), round + 10);
     }
 
     // The restart: the same durable location reopens — replay is the
@@ -405,10 +405,16 @@ fn a_killed_member_restarts_and_catches_up() {
         MemberHostOptions::tb1a(),
     )
     .expect("the restarted member opens");
-    let scope = mesh.scope.clone();
-    b.bind_channel(&ChannelBindRequest { scope }).expect("the database scope rebinds");
-    mesh.b = &b;
-    mesh.link_b = RegionLink::new("member-sfo", "member-gru").expect("the fresh sfo link opens");
+    b.bind_channel(&ChannelBindRequest { scope: bound_scope.clone() })
+        .expect("the database scope rebinds");
+    let mut mesh = Mesh {
+        lane,
+        scope: bound_scope,
+        a: &a,
+        b: &b,
+        link_a,
+        link_b: RegionLink::new("member-sfo", "member-gru").expect("the fresh sfo link opens"),
+    };
 
     mesh.drive_until(2_000, "the restarted member catches up", || orders(mesh.b).len() == 13);
     assert_eq!(orders(mesh.a).len(), 13, "the writer's own state is unchanged");
@@ -727,4 +733,38 @@ fn duplicate_delivery_replays_idempotently() {
     source_link.drain_acks(&mut lane).expect("the duplicate acknowledgements settle");
     assert_eq!(orders(&target).len(), 1, "replay does not duplicate the document");
     assert_eq!(source_link.in_flight(), 0, "the replay acknowledgements settle the frame");
+}
+
+#[test]
+fn recovered_origin_prefix_does_not_skip_a_durable_gap() {
+    use terrabase_tbep::replication::{apply_records, pull_origin_records};
+
+    let (_source_location, source) = member("gap-source");
+    let (target_location, target) = member("gap-target");
+    put_many(&source, 3);
+    let bound_scope = scope();
+    let (records, _) = pull_origin_records(source.engine_host(), &bound_scope, None)
+        .expect("source journal is readable");
+    assert_eq!(records.len(), 3);
+    apply_records(target.engine_host(), &bound_scope, &records[1..])
+        .expect("out of order durable rows apply");
+    drop(target);
+    let target = MemberHost::open(
+        target_location.path(),
+        7,
+        "tenant-a",
+        "project-a",
+        "database-a",
+        MemberHostOptions::tb1a(),
+    )
+    .expect("target reopens");
+    let engine = target.engine_host().engine();
+    let engine_scope = engine.scope_for(&TenantId::try_new("tenant-a").unwrap());
+    assert!(engine.durable_origin_prefixes(&engine_scope).unwrap().is_empty());
+    apply_records(target.engine_host(), &bound_scope, &records[..1])
+        .expect("missing predecessor applies");
+    let prefixes = engine.durable_origin_prefixes(&engine_scope).unwrap();
+    assert_eq!(prefixes.get(&records[0].origin), Some(&3));
+    let other_scope = engine.scope_for(&TenantId::try_new("tenant-b").unwrap());
+    assert!(engine.durable_origin_prefixes(&other_scope).unwrap().is_empty());
 }

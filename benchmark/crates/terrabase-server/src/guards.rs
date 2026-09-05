@@ -22,7 +22,7 @@
 //! `IOWeight`; enforcement of the request budgets lives here.
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
 /// Bytes in one decimal gigabyte, the unit the D-64 bandwidth cells use.
@@ -457,12 +457,12 @@ struct DatabaseGuardState {
 /// orchestrator's monthly rotation); the rate window rolls every second on
 /// its own.
 pub struct AbuseGuards {
-    plans: Mutex<HashMap<String, Plan>>,
+    plans: RwLock<HashMap<String, Plan>>,
     /// Explicit owner-tuned limits win over the plan's built-in row. Keeping
     /// overrides separate means a plan change never silently discards an
     /// operator's negotiated guard values.
-    limit_overrides: Mutex<HashMap<String, AbuseLimits>>,
-    states: Mutex<HashMap<String, Arc<Mutex<DatabaseGuardState>>>>,
+    limit_overrides: RwLock<HashMap<String, AbuseLimits>>,
+    states: RwLock<HashMap<String, Arc<Mutex<DatabaseGuardState>>>>,
     budgets: Mutex<HashMap<String, TenantBudget>>,
 }
 
@@ -472,9 +472,9 @@ impl AbuseGuards {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            plans: Mutex::new(HashMap::new()),
-            limit_overrides: Mutex::new(HashMap::new()),
-            states: Mutex::new(HashMap::new()),
+            plans: RwLock::new(HashMap::new()),
+            limit_overrides: RwLock::new(HashMap::new()),
+            states: RwLock::new(HashMap::new()),
             budgets: Mutex::new(HashMap::new()),
         }
     }
@@ -484,14 +484,17 @@ impl AbuseGuards {
         if database.is_empty() {
             return;
         }
-        self.plans.lock().unwrap_or_else(PoisonError::into_inner).insert(database.to_owned(), plan);
+        self.plans
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(database.to_owned(), plan);
     }
 
     /// Returns one database's plan, Free for databases nobody named.
     #[must_use]
     pub fn plan_of(&self, database: &str) -> Plan {
         self.plans
-            .lock()
+            .read()
             .unwrap_or_else(PoisonError::into_inner)
             .get(database)
             .copied()
@@ -507,7 +510,7 @@ impl AbuseGuards {
             return;
         }
         self.limit_overrides
-            .lock()
+            .write()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(database.to_owned(), limits);
     }
@@ -519,7 +522,7 @@ impl AbuseGuards {
 
     /// Removes the owner-tuned cells and resumes the selected plan row.
     pub fn clear_limits(&self, database: &str) {
-        self.limit_overrides.lock().unwrap_or_else(PoisonError::into_inner).remove(database);
+        self.limit_overrides.write().unwrap_or_else(PoisonError::into_inner).remove(database);
     }
 
     /// Returns the effective D-64 cells for one database. Unknown databases
@@ -527,7 +530,7 @@ impl AbuseGuards {
     #[must_use]
     pub fn limits_of(&self, database: &str) -> AbuseLimits {
         self.limit_overrides
-            .lock()
+            .read()
             .unwrap_or_else(PoisonError::into_inner)
             .get(database)
             .copied()
@@ -543,7 +546,12 @@ impl AbuseGuards {
     /// Returns (cloning) one database's counter shard, creating it on first
     /// use. The map lock is held for the lookup only.
     fn state_for(&self, database: &str) -> Arc<Mutex<DatabaseGuardState>> {
-        let mut states = self.states.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(state) =
+            self.states.read().unwrap_or_else(PoisonError::into_inner).get(database)
+        {
+            return Arc::clone(state);
+        }
+        let mut states = self.states.write().unwrap_or_else(PoisonError::into_inner);
         states
             .entry(database.to_owned())
             .or_insert_with(|| {
@@ -641,7 +649,7 @@ impl AbuseGuards {
         // a `u64::MAX` limit admit bytes after the counter had overflowed.
         let remaining = limit.saturating_sub(state.bandwidth_bytes);
         if bytes > remaining {
-            let observed = state.bandwidth_bytes.checked_add(bytes).unwrap_or(u64::MAX);
+            let observed = state.bandwidth_bytes.saturating_add(bytes);
             return Err(GuardRejection::new(
                 GuardKind::DirectReadBandwidth,
                 limit,
@@ -657,7 +665,7 @@ impl AbuseGuards {
     #[must_use]
     pub fn bandwidth_used(&self, database: &str) -> u64 {
         self.states
-            .lock()
+            .read()
             .unwrap_or_else(PoisonError::into_inner)
             .get(database)
             .map_or(0, |slot| slot.lock().unwrap_or_else(PoisonError::into_inner).bandwidth_bytes)
@@ -667,7 +675,7 @@ impl AbuseGuards {
     /// monthly rotation calls this; tests call it for determinism).
     pub fn reset_bandwidth(&self, database: &str) {
         if let Some(slot) =
-            self.states.lock().unwrap_or_else(PoisonError::into_inner).get(database).cloned()
+            self.states.read().unwrap_or_else(PoisonError::into_inner).get(database).cloned()
         {
             slot.lock().unwrap_or_else(PoisonError::into_inner).bandwidth_bytes = 0;
         }
@@ -718,7 +726,7 @@ impl AbuseGuards {
     /// Detaches one view identity; unknown identities are a no-op.
     pub fn detach_view(&self, database: &str, view: &str) {
         if let Some(slot) =
-            self.states.lock().unwrap_or_else(PoisonError::into_inner).get(database).cloned()
+            self.states.read().unwrap_or_else(PoisonError::into_inner).get(database).cloned()
         {
             slot.lock().unwrap_or_else(PoisonError::into_inner).views.remove(view);
         }
@@ -727,7 +735,7 @@ impl AbuseGuards {
     /// Returns one database's active distinct view count.
     #[must_use]
     pub fn view_count(&self, database: &str) -> u64 {
-        self.states.lock().unwrap_or_else(PoisonError::into_inner).get(database).map_or(0, |slot| {
+        self.states.read().unwrap_or_else(PoisonError::into_inner).get(database).map_or(0, |slot| {
             len64(slot.lock().unwrap_or_else(PoisonError::into_inner).views.len())
         })
     }
@@ -766,7 +774,7 @@ impl AbuseGuards {
     /// Releases one WebSocket slot; releasing an empty database is a no-op.
     pub fn release_ws(&self, database: &str) {
         if let Some(slot) =
-            self.states.lock().unwrap_or_else(PoisonError::into_inner).get(database).cloned()
+            self.states.read().unwrap_or_else(PoisonError::into_inner).get(database).cloned()
         {
             let mut state = slot.lock().unwrap_or_else(PoisonError::into_inner);
             state.ws_current = state.ws_current.saturating_sub(1);
@@ -777,7 +785,7 @@ impl AbuseGuards {
     #[must_use]
     pub fn ws_count(&self, database: &str) -> u64 {
         self.states
-            .lock()
+            .read()
             .unwrap_or_else(PoisonError::into_inner)
             .get(database)
             .map_or(0, |slot| slot.lock().unwrap_or_else(PoisonError::into_inner).ws_current)
@@ -828,7 +836,7 @@ impl AbuseGuards {
     /// Unregisters one endpoint; unknown endpoints are a no-op.
     pub fn unregister_webhook(&self, database: &str, endpoint: &str) {
         if let Some(slot) =
-            self.states.lock().unwrap_or_else(PoisonError::into_inner).get(database).cloned()
+            self.states.read().unwrap_or_else(PoisonError::into_inner).get(database).cloned()
         {
             slot.lock().unwrap_or_else(PoisonError::into_inner).webhooks.remove(endpoint);
         }
@@ -837,7 +845,7 @@ impl AbuseGuards {
     /// Returns one database's registered webhook endpoint count.
     #[must_use]
     pub fn webhook_count(&self, database: &str) -> u64 {
-        self.states.lock().unwrap_or_else(PoisonError::into_inner).get(database).map_or(0, |slot| {
+        self.states.read().unwrap_or_else(PoisonError::into_inner).get(database).map_or(0, |slot| {
             len64(slot.lock().unwrap_or_else(PoisonError::into_inner).webhooks.len())
         })
     }
@@ -868,7 +876,7 @@ impl AbuseGuards {
     /// monthly rotation use this; production traffic never calls it.
     pub fn reset_database(&self, database: &str) {
         if let Some(slot) =
-            self.states.lock().unwrap_or_else(PoisonError::into_inner).get(database).cloned()
+            self.states.read().unwrap_or_else(PoisonError::into_inner).get(database).cloned()
         {
             let mut state = slot.lock().unwrap_or_else(PoisonError::into_inner);
             state.window_start = None;
@@ -1191,6 +1199,7 @@ mod tests {
         let victim = p99((0..400).map(|_| probe("victim")).collect());
         stop.store(true, Ordering::Relaxed);
         flood.join().expect("the flood thread joins");
+        eprintln!("guard latency: solo p99={solo:?}, neighbour p99={victim:?}");
         assert!(
             victim_p99_within_2x_solo(solo, victim),
             "victim p99 {victim:?} exceeds 2x solo p99 {solo:?}"

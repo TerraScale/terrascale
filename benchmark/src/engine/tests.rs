@@ -1740,3 +1740,936 @@ fn assert_snapshot_records_from_pages(dir: &PathBuf, engine: Engine) {
     drop(reopened);
     std::fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn configured_replication_origin_and_clock_survive_reopen() {
+    #[derive(Debug)]
+    struct FixedClock;
+    impl super::ReplicationClock for FixedClock {
+        fn now_millis(&self) -> u64 {
+            1 << 47
+        }
+    }
+    let dir = location("configured-replication-clock");
+    let config = EngineConfig::durable(&dir)
+        .unwrap()
+        .with_replication_origin(crate::types::RegionId::try_new("gru").unwrap())
+        .with_replication_clock(Arc::new(FixedClock));
+    let engine = Engine::open(config.clone()).unwrap();
+    committed(commit_put(
+        &engine,
+        "tenant-a",
+        "clock-1",
+        "doc",
+        "one",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    let scope = tenant_scope(&engine, "tenant-a");
+    let first = engine
+        .streams()
+        .replay_sync_journal(&scope, None, 1, &crate::types::Cancellation::default())
+        .unwrap();
+    let first = first.records()[0].provenance();
+    assert_eq!(first.origin(), "gru");
+    assert_eq!(first.origin_sequence(), 1);
+    let first_hlc = first.hlc();
+    assert_eq!(first_hlc >> 16, 1 << 47);
+    engine.shutdown().unwrap();
+    let engine = Engine::open(config.clone()).unwrap();
+    committed(commit_put(
+        &engine,
+        "tenant-a",
+        "clock-2",
+        "doc",
+        "two",
+        ExpectedVersion::Any,
+        LocalDurability::Synced,
+    ));
+    let scope = tenant_scope(&engine, "tenant-a");
+    let records = engine
+        .streams()
+        .replay_sync_journal(&scope, None, 2, &crate::types::Cancellation::default())
+        .unwrap();
+    let second = records.records()[1].provenance();
+    assert_eq!(second.origin_sequence(), 2);
+    assert!(second.hlc() > first_hlc);
+    engine.shutdown().unwrap();
+    assert!(
+        Engine::open(
+            config.with_replication_origin(crate::types::RegionId::try_new("sfo").unwrap())
+        )
+        .is_err()
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn losing_merge_preserves_transactional_field_metadata() {
+    let (dir, engine) = open_engine("losing-merge-metadata");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let collection = CollectionName::try_new("users").expect("collection");
+    let id = document_id("counter");
+    let schema = crate::storage::MergeSchema::try_new(std::collections::BTreeMap::from([(
+        "count".to_owned(),
+        crate::storage::MergeFieldKind::PnCounter,
+    )]))
+    .expect("schema");
+    engine.declare_merge_schema(&scope, &collection, &schema).expect("declare");
+    let first = ReplicatedRecord {
+        collection: collection.clone(),
+        id: id.clone(),
+        body: DocumentValue::Object(std::collections::BTreeMap::from([(
+            "count".to_owned(),
+            DocumentValue::Integer(7),
+        )])),
+        deleted: false,
+        commit_ulid: "first-counter".into(),
+        hlc: 100,
+        origin: "peer-a".into(),
+        origin_sequence: 1,
+        context: Vec::new(),
+    };
+    engine.apply_replicated(&scope, &first).expect("first apply");
+    let kernels = engine.merge_kernels_for(&scope, &collection, &id).expect("metadata");
+    assert_eq!(kernels.len(), 1);
+    let losing = ReplicatedRecord {
+        body: DocumentValue::Object(std::collections::BTreeMap::from([(
+            "count".to_owned(),
+            DocumentValue::Integer(5),
+        )])),
+        commit_ulid: "losing-counter".into(),
+        hlc: 200,
+        origin: "peer-b".into(),
+        ..first
+    };
+    engine.apply_replicated(&scope, &losing).expect("losing apply");
+    assert_eq!(
+        engine.merge_kernels_for(&scope, &collection, &id).expect("unchanged metadata"),
+        kernels
+    );
+    assert_eq!(
+        engine.document_replication_stamp(&scope, &collection, &id).expect("stamp"),
+        Some((100, "peer-a".into(), false))
+    );
+    let conflicts = engine.merge_conflicts_for(&scope, &collection, &id, 10).expect("conflicts");
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].policy, "pn-counter-max");
+    engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn conflict_history_failure_rolls_back_document_and_retry_recovers_after_restart() {
+    let (dir, engine) = open_engine("conflict-history-atomicity");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let collection = CollectionName::try_new("users").expect("collection");
+    let id = document_id("conflict");
+    let value = |number| {
+        DocumentValue::Object(std::collections::BTreeMap::from([(
+            "value".to_owned(),
+            DocumentValue::Integer(number),
+        )]))
+    };
+    let first = ReplicatedRecord {
+        collection: collection.clone(),
+        id: id.clone(),
+        body: value(1),
+        deleted: false,
+        commit_ulid: "conflict-first".into(),
+        hlc: 100,
+        origin: "peer-a".into(),
+        origin_sequence: 1,
+        context: Vec::new(),
+    };
+    engine.apply_replicated(&scope, &first).expect("first apply");
+    let incoming = ReplicatedRecord {
+        body: value(2),
+        commit_ulid: "conflict-second".into(),
+        hlc: 200,
+        origin: "peer-b".into(),
+        ..first
+    };
+    let before = engine.published_sequence().expect("sequence");
+    let sql = rusqlite::Connection::open(dir.join("terrabase.sqlite3")).expect("fault connection");
+    sql.execute_batch(
+        "CREATE TRIGGER reject_conflict BEFORE INSERT ON merge_conflicts
+        BEGIN SELECT RAISE(ABORT, 'injected history failure'); END;",
+    )
+    .expect("install fault");
+    let losing = ReplicatedRecord {
+        body: value(0),
+        hlc: 50,
+        commit_ulid: "conflict-loser".into(),
+        ..incoming.clone()
+    };
+    assert_eq!(engine.apply_replicated(&scope, &losing), Err(EngineError::StorageFailure));
+    assert_eq!(engine.apply_replicated(&scope, &incoming), Err(EngineError::StorageFailure));
+    assert_eq!(engine.published_sequence().expect("unchanged sequence"), before);
+    assert_eq!(
+        read_document(&engine, "tenant-a", "conflict").expect("old document").value(),
+        &value(1)
+    );
+    assert!(
+        engine
+            .merge_conflicts_for(&scope, &collection, &id, 10)
+            .expect("no partial history")
+            .is_empty()
+    );
+    let operation = super::replication_operation_id(&incoming).expect("identity");
+    assert_eq!(
+        engine
+            .lock_storage()
+            .expect("storage")
+            .port
+            .replication_fingerprint(scope.tenant(), &operation)
+            .expect("binding read"),
+        None,
+        "a failed publication must not retain a source binding"
+    );
+    engine.shutdown().expect("shutdown");
+    sql.execute_batch("DROP TRIGGER reject_conflict").expect("remove fault");
+    drop(sql);
+    let engine = Engine::open(EngineConfig::durable(&dir).expect("config")).expect("reopen");
+    let scope = tenant_scope(&engine, "tenant-a");
+    assert_eq!(
+        read_document(&engine, "tenant-a", "conflict").expect("durable old document").value(),
+        &value(1)
+    );
+    engine.apply_replicated(&scope, &incoming).expect("retry publishes document and history");
+    let history = engine.merge_conflicts_for(&scope, &collection, &id, 10).expect("history");
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].loser_commit_ulid, "conflict-first");
+    assert_eq!(
+        read_document(&engine, "tenant-a", "conflict").expect("new document").value(),
+        &value(2)
+    );
+    engine.apply_replicated(&scope, &incoming).expect("idempotent retry");
+    assert_eq!(
+        engine.merge_conflicts_for(&scope, &collection, &id, 10).expect("unchanged history"),
+        history
+    );
+    engine.shutdown().expect("close");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn stale_replicated_merge_rejects_without_binding_identity_and_recomputes_on_retry() {
+    let (dir, engine) = open_engine("stale-merge-snapshot");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let collection = CollectionName::try_new("users").expect("collection");
+    let id = document_id("counter");
+    let schema = crate::storage::MergeSchema::try_new(std::collections::BTreeMap::from([
+        ("count".to_owned(), crate::storage::MergeFieldKind::PnCounter),
+        ("new".to_owned(), crate::storage::MergeFieldKind::PnCounter),
+    ]))
+    .expect("schema");
+    engine.declare_merge_schema(&scope, &collection, &schema).expect("declare");
+    let object = |fields: &[(&str, i64)]| {
+        DocumentValue::Object(
+            fields
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), DocumentValue::Integer(*value)))
+                .collect(),
+        )
+    };
+    let first = ReplicatedRecord {
+        collection: collection.clone(),
+        id: id.clone(),
+        body: object(&[("count", 7)]),
+        deleted: false,
+        commit_ulid: "snapshot-first".into(),
+        hlc: 100,
+        origin: "peer-a".into(),
+        origin_sequence: 1,
+        context: Vec::new(),
+    };
+    engine.apply_replicated(&scope, &first).expect("first apply");
+    let snapshot = engine.read_snapshot(&scope).expect("merge input snapshot");
+    let incoming = ReplicatedRecord {
+        body: object(&[("count", 9)]),
+        commit_ulid: "snapshot-incoming".into(),
+        hlc: 200,
+        origin: "peer-b".into(),
+        ..first.clone()
+    };
+    let intervening = ReplicatedRecord {
+        body: object(&[("count", 7), ("new", 11)]),
+        commit_ulid: "snapshot-intervening".into(),
+        hlc: 300,
+        origin: "peer-c".into(),
+        context: context("peer-a", 1),
+        ..first
+    };
+    engine.apply_replicated(&scope, &intervening).expect("intervening write");
+    let operation = super::replication_operation_id(&incoming).expect("replication identity");
+    assert_eq!(
+        engine.apply_replicated_clean(&scope, &incoming, &operation, snapshot),
+        Err(EngineError::Conflict)
+    );
+    assert_eq!(
+        engine.lock_storage().expect("storage").port.resolve_operation(scope.tenant(), &operation),
+        None
+    );
+    engine.apply_replicated(&scope, &incoming).expect("retry recomputes the merge");
+    assert_eq!(
+        read_document(&engine, "tenant-a", "counter").expect("document").value(),
+        &object(&[("count", 9), ("new", 11)])
+    );
+    engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn replicated_source_content_is_bound_across_merge_and_restart() {
+    let (dir, engine) = open_engine("replication-source-binding");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let collection = CollectionName::try_new("users").expect("collection");
+    let id = document_id("bound");
+    let object = |fields: &[(&str, i64)]| {
+        DocumentValue::Object(
+            fields
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), DocumentValue::Integer(*value)))
+                .collect(),
+        )
+    };
+    let schema = crate::storage::MergeSchema::try_new(std::collections::BTreeMap::from([
+        ("count".into(), crate::storage::MergeFieldKind::PnCounter),
+        ("new".into(), crate::storage::MergeFieldKind::PnCounter),
+    ]))
+    .expect("schema");
+    engine.declare_merge_schema(&scope, &collection, &schema).expect("declare");
+    let first = ReplicatedRecord {
+        collection: collection.clone(),
+        id: id.clone(),
+        body: object(&[("count", 7)]),
+        deleted: false,
+        commit_ulid: "bound-first".into(),
+        hlc: 100,
+        origin: "peer-a".into(),
+        origin_sequence: 1,
+        context: Vec::new(),
+    };
+    engine.apply_replicated(&scope, &first).expect("seed");
+    let incoming = ReplicatedRecord {
+        body: object(&[("count", 5), ("new", 11)]),
+        commit_ulid: "bound-incoming".into(),
+        hlc: 200,
+        origin: "peer-b".into(),
+        ..first
+    };
+    let applied = engine.apply_replicated(&scope, &incoming).expect("merged publication");
+    assert!(!applied.replayed());
+    assert_eq!(
+        read_document(&engine, "tenant-a", "bound").expect("merged").value(),
+        &object(&[("count", 7), ("new", 11)])
+    );
+    engine.shutdown().expect("shutdown");
+    let engine = Engine::open(EngineConfig::durable(&dir).expect("config")).expect("reopen");
+    let scope = tenant_scope(&engine, "tenant-a");
+    assert!(engine.apply_replicated(&scope, &incoming).expect("original replay").replayed());
+    let operation = super::replication_operation_id(&incoming).expect("identity");
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    assert!(
+        engine
+            .apply_replicated_clean(&scope, &incoming, &operation, snapshot)
+            .expect("commit-time replay uses source fingerprint, not merged bytes")
+            .replayed()
+    );
+    let before = engine.published_sequence().expect("sequence");
+    let history = engine.merge_conflicts_for(&scope, &collection, &id, 10).expect("history");
+    let variants = [
+        ReplicatedRecord { body: object(&[("count", 99)]), ..incoming.clone() },
+        ReplicatedRecord { hlc: 300, ..incoming.clone() },
+        ReplicatedRecord { origin_sequence: 2, ..incoming.clone() },
+        ReplicatedRecord { context: context("peer-c", 1), ..incoming.clone() },
+        ReplicatedRecord { deleted: true, ..incoming.clone() },
+    ];
+    for changed in variants {
+        assert!(
+            matches!(
+                engine.apply_replicated(&scope, &changed),
+                Err(EngineError::OperationIdReuse { .. })
+            ),
+            "changed source content must not replay"
+        );
+        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+        assert!(
+            matches!(
+                engine.apply_replicated_clean(&scope, &changed, &operation, snapshot),
+                Err(EngineError::OperationIdReuse { .. })
+            ),
+            "the transaction must also reject changed source content"
+        );
+    }
+    assert_eq!(engine.published_sequence().expect("unchanged"), before);
+    assert_eq!(engine.merge_conflicts_for(&scope, &collection, &id, 10).expect("history"), history);
+    assert!(engine.apply_replicated(&scope, &incoming).expect("still replays").replayed());
+    engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn first_replication_rejects_a_causal_context_covering_its_own_dot() {
+    let (dir, engine) = open_engine("replication-invalid-first-context");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let record = ReplicatedRecord {
+        collection: CollectionName::try_new("users").expect("collection"),
+        id: document_id("invalid"),
+        body: DocumentValue::Integer(1),
+        deleted: false,
+        commit_ulid: "invalid-causal-source".into(),
+        hlc: 100,
+        origin: "peer-a".into(),
+        origin_sequence: 1,
+        context: context("peer-a", 1),
+    };
+    let before = engine.published_sequence().expect("sequence");
+    assert_eq!(engine.apply_replicated(&scope, &record), Err(EngineError::InvalidDocument));
+    assert_eq!(engine.published_sequence().expect("unchanged"), before);
+    assert!(read_document(&engine, "tenant-a", "invalid").is_none());
+    let operation = super::replication_operation_id(&record).expect("operation");
+    assert_eq!(
+        engine
+            .lock_storage()
+            .expect("storage")
+            .port
+            .replication_fingerprint(scope.tenant(), &operation)
+            .expect("binding"),
+        None
+    );
+    engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn losing_replication_replays_after_restart_and_later_document_changes() {
+    let (dir, engine) = open_engine("superseded-replay");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let first = ReplicatedRecord {
+        collection: CollectionName::try_new("users").expect("collection"),
+        id: document_id("loser"),
+        body: DocumentValue::Integer(10),
+        deleted: false,
+        commit_ulid: "superseded-first".into(),
+        hlc: 300,
+        origin: "peer-a".into(),
+        origin_sequence: 1,
+        context: Vec::new(),
+    };
+    engine.apply_replicated(&scope, &first).expect("seed");
+    let losing = ReplicatedRecord {
+        body: DocumentValue::Integer(5),
+        commit_ulid: "superseded-loser".into(),
+        hlc: 200,
+        origin: "peer-b".into(),
+        ..first.clone()
+    };
+    let before = engine.published_sequence().expect("sequence");
+    let result = engine.apply_replicated(&scope, &losing).expect("loss");
+    assert!(result.superseded());
+    assert!(!result.replayed());
+    assert!(result.receipt().is_none());
+    assert_eq!(engine.published_sequence().expect("sequence"), before);
+    let later = ReplicatedRecord {
+        body: DocumentValue::Integer(1),
+        commit_ulid: "superseded-later".into(),
+        hlc: 100,
+        origin: "peer-c".into(),
+        context: context("peer-a", 1),
+        ..first
+    };
+    engine.apply_replicated(&scope, &later).expect("causally later value");
+    engine.shutdown().expect("shutdown");
+    let engine = Engine::open(EngineConfig::durable(&dir).expect("config")).expect("reopen");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let before = engine.published_sequence().expect("sequence");
+    let history =
+        engine.merge_conflicts_for(&scope, &losing.collection, &losing.id, 10).expect("history");
+    assert_eq!(history.len(), 1);
+    let replay = engine.apply_replicated(&scope, &losing).expect("durable loss");
+    assert!(replay.superseded());
+    assert!(replay.replayed());
+    assert_eq!(engine.published_sequence().expect("sequence"), before);
+    assert_eq!(
+        read_document(&engine, "tenant-a", "loser").expect("preserved").value(),
+        &DocumentValue::Integer(1)
+    );
+    assert_eq!(
+        engine.merge_conflicts_for(&scope, &losing.collection, &losing.id, 10).expect("history"),
+        history
+    );
+    let operation = super::replication_operation_id(&losing).expect("operation");
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    assert_eq!(
+        engine.apply_replicated_clean(&scope, &losing, &operation, snapshot),
+        Err(EngineError::Conflict),
+        "a commit racing the stored loss must retry instead of publishing"
+    );
+    let changed = ReplicatedRecord { body: DocumentValue::Integer(99), ..losing };
+    assert!(matches!(
+        engine.apply_replicated(&scope, &changed),
+        Err(EngineError::OperationIdReuse { .. })
+    ));
+    engine.shutdown().expect("shutdown");
+    let sql =
+        rusqlite::Connection::open(dir.join("terrabase.sqlite3")).expect("corruption connection");
+    sql.execute("DELETE FROM replication_bindings WHERE operation = ?1", [operation.as_str()])
+        .expect("remove binding");
+    drop(sql);
+    assert!(
+        Engine::open(EngineConfig::durable(&dir).expect("config")).is_err(),
+        "a durable loss without its source fingerprint must refuse startup"
+    );
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn stale_losing_decision_does_not_bind_the_source_and_retry_can_win() {
+    let (dir, engine) = open_engine("superseded-stale");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let first = ReplicatedRecord {
+        collection: CollectionName::try_new("users").expect("collection"),
+        id: document_id("stale-loser"),
+        body: DocumentValue::Integer(10),
+        deleted: false,
+        commit_ulid: "stale-loss-first".into(),
+        hlc: 300,
+        origin: "peer-a".into(),
+        origin_sequence: 1,
+        context: Vec::new(),
+    };
+    engine.apply_replicated(&scope, &first).expect("seed");
+    let snapshot = engine.read_snapshot(&scope).expect("merge snapshot");
+    let incoming = ReplicatedRecord {
+        body: DocumentValue::Integer(5),
+        commit_ulid: "stale-loss-incoming".into(),
+        hlc: 200,
+        origin: "peer-b".into(),
+        ..first.clone()
+    };
+    let later = ReplicatedRecord {
+        body: DocumentValue::Integer(1),
+        commit_ulid: "stale-loss-later".into(),
+        hlc: 100,
+        origin: "peer-c".into(),
+        context: context("peer-a", 1),
+        ..first
+    };
+    engine.apply_replicated(&scope, &later).expect("intervening publication");
+    assert_eq!(
+        engine.record_superseded_replication(&scope, &incoming, &snapshot, None),
+        Err(EngineError::Conflict)
+    );
+    let operation = super::replication_operation_id(&incoming).expect("operation");
+    assert_eq!(
+        engine
+            .lock_storage()
+            .expect("storage")
+            .port
+            .replication_fingerprint(scope.tenant(), &operation)
+            .expect("binding"),
+        None
+    );
+    let result = engine.apply_replicated(&scope, &incoming).expect("recomputed apply");
+    assert!(!result.superseded());
+    assert_eq!(
+        read_document(&engine, "tenant-a", "stale-loser").expect("winner").value(),
+        &DocumentValue::Integer(5)
+    );
+    engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn index_control_generation_has_one_concurrent_winner_and_survives_restart() {
+    let (dir, engine) = open_engine("index-generation-race");
+    let engine = Arc::new(engine);
+    let barrier = Arc::new(std::sync::Barrier::new(17));
+    let threads: Vec<_> = (0..16)
+        .map(|id| {
+            let engine = Arc::clone(&engine);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                engine.auto_index_forbid_shape(
+                    &tenant("tenant-a"),
+                    &format!("candidate-{id}"),
+                    "score",
+                    0,
+                )
+            })
+        })
+        .collect();
+    barrier.wait();
+    let mut winners = 0;
+    for thread in threads {
+        match thread.join().unwrap() {
+            Ok(generation) => {
+                assert_eq!(generation, 1);
+                winners += 1;
+            }
+            Err(EngineError::Conflict) => {}
+            result => panic!("unexpected control outcome: {result:?}"),
+        }
+    }
+    assert_eq!(winners, 1);
+    let owner = tenant("tenant-a");
+    let audit = engine.auto_index_lifecycle_audit(&owner, None, None, 100).unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].generation, 1);
+    drop(engine);
+    let reopened = reopen_engine(&dir);
+    assert_eq!(reopened.auto_index_lifecycle_generation(&owner).unwrap(), 1);
+    assert_eq!(reopened.auto_index_lifecycle_audit(&owner, None, None, 100).unwrap(), audit);
+    assert!(matches!(
+        reopened.auto_index_forbid_shape(&owner, "next", "score", 0),
+        Err(EngineError::Conflict)
+    ));
+    assert_eq!(reopened.auto_index_forbid_shape(&owner, "next", "score", 1).unwrap(), 2);
+    drop(reopened);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn invisible_index_build_lifecycle_restarts_without_exposing_the_candidate() {
+    use crate::auto_index::{
+        LifecyclePhase, LogicalCost, Observation, Predicate, PredicateKind, Template,
+    };
+    use crate::storage::{InvisibleColumnKind, InvisibleIndexColumn};
+    let (dir, engine) = open_engine("invisible-lifecycle");
+    let owner = tenant("tenant-a");
+    let scope = engine.scope_for(&owner);
+    let collection = CollectionName::try_new("users").unwrap();
+    let mut transaction =
+        engine.begin(&scope, engine.read_snapshot(&scope).unwrap(), operation("initial")).unwrap();
+    for id in ["a", "b"] {
+        transaction
+            .put(
+                Document::new(
+                    document_id(id),
+                    collection.clone(),
+                    DocumentValue::Object(std::collections::BTreeMap::from([(
+                        "score".into(),
+                        DocumentValue::Integer(1),
+                    )])),
+                ),
+                ExpectedVersion::New,
+            )
+            .unwrap();
+    }
+    assert!(matches!(transaction.commit(LocalDurability::Written), CommitOutcome::Committed(_)));
+    engine.record_auto_index_observation(Observation {
+        tenant: owner.as_str().into(),
+        template: Template {
+            collection: "users".into(),
+            predicates: vec![Predicate { field: "score".into(), kind: PredicateKind::Equality }],
+            ordering: vec!["score".into()],
+            projection: None,
+        },
+        cost: LogicalCost::new(10, 10),
+        rows_returned: 2,
+        index: None,
+        at_millis: 1,
+    });
+    let recommended = engine.auto_index_recommendations(&owner, None, 10).unwrap();
+    let id = &recommended.recommendations[0].candidate_id;
+    let columns =
+        [InvisibleIndexColumn { field: "score".into(), kind: InvisibleColumnKind::Numeric }];
+    engine.auto_index_apply(&owner, id, 0, 1).unwrap();
+    assert!(
+        engine.begin_index_build(&owner, id, &columns, 1, 2).is_err(),
+        "missing extraction must refuse build"
+    );
+    assert_eq!(engine.auto_index_lifecycle_generation(&owner).unwrap(), 1);
+    engine.register_index_field(&collection, "score").unwrap();
+    let building = engine.begin_index_build(&owner, id, &columns, 1, 2).unwrap();
+    assert_eq!(building.phase, LifecyclePhase::Building);
+    assert_eq!(building.generation, 2);
+    assert!(!building.visible);
+    let partial = engine.advance_index_build(&owner, id, 1, 2, 3).unwrap();
+    assert_eq!(partial.phase, LifecyclePhase::Building);
+    assert_eq!(partial.covered_watermark, 0);
+    let filter = crate::storage::ScanFilter::try_new(vec![crate::storage::ScanCondition {
+        field: "score".into(),
+        op: crate::storage::ScanOp::Equals,
+        value: DocumentValue::Integer(1),
+    }])
+    .unwrap();
+    let request = crate::storage::ShadowReadRequest {
+        collection: &collection,
+        filter: &filter,
+        candidate_field: "score",
+        hidden_candidate: Some(id),
+        after: None,
+        limit: 10,
+        max_vm_steps: 10_000,
+    };
+    assert_eq!(
+        engine.measure_index_shadow(&scope, &engine.read_snapshot(&scope).unwrap(), &request),
+        Err(crate::storage::ShadowReadError::InvalidRequest)
+    );
+    drop(engine);
+    let engine = reopen_engine(&dir);
+    assert_eq!(
+        engine.auto_index_lifecycle_snapshot(&owner, None, 10).unwrap().indexes,
+        vec![partial]
+    );
+    let shadowing = engine.advance_index_build(&owner, id, 1, 3, 4).unwrap();
+    assert_eq!(shadowing.phase, LifecyclePhase::Shadowing);
+    assert_eq!(Some(shadowing.covered_watermark), shadowing.target_watermark);
+    assert!(!shadowing.visible && !shadowing.zero_stale_reads && !shadowing.regression_free);
+    assert_eq!(shadowing.generation, 4);
+    assert_hidden_shadow_scope(&engine, &owner, &request);
+    assert!(engine.auto_index_shadow_evidence(&owner, id, [7; 32], 20).unwrap().is_none());
+    assert!(matches!(engine.advance_index_build(&owner, id, 1, 4, 5), Err(EngineError::Conflict)));
+    drop(engine);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn assert_hidden_shadow_scope(
+    engine: &Engine,
+    owner: &TenantId,
+    request: &crate::storage::ShadowReadRequest<'_>,
+) {
+    let scope = engine.scope_for(owner);
+    let snapshot = engine.read_snapshot(&scope).unwrap();
+    let comparison = engine.measure_index_shadow(&scope, &snapshot, request).unwrap();
+    assert_eq!(comparison.ordinary.rows, 2);
+    assert_eq!(comparison.ordinary.result_digest, comparison.candidate.result_digest);
+    let foreign_scope = engine.scope_for(&tenant("foreign"));
+    assert_eq!(
+        engine.measure_index_shadow(
+            &foreign_scope,
+            &engine.read_snapshot(&foreign_scope).unwrap(),
+            request
+        ),
+        Err(crate::storage::ShadowReadError::InvalidRequest)
+    );
+}
+
+#[test]
+fn index_shadow_measurements_validate_scope_and_do_not_authorize_activation() {
+    use crate::storage::{ScanCondition, ScanFilter, ScanOp, ShadowReadError, ShadowReadRequest};
+    let (dir, engine) = open_engine("index-shadow-scope");
+    let owner = tenant("tenant-a");
+    let scope = engine.scope_for(&owner);
+    let collection = CollectionName::try_new("orders").unwrap();
+    engine.register_index_field(&collection, "score").unwrap();
+    let snapshot = engine.read_snapshot(&scope).unwrap();
+    let filter = ScanFilter::try_new(vec![ScanCondition {
+        field: "score".into(),
+        op: ScanOp::Equals,
+        value: DocumentValue::Integer(1),
+    }])
+    .unwrap();
+    let request = ShadowReadRequest {
+        collection: &collection,
+        filter: &filter,
+        candidate_field: "score",
+        hidden_candidate: None,
+        after: None,
+        limit: 10,
+        max_vm_steps: 10_000,
+    };
+    let comparison = engine.measure_index_shadow(&scope, &snapshot, &request).unwrap();
+    assert_eq!(comparison.ordinary.rows, 0);
+    assert_eq!(comparison.ordinary.result_digest, comparison.candidate.result_digest);
+    let foreign_scope = engine.scope_for(&tenant("tenant-b"));
+    assert_eq!(
+        engine.measure_index_shadow(&foreign_scope, &snapshot, &request),
+        Err(ShadowReadError::ScopeMismatch)
+    );
+    let (foreign_dir, foreign_engine) = open_engine("index-shadow-foreign");
+    assert_eq!(
+        foreign_engine.measure_index_shadow(&scope, &snapshot, &request),
+        Err(ShadowReadError::ScopeMismatch)
+    );
+    assert_eq!(engine.auto_index_lifecycle_generation(&owner).unwrap(), 0);
+    assert!(engine.auto_index_shadow_evidence(&owner, "score", [7; 32], 20).unwrap().is_none());
+    drop(foreign_engine);
+    drop(engine);
+    std::fs::remove_dir_all(foreign_dir).unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn index_control_receipts_match_the_committed_snapshot() {
+    use crate::auto_index::{LogicalCost, Observation, Predicate, PredicateKind, Template};
+    let (dir, engine) = open_engine("index-control-receipts");
+    let owner = tenant("tenant-a");
+    engine.record_auto_index_observation(Observation {
+        tenant: owner.as_str().to_owned(),
+        template: Template {
+            collection: "orders".into(),
+            predicates: vec![Predicate { field: "score".into(), kind: PredicateKind::Equality }],
+            ordering: vec![],
+            projection: None,
+        },
+        cost: LogicalCost::new(100, 100),
+        rows_returned: 1,
+        index: None,
+        at_millis: 1,
+    });
+    let recommendations = engine.auto_index_recommendations(&owner, None, 10).unwrap();
+    let candidate = &recommendations.recommendations[0].candidate_id;
+    let applied =
+        engine.auto_index_apply(&owner, candidate, recommendations.generation, 2).unwrap();
+    assert_eq!(applied.generation, 1);
+    assert_eq!(applied.phase, crate::auto_index::LifecyclePhase::Selected);
+    assert!(!applied.visible && !applied.zero_stale_reads && !applied.regression_free);
+    assert!(engine.index_descriptors().unwrap().is_empty());
+    assert!(matches!(engine.auto_index_apply(&owner, candidate, 1, 3), Err(EngineError::Conflict)));
+    assert!(matches!(
+        engine.auto_index_pin_template(&owner, candidate, "orders where score = ?", 1),
+        Err(EngineError::Conflict)
+    ));
+    assert_eq!(
+        engine.auto_index_lifecycle_snapshot(&owner, None, 10).unwrap().indexes,
+        vec![applied.clone()]
+    );
+    drop(engine);
+    let engine = reopen_engine(&dir);
+    assert_eq!(
+        engine.auto_index_lifecycle_snapshot(&owner, None, 10).unwrap().indexes,
+        vec![applied.clone()]
+    );
+    assert!(engine.index_descriptors().unwrap().is_empty());
+    assert!(engine.auto_index_shadow_evidence(&owner, candidate, [7; 32], 20).unwrap().is_none());
+    // Seed active metadata to exercise pin persistence independently of the
+    // unfinished build worker. This is not evidence of engine activation.
+    seed_active_index_control_fixture(&engine, applied);
+    let pinned =
+        engine.auto_index_pin_template(&owner, candidate, "orders where score = ?", 2).unwrap();
+    assert_eq!(pinned.generation, 3);
+    assert!(pinned.pinned);
+    assert_eq!(
+        engine.auto_index_lifecycle_snapshot(&owner, None, 10).unwrap().indexes,
+        vec![pinned.clone()]
+    );
+    assert!(matches!(engine.auto_index_apply(&owner, candidate, 1, 3), Err(EngineError::Conflict)));
+    assert!(matches!(
+        engine.auto_index_pin_template(&owner, candidate, "orders where score = ?", 1),
+        Err(EngineError::Conflict)
+    ));
+    assert!(matches!(
+        engine.auto_index_retire(&owner, candidate, 1, 3),
+        Err(EngineError::Conflict)
+    ));
+    assert!(matches!(
+        engine.auto_index_retire(&owner, candidate, 3, 3),
+        Err(EngineError::Conflict)
+    ));
+    let snapshot = engine.auto_index_lifecycle_snapshot(&owner, None, 10).unwrap();
+    drop(engine);
+    let reopened = reopen_engine(&dir);
+    assert_eq!(reopened.auto_index_lifecycle_snapshot(&owner, None, 10).unwrap(), snapshot);
+    drop(reopened);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn seed_active_index_control_fixture(
+    engine: &Engine,
+    mut view: crate::auto_index::LifecycleIndexView,
+) {
+    view.phase = crate::auto_index::LifecyclePhase::Active;
+    view.visible = true;
+    view.zero_stale_reads = true;
+    view.regression_free = true;
+    engine
+        .auto_index_lifecycle
+        .lock()
+        .unwrap()
+        .install(engine.lock_storage().unwrap().port.as_mut(), view, 2, [0; 32])
+        .unwrap();
+}
+
+#[test]
+fn index_tenant_controls_and_audits_stay_isolated_after_restart() {
+    use crate::auto_index::{LogicalCost, Observation, Predicate, PredicateKind, Template};
+    let (dir, engine) = open_engine("index-tenant-isolation");
+    let a = tenant("tenant-a");
+    let b = tenant("tenant-b");
+    let c = tenant("tenant-c");
+    let mut observation = Observation {
+        tenant: a.as_str().into(),
+        template: Template {
+            collection: "orders".into(),
+            predicates: vec![Predicate { field: "score".into(), kind: PredicateKind::Equality }],
+            ordering: vec![],
+            projection: None,
+        },
+        cost: LogicalCost::new(10, 10),
+        rows_returned: 1,
+        index: None,
+        at_millis: 1,
+    };
+    engine.record_auto_index_observation(observation.clone());
+    assert!(engine.auto_index_recommendations(&b, None, 10).unwrap().recommendations.is_empty());
+    observation.tenant = b.as_str().into();
+    engine.record_auto_index_observation(observation);
+    let recommendation = engine.auto_index_recommendations(&a, None, 10).unwrap();
+    let id = &recommendation.recommendations[0].candidate_id;
+    assert_eq!(
+        &engine.auto_index_recommendations(&b, None, 10).unwrap().recommendations[0].candidate_id,
+        id
+    );
+    let installed_a = engine.auto_index_apply(&a, id, 0, 2).unwrap();
+    // Tenant A's commit cannot invalidate tenant B's optimistic generation.
+    let installed_b = engine.auto_index_apply(&b, id, 0, 3).unwrap();
+    assert_eq!(installed_a.generation, 1);
+    assert_eq!(installed_b.generation, 1);
+    assert_eq!(engine.auto_index_forbid_shape(&a, id, "score", 1).unwrap(), 2);
+    assert!(engine.auto_index_recommendations(&a, None, 10).unwrap().recommendations.is_empty());
+    assert_eq!(engine.auto_index_recommendations(&b, None, 10).unwrap().recommendations.len(), 1);
+    seed_active_index_control_fixture(&engine, installed_b);
+    let pinned_b = engine.auto_index_pin_template(&b, id, "orders where score = ?", 2).unwrap();
+    assert!(pinned_b.pinned);
+    assert!(!pinned_b.forbidden);
+    let snapshot_a = engine.auto_index_lifecycle_snapshot(&a, None, 10).unwrap();
+    let snapshot_b = engine.auto_index_lifecycle_snapshot(&b, None, 10).unwrap();
+    assert!(snapshot_a.indexes[0].forbidden);
+    assert!(!snapshot_a.indexes[0].pinned);
+    assert_eq!(snapshot_a.indexes[0].tenant, a.as_str());
+    assert_eq!(snapshot_b.indexes[0].tenant, b.as_str());
+    let audit_a = engine.auto_index_lifecycle_audit(&a, None, Some(id), 10).unwrap();
+    let audit_b = engine.auto_index_lifecycle_audit(&b, None, Some(id), 10).unwrap();
+    assert_eq!(audit_a.len(), 2);
+    assert_eq!(audit_b.len(), 3);
+    assert_ne!(audit_a, audit_b);
+    assert!(engine.auto_index_lifecycle_audit(&c, None, None, 10).unwrap().is_empty());
+    assert_eq!(engine.auto_index_lifecycle_generation(&c).unwrap(), 0);
+    drop(engine);
+    let reopened = reopen_engine(&dir);
+    assert_eq!(reopened.auto_index_lifecycle_snapshot(&a, None, 10).unwrap(), snapshot_a);
+    assert_eq!(reopened.auto_index_lifecycle_snapshot(&b, None, 10).unwrap(), snapshot_b);
+    assert_eq!(reopened.auto_index_lifecycle_audit(&a, None, Some(id), 10).unwrap(), audit_a);
+    assert_eq!(reopened.auto_index_lifecycle_audit(&b, None, Some(id), 10).unwrap(), audit_b);
+    assert!(reopened.auto_index_lifecycle_audit(&c, None, None, 10).unwrap().is_empty());
+    drop(reopened);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn index_durable_snapshot_excludes_process_local_planner_entries() {
+    use crate::query::optimizer::{IndexCapabilities, IndexDefinition, IndexField, IndexKind};
+    let (dir, engine) = open_engine("durable-index-snapshot");
+    let owner = tenant("tenant-a");
+    let definition = IndexDefinition::try_new(
+        CollectionName::try_new("orders").unwrap(),
+        vec![IndexField::try_new("score", IndexCapabilities::FULL).unwrap()],
+        IndexKind::Auto,
+    )
+    .unwrap();
+    engine.indexes.register_auto(&owner, &definition).unwrap();
+    assert_eq!(engine.queries().registered_indexes(&owner).len(), 1);
+    let snapshot = engine.auto_index_lifecycle_snapshot(&owner, None, 10).unwrap();
+    assert!(snapshot.indexes.is_empty());
+    assert_eq!(snapshot.generation, 0);
+    drop(engine);
+    let reopened = reopen_engine(&dir);
+    assert_eq!(reopened.auto_index_lifecycle_snapshot(&owner, None, 10).unwrap(), snapshot);
+    drop(reopened);
+    std::fs::remove_dir_all(dir).unwrap();
+}

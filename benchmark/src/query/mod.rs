@@ -117,6 +117,7 @@ use model::NormalizedQuery;
 pub(crate) fn observe_auto_index_execution(
     engine: &Engine,
     query: &NormalizedQuery,
+    tenant: &TenantId,
     result: &QueryResult,
 ) {
     let Some(collection) = query.source().collection() else { return };
@@ -157,6 +158,7 @@ pub(crate) fn observe_auto_index_execution(
     let index =
         result.index_generation().map(|generation| generation.namespace().name().to_owned());
     let observation = crate::auto_index::Observation {
+        tenant: tenant.as_str().to_owned(),
         template: crate::auto_index::Template {
             collection: collection.as_str().to_owned(),
             predicates,
@@ -593,13 +595,13 @@ impl<'engine> QueryStore<'engine> {
             // document model.
             if plan.sql_execute_only_operator().is_none() {
                 let result = execute::execute(self.engine, &self.indexes, plan, snapshot)?;
-                observe_auto_index_execution(self.engine, plan.model(), &result);
+                observe_auto_index_execution(self.engine, plan.model(), snapshot.tenant(), &result);
                 return Ok(result);
             }
             return sql_execute::execute(self.engine, plan, runtime, snapshot);
         }
         let result = execute::execute(self.engine, &self.indexes, plan, snapshot)?;
-        observe_auto_index_execution(self.engine, plan.model(), &result);
+        observe_auto_index_execution(self.engine, plan.model(), snapshot.tenant(), &result);
         Ok(result)
     }
 

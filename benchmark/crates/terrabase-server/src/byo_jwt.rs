@@ -1,7 +1,7 @@
 //! BYO-JWT authentication over a tenant-pinned JWKS endpoint (E-3).
 //!
 //! This module owns the hostile-input boundary. HTTP/TLS and cryptographic
-//! implementations are supplied through JwksFetcher and JwtSignatureVerifier;
+//! implementations are supplied through `JwksFetcher` and `JwtSignatureVerifier`;
 //! the fetcher contract requires certificate and hostname verification and a
 //! public-IP connection policy. Keeping those effects behind traits makes the
 //! parser and cache testable without making a network request.
@@ -10,9 +10,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
+use tokio::sync::Mutex;
 
 use serde::Deserialize;
 use serde::de::{MapAccess, Visitor};
@@ -27,11 +28,11 @@ pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024;
 /// Maximum JWT signature size after decoding.
 pub const MAX_SIGNATURE_BYTES: usize = 4 * 1024;
 /// Maximum JWKS response size.
-pub const MAX_JWKS_BYTES: usize = 1 * 1024 * 1024;
+pub const MAX_JWKS_BYTES: usize = 1024 * 1024;
 /// Maximum keys retained from one JWKS document.
 pub const MAX_JWKS_KEYS: usize = 256;
 /// Maximum cache lifetime accepted from configuration.
-pub const MAX_CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+pub const MAX_CACHE_TTL: Duration = Duration::from_hours(24);
 /// Maximum clock skew accepted from configuration.
 pub const MAX_CLOCK_SKEW: u64 = 5 * 60;
 /// Maximum custom claims copied to an authorization context.
@@ -41,6 +42,8 @@ pub const MAX_CONTEXT_OPERATIONS: usize = 32;
 const MAX_TEXT_BYTES: usize = 255;
 const MAX_CLAIM_NAME_BYTES: usize = 128;
 const MAX_CLAIM_VALUE_BYTES: usize = 4 * 1024;
+const MIN_RSA_MODULUS_BYTES: usize = 256;
+const MAX_RSA_EXPONENT_BYTES: usize = 8;
 
 /// JWT signature algorithms supported by the policy surface.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -49,7 +52,7 @@ pub enum Algorithm {
     Rs256,
     /// ECDSA P-256 with SHA-256.
     Es256,
-    /// Ed25519 (the JOSE EdDSA spelling).
+    /// Ed25519 (the JOSE `EdDSA` spelling).
     EdDsa,
 }
 
@@ -82,6 +85,15 @@ pub struct JwksEndpoint(String);
 
 impl JwksEndpoint {
     /// Validates a tenant-pinned JWKS endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns `UnsafeJwksEndpoint` for a non-HTTPS URL, an unsupported authority,
+    /// a private hostname, or an ambiguous path.
+    #[allow(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "these suffixes classify normalized DNS names, not file extensions"
+    )]
     pub fn parse(value: &str) -> Result<Self, JwtConfigError> {
         if value.len() > 2_048 || !value.is_ascii() || value.contains(['?', '#', '\\', '%']) {
             return Err(JwtConfigError::UnsafeJwksEndpoint);
@@ -123,6 +135,7 @@ impl JwksEndpoint {
                 }
                 return Err(JwtConfigError::UnsafeJwksEndpoint);
             }
+            let host = host.to_ascii_lowercase();
             if host.eq_ignore_ascii_case("localhost")
                 || host.ends_with(".localhost")
                 || host.ends_with(".local")
@@ -132,18 +145,21 @@ impl JwksEndpoint {
                 || host
                     .bytes()
                     .any(|byte| !(byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-'))
-                || host
-                    .split('.')
-                    .any(|label| label.is_empty() || label.starts_with('-') || label.ends_with('-'))
+                || host.split('.').any(|label| {
+                    label.is_empty()
+                        || label.len() > 63
+                        || label.starts_with('-')
+                        || label.ends_with('-')
+                })
             {
                 return Err(JwtConfigError::UnsafeJwksEndpoint);
             }
-            host.to_ascii_lowercase()
+            host
         };
         if path.len() > 1_024
             || path.starts_with('/')
             || path.contains("..")
-            || path.chars().any(char::is_control)
+            || path.chars().any(|character| character.is_control() || character.is_whitespace())
         {
             return Err(JwtConfigError::UnsafeJwksEndpoint);
         }
@@ -166,18 +182,22 @@ fn is_private_ip(address: IpAddr) -> bool {
                 || ip.is_unspecified()
                 || ip.is_multicast()
                 || (ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1]))
-                || (ip.octets()[0] == 192 && ip.octets()[1] == 0 && ip.octets()[2] == 0)
+                || (ip.octets()[0] == 192 && ip.octets()[1] == 0)
                 || (ip.octets()[0] == 198 && (18..=19).contains(&ip.octets()[1]))
                 || (ip.octets()[0] == 198 && ip.octets()[1] == 51 && ip.octets()[2] == 100)
                 || (ip.octets()[0] == 203 && ip.octets()[1] == 0 && ip.octets()[2] == 113)
                 || ip.octets()[0] >= 240
         }
         IpAddr::V6(ip) => {
-            ip.is_loopback()
+            // IPv4-mapped addresses are a common DNS/connection-policy
+            // bypass: classify the embedded address, not just the IPv6 form.
+            ip.to_ipv4_mapped().is_some_and(|mapped| is_private_ip(IpAddr::V4(mapped)))
+                || ip.is_loopback()
                 || ip.is_unspecified()
                 || ip.is_multicast()
                 || (ip.segments()[0] & 0xfe00) == 0xfc00
                 || (ip.segments()[0] & 0xffc0) == 0xfe80
+                || (ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8)
         }
     }
 }
@@ -205,6 +225,11 @@ pub struct TenantJwtConfig {
 
 impl TenantJwtConfig {
     /// Validates a complete production tenant policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidText` for invalid identity fields, or `InvalidPolicy` when
+    /// algorithms, clock skew, cache lifetime, or generation violate the bounds.
     pub fn validate(&self) -> Result<(), JwtConfigError> {
         for value in [&self.tenant, &self.issuer, &self.audience] {
             if value.is_empty()
@@ -301,11 +326,16 @@ pub struct JwksDocument {
 
 impl JwksDocument {
     /// Parses one response without retaining arbitrary JSON or remote errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MalformedJwks` for oversized or malformed JSON, duplicate key
+    /// identifiers, unsupported algorithms, or invalid public key material.
     pub fn parse(body: &[u8]) -> Result<Self, JwtAuthenticationError> {
         if body.is_empty() || body.len() > MAX_JWKS_BYTES {
             return Err(JwtAuthenticationError::MalformedJwks);
         }
-        let object = parse_object(body).map_err(|_| JwtAuthenticationError::MalformedJwks)?;
+        let object = parse_object(body).map_err(|()| JwtAuthenticationError::MalformedJwks)?;
         let Some(Value::Array(values)) = object.get("keys") else {
             return Err(JwtAuthenticationError::MalformedJwks);
         };
@@ -321,7 +351,11 @@ impl JwksDocument {
             let Some(kid) = fields.get("kid").and_then(Value::as_str) else {
                 return Err(JwtAuthenticationError::MalformedJwks);
             };
-            if kid.is_empty() || kid.len() > 128 || !kid.is_ascii() || !kids.insert(kid.to_owned())
+            if kid.is_empty()
+                || kid.len() > 128
+                || !kid.is_ascii()
+                || kid.chars().any(char::is_control)
+                || !kids.insert(kid.to_owned())
             {
                 return Err(JwtAuthenticationError::MalformedJwks);
             }
@@ -333,12 +367,32 @@ impl JwksDocument {
             if fields.get("use").is_some_and(|value| value.as_str() != Some("sig")) {
                 return Err(JwtAuthenticationError::MalformedJwks);
             }
+            if let Some(value) = fields.get("key_ops") {
+                let Value::Array(operations) = value else {
+                    return Err(JwtAuthenticationError::MalformedJwks);
+                };
+                if operations.len() != 1
+                    || operations.first().and_then(Value::as_str) != Some("verify")
+                {
+                    return Err(JwtAuthenticationError::MalformedJwks);
+                }
+            }
             let mut material = BTreeMap::new();
             let (key_type, curve) = match (fields.get("kty").and_then(Value::as_str), algorithm) {
                 (Some("RSA"), Algorithm::Rs256) => {
                     let n = decode_field(fields, "n")?;
                     let e = decode_field(fields, "e")?;
-                    if n.is_empty() || e.is_empty() {
+                    // Enforce a 2048-bit RSA floor at the input boundary;
+                    // accepting a tiny modulus and deferring the decision to
+                    // a verifier creates an algorithm-policy downgrade seam.
+                    if n.len() < MIN_RSA_MODULUS_BYTES
+                        || n[0] < 0x80
+                        || e.is_empty()
+                        || e.len() > MAX_RSA_EXPONENT_BYTES
+                        || e[0] == 0
+                        || e.last().is_none_or(|last| *last % 2 == 0)
+                        || (e.len() == 1 && e[0] < 3)
+                    {
                         return Err(JwtAuthenticationError::MalformedJwks);
                     }
                     material.insert("n", n);
@@ -394,7 +448,7 @@ fn decode_field(
     let Some(value) = fields.get(name).and_then(Value::as_str) else {
         return Err(JwtAuthenticationError::MalformedJwks);
     };
-    decode_base64url(value, MAX_JWKS_BYTES).map_err(|_| JwtAuthenticationError::MalformedJwks)
+    decode_base64url(value, MAX_JWKS_BYTES).map_err(|()| JwtAuthenticationError::MalformedJwks)
 }
 
 /// Crypto boundary for the maintained AWS-LC (or equivalent) implementation.
@@ -527,7 +581,7 @@ pub enum JwtAuthenticationError {
 /// Async parent authorization hook invoked after cryptographic admission.
 pub trait ParentAuthenticationHook: Send + Sync {
     /// Binds or rejects the bounded context. Hook errors are collapsed into
-    /// JwtAuthenticationError::ParentRejected.
+    /// `JwtAuthenticationError::ParentRejected`.
     fn admit<'a>(
         &'a self,
         context: &'a AuthorizationContext,
@@ -551,7 +605,75 @@ pub struct ByoJwtService<F, V> {
     verifier: Arc<V>,
     state: RwLock<State>,
     generation: AtomicU64,
+    generation_exhausted: AtomicBool,
     fetch_lock: Mutex<()>,
+}
+
+/// A parent-composed authenticator that always runs the parent admission hook.
+///
+/// This is the construction seam for an HTTP/API parent: callers retain the
+/// service only behind this wrapper and therefore cannot accidentally forget
+/// the parent authorization step after cryptographic authentication.  The
+/// wrapper contains no token bytes and is safe to share between requests.
+pub struct ByoJwtAuthenticator<F, V, H> {
+    service: Arc<ByoJwtService<F, V>>,
+    hook: Arc<H>,
+}
+
+impl<F, V, H> ByoJwtAuthenticator<F, V, H>
+where
+    F: JwksFetcher + 'static,
+    V: JwtSignatureVerifier + 'static,
+    H: ParentAuthenticationHook + 'static,
+{
+    /// Builds a verifier and binds it to the mandatory parent hook.
+    ///
+    /// # Errors
+    ///
+    /// Returns the tenant policy validation error before constructing the service.
+    pub fn new(
+        config: TenantJwtConfig,
+        fetcher: Arc<F>,
+        verifier: Arc<V>,
+        hook: Arc<H>,
+    ) -> Result<Self, JwtConfigError> {
+        let service = Arc::new(ByoJwtService::new(config, fetcher, verifier)?);
+        Ok(Self { service, hook })
+    }
+
+    /// Wraps an already-created service with the mandatory parent hook.
+    #[must_use]
+    pub fn from_service(service: Arc<ByoJwtService<F, V>>, hook: Arc<H>) -> Self {
+        Self { service, hook }
+    }
+
+    /// Authenticates a bearer token and invokes the parent hook before return.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authentication error for rejected token claims or signatures,
+    /// unavailable keys, concurrent revocation, or refusal by the parent hook.
+    pub async fn authenticate(
+        &self,
+        token: &str,
+        now: u64,
+    ) -> Result<AuthorizationContext, JwtAuthenticationError> {
+        self.service.authenticate_with_hook(token, now, self.hook.as_ref()).await
+    }
+
+    /// Revokes all cached admissions in the wrapped service.
+    pub fn revoke_all(&self) {
+        self.service.revoke_all();
+    }
+
+    /// Replaces the pinned policy while retaining mandatory parent admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns the policy validation error, or `InvalidPolicy` if the generation is exhausted.
+    pub fn replace_config(&self, config: TenantJwtConfig) -> Result<(), JwtConfigError> {
+        self.service.replace_config(config)
+    }
 }
 
 impl<F, V> ByoJwtService<F, V>
@@ -560,6 +682,10 @@ where
     V: JwtSignatureVerifier + 'static,
 {
     /// Creates a fail-closed service from validated tenant configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns the tenant policy validation error before constructing the service.
     pub fn new(
         config: TenantJwtConfig,
         fetcher: Arc<F>,
@@ -571,30 +697,68 @@ where
             state: RwLock::new(State { config, cache: None }),
             fetcher,
             verifier,
+            generation_exhausted: AtomicBool::new(false),
             fetch_lock: Mutex::new(()),
         })
     }
 
+    /// Creates a service and binds it to a mandatory parent authorization hook.
+    ///
+    /// # Errors
+    ///
+    /// Returns the tenant policy validation error before constructing the service.
+    pub fn with_parent_hook<H>(
+        config: TenantJwtConfig,
+        fetcher: Arc<F>,
+        verifier: Arc<V>,
+        hook: Arc<H>,
+    ) -> Result<ByoJwtAuthenticator<F, V, H>, JwtConfigError>
+    where
+        H: ParentAuthenticationHook + 'static,
+    {
+        ByoJwtAuthenticator::new(config, fetcher, verifier, hook)
+    }
+
     /// Revokes all cached admissions and invalidates in-flight fetches.
     pub fn revoke_all(&self) {
-        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
         let mut state = self.state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(generation) = state.config.generation.checked_add(1) else {
+            // There is no representable generation after u64::MAX.  Keep the
+            // service permanently fail-closed rather than wrapping and
+            // accidentally re-admitting a token from the old generation.
+            self.generation_exhausted.store(true, Ordering::Release);
+            state.cache = None;
+            return;
+        };
         state.cache = None;
         state.config.generation = generation;
+        self.generation.store(generation, Ordering::Release);
     }
 
     /// Replaces the pinned tenant policy and advances its generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the policy validation error, or `InvalidPolicy` if the generation is exhausted.
+    /// The previous policy remains installed on failure.
     pub fn replace_config(&self, mut config: TenantJwtConfig) -> Result<(), JwtConfigError> {
         config.validate()?;
-        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
-        config.generation = generation;
         let mut state = self.state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let generation =
+            state.config.generation.checked_add(1).ok_or(JwtConfigError::InvalidPolicy)?;
+        config.generation = generation;
         state.config = config;
         state.cache = None;
+        self.generation.store(generation, Ordering::Release);
         Ok(())
     }
 
     /// Authenticates one bearer token at a caller-supplied unix timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authentication error for rejected token claims or signatures,
+    /// unavailable keys, or a configuration generation changed during verification.
     pub async fn authenticate(
         &self,
         token: &str,
@@ -605,14 +769,24 @@ where
     }
 
     /// Authenticates and then invokes the parent authorization hook.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authentication error for rejected token claims or signatures,
+    /// unavailable keys, concurrent revocation, or refusal by the parent hook.
     pub async fn authenticate_with_hook<H: ParentAuthenticationHook>(
         &self,
         token: &str,
         now: u64,
         hook: &H,
     ) -> Result<AuthorizationContext, JwtAuthenticationError> {
-        let (context, _) = self.authenticate_inner(token, now).await?;
-        hook.admit(&context).await.map_err(|_| JwtAuthenticationError::ParentRejected)?;
+        let (context, generation) = self.authenticate_inner(token, now).await?;
+        hook.admit(&context).await.map_err(|()| JwtAuthenticationError::ParentRejected)?;
+        if self.generation_exhausted.load(Ordering::Acquire)
+            || self.generation.load(Ordering::Acquire) != generation
+        {
+            return Err(JwtAuthenticationError::GenerationChanged);
+        }
         Ok(context)
     }
 
@@ -622,14 +796,26 @@ where
         now: u64,
     ) -> Result<(AuthorizationContext, u64), JwtAuthenticationError> {
         let parsed = ParsedToken::parse(token)?;
+        if self.generation_exhausted.load(Ordering::Acquire) {
+            return Err(JwtAuthenticationError::GenerationChanged);
+        }
         let (config, generation) = {
             let state = self.state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-            (state.config.clone(), self.generation.load(Ordering::Acquire))
+            // The config and its generation are read under one lock.  The
+            // atomic is only the invalidation fence used across awaits; using
+            // it as the source here could pair a pre-rotation endpoint with a
+            // post-rotation generation during the tiny update window.
+            (state.config.clone(), state.config.generation)
         };
-        if parsed.algorithm.map_or(true, |algorithm| !config.algorithms.contains(&algorithm)) {
+        if parsed.algorithm.is_none_or(|algorithm| !config.algorithms.contains(&algorithm)) {
             return Err(JwtAuthenticationError::AlgorithmRejected);
         }
         let algorithm = parsed.algorithm.ok_or(JwtAuthenticationError::AlgorithmRejected)?;
+        // Claims are still untrusted until the signature check, but their
+        // shape and configured bindings can be rejected before touching the
+        // network.  This keeps malformed/expired bearer floods from forcing
+        // JWKS retrievals.
+        parsed.validate_claims(&config, now)?;
         let document = self.jwks(&config, generation, parsed.kid.as_str(), now, false).await?;
         let key = match document.key(&parsed.kid, algorithm) {
             Ok(key) => key.clone(),
@@ -652,6 +838,13 @@ where
             return Err(JwtAuthenticationError::GenerationChanged);
         }
         let context = parsed.context(&config, generation, now)?;
+        // A revocation can race the check above while claims are being
+        // copied.  Re-check after constructing the bounded context so an
+        // admission can never escape with a generation that was revoked
+        // before this method returns.
+        if self.generation.load(Ordering::Acquire) != generation {
+            return Err(JwtAuthenticationError::GenerationChanged);
+        }
         Ok((context, generation))
     }
 
@@ -672,8 +865,7 @@ where
                 return Ok(Arc::clone(&cache.document));
             }
         }
-        let _fetch_guard =
-            self.fetch_lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _fetch_guard = self.fetch_lock.lock().await;
         if !force_refresh {
             let state = self.state.read().unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(cache) = &state.cache
@@ -683,12 +875,21 @@ where
                 return Ok(Arc::clone(&cache.document));
             }
         }
-        let body = self
-            .fetcher
-            .fetch(&config.jwks_endpoint)
-            .await
-            .map_err(|_| JwtAuthenticationError::JwksUnavailable)?;
-        let document = Arc::new(JwksDocument::parse(&body)?);
+        let Ok(body) = self.fetcher.fetch(&config.jwks_endpoint).await else {
+            // Never fall back to an expired or failed-rotation key set.
+            // Clearing here also prevents a later request from treating
+            // the old entry as fresh when the supplied clock advances
+            // less than one second.
+            self.clear_cache(generation);
+            return Err(JwtAuthenticationError::JwksUnavailable);
+        };
+        let document = match JwksDocument::parse(&body) {
+            Ok(document) => Arc::new(document),
+            Err(error) => {
+                self.clear_cache(generation);
+                return Err(error);
+            }
+        };
         if self.generation.load(Ordering::Acquire) != generation {
             return Err(JwtAuthenticationError::GenerationChanged);
         }
@@ -697,14 +898,32 @@ where
             Some(CachedJwks { document: Arc::clone(&document), fetched_at: now, generation });
         Ok(document)
     }
+
+    fn clear_cache(&self, generation: u64) {
+        let mut state = self.state.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.config.generation == generation {
+            state.cache = None;
+        }
+    }
 }
 
+#[derive(Clone)]
 struct ParsedToken {
     signing_input: String,
     signature: Vec<u8>,
     algorithm: Option<Algorithm>,
     kid: String,
     claims: BTreeMap<String, Value>,
+}
+
+impl ParsedToken {
+    fn validate_claims(
+        &self,
+        config: &TenantJwtConfig,
+        now: u64,
+    ) -> Result<(), JwtAuthenticationError> {
+        self.clone().context(config, config.generation, now).map(|_| ())
+    }
 }
 
 impl ParsedToken {
@@ -726,22 +945,29 @@ impl ParsedToken {
             return Err(JwtAuthenticationError::MalformedToken);
         }
         let header_bytes = decode_base64url(header, MAX_HEADER_BYTES)
-            .map_err(|_| JwtAuthenticationError::MalformedToken)?;
+            .map_err(|()| JwtAuthenticationError::MalformedToken)?;
         let payload_bytes = decode_base64url(payload, MAX_PAYLOAD_BYTES)
-            .map_err(|_| JwtAuthenticationError::MalformedToken)?;
+            .map_err(|()| JwtAuthenticationError::MalformedToken)?;
         let signature = decode_base64url(signature, MAX_SIGNATURE_BYTES)
-            .map_err(|_| JwtAuthenticationError::MalformedToken)?;
+            .map_err(|()| JwtAuthenticationError::MalformedToken)?;
         let header =
-            parse_object(&header_bytes).map_err(|_| JwtAuthenticationError::MalformedToken)?;
+            parse_object(&header_bytes).map_err(|()| JwtAuthenticationError::MalformedToken)?;
         let claims =
-            parse_object(&payload_bytes).map_err(|_| JwtAuthenticationError::MalformedToken)?;
+            parse_object(&payload_bytes).map_err(|()| JwtAuthenticationError::MalformedToken)?;
         let Some(kid) = header.get("kid").and_then(Value::as_str) else {
             return Err(JwtAuthenticationError::MalformedToken);
         };
-        if kid.is_empty() || kid.len() > 128 || !kid.is_ascii() {
+        if kid.is_empty() || kid.len() > 128 || !kid.is_ascii() || kid.chars().any(char::is_control)
+        {
             return Err(JwtAuthenticationError::MalformedToken);
         }
         if header.get("typ").is_some_and(|value| value.as_str() != Some("JWT")) {
+            return Err(JwtAuthenticationError::MalformedToken);
+        }
+        // These members can redirect key selection away from the tenant-pinned
+        // JWKS or alter JOSE processing.  The service has no extension
+        // registry, so rejecting them is safer than silently ignoring them.
+        if ["jku", "jwk", "x5u", "crit"].iter().any(|name| header.contains_key(*name)) {
             return Err(JwtAuthenticationError::MalformedToken);
         }
         let algorithm = header.get("alg").and_then(Value::as_str).and_then(Algorithm::parse);
@@ -874,11 +1100,25 @@ fn audience_claim(
 ) -> Result<String, JwtAuthenticationError> {
     match claims.get("aud") {
         Some(Value::String(value)) if value == expected => Ok(value.clone()),
-        Some(Value::Array(values))
-            if values.len() <= 8
-                && values.iter().filter_map(Value::as_str).any(|value| value == expected) =>
-        {
-            Ok(expected.to_owned())
+        Some(Value::Array(values)) if !values.is_empty() && values.len() <= 8 => {
+            let mut found = false;
+            for value in values {
+                let Some(value) = value.as_str() else {
+                    return Err(JwtAuthenticationError::BindingMismatch);
+                };
+                if value.is_empty()
+                    || value.len() > MAX_TEXT_BYTES
+                    || value.chars().any(char::is_control)
+                {
+                    return Err(JwtAuthenticationError::BindingMismatch);
+                }
+                found |= value == expected;
+            }
+            if found {
+                Ok(expected.to_owned())
+            } else {
+                Err(JwtAuthenticationError::BindingMismatch)
+            }
         }
         _ => Err(JwtAuthenticationError::BindingMismatch),
     }
@@ -914,7 +1154,7 @@ fn decode_base64url(value: &str, max_decoded: usize) -> Result<Vec<u8>, ()> {
         bits += 6;
         if bits >= 8 {
             bits -= 8;
-            output.push((accumulator >> bits) as u8);
+            output.push(u8::try_from(accumulator >> bits).map_err(|_| ())?);
             if bits == 0 {
                 accumulator = 0;
             } else {
@@ -991,9 +1231,102 @@ mod tests {
 
     struct Verifier;
 
+    struct DelayedFetcher {
+        calls: AtomicUsize,
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+
+    impl JwksFetcher for DelayedFetcher {
+        fn fetch<'a>(
+            &'a self,
+            _: &'a JwksEndpoint,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, JwksFetchError>> + Send + 'a>> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                self.entered.notify_one();
+                self.release.notified().await;
+                Ok(jwks())
+            })
+        }
+    }
+
+    fn delayed_fetcher() -> Arc<DelayedFetcher> {
+        Arc::new(DelayedFetcher {
+            calls: AtomicUsize::new(0),
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        })
+    }
+
+    #[tokio::test]
+    async fn concurrent_authentication_shares_a_pending_jwks_fetch() {
+        let fetcher = delayed_fetcher();
+        let service = Arc::new(
+            ByoJwtService::new(config(), Arc::clone(&fetcher), Arc::new(Verifier)).expect("config"),
+        );
+        let mut requests = Vec::new();
+        for _ in 0..8 {
+            let service = Arc::clone(&service);
+            requests.push(tokio::spawn(async move {
+                service.authenticate(&token(valid_payload()), 100).await
+            }));
+        }
+        tokio::time::timeout(Duration::from_secs(1), fetcher.entered.notified())
+            .await
+            .expect("fetch starts without blocking the executor");
+        fetcher.release.notify_one();
+        for request in requests {
+            tokio::time::timeout(Duration::from_secs(1), request)
+                .await
+                .expect("request completes")
+                .expect("task succeeds")
+                .expect("token admitted");
+        }
+        assert_eq!(fetcher.calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn revocation_during_jwks_fetch_prevents_admission() {
+        let fetcher = delayed_fetcher();
+        let service = Arc::new(
+            ByoJwtService::new(config(), Arc::clone(&fetcher), Arc::new(Verifier)).expect("config"),
+        );
+        let request_service = Arc::clone(&service);
+        let request = tokio::spawn(async move {
+            request_service.authenticate(&token(valid_payload()), 100).await
+        });
+        tokio::time::timeout(Duration::from_secs(1), fetcher.entered.notified())
+            .await
+            .expect("fetch starts");
+        service.revoke_all();
+        fetcher.release.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(1), request)
+            .await
+            .expect("request completes")
+            .expect("task succeeds");
+        assert_eq!(result, Err(JwtAuthenticationError::GenerationChanged));
+    }
+
     impl JwtSignatureVerifier for Verifier {
         fn verify(&self, _: Algorithm, _: &JwkKey, _: &[u8], signature: &[u8]) -> bool {
             signature == b"ok"
+        }
+    }
+
+    struct Hook {
+        calls: AtomicUsize,
+        admit: bool,
+    }
+
+    impl ParentAuthenticationHook for Hook {
+        fn admit<'a>(
+            &'a self,
+            _: &'a AuthorizationContext,
+        ) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send + 'a>> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            let result = self.admit;
+            Box::pin(ready(if result { Ok(()) } else { Err(()) }))
         }
     }
 
@@ -1006,7 +1339,7 @@ mod tests {
                 .expect("endpoint"),
             algorithms: BTreeSet::from([Algorithm::Rs256]),
             clock_skew_secs: 5,
-            cache_ttl: Duration::from_secs(60),
+            cache_ttl: Duration::from_mins(1),
             generation: 1,
         }
     }
@@ -1039,7 +1372,13 @@ mod tests {
     }
 
     fn jwks() -> Vec<u8> {
-        br#"{"keys":[{"kty":"RSA","kid":"k1","alg":"RS256","n":"AQ","e":"AQAB"}]}"#.to_vec()
+        let mut modulus = vec![0_u8; MIN_RSA_MODULUS_BYTES];
+        modulus[0] = 0x80;
+        format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"k1","alg":"RS256","n":"{}","e":"AQAB"}}]}}"#,
+            encode(&modulus)
+        )
+        .into_bytes()
     }
 
     fn valid_payload() -> &'static str {
@@ -1057,10 +1396,49 @@ mod tests {
             Err(JwtConfigError::UnsafeJwksEndpoint)
         );
         assert_eq!(
+            JwksEndpoint::parse("https://[::ffff:127.0.0.1]/a"),
+            Err(JwtConfigError::UnsafeJwksEndpoint)
+        );
+        assert_eq!(
+            JwksEndpoint::parse("https://192.0.0.1/a"),
+            Err(JwtConfigError::UnsafeJwksEndpoint)
+        );
+        assert_eq!(
+            JwksEndpoint::parse("https://[2001:db8::1]/a"),
+            Err(JwtConfigError::UnsafeJwksEndpoint)
+        );
+        assert_eq!(
             JwksEndpoint::parse("https://keys.example:8443/a"),
             Err(JwtConfigError::UnsafeJwksEndpoint)
         );
         assert!(JwksEndpoint::parse("https://keys.example/a").is_ok());
+    }
+
+    #[test]
+    fn endpoint_validates_canonical_hostnames_and_rejects_ambiguous_paths() {
+        for endpoint in [
+            "https://keys.LOCALHOST/a",
+            "https://keys.LoCaL/a",
+            "https://keys.INTERNAL/a",
+            "https://keys.LAN/a",
+            "https://keys.example/a b",
+            "https://keys.example/a\t",
+        ] {
+            assert_eq!(
+                JwksEndpoint::parse(endpoint),
+                Err(JwtConfigError::UnsafeJwksEndpoint),
+                "{endpoint:?}"
+            );
+        }
+        assert_eq!(
+            JwksEndpoint::parse(&format!("https://{}.example/a", "a".repeat(64))),
+            Err(JwtConfigError::UnsafeJwksEndpoint)
+        );
+        assert_eq!(
+            JwksEndpoint::parse("https://KEYS.Example:443/Jwks").unwrap().as_str(),
+            "https://keys.example/Jwks"
+        );
+        assert!(JwksEndpoint::parse(&format!("https://{}.example/a", "a".repeat(63))).is_ok());
     }
 
     #[tokio::test]
@@ -1098,11 +1476,57 @@ mod tests {
         assert_eq!(fetcher.calls.load(Ordering::Relaxed), 2);
     }
 
+    #[tokio::test]
+    async fn parent_constructor_always_runs_the_parent_hook() {
+        let fetcher = Arc::new(Fetcher { body: jwks(), calls: AtomicUsize::new(0) });
+        let hook = Arc::new(Hook { calls: AtomicUsize::new(0), admit: true });
+        let authenticator = ByoJwtService::with_parent_hook(
+            config(),
+            Arc::clone(&fetcher),
+            Arc::new(Verifier),
+            Arc::clone(&hook),
+        )
+        .expect("config");
+        authenticator.authenticate(&token(valid_payload()), 100).await.expect("admitted");
+        assert_eq!(hook.calls.load(Ordering::Relaxed), 1);
+
+        let refusing = Arc::new(Hook { calls: AtomicUsize::new(0), admit: false });
+        let authenticator = ByoJwtService::with_parent_hook(
+            config(),
+            fetcher,
+            Arc::new(Verifier),
+            Arc::clone(&refusing),
+        )
+        .expect("config");
+        assert_eq!(
+            authenticator.authenticate(&token(valid_payload()), 100).await,
+            Err(JwtAuthenticationError::ParentRejected)
+        );
+        assert_eq!(refusing.calls.load(Ordering::Relaxed), 1);
+    }
+
     #[test]
     fn duplicate_json_members_and_noncanonical_base64_fail_closed() {
         assert!(parse_object(br#"{"iss":"a","iss":"b"}"#).is_err());
         assert!(decode_base64url("AQ=", 10).is_err());
         assert!(decode_base64url("AB", 10).is_err());
         assert_eq!(decode_base64url("AQ", 10), Ok(vec![1]));
+    }
+
+    #[test]
+    fn hostile_header_and_audience_shapes_fail_closed() {
+        let with_jku = "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIiwiamt1IjoiaHR0cHM6Ly9ldmlsIn0.e30.b2s";
+        assert!(matches!(
+            ParsedToken::parse(with_jku),
+            Err(JwtAuthenticationError::MalformedToken)
+        ));
+        let claims = BTreeMap::from([(
+            "aud".to_owned(),
+            Value::Array(vec![Value::String("terrabase".into()), Value::Null]),
+        )]);
+        assert_eq!(
+            audience_claim(&claims, "terrabase"),
+            Err(JwtAuthenticationError::BindingMismatch)
+        );
     }
 }

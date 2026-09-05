@@ -84,6 +84,27 @@ pub enum RegionCodeError {
     Retired(RegionCode),
 }
 
+impl fmt::Display for RegionCodeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WrongLength(length) => {
+                write!(formatter, "Region code must be exactly three bytes (got {length})")
+            }
+            Self::NonAscii { index } => {
+                write!(formatter, "Region code contains non-ASCII byte at index {index}")
+            }
+            Self::NotUppercaseLetter { index, byte } => write!(
+                formatter,
+                "Region code byte at index {index} is not an uppercase ASCII letter (0x{byte:02x})"
+            ),
+            Self::Unregistered(code) => write!(formatter, "Region code {code} is not registered"),
+            Self::Retired(code) => write!(formatter, "Region code {code} is retired"),
+        }
+    }
+}
+
+impl std::error::Error for RegionCodeError {}
+
 /// The typed failures of Region catalog admission and retirement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RegionAdmissionError {

@@ -29,10 +29,9 @@ pub(crate) enum StagedWrite {
         expected: ExpectedVersion,
     },
     /// Insert or replace one document replicated from a peer region
-    /// (D-35/D-36): an unconditional apply — the tailer owns the
-    /// last-writer ordering, so there is no optimistic conflict clause —
-    /// stamped `kind='replicated'` with its causal metadata, and bound to
-    /// the SOURCE region's commit identity for idempotent re-apply.
+    /// (D-35/D-36), checked against the merge snapshot and stamped
+    /// `kind='replicated'` with its causal metadata. The source commit
+    /// identity is retained separately from the per-record replay binding.
     ReplicatedPut {
         /// The replicated document to publish.
         document: Document,
@@ -94,6 +93,10 @@ pub(crate) struct CommitIntent {
     /// Trusted usage admission bound atomically to this origin mutation.
     /// Replication, repair, and internal writes carry `None` and never mint.
     pub(crate) usage_admission: Option<UsageAdmissionContext>,
+    /// Original source content, independent of the merged publication bytes.
+    pub(crate) replication_fingerprint: Option<[u8; 32]>,
+    /// Conflict history staged atomically with a replicated document update.
+    pub(crate) merge_conflict: Option<(CollectionName, DocumentId, super::MergeConflictEntry)>,
     /// The engine's replication clock stamp for an origin commit (the
     /// hybrid stamp the deterministic merge compares). A replicated
     /// intent carries `0` here — its stamp rides the staged variant.
@@ -177,4 +180,15 @@ pub(crate) enum OperationResolution {
     },
     /// A durable rejection record exists for the operation.
     Rejected(CommitRejection),
+}
+
+/// A merge decision that publishes no document, bound to its read snapshot.
+pub(crate) struct SupersededReplication {
+    pub(crate) tenant: TenantId,
+    pub(crate) operation: OperationId,
+    pub(crate) fingerprint: [u8; 32],
+    pub(crate) snapshot_sequence: StorageSequence,
+    pub(crate) collection: CollectionName,
+    pub(crate) id: DocumentId,
+    pub(crate) conflict: Option<super::MergeConflictEntry>,
 }

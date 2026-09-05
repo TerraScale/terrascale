@@ -267,6 +267,11 @@ pub trait JournalRowSource {
     ///
     /// A source that cannot reconstruct the exact mutation must leave this
     /// seam unavailable; callers then retain the snapshot fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns a hosting error when the adapter cannot read or apply the
+    /// authenticated durable mutations under the supplied scope.
     fn durable_mutations(
         &self,
         _scope: &BoundScope,
@@ -279,6 +284,11 @@ pub trait JournalRowSource {
     /// The default is deliberately unavailable for summary-only adapters.
     /// Implementations must apply records idempotently and durably before
     /// returning so the post-apply proof can be trusted.
+    ///
+    /// # Errors
+    ///
+    /// Returns a hosting error when the adapter cannot read or apply the
+    /// authenticated durable mutations under the supplied scope.
     fn apply_mutations(
         &self,
         _scope: &BoundScope,
@@ -375,12 +385,47 @@ where
     )
 }
 
+fn repair_row_budget(
+    max_ranges: usize,
+    max_mutations: usize,
+    max_bytes: usize,
+) -> Result<usize, HostingError> {
+    if max_ranges == 0 {
+        return Err(HostingError::Invalid("the repair range budget must be nonzero".into()));
+    }
+    if max_mutations == 0 || max_bytes == 0 {
+        return Err(HostingError::Invalid("the mutation repair budgets must be nonzero".into()));
+    }
+    Ok(max_ranges.saturating_mul(MAX_REPAIR_ROWS_PER_RANGE).max(1))
+}
+
+fn verified_mutation_index(
+    scope: &BoundScope,
+    mutations: Vec<AuthenticatedMutation>,
+) -> Result<std::collections::BTreeMap<JournalRowId, AuthenticatedMutation>, HostingError> {
+    let mut by_id = std::collections::BTreeMap::new();
+    for mutation in mutations {
+        mutation.verify(scope)?;
+        if by_id.insert(mutation.row.id.clone(), mutation).is_some() {
+            return Err(HostingError::Invalid(
+                "the anti-entropy mutation range contains a duplicate identity".into(),
+            ));
+        }
+    }
+    Ok(by_id)
+}
+
 /// Runs a bounded reconciliation and, when possible, transfers the exact
 /// missing mutations instead of immediately requiring a snapshot.
 ///
 /// A source or target that does not implement the mutation seams returns a
 /// snapshot decision.  This is intentionally a safe fallback for old
 /// transports: a digest-only exchange must never be treated as repair.
+///
+/// # Errors
+///
+/// Returns a hosting error for invalid budgets, unauthenticated mutations,
+/// unavailable journal summaries, or a failed post-apply equality proof.
 pub fn repair_once_sources_bounded_with_budgets<L, R>(
     local: &L,
     peer: &R,
@@ -393,13 +438,7 @@ where
     L: JournalRowSource,
     R: JournalRowSource,
 {
-    if max_ranges == 0 {
-        return Err(HostingError::Invalid("the repair range budget must be nonzero".into()));
-    }
-    if max_mutations == 0 || max_bytes == 0 {
-        return Err(HostingError::Invalid("the mutation repair budgets must be nonzero".into()));
-    }
-    let row_budget = max_ranges.saturating_mul(MAX_REPAIR_ROWS_PER_RANGE).max(1);
+    let row_budget = repair_row_budget(max_ranges, max_mutations, max_bytes)?;
     let local_summary = JournalRowSource::durable_journal_summary(local, scope, row_budget)?;
     let peer_summary = JournalRowSource::durable_journal_summary(peer, scope, row_budget)?;
     if !local_summary.complete || !peer_summary.complete {
@@ -444,24 +483,13 @@ where
                 max_ranges,
             });
         }
-        let mutations = match peer.durable_mutations(scope) {
-            Ok(mutations) => mutations,
-            Err(_) => {
-                return Ok(RepairDecision::NeedsSnapshot {
-                    ranges: plan.differences().len(),
-                    max_ranges,
-                });
-            }
+        let Ok(mutations) = peer.durable_mutations(scope) else {
+            return Ok(RepairDecision::NeedsSnapshot {
+                ranges: plan.differences().len(),
+                max_ranges,
+            });
         };
-        let mut by_id = std::collections::BTreeMap::new();
-        for mutation in mutations {
-            mutation.verify(scope)?;
-            if by_id.insert(mutation.row.id.clone(), mutation).is_some() {
-                return Err(HostingError::Invalid(
-                    "the anti-entropy mutation range contains a duplicate identity".into(),
-                ));
-            }
-        }
+        let mut by_id = verified_mutation_index(scope, mutations)?;
         let mut transfer = Vec::with_capacity(plan.differences().len());
         let mut bytes = 0usize;
         for difference in plan.differences() {
@@ -498,14 +526,11 @@ where
             }
             transfer.push(mutation);
         }
-        let repaired = match local.apply_mutations(scope, &transfer) {
-            Ok(repaired) => repaired,
-            Err(_) => {
-                return Ok(RepairDecision::NeedsSnapshot {
-                    ranges: plan.differences().len(),
-                    max_ranges,
-                });
-            }
+        let Ok(repaired) = local.apply_mutations(scope, &transfer) else {
+            return Ok(RepairDecision::NeedsSnapshot {
+                ranges: plan.differences().len(),
+                max_ranges,
+            });
         };
         let local_after = local.durable_journal_summary(scope, row_budget)?;
         if !local_after.complete || local_after.table != peer_summary.table {
@@ -555,6 +580,11 @@ pub struct SnapshotProof {
 /// Callers must invoke this before advancing a replication cursor to
 /// [`journal_end`].  An incomplete or unavailable summary is an error, never
 /// permission to trust the copied bytes.
+///
+/// # Errors
+///
+/// Returns a hosting error for unavailable or incomplete journal summaries,
+/// invalid budgets, or unequal source and target fingerprints.
 pub fn prove_snapshot_reconciliation<L, R>(
     source: &L,
     target: &R,

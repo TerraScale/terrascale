@@ -97,7 +97,11 @@ fn mutation(
         origin_sequence: sequence,
         context: Vec::new(),
     };
-    AuthenticatedMutation::new(tenant, DurableJournalRow::new(id, [sequence as u8; 32]), record)
+    AuthenticatedMutation::new(
+        tenant,
+        DurableJournalRow::new(id, [u8::try_from(sequence).expect("fixture sequence fits u8"); 32]),
+        record,
+    )
 }
 
 #[test]

@@ -79,8 +79,6 @@ use crate::proto::terrabase::v1::replication_service_server::ReplicationService;
 use crate::proto::terrabase::v1::replication_service_server::ReplicationServiceServer;
 use crate::proto::terrabase::v1::schema_service_server::SchemaService;
 use crate::proto::terrabase::v1::schema_service_server::SchemaServiceServer;
-use crate::proto::terrabase::v1::tier_service_server::TierService;
-use crate::proto::terrabase::v1::tier_service_server::TierServiceServer;
 use crate::proto::terrabase::v1::usage_service_server::UsageService;
 use crate::proto::terrabase::v1::usage_service_server::UsageServiceServer;
 use crate::registry;
@@ -915,12 +913,7 @@ fn serve_routes(
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            UsageServiceServer::new(Arc::clone(&server))
-                .max_decoding_message_size(message_bytes)
-                .max_encoding_message_size(message_bytes),
-        )
-        .add_service(
-            TierServiceServer::new(server)
+            UsageServiceServer::new(server)
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         ))
@@ -1090,7 +1083,6 @@ fn host_error(error: HostingError) -> Status {
         registry::ErrorCode::ProtocolVersionMismatch => pb::ErrorCode::ProtocolVersionMismatch,
         registry::ErrorCode::BackupClusterReadOnly => pb::ErrorCode::BackupClusterReadOnly,
         registry::ErrorCode::BackupClusterImmutable => pb::ErrorCode::BackupClusterImmutable,
-        registry::ErrorCode::ColdTierUnavailable => pb::ErrorCode::ColdTierUnavailable,
         registry::ErrorCode::FrontierUnreachable => pb::ErrorCode::FrontierUnreachable,
         registry::ErrorCode::UsageUnavailable => pb::ErrorCode::UsageUnavailable,
         registry::ErrorCode::UsageCorrupt => pb::ErrorCode::UsageCorrupt,
@@ -1645,36 +1637,6 @@ fn replication_status_pb(value: registry::ReplicationStatus) -> i32 {
         registry::ReplicationStatus::Unavailable => pb::ReplicationStatus::Unavailable as i32,
         registry::ReplicationStatus::Degraded => pb::ReplicationStatus::Degraded as i32,
         registry::ReplicationStatus::Unknown => pb::ReplicationStatus::Unknown as i32,
-    }
-}
-
-// --- tier conversion ---
-
-fn tier_move_receipt(value: &registry::TierMoveReceipt) -> pb::TierMoveReceipt {
-    pb::TierMoveReceipt {
-        policy_id: value.policy_id.clone(),
-        policy_version: value.policy_version,
-        decision: match value.decision {
-            registry::TierDecision::Promote => pb::TierDecision::Promote as i32,
-            registry::TierDecision::Demote => pb::TierDecision::Demote as i32,
-            registry::TierDecision::Split => pb::TierDecision::Split as i32,
-            registry::TierDecision::None => pb::TierDecision::None as i32,
-            registry::TierDecision::Refused => pb::TierDecision::Refused as i32,
-        },
-        reasons: value
-            .reasons
-            .iter()
-            .map(|reason| pb::TierMoveReason {
-                fact: reason.fact.clone(),
-                observed: reason.observed.clone(),
-            })
-            .collect(),
-        segment_id: value.segment_id,
-        bytes: value.bytes,
-        manifest_before: value.manifest_before,
-        manifest_after: value.manifest_after,
-        dry_run: value.dry_run,
-        manifest_accepted: value.manifest_accepted,
     }
 }
 
@@ -2488,138 +2450,5 @@ impl UsageService for Arc<TbepGrpcServer> {
             continuation: response.continuation,
             snapshot_sequence: response.snapshot_sequence,
         }))
-    }
-}
-
-#[tonic::async_trait]
-impl TierService for Arc<TbepGrpcServer> {
-    async fn configure(
-        &self,
-        request: Request<pb::TierServiceConfigureRequest>,
-    ) -> Result<Response<pb::TierServiceConfigureResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let message = request.into_inner();
-        let domain = registry::TierConfigureRequest {
-            policy_id: message.policy_id,
-            version: message.version,
-            nvme_budget_bytes: message.nvme_budget_bytes,
-            min_residence_moves: message.min_residence_moves,
-            promotion_threshold: message.promotion_threshold,
-            pinned_segment_ids: message.pinned_segment_ids,
-        };
-        domain.validate().map_err(|error| conversion_error(&error.to_string()))?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Write, move || {
-            host.tier_configure(&tenant, &domain, &key)
-        })
-        .await?;
-        Ok(Response::new(pb::TierServiceConfigureResponse {
-            policy_id: response.policy_id,
-            version: response.version,
-            paused: response.paused,
-        }))
-    }
-
-    async fn inspect(
-        &self,
-        request: Request<pb::TierServiceInspectRequest>,
-    ) -> Result<Response<pb::TierServiceInspectResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response =
-            run_host(self.as_ref(), MetricOperation::Read, move || host.tier_inspect(&tenant))
-                .await?;
-        Ok(Response::new(pb::TierServiceInspectResponse {
-            configured: response.configured,
-            paused: response.paused,
-            manifest_epoch: response.manifest_epoch,
-            object_count: response.object_count,
-            nvme_bytes: response.nvme_bytes,
-        }))
-    }
-
-    async fn dry_run(
-        &self,
-        request: Request<pb::TierServiceDryRunRequest>,
-    ) -> Result<Response<pb::TierServiceDryRunResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response =
-            run_host(self.as_ref(), MetricOperation::Other, move || host.tier_dry_run(&tenant))
-                .await?;
-        Ok(Response::new(pb::TierServiceDryRunResponse {
-            receipt: Some(tier_move_receipt(&response.receipt)),
-        }))
-    }
-
-    async fn explain(
-        &self,
-        request: Request<pb::TierServiceExplainRequest>,
-    ) -> Result<Response<pb::TierServiceExplainResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response =
-            run_host(self.as_ref(), MetricOperation::Read, move || host.tier_explain(&tenant))
-                .await?;
-        Ok(Response::new(pb::TierServiceExplainResponse {
-            receipt: Some(tier_move_receipt(&response.receipt)),
-        }))
-    }
-
-    async fn run(
-        &self,
-        request: Request<pb::TierServiceRunRequest>,
-    ) -> Result<Response<pb::TierServiceRunResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response =
-            run_host(self.as_ref(), MetricOperation::Write, move || host.tier_run(&tenant, &key))
-                .await?;
-        Ok(Response::new(pb::TierServiceRunResponse {
-            receipt: Some(tier_move_receipt(&response.receipt)),
-        }))
-    }
-
-    async fn pause(
-        &self,
-        request: Request<pb::TierServicePauseRequest>,
-    ) -> Result<Response<pb::TierServicePauseResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response =
-            run_host(self.as_ref(), MetricOperation::Write, move || host.tier_pause(&tenant, &key))
-                .await?;
-        Ok(Response::new(pb::TierServicePauseResponse { paused: response.paused }))
-    }
-
-    async fn resume(
-        &self,
-        request: Request<pb::TierServiceResumeRequest>,
-    ) -> Result<Response<pb::TierServiceResumeResponse>, Status> {
-        self.counted();
-        let identity = self.identity(&request)?;
-        let key = idempotency_key(&request)?;
-        let host = Arc::clone(&self.host);
-        let tenant = identity.tenant;
-        let response = run_host(self.as_ref(), MetricOperation::Write, move || {
-            host.tier_resume(&tenant, &key)
-        })
-        .await?;
-        Ok(Response::new(pb::TierServiceResumeResponse { paused: response.paused }))
     }
 }

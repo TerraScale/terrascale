@@ -1474,8 +1474,6 @@ pub enum UsageCommandError {
     IdentityConflict,
     /// A usage-bearing mutation requested weaker than synced durability.
     RequiresSynced,
-    /// The selected legacy storage backend cannot persist usage facts.
-    UnsupportedBackend,
     /// The location contains legacy facts that cannot be billed truthfully.
     UsageUnavailable,
     /// Persisted usage bytes are corrupt or semantically inconsistent.
@@ -1492,7 +1490,6 @@ impl fmt::Display for UsageCommandError {
             Self::IdentityMismatch => "usage identity does not match the mutation identity",
             Self::IdentityConflict => "usage identity is already bound to different content",
             Self::RequiresSynced => "usage-bearing mutation requires synced durability",
-            Self::UnsupportedBackend => "storage backend does not support durable usage",
             Self::UsageUnavailable => "authoritative usage is unavailable for this location",
             Self::CorruptStorage => "persisted usage is corrupt",
             Self::StorageUnavailable => "durable usage storage is unavailable",

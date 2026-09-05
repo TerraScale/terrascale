@@ -3356,6 +3356,22 @@ fn large_collection_first_query_is_not_ready_until_the_governed_backfill_complet
         }
     }
     assert!(active, "the bounded pass completes the descriptor");
+    // These are new requests after maintenance, with fresh request deadlines.
+    // The original plans can legitimately expire while the backfill runs.
+    let plan = governed_backfill_plan(
+        &store,
+        QueryCondition::Equals {
+            field: "tag".to_owned(),
+            value: DocumentValue::String("needle".into()),
+        },
+    );
+    let range = governed_backfill_plan(
+        &store,
+        QueryCondition::GreaterOrEqual {
+            field: "tag".to_owned(),
+            value: DocumentValue::String("n".into()),
+        },
+    );
     let fresh = engine.read_snapshot(&tenant_scope).expect("fresh snapshot");
     let result = store.execute(&plan, &fresh).expect("the query serves once active");
     assert_governed_backfill_rows(&row_ids(&result));
@@ -4229,4 +4245,48 @@ fn execute_only_sql_preserves_parameter_slots_aliases_and_metadata() {
     assert_eq!(store.execute(&duplicate_plan, &snapshot).unwrap_err(), QueryError::InvalidSpec);
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn index_tenant_observations_use_the_executed_snapshot_scope() {
+    let (dir, engine) = open_engine("index-tenant-observations");
+    let a = scope(&engine, "tenant-a");
+    let b = scope(&engine, "tenant-b");
+    commit_documents(
+        &engine,
+        &a,
+        "seed-a",
+        vec![object_document("a", "orders", &[("score", DocumentValue::Integer(7))])],
+    );
+    commit_documents(
+        &engine,
+        &b,
+        "seed-b",
+        vec![object_document("b", "orders", &[("score", DocumentValue::Integer(8))])],
+    );
+    let store = engine.queries();
+    // Unbound SQL gets its authority from the validated read snapshot.
+    let plan = store
+        .compile(QueryInput::sql(
+            SqlQueryText::try_new("SELECT score FROM orders WHERE score = 7").unwrap(),
+        ))
+        .unwrap();
+    let result = store.execute(&plan, &engine.read_snapshot(&a).unwrap()).unwrap();
+    assert_eq!(result.rows().len(), 1);
+    assert!(
+        !engine
+            .auto_index_recommendations(&tenant("tenant-a"), None, 10)
+            .unwrap()
+            .recommendations
+            .is_empty()
+    );
+    assert!(
+        engine
+            .auto_index_recommendations(&tenant("tenant-b"), None, 10)
+            .unwrap()
+            .recommendations
+            .is_empty()
+    );
+    drop(engine);
+    std::fs::remove_dir_all(dir).unwrap();
 }

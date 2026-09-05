@@ -1,11 +1,10 @@
 //! The TerraBase side of the benchmark lane: an in-process driver that
-//! runs the mapped workloads against a durable Engine and returns exact,
-//! deterministic counters.
+//! runs workloads against a durable Engine and records counters and footprint.
 //!
 //! This is the SE-07 lane discipline applied to the objective's workloads.
-//! The counters are operations, durable bytes appended, and documents
-//! returned — facts about an operation stream, reproducible on any machine,
-//! not timings. Wall-clock samples are taken only by the commissioning
+//! Operations, publication revisions, and returned documents describe the
+//! operation stream. Storage footprint is sampled separately; checkpointing
+//! and WAL reuse affect it. Wall-clock samples are taken only by the commissioning
 //! sampler, which exists to prove the gate machinery and renders its
 //! outcome as `inconclusive` by construction.
 //!
@@ -40,13 +39,15 @@ use super::{
     vocabulary::{ObjectiveStatus, Verdict},
 };
 
-/// The exact, deterministic counters one measured workload window produced.
+/// Workload counters and sampled storage footprint for one measured window.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct WorkloadCounters {
     /// Operations the window completed.
     pub operations: u64,
-    /// Durable bytes the window appended to the engine location.
-    pub durable_bytes_written: u64,
+    /// Change in file lengths, including WAL and sidecars. This is not write I/O.
+    pub storage_footprint_change_bytes: i128,
+    /// Engine publication revisions committed during the window.
+    pub committed_revisions: u64,
     /// Documents the window returned to the caller.
     pub documents_returned: u64,
 }
@@ -180,6 +181,7 @@ impl TerraBaseLane {
             );
         }
         let baseline = self.durable_bytes();
+        let revision = self.published_revision();
         let mut returned = 0_u64;
         for index in 0..operations {
             let selected = workload.select_mixed(index);
@@ -187,7 +189,11 @@ impl TerraBaseLane {
         }
         WorkloadCounters {
             operations: operations as u64,
-            durable_bytes_written: self.durable_bytes().saturating_sub(baseline),
+            storage_footprint_change_bytes: i128::from(self.durable_bytes()) - i128::from(baseline),
+            committed_revisions: self
+                .published_revision()
+                .checked_sub(revision)
+                .expect("publication revisions never regress"),
             documents_returned: returned,
         }
     }
@@ -341,12 +347,17 @@ impl TerraBaseLane {
         self.operations.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// The last durable publication revision, independent of checkpoint timing.
+    pub(crate) fn published_revision(&self) -> u64 {
+        self.engine.published_sequence().expect("publication sequence is readable").get()
+    }
+
     /// The total size of every file under the engine's durable location.
     ///
-    /// This is the deterministic write counter: the same operation stream
-    /// appends the same bytes, on any machine, at any time.
+    /// This samples file lengths, including WAL and sidecars. Allocation and
+    /// checkpoint timing can change it; it does not count bytes written.
     pub(crate) fn durable_bytes(&self) -> u64 {
-        directory_bytes(&self.dir)
+        directory_bytes(&self.dir).expect("benchmark storage footprint is readable")
     }
 
     /// Shuts the engine down and removes its location.
@@ -357,20 +368,23 @@ impl TerraBaseLane {
 }
 
 /// Sums the length of every regular file under `root`, recursively.
-fn directory_bytes(root: &Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return 0;
-    };
-    let mut total = 0;
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else { continue };
-        if file_type.is_dir() {
-            total += directory_bytes(&entry.path());
+fn directory_bytes(root: &Path) -> std::io::Result<u64> {
+    let mut total = 0_u64;
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let length = if file_type.is_dir() {
+            directory_bytes(&entry.path())?
         } else if file_type.is_file() {
-            total += entry.metadata().map_or(0, |meta| meta.len());
-        }
+            entry.metadata()?.len()
+        } else {
+            0
+        };
+        total = total
+            .checked_add(length)
+            .ok_or_else(|| std::io::Error::other("benchmark storage footprint overflow"))?;
     }
-    total
+    Ok(total)
 }
 
 /// A validated document identifier.
@@ -409,4 +423,29 @@ fn document(id: &str, fields: BTreeMap<String, DocumentValue>) -> Document {
         CollectionName::try_new("users").expect("valid identifier"),
         DocumentValue::Object(fields),
     )
+}
+
+#[cfg(test)]
+mod footprint_tests {
+    use super::{WINDOW, directory_bytes};
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn footprint_counts_nested_regular_files_and_reports_missing_storage() {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-footprint-{}-{}",
+            std::process::id(),
+            WINDOW.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        std::fs::write(root.join("database"), [0_u8; 17]).unwrap();
+        std::fs::write(root.join("nested/wal"), [0_u8; 31]).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&root, root.join("nested/cycle")).unwrap();
+        assert_eq!(directory_bytes(&root).unwrap(), 48);
+        std::fs::remove_file(root.join("nested/wal")).unwrap();
+        assert_eq!(directory_bytes(&root).unwrap(), 17);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(directory_bytes(&root).unwrap_err().kind(), std::io::ErrorKind::NotFound);
+    }
 }

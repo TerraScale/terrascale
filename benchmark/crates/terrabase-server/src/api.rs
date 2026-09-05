@@ -51,7 +51,7 @@ use utoipa_axum::routes;
 use utoipa_scalar::Scalar;
 use utoipa_scalar::Servable;
 
-use crate::api_keys::{Principal, Verbs};
+use crate::api_keys::Verbs;
 
 /// The public API's path prefix.
 pub const API_PREFIX: &str = "/api/v1";
@@ -520,8 +520,6 @@ pub struct ApiState {
     /// member (the single-tenant local stack shape; the multi-project
     /// router arrives with the ts-proxy lane).
     pub scope: (String, String),
-    /// The reactive transports' live subscriptions (`S-04`).
-    pub reactive: Arc<crate::reactive_api::ReactiveSessions>,
     /// The Litestream fleet (`S-06`): one stream per hosted database.
     pub backups: Arc<crate::backup::BackupStreams>,
     /// Where the fleet writes replicas: `<data_root>/backup` on the local
@@ -531,9 +529,6 @@ pub struct ApiState {
     /// cached per (database, second) under the backup root with a bounded
     /// budget.
     pub timetravel: Arc<crate::backup::TimeTravelCache>,
-    /// The regions this deployment believes active: `GlobalDurable`
-    /// fails closed under two (D-37).
-    pub active_regions: usize,
     /// The D-64 abuse guards and per-tenant governance budgets (E-10):
     /// every read/query/transport admission on this surface checks them
     /// first, and every served direct-read byte accounts against them.
@@ -564,7 +559,6 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(get_document, put_document, patch_document, delete_document))
         .routes(routes!(document_history))
         .routes(routes!(execute_sql))
-        .routes(routes!(crate::reactive_api::poll))
         .routes(routes!(crate::reactive_api::websocket))
         .routes(routes!(list_backups))
         .routes(routes!(restore_backup))
@@ -692,37 +686,21 @@ fn enrich_openapi(raw: String) -> String {
                     set_response_header(operation, "200", "X-TerraScale-Session", "string");
                     set_response_header(operation, "204", "X-TerraScale-Session", "string");
                 }
-                if operation_id == "poll" {
-                    set_response_header(operation, "200", "X-TerraScale-Subscription", "integer");
-                    if let Some(response) = operation
+                if matches!(operation_id.as_str(), "snapshot" | "view_log")
+                    && let Some(response) = operation
                         .get_mut("responses")
                         .and_then(serde_json::Value::as_object_mut)
                         .and_then(|responses| responses.get_mut("200"))
                         .and_then(serde_json::Value::as_object_mut)
-                    {
-                        response.insert("content".to_owned(), serde_json::json!({
+                {
+                    response.insert(
+                        "content".to_owned(),
+                        serde_json::json!({
                             "application/msgpack": {
-                                "schema": { "$ref": "#/components/schemas/ReactiveFramesResponse" }
+                                "schema": { "$ref": "#/components/schemas/ReactiveEnvelope" }
                             }
-                        }));
-                    }
-                }
-                if matches!(operation_id.as_str(), "snapshot" | "view_log") {
-                    if let Some(response) = operation
-                        .get_mut("responses")
-                        .and_then(serde_json::Value::as_object_mut)
-                        .and_then(|responses| responses.get_mut("200"))
-                        .and_then(serde_json::Value::as_object_mut)
-                    {
-                        response.insert(
-                            "content".to_owned(),
-                            serde_json::json!({
-                                "application/msgpack": {
-                                    "schema": { "$ref": "#/components/schemas/ReactiveEnvelope" }
-                                }
-                            }),
-                        );
-                    }
+                        }),
+                    );
                 }
             }
         }
@@ -995,7 +973,6 @@ fn request_schema(operation_id: &str) -> Option<(&'static str, bool)> {
         "execute_sql" => ("SqlRequest", true),
         "attach_view" => ("AttachViewRequest", true),
         "restore_backup" | "create_branch" => ("RestoreRequest", true),
-        "poll" => ("ReactivePollRequest", true),
         _ => return None,
     })
 }
@@ -1017,7 +994,6 @@ fn success_schema(operation_id: &str) -> Option<&'static str> {
         "document_history" => Some("HistoryResponse"),
         "execute_sql" => Some("SqlResultResponse"),
         "list_backups" => Some("BackupStatusResponse"),
-        "poll" => Some("ReactiveFramesResponse"),
         "attach_view" => Some("AttachViewResponse"),
         _ => None,
     }
@@ -1068,8 +1044,6 @@ fn openapi_schemas() -> serde_json::Value {
         ] },
         "AttachViewRequest": { "type": "object", "required": ["databaseId", "statement"], "properties": { "databaseId": { "type": "string" }, "statement": { "type": "string" }, "parameters": { "type": "string", "description": "Base64 encoded SQL parameter bytes" }, "checkpoint": { "type": ["string", "null"], "description": "Base64 encoded opaque resume checkpoint" }, "subscription": { "type": ["string", "null"] }, "entitlement_epoch": { "type": "integer", "format": "int64" } } },
         "AttachViewResponse": { "type": "object", "required": ["view", "generation", "snapshot_chunks", "log", "checkpoint", "capability", "capability_header", "offset"], "properties": { "view": { "type": "string" }, "generation": { "type": "integer", "format": "int64" }, "snapshot_chunks": { "type": "array", "items": { "type": "string" } }, "log": { "type": "string" }, "checkpoint": { "type": "string" }, "capability": { "type": "string" }, "capability_header": { "type": "string" }, "offset": { "type": "integer", "format": "int64" } } },
-        "ReactivePollRequest": { "type": "object", "required": ["op"], "properties": { "op": { "type": "string", "enum": ["subscribe", "poll", "unsubscribe"] }, "collection": { "type": "string" }, "conditions": { "type": "array", "items": { "type": "object" } }, "projection": { "type": "array", "items": { "type": "string" } }, "subscription": { "type": "integer", "format": "int64" }, "resume": { "type": "object" } } },
-        "ReactiveFramesResponse": { "type": "array", "description": "MessagePack frames; projected bodies are canonical JSON strings.", "items": { "type": "object", "additionalProperties": true } }
     });
     let Some(schemas) = schemas.as_object_mut() else {
         return serde_json::json!({});
@@ -1096,40 +1070,6 @@ fn openapi_schemas() -> serde_json::Value {
             ]
         }),
     );
-    schemas.insert("ReactiveCondition".to_owned(), serde_json::json!({
-        "type": "object", "required": ["field", "op", "value"],
-        "properties": {
-            "field": { "type": "string" },
-            "op": { "type": "string", "enum": ["equals", "less", "less_or_equal", "greater", "greater_or_equal"] },
-            "value": { "oneOf": [{ "type": "string" }, { "type": "number" }] }
-        }
-    }));
-    schemas.insert(
-        "ReactiveResume".to_owned(),
-        serde_json::json!({
-            "type": "object", "required": ["subscription", "revision"],
-            "properties": {
-                "subscription": { "type": "integer", "format": "int64" },
-                "revision": { "type": "integer", "format": "int64" }
-            }
-        }),
-    );
-    schemas.insert("ReactivePollRequest".to_owned(), serde_json::json!({
-        "oneOf": [
-            { "type": "object", "required": ["op", "collection"], "properties": {
-                "op": { "const": "subscribe" }, "collection": { "type": "string" },
-                "conditions": { "type": "array", "items": { "$ref": "#/components/schemas/ReactiveCondition" } },
-                "projection": { "type": "array", "items": { "type": "string" } },
-                "resume": { "$ref": "#/components/schemas/ReactiveResume" }
-            } },
-            { "type": "object", "required": ["op", "subscription"], "properties": {
-                "op": { "const": "poll" }, "subscription": { "type": "integer", "format": "int64" }
-            } },
-            { "type": "object", "required": ["op", "subscription"], "properties": {
-                "op": { "const": "unsubscribe" }, "subscription": { "type": "integer", "format": "int64" }
-            } }
-        ]
-    }));
     schemas.insert("ReactiveEnvelope".to_owned(), serde_json::json!({
         "type": "array",
         "description": "One indexed sync-v1 MessagePack envelope: [major, minor, features, tag, correlation, causation, body].",
@@ -1141,11 +1081,6 @@ fn openapi_schemas() -> serde_json::Value {
             { "oneOf": [{ "type": "array" }, { "type": "object" }] }
         ],
         "items": false
-    }));
-    schemas.insert("ReactiveFramesResponse".to_owned(), serde_json::json!({
-        "type": "array",
-        "description": "MessagePack array of indexed sync-v1 envelopes; projected bodies remain opaque canonical JSON bytes.",
-        "items": { "$ref": "#/components/schemas/ReactiveEnvelope" }
     }));
     serde_json::Value::Object(std::mem::take(schemas))
 }
@@ -1355,7 +1290,7 @@ fn required_verb(method: &Method, path: &str) -> Verbs {
         return Verbs::READ;
     }
     if let Some(rest) = path.strip_prefix("/api/v1/databases/") {
-        if rest.ends_with("/sql") || rest.ends_with("/reactive/poll") {
+        if rest.ends_with("/sql") {
             return Verbs::READ;
         }
         if rest.contains("/documents") {
@@ -1502,25 +1437,25 @@ async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Re
             // from the fleet's per-database registry — Free until the
             // billing lane supplies the database's plan (D-25 retention,
             // fail-closed).
-            if record.placement.contains(&state.region) {
-                if let Some(catalog) = state.catalog.clone() {
-                    if catalog.host_for(&state.scope.0, &state.scope.1, name).is_err() {
-                        let _ = control.soft_delete(name);
-                        return ApiError::storage_failure().into_response();
-                    }
-                    let location = catalog.location_for(&state.scope.0, &state.scope.1, name);
-                    let plan = state.backups.plan_for(name);
-                    if let Err(error) = attach_backup(
-                        &state.backups,
-                        name,
-                        &location,
-                        &state.backup_root,
-                        &plan,
-                        state.region,
-                    ) {
-                        let _ = control.soft_delete(name);
-                        return ApiError::backup(error).into_response();
-                    }
+            if record.placement.contains(&state.region)
+                && let Some(catalog) = state.catalog.clone()
+            {
+                if catalog.host_for(&state.scope.0, &state.scope.1, name).is_err() {
+                    let _ = control.soft_delete(name);
+                    return ApiError::storage_failure().into_response();
+                }
+                let location = catalog.location_for(&state.scope.0, &state.scope.1, name);
+                let plan = state.backups.plan_for(name);
+                if let Err(error) = attach_backup(
+                    &state.backups,
+                    name,
+                    &location,
+                    &state.backup_root,
+                    &plan,
+                    state.region,
+                ) {
+                    let _ = control.soft_delete(name);
+                    return ApiError::backup(error).into_response();
                 }
             }
             record_response(StatusCode::CREATED, &record)
@@ -1802,14 +1737,14 @@ struct DocumentPaging {
     after: Option<String>,
 }
 
-/// The request's durability class (D-34): `regional` acknowledges the
-/// local write, `global` waits for the replicated sync point. The header
-/// is optional; `regional` is the default.
+/// Requested public durability. The local-stack host can fsync locally;
+/// it cannot manufacture a global receipt from configured topology.
+/// Production serving remains gated on the complete RF=2 Member adapter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Durability {
-    /// The local region's acknowledgement (`Written`).
+    /// The regional class; this local-stack adapter fsyncs its sole replica.
     Regional,
-    /// The replicated acknowledgement (`Synced`).
+    /// A global receipt, requiring an installed replication coordinator.
     Global,
 }
 
@@ -1833,27 +1768,17 @@ impl Durability {
         }
     }
 
-    fn level(self) -> LocalDurability {
+    fn local_level(self) -> Result<LocalDurability, ApiError> {
         match self {
-            Self::Regional => LocalDurability::Written,
-            Self::Global => LocalDurability::Synced,
-        }
-    }
-
-    /// The typed refusal for a global write under two active regions
-    /// (D-37): the class fails closed, never degrades to regional.
-    fn requires_active_regions(self, active: usize) -> Result<(), ApiError> {
-        if matches!(self, Self::Global) && active < 2 {
-            return Err(ApiError {
+            Self::Regional => Ok(LocalDurability::Synced),
+            Self::Global => Err(ApiError {
                 status: StatusCode::SERVICE_UNAVAILABLE,
                 code: "global_durability_unavailable",
-                message: "GlobalDurable needs at least two active regions".into(),
-                fix: "retry as regional, or add a region to the member's active set                       (public_api.regions in the member config)"
-                    .into(),
+                message: "the serving host has no global replication receipt provider".into(),
+                fix: "retry when the member's replication coordinator is available".into(),
                 placement: None,
-            });
+            }),
         }
-        Ok(())
     }
 }
 
@@ -1921,46 +1846,12 @@ async fn batch_documents(
     let Ok(collection) = CollectionName::try_new(&collection) else {
         return invalid_identifier("collection name", &collection).into_response();
     };
-    let request: serde_json::Value = match serde_json::from_str(&body) {
-        Ok(value) => value,
-        Err(_) => {
-            return ApiError {
-                status: StatusCode::BAD_REQUEST,
-                code: "invalid_json",
-                message: "the batch body is not JSON".into(),
-                fix: "send an object with an operations array of put/patch/delete ops".into(),
-                placement: None,
-            }
-            .into_response();
-        }
+    let operations = match parse_batch_operations(&body) {
+        Ok(operations) => operations,
+        Err(error) => return error.into_response(),
     };
-    let Some(operations) = request.get("operations").and_then(serde_json::Value::as_array) else {
-        return ApiError {
-            status: StatusCode::BAD_REQUEST,
-            code: "missing_operations",
-            message: "the batch names no operations".into(),
-            fix: "send an operations array with at least one op".into(),
-            placement: None,
-        }
-        .into_response();
-    };
-    if operations.is_empty() || operations.len() > 1000 {
-        return ApiError {
-            status: StatusCode::UNPROCESSABLE_ENTITY,
-            code: "batch_size_out_of_bounds",
-            message: "a batch is 1..=1000 operations".into(),
-            fix: "split the batch; a batch commits atomically so smaller is safer".into(),
-            placement: None,
-        }
-        .into_response();
-    }
-    let durability = match Durability::of_header(&headers) {
-        Ok(durability) => {
-            if let Err(error) = durability.requires_active_regions(state.active_regions) {
-                return error.into_response();
-            }
-            durability.level()
-        }
+    let durability = match Durability::of_header(&headers).and_then(Durability::local_level) {
+        Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
     let operation = match write_operation(&headers, "api-batch") {
@@ -1971,21 +1862,9 @@ async fn batch_documents(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    let mut session_ids = std::collections::BTreeSet::new();
-    for item in operations {
-        if let Some(id) = item.get("id").and_then(serde_json::Value::as_str)
-            && let Ok(id) = DocumentId::try_new(id)
-        {
-            session_ids.insert(id);
-        }
-    }
-    for id in &session_ids {
-        if let Err(error) = session.load(&collection, id) {
-            return session_error(error).into_response();
-        }
-    }
-    let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::storage_failure().into_response();
+    let snapshot = match session.read_snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => return session_error(error).into_response(),
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
         return ApiError::storage_failure().into_response();
@@ -2005,10 +1884,8 @@ async fn batch_documents(
                     operations.len()
                 ),
             );
-            for id in &session_ids {
-                if let Err(error) = session.refresh(&collection, id) {
-                    return session_error(error).into_response();
-                }
+            if let Err(error) = session.read_snapshot() {
+                return session_error(error).into_response();
             }
             with_session(&mut response, session.session_token());
             response
@@ -2025,11 +1902,42 @@ async fn batch_documents(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "commit_unknown",
             message: format!("the batch's outcome is unknown: {reason:?}"),
-            fix: "re-read to see whether it landed, then resend with a fresh key".into(),
+            fix: "check whether it landed; retry the identical request with its original Idempotency-Key".into(),
             placement: None,
         }
         .into_response(),
     }
+}
+
+/// Decodes the bounded operation list before opening a write transaction.
+fn parse_batch_operations(body: &str) -> Result<Vec<serde_json::Value>, ApiError> {
+    let mut request: serde_json::Value = serde_json::from_str(body).map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_json",
+        message: "the batch body is not JSON".into(),
+        fix: "send an object with an operations array of put/patch/delete ops".into(),
+        placement: None,
+    })?;
+    let operations = request.as_object_mut().and_then(|object| object.remove("operations"));
+    let Some(serde_json::Value::Array(operations)) = operations else {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "missing_operations",
+            message: "the batch names no operations".into(),
+            fix: "send an operations array with at least one op".into(),
+            placement: None,
+        });
+    };
+    if operations.is_empty() || operations.len() > 1000 {
+        return Err(ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "batch_size_out_of_bounds",
+            message: "a batch is 1..=1000 operations".into(),
+            fix: "split the batch into groups of at most 1000 operations".into(),
+            placement: None,
+        });
+    }
+    Ok(operations)
 }
 
 /// Stages one batch operation onto the transaction. `Err` carries the
@@ -2106,7 +2014,6 @@ fn session_error(error: SessionError) -> ApiError {
             fix: format!("retry through the session's safe Region ({})", region.region()),
             placement: None,
         },
-        SessionError::ScopeMismatch | SessionError::Engine(_) => ApiError::storage_failure(),
         _ => ApiError::storage_failure(),
     }
 }
@@ -2169,7 +2076,8 @@ fn encode_base64url(bytes: &[u8]) -> String {
         let b = chunk.get(1).copied().unwrap_or(0);
         output.push(ALPHABET[usize::from((a << 4 | b >> 4) & 0x3f)] as char);
         if chunk.len() > 1 {
-            output.push(ALPHABET[usize::from((b << 2 | chunk[2] >> 6) & 0x3f)] as char);
+            let c = chunk.get(2).copied().unwrap_or(0);
+            output.push(ALPHABET[usize::from((b << 2 | c >> 6) & 0x3f)] as char);
         }
         if chunk.len() > 2 {
             output.push(ALPHABET[usize::from(chunk[2] & 0x3f)] as char);
@@ -2225,7 +2133,12 @@ fn refresh_session(
     collection: &CollectionName,
     id: &DocumentId,
 ) -> Result<SessionToken, ApiError> {
-    session.refresh(collection, id).map_err(session_error)?;
+    // Writes commit through an Engine transaction outside the read session.
+    // A create may have cached this key as missing, which `refresh` cannot
+    // reload because it requires a tracked document. Clear either cached
+    // state and read the committed key before returning its causal frontier.
+    session.evict(collection, id);
+    session.load(collection, id).map_err(session_error)?;
     Ok(session.session_token().clone())
 }
 
@@ -2433,10 +2346,10 @@ async fn get_document(
         None
     };
     if let Some(at_millis) = at.at {
-        if let Some(session) = &mut session {
-            if let Err(error) = session.load(&collection, &id) {
-                return session_error(error).into_response();
-            }
+        if let Some(session) = &mut session
+            && let Err(error) = session.load(&collection, &id)
+        {
+            return session_error(error).into_response();
         }
         return time_travel_document(
             &state,
@@ -2445,11 +2358,16 @@ async fn get_document(
             &id,
             at_millis,
             &headers,
-            session.as_ref().map(|session| session.session_token()),
+            session.as_ref().map(terrabase::Session::session_token),
         );
     }
-    let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::storage_failure().into_response();
+    let snapshot = match &mut session {
+        Some(session) => session.read_snapshot().map_err(session_error),
+        None => engine.read_snapshot(&scope).map_err(|_| ApiError::storage_failure()),
+    };
+    let snapshot = match snapshot {
+        Ok(snapshot) => snapshot,
+        Err(error) => return error.into_response(),
     };
     let Ok(operation) = OperationId::try_new("api-read") else {
         return ApiError::storage_failure().into_response();
@@ -2481,23 +2399,10 @@ async fn get_document(
         }
         return response;
     }
-    let document = if let Some(session) = &mut session {
-        drop(transaction);
-        match session.load(&collection, &id) {
-            Ok(Some(document)) => document,
-            Ok(None) => {
-                return document_not_found(collection.as_str(), id.as_str()).into_response();
-            }
-            Err(error) => return session_error(error).into_response(),
-        }
-    } else {
-        match transaction.read_in_collection(&collection, &id) {
-            Ok(Some(document)) => document,
-            Ok(None) => {
-                return document_not_found(collection.as_str(), id.as_str()).into_response();
-            }
-            Err(_) => return ApiError::storage_failure().into_response(),
-        }
+    let document = match transaction.read_in_collection(&collection, &id) {
+        Ok(Some(document)) => document,
+        Ok(None) => return document_not_found(collection.as_str(), id.as_str()).into_response(),
+        Err(_) => return ApiError::storage_failure().into_response(),
     };
     let mut body = String::with_capacity(256);
     push_value(&mut body, document.value());
@@ -2673,13 +2578,8 @@ async fn put_document(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let durability = match Durability::of_header(&headers) {
-        Ok(durability) => {
-            if let Err(error) = durability.requires_active_regions(state.active_regions) {
-                return error.into_response();
-            }
-            durability.level()
-        }
+    let durability = match Durability::of_header(&headers).and_then(Durability::local_level) {
+        Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
@@ -2743,7 +2643,7 @@ async fn put_document(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "commit_unknown",
             message: format!("the write's outcome is unknown: {reason:?}"),
-            fix: "re-read to see whether it landed, then retry with a new operation".into(),
+            fix: "check whether it landed; retry the identical request with its original Idempotency-Key".into(),
             placement: None,
         }
         .into_response(),
@@ -2774,45 +2674,25 @@ async fn patch_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
-    let value: serde_json::Value = match serde_json::from_str(&body) {
+    let value = match parse_merge_patch(&body) {
         Ok(value) => value,
-        Err(_) => {
-            return ApiError {
-                status: StatusCode::BAD_REQUEST,
-                code: "invalid_json",
-                message: "the request body is not a JSON merge patch".into(),
-                fix: "send an object whose fields merge into the document".into(),
-                placement: None,
-            }
-            .into_response();
-        }
+        Err(error) => return error.into_response(),
     };
     let mut session = match open_session(engine, &scope, &headers) {
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    let existing_for_session = match session.load(&collection, &id) {
-        Ok(existing) => existing,
-        Err(error) => return session_error(error).into_response(),
-    };
-    if existing_for_session.is_none() {
-        return document_not_found(collection.as_str(), id.as_str()).into_response();
-    }
     let operation = match write_operation(&headers, "api-patch") {
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let durability = match Durability::of_header(&headers) {
-        Ok(durability) => {
-            if let Err(error) = durability.requires_active_regions(state.active_regions) {
-                return error.into_response();
-            }
-            durability.level()
-        }
+    let durability = match Durability::of_header(&headers).and_then(Durability::local_level) {
+        Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
-    let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::storage_failure().into_response();
+    let snapshot = match session.read_snapshot() {
+        Ok(snapshot) => snapshot,
+        Err(error) => return session_error(error).into_response(),
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
         return ApiError::storage_failure().into_response();
@@ -2871,11 +2751,21 @@ async fn patch_document(
             status: StatusCode::INTERNAL_SERVER_ERROR,
             code: "commit_failed",
             message: "the engine did not commit the patch".into(),
-            fix: "re-read to see whether it landed, then retry with a fresh key".into(),
+            fix: "check whether it landed; retry the identical request with its original Idempotency-Key".into(),
             placement: None,
         }
         .into_response(),
     }
+}
+
+fn parse_merge_patch(body: &str) -> Result<serde_json::Value, ApiError> {
+    serde_json::from_str(body).map_err(|_| ApiError {
+        status: StatusCode::BAD_REQUEST,
+        code: "invalid_json",
+        message: "the request body is not a JSON merge patch".into(),
+        fix: "send the JSON value to merge into the document".into(),
+        placement: None,
+    })
 }
 
 /// One document's retained revision history, newest first (D-42: history
@@ -2955,11 +2845,10 @@ async fn delete_document(
         Ok(session) => session,
         Err(error) => return error.into_response(),
     };
-    match session.load(&collection, &id) {
-        Ok(Some(_)) => {}
-        Ok(None) => return document_not_found(collection.as_str(), id.as_str()).into_response(),
+    let present = match session.load(&collection, &id) {
+        Ok(document) => document.is_some(),
         Err(error) => return session_error(error).into_response(),
-    }
+    };
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::storage_failure().into_response();
     };
@@ -2967,13 +2856,8 @@ async fn delete_document(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let durability = match Durability::of_header(&headers) {
-        Ok(durability) => {
-            if let Err(error) = durability.requires_active_regions(state.active_regions) {
-                return error.into_response();
-            }
-            durability.level()
-        }
+    let durability = match Durability::of_header(&headers).and_then(Durability::local_level) {
+        Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
@@ -2981,6 +2865,9 @@ async fn delete_document(
     };
     if let Err(error) = check_if_match(&headers, &transaction, &collection, &id) {
         return error.into_response();
+    }
+    if !present {
+        return document_not_found(collection.as_str(), id.as_str()).into_response();
     }
     let expected = if has_idempotency_key(&headers) {
         ExpectedVersion::Any
@@ -3581,11 +3468,13 @@ mod tests {
     use super::API_PREFIX;
     use super::ApiError;
     use super::ApiState;
+    use super::SESSION_HEADER;
     use super::decode_session_header;
     use super::encode_base64url;
     use super::openapi_json;
     use super::router;
     use axum::body::Body;
+    use axum::http::HeaderValue;
     use axum::http::Request;
     use axum::http::StatusCode;
     use axum::http::header;
@@ -3610,11 +3499,9 @@ mod tests {
             control: None,
             catalog: None,
             scope: ("terrabase-local".into(), "local".into()),
-            reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
             backups,
             backup_root,
             timetravel,
-            active_regions: 1,
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
@@ -3657,11 +3544,9 @@ mod tests {
             control: Some(Arc::new(control)),
             catalog: Some(Arc::new(catalog)),
             scope: ("terrabase-local".into(), "local".into()),
-            reactive: Arc::new(crate::reactive_api::ReactiveSessions::default()),
             backups,
             backup_root: dir.join("backup"),
             timetravel,
-            active_regions: 3,
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
@@ -3736,7 +3621,6 @@ mod tests {
             ("/api/v1/databases/{name}/backups", "get"),
             ("/api/v1/databases/{name}/branches", "get"),
             ("/api/v1/databases/{name}/reactive", "get"),
-            ("/api/v1/databases/{name}/reactive/poll", "post"),
             ("/api/v1/reactive/views", "post"),
             ("/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}", "get"),
             ("/api/v1/reactive/views/{view}/{generation}/log", "get"),
@@ -3799,14 +3683,9 @@ mod tests {
             components.get("schemas").and_then(serde_json::Value::as_object).expect("schemas");
         assert!(schemas.contains_key("SqlExplainResponse"));
         assert!(schemas.contains_key("SqlResultResponse"));
-        assert_eq!(
-            schemas
-                .get("ReactiveFramesResponse")
-                .and_then(|schema| schema.get("items"))
-                .and_then(|items| items.get("$ref"))
-                .and_then(serde_json::Value::as_str),
-            Some("#/components/schemas/ReactiveEnvelope")
-        );
+        assert_eq!(schemas["ReactiveEnvelope"]["minItems"], 7);
+        assert!(!schemas.contains_key("ReactivePollRequest"));
+        assert!(document["paths"].get("/api/v1/databases/{name}/reactive/poll").is_none());
         let paths = document.get("paths").and_then(serde_json::Value::as_object).expect("paths");
         let body_operations = [
             "create_database",
@@ -3818,7 +3697,6 @@ mod tests {
             "attach_view",
             "restore_backup",
             "create_branch",
-            "poll",
         ];
         let mut operation_count = 0;
         for item in paths.values() {
@@ -3894,7 +3772,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(operation_count, 27, "registered route count changed");
+        assert_eq!(operation_count, 26, "registered route count changed");
     }
 
     #[tokio::test]
@@ -4087,6 +3965,7 @@ mod tests {
             &id,
             ten_days_ago_millis,
             &headers,
+            None,
         )
         .status();
         assert_eq!(refused, StatusCode::UNPROCESSABLE_ENTITY, "Free refuses the old moment");
@@ -4099,6 +3978,7 @@ mod tests {
             &id,
             ten_days_ago_millis,
             &headers,
+            None,
         )
         .status();
         assert_ne!(
@@ -4115,6 +3995,7 @@ mod tests {
             &id,
             ten_days_ago_millis,
             &headers,
+            None,
         )
         .status();
         assert_eq!(closed, StatusCode::UNPROCESSABLE_ENTITY, "unknown plans fail closed");
@@ -4387,9 +4268,10 @@ mod tests {
             )
             .await
             .expect("answers");
-        assert_eq!(response.status(), StatusCode::OK, "the put commits");
+        let put_status = response.status();
         let put_body = axum::body::to_bytes(response.into_body(), 8192).await.expect("body");
         let put_body = String::from_utf8(put_body.to_vec()).expect("utf-8");
+        assert_eq!(put_status, StatusCode::OK, "the put commits: {put_body}");
         assert!(put_body.contains("revision"), "{put_body}");
         // GET answers with an ETag.
         let response = router
@@ -4679,6 +4561,7 @@ mod tests {
             .expect("answers");
         assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
         let response = router
+            .clone()
             .oneshot(
                 Request::delete(path)
                     .header(auth, key)
@@ -4689,6 +4572,21 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let response = router
+            .oneshot(
+                Request::patch(path)
+                    .header(auth, key)
+                    .header("if-match", "*")
+                    .body(Body::from(r#"{"n":3}"#))
+                    .expect("patch missing document"),
+            )
+            .await
+            .expect("precondition response");
+        assert_eq!(
+            response.status(),
+            StatusCode::PRECONDITION_FAILED,
+            "a missing patch target must fail If-Match before returning 404"
+        );
     }
 
     #[tokio::test]
@@ -4920,6 +4818,29 @@ mod tests {
             .expect("answers");
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().contains_key("x-terrascale-session"));
+        let session =
+            decode_session_header(response.headers()).expect("valid session").expect("token");
+        assert!(
+            session.frontier().entries().next().is_some(),
+            "the token covers the committed batch"
+        );
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/databases/prod/collections/users/documents/a")
+                    .header(auth, key)
+                    .header(SESSION_HEADER.clone(), encode_base64url(&session.encode()))
+                    .body(Body::empty())
+                    .expect("causal read request"),
+            )
+            .await
+            .expect("causal read");
+        assert_eq!(response.status(), StatusCode::OK);
+        let value: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 4096).await.expect("document"),
+        )
+        .expect("document JSON");
+        assert_eq!(value["n"], 1);
         // A batch with one bad op lands NOTHING (atomicity).
         let mixed = r#"{"operations":[
             {"op":"put","id":"c","value":{"n":3}},
@@ -4957,102 +4878,161 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::too_many_lines, reason = "one route contract, one test")]
-    async fn reactive_poll_subscribes_seeds_and_streams_deltas() {
-        use axum::body::Body;
-        use axum::http::Request;
-        let auth = "authorization";
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the route journey verifies attach, snapshot, and delta bytes"
+    )]
+    async fn sql_view_delivers_an_immutable_snapshot_and_committed_delta() {
+        use terrabase_sync_core::wire::{Message, ResultOperation, decode_envelope};
         let key = "Bearer tskey_test_abcdefghijklmnop";
         let router = router(state_with_keys_and_control());
         let response = router
             .clone()
             .oneshot(
                 Request::post("/api/v1/databases")
-                    .header(auth, key)
+                    .header("authorization", key)
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .expect("request"),
             )
             .await
-            .expect("answers");
+            .expect("answer");
         assert_eq!(response.status(), StatusCode::CREATED);
-        let put = Request::put("/api/v1/databases/prod/collections/orders/documents/o-1")
-            .header(auth, key)
-            .body(Body::from(r#"{"status":"paid","total":10}"#))
-            .expect("request");
-        let response = router.clone().oneshot(put).await.expect("answers");
-        assert_eq!(response.status(), StatusCode::OK);
-
-        // Subscribe over the poll transport: the first response is the
-        // MessagePack Seed frame array.
-        let subscribe = Request::post("/api/v1/databases/prod/reactive/poll")
-            .header(auth, key)
-            .body(Body::from(
-                r#"{"op":"subscribe","collection":"orders","conditions":[{"field":"status","op":"equals","value":"paid"}],"projection":["total"]}"#,
-            ))
-            .expect("request");
-        let response = router.clone().oneshot(subscribe).await.expect("answers");
-        assert_eq!(response.status(), StatusCode::OK);
+        let put = |id: &str, total: u32| {
+            Request::put(format!("/api/v1/databases/prod/collections/orders/documents/{id}"))
+                .header("authorization", key)
+                .body(Body::from(format!(r#"{{"status":"paid","total":{total}}}"#)))
+                .expect("request")
+        };
         assert_eq!(
-            response.headers().get("content-type").and_then(|v| v.to_str().ok()),
-            Some("application/msgpack")
+            router.clone().oneshot(put("o-1", 10)).await.expect("put").status(),
+            StatusCode::OK
         );
-        let subscription: u64 = response
-            .headers()
-            .get("x-terrascale-subscription")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse().ok())
-            .expect("the subscription id rides the header");
+        let attach_request = || {
+            Request::post("/api/v1/reactive/views")
+            .header("authorization", key)
+            .body(Body::from(r#"{"databaseId":"prod","statement":"SELECT total FROM orders WHERE status = 'paid'"}"#)).expect("request")
+        };
+        let response = router.clone().oneshot(attach_request()).await.expect("attach");
+        let status = response.status();
         let body = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
-        let seed = decode_frames(&body);
-        assert_eq!(seed.len(), 1, "the seed is the only frame");
-        assert!(seed[0].contains("seed"), "the frame kind is seed: {}", seed[0]);
-        assert!(seed[0].contains("o-1"), "the committed document is a member");
-
-        // A write in the same member, then poll: the Insert delta arrives.
-        let put = Request::put("/api/v1/databases/prod/collections/orders/documents/o-2")
-            .header(auth, key)
-            .body(Body::from(r#"{"status":"paid","total":20}"#))
-            .expect("request");
-        let response = router.clone().oneshot(put).await.expect("answers");
+        assert_eq!(status, StatusCode::CREATED, "{}", String::from_utf8_lossy(&body));
+        let attached: serde_json::Value = serde_json::from_slice(&body).expect("attach metadata");
+        let snapshot_url = attached["snapshot_chunks"][0].as_str().expect("snapshot URL");
+        let log_url = attached["log"].as_str().expect("log URL");
+        let capability = attached["capability"].as_str().expect("capability");
+        let read = |url: &str| {
+            Request::get(url)
+                .header("authorization", key)
+                .header("x-terrascale-view-capability", capability)
+                .body(Body::empty())
+                .expect("request")
+        };
+        let response = router.clone().oneshot(read(snapshot_url)).await.expect("snapshot");
         assert_eq!(response.status(), StatusCode::OK);
-        let poll = Request::post("/api/v1/databases/prod/reactive/poll")
-            .header(auth, key)
-            .body(Body::from(format!(r#"{{"op":"poll","subscription":{subscription}}}"#)))
-            .expect("request");
-        let response = router.clone().oneshot(poll).await.expect("answers");
+        let original = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
+        let Message::Snapshot { snapshot, .. } =
+            decode_envelope(&original).expect("wire envelope").message
+        else {
+            panic!("snapshot envelope")
+        };
+        assert_eq!(snapshot.items.len(), 1);
+        assert_eq!(snapshot.items[0].identity, "o-1");
+        let pending = tokio::spawn(router.clone().oneshot(read(log_url)));
+        tokio::task::yield_now().await;
+        assert!(!pending.is_finished(), "the log waits before the new write");
+        assert_eq!(
+            router.clone().oneshot(put("o-2", 20)).await.expect("put").status(),
+            StatusCode::OK
+        );
+        let response = tokio::time::timeout(std::time::Duration::from_secs(2), pending)
+            .await
+            .expect("commit wakes the waiting request")
+            .expect("request task")
+            .expect("log");
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
-        let frames = decode_frames(&body);
-        assert_eq!(frames.len(), 1, "one delta for the one write: {frames:?}");
-        assert!(frames[0].contains("delta") && frames[0].contains("o-2"), "{}", frames[0]);
-
-        // A poll on ANOTHER database's route cannot touch the session.
+        let Message::Delta { operations, from_revision, to_revision, .. } =
+            decode_envelope(&body).expect("wire envelope").message
+        else {
+            panic!("delta envelope")
+        };
+        assert!(operations.iter().any(|operation| matches!(operation, ResultOperation::Insert { identity, .. } if identity == "o-2")));
+        let replay = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            router.clone().oneshot(read(log_url)),
+        )
+        .await
+        .expect("another reader gets the existing revision immediately")
+        .expect("replay");
+        assert_eq!(replay.status(), StatusCode::OK);
+        assert_eq!(axum::body::to_bytes(replay.into_body(), 65_536).await.expect("body"), body);
+        assert_eq!(from_revision, snapshot.revision);
+        let next_log = format!(
+            "/api/v1/reactive/views/{}/{}/log?offset={to_revision}",
+            attached["view"].as_str().expect("view"),
+            attached["generation"].as_u64().expect("generation")
+        );
+        let irrelevant =
+            Request::put("/api/v1/databases/prod/collections/orders/documents/ignored")
+                .header("authorization", key)
+                .body(Body::from(r#"{"status":"open","total":99}"#))
+                .expect("request");
+        assert_eq!(router.clone().oneshot(irrelevant).await.expect("put").status(), StatusCode::OK);
+        let waiting = tokio::spawn(router.clone().oneshot(read(&next_log)));
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished(), "an irrelevant write does not emit a result delta");
+        let response = router.clone().oneshot(attach_request()).await.expect("reattach");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let reattached: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), 65_536).await.expect("body"),
+        )
+        .expect("metadata");
+        assert_eq!(reattached["view"], attached["view"]);
+        assert_eq!(
+            reattached["offset"], to_revision,
+            "an irrelevant write does not change the result revision"
+        );
         let response = router
             .clone()
-            .oneshot(
-                Request::post("/api/v1/databases/other/reactive/poll")
-                    .header(auth, key)
-                    .body(Body::from(format!(r#"{{"op":"poll","subscription":{subscription}}}"#)))
-                    .expect("request"),
-            )
+            .oneshot(read(reattached["snapshot_chunks"][0].as_str().expect("snapshot")))
             .await
-            .expect("answers");
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    /// The `MessagePack` wire form, as the transports write it: strings
-    /// appear verbatim in the bytes, so the assertions read them raw.
-    fn decode_frames(bytes: &[u8]) -> Vec<String> {
-        let mut cursor = bytes;
-        let count =
-            rmp::decode::read_array_len(&mut cursor).expect("the body is a frame array") as usize;
-        assert!(bytes.len() >= count, "each frame is at least one byte");
-        // Test lens: one rendered "frame" per array slot is unnecessary —
-        // the assertions need the kinds and the member identities, which
-        // ride as verbatim strings.
-        let text = String::from_utf8_lossy(bytes);
-        let _ = count;
-        vec![text.into_owned()]
+            .expect("snapshot");
+        assert_eq!(response.status(), StatusCode::OK, "reattachment names an existing snapshot");
+        assert_eq!(
+            router.clone().oneshot(put("o-3", 30)).await.expect("put").status(),
+            StatusCode::OK
+        );
+        let response =
+            router.clone().oneshot(attach_request()).await.expect("reattach after write");
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let response = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+            .await
+            .expect("existing subscriber wakes")
+            .expect("task")
+            .expect("log");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
+        let Message::Delta { from_revision, operations, .. } =
+            decode_envelope(&bytes).expect("delta").message
+        else {
+            panic!("delta envelope")
+        };
+        assert_eq!(
+            from_revision, to_revision,
+            "reattachment preserves existing subscriber continuity"
+        );
+        assert!(
+            operations.iter().any(
+                |op| matches!(op, ResultOperation::Insert { identity, .. } if identity == "o-3")
+            )
+        );
+        let response = router.oneshot(read(snapshot_url)).await.expect("same snapshot");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            axum::body::to_bytes(response.into_body(), 65_536).await.expect("body"),
+            original,
+            "an existing snapshot URL retains identical bytes after writes"
+        );
     }
 
     #[tokio::test]
@@ -5411,45 +5391,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn global_durability_fails_closed_under_two_regions() {
-        use axum::body::Body;
-        use axum::http::Request;
-        let auth = "authorization";
-        let key = "Bearer tskey_test_abcdefghijklmnop";
-        let three_region = router(state_with_keys_and_control());
-        let response = three_region
+    async fn global_durability_requires_replication_receipts_before_mutation() {
+        let auth = "Bearer tskey_test_abcdefghijklmnop";
+        let router = router(state_with_keys_and_control());
+        let response = router
             .clone()
             .oneshot(
                 Request::post("/api/v1/databases")
-                    .header(auth, key)
-                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .header("authorization", auth)
+                    .body(Body::from(
+                        r#"{"name":"prod","placement":["GRU","SFO","FRA"],"residency":null}"#,
+                    ))
                     .expect("request"),
             )
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::CREATED);
-        // Three active regions: a global write proceeds (regional semantics
-        // locally; the replicated ack tracking rides the QUIC slice).
-        let response = three_region
+        let path = "/api/v1/databases/prod/collections/users/documents/g-1";
+        let response = router
             .clone()
             .oneshot(
-                Request::put("/api/v1/databases/prod/collections/users/documents/g-1")
-                    .header(auth, key)
-                    .header("x-terrascale-durability", "global")
-                    .body(Body::from(r#"{"n":1}"#))
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert_eq!(response.status(), StatusCode::OK);
-        // One active region: the same write fails closed with its remedy.
-        let mut single = state_with_keys_and_control();
-        Arc::get_mut(&mut single).expect("sole handle").active_regions = 1;
-        let single_region = router(single);
-        let response = single_region
-            .oneshot(
-                Request::put("/api/v1/databases/prod/collections/users/documents/g-2")
-                    .header(auth, key)
+                Request::put(path)
+                    .header("authorization", auth)
                     .header("x-terrascale-durability", "global")
                     .body(Body::from(r#"{"n":1}"#))
                     .expect("request"),
@@ -5460,7 +5423,20 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(body.contains("global_durability_unavailable"), "{body}");
-        assert!(body.contains("\"fix\":"), "{body}");
+        let response = router
+            .oneshot(
+                Request::get(path)
+                    .header("authorization", auth)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "a refused global write never commits locally"
+        );
     }
 
     #[tokio::test]
@@ -5492,14 +5468,24 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::OK);
-        // The write's session sequence is covered locally: the read serves
-        // immediately.
+        let etag = response.headers().get("etag").expect("write revision").clone();
+        let covered = response.headers().get(&SESSION_HEADER).expect("write session").clone();
+        let mut future =
+            decode_session_header(response.headers()).expect("valid token").expect("token");
+        let (origin, sequence) = future
+            .frontier()
+            .entries()
+            .next()
+            .map(|(origin, sequence)| (origin.clone(), sequence))
+            .expect("write frontier");
+        future.advance(origin, sequence + 1).expect("advance future frontier");
+        // The write's opaque token is covered locally: the read serves immediately.
         let response = router
             .clone()
             .oneshot(
                 Request::get("/api/v1/databases/prod/collections/users/documents/s-1")
                     .header(auth, key)
-                    .header("x-terrascale-session", "1")
+                    .header(SESSION_HEADER.clone(), covered)
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -5508,25 +5494,32 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         // A future sequence (replication that has not happened yet) times
         // out with the typed remedy, never a stale read.
-        let started = std::time::Instant::now();
-        let response = router
-            .oneshot(
-                Request::get("/api/v1/databases/prod/collections/users/documents/s-1")
-                    .header(auth, key)
-                    .header("x-terrascale-session", "1000000")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("answers");
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
-        let body = String::from_utf8(body.to_vec()).expect("utf-8");
-        assert!(body.contains("session_not_covered"), "{body}");
-        assert!(
-            started.elapsed() >= std::time::Duration::from_secs(2),
-            "the wait is bounded but real"
-        );
+        for path in [
+            "/api/v1/databases/prod/collections/users/documents/s-1",
+            "/api/v1/databases/prod/collections/users/documents/missing",
+        ] {
+            let started = std::time::Instant::now();
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::get(path)
+                        .header(auth, key)
+                        .header(SESSION_HEADER.clone(), encode_base64url(&future.encode()))
+                        .header("if-none-match", etag.clone())
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("answers");
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
+            let body = String::from_utf8(body.to_vec()).expect("utf-8");
+            assert!(body.contains("stale_replica"), "{body}");
+            assert!(
+                started.elapsed() >= std::time::Duration::from_secs(2),
+                "the wait is bounded but real"
+            );
+        }
     }
 
     #[tokio::test]

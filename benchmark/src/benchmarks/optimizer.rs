@@ -32,21 +32,13 @@
 //! statement can come out of it on this host: the PostgreSQL reference
 //! baseline is `Unrun` with its reason and owner
 //! ([`super::reference`]), and the objective status of every receipt here is
-//! `inconclusive`. The one comparison that **does** exist is the write-path
-//! overhead comparison — TerraBase with active auto indexes against
-//! TerraBase without — and its verdict is recorded with the exact
-//! vocabulary while its objective status stays `inconclusive`.
+//! `inconclusive`. The write-stream diagnostic compares sampled storage
+//! footprint with and without active indexes. Checkpoint timing and WAL
+//! reuse affect those samples, so they cannot qualify write I/O overhead.
 //!
-//! Execution remains the W3-2 bounded snapshot scan: no query here is
-//! narrowed or ordered by index data, so nothing in this module is evidence
-//! that an auto index made a query *faster*. What is measured is the
-//! optimizer's own behavior — what it selected, what it created, what that
-//! cost on the durable write path, and that it stayed inside its bounds.
-//!
-//! No measurement hook is added to `src/query/optimizer/` or `src/index/`:
-//! everything below reads the typed reads that already exist
-//! (`QueryStore::recent_index_selections`, `QueryStore::registered_indexes`)
-//! plus the lane's durable-byte counter.
+//! Query checks inspect selections, durable descriptors, publication
+//! revisions, and registry bounds through the existing engine APIs. These
+//! checks do not establish query speed relative to a reference database.
 
 #![allow(clippy::doc_markdown)] // dense with the proper nouns PostgreSQL and TerraBase
 
@@ -70,8 +62,7 @@ use crate::{
 
 use super::{
     driver::TerraBaseLane,
-    gates::{self, MedianRange, Trend},
-    lane::LaneConfig,
+    gates::{self, Trend},
     reference,
     vocabulary::{self, ObjectiveStatus, Verdict},
 };
@@ -123,7 +114,7 @@ impl OptimizerWorkload {
             Self::WritePath => {
                 "Engine::begin + Transaction::put + commit(LocalDurability::Synced) — the \
                  acknowledged write stream with K active auto indexes, against the same stream \
-                 with none, measured by the lane's deterministic durable-byte counter"
+                 with none, measured by the lane's sampled storage footprint"
             }
             Self::RegistryBound => {
                 "Engine::queries().compile + execute — distinct ad-hoc shapes driven past \
@@ -186,13 +177,6 @@ pub(crate) mod budgets {
     /// was not chosen and carried no recorded reason.
     pub const UNEXPLAINED_UNCHOSEN_COMPLETE: u64 = 0;
 
-    /// OH-B1 — durable bytes one auto-index creation appends.
-    pub const DURABLE_BYTES_PER_CREATION: u64 = 0;
-
-    /// OH-B3 — additional durable bytes per acknowledged write per active
-    /// auto index.
-    pub const DURABLE_BYTES_PER_WRITE_PER_ACTIVE_INDEX: u64 = 0;
-
     /// MB-B1 — the live auto-index registry bound, the engine's own
     /// `MAX_AUTO_INDEXES_PER_TENANT`.
     pub const LIVE_AUTO_PER_TENANT: usize = crate::query::optimizer::MAX_AUTO_INDEXES_PER_TENANT;
@@ -202,15 +186,15 @@ pub(crate) mod budgets {
     pub const RETAINED_SELECTION_RECORDS: usize = crate::query::optimizer::MAX_SELECTION_RECORDS;
 }
 
-/// The exact, deterministic counters of one measured ad-hoc window.
+/// Query counters and sampled storage footprint of one ad-hoc window.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct AdHocWindow {
     /// Ad-hoc query operations the window completed.
     pub operations: u64,
     /// Documents the window returned to the caller.
     pub documents_returned: u64,
-    /// Durable bytes the window appended to the engine location.
-    pub durable_bytes_written: u64,
+    /// Change in file lengths; checkpointing and WAL reuse affect this value.
+    pub storage_footprint_change_bytes: i128,
     /// Selection records the window's queries produced.
     pub selections: u64,
     /// Selections that created an auto index.
@@ -256,50 +240,6 @@ pub(crate) struct RegistryWindow {
     pub live_auto_after: usize,
     /// Retired auto indexes still observable after the window.
     pub retired_after: usize,
-}
-
-/// The write-path overhead comparison: the one comparison that exists on
-/// this host, both sides TerraBase.
-#[derive(Clone, Debug)]
-pub(crate) struct WritePathComparison {
-    /// Durable bytes per write with no active auto index, one entry per
-    /// measured round.
-    pub without_auto_indexes: Vec<f64>,
-    /// Durable bytes per write with the active auto indexes, one entry per
-    /// measured round.
-    pub with_auto_indexes: Vec<f64>,
-    /// Active auto indexes during the measured window.
-    pub active_auto_indexes: usize,
-    /// The gate's classification of the counter (lower is better).
-    pub trend: Trend,
-    /// The comparison verdict, from the closed vocabulary.
-    pub verdict: Verdict,
-}
-
-impl WritePathComparison {
-    /// Runs the gate over both sides' durable-bytes-per-write samples and
-    /// maps the trend onto the verdict vocabulary.
-    ///
-    /// Lower is better here: `Stable` is the budget met (`no-improvement`),
-    /// `Worse` — the auto-index side appending measurably more — is the
-    /// budget breached (`v1-regression`), and `Better` is recorded as
-    /// `v1-faster` rather than absorbed.
-    pub(crate) fn of(
-        without_auto_indexes: Vec<f64>,
-        with_auto_indexes: Vec<f64>,
-        active_auto_indexes: usize,
-    ) -> Self {
-        let current = MedianRange::of(&with_auto_indexes).expect("measured samples");
-        let prior = MedianRange::of(&without_auto_indexes).expect("measured samples");
-        let trend =
-            gates::classify_lower(&current, &prior, LaneConfig::RECORD_MINIMUM.noise_percent);
-        let verdict = match trend {
-            Trend::Stable => Verdict::NoImprovement,
-            Trend::Worse => Verdict::V1Regression,
-            Trend::Better => Verdict::V1Faster,
-        };
-        Self { without_auto_indexes, with_auto_indexes, active_auto_indexes, trend, verdict }
-    }
 }
 
 /// The in-process driver of the ad-hoc class: a durable engine plus the
@@ -391,8 +331,8 @@ impl AdHocLane {
     }
 
     /// Commits `count` acknowledged writes into `collection`, returning the
-    /// durable bytes the stream appended.
-    pub(crate) fn write_stream(&self, collection: &str, count: usize) -> u64 {
+    /// signed change in storage footprint, not write I/O.
+    pub(crate) fn write_stream(&self, collection: &str, count: usize) -> i128 {
         let baseline = self.lane.durable_bytes();
         for index in 0..count {
             self.lane.commit_put(
@@ -408,12 +348,17 @@ impl AdHocLane {
                 ExpectedVersion::Any,
             );
         }
-        self.lane.durable_bytes().saturating_sub(baseline)
+        i128::from(self.lane.durable_bytes()) - i128::from(baseline)
     }
 
-    /// The lane's deterministic durable-byte counter.
+    /// The lane's sampled storage footprint.
     pub(crate) fn durable_bytes(&self) -> u64 {
         self.lane.durable_bytes()
+    }
+
+    /// The last durable publication revision.
+    pub(crate) fn published_revision(&self) -> u64 {
+        self.lane.published_revision()
     }
 
     /// The lane's tenant.
@@ -603,9 +548,9 @@ fn fold_one(
 /// The record store is bounded (`MAX_SELECTION_RECORDS`), so a window longer
 /// than the bound retains only its newest records — the classification above
 /// happens per query for exactly that reason, and what this fold adds is the
-/// durable-byte counter and the two lifecycle counts.
+/// storage footprint change and the two lifecycle counts.
 fn finish_window(lane: &AdHocLane, baseline: u64, mut window: AdHocWindow) -> AdHocWindow {
-    window.durable_bytes_written = lane.durable_bytes().saturating_sub(baseline);
+    window.storage_footprint_change_bytes = i128::from(lane.durable_bytes()) - i128::from(baseline);
     let registered = lane.registered();
     window.live_auto_after = live_auto_of(&registered);
     window.retired_after = retired_of(&registered);

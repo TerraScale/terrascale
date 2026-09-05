@@ -1,16 +1,7 @@
-# `terrabase-sim` — deterministic simulation harness skeleton (E-12, ADR 0044 §4).
-#
-# Scaffolding for the seeded-fault simulation harness that qualifies the
-# replication and sync engines against the eight invariants of ADR 0044 §4.
-# Starts on day one against trait interfaces; one subagent per invariant once
-# E-5/E-6 land; CI seed batch + nightly sweep.
-#
-# This crate is engine-independent on purpose: it defines the world vocabulary
-# (`model`), the engine seams (`traits`), the fault injectors (`faults`), the
-# seeded RNG (`rng`), the deterministic workload generator (`workload`), an
-# in-memory stub engine (`world`) that proves the harness mechanics, and the
-# invariant checklist (`check`). It never imports an engine crate, and no
-# engine crate imports it, so engine logic stays untouched.
+# Deterministic simulation harness for E-12 / ADR 0044 §4.
+# The production adapter exercises the durable Engine, member transport,
+# reconciliation, and result-view state. The stub world tests harness mechanics.
+# Product crates never depend on this qualification harness.
 
 [package]
 name = "terrabase-sim"
@@ -33,7 +24,7 @@ rand = "0.9"
 rand_chacha = "0.9"
 # The adapter is the one deliberate integration point for the durable Engine.
 # The Engine does not depend on this harness, so this edge does not form a
-# cycle and keeps the stub crate's trait vocabulary independent.
+# cycle and keeps the harness trait vocabulary independent.
 terrabase = { path = "../..", default-features = false }
 terrabase-member-transport = { path = "../terrabase-member-transport", default-features = false }
 terrabase-replication-core = { path = "../terrabase-replication-core" }

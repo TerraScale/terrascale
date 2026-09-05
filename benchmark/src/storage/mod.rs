@@ -12,18 +12,29 @@ mod codec;
 #[cfg(test)]
 mod faults;
 mod intent;
+mod invisible;
 mod ownership;
+mod shadow;
 mod sqlite;
+
+pub use invisible::{InvisibleColumnKind, InvisibleIndexColumn, InvisibleIndexProgress};
+pub use shadow::{
+    MAX_SHADOW_ROWS, MAX_SHADOW_VM_STEPS, ShadowReadComparison, ShadowReadError,
+    ShadowReadMeasurement, ShadowReadRequest,
+};
 
 #[cfg(test)]
 pub(crate) use faults::FaultPoint;
 pub(crate) use intent::{
-    CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite, UnknownCause,
+    CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite,
+    SupersededReplication, UnknownCause,
 };
+pub(crate) use ownership::validate_local_restore_source;
 pub use ownership::{DatabaseOwner, EnvironmentName, OwnershipError};
 pub(crate) use ownership::{OwnershipMode, load_or_create};
 pub(crate) use sqlite::SqliteStorage;
 pub use sqlite::database_file;
+pub(crate) use sqlite::import_backup_file;
 
 /// Failures opening one durable location.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -66,8 +77,6 @@ use crate::usage::{DurableUsageFact, MeasurementWindow, MintingRule, UsageFact, 
 /// Storage-side usage command failures, mapped to the public Engine contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UsageStorageError {
-    /// The selected storage backend predates durable usage facts.
-    UnsupportedBackend,
     /// Persisted usage is malformed or contradicts its durable binding.
     Corrupt,
     /// One scoped fact identity is already bound to different content.
@@ -578,7 +587,7 @@ pub fn billed_writes_for_bytes(body_len: u64) -> u64 {
 pub(crate) struct AppliedFrontierEntry {
     /// The logical origin that produced the rows.
     pub(crate) origin: String,
-    /// The greatest origin sequence retained for this tenant.
+    /// The greatest contiguous origin sequence proven for this tenant.
     pub(crate) origin_sequence: u64,
     /// The greatest HLC stamp observed for this origin.
     pub(crate) hlc: u64,
@@ -590,14 +599,13 @@ pub(crate) struct AppliedFrontierEntry {
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
+    /// Runs a file capture with commits and background checkpoints excluded.
+    fn with_quiescent_wal(&self, capture: &mut dyn FnMut(&std::path::Path)) -> Result<(), ()>;
     /// Opens a read-only `SQLite` handle for one bounded SQL execution.
     ///
     /// This narrow capability keeps physical storage access behind the Engine;
     /// query execution never reconstructs a database from an unverified path.
-    /// Backends that are not `SQLite` fail closed.
-    fn open_sqlite_read_connection(&self) -> Result<rusqlite::Connection, ()> {
-        Err(())
-    }
+    fn open_sqlite_read_connection(&self) -> Result<rusqlite::Connection, ()>;
 
     /// Runs the publication order for one validated commit intent.
     fn commit(&mut self, intent: CommitIntent) -> CommitResult;
@@ -622,29 +630,32 @@ pub(crate) trait StoragePort: Send {
         operation: &OperationId,
     ) -> Option<OperationResolution>;
 
+    /// Returns the original source fingerprint bound to a replicated publication.
+    fn replication_fingerprint(
+        &self,
+        tenant: &TenantId,
+        operation: &OperationId,
+    ) -> Result<Option<[u8; 32]>, ()>;
+
     /// Appends one standalone authoritative usage fact durably and
-    /// idempotently. The default rejects legacy backends.
+    /// idempotently.
     fn record_usage(
         &mut self,
-        _tenant: &TenantId,
-        _fact: UsageFact,
-    ) -> Result<(DurableUsageFact, bool), UsageStorageError> {
-        Err(UsageStorageError::UnsupportedBackend)
-    }
+        tenant: &TenantId,
+        fact: UsageFact,
+    ) -> Result<(DurableUsageFact, bool), UsageStorageError>;
 
     /// Returns at most `limit` tenant facts at or below the fixed snapshot,
     /// ordered strictly after the optional continuation position. The Engine
     /// asks for one extra row to decide whether another page exists.
     fn usage_facts_page(
         &self,
-        _tenant: &TenantId,
-        _snapshot: StorageSequence,
-        _after: Option<&UsageFactPosition>,
-        _window: Option<MeasurementWindow>,
-        _limit: u32,
-    ) -> Result<Vec<DurableUsageFact>, UsageStorageError> {
-        Err(UsageStorageError::UnsupportedBackend)
-    }
+        tenant: &TenantId,
+        snapshot: StorageSequence,
+        after: Option<&UsageFactPosition>,
+        window: Option<MeasurementWindow>,
+        limit: u32,
+    ) -> Result<Vec<DurableUsageFact>, UsageStorageError>;
 
     /// Returns one database's metering fact, when it has billed rows.
     fn metering_fact(&self, _db: &str) -> Option<DbUsageFact> {
@@ -783,11 +794,11 @@ pub(crate) trait StoragePort: Send {
     /// the condition conjunction applied in SQL over the newest version of
     /// each key, so non-matching rows are never decoded or shipped.
     ///
-    /// The pushed filter is a sound narrowing, never an exact one: a backend
-    /// may drop conditions it cannot express exactly (fields without an
+    /// The pushed filter is a sound narrowing, never an exact one: the
+    /// implementation may drop conditions it cannot express exactly (fields without an
     /// active descriptor, value kinds the columns do not carry), and the
     /// caller still applies its full predicate over the returned page.
-    /// `None` reports that this backend cannot push the filter at all and
+    /// `None` reports that this implementation cannot push the filter at all and
     /// the caller falls back to [`StoragePort::documents_in_collection_at_from`].
     fn collection_scan_filtered(
         &self,
@@ -799,6 +810,37 @@ pub(crate) trait StoragePort: Send {
         _filter: &ScanFilter,
     ) -> Option<Result<Vec<Document>, SnapshotReadError>> {
         None
+    }
+
+    /// Measures ordinary and forced-index generated reads in one read transaction.
+    fn shadow_filtered_page(
+        &self,
+        _sequence: StorageSequence,
+        _tenant: &TenantId,
+        _request: &ShadowReadRequest<'_>,
+    ) -> Result<ShadowReadComparison, ShadowReadError> {
+        Err(ShadowReadError::Unavailable)
+    }
+
+    /// Creates or resumes a hidden physical candidate with durable write maintenance.
+    fn begin_invisible_index(
+        &mut self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &str,
+        _columns: &[InvisibleIndexColumn],
+    ) -> Result<InvisibleIndexProgress, ()> {
+        Err(())
+    }
+
+    /// Advances a hidden candidate by at most the admitted number of rows.
+    fn advance_invisible_index(
+        &mut self,
+        _tenant: &TenantId,
+        _id: &str,
+        _batch: u32,
+    ) -> Result<InvisibleIndexProgress, ()> {
+        Err(())
     }
 
     /// Registers one extracted index column descriptor (D-31/D-42): the
@@ -835,7 +877,7 @@ pub(crate) trait StoragePort: Send {
     /// Reports one field's durable descriptor state without registering
     /// anything: `Some(true)` is an active descriptor whose conditions push,
     /// `Some(false)` is a building descriptor whose backfill still owes rows,
-    /// and `None` is no descriptor (or a backend that does not report).
+    /// and `None` is no descriptor (or an unavailable descriptor state).
     ///
     /// The read is lock-light (in-memory state, no transaction): the query
     /// path calls it per pushable field to decide between pushing,
@@ -880,14 +922,14 @@ pub(crate) trait StoragePort: Send {
 
     /// Reports one field's text-descriptor state without registering
     /// anything: `Some(true)` narrows, `Some(false)` is building, and
-    /// `None` is no descriptor (or a backend that does not report).
+    /// `None` is no descriptor (or an unavailable descriptor state).
     fn fts_descriptor_state(&self, _collection: &CollectionName, _field: &str) -> Option<bool> {
         None
     }
 
     /// Returns the FTS5 candidate set of one search — the matching
     /// document ids with relevance scores, higher first — or `None` when
-    /// this backend cannot narrow the read and the caller must take the
+    /// this implementation cannot narrow the read and the caller must take the
     /// exact scan. The candidates are a sound narrowing, never an exact
     /// filter: the caller still applies its full predicate.
     fn fts_match(
@@ -958,7 +1000,7 @@ pub(crate) trait StoragePort: Send {
 
     /// Reports whether the immutable state needed for a historical boundary
     /// is still retained. A false result must fail closed instead of letting
-    /// a backend fall back to its current published state.
+    /// an implementation fall back to its current published state.
     fn snapshot_boundary_available(&self, sequence: StorageSequence) -> bool;
 
     /// Resolves the durability of each requested final-state key without
@@ -992,12 +1034,10 @@ pub(crate) trait StoragePort: Send {
         Vec::new()
     }
 
-    /// Returns the tenant's durable per-origin causal progress.
-    ///
-    /// Backends without replication provenance return an empty result; the
-    /// Engine then cannot claim a frontier for those backends.
-    fn applied_frontier(&self, _tenant: &TenantId) -> Vec<AppliedFrontierEntry> {
-        Vec::new()
+    /// Recovers contiguous origin prefixes proven by durable storage.
+    /// Missing history never proves a prefix; storage errors remain errors.
+    fn durable_origin_prefixes(&self, _tenant: &TenantId) -> Result<Vec<AppliedFrontierEntry>, ()> {
+        Err(())
     }
 
     /// Returns every tenant that has at least one recorded published commit,
@@ -1058,6 +1098,12 @@ pub(crate) trait StoragePort: Send {
         None
     }
 
+    /// Reads a bounded page of database-owned index lifecycle events.
+    fn index_lifecycle_events(&self, from: u64, limit: usize) -> Result<Vec<Vec<u8>>, ()>;
+
+    /// Appends exactly the next lifecycle event with synced `SQLite` durability.
+    fn append_index_lifecycle_event(&mut self, sequence: u64, payload: &[u8]) -> Result<(), ()>;
+
     /// Returns the opaque, versioned causal context persisted with the
     /// document's newest row. Storage keeps this as bytes so merge and
     /// replication can carry it without a JSON/document decode on reads.
@@ -1070,18 +1116,19 @@ pub(crate) trait StoragePort: Send {
         None
     }
 
-    /// Records one deterministic conflict loser (D-36): the side a merge
-    /// superseded, with the winner, policy, and explanation. The default
-    /// keeps no conflicts.
-    fn record_merge_conflict(
+    /// Atomically records a superseded source and optional conflict history.
+    /// Returns true when the same decision was already recorded.
+    fn record_superseded_replication(
         &mut self,
-        _tenant: &TenantId,
-        _collection: &CollectionName,
-        _id: &DocumentId,
-        _conflict: &MergeConflictEntry,
-    ) -> Result<(), ()> {
-        Ok(())
-    }
+        intent: SupersededReplication,
+    ) -> Result<bool, CommitRejection>;
+
+    /// Reports whether a source operation has a durable superseded decision.
+    fn replication_was_superseded(
+        &self,
+        tenant: &TenantId,
+        operation: &OperationId,
+    ) -> Result<bool, ()>;
 
     /// Returns one document's recorded conflict losers, newest first,
     /// bounded by `limit`. The default serves none.
@@ -1093,20 +1140,6 @@ pub(crate) trait StoragePort: Send {
         _limit: u32,
     ) -> Vec<MergeConflictEntry> {
         Vec::new()
-    }
-
-    /// Stores one per-field causal kernel of a declared collection
-    /// (D-36). Schema-free collections never call this seam.
-    fn upsert_merge_kernel(
-        &mut self,
-        _tenant: &TenantId,
-        _collection: &CollectionName,
-        _id: &DocumentId,
-        _field: &str,
-        _hlc: u64,
-        _origin: &str,
-    ) -> Result<(), ()> {
-        Ok(())
     }
 
     /// Returns one document's stored per-field kernels in field order.
@@ -1157,13 +1190,27 @@ pub struct JournalProvenance {
     origin: String,
     origin_sequence: u64,
     hlc: u64,
+    /// The opaque, versioned dotted causal context persisted with the row.
+    ///
+    /// Storage and replication adapters pass this through without
+    /// interpreting its bytes. An empty value is retained for journal rows
+    /// written before causal-context persistence was introduced.
+    context: Vec<u8>,
 }
 
 impl JournalProvenance {
     /// Assembles one provenance from its facts. Crate-only: provenance is
     /// recorded by the storage write path, never minted by a consumer.
     pub(crate) fn new(kind: JournalKind, origin: String, origin_sequence: u64, hlc: u64) -> Self {
-        Self { kind, origin, origin_sequence, hlc }
+        Self { kind, origin, origin_sequence, hlc, context: Vec::new() }
+    }
+
+    /// Attaches the exact durable causal context carried by the journal row.
+    /// Crate-only because storage is the sole authority that constructs
+    /// journal provenance.
+    pub(crate) fn with_context(mut self, context: Vec<u8>) -> Self {
+        self.context = context;
+        self
     }
 
     /// Returns whether the row was written by this region.
@@ -1188,6 +1235,13 @@ impl JournalProvenance {
     #[must_use]
     pub const fn hlc(&self) -> u64 {
         self.hlc
+    }
+
+    /// Returns the opaque, versioned dotted causal context persisted with the
+    /// journal row.
+    #[must_use]
+    pub fn context(&self) -> &[u8] {
+        &self.context
     }
 }
 
@@ -1353,7 +1407,7 @@ impl CommitPublicationEvent {
 }
 
 /// Computes the logical digest binding an operation identity to its write set.
-pub(crate) use codec::write_set_digest;
+pub(crate) use codec::{document_fingerprint, write_set_digest};
 
 /// Reports whether one document is inside the codec's structural limits.
 pub(crate) use codec::document_within_limits;

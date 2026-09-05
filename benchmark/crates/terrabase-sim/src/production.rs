@@ -5,11 +5,12 @@
 //! [`terrabase::Engine`], every cross-region delivery crosses the real typed
 //! [`terrabase_member_transport::InProcessLane`], and reconciliation uses the
 //! production range-summary kernel.  The small amount of bookkeeping here
-//! carries the simulation's causal context alongside the transport record;
-//! the current public replication record does not yet expose that context.
+//! schedules causal dependencies; origin metadata is read from the engine's
+//! durable publication journal and preserved through transport.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use terrabase::engine::{CommitOutcome, Engine, EngineConfig, ReplicatedRecord};
@@ -27,11 +28,17 @@ use crate::traits::{ReconcileStats, ReplicationEngine, SyncEngine, ViewRevision}
 const TENANT: &str = "simulation-tenant";
 const COLLECTION: &str = "simulation";
 const GENERATION: u64 = 1;
-// Engine origin HLCs contain wall-clock millis in their high bits.  The
-// adapter's deterministic source stamp must therefore sit above that range,
-// otherwise a remote record would be spuriously superseded by a local write
-// on one Region and replicas could diverge.
-const HLC_BASE: u64 = 1 << 63;
+// Deterministic physical milliseconds, inside the HLC's 48-bit clock range.
+const CLOCK_BASE_MILLIS: u64 = 1 << 47;
+
+#[derive(Debug)]
+struct SimulationClock(AtomicU64);
+impl terrabase::engine::ReplicationClock for SimulationClock {
+    fn now_millis(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
 const MAX_JOURNAL_PAGE: u32 = 4_096;
 const RECONCILIATION_LIMIT: usize = 1_000_000;
 static TEMP_ROOT: AtomicU64 = AtomicU64::new(1);
@@ -58,6 +65,7 @@ struct RegionState {
     member: MemberId,
     location: PathBuf,
     engine: Option<Engine>,
+    clock: Arc<SimulationClock>,
     applied: BTreeSet<(RegionId, u64)>,
     next_sequence: u64,
 }
@@ -124,24 +132,52 @@ impl ProductionWorld {
     }
 
     /// Creates a durable world under a unique temporary directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for zero Regions, a nonempty root, or unavailable storage or identifiers.
     pub fn new(region_count: usize) -> Result<Self, ProductionWorldError> {
-        let serial = TEMP_ROOT.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("terrabase-sim-{serial}"));
-        Self::with_root(region_count, FaultPlan::new(), root)
+        Self::with_faults(region_count, FaultPlan::new())
     }
 
-    /// Creates a durable world under the supplied fault plan and root.
+    /// Creates a durable world under the supplied fault plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for zero Regions, unavailable temporary storage, or
+    /// an engine or identifier that cannot be initialized.
     pub fn with_faults(
         region_count: usize,
         faults: FaultPlan,
     ) -> Result<Self, ProductionWorldError> {
-        let serial = TEMP_ROOT.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("terrabase-sim-{serial}"));
-        Self::with_root(region_count, faults, root)
+        if region_count == 0 {
+            return Err(ProductionWorldError::EmptyWorld);
+        }
+        for _ in 0..128 {
+            let serial = TEMP_ROOT.fetch_add(1, Ordering::Relaxed);
+            let root =
+                std::env::temp_dir().join(format!("terrabase-sim-{}-{serial}", std::process::id()));
+            match std::fs::create_dir(&root) {
+                Ok(()) => {
+                    let result = Self::with_root(region_count, faults, &root);
+                    if result.is_err() {
+                        let _ = std::fs::remove_dir_all(&root);
+                    }
+                    return result;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(_) => return Err(ProductionWorldError::EngineUnavailable),
+            }
+        }
+        Err(ProductionWorldError::EngineUnavailable)
     }
 
     /// Creates a world at an explicit durable root. The root must be owned by
     /// this world; an existing non-empty root is refused.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for zero Regions, a nonempty root, or unavailable storage or identifiers.
     pub fn with_root(
         region_count: usize,
         faults: FaultPlan,
@@ -167,8 +203,13 @@ impl ProductionWorld {
             let member = MemberId::try_new(&format!("sim-member-{index}"))
                 .map_err(|_| ProductionWorldError::InvalidIdentifier)?;
             let location = root.join(format!("region-{index}"));
+            let clock = Arc::new(SimulationClock(AtomicU64::new(CLOCK_BASE_MILLIS)));
+            let origin = terrabase::types::RegionId::try_new(&format!("region-{index}"))
+                .map_err(|_| ProductionWorldError::InvalidIdentifier)?;
             let config = EngineConfig::durable(&location)
-                .map_err(|_| ProductionWorldError::EngineUnavailable)?;
+                .map_err(|_| ProductionWorldError::EngineUnavailable)?
+                .with_replication_origin(origin)
+                .with_replication_clock(clock.clone());
             let engine =
                 Engine::open(config).map_err(|_| ProductionWorldError::EngineUnavailable)?;
             regions.push(RegionState {
@@ -176,6 +217,7 @@ impl ProductionWorld {
                 member,
                 location,
                 engine: Some(engine),
+                clock,
                 applied: BTreeSet::new(),
                 next_sequence: 0,
             });
@@ -231,6 +273,10 @@ impl ProductionWorld {
     }
 
     /// Restarts one durable region by closing and reopening its Engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the Region is unknown or its durable engine cannot restart.
     pub fn restart_region(&mut self, region: RegionId) -> Result<(), ProductionWorldError> {
         let Some(position) = self.region_position(region) else {
             return Err(ProductionWorldError::EngineUnavailable);
@@ -239,8 +285,12 @@ impl ProductionWorld {
             engine.shutdown().map_err(|_| ProductionWorldError::EngineUnavailable)?;
         }
         let location = self.regions[position].location.clone();
+        let origin = terrabase::types::RegionId::try_new(&format!("region-{}", region.index()))
+            .map_err(|_| ProductionWorldError::InvalidIdentifier)?;
         let config = EngineConfig::durable(&location)
-            .map_err(|_| ProductionWorldError::EngineUnavailable)?;
+            .map_err(|_| ProductionWorldError::EngineUnavailable)?
+            .with_replication_origin(origin)
+            .with_replication_clock(self.regions[position].clock.clone());
         self.regions[position].engine =
             Some(Engine::open(config).map_err(|_| ProductionWorldError::EngineUnavailable)?);
         // Progress is a cache, not the source of truth. Rebuild it from the
@@ -262,11 +312,8 @@ impl ProductionWorld {
                 break;
             }
             for durable in &page {
-                // The engine's local origin is path-bound and therefore is
-                // intentionally different from the simulation's Region
-                // identity.  Rebuild the adapter cache from the durable
-                // operation identity embedded in the canonical journal row,
-                // rather than guessing from that local origin string.
+                // Rebuild the adapter cache only from operation identities
+                // proven present in the durable journal.
                 for (id, row) in &self.records {
                     if durable
                         .canonical
@@ -325,7 +372,7 @@ impl ProductionWorld {
     }
 
     /// Reads the complete durable journal for one region.  This is deliberately
-    /// a fresh SQLite read on every proof operation; the simulation's row map
+    /// a fresh `SQLite` read on every proof operation; the simulation's row map
     /// is metadata for causal scheduling, never evidence that a mutation was
     /// persisted.
     fn durable_journal(
@@ -387,6 +434,10 @@ impl ProductionWorld {
     }
 
     /// Alias for [`Self::restart_region`] used by simulation fault drivers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the Region is unknown or its durable engine cannot restart.
     pub fn restart(&mut self, region: RegionId) -> Result<(), ProductionWorldError> {
         self.restart_region(region)
     }
@@ -567,7 +618,9 @@ impl ProductionWorld {
                 value,
             ));
         }
-        let mut state = terrabase_sync_core::native::ViewState::new(Default::default());
+        let mut state = terrabase_sync_core::native::ViewState::new(
+            terrabase_sync_core::native::Limits::default(),
+        );
         let sequence = engine.published_sequence().ok()?.get();
         let snapshot = terrabase_sync_core::native::Snapshot::new(
             GENERATION,
@@ -636,7 +689,7 @@ impl ProductionWorld {
         Some((digest, bytes))
     }
 
-    /// Whether a row has reached this Region's durable SQLite journal.  This
+    /// Whether a row has reached this Region's durable `SQLite` journal.  This
     /// is the proof behind `RegionalDurable`; it is intentionally independent
     /// of the cross-Region applied cache.
     #[must_use]
@@ -675,7 +728,12 @@ impl ReplicationEngine for ProductionWorld {
         let operation =
             terrabase::types::OperationId::try_new(&format!("sim-r{}-{}", region.index(), seq))
                 .ok()?;
-        let context = self.applied_frontier(region);
+        self.regions[position].clock.0.store(
+            CLOCK_BASE_MILLIS
+                .saturating_add(self.step)
+                .saturating_add_signed(self.faults.clock_offset_ms(region, self.step)),
+            Ordering::Relaxed,
+        );
         let engine = self.regions[position].engine.as_ref()?;
         let scope = engine.scope_for(&self.tenant);
         let snapshot = engine.read_snapshot(&scope).ok()?;
@@ -684,18 +742,28 @@ impl ReplicationEngine for ProductionWorld {
         let mut transaction = engine.begin(&scope, snapshot, operation).ok()?;
         let document = Document::new(id, collection, DocumentValue::String(value.to_string()));
         transaction.put(document, ExpectedVersion::Any).ok()?;
-        if !matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)) {
+        let CommitOutcome::Committed(receipt) = transaction.commit(LocalDurability::Synced) else {
             return None;
-        }
+        };
+        let batch = engine
+            .streams()
+            .replay_sync_journal(
+                &scope,
+                Some(terrabase::streaming::ChangeCheckpoint::after(
+                    receipt.sequence().get().saturating_sub(1),
+                    0,
+                )),
+                1,
+                &terrabase::types::Cancellation::default(),
+            )
+            .ok()?;
+        let provenance = batch.records().first()?.provenance();
+        let context = decode_frontier_context(provenance.context())?;
         let row = JournalRow {
             origin: region,
             seq,
             context,
-            hlc: Hlc::new(
-                HLC_BASE
-                    .saturating_add(seq)
-                    .saturating_add_signed(self.faults.clock_offset_ms(region, self.step)),
-            ),
+            hlc: Hlc::new(provenance.hlc()),
             key,
             value: value.to_string().into_bytes(),
             tombstone: false,
@@ -716,7 +784,12 @@ impl ReplicationEngine for ProductionWorld {
         let operation =
             terrabase::types::OperationId::try_new(&format!("sim-r{}-{}", region.index(), seq))
                 .ok()?;
-        let context = self.applied_frontier(region);
+        self.regions[position].clock.0.store(
+            CLOCK_BASE_MILLIS
+                .saturating_add(self.step)
+                .saturating_add_signed(self.faults.clock_offset_ms(region, self.step)),
+            Ordering::Relaxed,
+        );
         let engine = self.regions[position].engine.as_ref()?;
         let scope = engine.scope_for(&self.tenant);
         let snapshot = engine.read_snapshot(&scope).ok()?;
@@ -724,18 +797,28 @@ impl ReplicationEngine for ProductionWorld {
         let collection = terrabase::types::CollectionName::try_new(COLLECTION).ok()?;
         let mut transaction = engine.begin(&scope, snapshot, operation).ok()?;
         transaction.delete_in_collection(&collection, id, ExpectedVersion::Any);
-        if !matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)) {
+        let CommitOutcome::Committed(receipt) = transaction.commit(LocalDurability::Synced) else {
             return None;
-        }
+        };
+        let batch = engine
+            .streams()
+            .replay_sync_journal(
+                &scope,
+                Some(terrabase::streaming::ChangeCheckpoint::after(
+                    receipt.sequence().get().saturating_sub(1),
+                    0,
+                )),
+                1,
+                &terrabase::types::Cancellation::default(),
+            )
+            .ok()?;
+        let provenance = batch.records().first()?.provenance();
+        let context = decode_frontier_context(provenance.context())?;
         let row = JournalRow {
             origin: region,
             seq,
             context,
-            hlc: Hlc::new(
-                HLC_BASE
-                    .saturating_add(seq)
-                    .saturating_add_signed(self.faults.clock_offset_ms(region, self.step)),
-            ),
+            hlc: Hlc::new(provenance.hlc()),
             key,
             value: Vec::new(),
             tombstone: true,
@@ -845,9 +928,8 @@ impl ReplicationEngine for ProductionWorld {
         };
         let mut hash = fnv_bytes(0xcbf2_9ce4_8422_2325, b"terrabase-sim-fingerprint-v1");
         hash = fnv_bytes(hash, &(state.applied.len() as u64).to_be_bytes());
-        // Include evidence derived from the durable files without hashing
-        // path-bound local origins, which intentionally differ after the
-        // same source row is applied on another member.
+        // Include evidence derived from the durable files as well as the
+        // logical journal set maintained by the scheduler.
         let durable_rows = state
             .applied
             .iter()
@@ -908,15 +990,13 @@ impl ReplicationEngine for ProductionWorld {
                 let commit = row_commit(row);
                 let durable_has_row = durable.iter().any(|entry| {
                     entry.canonical.windows(commit.len()).any(|window| window == commit)
-                });
-                if durable_has_row {
-                    if let Ok(row_id) =
+                }) || self.durable_contains(state.id, row).unwrap_or(false);
+                if durable_has_row
+                    && let Ok(row_id) =
                         JournalRowId::new(format!("region-{}", row.origin.index()), row.seq)
-                    {
-                        let hash =
-                            terrabase_replication_core::anti_entropy::row_hash(&row_bytes(row));
-                        table.insert(&RowSummary::new(row_id, hash));
-                    }
+                {
+                    let hash = terrabase_replication_core::anti_entropy::row_hash(&row_bytes(row));
+                    table.insert(&RowSummary::new(row_id, hash));
                 }
             }
             table
@@ -1023,8 +1103,8 @@ impl ReplicationEngine for ProductionWorld {
         let scope = engine.scope_for(&self.tenant);
         // The wire contract carries a dotted context and receivers must not
         // expose a row before its dependencies. The current public
-        // `ReplicatedRecord` predates that field, so the adapter enforces the
-        // same causal gate while driving the production apply path. A stable
+        // adapter enforces the causal gate while driving the production
+        // apply path with the original persisted context. A stable
         // `(origin, seq)` tie-break makes every supplied permutation exercise
         // the same admissible causal order.
         let mut frontier = Frontier::new();
@@ -1036,8 +1116,7 @@ impl ReplicationEngine for ProductionWorld {
                 .enumerate()
                 .filter(|(_, row)| frontier.covers(&row.context))
                 .min_by_key(|(_, row)| (row.origin, row.seq))
-                .map(|(index, _)| index)
-                .unwrap_or(0);
+                .map_or(0, |(index, _)| index);
             let row = remaining.swap_remove(candidate);
             frontier.advance(row.origin, row.seq);
             ordered.push(row);
@@ -1252,9 +1331,13 @@ fn encode_frontier_context(frontier: &Frontier) -> Vec<u8> {
     entries.sort_by(|left, right| left.0.cmp(&right.0));
     let mut bytes = Vec::with_capacity(5 + entries.len() * 20);
     bytes.push(1);
-    bytes.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(
+        &u32::try_from(entries.len()).expect("simulation Region count fits u32").to_le_bytes(),
+    );
     for (origin, sequence) in &entries {
-        bytes.extend_from_slice(&(origin.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(
+            &u32::try_from(origin.len()).expect("formatted Region identity fits u32").to_le_bytes(),
+        );
         bytes.extend_from_slice(origin.as_bytes());
         bytes.extend_from_slice(&sequence.to_le_bytes());
     }
@@ -1265,4 +1348,29 @@ fn encode_frontier_context(frontier: &Frontier) -> Vec<u8> {
 #[must_use]
 fn production_capability_for(view: &str, generation: u64) -> u64 {
     fnv_bytes(fnv_bytes(0xcbf2_9ce4_8422_2325, view.as_bytes()), &generation.to_be_bytes())
+}
+
+fn decode_frontier_context(bytes: &[u8]) -> Option<Frontier> {
+    if bytes.is_empty() {
+        return Some(Frontier::new());
+    }
+    let (version, mut remaining) = bytes.split_first()?;
+    if *version != 1 {
+        return None;
+    }
+    let count = u32::from_le_bytes(remaining.get(..4)?.try_into().ok()?);
+    remaining = remaining.get(4..)?;
+    let mut frontier = Frontier::new();
+    for _ in 0..count {
+        let length =
+            usize::try_from(u32::from_le_bytes(remaining.get(..4)?.try_into().ok()?)).ok()?;
+        remaining = remaining.get(4..)?;
+        let origin = std::str::from_utf8(remaining.get(..length)?).ok()?;
+        let index = origin.strip_prefix("region-")?.parse::<usize>().ok()?;
+        remaining = remaining.get(length..)?;
+        let sequence = u64::from_le_bytes(remaining.get(..8)?.try_into().ok()?);
+        remaining = remaining.get(8..)?;
+        frontier.advance(RegionId::from_index(index), sequence);
+    }
+    remaining.is_empty().then_some(frontier)
 }

@@ -84,6 +84,23 @@ def median(values):
     return statistics.median(values) if values else float("nan")
 
 
+def has_admission_contract(document):
+    """Only admit immutable, envelope-aware lane documents.
+
+    Older retained attempts used ``unassigned`` digests and were produced
+    under the retired 8cpu/8G envelope. Keeping their measured numbers in the
+    table would turn historical facts into a current comparison claim.
+    """
+    comparison = document.get("comparability") if isinstance(document, dict) else None
+    if not isinstance(comparison, dict):
+        return False
+    digests = ("run_digest", "candidate_digest", "workload_digest", "topology_digest", "config_digest")
+    return all(isinstance(comparison.get(name), str)
+               and len(comparison[name]) == 64
+               and all(char in "0123456789abcdef" for char in comparison[name])
+               for name in digests)
+
+
 DIAGNOSTIC_IDENTITY = "tbep-qualification-harness/network-mtls/v1"
 DIAGNOSTIC_LIMIT = "source identity: terrabase-rust-diagnostic-qualification/v1"
 
@@ -107,6 +124,8 @@ def summarize(document):
         return ("invalid",) + ("-",) * 5
     if document.get("status") == "failed":
         return ("failed",) + ("-",) * 5
+    if not has_admission_contract(document):
+        return ("invalid",) + ("-",) * 5
     samples = document.get("samples")
     if not isinstance(samples, list) or not samples:
         return ("missing",) + ("-",) * 5

@@ -14,13 +14,13 @@ use terrabase_server::api::{ApiState, router};
 use terrabase_server::api_keys::{KeyStore, Scope, Verbs};
 use terrabase_server::backup::{BackupStreams, TimeTravelCache};
 use terrabase_server::control::ControlPlane;
-use terrabase_server::reactive_api::{CapabilityKeyRing, OriginProofKeyRing, ReactiveSessions};
+use terrabase_server::reactive_api::{CapabilityKeyRing, OriginProofKeyRing};
 use tower::util::ServiceExt;
 
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(1);
 
 /// An isolated public-router fixture. The root is deleted when the fixture is
-/// dropped, including database and control-plane SQLite files.
+/// dropped, including database and control-plane `SQLite` files.
 pub struct Fixture {
     root: PathBuf,
     /// The state shared by the router and test callers.
@@ -38,7 +38,7 @@ impl Fixture {
         let catalog = terrabase_tbep::catalog::HostCatalog::open(
             &root.join("databases"),
             8,
-            Duration::from_secs(60),
+            Duration::from_mins(1),
         )
         .expect("database catalog opens");
         let backups = Arc::new(BackupStreams::new(root.join("missing-litestream")));
@@ -49,11 +49,9 @@ impl Fixture {
             control: Some(Arc::new(control)),
             catalog: Some(Arc::new(catalog)),
             scope: ("tenant-a".into(), "project-a".into()),
-            reactive: Arc::new(ReactiveSessions::default()),
             backups: Arc::clone(&backups),
             backup_root: root.join("backup"),
             timetravel: Arc::new(TimeTravelCache::new(backups, &root.join("timetravel"))),
-            active_regions: 3,
             guards: Arc::new(terrabase_server::guards::AbuseGuards::new()),
             origin_proof_keys: Arc::new(
                 OriginProofKeyRing::new(
@@ -118,6 +116,7 @@ pub async fn send(router: Router, request: Request<Body>) -> axum::response::Res
 }
 
 /// Returns a stable API key registration used by broad-scope tests.
+#[must_use]
 pub fn admin_registration() -> (&'static str, &'static str, Scope) {
     ("tskey_e17_admin_abcdefghijkl", "e17-admin", Scope::every_database(Verbs::ALL))
 }

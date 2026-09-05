@@ -7,6 +7,7 @@
 //! plane. Until a durable replication adapter reports every required fact,
 //! readiness fails closed.
 
+use crate::wal_route::{DurableWalAssignmentSource, WalReplicaBinding, WalRouteError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -335,6 +336,45 @@ pub trait DurableMembershipSource: Send + Sync {
     fn load_admitted_placement(&self) -> Result<ProductionPlacement, MembershipSourceError>;
 }
 
+/// Admission belongs to one immutable configured placement. Once authority
+/// contradicts it, a new composition is required before serving again.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum MembershipAdmission {
+    #[default]
+    Pending,
+    Admitted,
+    Fenced,
+}
+
+impl MembershipAdmission {
+    fn reconcile(
+        &mut self,
+        configured: &ProductionPlacement,
+        source: &dyn DurableMembershipSource,
+    ) -> Result<(), ProductionMemberError> {
+        if *self == Self::Fenced {
+            return Err(ProductionMemberError::MembershipMismatch);
+        }
+        match source.load_admitted_placement() {
+            Ok(admitted) if &admitted == configured => {
+                *self = Self::Admitted;
+                Ok(())
+            }
+            Ok(_) => {
+                *self = Self::Fenced;
+                Err(ProductionMemberError::MembershipMismatch)
+            }
+            Err(MembershipSourceError::InvalidProof) => {
+                *self = Self::Fenced;
+                Err(ProductionMemberError::MembershipSource(MembershipSourceError::InvalidProof))
+            }
+            Err(error @ MembershipSourceError::Unavailable) => {
+                Err(ProductionMemberError::MembershipSource(error))
+            }
+        }
+    }
+}
+
 /// Failure to load an authoritative membership record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MembershipSourceError {
@@ -459,13 +499,33 @@ pub struct ProductionMemberFacts {
 
 /// One production Member process around one local durable seat.
 pub struct ProductionMemberRuntime {
+    // Revoke retained replication handles before dropping storage or transport.
+    wal_bindings: Mutex<WalBindings>,
     placement: ProductionPlacement,
     routes: DatabaseRoutingCatalog,
     member: Member,
     transport: ProductionQuicEndpoint,
-    membership_admitted: AtomicBool,
+    membership_admission: Mutex<MembershipAdmission>,
     data_plane: Mutex<Option<Arc<dyn ProductionDataPlane>>>,
     draining: AtomicBool,
+}
+
+/// Owns revocation even when the runtime is dropped without graceful drain.
+#[derive(Default)]
+struct WalBindings(BTreeMap<DatabaseRouteScope, WalReplicaBinding>);
+
+impl WalBindings {
+    fn fence(&self) {
+        for binding in self.0.values() {
+            binding.fence();
+        }
+    }
+}
+
+impl Drop for WalBindings {
+    fn drop(&mut self) {
+        self.fence();
+    }
 }
 
 impl ProductionMemberRuntime {
@@ -518,7 +578,8 @@ impl ProductionMemberRuntime {
             routes,
             member,
             transport,
-            membership_admitted: AtomicBool::new(false),
+            membership_admission: Mutex::new(MembershipAdmission::Pending),
+            wal_bindings: Mutex::new(WalBindings::default()),
             data_plane: Mutex::new(None),
             draining: AtomicBool::new(false),
         })
@@ -529,7 +590,9 @@ impl ProductionMemberRuntime {
     ///
     /// A control-plane outage after this succeeds does not revoke the durable
     /// admission. A lease expiry alone cannot remove a Member or lower an
-    /// acknowledgement boundary.
+    /// acknowledgement boundary. A different accepted placement or invalid
+    /// authority proof fences this composition permanently. Construct a new
+    /// Member for the newly admitted placement.
     ///
     /// # Errors
     ///
@@ -539,13 +602,59 @@ impl ProductionMemberRuntime {
         &self,
         source: &dyn DurableMembershipSource,
     ) -> Result<(), ProductionMemberError> {
-        let admitted =
-            source.load_admitted_placement().map_err(ProductionMemberError::MembershipSource)?;
-        if admitted != self.placement {
-            return Err(ProductionMemberError::MembershipMismatch);
+        let mut admission = lock_unpoisoned(&self.membership_admission);
+        let result = admission.reconcile(&self.placement, source);
+        if *admission == MembershipAdmission::Fenced {
+            lock_unpoisoned(&self.wal_bindings).fence();
         }
-        self.membership_admitted.store(true, Ordering::Release);
-        Ok(())
+        result
+    }
+
+    /// Loads accepted writer authority and creates or reconciles the database binding.
+    /// Identities must exactly match the configured authenticated transport.
+    /// Changed assignments fence old handles; replacement requires a new runtime.
+    /// Membership fencing, drain, and runtime destruction revoke all returned clones.
+    ///
+    /// # Errors
+    /// Rejects unadmitted members, unknown databases, invalid or unavailable
+    /// authority, foreign identities, and invalid regional writer assignments.
+    pub fn bind_wal_replica(
+        &self,
+        scope: DatabaseRouteScope,
+        source: &dyn DurableWalAssignmentSource,
+    ) -> Result<WalReplicaBinding, WalRouteError> {
+        let admission = lock_unpoisoned(&self.membership_admission);
+        if *admission != MembershipAdmission::Admitted
+            || self.draining.load(Ordering::Acquire)
+            || self.routes.resolve(&scope).is_none()
+        {
+            return Err(WalRouteError::Unauthorized);
+        }
+        let observed = source.load_assignment(scope);
+        let mut bindings = lock_unpoisoned(&self.wal_bindings);
+        if let Some(binding) = bindings.0.get(&scope) {
+            binding.reconcile_assignment(observed.as_ref().map_err(|error| *error))?;
+            return Ok(binding.clone());
+        }
+        let assignment = observed.map_err(WalRouteError::Authority)?;
+        if assignment.scope != scope
+            || assignment.generation != self.placement.generation()
+            || assignment.epoch != self.placement.epoch()
+        {
+            return Err(WalRouteError::Unauthorized);
+        }
+        let config = self.transport.config();
+        for identity in [&assignment.writer, &assignment.follower] {
+            if identity != config.local_identity()
+                && !config.peers().any(|peer| peer.identity() == identity)
+            {
+                return Err(WalRouteError::Unauthorized);
+            }
+        }
+        let binding =
+            WalReplicaBinding::new(scope, &self.placement, assignment.writer, assignment.follower)?;
+        bindings.0.insert(scope, binding.clone());
+        Ok(binding)
     }
 
     /// Attaches the one durable data-plane and complete-host composition.
@@ -575,6 +684,12 @@ impl ProductionMemberRuntime {
     /// Computes readiness without consulting NATS liveness.
     #[must_use]
     pub fn facts(&self) -> ProductionMemberFacts {
+        let admitted =
+            *lock_unpoisoned(&self.membership_admission) == MembershipAdmission::Admitted;
+        self.facts_with_membership(admitted)
+    }
+
+    fn facts_with_membership(&self, membership_admitted: bool) -> ProductionMemberFacts {
         let transport = self.transport.facts();
         let data_plane = lock_unpoisoned(&self.data_plane)
             .as_ref()
@@ -589,7 +704,7 @@ impl ProductionMemberRuntime {
         {
             blockers.insert(ProductionReadinessBlocker::CatalogNotServing);
         }
-        if !self.membership_admitted.load(Ordering::Acquire) {
+        if !membership_admitted {
             blockers.insert(ProductionReadinessBlocker::MembershipNotAdmitted);
         }
         if !transport.bound || !transport.accepting || !transport.tls_provider_ready {
@@ -654,20 +769,26 @@ impl ProductionMemberRuntime {
         &self,
         scope: &DatabaseRouteScope,
     ) -> Result<ProductionDatabaseLease, ProductionAdmissionError> {
-        let facts = self.facts();
+        let admission = lock_unpoisoned(&self.membership_admission);
+        let facts = self.facts_with_membership(*admission == MembershipAdmission::Admitted);
         if !facts.ready {
             return Err(ProductionAdmissionError::NotReady(facts.blockers));
         }
         let database =
             self.routes.resolve(scope).ok_or(ProductionAdmissionError::UnknownDatabaseScope)?;
         let lease = self.member.acquire(database).map_err(ProductionAdmissionError::Storage)?;
+        drop(admission);
         Ok(ProductionDatabaseLease { scope: *scope, lease })
     }
 
     /// Stops admission, drains the data plane and QUIC endpoint, then flushes
     /// every isolated engine within bounded component deadlines.
     pub async fn drain(self) -> ProductionMemberDrainReport {
-        self.draining.store(true, Ordering::Release);
+        {
+            let _admission = lock_unpoisoned(&self.membership_admission);
+            self.draining.store(true, Ordering::Release);
+            lock_unpoisoned(&self.wal_bindings).fence();
+        }
         let data_plane = lock_unpoisoned(&self.data_plane).clone();
         if let Some(data_plane) = &data_plane {
             data_plane.begin_drain();
@@ -785,6 +906,47 @@ mod tests {
     }
 
     #[test]
+    fn runtime_binding_registry_revokes_retained_handles_on_fence_and_drop() {
+        let placement = ProductionPlacement::try_new(
+            member(1),
+            7,
+            9,
+            [ProductionRegionSeats::try_new(RegionCode::GRU, [member(1), member(2)]).unwrap()],
+        )
+        .unwrap();
+        let binding = || {
+            crate::wal_route::WalReplicaBinding::new(
+                scope(1),
+                &placement,
+                super::MemberWorkloadIdentity::try_new(
+                    "production",
+                    "cluster",
+                    &member(1).to_text(),
+                )
+                .unwrap(),
+                super::MemberWorkloadIdentity::try_new(
+                    "production",
+                    "cluster",
+                    &member(2).to_text(),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        let retained = binding();
+        let mut registry = super::WalBindings::default();
+        registry.0.insert(scope(1), retained.clone());
+        assert!(!retained.is_fenced());
+        registry.fence();
+        assert!(retained.is_fenced());
+        let retained = binding();
+        registry.0.insert(scope(1), retained.clone());
+        assert!(!retained.is_fenced());
+        drop(registry);
+        assert!(retained.is_fenced());
+    }
+
+    #[test]
     fn placement_is_exact_rf2_over_the_initial_catalog() {
         let placement = ProductionPlacement::try_new(
             member(1),
@@ -835,5 +997,74 @@ mod tests {
             DatabaseRoutingCatalog::try_new([first, first]).err(),
             Some(ProductionMemberError::InvalidRoutingCatalog)
         );
+    }
+    struct MembershipSource(Result<ProductionPlacement, super::MembershipSourceError>);
+
+    impl super::DurableMembershipSource for MembershipSource {
+        fn load_admitted_placement(
+            &self,
+        ) -> Result<ProductionPlacement, super::MembershipSourceError> {
+            self.0.clone()
+        }
+    }
+
+    fn placement(epoch: u64) -> ProductionPlacement {
+        ProductionPlacement::try_new(
+            member(1),
+            1,
+            epoch,
+            [ProductionRegionSeats::try_new(RegionCode::GRU, [member(1), member(2)]).unwrap()],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn membership_outage_preserves_admission_but_cannot_grant_it() {
+        let configured = placement(1);
+        let unavailable = MembershipSource(Err(super::MembershipSourceError::Unavailable));
+        let mut admission = super::MembershipAdmission::Pending;
+        assert!(admission.reconcile(&configured, &unavailable).is_err());
+        assert_eq!(admission, super::MembershipAdmission::Pending);
+        admission.reconcile(&configured, &MembershipSource(Ok(configured.clone()))).unwrap();
+        assert!(admission.reconcile(&configured, &unavailable).is_err());
+        assert_eq!(admission, super::MembershipAdmission::Admitted);
+    }
+
+    #[test]
+    fn changed_membership_fences_the_old_composition_even_if_the_source_rolls_back() {
+        let configured = placement(1);
+        let original = MembershipSource(Ok(configured.clone()));
+        let mut admission = super::MembershipAdmission::Pending;
+        admission.reconcile(&configured, &original).unwrap();
+        assert_eq!(
+            admission.reconcile(&configured, &MembershipSource(Ok(placement(2)))),
+            Err(ProductionMemberError::MembershipMismatch)
+        );
+        assert_eq!(admission, super::MembershipAdmission::Fenced);
+        assert_eq!(
+            admission.reconcile(&configured, &original),
+            Err(ProductionMemberError::MembershipMismatch)
+        );
+        assert_eq!(admission, super::MembershipAdmission::Fenced);
+        let mut replacement = super::MembershipAdmission::Pending;
+        replacement.reconcile(&placement(2), &MembershipSource(Ok(placement(2)))).unwrap();
+        assert_eq!(replacement, super::MembershipAdmission::Admitted);
+    }
+
+    #[test]
+    fn invalid_membership_proof_revokes_existing_admission() {
+        let configured = placement(1);
+        let mut admission = super::MembershipAdmission::Pending;
+        admission.reconcile(&configured, &MembershipSource(Ok(configured.clone()))).unwrap();
+        assert_eq!(
+            admission.reconcile(
+                &configured,
+                &MembershipSource(Err(super::MembershipSourceError::InvalidProof))
+            ),
+            Err(ProductionMemberError::MembershipSource(
+                super::MembershipSourceError::InvalidProof
+            ))
+        );
+        assert_eq!(admission, super::MembershipAdmission::Fenced);
     }
 }

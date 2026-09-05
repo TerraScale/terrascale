@@ -5,7 +5,7 @@
 //! served by tonic. The document/query/sync-session data-plane RPCs were
 //! deleted with the S-03 TBEP reduction (the public API owns the data
 //! plane); the backbone subscription streams, schemas and migrations,
-//! replication observation, tier administration, usage, topology/admin
+//! replication observation, usage, topology/admin
 //! reads, and supervision operations ride gRPC.
 //!
 //! Layout:
@@ -69,7 +69,7 @@ pub mod registry;
 pub mod replication;
 pub mod replication_lanes;
 pub mod value;
-pub mod wal_follower;
+pub use terrabase_cluster::wal_follower;
 
 /// The compiled protobuf contract (prost messages and tonic stubs).
 pub mod proto {

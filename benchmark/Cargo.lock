@@ -1477,6 +1477,7 @@ version = "0.23.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
 dependencies = [
+ "aws-lc-rs",
  "log",
  "once_cell",
  "ring",
@@ -1502,6 +1503,7 @@ version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
+ "aws-lc-rs",
  "ring",
  "rustls-pki-types",
  "untrusted",
@@ -1771,6 +1773,7 @@ dependencies = [
  "serde_json",
  "terrabase",
  "terrabase-member-transport",
+ "tokio",
 ]
 
 [[package]]
@@ -1804,9 +1807,15 @@ dependencies = [
 name = "terrabase-server"
 version = "0.1.0"
 dependencies = [
+ "aws-lc-rs",
  "axum",
  "blake3",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "rmp",
+ "rustls",
  "serde",
  "serde_json",
  "terrabase",
@@ -1814,11 +1823,13 @@ dependencies = [
  "terrabase-sync-core",
  "terrabase-tbep",
  "tokio",
+ "tokio-rustls",
  "toml",
  "tower",
  "utoipa",
  "utoipa-axum",
  "utoipa-scalar",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -1849,6 +1860,7 @@ dependencies = [
  "rusqlite",
  "rustls-pki-types",
  "terrabase",
+ "terrabase-cluster",
  "terrabase-member-transport",
  "terrabase-replication-core",
  "terrabase-sync-core",
@@ -2370,6 +2382,15 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]

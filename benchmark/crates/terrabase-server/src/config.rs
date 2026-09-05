@@ -117,8 +117,6 @@ pub struct ProductionTransport {
     pub server_private_key: PathBuf,
     /// TLS client/member CA bundle path.
     pub client_ca: PathBuf,
-    /// Exact private-member principals admitted by the TBEP certificate policy.
-    pub member_principals: BTreeSet<String>,
     /// Exact remote peer endpoint and identity set.
     pub peers: Vec<ProductionPeer>,
 }
@@ -182,11 +180,6 @@ pub struct PublicApiConfig {
     pub capability_key_file: Option<PathBuf>,
     /// Previous view-capability HMAC key retained for one overlap.
     pub capability_previous_key_file: Option<PathBuf>,
-    /// The regions this deployment believes active for `GlobalDurable`
-    /// (D-37: the class fails closed under two). Absent means a
-    /// single-region deployment and every global write is refused with
-    /// its typed remedy.
-    pub active_regions: usize,
 }
 
 /// Fully validated production server configuration.
@@ -1162,7 +1155,6 @@ fn parse_public_api(
         origin_proof_previous_key_file: section.origin_proof_previous_key_file.clone(),
         capability_key_file: section.capability_key_file.clone(),
         capability_previous_key_file: section.capability_previous_key_file.clone(),
-        active_regions: named.len(),
     }))
 }
 
@@ -1491,9 +1483,7 @@ address = "0.0.0.0:7202"
         let config = ServerConfig::parse(&valid()).expect("valid config");
         assert_eq!(config.region, Region::Gru);
         assert_eq!(config.max_inflight, 128);
-        assert!(
-            config.member_principals.contains("spiffe://local/stack-member")
-        );
+        assert!(config.member_principals.contains("spiffe://local/stack-member"));
     }
 
     #[test]
@@ -1540,14 +1530,11 @@ address = "0.0.0.0:7202"
     fn member_principals_are_bounded_trimmed_and_unique() {
         for principal in [
             "spiffe://\u{0001}",
-            " gateway",
-            "gateway ",
+            " member",
+            "member ",
             &"g".repeat(terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES + 1),
         ] {
-            let text = valid().replace(
-                "spiffe://local/stack-member",
-                principal,
-            );
+            let text = valid().replace("spiffe://local/stack-member", principal);
             assert!(
                 matches!(
                     ServerConfig::parse(&text),

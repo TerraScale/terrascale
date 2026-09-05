@@ -50,6 +50,7 @@ const LAYERS: &[(&str, u32)] = &[
     ("terrabase-cluster", 5),
     ("terrabase-tbep", 6),
     ("terrabase-server", 7),
+    ("terrabase-sim", 8),
 ];
 
 /// The frozen internal-dependency allow-list: every `(consumer, provider)`
@@ -100,7 +101,17 @@ const LAYERS: &[(&str, u32)] = &[
 /// that boundary and contains no host or network code. The edge points
 /// strictly down the frozen layer order (6 -> 4), and ADR 0044's range-based
 /// anti-entropy decision is the accepting record.
+///
+/// Review note (E-12 / ADR 0044 §4): `terrabase-sim` exercises the durable
+/// Engine, fault-injectable member transport, range reconciliation, and
+/// result-view state to check the specified replication and sync invariants.
+/// Its four provider edges point down from the qualification layer; production
+/// crates never depend on the simulation harness.
 const ALLOWED_EDGES: &[(&str, &str)] = &[
+    ("terrabase-sim", "terrabase"),
+    ("terrabase-sim", "terrabase-member-transport"),
+    ("terrabase-sim", "terrabase-replication-core"),
+    ("terrabase-sim", "terrabase-sync-core"),
     ("terrabase-crdt", "terrabase-causal"),
     ("terrabase-replication-core", "terrabase-causal"),
     ("terrabase-cluster", "terrabase"),

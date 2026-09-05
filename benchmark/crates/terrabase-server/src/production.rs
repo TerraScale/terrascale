@@ -125,6 +125,11 @@ impl ProductionDependencyProvider for MissingProductionDependencyProvider {
 /// This function is the testable composition boundary used by the daemon and
 /// by the local harness. It has no development fallback and performs no
 /// listener bind when a required provider is absent.
+///
+/// # Errors
+///
+/// Returns `Catalog` if the authoritative catalog cannot be opened or validated,
+/// or `Component` if a required dependency cannot be initialized.
 pub fn prepare_production<P: ProductionDependencyProvider>(
     config: &ProductionConfig,
     provider: &P,
@@ -271,7 +276,7 @@ impl ProductionCatalogBootstrap {
             return close_with(&member, ProductionCatalogError::DatabaseRegionNotPlaced);
         }
 
-        let member_databases = member.database_ids().into_iter().collect::<BTreeSet<_>>();
+        let member_databases = member.database_ids().collect::<BTreeSet<_>>();
         let route_databases =
             routes.routes().map(|(_, database)| database.clone()).collect::<BTreeSet<_>>();
         if member_databases != route_databases || member.status().databases != routes.len() {

@@ -48,6 +48,8 @@ pub struct MemberHost {
     journal_sync: Mutex<()>,
 }
 
+type SubscriptionSeed = (crate::reactive::ProjectedMembers, Vec<(String, Vec<u8>)>);
+
 impl MemberHost {
     /// Opens the staged host when the explicit TB-1a construction flag is on.
     ///
@@ -116,6 +118,11 @@ impl MemberHost {
     /// Attaches an authorization-equivalent reader to the shared SQL view.
     /// The authorization scope is part of the view identity; callers must
     /// pass the canonical rule/entitlement binding, never a per-request id.
+    ///
+    /// # Errors
+    ///
+    /// Returns a hosting error for invalid scope or query, unavailable
+    /// snapshot data, or a subscription that cannot be admitted.
     pub fn reactive_subscribe_authorized(
         &self,
         scope: &registry::BoundScope,
@@ -154,6 +161,11 @@ impl MemberHost {
     /// Opens a reactive view from the query planner's compiled SQL plan.
     /// Snapshot seeding executes that plan once; committed rows then flow
     /// through the dependency-indexed shared materializer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a hosting error for invalid scope or query, unavailable
+    /// snapshot data, or a subscription that cannot be admitted.
     pub fn reactive_subscribe_plan(
         &self,
         scope: &registry::BoundScope,
@@ -270,7 +282,7 @@ impl MemberHost {
         &self,
         scope: &registry::BoundScope,
         spec: &terrabase_sync_core::server::SubscriptionSpec,
-    ) -> Result<(crate::reactive::ProjectedMembers, Vec<(String, Vec<u8>)>), HostingError> {
+    ) -> Result<SubscriptionSeed, HostingError> {
         use terrabase_sync_core::server::Condition;
 
         let engine = self.engine.engine();
@@ -464,60 +476,6 @@ impl TbepHost for MemberHost {
         request: &registry::UsageExportRequest,
     ) -> Result<registry::UsageExportResponse, HostingError> {
         self.engine.usage_export(scope, request)
-    }
-
-    fn tier_configure(
-        &self,
-        scope: &registry::BoundScope,
-        request: &registry::TierConfigureRequest,
-        idempotency_key: &str,
-    ) -> Result<registry::TierConfigureResponse, HostingError> {
-        self.engine.tier_configure(scope, request, idempotency_key)
-    }
-
-    fn tier_inspect(
-        &self,
-        scope: &registry::BoundScope,
-    ) -> Result<registry::TierInspectResponse, HostingError> {
-        self.engine.tier_inspect(scope)
-    }
-
-    fn tier_explain(
-        &self,
-        scope: &registry::BoundScope,
-    ) -> Result<registry::TierExplainResponse, HostingError> {
-        self.engine.tier_explain(scope)
-    }
-
-    fn tier_dry_run(
-        &self,
-        scope: &registry::BoundScope,
-    ) -> Result<registry::TierDryRunResponse, HostingError> {
-        self.engine.tier_dry_run(scope)
-    }
-
-    fn tier_run(
-        &self,
-        scope: &registry::BoundScope,
-        idempotency_key: &str,
-    ) -> Result<registry::TierRunResponse, HostingError> {
-        self.engine.tier_run(scope, idempotency_key)
-    }
-
-    fn tier_pause(
-        &self,
-        scope: &registry::BoundScope,
-        idempotency_key: &str,
-    ) -> Result<registry::TierPauseResponse, HostingError> {
-        self.engine.tier_pause(scope, idempotency_key)
-    }
-
-    fn tier_resume(
-        &self,
-        scope: &registry::BoundScope,
-        idempotency_key: &str,
-    ) -> Result<registry::TierResumeResponse, HostingError> {
-        self.engine.tier_resume(scope, idempotency_key)
     }
 
     fn admin_status(&self) -> Result<registry::AdminStatusResponse, HostingError> {

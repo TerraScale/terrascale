@@ -108,10 +108,10 @@ fn merge_doc(docs: &mut BTreeMap<u64, DocVersion>, row: &JournalRow) -> bool {
             // A concurrent remove wins regardless of clock skew. HLC and
             // origin are the deterministic tiebreak for competing puts (or
             // competing removes).
-            if row.tombstone != stored.tombstone {
-                row.tombstone
-            } else {
+            if row.tombstone == stored.tombstone {
                 (row.hlc.value(), row.origin) > (stored.hlc, stored.origin)
+            } else {
+                row.tombstone
             }
         }
     };
@@ -502,24 +502,24 @@ pub fn capability_for(view: &str, generation: u64) -> u64 {
 /// their supplied cut once callers provide a [`ViewRevision`].
 pub trait RevisionInput {
     /// Resolves the supplied input to the revision that must be checked.
-    fn revision(&self, world: &StubWorld, region: RegionId) -> Option<ViewRevision>;
+    fn revision(self, world: &StubWorld, region: RegionId) -> Option<ViewRevision>;
 }
 
 impl RevisionInput for &str {
-    fn revision(&self, world: &StubWorld, region: RegionId) -> Option<ViewRevision> {
+    fn revision(self, world: &StubWorld, region: RegionId) -> Option<ViewRevision> {
         world.view_revision(self, region)
     }
 }
 
 impl RevisionInput for &ViewRevision {
-    fn revision(&self, _world: &StubWorld, _region: RegionId) -> Option<ViewRevision> {
-        Some((**self).clone())
+    fn revision(self, _world: &StubWorld, _region: RegionId) -> Option<ViewRevision> {
+        Some(self.clone())
     }
 }
 
 impl RevisionInput for ViewRevision {
-    fn revision(&self, _world: &StubWorld, _region: RegionId) -> Option<ViewRevision> {
-        Some(self.clone())
+    fn revision(self, _world: &StubWorld, _region: RegionId) -> Option<ViewRevision> {
+        Some(self)
     }
 }
 
@@ -590,12 +590,6 @@ impl ReplicationEngine for StubWorld {
                         scheduled += Self::schedule_repair_into(pending, step, row, right_position);
                     }
                 }
-                (None, Some(_)) => {
-                    union_len = union_len.saturating_add(1);
-                    if let Some((_, row)) = right_iter.next() {
-                        scheduled += Self::schedule_repair_into(pending, step, row, left_position);
-                    }
-                }
                 (Some(left_id), Some(right_id)) if left_id == right_id => {
                     union_len = union_len.saturating_add(1);
                     let _left = left_iter.next();
@@ -607,7 +601,7 @@ impl ReplicationEngine for StubWorld {
                         scheduled += Self::schedule_repair_into(pending, step, row, right_position);
                     }
                 }
-                (Some(_), Some(_)) => {
+                (_, Some(_)) => {
                     union_len = union_len.saturating_add(1);
                     if let Some((_, row)) = right_iter.next() {
                         scheduled += Self::schedule_repair_into(pending, step, row, left_position);

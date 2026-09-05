@@ -1,16 +1,12 @@
 //! Budget tests for the IX-04 optimizer measurement class.
 //!
-//! Every test here decides one written budget of
-//! `docs/benchmarks/ix04-optimizer-evidence.md` by driving the real engine
-//! through the real public seam and reading the typed reads back. The
-//! counters are deterministic facts, so a failure is a budget breach, not
-//! noise.
+//! These tests exercise query selection, descriptor state, and publication
+//! counts through the real engine. Ignored diagnostics report storage footprint;
+//! they do not qualify write I/O overhead.
 
 use super::{
     gates::Trend,
-    optimizer::{
-        self, AdHocLane, OptimizerRunRecord, OptimizerWorkload, WritePathComparison, budgets,
-    },
+    optimizer::{self, AdHocLane, OptimizerRunRecord, OptimizerWorkload, budgets},
     reference,
     vocabulary::{ObjectiveStatus, Verdict},
 };
@@ -163,29 +159,17 @@ fn the_first_sighting_of_each_shape_creates_exactly_one_index() {
         "the triggering query still answers"
     );
     assert_eq!(window.refusals, 0);
-    // D-42 supersedes the memory-only half of OH-B1: the first sighting of
-    // a field durably registers its extracted-column descriptor (one ALTER
-    // pair, one descriptor row, covering indexes per field) — one Active
-    // registration per field, then `Unchanged`. File sizes do not witness
-    // it: under WAL with the engine's off-path passive checkpoints the
-    // window's frames land in reused WAL capacity, so the durable-byte
-    // counter reads zero while the registrations commit. The non-vacuity
-    // guard is therefore the durable table itself: all four fields stand
-    // Active after the window. Steady-state serving still appends nothing:
-    // the same shapes re-run choose their indexes without writing a byte,
-    // and the descriptor set is unchanged.
+    // First use persists descriptors. File lengths cannot measure the write
+    // I/O because checkpoints and WAL reuse change allocation independently.
     assert_eq!(
         active_descriptor_fields(&lane),
         ["f0", "f1", "f2", "f3"],
         "the first sighting registers durable descriptors"
     );
+    let revision = lane.published_revision();
     let steady = optimizer::run_single_collection(&lane, "adhoc", &["f0", "f1", "f2", "f3"]);
     assert_eq!(steady.creations, 0, "the re-run creates nothing");
-    assert_eq!(
-        steady.durable_bytes_written,
-        budgets::DURABLE_BYTES_PER_CREATION * u64::try_from(shapes.len()).unwrap_or(0),
-        "OH-B1: served shapes append no durable bytes"
-    );
+    assert_eq!(lane.published_revision(), revision, "served shapes publish no document revisions");
     assert_eq!(
         active_descriptor_fields(&lane),
         ["f0", "f1", "f2", "f3"],
@@ -364,62 +348,23 @@ fn each_creation_performs_one_published_initial_build() {
     lane.remove();
 }
 
-/// OH-B3 — the write-path durable overhead of active auto indexes is zero:
-/// the same acknowledged write stream appends the same durable bytes with
-/// active auto indexes as without them, and the gate reads the comparison as
-/// inside the noise band.
+/// Index maintenance preserves one publication per acknowledged document write.
 #[test]
-fn active_auto_indexes_add_no_durable_bytes_to_the_write_path() {
-    const COLLECTIONS: usize = 4;
-    const WRITES: usize = 16;
-
-    let without = {
-        let lane = AdHocLane::open("oh-b3-without");
-        for collection in 0..COLLECTIONS {
-            let name = format!("adhoc{collection}");
-            lane.seed_collection(&name, 8, &["f0"]);
+fn active_auto_indexes_preserve_document_publication_counts() {
+    for indexed in [false, true] {
+        let lane =
+            AdHocLane::open(if indexed { "indexed-publications" } else { "plain-publications" });
+        lane.seed_collection("adhoc0", 8, &["f0"]);
+        if indexed {
+            let created = optimizer::run_cross_collection(&lane, 1, &["f0"], 1);
+            assert_eq!(created.creations, 1);
         }
-        // No ad-hoc query runs here, so no auto index exists.
-        let rounds = (0..3)
-            .map(|round| {
-                let target = format!("adhoc{}", round % COLLECTIONS);
-                let bytes = lane.write_stream(&target, WRITES);
-                f64::from(u32::try_from(bytes).unwrap_or(u32::MAX))
-                    / f64::from(u32::try_from(WRITES).unwrap_or(u32::MAX))
-            })
-            .collect::<Vec<f64>>();
-        assert_eq!(lane.registered().len(), 0, "the baseline lane carries no index at all");
+        let revision = lane.published_revision();
+        lane.write_stream("adhoc0", 16);
+        assert_eq!(lane.published_revision(), revision + 16);
+        assert_eq!(lane.ad_hoc("adhoc0", &["f0"], 0), Ok(1));
         lane.remove();
-        rounds
-    };
-
-    let with = {
-        let lane = AdHocLane::open("oh-b3-with");
-        for collection in 0..COLLECTIONS {
-            let name = format!("adhoc{collection}");
-            lane.seed_collection(&name, 8, &["f0"]);
-        }
-        // One ad-hoc shape per collection: one live auto index each.
-        let created = optimizer::run_cross_collection(&lane, COLLECTIONS, &["f0"], 1);
-        assert_eq!(created.creations, COLLECTIONS as u64);
-        assert_eq!(created.live_auto_after, COLLECTIONS);
-
-        let rounds = (0..3)
-            .map(|round| {
-                let target = format!("adhoc{}", round % COLLECTIONS);
-                let bytes = lane.write_stream(&target, WRITES);
-                f64::from(u32::try_from(bytes).unwrap_or(u32::MAX))
-                    / f64::from(u32::try_from(WRITES).unwrap_or(u32::MAX))
-            })
-            .collect::<Vec<f64>>();
-        assert_eq!(lane.registered().len(), COLLECTIONS, "the measured lane carries the indexes");
-        lane.remove();
-        rounds
-    };
-
-    let comparison = WritePathComparison::of(without, with, COLLECTIONS);
-    assert_eq!(comparison.trend, Trend::Stable, "the durable-byte counter must not move");
-    assert_eq!(comparison.verdict, Verdict::NoImprovement, "the budget is met");
+    }
 }
 
 /// OH-B4 — one dynamic query produces exactly one selection record, whatever
@@ -589,14 +534,14 @@ fn ix04_adhoc_workload_characterization() {
             OptimizerWorkload::SingleCollection,
             vec![format!(
                 "window counters: {} operations, {} selections, {} creations, {} chosen, {} \
-                 cache hits, {} unexplained complete candidates, {} durable bytes, {} live auto",
+                 cache hits, {} unexplained complete candidates, {} storage footprint change in bytes, {} live auto",
                 single.operations,
                 single.selections,
                 single.creations,
                 single.chosen,
                 single.cache_hits,
                 single.unexplained_unchosen_complete,
-                single.durable_bytes_written,
+                single.storage_footprint_change_bytes,
                 single.live_auto_after
             )]
         )
@@ -629,7 +574,7 @@ fn ix04_write_path_overhead_characterization() {
             .map(|round| {
                 let target = format!("adhoc{}", round % COLLECTIONS);
                 let bytes = lane.write_stream(&target, WRITES);
-                f64::from(u32::try_from(bytes).unwrap_or(u32::MAX))
+                f64::from(i32::try_from(bytes).expect("diagnostic footprint change fits i32"))
                     / f64::from(u32::try_from(WRITES).unwrap_or(u32::MAX))
             })
             .collect::<Vec<f64>>()
@@ -652,30 +597,14 @@ fn ix04_write_path_overhead_characterization() {
         .map(|round| {
             let target = format!("adhoc{}", round % COLLECTIONS);
             let bytes = lane.write_stream(&target, WRITES);
-            f64::from(u32::try_from(bytes).unwrap_or(u32::MAX))
+            f64::from(i32::try_from(bytes).expect("diagnostic footprint change fits i32"))
                 / f64::from(u32::try_from(WRITES).unwrap_or(u32::MAX))
         })
         .collect::<Vec<f64>>();
 
-    let comparison = WritePathComparison::of(without, with, COLLECTIONS);
-    println!("durable bytes per write without auto indexes: {:?}", comparison.without_auto_indexes);
-    println!(
-        "durable bytes per write with {} active auto indexes: {:?}",
-        comparison.active_auto_indexes, comparison.with_auto_indexes
-    );
-    println!(
-        "receipt (write-path):\n{}",
-        OptimizerRunRecord::budget_comparison(
-            OptimizerWorkload::WritePath,
-            comparison.verdict,
-            vec![format!(
-                "gate trend {:?}; budget OH-B3 is {} durable bytes per write per active index",
-                comparison.trend,
-                budgets::DURABLE_BYTES_PER_WRITE_PER_ACTIVE_INDEX
-            )],
-        )
-        .render()
-    );
+    println!("storage footprint change per write without auto indexes: {without:?}");
+    println!("storage footprint change per write with {COLLECTIONS} active auto indexes: {with:?}");
+    println!("Write I/O overhead is inconclusive: file lengths do not measure bytes written.");
 
     lane.remove();
 }

@@ -433,3 +433,10 @@ pub(crate) fn decode_rejection(code: u8) -> Option<CommitRejection> {
         _ => None,
     }
 }
+
+/// Fingerprints a structurally valid document with the storage's canonical encoding.
+pub(crate) fn document_fingerprint(document: &Document) -> [u8; 32] {
+    let mut bytes = Vec::new();
+    encode_document(&mut bytes, document);
+    *blake3::hash(&bytes).as_bytes()
+}

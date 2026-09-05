@@ -32,13 +32,16 @@ pub const ENVELOPE_VERSION_MAJOR: u16 = 1;
 /// (SE-07) adds the batched acknowledgement report
 /// ([`FrameKind::AckBatch`]); minor 2 (S-05, ADR 0041 D-35/D-36) adds the
 /// journal tailer's replicated-record batch ([`FrameKind::ReplicationBatch`]);
-/// minor 3 adds the durable source sequence to replicated records. Encoders
-/// use the minimum minor for each frame kind so older peers can continue to
-/// decode unchanged frame classes.
-pub const ENVELOPE_VERSION_MINOR: u16 = 3;
+/// minor 3 adds the durable source sequence to replicated records; minor 4
+/// adds the bounded opaque causal-context bytes to each replicated record.
+/// Encoders use the canonical minor for each frame kind so older peers can
+/// continue to decode unchanged frame classes, while a legacy replication
+/// batch at minor 3 remains decodable with an empty context.
+pub const ENVELOPE_VERSION_MINOR: u16 = REPLICATION_BATCH_CONTEXT_VERSION_MINOR;
 
 const ACK_BATCH_VERSION_MINOR: u16 = 1;
 const REPLICATION_BATCH_VERSION_MINOR: u16 = 3;
+const REPLICATION_BATCH_CONTEXT_VERSION_MINOR: u16 = 4;
 
 /// The digest length the codec writes and verifies.
 pub const DIGEST_BYTES: usize = 32;
@@ -52,6 +55,15 @@ pub const MAX_FRAME_BYTES: usize = MAX_PAYLOAD_BYTES + 1024;
 
 /// The maximum length of any identifier or free-text field in a payload.
 pub const MAX_FIELD_BYTES: u32 = 4096;
+
+/// The maximum opaque causal-context byte string carried by one replicated
+/// record. The transport only bounds and preserves these bytes; the engine
+/// owns their causal interpretation and canonical-content validation.
+pub const MAX_CONTEXT_BYTES: usize = 64 * 1024;
+
+/// Compatibility spelling for callers that name the field explicitly as a
+/// causal context.
+pub const MAX_CAUSAL_CONTEXT_BYTES: usize = MAX_CONTEXT_BYTES;
 
 /// The written per-frame envelope-overhead budget of the member lane
 /// (PD-2026-08-26-13 D1): the encoded bytes of one envelope minus its
@@ -143,6 +155,14 @@ impl FrameKind {
             Self::CatchUpRequest | Self::CatchUpBatch | Self::Push | Self::AckReport => 0,
             Self::AckBatch => ACK_BATCH_VERSION_MINOR,
             Self::ReplicationBatch => REPLICATION_BATCH_VERSION_MINOR,
+        }
+    }
+
+    /// Returns the minor used by the canonical encoder for this kind.
+    const fn encoding_minor(self) -> u16 {
+        match self {
+            Self::ReplicationBatch => REPLICATION_BATCH_CONTEXT_VERSION_MINOR,
+            _ => self.minimum_minor(),
         }
     }
 }
@@ -348,6 +368,13 @@ pub struct ReplicatedWrite {
     pub origin: String,
     /// The source region's durable per-origin journal sequence.
     pub origin_sequence: u64,
+    /// The source row's canonical causal-context bytes.
+    ///
+    /// These bytes are intentionally opaque at the transport boundary. They
+    /// are copied byte-for-byte into the envelope and validated by the engine
+    /// that owns the causal codec. An empty value is the legacy form for
+    /// records decoded from envelope minor 3.
+    pub context: Vec<u8>,
 }
 
 /// The typed payload of one member envelope.
@@ -413,7 +440,9 @@ pub enum Payload {
     /// Ships one journal tailer batch of replicated records to a peer
     /// region (envelope minor 3, ADR 0041 D-35/D-36): one frame per
     /// group-commit wave per peer, canonical body bytes plus causal
-    /// metadata and the source journal sequence.
+    /// metadata and the source journal sequence. Context-bearing records use
+    /// envelope minor 4; minor 3 is retained for legacy records without a
+    /// context field.
     ReplicationBatch {
         /// The tenant the records belong to.
         tenant: TenantId,
@@ -536,7 +565,7 @@ pub fn encode(envelope: &Envelope) -> Result<EncodedFrame, EnvelopeError> {
     );
     frame.extend_from_slice(ENVELOPE_SCHEMA.as_bytes());
     put_u16(&mut frame, ENVELOPE_VERSION_MAJOR);
-    put_u16(&mut frame, envelope.kind.minimum_minor());
+    put_u16(&mut frame, envelope.kind.encoding_minor());
     put_u8(&mut frame, envelope.kind.wire());
     put_u64(&mut frame, envelope.message_id);
     put_option_u64(&mut frame, envelope.correlation_id);
@@ -616,7 +645,7 @@ pub fn decode(frame: &[u8]) -> Result<(Envelope, EncodedFrame), EnvelopeError> {
         return Err(EnvelopeError::DigestMismatch);
     }
     let mut payload_cursor = Cursor::new(payload_bytes);
-    let payload = decode_payload(&mut payload_cursor, kind)?;
+    let payload = decode_payload(&mut payload_cursor, kind, minor)?;
     if !payload_cursor.is_empty() {
         return Err(EnvelopeError::TrailingBytes);
     }
@@ -820,6 +849,16 @@ fn put_str(out: &mut Vec<u8>, text: &str) -> Result<(), EnvelopeError> {
     Ok(())
 }
 
+/// Writes one bounded opaque byte string in canonical length-prefixed form.
+fn put_bytes_field(out: &mut Vec<u8>, bytes: &[u8], max: usize) -> Result<(), EnvelopeError> {
+    if bytes.len() > max {
+        return Err(EnvelopeError::FieldTooLarge);
+    }
+    put_u32(out, u32::try_from(bytes.len()).map_err(|_| EnvelopeError::FieldTooLarge)?);
+    out.extend_from_slice(bytes);
+    Ok(())
+}
+
 fn put_option_u64(out: &mut Vec<u8>, value: Option<u64>) {
     match value {
         Some(value) => {
@@ -847,6 +886,15 @@ fn take_str(cursor: &mut Cursor<'_>) -> Result<String, EnvelopeError> {
     }
     let bytes = cursor.take_bytes(len)?;
     String::from_utf8(bytes.to_vec()).map_err(|_| EnvelopeError::InvalidText)
+}
+
+/// Reads one bounded opaque byte string in canonical length-prefixed form.
+fn take_bytes_field(cursor: &mut Cursor<'_>, max: usize) -> Result<Vec<u8>, EnvelopeError> {
+    let len = cursor.take_u32()? as usize;
+    if len > max {
+        return Err(EnvelopeError::FieldTooLarge);
+    }
+    Ok(cursor.take_bytes(len)?.to_vec())
 }
 
 fn take_option_u64(cursor: &mut Cursor<'_>) -> Result<Option<u64>, EnvelopeError> {
@@ -929,6 +977,9 @@ fn encode_payload(out: &mut Vec<u8>, payload: &Payload) -> Result<(), EnvelopeEr
                     return Err(EnvelopeError::MalformedLength);
                 }
                 put_u64(out, record.origin_sequence);
+                // Minor 4's canonical record shape always carries this
+                // length-prefixed field, including for an empty context.
+                put_bytes_field(out, &record.context, MAX_CONTEXT_BYTES)?;
             }
         }
     }
@@ -981,6 +1032,10 @@ const MIN_WRITE_WIRE_BYTES: usize = 13;
 /// empty origin, and the source sequence — every counted field at its empty
 /// minimum).
 const MIN_REPLICATED_WIRE_BYTES: usize = 33;
+/// The minimum wire bytes one decoded context-bearing replicated record
+/// occupies. The canonical context field is always present, including when
+/// its byte string is empty.
+const MIN_REPLICATED_CONTEXT_WIRE_BYTES: usize = MIN_REPLICATED_WIRE_BYTES + 4;
 /// The minimum wire bytes one decoded object entry of a [`LaneValue`]
 /// occupies (a `u32` string length of zero plus one value tag byte).
 const MIN_OBJECT_ENTRY_BYTES: usize = 5;
@@ -991,14 +1046,18 @@ fn bounded_capacity(cursor: &Cursor<'_>, declared: usize, min_wire_bytes: usize)
     declared.min(cursor.remaining() / min_wire_bytes)
 }
 
-fn decode_payload(cursor: &mut Cursor<'_>, kind: FrameKind) -> Result<Payload, EnvelopeError> {
+fn decode_payload(
+    cursor: &mut Cursor<'_>,
+    kind: FrameKind,
+    minor: u16,
+) -> Result<Payload, EnvelopeError> {
     match kind {
         FrameKind::CatchUpRequest => decode_catch_up_request(cursor),
         FrameKind::CatchUpBatch => decode_catch_up_batch(cursor),
         FrameKind::Push => decode_push(cursor),
         FrameKind::AckReport => decode_ack_report(cursor),
         FrameKind::AckBatch => decode_ack_batch(cursor),
-        FrameKind::ReplicationBatch => decode_replication_batch(cursor),
+        FrameKind::ReplicationBatch => decode_replication_batch(cursor, minor),
     }
 }
 
@@ -1056,13 +1115,20 @@ fn decode_ack_batch(cursor: &mut Cursor<'_>) -> Result<Payload, EnvelopeError> {
     Ok(Payload::AckBatch { tenant, reports })
 }
 
-fn decode_replication_batch(cursor: &mut Cursor<'_>) -> Result<Payload, EnvelopeError> {
+fn decode_replication_batch(cursor: &mut Cursor<'_>, minor: u16) -> Result<Payload, EnvelopeError> {
     let tenant = decode_tenant(cursor)?;
     let count = bounded_count(cursor.take_u32()? as usize)?;
-    let mut records =
-        Vec::with_capacity(bounded_capacity(cursor, count, MIN_REPLICATED_WIRE_BYTES));
+    let min_wire_bytes = if minor >= REPLICATION_BATCH_CONTEXT_VERSION_MINOR {
+        MIN_REPLICATED_CONTEXT_WIRE_BYTES
+    } else {
+        MIN_REPLICATED_WIRE_BYTES
+    };
+    let mut records = Vec::with_capacity(bounded_capacity(cursor, count, min_wire_bytes));
     for _ in 0..count {
-        records.push(decode_replicated_write(cursor)?);
+        records.push(decode_replicated_write(
+            cursor,
+            minor >= REPLICATION_BATCH_CONTEXT_VERSION_MINOR,
+        )?);
     }
     Ok(Payload::ReplicationBatch { tenant, records })
 }
@@ -1083,7 +1149,10 @@ fn decode_bool(cursor: &mut Cursor<'_>) -> Result<bool, EnvelopeError> {
     }
 }
 
-fn decode_replicated_write(cursor: &mut Cursor<'_>) -> Result<ReplicatedWrite, EnvelopeError> {
+fn decode_replicated_write(
+    cursor: &mut Cursor<'_>,
+    has_context: bool,
+) -> Result<ReplicatedWrite, EnvelopeError> {
     let collection =
         CollectionName::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
     let id = DocumentId::try_new(&take_str(cursor)?).map_err(|_| EnvelopeError::FieldTooLarge)?;
@@ -1099,7 +1168,9 @@ fn decode_replicated_write(cursor: &mut Cursor<'_>) -> Result<ReplicatedWrite, E
     if origin_sequence == 0 || origin_sequence > i64::MAX as u64 {
         return Err(EnvelopeError::MalformedLength);
     }
-    Ok(ReplicatedWrite { collection, id, body, commit_ulid, hlc, origin, origin_sequence })
+    let context =
+        if has_context { take_bytes_field(cursor, MAX_CONTEXT_BYTES)? } else { Vec::new() };
+    Ok(ReplicatedWrite { collection, id, body, commit_ulid, hlc, origin, origin_sequence, context })
 }
 
 fn decode_commits(cursor: &mut Cursor<'_>) -> Result<Vec<LaneCommit>, EnvelopeError> {

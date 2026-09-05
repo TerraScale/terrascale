@@ -58,6 +58,10 @@ pub struct TenantScope {
 
 impl TenantScope {
     /// Creates a scope, rejecting empty identities.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-request error when any scope identity is empty.
     pub fn new(
         tenant: impl Into<String>,
         project: impl Into<String>,
@@ -114,6 +118,8 @@ pub struct DeliveryRecord {
     pub event_id: String,
     /// Journal revision.
     pub revision: u64,
+    /// Start of the current automatic retry window in Unix seconds.
+    pub retry_started_at: u64,
     /// Number of attempts made.
     pub attempts: u32,
     /// Next eligible attempt, or zero when terminal/succeeded.
@@ -165,10 +171,29 @@ pub enum DeliveryError {
     Permanent,
 }
 
-/// Durable endpoint and delivery state port.  This must be backed by SQLite
+/// Durable result of one webhook delivery attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeliveryAttempt {
+    /// Number of attempts including this one.
+    pub attempts: u32,
+    /// Earliest next attempt in Unix seconds, or zero when terminal.
+    pub next_attempt_at: u64,
+    /// HTTP status when the transport received a response.
+    pub status: Option<u16>,
+    /// Whether the endpoint acknowledged delivery.
+    pub delivered: bool,
+    /// Whether automatic delivery attempts have ended.
+    pub terminal: bool,
+}
+
+/// Durable endpoint and delivery state port.  This must be backed by `SQLite`
 /// in production; the service does not provide a memory implementation.
 pub trait WebhookStorage: Send + Sync + 'static {
     /// Creates one endpoint durably and atomically with its stable id.
+    ///
+    /// # Errors
+    ///
+    /// Returns a scope, storage, or concurrent-write failure.
     fn create_endpoint(
         &self,
         scope: &TenantScope,
@@ -176,18 +201,30 @@ pub trait WebhookStorage: Send + Sync + 'static {
         now: u64,
     ) -> Result<WebhookEndpoint, StorageError>;
     /// Removes an endpoint during create rollback or explicit deletion.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing endpoint, scope, storage, or concurrent-write failure.
     fn delete_endpoint(
         &self,
         scope: &TenantScope,
         id: &str,
     ) -> Result<WebhookEndpoint, StorageError>;
     /// Finds one non-secret endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, storage, or decoding failures; absence is `None`.
     fn endpoint(
         &self,
         scope: &TenantScope,
         id: &str,
     ) -> Result<Option<WebhookEndpoint>, StorageError>;
     /// Lists endpoints, including deleted records when the caller asks for them.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, storage, or decoding failures.
     fn list_endpoints(
         &self,
         scope: &TenantScope,
@@ -195,6 +232,10 @@ pub trait WebhookStorage: Send + Sync + 'static {
     ) -> Result<Vec<WebhookEndpoint>, StorageError>;
     /// Ensures one durable delivery row exists.  Repeated calls return the
     /// same row and therefore provide idempotency after process crashes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing endpoint, conflicting publication identity, scope, or storage failure.
     fn ensure_delivery(
         &self,
         scope: &TenantScope,
@@ -203,25 +244,58 @@ pub trait WebhookStorage: Send + Sync + 'static {
         now: u64,
     ) -> Result<DeliveryRecord, StorageError>;
     /// Persists the result of one attempt before any subsequent attempt.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing delivery, scope, storage, or concurrent-write failure.
     fn record_attempt(
         &self,
         scope: &TenantScope,
         endpoint_id: &str,
-        delivery_id: &str,
-        attempts: u32,
-        next_attempt_at: u64,
-        status: Option<u16>,
-        delivered: bool,
-        terminal: bool,
+        expected: &DeliveryRecord,
+        attempt: &DeliveryAttempt,
+    ) -> Result<(), StorageError>;
+    /// Terminates an expired retry window without counting a network attempt.
+    /// The expected record prevents expiration from overwriting a concurrent replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing delivery, premature expiry, concurrent change, or storage failure.
+    fn expire_delivery(
+        &self,
+        scope: &TenantScope,
+        expected: &DeliveryRecord,
+        now: u64,
     ) -> Result<(), StorageError>;
     /// Reads the durable delivery log.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing endpoint, scope, storage, or decoding failure.
     fn delivery_log(
         &self,
         scope: &TenantScope,
         endpoint_id: &str,
         limit: usize,
     ) -> Result<DeliveryLog, StorageError>;
+    /// Returns at most `limit` nonterminal deliveries due by `now`, oldest first.
+    /// Selection is independent of the publication journal cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, storage, or decoding failures.
+    fn due_deliveries(
+        &self,
+        scope: &TenantScope,
+        endpoint_id: &str,
+        now: u64,
+        limit: usize,
+    ) -> Result<Vec<DeliveryRecord>, StorageError>;
     /// Marks one delivery eligible immediately for a replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing endpoint/delivery, scope, storage, or concurrent-write failure.
     fn replay_delivery(
         &self,
         scope: &TenantScope,
@@ -232,9 +306,13 @@ pub trait WebhookStorage: Send + Sync + 'static {
 }
 
 /// Durable shared publication journal port.  The page must be derived from
-/// the same revision line used by HTTP views and WebSockets.
+/// the same revision line used by HTTP views and `WebSockets`.
 pub trait WebhookJournal: Send + Sync + 'static {
     /// Reads publications strictly after `cursor` for one database.
+    ///
+    /// # Errors
+    ///
+    /// Returns scope, storage, or publication-decoding failures.
     fn page(
         &self,
         scope: &TenantScope,
@@ -269,12 +347,12 @@ impl WebhookJournal for EngineWebhookJournal {
         cursor: u64,
         limit: usize,
     ) -> Result<Vec<Publication>, StorageError> {
+        let engine_scope = webhook_engine_scope(&self.engine, scope)?;
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let tenant = TenantId::try_new(&scope.tenant).map_err(|_| StorageError::Conflict)?;
-        let engine_scope = self.engine.scope_for(&tenant);
-        let limit = u32::try_from(limit.min(MAX_JOURNAL_PAGE)).unwrap_or(MAX_JOURNAL_PAGE as u32);
+        let limit =
+            u32::try_from(limit.min(MAX_JOURNAL_PAGE)).map_err(|_| StorageError::Unavailable)?;
         let rows = self
             .engine
             .journal_rows(&engine_scope, cursor, limit)
@@ -300,7 +378,7 @@ impl WebhookJournal for EngineWebhookJournal {
 
 /// Engine-backed durable endpoint and delivery records.
 ///
-/// The adapter uses the Engine's ordinary SQLite document transaction, so
+/// The adapter uses the Engine's ordinary `SQLite` document transaction, so
 /// endpoint creation, delivery idempotency, retry state, and replay survive a
 /// process restart. A process-local mutex only serializes this adapter's
 /// compare-and-write operations; it is not a source of state or a fallback.
@@ -317,8 +395,7 @@ impl EngineWebhookStorage {
     }
 
     fn engine_scope(&self, scope: &TenantScope) -> Result<terrabase::TenantScope, StorageError> {
-        let tenant = TenantId::try_new(&scope.tenant).map_err(|_| StorageError::Conflict)?;
-        Ok(self.engine.scope_for(&tenant))
+        webhook_engine_scope(&self.engine, scope)
     }
 
     fn read_document(
@@ -328,14 +405,15 @@ impl EngineWebhookStorage {
         id: &str,
     ) -> Result<Option<Document>, StorageError> {
         let engine_scope = self.engine_scope(scope)?;
-        let snapshot = self.engine.read_snapshot(&engine_scope).map_err(map_engine_storage)?;
+        let snapshot =
+            self.engine.read_snapshot(&engine_scope).map_err(|error| map_engine_storage(&error))?;
         let transaction = self
             .engine
             .begin(&engine_scope, snapshot, operation_id("webhook-read"))
-            .map_err(map_engine_storage)?;
+            .map_err(|error| map_engine_storage(&error))?;
         let collection = CollectionName::try_new(collection).map_err(|_| StorageError::Conflict)?;
         let id = DocumentId::try_new(id).map_err(|_| StorageError::Conflict)?;
-        transaction.read_in_collection(&collection, &id).map_err(map_engine_storage)
+        transaction.read_in_collection(&collection, &id).map_err(|error| map_engine_storage(&error))
     }
 
     fn documents(
@@ -344,11 +422,12 @@ impl EngineWebhookStorage {
         collection: &str,
     ) -> Result<Vec<Document>, StorageError> {
         let engine_scope = self.engine_scope(scope)?;
-        let snapshot = self.engine.read_snapshot(&engine_scope).map_err(map_engine_storage)?;
+        let snapshot =
+            self.engine.read_snapshot(&engine_scope).map_err(|error| map_engine_storage(&error))?;
         let collection = CollectionName::try_new(collection).map_err(|_| StorageError::Conflict)?;
         self.engine
             .snapshot_documents_in_collection(&engine_scope, &snapshot, &collection)
-            .map_err(map_engine_storage)
+            .map_err(|error| map_engine_storage(&error))
     }
 
     fn write_document(
@@ -360,21 +439,22 @@ impl EngineWebhookStorage {
         expected: ExpectedVersion,
     ) -> Result<(), StorageError> {
         let engine_scope = self.engine_scope(scope)?;
-        let snapshot = self.engine.read_snapshot(&engine_scope).map_err(map_engine_storage)?;
+        let snapshot =
+            self.engine.read_snapshot(&engine_scope).map_err(|error| map_engine_storage(&error))?;
         let mut transaction = self
             .engine
             .begin(&engine_scope, snapshot, operation_id("webhook-write"))
-            .map_err(map_engine_storage)?;
+            .map_err(|error| map_engine_storage(&error))?;
         let collection = CollectionName::try_new(collection).map_err(|_| StorageError::Conflict)?;
         let id = DocumentId::try_new(id).map_err(|_| StorageError::Conflict)?;
         transaction
             .put(Document::new(id, collection, value), expected)
-            .map_err(map_engine_storage)?;
+            .map_err(|error| map_engine_storage(&error))?;
         match transaction.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(()),
-            CommitOutcome::Rejected(
-                CommitError::Conflict | CommitError::OperationIdReuse { .. },
-            ) => Err(StorageError::Conflict),
+            CommitOutcome::Rejected(CommitError::Conflict | CommitError::OperationIdReuse) => {
+                Err(StorageError::Conflict)
+            }
             CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
                 Err(StorageError::Unavailable)
             }
@@ -382,7 +462,22 @@ impl EngineWebhookStorage {
     }
 }
 
-fn map_engine_storage(error: EngineError) -> StorageError {
+fn webhook_engine_scope(
+    engine: &Engine,
+    scope: &TenantScope,
+) -> Result<terrabase::TenantScope, StorageError> {
+    let owner = engine.database_owner();
+    if scope.tenant != owner.tenant().to_text()
+        || scope.project != owner.project().to_text()
+        || scope.database != owner.database().to_text()
+    {
+        return Err(StorageError::Conflict);
+    }
+    let tenant = TenantId::try_new(&scope.tenant).map_err(|_| StorageError::Conflict)?;
+    Ok(engine.scope_for(&tenant))
+}
+
+fn map_engine_storage(error: &EngineError) -> StorageError {
     match error {
         EngineError::ScopeMismatch
         | EngineError::SnapshotEngineMismatch
@@ -400,10 +495,28 @@ fn delivery_id(endpoint_id: &str, event_id: &str) -> String {
     format!("{endpoint_id}:{event_id}")
 }
 
+// SQLite document integers are signed. Keep compact legacy integers where
+// possible and use exact decimal text for the upper half of the u64 range.
+fn unsigned_value(value: u64) -> DocumentValue {
+    i64::try_from(value)
+        .map_or_else(|_| DocumentValue::String(value.to_string()), DocumentValue::Integer)
+}
+
+fn unsigned_from_value(value: &DocumentValue) -> Option<u64> {
+    match value {
+        DocumentValue::Integer(value) => u64::try_from(*value).ok(),
+        DocumentValue::String(text) => {
+            let value = text.parse::<u64>().ok()?;
+            (text == &value.to_string()).then_some(value)
+        }
+        _ => None,
+    }
+}
+
 fn endpoint_value(record: &WebhookEndpoint) -> DocumentValue {
     DocumentValue::Object(BTreeMap::from([
         ("endpoint".into(), DocumentValue::String(record.endpoint.clone())),
-        ("created_at".into(), DocumentValue::Integer(record.created_at as i64)),
+        ("created_at".into(), unsigned_value(record.created_at)),
         ("deleted".into(), DocumentValue::Boolean(record.deleted)),
     ]))
 }
@@ -414,10 +527,7 @@ fn endpoint_from_document(document: &Document) -> Option<WebhookEndpoint> {
         DocumentValue::String(value) => value.clone(),
         _ => return None,
     };
-    let created_at = match fields.get("created_at")? {
-        DocumentValue::Integer(value) => u64::try_from(*value).ok()?,
-        _ => return None,
-    };
+    let created_at = unsigned_from_value(fields.get("created_at")?)?;
     let deleted = match fields.get("deleted")? {
         DocumentValue::Boolean(value) => *value,
         _ => return None,
@@ -428,9 +538,10 @@ fn endpoint_from_document(document: &Document) -> Option<WebhookEndpoint> {
 fn delivery_value(record: &DeliveryRecord) -> DocumentValue {
     DocumentValue::Object(BTreeMap::from([
         ("event_id".into(), DocumentValue::String(record.event_id.clone())),
-        ("revision".into(), DocumentValue::Integer(record.revision as i64)),
+        ("revision".into(), unsigned_value(record.revision)),
         ("attempts".into(), DocumentValue::Integer(i64::from(record.attempts))),
-        ("next_attempt_at".into(), DocumentValue::Integer(record.next_attempt_at as i64)),
+        ("next_attempt_at".into(), unsigned_value(record.next_attempt_at)),
+        ("retry_started_at".into(), unsigned_value(record.retry_started_at)),
         (
             "status".into(),
             record
@@ -448,10 +559,7 @@ fn delivery_from_document(document: &Document) -> Option<DeliveryRecord> {
         DocumentValue::String(value) => Some(value.clone()),
         _ => None,
     };
-    let integer = |name: &str| match fields.get(name)? {
-        DocumentValue::Integer(value) => u64::try_from(*value).ok(),
-        _ => None,
-    };
+    let integer = |name: &str| unsigned_from_value(fields.get(name)?);
     let boolean = |name: &str| match fields.get(name)? {
         DocumentValue::Boolean(value) => Some(*value),
         _ => None,
@@ -467,6 +575,7 @@ fn delivery_from_document(document: &Document) -> Option<DeliveryRecord> {
         revision: integer("revision")?,
         attempts: u32::try_from(integer("attempts")?).ok()?,
         next_attempt_at: integer("next_attempt_at")?,
+        retry_started_at: integer("retry_started_at")?,
         status,
         delivered: boolean("delivered")?,
         terminal: boolean("terminal")?,
@@ -584,6 +693,7 @@ impl WebhookStorage for EngineWebhookStorage {
             revision: publication.revision,
             attempts: 0,
             next_attempt_at: now,
+            retry_started_at: now,
             status: None,
             delivered: false,
             terminal: false,
@@ -602,13 +712,11 @@ impl WebhookStorage for EngineWebhookStorage {
         &self,
         scope: &TenantScope,
         endpoint_id: &str,
-        delivery_id: &str,
-        attempts: u32,
-        next_attempt_at: u64,
-        status: Option<u16>,
-        delivered: bool,
-        terminal: bool,
+        expected: &DeliveryRecord,
+        attempt: &DeliveryAttempt,
     ) -> Result<(), StorageError> {
+        let delivery_id = &expected.id;
+        let DeliveryAttempt { attempts, next_attempt_at, status, delivered, terminal } = *attempt;
         let _guard = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
         if !delivery_id.starts_with(&format!("{endpoint_id}:")) {
             return Err(StorageError::NotFound);
@@ -617,8 +725,23 @@ impl WebhookStorage for EngineWebhookStorage {
             .read_document(scope, WEBHOOK_DELIVERIES_COLLECTION, delivery_id)?
             .ok_or(StorageError::NotFound)?;
         let mut record = delivery_from_document(&document).ok_or(StorageError::Unavailable)?;
-        if attempts != record.attempts.saturating_add(1) {
-            return if attempts <= record.attempts { Ok(()) } else { Err(StorageError::Conflict) };
+        if attempts <= record.attempts {
+            let persisted = DeliveryAttempt {
+                attempts: record.attempts,
+                next_attempt_at: record.next_attempt_at,
+                status: record.status,
+                delivered: record.delivered,
+                terminal: record.terminal,
+            };
+            return if *attempt == persisted && record.retry_started_at == expected.retry_started_at
+            {
+                Ok(())
+            } else {
+                Err(StorageError::Conflict)
+            };
+        }
+        if record != *expected || record.terminal || attempts != record.attempts.saturating_add(1) {
+            return Err(StorageError::Conflict);
         }
         record.attempts = attempts;
         record.next_attempt_at = next_attempt_at;
@@ -629,6 +752,31 @@ impl WebhookStorage for EngineWebhookStorage {
             scope,
             WEBHOOK_DELIVERIES_COLLECTION,
             delivery_id,
+            delivery_value(&record),
+            ExpectedVersion::Exact(document.metadata().version()),
+        )
+    }
+
+    fn expire_delivery(
+        &self,
+        scope: &TenantScope,
+        expected: &DeliveryRecord,
+        now: u64,
+    ) -> Result<(), StorageError> {
+        let _guard = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
+        let document = self
+            .read_document(scope, WEBHOOK_DELIVERIES_COLLECTION, &expected.id)?
+            .ok_or(StorageError::NotFound)?;
+        let mut record = delivery_from_document(&document).ok_or(StorageError::Unavailable)?;
+        if record != *expected || !retry_expired(record.retry_started_at, now) {
+            return Err(StorageError::Conflict);
+        }
+        record.terminal = true;
+        record.next_attempt_at = 0;
+        self.write_document(
+            scope,
+            WEBHOOK_DELIVERIES_COLLECTION,
+            &record.id,
             delivery_value(&record),
             ExpectedVersion::Exact(document.metadata().version()),
         )
@@ -654,6 +802,36 @@ impl WebhookStorage for EngineWebhookStorage {
         Ok(DeliveryLog { deliveries: records })
     }
 
+    fn due_deliveries(
+        &self,
+        scope: &TenantScope,
+        endpoint_id: &str,
+        now: u64,
+        limit: usize,
+    ) -> Result<Vec<DeliveryRecord>, StorageError> {
+        self.engine_scope(scope)?;
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let prefix = format!("{endpoint_id}:");
+        let mut records = Vec::new();
+        for document in self.documents(scope, WEBHOOK_DELIVERIES_COLLECTION)? {
+            let record = delivery_from_document(&document).ok_or(StorageError::Unavailable)?;
+            if record.id.starts_with(&prefix)
+                && !record.delivered
+                && !record.terminal
+                && record.next_attempt_at <= now
+            {
+                records.push(record);
+            }
+        }
+        records.sort_by(|left, right| {
+            (left.next_attempt_at, &left.id).cmp(&(right.next_attempt_at, &right.id))
+        });
+        records.truncate(limit.min(MAX_JOURNAL_PAGE));
+        Ok(records)
+    }
+
     fn replay_delivery(
         &self,
         scope: &TenantScope,
@@ -670,6 +848,7 @@ impl WebhookStorage for EngineWebhookStorage {
             .ok_or(StorageError::NotFound)?;
         let mut record = delivery_from_document(&document).ok_or(StorageError::Unavailable)?;
         record.next_attempt_at = now;
+        record.retry_started_at = now;
         record.delivered = false;
         record.terminal = false;
         self.write_document(
@@ -687,6 +866,10 @@ impl WebhookStorage for EngineWebhookStorage {
 /// secret manager/Vault and never in endpoint rows or this service.
 pub trait WebhookSecrets: Send + Sync + 'static {
     /// Provisions a secret after durable endpoint creation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unavailable secret provider or an endpoint/placement refusal.
     fn provision(
         &self,
         scope: &TenantScope,
@@ -694,6 +877,10 @@ pub trait WebhookSecrets: Send + Sync + 'static {
         region: &str,
     ) -> Result<(), SecretError>;
     /// Destroys a secret after durable endpoint deletion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unavailable provider or missing secret error.
     fn destroy(
         &self,
         scope: &TenantScope,
@@ -701,6 +888,10 @@ pub trait WebhookSecrets: Send + Sync + 'static {
         region: &str,
     ) -> Result<(), SecretError>;
     /// Reads the secret only in an admitted placement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unavailable provider or missing secret error.
     fn get(
         &self,
         scope: &TenantScope,
@@ -713,7 +904,15 @@ pub trait WebhookSecrets: Send + Sync + 'static {
 /// [`crate::guards::AbuseGuards`].
 pub trait WebhookGuard: Send + Sync + 'static {
     /// Reserves one endpoint identity.  Called only after durable creation.
-    fn reserve(&self, scope: &TenantScope, endpoint: &str) -> Result<(), ()>;
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the endpoint cannot be admitted under its scope and quota.
+    fn reserve(
+        &self,
+        scope: &TenantScope,
+        endpoint: &str,
+    ) -> Result<(), crate::guards::GuardRejection>;
     /// Releases an endpoint identity after durable deletion.
     fn release(&self, scope: &TenantScope, endpoint: &str);
 }
@@ -732,8 +931,12 @@ impl AbuseGuardWebhookGuard {
 }
 
 impl WebhookGuard for AbuseGuardWebhookGuard {
-    fn reserve(&self, scope: &TenantScope, endpoint: &str) -> Result<(), ()> {
-        self.guards.register_webhook(&scope.database, endpoint).map_err(|_| ())
+    fn reserve(
+        &self,
+        scope: &TenantScope,
+        endpoint: &str,
+    ) -> Result<(), crate::guards::GuardRejection> {
+        self.guards.register_webhook(&scope.database, endpoint)
     }
 
     fn release(&self, scope: &TenantScope, endpoint: &str) {
@@ -746,8 +949,16 @@ impl WebhookGuard for AbuseGuardWebhookGuard {
 /// resolution.  This explicit check prevents a DNS-to-private SSRF shortcut.
 pub trait WebhookDelivery: Send + Sync + 'static {
     /// Validates the target and its resolved address policy before create.
+    ///
+    /// # Errors
+    ///
+    /// Returns target-policy, DNS, or transport failures.
     fn validate_target(&self, endpoint: &str) -> Result<(), DeliveryError>;
     /// Sends one signed request with bounded transport timeouts.
+    ///
+    /// # Errors
+    ///
+    /// Returns a rejected target, retryable network error, or permanent delivery failure.
     fn send(
         &self,
         endpoint: &str,
@@ -765,8 +976,16 @@ pub trait WebhookDelivery: Send + Sync + 'static {
 pub trait HttpsTransport: Send + Sync + 'static {
     /// Resolves the endpoint immediately before use. Implementations must not
     /// return cached addresses beyond the request's lifetime.
+    ///
+    /// # Errors
+    ///
+    /// Returns a target-policy or DNS-resolution failure.
     fn resolve(&self, endpoint: &str) -> Result<Vec<IpAddr>, DeliveryError>;
     /// Sends one HTTPS request using the already validated endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns a rejected target, retryable network error, or permanent delivery failure.
     fn send_https(
         &self,
         endpoint: &str,
@@ -935,6 +1154,10 @@ impl WebhookClock for SystemWebhookClock {
 /// provide this; absent or failing authorization denies the request.
 pub trait WebhookAuthorizer: Send + Sync + 'static {
     /// Checks the authenticated tenant/project and requested action.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authentication, scope, or authorization refusal.
     fn authorize(
         &self,
         headers: &HeaderMap,
@@ -954,6 +1177,7 @@ fn authorize_scope(
 }
 
 /// Durable webhook service composed from explicit production ports.
+#[derive(Clone)]
 pub struct WebhookService {
     storage: Arc<dyn WebhookStorage>,
     journal: Arc<dyn WebhookJournal>,
@@ -967,6 +1191,10 @@ pub struct WebhookService {
 impl WebhookService {
     /// Builds the service.  All ports and a non-empty placement region are
     /// mandatory, so a production caller cannot accidentally use a fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-request error if the placement region is empty.
     pub fn new(
         storage: Arc<dyn WebhookStorage>,
         journal: Arc<dyn WebhookJournal>,
@@ -987,6 +1215,10 @@ impl WebhookService {
     ///
     /// Every required dependency is checked before the service is returned;
     /// callers get the exact missing hook and can keep the member unready.
+    ///
+    /// # Errors
+    ///
+    /// Returns the missing-port identity or an empty-region composition error.
     pub fn from_ports(
         ports: WebhookPorts,
         clock: Arc<dyn WebhookClock>,
@@ -1009,7 +1241,12 @@ impl WebhookService {
     }
 
     /// Creates an HTTPS endpoint.  Durable create precedes secret provisioning
-    /// and D-64 reservation; every later failure rolls back durable state.
+    /// and D-64 reservation; later failures trigger best-effort cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns endpoint-policy, transport, durable storage, secret provisioning, or
+    /// quota-admission failures. Cleanup errors do not replace the original failure.
     pub fn create(
         &self,
         scope: &TenantScope,
@@ -1034,11 +1271,19 @@ impl WebhookService {
     }
 
     /// Lists durable endpoints, omitting deleted records by default.
+    ///
+    /// # Errors
+    ///
+    /// Returns the durable storage failure as a webhook service error.
     pub fn list(&self, scope: &TenantScope) -> Result<Vec<WebhookEndpoint>, WebhookError> {
         self.storage.list_endpoints(scope, false).map_err(WebhookError::storage)
     }
 
     /// Deletes one endpoint durably and then releases its D-64 reservation.
+    ///
+    /// # Errors
+    ///
+    /// Returns endpoint lookup/deletion or secret destruction failures.
     pub fn delete(&self, scope: &TenantScope, id: &str) -> Result<WebhookEndpoint, WebhookError> {
         let endpoint = self
             .storage
@@ -1052,7 +1297,28 @@ impl WebhookService {
     }
 
     /// Replays one durable delivery immediately, then performs it once.
+    ///
+    /// # Errors
+    ///
+    /// Returns durable replay, endpoint, secret, publication, or attempt-recording failures.
     pub async fn replay(
+        &self,
+        scope: &TenantScope,
+        endpoint_id: &str,
+        delivery_id: &str,
+    ) -> Result<DeliveryRecord, WebhookError> {
+        let service = self.clone();
+        let scope = scope.clone();
+        let endpoint_id = endpoint_id.to_owned();
+        let delivery_id = delivery_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            service.replay_blocking(&scope, &endpoint_id, &delivery_id)
+        })
+        .await
+        .map_err(|_| WebhookError::storage(StorageError::Unavailable))?
+    }
+
+    fn replay_blocking(
         &self,
         scope: &TenantScope,
         endpoint_id: &str,
@@ -1063,7 +1329,7 @@ impl WebhookService {
             .storage
             .replay_delivery(scope, endpoint_id, delivery_id, now)
             .map_err(WebhookError::storage)?;
-        self.attempt(scope, endpoint_id, &record, now).await?;
+        self.attempt(scope, endpoint_id, &record, now)?;
         self.storage
             .delivery_log(scope, endpoint_id, MAX_JOURNAL_PAGE)
             .map_err(WebhookError::storage)
@@ -1076,8 +1342,24 @@ impl WebhookService {
     }
 
     /// Consumes one durable journal page, creating idempotent delivery rows and
-    /// attempting all rows due at `now`.  Re-running after a crash is safe.
+    /// attempting a bounded page of due rows, including earlier publications.
+    ///
+    /// # Errors
+    ///
+    /// Returns endpoint/journal read, delivery creation, secret, or attempt-recording failures.
     pub async fn dispatch(
+        &self,
+        scope: &TenantScope,
+        cursor: u64,
+    ) -> Result<DispatchReport, WebhookError> {
+        let service = self.clone();
+        let scope = scope.clone();
+        tokio::task::spawn_blocking(move || service.dispatch_blocking(&scope, cursor))
+            .await
+            .map_err(|_| WebhookError::storage(StorageError::Unavailable))?
+    }
+
+    fn dispatch_blocking(
         &self,
         scope: &TenantScope,
         cursor: u64,
@@ -1095,15 +1377,19 @@ impl WebhookService {
                     report.skipped = report.skipped.saturating_add(1);
                     continue;
                 }
-                let row = self
-                    .storage
+                self.storage
                     .ensure_delivery(scope, &endpoint.id, publication, self.clock.now())
                     .map_err(WebhookError::storage)?;
-                if row.delivered || row.terminal || row.next_attempt_at > self.clock.now() {
-                    continue;
+            }
+            let now = self.clock.now();
+            let due = self
+                .storage
+                .due_deliveries(scope, &endpoint.id, now, MAX_JOURNAL_PAGE)
+                .map_err(WebhookError::storage)?;
+            for row in due {
+                if self.attempt(scope, &endpoint.id, &row, self.clock.now())? {
+                    report.attempted = report.attempted.saturating_add(1);
                 }
-                self.attempt(scope, &endpoint.id, &row, self.clock.now()).await?;
-                report.attempted = report.attempted.saturating_add(1);
             }
         }
         report.publications = publications.len();
@@ -1111,6 +1397,10 @@ impl WebhookService {
     }
 
     /// Reads the durable delivery log for dashboard inspection.
+    ///
+    /// # Errors
+    ///
+    /// Returns the durable delivery-log read failure as a service error.
     pub fn delivery_log(
         &self,
         scope: &TenantScope,
@@ -1122,20 +1412,24 @@ impl WebhookService {
             .map_err(WebhookError::storage)
     }
 
-    async fn attempt(
+    fn attempt(
         &self,
         scope: &TenantScope,
         endpoint_id: &str,
         row: &DeliveryRecord,
         now: u64,
-    ) -> Result<(), WebhookError> {
+    ) -> Result<bool, WebhookError> {
+        if retry_expired(row.retry_started_at, now) {
+            self.storage.expire_delivery(scope, row, now).map_err(WebhookError::storage)?;
+            return Ok(false);
+        }
         let endpoint = self
             .storage
             .endpoint(scope, endpoint_id)
             .map_err(WebhookError::storage)?
             .ok_or_else(WebhookError::not_found)?;
         if endpoint.deleted {
-            return Ok(());
+            return Ok(false);
         }
         let secret =
             self.secrets.get(scope, endpoint_id, &self.region).map_err(WebhookError::secret)?;
@@ -1165,13 +1459,25 @@ impl WebhookService {
             Ok(response) if (200..300).contains(&response.status) => {
                 (Some(response.status), true, true, 0)
             }
-            Ok(response) => retry_state(response.status, attempt, now),
+            Ok(response) => retry_state(response.status, attempt, row.retry_started_at, now),
             Err(DeliveryError::TargetRejected | DeliveryError::Permanent) => (None, false, true, 0),
-            Err(DeliveryError::Retryable) => retry_state(0, attempt, now),
+            Err(DeliveryError::Retryable) => retry_state(0, attempt, row.retry_started_at, now),
         };
         self.storage
-            .record_attempt(scope, endpoint_id, &row.id, attempt, next, status, delivered, terminal)
-            .map_err(WebhookError::storage)
+            .record_attempt(
+                scope,
+                endpoint_id,
+                row,
+                &DeliveryAttempt {
+                    attempts: attempt,
+                    next_attempt_at: next,
+                    status,
+                    delivered,
+                    terminal,
+                },
+            )
+            .map_err(WebhookError::storage)?;
+        Ok(true)
     }
 }
 
@@ -1197,6 +1503,10 @@ pub struct WebhookHttpState {
 
 impl WebhookHttpState {
     /// Builds handler state only after every production dependency is present.
+    ///
+    /// # Errors
+    ///
+    /// Returns a missing-port or empty-region error from [`WebhookService::from_ports`].
     pub fn from_ports(
         ports: WebhookPorts,
         authorizer: Arc<dyn WebhookAuthorizer>,
@@ -1234,6 +1544,10 @@ pub fn http_router(service: Arc<WebhookService>, authorizer: Arc<dyn WebhookAuth
 /// Builds the parent-router fragment and its state from explicit production
 /// ports. An absent secret provider, journal, storage, guard, or transport is
 /// reported before any route is returned.
+///
+/// # Errors
+///
+/// Returns a missing-port or empty-region composition error.
 pub fn router_from_ports(
     ports: WebhookPorts,
     authorizer: Arc<dyn WebhookAuthorizer>,
@@ -1253,6 +1567,12 @@ pub fn router_from_ports(
         .with_state(state))
 }
 
+async fn blocking_webhook_response(work: impl FnOnce() -> Response + Send + 'static) -> Response {
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|_| WebhookError::storage(StorageError::Unavailable).into_response())
+}
+
 /// Parent-callable list handler.
 pub async fn list_webhooks(
     State(state): State<Arc<WebhookHttpState>>,
@@ -1264,10 +1584,11 @@ pub async fn list_webhooks(
         Ok(scope) => scope,
         Err(error) => return error.into_response(),
     };
-    match state.service.list(&scope) {
+    blocking_webhook_response(move || match state.service.list(&scope) {
         Ok(webhooks) => json_response(StatusCode::OK, &serde_json::json!({ "webhooks": webhooks })),
         Err(error) => error.into_response(),
-    }
+    })
+    .await
 }
 
 /// Parent-callable create handler.
@@ -1285,10 +1606,11 @@ pub async fn create_webhook(
     let Ok(input) = serde_json::from_slice::<CreateWebhook>(&body) else {
         return WebhookError::invalid_request("webhook request is invalid").into_response();
     };
-    match state.service.create(&scope, &input) {
+    blocking_webhook_response(move || match state.service.create(&scope, &input) {
         Ok(webhook) => json_response(StatusCode::CREATED, &webhook),
         Err(error) => error.into_response(),
-    }
+    })
+    .await
 }
 
 /// Parent-callable delete handler.
@@ -1302,10 +1624,11 @@ pub async fn delete_webhook(
             Ok(scope) => scope,
             Err(error) => return error.into_response(),
         };
-    match state.service.delete(&scope, &id) {
+    blocking_webhook_response(move || match state.service.delete(&scope, &id) {
         Ok(webhook) => json_response(StatusCode::OK, &webhook),
         Err(error) => error.into_response(),
-    }
+    })
+    .await
 }
 
 /// Parent-callable delivery-log handler.
@@ -1319,10 +1642,13 @@ pub async fn list_deliveries(
         Ok(scope) => scope,
         Err(error) => return error.into_response(),
     };
-    match state.service.delivery_log(&scope, &id, MAX_JOURNAL_PAGE) {
-        Ok(log) => json_response(StatusCode::OK, &log),
-        Err(error) => error.into_response(),
-    }
+    blocking_webhook_response(move || {
+        match state.service.delivery_log(&scope, &id, MAX_JOURNAL_PAGE) {
+            Ok(log) => json_response(StatusCode::OK, &log),
+            Err(error) => error.into_response(),
+        }
+    })
+    .await
 }
 
 /// Parent-callable replay handler.
@@ -1361,10 +1687,12 @@ pub struct WebhookError {
 
 impl WebhookError {
     /// Constructs a malformed-request failure for an authorization adapter.
+    #[must_use]
     pub fn invalid_request(detail: &'static str) -> Self {
         Self { code: "invalid_request", status: StatusCode::BAD_REQUEST, detail }
     }
     /// Constructs an authentication failure for an authorization adapter.
+    #[must_use]
     pub fn unauthorized() -> Self {
         Self {
             code: "unauthorized",
@@ -1373,6 +1701,7 @@ impl WebhookError {
         }
     }
     /// Constructs a scope failure for an authorization adapter.
+    #[must_use]
     pub fn forbidden() -> Self {
         Self {
             code: "forbidden",
@@ -1441,6 +1770,11 @@ impl std::error::Error for WebhookError {}
 
 /// Validates and canonicalizes an endpoint without performing DNS.  The
 /// delivery port must perform the second, resolved-address policy check.
+///
+/// # Errors
+///
+/// Returns an invalid-request error for a malformed, oversized, non-HTTPS,
+/// credential-bearing, or non-public endpoint.
 pub fn validate_endpoint(raw: &str) -> Result<String, WebhookError> {
     let endpoint = raw.trim();
     if endpoint.len() > MAX_ENDPOINT_BYTES
@@ -1471,9 +1805,10 @@ pub fn validate_endpoint(raw: &str) -> Result<String, WebhookError> {
     if port == Some(0) {
         return Err(WebhookError::invalid_request("endpoint port is invalid"));
     }
-    if host.eq_ignore_ascii_case("localhost")
+    let host = host.to_ascii_lowercase();
+    if host == "localhost"
         || host.ends_with(".localhost")
-        || host.ends_with(".local")
+        || host.strip_suffix(".local").is_some()
         || host.ends_with(".internal")
         || host.ends_with(".home.arpa")
     {
@@ -1487,10 +1822,10 @@ pub fn validate_endpoint(raw: &str) -> Result<String, WebhookError> {
     {
         return Err(WebhookError::invalid_request("endpoint host is invalid"));
     }
-    if let Ok(address) = host.parse::<IpAddr>() {
-        if !is_public_ip(address) {
-            return Err(WebhookError::invalid_request("endpoint host is not public"));
-        }
+    if let Ok(address) = host.parse::<IpAddr>()
+        && !is_public_ip(address)
+    {
+        return Err(WebhookError::invalid_request("endpoint host is not public"));
     }
     if host.bytes().any(|byte| {
         !(byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'[' | b']' | b':'))
@@ -1547,6 +1882,10 @@ fn is_public_ip(address: IpAddr) -> bool {
             let benchmark = octets[0] == 198 && (18..=19).contains(&octets[1]);
             !shared
                 && !benchmark
+                && octets[0] != 0
+                && octets[0] < 224
+                && !(octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
+                && !ip.is_private()
                 && !ip.is_loopback()
                 && !ip.is_link_local()
                 && !ip.is_unspecified()
@@ -1560,8 +1899,8 @@ fn is_public_ip(address: IpAddr) -> bool {
             let segments = ip.segments();
             !ip.is_loopback()
                 && !ip.is_unspecified()
-                && !(segments[0] & 0xfe00 == 0xfc00)
-                && !(segments[0] & 0xffc0 == 0xfe80)
+                && (segments[0] & 0xfe00 != 0xfc00)
+                && (segments[0] & 0xffc0 != 0xfe80)
                 && !ip.is_multicast()
                 && !is_ipv6_documentation(ip)
         }
@@ -1583,6 +1922,7 @@ fn is_ipv6_documentation(ip: Ipv6Addr) -> bool {
 /// audited dependency set.  The secret is first normalized to BLAKE3's
 /// fixed-size key, allowing secret managers to return any high-entropy key
 /// size without weakening the MAC.
+#[must_use]
 pub fn sign_delivery(secret: &[u8], timestamp: &str, body: &[u8]) -> String {
     let key = blake3::hash(secret);
     let mut message = Vec::with_capacity(timestamp.len() + 1 + body.len());
@@ -1592,7 +1932,16 @@ pub fn sign_delivery(secret: &[u8], timestamp: &str, body: &[u8]) -> String {
     blake3::keyed_hash(key.as_bytes(), &message).to_hex().to_string()
 }
 
-fn retry_state(status: u16, attempt: u32, now: u64) -> (Option<u16>, bool, bool, u64) {
+fn retry_expired(started_at: u64, now: u64) -> bool {
+    now.saturating_sub(started_at) >= RETRY_HORIZON_SECONDS
+}
+
+fn retry_state(
+    status: u16,
+    attempt: u32,
+    started_at: u64,
+    now: u64,
+) -> (Option<u16>, bool, bool, u64) {
     if !matches!(status, 0 | 408 | 425 | 429) && !(500..600).contains(&status) {
         return (Some(status).filter(|value| *value != 0), false, true, 0);
     }
@@ -1603,11 +1952,11 @@ fn retry_state(status: u16, attempt: u32, now: u64) -> (Option<u16>, bool, bool,
         .checked_shl(attempt.saturating_sub(1))
         .unwrap_or(MAX_RETRY_DELAY_SECONDS)
         .min(MAX_RETRY_DELAY_SECONDS);
-    let next = now.saturating_add(delay);
-    if next > now.saturating_add(RETRY_HORIZON_SECONDS) {
+    let next = now.checked_add(delay);
+    if next.is_none_or(|next| retry_expired(started_at, next)) {
         (Some(status).filter(|value| *value != 0), false, true, 0)
     } else {
-        (Some(status).filter(|value| *value != 0), false, false, next)
+        (Some(status).filter(|value| *value != 0), false, false, next.unwrap_or(now))
     }
 }
 
@@ -1635,11 +1984,17 @@ mod tests {
 
     #[test]
     fn retry_schedule_is_bounded_and_terminal() {
-        let first = retry_state(503, 1, 100);
+        let first = retry_state(503, 1, 100, 100);
         assert_eq!(first.3, 101);
-        let last = retry_state(503, MAX_ATTEMPTS, 100);
+        let last = retry_state(503, MAX_ATTEMPTS, 100, 100);
         assert!(last.2);
-        assert_eq!(retry_state(404, 1, 100).2, true);
+        assert!(retry_state(404, 1, 100, 100).2);
+        let deadline = 100 + RETRY_HORIZON_SECONDS;
+        assert!(!retry_state(503, 1, 100, deadline - 2).2);
+        assert!(retry_state(503, 1, 100, deadline - 1).2);
+        assert!(retry_expired(100, deadline));
+        assert!(!retry_expired(100, 99));
+        assert!(retry_state(503, 1, u64::MAX, u64::MAX).2);
     }
 
     #[test]
@@ -1708,6 +2063,96 @@ mod tests {
     }
 
     #[test]
+    fn https_adapter_rejects_nonpublic_dns_answers_before_sending() {
+        for address in [
+            "10.0.0.1",
+            "172.16.0.1",
+            "192.168.1.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "100.64.0.1",
+            "198.18.0.1",
+            "192.0.0.1",
+            "192.0.2.1",
+            "198.51.100.1",
+            "203.0.113.1",
+            "0.1.2.3",
+            "224.0.0.1",
+            "240.0.0.1",
+            "255.255.255.255",
+            "::1",
+            "::",
+            "fc00::1",
+            "fe80::1",
+            "ff02::1",
+            "2001:db8::1",
+            "::ffff:10.0.0.1",
+        ] {
+            let transport = Arc::new(TestHttpsTransport {
+                addresses: vec!["1.1.1.1".parse().expect("public"), address.parse().expect("ip")],
+                sent: Mutex::new(Vec::new()),
+            });
+            let delivery = HttpsWebhookDelivery::new(Arc::clone(&transport));
+            assert_eq!(
+                delivery.send("https://hooks.example/events", &BTreeMap::new(), b"body"),
+                Err(DeliveryError::TargetRejected),
+                "rejects mixed public/nonpublic answers containing {address}"
+            );
+            assert!(transport.sent.lock().expect("test transport lock").is_empty());
+        }
+        for host in
+            ["LOCALHOST", "hooks.LOCALHOST", "hooks.LOCAL", "hooks.INTERNAL", "hooks.HOME.ARPA"]
+        {
+            assert!(validate_endpoint(&format!("https://{host}/events")).is_err());
+        }
+    }
+
+    fn assert_retry_expiry_and_replay(
+        storage: &EngineWebhookStorage,
+        scope: &TenantScope,
+        endpoint: &str,
+        original: &DeliveryRecord,
+    ) {
+        assert_eq!(
+            storage.expire_delivery(scope, original, RETRY_HORIZON_SECONDS - 1),
+            Err(StorageError::Conflict)
+        );
+        storage.expire_delivery(scope, original, RETRY_HORIZON_SECONDS).expect("expiry");
+        let expired = storage.delivery_log(scope, endpoint, 10).expect("expired log");
+        assert!(expired.deliveries[0].terminal);
+        assert_eq!(expired.deliveries[0].attempts, original.attempts);
+        assert_eq!(expired.deliveries[0].next_attempt_at, 0);
+        assert_eq!(
+            storage.record_attempt(
+                scope,
+                endpoint,
+                original,
+                &DeliveryAttempt {
+                    attempts: original.attempts + 1,
+                    next_attempt_at: 0,
+                    status: Some(204),
+                    delivered: true,
+                    terminal: true,
+                }
+            ),
+            Err(StorageError::Conflict)
+        );
+        let replay = storage
+            .replay_delivery(scope, endpoint, &original.id, RETRY_HORIZON_SECONDS + 1)
+            .expect("explicit replay opens a new window");
+        assert_eq!(replay.retry_started_at, RETRY_HORIZON_SECONDS + 1);
+        assert!(!replay.terminal);
+        assert_eq!(
+            storage.expire_delivery(scope, original, RETRY_HORIZON_SECONDS + 1),
+            Err(StorageError::Conflict)
+        );
+        assert_eq!(
+            storage.delivery_log(scope, endpoint, 10).expect("replay log").deliveries,
+            vec![replay]
+        );
+    }
+
+    #[test]
     fn engine_storage_round_trips_endpoint_and_delivery_rows() {
         let root = std::env::temp_dir().join(format!(
             "terrascale-webhook-{}",
@@ -1738,19 +2183,70 @@ mod tests {
             storage.ensure_delivery(&scope, &endpoint.id, &publication, 99),
             Ok(delivery.clone())
         );
+        let successful = DeliveryAttempt {
+            attempts: 1,
+            next_attempt_at: 0,
+            status: Some(204),
+            delivered: true,
+            terminal: true,
+        };
+        storage.record_attempt(&scope, &endpoint.id, &delivery, &successful).expect("attempt");
         storage
-            .record_attempt(&scope, &endpoint.id, &delivery.id, 1, 0, Some(204), true, true)
-            .expect("attempt");
+            .record_attempt(&scope, &endpoint.id, &delivery, &successful)
+            .expect("identical retry");
+        assert_eq!(
+            storage.record_attempt(
+                &scope,
+                &endpoint.id,
+                &delivery,
+                &DeliveryAttempt { status: Some(500), delivered: false, ..successful }
+            ),
+            Err(StorageError::Conflict)
+        );
+        let persisted = storage.delivery_log(&scope, &endpoint.id, 10).expect("unchanged log");
+        assert!(persisted.deliveries[0].delivered);
+        assert_eq!(persisted.deliveries[0].status, Some(204));
         assert_eq!(
             storage.delivery_log(&scope, &endpoint.id, 10).expect("log").deliveries.len(),
             1
         );
+        let mut boundary_records = Vec::new();
+        for value in [0, i64::MAX.cast_unsigned(), i64::MAX.cast_unsigned() + 1, u64::MAX] {
+            let endpoint = storage
+                .create_endpoint(&scope, "https://hooks.example/events", value)
+                .expect("full-range endpoint timestamp");
+            let publication = Publication {
+                revision: value,
+                event_id: format!("event-{value}"),
+                body: b"body".to_vec(),
+            };
+            let delivery = storage
+                .ensure_delivery(&scope, &endpoint.id, &publication, value)
+                .expect("full-range delivery metadata");
+            boundary_records.push((endpoint, delivery));
+        }
         drop(storage);
-        let engine = match Arc::try_unwrap(engine) {
-            Ok(engine) => engine,
-            Err(_) => panic!("sole engine"),
-        };
+        let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
         engine.shutdown().expect("flush");
+        let reopened = Arc::new(
+            Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+                .expect("reopen"),
+        );
+        let storage = EngineWebhookStorage::new(Arc::clone(&reopened));
+        for (endpoint, delivery) in boundary_records {
+            assert_eq!(storage.endpoint(&scope, &endpoint.id), Ok(Some(endpoint.clone())));
+            let log = storage.delivery_log(&scope, &endpoint.id, 10).expect("durable delivery");
+            assert_eq!(log.deliveries, vec![delivery.clone()]);
+            if delivery.retry_started_at == 0 {
+                assert_retry_expiry_and_replay(&storage, &scope, &endpoint.id, &delivery);
+            }
+        }
+        drop(storage);
+        let Ok(reopened) = Arc::try_unwrap(reopened) else { panic!("sole reopened engine") };
+        reopened.shutdown().expect("close reopened engine");
         let _ = std::fs::remove_dir_all(root);
     }
 }
+
+#[cfg(test)]
+mod delivery_tests;
