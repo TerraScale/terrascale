@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, Query, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::http::{Method, Uri};
@@ -24,6 +23,7 @@ use crate::view_capability::{
 
 mod incremental;
 mod polling;
+mod socket;
 
 /// Fixed capability header; it never appears in a URL or cache key.
 pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-View-Capability";
@@ -949,6 +949,7 @@ pub async fn websocket(
     State(state): State<Arc<ApiState>>,
     axum::extract::Extension(principal): axum::extract::Extension<crate::api_keys::Principal>,
     Path(name): Path<String>,
+    headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
     if let Err(error) = crate::api::document_host(&state, &name) {
@@ -967,7 +968,17 @@ pub async fn websocket(
         return ApiError::abuse_guard(&rejection).into_response();
     }
     let permit = WsPermit { guards: Arc::clone(&state.guards), database: name.clone() };
-    upgrade.on_upgrade(move |socket| serve_socket(socket, state, name, principal, permit))
+    let Some(credential) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|header| header.to_str().ok())
+        .and_then(|header| header.strip_prefix("Bearer "))
+        .map(str::to_owned)
+    else {
+        return capability_error().into_response();
+    };
+    upgrade
+        .max_message_size(terrabase_sync_core::wire::MAX_MESSAGE_BYTES)
+        .on_upgrade(move |socket| socket::serve(socket, state, name, principal, credential, permit))
 }
 
 struct WsPermit {
@@ -978,91 +989,6 @@ struct WsPermit {
 impl Drop for WsPermit {
     fn drop(&mut self) {
         self.guards.release_ws(&self.database);
-    }
-}
-
-async fn serve_socket(
-    mut socket: WebSocket,
-    state: Arc<ApiState>,
-    database: String,
-    principal: crate::api_keys::Principal,
-    _permit: WsPermit,
-) {
-    // Shared views outlive individual transports. Their quota stays charged
-    // while their snapshots and logs remain in the store.
-    // Keep the upgraded transport alive for successive subscribe frames. A
-    // WebSocket is a sustained transport; one initial snapshot must not turn
-    // it into an expensive one-shot request.
-    loop {
-        let Some(Ok(Message::Binary(bytes))) = socket.recv().await else {
-            return;
-        };
-        let Ok(envelope) = terrabase_sync_core::wire::decode_envelope(&bytes) else {
-            let _ = socket
-                .send(Message::Binary(
-                    error_bytes(terrabase_sync_core::wire::ErrorCode::MalformedFrame).into(),
-                ))
-                .await;
-            return;
-        };
-        let terrabase_sync_core::wire::Message::Subscribe {
-            subscription,
-            query,
-            parameters,
-            checkpoint,
-        } = envelope.message
-        else {
-            let _ = socket
-                .send(Message::Binary(
-                    error_bytes(terrabase_sync_core::wire::ErrorCode::MalformedFrame).into(),
-                ))
-                .await;
-            return;
-        };
-        let request = AttachRequest {
-            database_id: database.clone(),
-            statement: query,
-            parameters: encode_base64(&parameters),
-            checkpoint: checkpoint.map(|value| encode_base64(&value)),
-            subscription: Some(subscription),
-            entitlement_epoch: 0,
-        };
-        let scope = format!("{}:{}:{}", state.scope.0, state.scope.1, database);
-        let Ok(host) = crate::api::document_host(&state, &database) else {
-            let _ = socket
-                .send(Message::Binary(
-                    error_bytes(terrabase_sync_core::wire::ErrorCode::PermissionDenied).into(),
-                ))
-                .await;
-            return;
-        };
-        let Ok(materialization) = prepare_view(&state, &host, &request, &scope, Some(&principal))
-        else {
-            let _ = socket
-                .send(Message::Binary(
-                    error_bytes(terrabase_sync_core::wire::ErrorCode::PermissionDenied).into(),
-                ))
-                .await;
-            return;
-        };
-        let Ok((response, view_id)) = store().attach_materialized(
-            &request,
-            &scope,
-            state.region,
-            Some(&materialization),
-            &state.capability_keys,
-            Some(&state.guards),
-        ) else {
-            let _ = socket
-                .send(Message::Binary(
-                    error_bytes(terrabase_sync_core::wire::ErrorCode::Unavailable).into(),
-                ))
-                .await;
-            return;
-        };
-        if let Ok(snapshot) = store().read_snapshot(&view_id, 1, response.offset) {
-            let _ = socket.send(Message::Binary(snapshot.bytes.to_vec().into())).await;
-        }
     }
 }
 

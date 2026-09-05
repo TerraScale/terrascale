@@ -3465,6 +3465,7 @@ pub(crate) fn json_response(status: StatusCode, body: String) -> Response {
 
 #[cfg(test)]
 mod tests {
+    mod websocket;
     use super::API_PREFIX;
     use super::ApiError;
     use super::ApiState;
