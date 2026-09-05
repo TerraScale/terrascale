@@ -50,8 +50,22 @@ after pruning include every view of the collection. Numeric bounds deliberately
 overmatch rounded values; the native evaluator retains exact integer semantics.
 Predicates without a usable scalar interval use collection-wide matching.
 Irrelevant rows advance only the source watermark, before candidate cloning or
-fallback SQL. The shared publication signal still wakes all views on the source;
-targeted notification dispatch remains separate work.
+fallback SQL.
+
+Pending origin polls lease one dispatcher per source. It reads shared journal
+records at the emission cadence and notifies only pending views whose registered
+dependencies match. Cached responses need no dispatcher. Equivalent readers
+continue to share one canonical poll. A missing replay prefix wakes all pending
+views so each can take its exact-cut refill path.
+
+The last pending poll releases the worker, cancels queued work, and signals
+in-flight replay to stop at its next cancellation check. SQLite calls already
+running finish before replay can observe cancellation. Idle sources do no
+dispatcher replay work. A later poll starts from its observed source cut and
+checks the view before waiting, covering writes during the idle period.
+Materialization and frame encoding remain demand-driven. The dispatcher reads
+the durable journal and hydrates predecessors from storage; direct dispatch
+from old/new extracted values on commit remains separate work.
 
 ## Result digest
 

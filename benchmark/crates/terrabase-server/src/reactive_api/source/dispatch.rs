@@ -145,14 +145,13 @@ async fn run(
         if cancellation.is_cancelled() {
             return;
         }
-        match result {
-            Ok(Ok(through)) => cursor = through,
-            _ => {
-                let Some(source) = source.upgrade() else { return };
-                // Let each pending route report its normal typed storage or
-                // reset refusal; never strand waiters behind a failed pass.
-                source.notify_pending(None, &cancellation);
-            }
+        if let Ok(Ok(through)) = result {
+            cursor = through;
+        } else {
+            let Some(source) = source.upgrade() else { return };
+            // Let each pending route report its normal typed storage or
+            // reset refusal; never strand waiters behind a failed pass.
+            source.notify_pending(None, &cancellation);
         }
         notified.await;
     }
