@@ -212,7 +212,11 @@ fn resolve_published(
     // sequences; the walk stops at the first touching commit.
     let mut bound = snapshot;
     let touching = loop {
-        let Some(commit_sequence) = storage.port.tenant_sequence(tenant, bound) else {
+        let Some(commit_sequence) = storage
+            .port
+            .tenant_sequence(tenant, bound)
+            .map_err(|()| EngineError::StorageFailure)?
+        else {
             // The table holds the document but the history holds no commit
             // for this tenant: the publication cannot be proven.
             return Err(EngineError::StorageFailure);

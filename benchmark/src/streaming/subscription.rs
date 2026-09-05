@@ -589,8 +589,8 @@ fn initial_checkpoint(
     let sequence = if spec.starts_from_beginning() {
         // Resume so the oldest servable history is the first delivery; a
         // cursor older than the servable window must not skip a gap.
-        match engine.servable_history_start() {
-            Ok(Some(start)) => StorageSequence::new(start.get().saturating_sub(1)),
+        match engine.servable_history_start().map_err(|error| sources::map_engine_error(&error))? {
+            Some(start) => StorageSequence::new(start.get().saturating_sub(1)),
             _ => StorageSequence::new(0),
         }
     } else {

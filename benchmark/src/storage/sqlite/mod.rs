@@ -3337,7 +3337,7 @@ fn history_floor_on(connection: &Connection) -> Result<Option<u64>, ()> {
             row.get::<_, Option<i64>>(0)
         })
         .map_err(|_| ())?;
-    Ok(floor.and_then(|value| u64::try_from(value).ok()))
+    floor.map(|value| u64::try_from(value).map_err(|_| ())).transpose()
 }
 
 /// Reads one fact identity's stored envelope, when the identity is bound.
@@ -5387,67 +5387,63 @@ impl StoragePort for SqliteStorage {
         origin_prefixes_on(reader.connection(), tenant.as_str())
     }
 
-    fn committed_tenants(&self) -> Vec<TenantId> {
+    fn committed_tenants(&self) -> Result<Vec<TenantId>, ()> {
         let reader = self.reader();
-        let connection = reader.connection();
-        let Ok(mut statement) = connection.prepare_cached(
+        let mut statement = reader.connection().prepare_cached(
             "SELECT tenant FROM documents UNION SELECT tenant FROM origin_prefixes ORDER BY tenant",
-        ) else {
-            return Vec::new();
-        };
-        let Ok(rows) = statement.query_map([], |row| row.get::<_, String>(0)) else {
-            return Vec::new();
-        };
-        rows.flatten().filter_map(|tenant| TenantId::try_new(&tenant).ok()).collect()
+        ).map_err(|_| ())?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0)).map_err(|_| ())?;
+        rows.map(|row| TenantId::try_new(&row.map_err(|_| ())?).map_err(|_| ())).collect()
     }
 
-    fn tenant_sequence(&self, tenant: &TenantId, at: StorageSequence) -> Option<StorageSequence> {
+    fn tenant_sequence(
+        &self,
+        tenant: &TenantId,
+        at: StorageSequence,
+    ) -> Result<Option<StorageSequence>, ()> {
+        let at = i64::try_from(at.get()).map_err(|_| ())?;
         let reader = self.reader();
-        let connection = reader.connection();
-        connection
+        let sequence = reader
+            .connection()
             .query_row(
                 "SELECT MAX(commit_seq) FROM documents WHERE tenant = ?1 AND commit_seq <= ?2",
-                rusqlite::params![tenant.as_str(), at.get() as i64],
+                rusqlite::params![tenant.as_str(), at],
                 |row| row.get::<_, Option<i64>>(0),
             )
-            .ok()
-            .flatten()
-            .and_then(|sequence| u64::try_from(sequence).ok())
-            .map(StorageSequence::new)
+            .map_err(|_| ())?;
+        sequence
+            .map(|value| u64::try_from(value).map(StorageSequence::new).map_err(|_| ()))
+            .transpose()
     }
 
-    fn servable_history_start(&self) -> Option<StorageSequence> {
+    fn servable_history_start(&self) -> Result<Option<StorageSequence>, ()> {
         let reader = self.reader();
         let connection = reader.connection();
-        // The pruning floor bounds what the folded rows can still serve;
-        // with no consumer registered, the oldest retained row is the
-        // bound.
-        history_floor_on(connection)
-            .ok()
-            .flatten()
-            .or_else(|| {
-                connection
-                    .query_row("SELECT MIN(commit_seq) FROM documents", [], |row| {
-                        row.get::<_, Option<i64>>(0)
-                    })
-                    .ok()
-                    .flatten()
-                    .and_then(|sequence| u64::try_from(sequence).ok())
+        // With no consumer registered, use the oldest retained row.
+        if let Some(floor) = history_floor_on(connection)? {
+            return Ok(Some(StorageSequence::new(floor)));
+        }
+        let sequence = connection
+            .query_row("SELECT MIN(commit_seq) FROM documents", [], |row| {
+                row.get::<_, Option<i64>>(0)
             })
-            .map(StorageSequence::new)
+            .map_err(|_| ())?;
+        sequence
+            .map(|value| u64::try_from(value).map(StorageSequence::new).map_err(|_| ()))
+            .transpose()
     }
 
-    fn journaled_high_water(&self) -> Option<StorageSequence> {
+    fn journaled_high_water(&self) -> Result<Option<StorageSequence>, ()> {
         let reader = self.reader();
-        let connection = reader.connection();
-        connection
+        let sequence = reader
+            .connection()
             .query_row("SELECT MAX(commit_seq) FROM documents", [], |row| {
                 row.get::<_, Option<i64>>(0)
             })
-            .ok()
-            .flatten()
-            .and_then(|sequence| u64::try_from(sequence).ok())
-            .map(StorageSequence::new)
+            .map_err(|_| ())?;
+        sequence
+            .map(|value| u64::try_from(value).map(StorageSequence::new).map_err(|_| ()))
+            .transpose()
     }
 
     fn published_state(&self) -> (StorageSequence, StorageRootId) {

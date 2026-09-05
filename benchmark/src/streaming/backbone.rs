@@ -352,8 +352,11 @@ pub(crate) fn replay(
             // The servable beginning: the same resume rule the live
             // subscription path applies, so both entry points serve the
             // identical first event.
-            match engine.servable_history_start() {
-                Ok(Some(start)) => (start.get().saturating_sub(1), 0),
+            match engine
+                .servable_history_start()
+                .map_err(|error| sources::map_engine_error(&error))?
+            {
+                Some(start) => (start.get().saturating_sub(1), 0),
                 _ => (0, 0),
             }
         }
@@ -445,8 +448,11 @@ pub(crate) fn replay_sync_journal(
 
     let (cursor_sequence, cursor_write_index) = match after {
         Some(checkpoint) => (checkpoint.sequence(), checkpoint.write_index()),
-        None => match engine.servable_history_start() {
-            Ok(Some(start)) => (start.get().saturating_sub(1), 0),
+        None => match engine
+            .servable_history_start()
+            .map_err(|error| sources::map_engine_error(&error))?
+        {
+            Some(start) => (start.get().saturating_sub(1), 0),
             _ => (0, 0),
         },
     };

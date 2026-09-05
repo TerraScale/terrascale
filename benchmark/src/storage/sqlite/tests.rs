@@ -413,7 +413,7 @@ fn faulted_batch_leaves_zero_divergence() {
     );
     let storage = reopened.storage.lock().expect("storage lock");
     assert_eq!(
-        storage.port.journaled_high_water().map(StorageSequence::get),
+        storage.port.journaled_high_water().unwrap().map(StorageSequence::get),
         Some(1),
         "the faulted commit left no journal record"
     );
@@ -539,7 +539,11 @@ fn sequence_only_delete_is_durable_across_reopen() {
         let storage = engine.storage.lock().expect("storage lock");
         assert_eq!(storage.port.published_state().0.get(), first);
         assert_eq!(storage.port.metering_fact("tenant-a").expect("metering fact").seq_hi(), first);
-        assert_eq!(storage.port.journaled_high_water(), None, "no document row was written");
+        assert_eq!(
+            storage.port.journaled_high_water().unwrap(),
+            None,
+            "no document row was written"
+        );
     }
     drop(engine);
 
@@ -557,7 +561,7 @@ fn sequence_only_delete_is_durable_across_reopen() {
     assert_eq!(second, 2, "the next commit cannot reuse the sequence-only publication");
     let storage = reopened.storage.lock().expect("storage lock");
     assert_eq!(storage.port.published_state().0.get(), second);
-    assert_eq!(storage.port.journaled_high_water(), Some(StorageSequence::new(second)));
+    assert_eq!(storage.port.journaled_high_water().unwrap(), Some(StorageSequence::new(second)));
     drop(storage);
     drop(reopened);
     std::fs::remove_dir_all(&dir).ok();
@@ -889,6 +893,82 @@ fn journal_replay_distinguishes_storage_failure_from_a_drained_journal() {
 }
 
 #[test]
+fn journal_metadata_distinguishes_empty_storage_from_failed_reads() {
+    let (dir, engine) = open_sqlite_engine("journal-metadata-errors");
+    let tenant = tenant();
+    let cursor = StorageSequence::new(0);
+    assert_eq!(engine.committed_tenants().unwrap(), Vec::<TenantId>::new());
+    assert_eq!(engine.tenant_sequence(&tenant, cursor).unwrap(), None);
+    assert_eq!(engine.servable_history_start().unwrap(), None);
+    assert_eq!(engine.journaled_high_water().unwrap(), None);
+    assert_eq!(
+        engine.tenant_sequence(&tenant, StorageSequence::new(u64::MAX)),
+        Err(crate::engine::EngineError::StorageFailure)
+    );
+    let connection = Connection::open(dir.join("terrabase.sqlite3")).unwrap();
+    connection.execute_batch("DROP TABLE documents").unwrap();
+    assert_eq!(engine.committed_tenants(), Err(crate::engine::EngineError::StorageFailure));
+    assert_eq!(
+        engine.tenant_sequence(&tenant, cursor),
+        Err(crate::engine::EngineError::StorageFailure)
+    );
+    assert_eq!(engine.servable_history_start(), Err(crate::engine::EngineError::StorageFailure));
+    assert_eq!(engine.journaled_high_water(), Err(crate::engine::EngineError::StorageFailure));
+    drop(connection);
+    drop(engine);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn journal_metadata_rejects_invalid_tenants_and_negative_frontiers() {
+    let (dir, storage) = sqlite_store("invalid-journal-metadata");
+    {
+        let writer = storage.raw_writer_connection();
+        writer.execute_batch(
+            "INSERT INTO origin_prefixes (tenant, origin, seq, hlc) VALUES ('', 'region-a', 1, 0);
+             INSERT INTO consumer_frontiers (name, seq) VALUES ('broken', -1);"
+        ).unwrap();
+    }
+    assert!(storage.committed_tenants().is_err());
+    assert!(storage.servable_history_start().is_err());
+    drop(storage);
+    assert!(matches!(
+        Engine::open(EngineConfig::durable(&dir).unwrap()),
+        Err(crate::engine::EngineOpenError::StorageUnavailable)
+    ));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn journal_metadata_failure_reaches_replay_and_subscription_callers() {
+    use crate::streaming::{ChangeFilter, ChangeReplayRequest, StreamError, SubscriptionSpec};
+    use crate::types::Cancellation;
+
+    let (dir, engine) = open_sqlite_engine("journal-start-errors");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let filter = ChangeFilter::try_new(None, None).unwrap();
+    let request = ChangeReplayRequest::try_new(filter.clone(), None, 10).unwrap();
+    let spec = SubscriptionSpec::try_new("history-reader", filter, 10).unwrap().from_beginning();
+    // The document journal remains readable. Only its history-bound query
+    // fails, so falling back to zero would incorrectly report success.
+    let connection = Connection::open(dir.join("terrabase.sqlite3")).unwrap();
+    connection.execute_batch("DROP TABLE consumer_frontiers").unwrap();
+    assert!(engine.tenant_commits(scope.tenant(), StorageSequence::new(0), 10).unwrap().is_empty());
+    assert_eq!(
+        engine.streams().replay_changes(&scope, &request, &Cancellation::new()).unwrap_err(),
+        StreamError::EngineClosed
+    );
+    assert_eq!(
+        engine.streams().replay_sync_journal(&scope, None, 10, &Cancellation::new()).unwrap_err(),
+        StreamError::EngineClosed
+    );
+    assert_eq!(engine.streams().subscribe(&scope, &spec).unwrap_err(), StreamError::EngineClosed);
+    drop(connection);
+    drop(engine);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn pruning_requires_every_consumer_frontier() {
     let (_dir, mut storage) = sqlite_store("prune-frontiers");
     storage.advance_consumer_frontier("fast", 0).expect("fast frontier registers");
@@ -919,7 +999,7 @@ fn pruning_requires_every_consumer_frontier() {
     assert_eq!(pruned, 1);
     assert_eq!(storage.journal_records(), 2);
     // The pruning floor is the honest history bound now.
-    assert_eq!(storage.servable_history_start().map(StorageSequence::get), Some(2));
+    assert_eq!(storage.servable_history_start().unwrap().map(StorageSequence::get), Some(2));
     assert!(!storage.snapshot_boundary_available(StorageSequence::new(1)));
     assert!(storage.snapshot_boundary_available(StorageSequence::new(2)));
     // Above-floor snapshots still answer exactly.
@@ -1139,7 +1219,7 @@ fn sustained_writes_with_advancing_consumers_keep_the_journal_bounded() {
         "an advancing consumer fleet bounds the journal, found {}",
         storage.journal_records()
     );
-    assert_eq!(storage.servable_history_start().map(StorageSequence::get), Some(50));
+    assert_eq!(storage.servable_history_start().unwrap().map(StorageSequence::get), Some(50));
 
     // A consumer registered behind a new head pins every row it still needs.
     commit(
@@ -1151,7 +1231,7 @@ fn sustained_writes_with_advancing_consumers_keep_the_journal_bounded() {
     storage.advance_consumer_frontier("replication", 51).expect("frontier advances");
     storage.advance_consumer_frontier("sync", 51).expect("frontier advances");
     storage.prune_below_consumer_frontiers().expect("prune runs");
-    assert_eq!(storage.servable_history_start().map(StorageSequence::get), Some(50));
+    assert_eq!(storage.servable_history_start().unwrap().map(StorageSequence::get), Some(50));
     assert_eq!(storage.journal_records(), 2);
 }
 
@@ -1176,7 +1256,7 @@ fn compact_sweeps_the_pruning_floor() {
     storage.run_retention_sweep().expect("sweep runs");
     assert_eq!(storage.journal_records(), 1, "the sweep pruned below the floor");
     assert_eq!(
-        storage.servable_history_start(),
+        storage.servable_history_start().unwrap(),
         Some(StorageSequence::new(3)),
         "the floor is the servable bound"
     );

@@ -1044,12 +1044,16 @@ pub(crate) trait StoragePort: Send {
 
     /// Returns every tenant that has at least one recorded published commit,
     /// in canonical tenant order (W4-CA-4).
-    fn committed_tenants(&self) -> Vec<TenantId>;
+    fn committed_tenants(&self) -> Result<Vec<TenantId>, ()>;
 
     /// Returns the tenant's latest recorded sequence at or below `at`
     /// (W4-CA-4): the mapping entry that turns one global
     /// storage-sequence cursor into this tenant's own progress.
-    fn tenant_sequence(&self, tenant: &TenantId, at: StorageSequence) -> Option<StorageSequence>;
+    fn tenant_sequence(
+        &self,
+        tenant: &TenantId,
+        at: StorageSequence,
+    ) -> Result<Option<StorageSequence>, ()>;
 
     /// Returns the oldest sequence the durable publication history can
     /// serve, or `None` when no history is servable (W4-CA-4).
@@ -1057,7 +1061,7 @@ pub(crate) trait StoragePort: Send {
     /// A cursor older than this bound cannot be served incrementally: the
     /// caller must fall back to a full catch-up or backup instead of
     /// silently skipping the gap.
-    fn servable_history_start(&self) -> Option<StorageSequence>;
+    fn servable_history_start(&self) -> Result<Option<StorageSequence>, ()>;
 
     /// Returns the last global storage sequence durably recorded in the
     /// publication-history journal (W4-CA-4 repair F2).
@@ -1068,7 +1072,7 @@ pub(crate) trait StoragePort: Send {
     /// published_state().0` means at least one published commit is not
     /// servable from the journal, and the consumer must fall back instead
     /// of assuming completeness.
-    fn journaled_high_water(&self) -> Option<StorageSequence>;
+    fn journaled_high_water(&self) -> Result<Option<StorageSequence>, ()>;
 
     /// Returns the currently published sequence and root identity.
     fn published_state(&self) -> (StorageSequence, StorageRootId);

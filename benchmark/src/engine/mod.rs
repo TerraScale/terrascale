@@ -1163,7 +1163,9 @@ impl Engine {
         .map_err(|_| EngineOpenError::StorageUnavailable)?;
         let mut initial_clock =
             ReplicationClockStamp::new(config.replication_clock.now_millis(), 0);
-        for tenant in storage.committed_tenants() {
+        for tenant in
+            storage.committed_tenants().map_err(|()| EngineOpenError::StorageUnavailable)?
+        {
             for entry in storage
                 .durable_origin_prefixes(&tenant)
                 .map_err(|()| EngineOpenError::StorageUnavailable)?
@@ -3828,7 +3830,12 @@ impl Engine {
         if !storage.port.snapshot_boundary_available(boundary) {
             return Err(EngineError::SnapshotBoundaryUnavailable);
         }
-        if storage.port.servable_history_start().is_some_and(|start| boundary < start) {
+        if storage
+            .port
+            .servable_history_start()
+            .map_err(|()| EngineError::StorageFailure)?
+            .is_some_and(|start| boundary < start)
+        {
             return Err(EngineError::SnapshotBoundaryUnavailable);
         }
         if limit == 0 {
@@ -3953,7 +3960,7 @@ impl Engine {
     #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
     pub(crate) fn committed_tenants(&self) -> Result<Vec<TenantId>, EngineError> {
         let storage = self.lock_storage()?;
-        Ok(storage.port.committed_tenants())
+        storage.port.committed_tenants().map_err(|()| EngineError::StorageFailure)
     }
 
     /// Returns the tenant's latest recorded sequence at or below `at`
@@ -3972,7 +3979,7 @@ impl Engine {
     ) -> Result<Option<StorageSequence>, EngineError> {
         self.validate_tenant(tenant)?;
         let storage = self.lock_storage()?;
-        Ok(storage.port.tenant_sequence(tenant, at))
+        storage.port.tenant_sequence(tenant, at).map_err(|()| EngineError::StorageFailure)
     }
 
     /// Returns the oldest sequence the durable publication history can
@@ -3989,7 +3996,7 @@ impl Engine {
     #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
     pub(crate) fn servable_history_start(&self) -> Result<Option<StorageSequence>, EngineError> {
         let storage = self.lock_storage()?;
-        Ok(storage.port.servable_history_start())
+        storage.port.servable_history_start().map_err(|()| EngineError::StorageFailure)
     }
 
     /// Returns the last global storage sequence durably recorded in the
@@ -4007,7 +4014,7 @@ impl Engine {
     #[allow(dead_code, reason = "consumed by the W4 replication and backup packets")]
     pub(crate) fn journaled_high_water(&self) -> Result<Option<StorageSequence>, EngineError> {
         let storage = self.lock_storage()?;
-        Ok(storage.port.journaled_high_water())
+        storage.port.journaled_high_water().map_err(|()| EngineError::StorageFailure)
     }
 
     /// Returns the number of published commits the publication-history
