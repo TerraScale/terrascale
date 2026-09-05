@@ -895,6 +895,9 @@ pub async fn attach_view(
         .headers_mut()
         .insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
     result.headers_mut().insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    if let Ok(region) = HeaderValue::from_str(state.region.as_str()) {
+        result.headers_mut().insert(crate::api::REGION_HEADER, region);
+    }
     result
 }
 

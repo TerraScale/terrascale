@@ -59,7 +59,7 @@ The SDK's standalone test is environment-gated; the Rust harness supplies its
 isolated endpoint and ephemeral fixture credential. This gate does not require
 OCI or Cloudflare credentials.
 
-This qualification covers direct member connections. The current `ts-proxy`
-Snippet accepts snapshot and log paths only and rejects the canonical WebSocket
-path. WebSocket delivery through `sync.api.terrascale.tech` remains unqualified;
-the SDK's default HTTP transport uses the existing Snippet path.
+Attach reports `X-TerraScale-Region`; the SDK uses that Region's member host for
+optional WebSockets, as required by D-24/D-48. Snapshot and log requests retain
+the sync origin. The Snippet accepts only those HTTP paths. This local
+qualification does not qualify production DNS, TLS, or Cloudflare deployment.
