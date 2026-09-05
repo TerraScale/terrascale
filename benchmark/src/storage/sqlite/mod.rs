@@ -1820,12 +1820,11 @@ impl SqliteStorage {
         // the 30-day default. The cutoff rises with the sweep's own clock,
         // so a fresh row is never prunable regardless of frontiers.
         let now = unix_millis();
-        // Retention is evaluated per row below.  A single global
-        // `oldest_retained` sequence would incorrectly pin a short-window
-        // collection behind an older long-window collection.
+        // Each row's history window pins its entire commit. Independent
+        // commits can expire independently, without splitting publications.
         let floor = frontier;
-        // Whole-commit retention: a below-floor commit survives only when
-        // one of its rows is the newest version of its key — the row an
+        // Whole-commit retention: an expired below-floor commit survives
+        // when one of its rows is the newest version of its key — the row an
         // above-floor snapshot resolves when no later write exists. Every
         // other below-floor commit is fully shadowed, and pruning takes
         // whole commits only (never some of a commit's rows), so the
@@ -1860,26 +1859,17 @@ impl SqliteStorage {
             .execute(
                 "DELETE FROM documents
                  WHERE commit_seq < ?1
-                   AND committed_at < ?2 -
-                     COALESCE((SELECT days FROM collection_history
-                               WHERE collection = documents.collection), 30) * ?3
                    AND commit_seq NOT IN (
                    SELECT pin.commit_seq FROM documents pin
-                   WHERE NOT EXISTS (
+                   WHERE pin.committed_at >= ?2 -
+                     COALESCE((SELECT days FROM collection_history
+                               WHERE collection = pin.collection), 30) * ?3
+                   OR NOT EXISTS (
                      SELECT 1 FROM documents newer
                      WHERE newer.tenant = pin.tenant
                        AND newer.collection = pin.collection
                        AND newer.id = pin.id
                        AND newer.commit_seq > pin.commit_seq
-                   )
-                   -- An explicitly shorter collection window may retire
-                   -- even its sole (newest) row once that window expires;
-                   -- the default window keeps the newest row as the live
-                   -- snapshot anchor.
-                   AND NOT EXISTS (
-                     SELECT 1 FROM collection_history policy
-                     WHERE policy.collection = pin.collection
-                       AND pin.committed_at < ?2 - policy.days * ?3
                    )
                  )",
                 rusqlite::params![floor as i64, now, 24_i64 * 60 * 60 * 1000],

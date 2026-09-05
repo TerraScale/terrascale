@@ -987,7 +987,15 @@ fn collection_history_windows_are_evaluated_independently() {
         "long-window-op",
         vec![put(document("long", "long-lived", "two"), ExpectedVersion::New)],
     );
-    storage.advance_consumer_frontier("solo", 2).expect("frontier advances");
+    commit(
+        &mut storage,
+        "replacement-op",
+        vec![
+            put(document("short", "short-lived", "new"), ExpectedVersion::Exact(1)),
+            put(document("long", "long-lived", "new"), ExpectedVersion::Exact(1)),
+        ],
+    );
+    storage.advance_consumer_frontier("solo", 3).expect("frontier advances");
     {
         let connection = storage.raw_writer_connection();
         connection
@@ -1004,7 +1012,64 @@ fn collection_history_windows_are_evaluated_independently() {
             .expect("rows backdate");
     }
     assert_eq!(storage.prune_below_consumer_frontiers().expect("prune runs"), 1);
-    assert_eq!(storage.journal_records(), 1, "the long-window row remains");
+    assert_eq!(storage.journal_records(), 2, "the long-window history and current rows remain");
+}
+
+#[test]
+fn pruning_preserves_complete_commits_across_history_windows_and_reopen() {
+    let (dir, mut storage) = sqlite_store("prune-mixed-windows");
+    for version in 1..=2 {
+        let expected = if version == 1 { ExpectedVersion::New } else { ExpectedVersion::Exact(1) };
+        let result = commit(
+            &mut storage,
+            &format!("mixed-{version}"),
+            vec![
+                put(document("short", "short-lived", "value"), expected),
+                put(document("long", "long-lived", "value"), expected),
+            ],
+        );
+        assert_eq!(stored_sequence(&result), version);
+    }
+    storage.advance_consumer_frontier("solo", 3).unwrap();
+    {
+        let writer = storage.raw_writer_connection();
+        writer
+            .execute(
+                "INSERT INTO collection_history (collection, days) VALUES ('short-lived', 1)",
+                [],
+            )
+            .unwrap();
+        writer
+            .execute(
+                "UPDATE documents SET committed_at = ?1",
+                [super::unix_millis() - 2 * 24 * 60 * 60 * 1000],
+            )
+            .unwrap();
+    }
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 0);
+    let page = storage.tenant_commits(&tenant(), StorageSequence::new(0), 10).unwrap();
+    assert_eq!(page.len(), 2);
+    assert!(page.iter().all(|commit| commit.writes().len() == 2));
+    backdate_all_rows(&storage);
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 2);
+    drop(storage);
+    let storage = SqliteStorage::open(&dir).unwrap();
+    let page = storage.tenant_commits(&tenant(), StorageSequence::new(0), 10).unwrap();
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].sequence().get(), 2);
+    assert_eq!(page[0].writes().len(), 2);
+    for id in ["short", "long"] {
+        let current = storage
+            .read_document_at(
+                storage.published_state().0,
+                &tenant(),
+                &DocumentId::try_new(id).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(current.metadata().version(), 2);
+    }
+    drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -2155,13 +2220,13 @@ fn origin_progress_survives_pruning_and_reopen_atomically() {
             .unwrap();
     }
     storage.advance_consumer_frontier("replication", 5).unwrap();
-    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 1);
-    assert_eq!(storage.journal_records(), 0);
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 0);
+    assert_eq!(storage.journal_records(), 1, "history expiry must preserve current state");
     drop(storage);
     let mut storage = SqliteStorage::open(&dir).unwrap();
     commit(
         &mut storage,
-        "prefix-after-empty-history",
+        "prefix-after-history-sweep",
         vec![put(document("fresh", "users", "v5"), ExpectedVersion::New)],
     );
     assert_eq!(storage.durable_origin_prefixes(&tenant()).unwrap()[0].origin_sequence, 5);
