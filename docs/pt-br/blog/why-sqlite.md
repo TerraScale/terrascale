@@ -39,3 +39,9 @@ TerraBase, informed by a review of its source. The design shares background
 resources across databases and coordinates WAL capture with the engine.
 Faster backup and restore and lower resource use are implementation goals
 that must be demonstrated by benchmarks and recovery tests.
+
+Backup policy selects OCI Object Storage, Tigris, or both according to the
+plan, with operator-managed overrides for specific users. Each selected
+provider must support an independent restore and satisfy the database’s
+residency policy. Full backup readiness requires every selected destination.
+The rebuild completely removes the external Litestream integration.
