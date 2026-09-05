@@ -23,6 +23,7 @@ use crate::view_capability::{
 };
 
 mod incremental;
+mod polling;
 
 /// Fixed capability header; it never appears in a URL or cache key.
 pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-View-Capability";
@@ -315,6 +316,9 @@ struct Materializer {
 
 /// Process-wide canonical shared-view registry.
 pub struct ViewStore {
+    log_polls: Mutex<BTreeMap<polling::LogKey, Weak<polling::LogPoll>>>,
+    #[cfg(test)]
+    poll_starts: std::sync::atomic::AtomicUsize,
     initializing: Mutex<BTreeMap<String, Weak<Mutex<()>>>>,
     views: Mutex<BTreeMap<String, View>>,
     changed: Arc<Notify>,
@@ -448,6 +452,9 @@ fn attach_response(view: &View, capability_keys: &CapabilityKeyRing) -> AttachRe
 impl ViewStore {
     fn new() -> Self {
         Self {
+            log_polls: Mutex::new(BTreeMap::new()),
+            #[cfg(test)]
+            poll_starts: std::sync::atomic::AtomicUsize::new(0),
             initializing: Mutex::new(BTreeMap::new()),
             views: Mutex::new(BTreeMap::new()),
             changed: Arc::new(Notify::new()),
@@ -926,47 +933,13 @@ pub async fn view_log(
     {
         return error.into_response();
     }
-    let changed = {
-        let Ok(views) = store().views.lock() else {
-            return ApiError::storage_failure().into_response();
-        };
-        let Some(view) = views.get(&view) else { return unknown_view().into_response() };
-        view.materializer
-            .as_ref()
-            .map_or_else(|| Arc::clone(&store().changed), |source| Arc::clone(&source.changed))
-    };
-    let started = tokio::time::Instant::now();
-    loop {
-        // Register before checking the journal so a racing commit cannot be lost.
-        let notified = changed.notified();
-        tokio::pin!(notified);
-        notified.as_mut().enable();
-        let refresh_deadline = match store().read_log(&view, generation, offset) {
-            Ok(ReadResult::Data { revision, frozen }) => {
-                return immutable_response(&frozen, &format!("\"{view}-{generation}-{revision}\""));
-            }
-            Ok(ReadResult::Reset(bytes)) => return reset_response(bytes),
-            Ok(ReadResult::Empty) => None,
-            Ok(ReadResult::Deferred(deadline)) => Some(deadline),
-            Err(error) => return error.into_response(),
-        };
-        let remaining = LONG_POLL_WINDOW.saturating_sub(started.elapsed());
-        if remaining.is_zero() {
-            return empty_timeout();
+    match store().poll_log(&view, generation, offset).await {
+        Ok(ReadResult::Data { revision, frozen }) => {
+            immutable_response(&frozen, &format!("\"{view}-{generation}-{revision}\""))
         }
-        let wake = async {
-            if let Some(deadline) = refresh_deadline {
-                tokio::select! {
-                    () = notified => {},
-                    () = tokio::time::sleep_until(deadline) => {},
-                }
-            } else {
-                notified.await;
-            }
-        };
-        if tokio::time::timeout(remaining, wake).await.is_err() {
-            return empty_timeout();
-        }
+        Ok(ReadResult::Reset(bytes)) => reset_response(bytes),
+        Ok(ReadResult::Empty | ReadResult::Deferred(_)) => empty_timeout(),
+        Err(error) => error.into_response(),
     }
 }
 
@@ -1093,6 +1066,7 @@ async fn serve_socket(
     }
 }
 
+#[derive(Clone)]
 enum ReadResult {
     Data { revision: u64, frozen: Frozen },
     Reset(Vec<u8>),
