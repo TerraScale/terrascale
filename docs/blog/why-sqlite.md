@@ -11,7 +11,7 @@
 - Bytes everywhere (D-30): parse once with simd-json at write time, canonicalize, extract indexed fields, then keep the body as opaque canonical JSON bytes on every boundary.
 - Zero-parse reads: responses splice body bytes; `serde_json::Value` never appears on a data path.
 - Auto-indexing with zero stale reads: index maintenance happens in the write's own transaction, so a visible index cannot serve a stale read (D-31).
-- What this buys for launch (D-39): database branching, PITR via Litestream, full-text search (FTS5), and read-only SQL over HTTP.
+- What this buys for launch (D-39): database branching, PITR via native Rust backups, full-text search (FTS5), and read-only SQL over HTTP.
 - The honest limits: transactions are single-database (one file); cross-database transactions never exist.
 
 ## Draft
@@ -26,4 +26,11 @@ The second pillar is bytes everywhere (D-30). A document is parsed exactly once 
 
 Indexing is where databases often make you choose between performance and correctness. TerraScale's auto-indexing tracks query templates, plans candidates against hypothetical indexes, and builds selected indexes invisibly under a write budget (D-31). The invariant that matters is that an index is maintained in the write's own transaction. A visible index cannot serve a stale read, because the index and the data move in the same commit. Index-build progress can affect when an index becomes visible, but it does not create an eventually consistent read path.
 
-Finally, the practical payoff (D-39): because a database is a file, a branch can start from a database snapshot, PITR uses Litestream to stream WAL frames to object storage, full-text search uses SQLite's FTS5, and ad-hoc analysis uses read-only SQL over HTTP. These launch features build on the same storage model. The honest footnote is that transactions are single-database. One file, one transaction. Cross-database transactions do not exist by design.
+Finally, the practical payoff (D-39): because a database is a file, a branch can start from a database snapshot, PITR will use TerraBase’s internal Rust backup subsystem to archive committed SQLite changes to object storage, full-text search uses SQLite's FTS5, and ad-hoc analysis uses read-only SQL over HTTP. These launch features build on the same storage model. The honest footnote is that transactions are single-database. One file, one transaction. Cross-database transactions do not exist by design.
+
+The backup subsystem will rebuild the required functionality of
+[Litestream](https://github.com/benbjohnson/litestream) natively inside
+TerraBase, informed by a review of its source. The design shares background
+resources across databases and coordinates WAL capture with the engine.
+Faster backup and restore and lower resource use are implementation goals
+that must be demonstrated by benchmarks and recovery tests.
