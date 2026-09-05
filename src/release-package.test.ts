@@ -3,10 +3,9 @@ import { execFile } from "node:child_process";
 import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { test } from "vitest";
-import { resolveContractBundle } from "../scripts/openapi-contract-paths.ts";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
@@ -70,6 +69,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
       filter: (source) => ![".git", "node_modules", "dist"].includes(path.basename(source)),
     });
     await mkdir(path.dirname(producerContracts), { recursive: true });
+    const { resolveContractBundle } = await import(pathToFileURL(path.join(repositoryRoot, "scripts", "openapi-contract-paths.ts")).href);
     const bundle = await resolveContractBundle();
     try {
       await cp(bundle.root, producerContracts, { recursive: true });
