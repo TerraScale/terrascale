@@ -140,7 +140,7 @@ impl Session {
                 if request.subscription.as_deref() != Some(view)
                     || super::canonical_sql(request.statement.trim()) != active.statement
                     || super::decode_base64(&request.parameters)
-                        .map_err(|_| ErrorCode::MalformedFrame)?
+                        .map_err(|()| ErrorCode::MalformedFrame)?
                         != active.parameters
                 {
                     return Err(ErrorCode::PermissionDenied);

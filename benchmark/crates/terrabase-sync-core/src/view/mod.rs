@@ -1018,15 +1018,7 @@ fn snapshot_message(view_id: &str, inner: &ViewInner, items: Vec<ResultItem>) ->
 }
 
 fn digest_items(items: &[ResultItem]) -> String {
-    let mut bytes = Vec::new();
-    for item in items {
-        push_text(&mut bytes, &item.identity);
-        for field in &item.fields {
-            push_text(&mut bytes, &field.path);
-            push_bytes(&mut bytes, &field.value);
-        }
-    }
-    hex_u64(fnv64(&bytes))
+    crate::wire::result_digest(items)
 }
 
 fn checkpoint(generation: u64, revision: u64, retention_generation: u64) -> Vec<u8> {

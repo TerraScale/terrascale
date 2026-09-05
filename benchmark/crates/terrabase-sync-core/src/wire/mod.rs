@@ -1335,3 +1335,25 @@ impl Scanner<'_> {
         Ok(())
     }
 }
+
+/// Computes the result-view core digest for public wire items.
+#[must_use]
+pub fn result_digest(items: &[ResultItem]) -> String {
+    use std::fmt::Write;
+    let values = items
+        .iter()
+        .map(|item| {
+            crate::native::ResultItem::new(
+                item.identity.clone(),
+                item.fields.iter().map(|field| (field.path.clone(), field.value.clone())).collect(),
+            )
+        })
+        .collect::<Vec<_>>();
+    crate::native::result_digest(&values).as_bytes().iter().fold(
+        String::with_capacity(64),
+        |mut output, byte| {
+            let _ = write!(output, "{byte:02x}");
+            output
+        },
+    )
+}

@@ -361,6 +361,7 @@ fn attach_identity(
     let canonical_statement = canonical_sql(statement);
     let mut key = Vec::with_capacity(statement.len() + scope.len() + parameters.len() + 256);
     put_identity(&mut key, b"database", request.database_id.as_bytes());
+    put_identity(&mut key, b"result-digest", b"native-fnv1a-256-v1");
     // A materialization identity is supplied by the engine path. The
     // fallback remains deterministic for conformance fixtures.
     if let Some(materialization) = &materialization {
@@ -384,7 +385,7 @@ fn initial_view(
 ) -> View {
     let revision = materialization.as_ref().map_or(0, |value| value.revision);
     let digest =
-        materialization.as_ref().map_or_else(|| digest_bytes(&[]), |value| value.digest.clone());
+        materialization.as_ref().map_or_else(|| digest_items(&[]), |value| value.digest.clone());
     let identity_digest = blake3::hash(key).to_hex().to_string();
     let bytes = materialization.as_ref().map_or_else(
         || snapshot_envelope(view_id, 1, revision, checkpoint_bytes(view_id, 1, revision)),
@@ -1068,10 +1069,10 @@ pub(crate) fn websocket_capability(
             if token == "terrascale.sync.v1" {
                 protocol = true;
             }
-            if let Some(value) = token.strip_prefix("terrascale.cap.") {
-                if credential.replace(value).is_some() {
-                    return Err(capability_error());
-                }
+            if let Some(value) = token.strip_prefix("terrascale.cap.")
+                && credential.replace(value).is_some()
+            {
+                return Err(capability_error());
             }
         }
     }
@@ -1363,14 +1364,7 @@ fn document_value(value: &serde_json::Value) -> Option<terrabase::types::Documen
 }
 
 fn digest_items(items: &[terrabase_sync_core::wire::ResultItem]) -> String {
-    let mut bytes = Vec::new();
-    for item in items {
-        put_identity(&mut bytes, b"identity", item.identity.as_bytes());
-        for field in &item.fields {
-            put_identity(&mut bytes, field.path.as_bytes(), &field.value);
-        }
-    }
-    digest_bytes(&bytes)
+    terrabase_sync_core::wire::result_digest(items)
 }
 
 fn empty_timeout() -> Response {
@@ -1486,7 +1480,7 @@ fn snapshot_envelope(
         authorization_generation: 1,
         revision,
         items: Vec::new(),
-        digest: digest_bytes(&[]),
+        digest: digest_items(&[]),
         checkpoint,
     };
     terrabase_sync_core::wire::encode_envelope(&terrabase_sync_core::wire::Envelope {
@@ -1577,7 +1571,7 @@ fn reset_bytes(view: &View) -> Vec<u8> {
         authorization_generation: view.entitlement_epoch,
         revision: view.head,
         items: Vec::new(),
-        digest: digest_bytes(&[]),
+        digest: digest_items(&[]),
         checkpoint: checkpoint_bytes_with_identity(
             &view.id,
             view.generation,
@@ -1605,9 +1599,6 @@ fn error_bytes(code: terrabase_sync_core::wire::ErrorCode) -> Vec<u8> {
         message: terrabase_sync_core::wire::Message::Error { code, detail: None },
     })
     .expect("bounded error encodes")
-}
-fn digest_bytes(bytes: &[u8]) -> String {
-    blake3::hash(bytes).to_hex().to_string()
 }
 fn now_seconds() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()

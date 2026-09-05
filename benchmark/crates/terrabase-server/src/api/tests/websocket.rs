@@ -348,11 +348,23 @@ async fn typescript_browser_websocket_journey() {
     let origin = format!("http://{}", server.address);
     let output = tokio::task::spawn_blocking(move || {
         std::process::Command::new("node")
-            .args(["node_modules/vitest/vitest.mjs", "run", "src/integration/reactive-websocket.test.ts"])
+            .args([
+                "node_modules/vitest/vitest.mjs",
+                "run",
+                "src/integration/reactive-websocket.test.ts",
+            ])
             .current_dir(sdk)
             .env("TERRASCALE_REACTIVE_TEST_ORIGIN", origin)
             .env("TERRASCALE_REACTIVE_TEST_TOKEN", KEY)
-            .output().expect("run SDK test")
-    }).await.unwrap();
-    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            .output()
+            .expect("run SDK test")
+    })
+    .await
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

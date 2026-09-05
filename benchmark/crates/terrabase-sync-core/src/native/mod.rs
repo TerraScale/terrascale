@@ -194,7 +194,7 @@ impl Snapshot {
         retention_generation: u64,
         expires_at: u64,
     ) -> Self {
-        let digest = digest_items(&items);
+        let digest = result_digest(&items);
         let checkpoint =
             Checkpoint::issue(view_generation, revision, digest, retention_generation, expires_at);
         Self { view_generation, authorization_generation, revision, items, digest, checkpoint }
@@ -202,7 +202,7 @@ impl Snapshot {
 
     fn validate(&self, limits: Limits) -> Result<(), ViewError> {
         validate_items(&self.items, limits)?;
-        if self.digest != digest_items(&self.items) {
+        if self.digest != result_digest(&self.items) {
             return Err(ViewError::DigestMismatch);
         }
         if self.checkpoint.view_generation != self.view_generation
@@ -246,7 +246,7 @@ impl ResultDelta {
         retention_generation: u64,
         expires_at: u64,
     ) -> Self {
-        let result_digest = digest_items(result);
+        let result_digest = result_digest(result);
         let checkpoint = Checkpoint::issue(
             view_generation,
             to_revision,
@@ -429,7 +429,7 @@ impl ViewState {
         if apply_operations(&mut candidate, &delta.operations, self.limits).is_err() {
             return ApplyOutcome::ResetRequired(ResetReason::InvalidOperations);
         }
-        if digest_items(&candidate) != delta.result_digest {
+        if result_digest(&candidate) != delta.result_digest {
             return ApplyOutcome::ResetRequired(ResetReason::ViewDiverged);
         }
         if delta.checkpoint.view_generation != delta.view_generation
@@ -625,7 +625,7 @@ impl ViewState {
         self.view_generation = request.next_view_generation;
         self.revision = removal_revision + 1;
         self.items = final_items;
-        self.digest = digest_items(&self.items);
+        self.digest = result_digest(&self.items);
         self.checkpoint = Some(match &advance {
             GenerationAdvance::Diff(delta) => delta.checkpoint.clone(),
             GenerationAdvance::Reset(snapshot) => snapshot.checkpoint.clone(),
@@ -708,7 +708,7 @@ impl ViewState {
         let mut candidate = self.items.clone();
         apply_operations(&mut candidate, &delta.operations, self.limits)
             .map_err(|()| ViewError::InvalidSnapshot)?;
-        if digest_items(&candidate) != delta.result_digest {
+        if result_digest(&candidate) != delta.result_digest {
             return Err(ViewError::DigestMismatch);
         }
         if delta.checkpoint.view_generation != delta.view_generation
@@ -1281,7 +1281,10 @@ fn validate_items(items: &[ResultItem], limits: Limits) -> Result<(), ViewError>
     Ok(())
 }
 
-fn digest_items(items: &[ResultItem]) -> ResultDigest {
+/// Computes the canonical four-lane FNV-1a digest of an ordered result.
+/// An empty result has the all-zero digest. Field order follows UTF-8 keys.
+#[must_use]
+pub fn result_digest(items: &[ResultItem]) -> ResultDigest {
     if items.is_empty() {
         return ResultDigest::empty();
     }
