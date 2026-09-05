@@ -20,6 +20,8 @@ use std::time::{Duration, Instant};
 
 use crate::wire::{self, Envelope, Message, ResetReason, ResultItem, ResultOperation};
 
+mod delta;
+
 /// The maximum result size for a live top-k view (D-46).
 pub const MAX_TOP_K_ITEMS: usize = 2_000;
 /// The maximum number of projected operations in one published revision.
@@ -1226,6 +1228,7 @@ impl SharedViewRegistry {
 /// before it can create a shared view.
 #[allow(missing_docs)]
 pub mod plan {
+    pub use super::delta::diff;
     use super::{MAX_TOP_K_ITEMS, OrderKey, ResultItem, SharedViewKey, normalize_sql};
     use std::cmp::Ordering;
     use std::collections::{BTreeMap, BTreeSet};
@@ -1755,49 +1758,6 @@ pub mod plan {
             }
         }
         left.identity.cmp(&right.identity)
-    }
-
-    fn diff(before: &[ResultItem], after: &[ResultItem]) -> Vec<crate::wire::ResultOperation> {
-        let old: BTreeMap<&str, (usize, &ResultItem)> = before
-            .iter()
-            .enumerate()
-            .map(|(position, item)| (item.identity.as_str(), (position, item)))
-            .collect();
-        let new: BTreeMap<&str, (usize, &ResultItem)> = after
-            .iter()
-            .enumerate()
-            .map(|(position, item)| (item.identity.as_str(), (position, item)))
-            .collect();
-        let mut operations = Vec::new();
-        for (identity, (_, _)) in &old {
-            if !new.contains_key(identity) {
-                operations.push(crate::wire::ResultOperation::Remove {
-                    identity: (*identity).to_owned(),
-                });
-            }
-        }
-        for (identity, (position, item)) in &new {
-            match old.get(identity) {
-                None => operations.push(crate::wire::ResultOperation::Insert {
-                    identity: (*identity).to_owned(),
-                    position: *position as u32,
-                    fields: item.fields.clone(),
-                }),
-                Some((old_position, old_item)) if old_item.fields != item.fields => operations
-                    .push(crate::wire::ResultOperation::Update {
-                        identity: (*identity).to_owned(),
-                        fields: item.fields.clone(),
-                    }),
-                Some((old_position, _)) if old_position != position => {
-                    operations.push(crate::wire::ResultOperation::Move {
-                        identity: (*identity).to_owned(),
-                        position: *position as u32,
-                    });
-                }
-                _ => {}
-            }
-        }
-        operations
     }
 
     /// Classifies SQL text without pretending unsupported operators are live.

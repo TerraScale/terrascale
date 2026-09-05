@@ -4966,6 +4966,7 @@ mod tests {
         };
         assert!(operations.iter().any(|operation| matches!(operation, ResultOperation::Insert { identity, .. } if identity == "o-2")));
         assert!(operations.iter().any(|operation| matches!(operation, ResultOperation::Insert { identity, .. } if identity == "o-coalesced")));
+        assert_eq!(operations.len(), 2, "unchanged rows are not retransmitted");
         let replay_started = tokio::time::Instant::now();
         let replay = tokio::time::timeout(
             std::time::Duration::from_secs(1),
@@ -5027,7 +5028,7 @@ mod tests {
             .expect("log");
         assert_eq!(response.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
-        let Message::Delta { from_revision, operations, .. } =
+        let Message::Delta { from_revision, to_revision: latest_revision, operations, .. } =
             decode_envelope(&bytes).expect("delta").message
         else {
             panic!("delta envelope")
@@ -5041,13 +5042,31 @@ mod tests {
                 |op| matches!(op, ResultOperation::Insert { identity, .. } if identity == "o-3")
             )
         );
-        let response = router.oneshot(read(snapshot_url)).await.expect("same snapshot");
+        assert_eq!(operations.len(), 1, "one new row emits one insert");
+        let response = router.clone().oneshot(read(snapshot_url)).await.expect("same snapshot");
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             axum::body::to_bytes(response.into_body(), 65_536).await.expect("body"),
             original,
             "an existing snapshot URL retains identical bytes after writes"
         );
+        assert_eq!(
+            router.clone().oneshot(put("o-2", 21)).await.expect("update").status(),
+            StatusCode::OK
+        );
+        let update_log = format!(
+            "/api/v1/reactive/views/{}/{}/log?offset={latest_revision}",
+            attached["view"].as_str().unwrap(),
+            attached["generation"].as_u64().unwrap()
+        );
+        let response = router.oneshot(read(&update_log)).await.expect("updated view");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
+        let Message::Delta { operations, .. } = decode_envelope(&bytes).unwrap().message else {
+            panic!("delta envelope");
+        };
+        assert!(matches!(operations.as_slice(), [ResultOperation::Update { identity, fields }]
+            if identity == "o-2" && fields.iter().any(|field| field.value == b"21")));
     }
 
     #[tokio::test]

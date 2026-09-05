@@ -678,19 +678,7 @@ impl ViewStore {
                 return Ok(());
             }
         }
-        let mut operations = previous
-            .iter()
-            .map(|item| terrabase_sync_core::wire::ResultOperation::Remove {
-                identity: item.identity.clone(),
-            })
-            .collect::<Vec<_>>();
-        operations.extend(items.iter().enumerate().map(|(position, item)| {
-            terrabase_sync_core::wire::ResultOperation::Insert {
-                identity: item.identity.clone(),
-                position: u32::try_from(position).unwrap_or(u32::MAX),
-                fields: item.fields.clone(),
-            }
-        }));
+        let operations = terrabase_sync_core::view::plan::diff(&previous, &items);
         let checkpoint =
             checkpoint_bytes_with_identity(view_id, generation, revision, &identity_digest);
         let bytes =
