@@ -263,6 +263,8 @@ struct View {
     snapshot: BTreeMap<u64, Frozen>,
     log: BTreeMap<u64, Frozen>,
     materializer: Option<Materializer>,
+    /// One query execution per shared view, independent of other views.
+    refreshing: Arc<Mutex<()>>,
 }
 
 impl View {
@@ -308,9 +310,6 @@ struct Materializer {
 /// Process-wide canonical shared-view registry.
 pub struct ViewStore {
     views: Mutex<BTreeMap<String, View>>,
-    /// Concurrent origin reads share journal/snapshot refresh work; the
-    /// stored revision prevents repeating work for the same durable cut.
-    refreshing: Mutex<()>,
     changed: Arc<Notify>,
 }
 
@@ -404,6 +403,7 @@ fn initial_view(
         snapshot,
         log: BTreeMap::new(),
         materializer: materialization.as_ref().and_then(|value| value.materializer.clone()),
+        refreshing: Arc::new(Mutex::new(())),
     }
 }
 
@@ -437,11 +437,7 @@ fn attach_response(view: &View, capability_keys: &CapabilityKeyRing) -> AttachRe
 
 impl ViewStore {
     fn new() -> Self {
-        Self {
-            views: Mutex::new(BTreeMap::new()),
-            refreshing: Mutex::new(()),
-            changed: Arc::new(Notify::new()),
-        }
+        Self { views: Mutex::new(BTreeMap::new()), changed: Arc::new(Notify::new()) }
     }
 
     /// Attaches request metadata without resolving a database. The HTTP
@@ -566,7 +562,22 @@ impl ViewStore {
         generation: u64,
         offset: u64,
     ) -> Result<ReadResult, ApiError> {
+        match self.read_retained_log(view_id, generation, offset)? {
+            ReadResult::Empty => {}
+            retained => return Ok(retained),
+        }
         self.refresh_view(view_id)?;
+        self.read_retained_log(view_id, generation, offset)
+    }
+
+    /// Replay is independent of the materializer: an existing immutable
+    /// response or reset must not wait for a newer query execution.
+    fn read_retained_log(
+        &self,
+        view_id: &str,
+        generation: u64,
+        offset: u64,
+    ) -> Result<ReadResult, ApiError> {
         let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
         let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
         if generation != view.generation {
@@ -587,11 +598,19 @@ impl ViewStore {
         Ok(ReadResult::Empty)
     }
 
+    fn view_refresh_lock(&self, view_id: &str) -> Result<Arc<Mutex<()>>, ApiError> {
+        let views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
+        Ok(Arc::clone(&views.get(view_id).ok_or_else(unknown_view)?.refreshing))
+    }
+
     /// Replays the current durable snapshot when the journal sequence moved
     /// since the last materialization. Readers at the same durable cut
     /// observe the same frozen `MessagePack` bytes.
     fn refresh_view(&self, view_id: &str) -> Result<(), ApiError> {
-        let _singleflight = self.refreshing.lock().map_err(|_| ApiError::storage_failure())?;
+        let refreshing = self.view_refresh_lock(view_id)?;
+        // Never wait for a query while holding the registry lock. Concurrent
+        // refreshes of this view recheck its durable cut after acquiring it.
+        let _singleflight = refreshing.lock().map_err(|_| ApiError::storage_failure())?;
         let (materializer, previous, generation, identity_digest, observed_sequence) = {
             let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
             let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
@@ -1598,6 +1617,75 @@ fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
 mod tests {
     use super::*;
     use axum::http::{HeaderValue, Uri};
+
+    #[test]
+    fn retained_log_replay_does_not_wait_for_materialization() {
+        let store = ViewStore::new();
+        let (_, id) = store
+            .attach(
+                &AttachRequest {
+                    database_id: "db".into(),
+                    statement: "SELECT * FROM users".into(),
+                    parameters: String::new(),
+                    checkpoint: None,
+                    subscription: None,
+                    entitlement_epoch: 0,
+                },
+                "tenant",
+            )
+            .expect("attach");
+        let bytes: Arc<[u8]> = Arc::from([1, 2, 3]);
+        let (_, other) = store
+            .attach(
+                &AttachRequest {
+                    database_id: "another-db".into(),
+                    statement: "SELECT * FROM users".into(),
+                    parameters: String::new(),
+                    checkpoint: None,
+                    subscription: None,
+                    entitlement_epoch: 0,
+                },
+                "another-tenant",
+            )
+            .expect("unrelated view");
+        {
+            let mut views = store.views.lock().unwrap();
+            let view = views.get_mut(&id).unwrap();
+            view.floor = 1;
+            view.head = 2;
+            view.log.insert(2, Frozen { bytes: Arc::clone(&bytes), created: SystemTime::now() });
+        }
+        // Model a blocked materializer without needing a slow storage device.
+        // Release it before asserting, so a regression fails rather than hangs.
+        let refreshing = store.view_refresh_lock(&id).unwrap();
+        let serial = refreshing.lock().unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::scope(|threads| {
+            threads.spawn(|| {
+                let results = (0..16).map(|_| store.read_log(&id, 1, 1)).collect::<Vec<_>>();
+                let expired = store.read_log(&id, 1, 0);
+                let generation = store.read_log(&id, 2, 1);
+                let ahead = store.read_log(&id, 1, 3);
+                let unrelated = store.read_log(&other, 1, 0);
+                send.send((results, expired, generation, ahead, unrelated)).unwrap();
+            });
+            let outcome = receive.recv_timeout(Duration::from_secs(2));
+            drop(serial);
+            let (results, expired, generation, ahead, unrelated) =
+                outcome.expect("retained reads must not acquire the materializer lock");
+            for result in results {
+                let ReadResult::Data { revision, frozen } = result.unwrap() else {
+                    panic!("retained response");
+                };
+                assert_eq!(revision, 2);
+                assert!(Arc::ptr_eq(&bytes, &frozen.bytes), "replay shares the encoded bytes");
+            }
+            assert!(matches!(expired.unwrap(), ReadResult::Reset(_)));
+            assert_eq!(generation.err().unwrap().code, unknown_view().code);
+            assert_eq!(ahead.err().unwrap().code, offset_gap().code);
+            assert!(matches!(unrelated.unwrap(), ReadResult::Empty));
+        });
+    }
 
     #[test]
     fn retention_prunes_history_resets_old_readers_and_keeps_the_current_snapshot() {
