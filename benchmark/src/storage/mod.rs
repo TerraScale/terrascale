@@ -1037,6 +1037,14 @@ pub(crate) trait StoragePort: Send {
         limit: u32,
     ) -> Result<Vec<PublishedCommit>, JournalReadError>;
 
+    /// Looks up an exact retained commit for publication proof. Unlike replay,
+    /// this does not promise that intervening journal history is complete.
+    fn retained_commit(
+        &self,
+        tenant: &TenantId,
+        sequence: StorageSequence,
+    ) -> Result<Option<PublishedCommit>, ()>;
+
     /// Returns one bounded page of retained journal rows. `after` is only a
     /// paging cursor in global storage order; reconciliation identities are
     /// always the row's persisted `(origin, origin_sequence)` pair.

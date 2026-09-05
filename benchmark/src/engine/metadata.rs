@@ -228,11 +228,8 @@ fn resolve_published(
         let after = StorageSequence::new(commit_sequence.get() - 1);
         let commit = storage
             .port
-            .tenant_commits(tenant, after, 1)
-            .map_err(|_| EngineError::StorageFailure)?
-            .into_iter()
-            .next()
-            .filter(|commit| commit.sequence() == commit_sequence);
+            .retained_commit(tenant, commit_sequence)
+            .map_err(|()| EngineError::StorageFailure)?;
         let Some(commit) = commit else {
             // The index names a sequence the journal does not serve.
             return Err(EngineError::StorageFailure);

@@ -1262,6 +1262,49 @@ fn journal_pruning_watermark_is_atomic_durable_and_tenant_scoped() {
 }
 
 #[test]
+fn retained_publication_proofs_survive_later_journal_gaps() {
+    let (dir, engine) = open_sqlite_engine("retained-publication-proof");
+    drop(engine);
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    commit(
+        &mut storage,
+        "pinned",
+        vec![put(document("pinned", "users", "value"), ExpectedVersion::New)],
+    );
+    commit(&mut storage, "old", vec![put(document("hot", "users", "old"), ExpectedVersion::New)]);
+    commit(
+        &mut storage,
+        "new",
+        vec![put(document("hot", "users", "new"), ExpectedVersion::Exact(1))],
+    );
+    storage.advance_consumer_frontier("consumer", 3).unwrap();
+    backdate_all_rows(&storage);
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 1);
+    assert!(storage.tenant_commits(&tenant(), StorageSequence::new(0), 10).is_err());
+    assert!(storage.retained_commit(&tenant(), StorageSequence::new(1)).unwrap().is_some());
+    assert!(storage.retained_commit(&tenant(), StorageSequence::new(2)).unwrap().is_none());
+    drop(storage);
+    let engine = reopen_sqlite_engine(&dir);
+    let scope = tenant_scope(&engine, "tenant-a");
+    let snapshot = engine.read_snapshot(&scope).unwrap();
+    let transaction =
+        engine.begin(&scope, snapshot, OperationId::try_new("proof-read").unwrap()).unwrap();
+    let head = transaction
+        .head(
+            &CollectionName::try_new("users").unwrap(),
+            &DocumentId::try_new("pinned").unwrap(),
+            crate::engine::HeadCondition::Any,
+        )
+        .unwrap();
+    assert!(
+        matches!(head, crate::engine::DocumentHead::Current(contract) if contract.sequence().get() == 1)
+    );
+    drop(transaction);
+    drop(engine);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn pruning_keeps_each_keys_newest_version() {
     let (_dir, mut storage) = sqlite_store("prune-versions");
     commit(&mut storage, "op-1", vec![put(document("kept", "users", "one"), ExpectedVersion::New)]);

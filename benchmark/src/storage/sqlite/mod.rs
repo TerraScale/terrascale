@@ -1883,12 +1883,18 @@ impl SqliteStorage {
                 ).map_err(|_| ())?;
             }
         }
-        let mut pruned = 0_u64;
-        let mut watermarks = std::collections::BTreeMap::<String, i64>::new();
-        {
-            let mut statement = transaction
-                .prepare(
-                    "DELETE FROM documents
+        // Record deletion evidence row by row without SQLite's unbounded
+        // RETURNING buffer. The temporary trigger and its writes participate
+        // in this transaction, including rollback on any failure.
+        transaction.execute_batch(
+            "CREATE TEMP TRIGGER pruning_watermark AFTER DELETE ON main.documents BEGIN
+               INSERT INTO journal_pruning (tenant, pruned_through) VALUES (OLD.tenant, OLD.commit_seq)
+               ON CONFLICT(tenant) DO UPDATE SET pruned_through = MAX(pruned_through, excluded.pruned_through);
+             END;"
+        ).map_err(|_| ())?;
+        let pruned = transaction
+            .execute(
+                "DELETE FROM documents
                  WHERE commit_seq < ?1
                    AND commit_seq NOT IN (
                    SELECT pin.commit_seq FROM documents pin
@@ -1902,32 +1908,13 @@ impl SqliteStorage {
                        AND newer.id = pin.id
                        AND newer.commit_seq > pin.commit_seq
                    )
-                 ) RETURNING tenant, commit_seq",
-                )
-                .map_err(|_| ())?;
-            let rows = statement
-                .query_map(rusqlite::params![floor as i64, now, 24_i64 * 60 * 60 * 1000], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-                })
-                .map_err(|_| ())?;
-            for row in rows {
-                let (tenant, sequence) = row.map_err(|_| ())?;
-                watermarks
-                    .entry(tenant)
-                    .and_modify(|value| *value = (*value).max(sequence))
-                    .or_insert(sequence);
-                pruned += 1;
-            }
-        }
-        for (tenant, sequence) in watermarks {
-            transaction.execute(
-                "INSERT INTO journal_pruning (tenant, pruned_through) VALUES (?1, ?2)
-                 ON CONFLICT(tenant) DO UPDATE SET pruned_through = MAX(pruned_through, excluded.pruned_through)",
-                rusqlite::params![tenant, sequence],
-            ).map_err(|_| ())?;
-        }
+                 )",
+                rusqlite::params![floor as i64, now, 24_i64 * 60 * 60 * 1000],
+            )
+            .map_err(|_| ())?;
+        transaction.execute_batch("DROP TRIGGER temp.pruning_watermark").map_err(|_| ())?;
         transaction.commit().map_err(|_| ())?;
-        Ok(pruned)
+        u64::try_from(pruned).map_err(|_| ())
     }
 
     /// The minimum consumer frontier — the pruning floor — when any
@@ -3975,6 +3962,144 @@ fn collect_checked(
     Ok(documents)
 }
 
+impl SqliteStorage {
+    fn read_retained_commits(
+        &self,
+        tenant: &TenantId,
+        after: StorageSequence,
+        limit: u32,
+        require_continuous_history: bool,
+    ) -> Result<Vec<PublishedCommit>, super::JournalReadError> {
+        let after = i64::try_from(after.get()).map_err(|_| ())?;
+        let reader = self.reader();
+        let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
+        let connection = &transaction;
+        let pruned: Option<i64> = connection
+            .query_row(
+                "SELECT pruned_through FROM journal_pruning WHERE tenant = ?1",
+                [tenant.as_str()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| ())?;
+        if require_continuous_history && pruned.is_some_and(|sequence| after < sequence) {
+            return Err(super::JournalReadError::HistoryExpired);
+        }
+        let mut statement = connection
+            .prepare_cached(
+                "SELECT commit_seq, commit_ulid, collection, id, deleted, version,
+                    requested, body, kind, origin, origin_seq, hlc, context
+             FROM documents WHERE tenant = ?1 AND commit_seq > ?2 AND commit_seq IN (
+                 SELECT commit_seq FROM documents WHERE tenant = ?1 AND commit_seq > ?2
+                 ORDER BY commit_seq LIMIT ?3
+             )
+             ORDER BY commit_seq, collection, id",
+            )
+            .map_err(|_| ())?;
+        let rows = statement
+            .query_map(rusqlite::params![tenant.as_str(), after, i64::from(limit)], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, Vec<u8>>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, i64>(10)?,
+                    row.get::<_, i64>(11)?,
+                    row.get::<_, Vec<u8>>(12)?,
+                ))
+            })
+            .map_err(|_| ())?;
+        // Group the rows of one commit_seq into one PublishedCommit — the
+        // journal rebuilt from the folded rows. The inner LIMIT selects
+        // rows, and the outer query retrieves their complete commits.
+        // Every row of one commit carries the commit's provenance (D-35),
+        // so every row must agree with the first row of its group.
+        let mut commits: Vec<PublishedCommit> = Vec::new();
+        for row in rows {
+            let (
+                sequence,
+                operation,
+                collection,
+                id,
+                deleted,
+                version,
+                requested,
+                body,
+                kind,
+                origin,
+                origin_sequence,
+                hlc,
+                context,
+            ) = row.map_err(|_| ())?;
+            let sequence = u64::try_from(sequence).map_err(|_| ())?;
+            if sequence == 0 {
+                return Err(super::JournalReadError::StorageFailure);
+            }
+            let version = u64::try_from(version).map_err(|_| ())?;
+            let write = match deleted {
+                0 => {
+                    let document = decode_document_body(&body).ok_or(())?;
+                    if document.collection().as_str() != collection || document.id().as_str() != id
+                    {
+                        return Err(super::JournalReadError::StorageFailure);
+                    }
+                    PublishedWrite::Put { document }
+                }
+                1 => PublishedWrite::Delete {
+                    collection: Some(CollectionName::try_new(&collection).map_err(|_| ())?),
+                    id: DocumentId::try_new(&id).map_err(|_| ())?,
+                    version_at_delete: version,
+                },
+                _ => return Err(super::JournalReadError::StorageFailure),
+            };
+            let durability =
+                u8::try_from(requested).ok().and_then(codec::durability_of).ok_or(())?;
+            let operation = OperationId::try_new(&operation).map_err(|_| ())?;
+            let kind = match kind.as_str() {
+                ROW_KIND_ORIGIN => JournalKind::Origin,
+                ROW_KIND_REPLICATED => JournalKind::Replicated,
+                _ => return Err(super::JournalReadError::StorageFailure),
+            };
+            let provenance = JournalProvenance::new(
+                kind,
+                origin,
+                u64::try_from(origin_sequence).map_err(|_| ())?,
+                u64::from_le_bytes(hlc.to_le_bytes()),
+            )
+            .with_context(context);
+            match commits.last_mut() {
+                Some(last) if last.sequence().get() == sequence => {
+                    if last.operation_id() != &operation
+                        || last.durability() != durability
+                        || last.provenance() != &provenance
+                    {
+                        return Err(super::JournalReadError::StorageFailure);
+                    }
+                    let writes = last.writes_mut();
+                    writes.push(write);
+                }
+                _ => {
+                    commits.push(PublishedCommit::new(
+                        tenant.clone(),
+                        operation,
+                        StorageSequence::new(sequence),
+                        durability,
+                        provenance,
+                        vec![write],
+                    ));
+                }
+            }
+        }
+        Ok(commits)
+    }
+}
+
 impl StoragePort for SqliteStorage {
     fn index_lifecycle_events(&self, from: u64, limit: usize) -> Result<Vec<Vec<u8>>, ()> {
         let reader = self.reader();
@@ -5257,133 +5382,23 @@ impl StoragePort for SqliteStorage {
         after: StorageSequence,
         limit: u32,
     ) -> Result<Vec<PublishedCommit>, super::JournalReadError> {
-        let after = i64::try_from(after.get()).map_err(|_| ())?;
-        let reader = self.reader();
-        let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
-        let connection = &transaction;
-        let pruned: Option<i64> = connection
-            .query_row(
-                "SELECT pruned_through FROM journal_pruning WHERE tenant = ?1",
-                [tenant.as_str()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|_| ())?;
-        if pruned.is_some_and(|sequence| after < sequence) {
-            return Err(super::JournalReadError::HistoryExpired);
+        self.read_retained_commits(tenant, after, limit, true)
+    }
+
+    fn retained_commit(
+        &self,
+        tenant: &TenantId,
+        sequence: StorageSequence,
+    ) -> Result<Option<PublishedCommit>, ()> {
+        if sequence.get() == 0 {
+            return Ok(None);
         }
-        let mut statement = connection
-            .prepare_cached(
-                "SELECT commit_seq, commit_ulid, collection, id, deleted, version,
-                    requested, body, kind, origin, origin_seq, hlc, context
-             FROM documents WHERE tenant = ?1 AND commit_seq > ?2 AND commit_seq IN (
-                 SELECT commit_seq FROM documents WHERE tenant = ?1 AND commit_seq > ?2
-                 ORDER BY commit_seq LIMIT ?3
-             )
-             ORDER BY commit_seq, collection, id",
-            )
-            .map_err(|_| ())?;
-        let rows = statement
-            .query_map(rusqlite::params![tenant.as_str(), after, i64::from(limit)], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, i64>(5)?,
-                    row.get::<_, i64>(6)?,
-                    row.get::<_, Vec<u8>>(7)?,
-                    row.get::<_, String>(8)?,
-                    row.get::<_, String>(9)?,
-                    row.get::<_, i64>(10)?,
-                    row.get::<_, i64>(11)?,
-                    row.get::<_, Vec<u8>>(12)?,
-                ))
-            })
-            .map_err(|_| ())?;
-        // Group the rows of one commit_seq into one PublishedCommit — the
-        // journal rebuilt from the folded rows. The inner LIMIT selects
-        // rows, and the outer query retrieves their complete commits.
-        // Every row of one commit carries the commit's provenance (D-35),
-        // so every row must agree with the first row of its group.
-        let mut commits: Vec<PublishedCommit> = Vec::new();
-        for row in rows {
-            let (
-                sequence,
-                operation,
-                collection,
-                id,
-                deleted,
-                version,
-                requested,
-                body,
-                kind,
-                origin,
-                origin_sequence,
-                hlc,
-                context,
-            ) = row.map_err(|_| ())?;
-            let sequence = u64::try_from(sequence).map_err(|_| ())?;
-            if sequence == 0 {
-                return Err(super::JournalReadError::StorageFailure);
-            }
-            let version = u64::try_from(version).map_err(|_| ())?;
-            let write = match deleted {
-                0 => {
-                    let document = decode_document_body(&body).ok_or(())?;
-                    if document.collection().as_str() != collection || document.id().as_str() != id
-                    {
-                        return Err(super::JournalReadError::StorageFailure);
-                    }
-                    PublishedWrite::Put { document }
-                }
-                1 => PublishedWrite::Delete {
-                    collection: Some(CollectionName::try_new(&collection).map_err(|_| ())?),
-                    id: DocumentId::try_new(&id).map_err(|_| ())?,
-                    version_at_delete: version,
-                },
-                _ => return Err(super::JournalReadError::StorageFailure),
-            };
-            let durability =
-                u8::try_from(requested).ok().and_then(codec::durability_of).ok_or(())?;
-            let operation = OperationId::try_new(&operation).map_err(|_| ())?;
-            let kind = match kind.as_str() {
-                ROW_KIND_ORIGIN => JournalKind::Origin,
-                ROW_KIND_REPLICATED => JournalKind::Replicated,
-                _ => return Err(super::JournalReadError::StorageFailure),
-            };
-            let provenance = JournalProvenance::new(
-                kind,
-                origin,
-                u64::try_from(origin_sequence).map_err(|_| ())?,
-                u64::from_le_bytes(hlc.to_le_bytes()),
-            )
-            .with_context(context);
-            match commits.last_mut() {
-                Some(last) if last.sequence().get() == sequence => {
-                    if last.operation_id() != &operation
-                        || last.durability() != durability
-                        || last.provenance() != &provenance
-                    {
-                        return Err(super::JournalReadError::StorageFailure);
-                    }
-                    let writes = last.writes_mut();
-                    writes.push(write);
-                }
-                _ => {
-                    commits.push(PublishedCommit::new(
-                        tenant.clone(),
-                        operation,
-                        StorageSequence::new(sequence),
-                        durability,
-                        provenance,
-                        vec![write],
-                    ));
-                }
-            }
-        }
-        Ok(commits)
+        Ok(self
+            .read_retained_commits(tenant, StorageSequence::new(sequence.get() - 1), 1, false)
+            .map_err(|_| ())?
+            .into_iter()
+            .next()
+            .filter(|commit| commit.sequence() == sequence))
     }
 
     fn journal_rows(
