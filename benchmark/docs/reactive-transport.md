@@ -33,6 +33,16 @@ preflights locally with `no-store`; the subsequent read still requires a valid
 capability. Both use `Access-Control-Allow-Origin: *` without credential mode
 or origin-dependent response bytes.
 
+SQL views on one member host and tenant share a publication watch and a bounded
+journal replay buffer. The buffer retains up to 4,096 records and 8 MiB of
+accounted record data, including causal context. Concurrent views reuse the
+same immutable record allocations and select only records within their own
+snapshot cuts. Byte eviction, excessive backlog, or expired source history
+requires a view to rebuild at its exact immutable snapshot; none can become a
+silently skipped delta prefix. The source watch detaches when its last owner
+is dropped. Interval-based selection of affected views is not yet connected;
+the shared publication signal still wakes the views on that source.
+
 ## Result digest
 
 Wire producers and SDKs use the native result-view core's four-lane FNV-1a digest.
