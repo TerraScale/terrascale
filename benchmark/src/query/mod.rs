@@ -256,6 +256,13 @@ impl QueryPlan {
         self
     }
 
+    /// Returns the canonical index requirements derived from this query's
+    /// predicates and ordering, independent of automatic index lifecycle.
+    #[must_use]
+    pub fn index_requirements(&self) -> Vec<optimizer::IndexField> {
+        optimizer::demand_of(&self.query).fields().to_vec()
+    }
+
     /// Binds the score-rank request of a relevance-ordered search.
     /// Test-only: in-crate search tests bind the rank the SQL planner
     /// lowers from relevance ordering.

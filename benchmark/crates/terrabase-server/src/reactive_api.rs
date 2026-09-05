@@ -1195,11 +1195,22 @@ fn prepare_view(
     );
     put_identity(&mut identity, b"parameters", &parameter_bytes);
     put_identity(&mut identity, b"schema-version", b"1");
-    // Published generations and usage observations change on ordinary writes.
-    // Only catalog definitions/lifecycle state belong to the view identity.
+    // Bind the compiled index requirements before the seed can create an
+    // automatic index. Its build/usage lifecycle cannot change SQL semantics
+    // or split an existing view's revision line on the next attachment.
+    put_identity(&mut identity, b"index-plan-version", b"1");
+    put_identity(
+        &mut identity,
+        b"index-requirements",
+        format!("{:?}", plan.index_requirements()).as_bytes(),
+    );
+    // Explicit index definitions remain part of the catalog identity.
     let mut indexes = engine.queries().registered_indexes(&tenant);
     indexes.sort_by(|left, right| left.name().cmp(right.name()));
-    for index in indexes {
+    for index in indexes
+        .into_iter()
+        .filter(|index| index.kind() == terrabase::query::optimizer::IndexKind::Explicit)
+    {
         put_identity(&mut identity, b"index-name", index.name().as_bytes());
         put_identity(&mut identity, b"index-collection", index.collection().as_bytes());
         put_identity(

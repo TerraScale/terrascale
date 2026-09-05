@@ -5098,7 +5098,7 @@ mod tests {
                 barrier.wait();
                 runtime.block_on(app.oneshot(
                     Request::post("/api/v1/reactive/views").header("authorization", key)
-                        .body(Body::from(r#"{"databaseId":"prod","statement":"SELECT total FROM orders LIMIT 10"}"#)).unwrap(),
+                        .body(Body::from(r#"{"databaseId":"prod","statement":"SELECT total FROM orders WHERE total > 0 LIMIT 10"}"#)).unwrap(),
                 )).unwrap()
             }));
         }
