@@ -1683,8 +1683,9 @@ pub mod plan {
         }
     }
 
-    /// A bounded incremental result materializer. Top-k plans retain at most
-    /// `2 * limit` boundary candidates; unbounded plans retain at most `limit`.
+    /// An incremental result over the supplied rows. Source rows remain in
+    /// memory for refill after deletions; the result and eligible boundary
+    /// window are limited by the plan. This does not bound source-row memory.
     #[derive(Clone, Debug)]
     pub struct Materializer {
         plan: ViewPlan,
@@ -1730,7 +1731,7 @@ pub mod plan {
         }
         #[must_use]
         pub fn boundary_len(&self) -> usize {
-            self.rows.len().min(self.boundary)
+            self.rows.values().filter(|row| self.plan.matches(row)).take(self.boundary).count()
         }
         fn rebuild(&mut self) {
             let mut rows: Vec<&ExtractedRow> =

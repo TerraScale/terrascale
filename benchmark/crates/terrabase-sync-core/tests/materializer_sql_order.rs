@@ -55,11 +55,14 @@ fn filtering_precedes_top_k_and_deletions_refill_the_result() {
     rows.extend([a.clone(), b.clone(), row("c", 102.0), row("d", 103.0)]);
     materializer.seed(rows);
     assert_eq!(ids(&materializer), ["a", "b"]);
+    assert_eq!(materializer.boundary_len(), 4);
     materializer.apply(&ZSetDelta::remove(a));
     assert_eq!(ids(&materializer), ["b", "c"]);
+    assert_eq!(materializer.boundary_len(), 3);
     let changed = b.clone().with_value("status", Value::Text("open".into()));
     materializer.apply(&ZSetDelta::transition(Some(b), Some(changed)));
     assert_eq!(ids(&materializer), ["c", "d"]);
+    assert_eq!(materializer.boundary_len(), 2);
 }
 
 #[test]
