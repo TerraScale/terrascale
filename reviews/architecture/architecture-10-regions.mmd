@@ -1,0 +1,97 @@
+flowchart TB
+  title["TERRASCALE · 10 REGIONS<br/>Target architecture · v1 · 20 member hosts minimum · 3 global control replicas"]:::title
+  client["Customer app / SDK<br/>TypeScript · Go · Rust · .NET"]:::client
+  title ~~~ client
+  subgraph edge["CLOUDFLARE · DNS / TLS / WAF"]
+    direction LR
+    proxy["1 · REST load balancer<br/>api.terrascale.tech<br/>ts-proxy Worker + placement / member capacity KV"]:::rest
+    dash["Product UI / auth / billing / MCP<br/>app.terrascale.tech<br/>Vinext Worker · Better Auth · Stripe"]:::rest
+    snippet["3 · Reactive HTTP<br/>sync.api.terrascale.tech<br/>Snippet validates view capability"]:::sync
+    cache["4 · Cache Rules + Tiered Cache<br/>HIT: return immutable bytes<br/>MISS: collapse origin requests"]:::sync
+    snippet --> cache
+  end
+  client -->|REST bootstrap| proxy
+  client -->|UI and product routes| dash
+  client -->|snapshot cut / log offset| snippet
+  subgraph selected["OCI · ONE SELECTED DATABASE REGION · repeated in every admitted region"]
+    direction LR
+    subgraph hostA["MEMBER HOST A · Ubuntu / systemd"]
+      api["2 · TerraBase public API<br/>Auth + access rules + session checks<br/>CRUD · read-only SQL · attach view"]:::engine
+      sqlite[("SQLite database file + WAL<br/>Document bytes · indexes · history<br/>Durable publication journal")]:::engine
+      views["Shared incremental views<br/>Journal deltas · 100 ms coalescing<br/>Encode immutable MessagePack once"]:::sync
+      localA["Local ts-orchestrator + ts-node<br/>Private TBEP / lifecycle<br/>Independent systemd services"]:::control
+      api -->|write transaction / query| sqlite
+      sqlite -->|publication journal| views
+      localA -.->|health / drain / membership intent| api
+    end
+    subgraph hostB["MEMBER HOST B · Ubuntu / systemd"]
+      follower[("TerraBase physical follower<br/>RF=2 per placed database<br/>SQLite WAL · durable acknowledgement")]:::engine
+      localB["Local ts-orchestrator + ts-node<br/>Same-host TBEP / systemd"]:::control
+      localB -.-> follower
+    end
+    sqlite ==>|physical WAL frames| follower
+    bucket[("Regional OCI Object Storage<br/>Litestream backup / restore<br/>Encrypted under database DEK")]:::storage
+    sqlite -->|backup stream| bucket
+  end
+  proxy -->|healthy capacity within database placement| api
+  client -->|subsequent REST: direct regional TLS; failures / overload re-enter selection| api
+  dash -->|ordinary SDK and public credential| proxy
+  cache -->|MISS: canonical immutable GET| views
+  views -->|snapshot / delta bytes| cache
+  api -->|attach result: authorized view + capability| client
+  peers["OTHER REGIONS IN THIS DATABASE PLACEMENT<br/>Direct member-to-member QUIC<br/>Causal journal replication + CRDT merge + anti-entropy<br/>RegionalDurable is local RF=2; GlobalDurable adds the contract frontier"]:::replication
+  sqlite <==>|journal waves; residency filter| peers
+  subgraph control["CONTROL ONLY · GRU AUTHORITY · CUSTOMER TRAFFIC DOES NOT ENTER HERE"]
+    direction LR
+    deploy["ts-deploy / Forgejo<br/>Check · build · sign · publish<br/>Submit candidate"]:::control
+    master["GRU global master<br/>One fenced mutation authority<br/>Mirrors · canary · rollback"]:::control
+    quorum[("Permanent global JetStream R3<br/>GRU + SFO + FRA<br/>Embedded in 3 selected local orchestrators")]:::control
+    regional["Regional controllers on every member host<br/>GRU-issued region authority<br/>Durable operation intent + receipts"]:::control
+    deploy -.-> master
+    master -.-> quorum
+    master -.-> regional
+    regional -.-> quorum
+  end
+  regional -.->|reconcile / signed host commands| localA
+  regional -.-> localB
+  master -.->|DNS / KV / keys / Worker and Snippet promotion| edge
+  estate["ESTATE AND TELEMETRY<br/>estate.* → control-plane TerraBase database → dashboard SDK<br/>Grafana agents → Grafana Cloud · TerraBase owns usage facts"]:::note
+  regional -.-> estate
+  subgraph roster["REGIONAL FOOTPRINT · two hosts per region initially; grow with measured demand · each host runs TerraBase + local orchestrator + ts-node + Grafana agent"]
+    direction TB
+    subgraph permanent["CONTROL STORE LOCATIONS · one embedded replica in each"]
+      direction LR
+      gru["GRU<br/>2 member hosts<br/>Global master + regional role<br/>1 global store replica"]:::region
+      sfo["SFO<br/>2 member hosts<br/>Regional role<br/>1 global store replica"]:::region
+      fra["FRA<br/>2 member hosts<br/>Regional role<br/>1 global store replica"]:::region
+      gru ~~~ sfo ~~~ fra
+    end
+    subgraph row4["ADDITIONAL REGIONS 4–7 · illustrative identifiers, locations not selected"]
+      direction LR
+      r04["R04<br/>2 member hosts<br/>Regional authority only<br/>Uses global R3"]:::region
+      r05["R05<br/>2 member hosts<br/>Regional authority only<br/>Uses global R3"]:::region
+      r06["R06<br/>2 member hosts<br/>Regional authority only<br/>Uses global R3"]:::region
+      r07["R07<br/>2 member hosts<br/>Regional authority only<br/>Uses global R3"]:::region
+      r04 ~~~ r05 ~~~ r06 ~~~ r07
+    end
+    subgraph row8["ADDITIONAL REGIONS 8–10 · illustrative identifiers, locations not selected"]
+      direction LR
+      r08["R08<br/>2 member hosts<br/>Regional authority only<br/>Uses global R3"]:::region
+      r09["R09<br/>2 member hosts<br/>Regional authority only<br/>Uses global R3"]:::region
+      r10["R10<br/>2 member hosts<br/>Regional authority only<br/>Uses global R3"]:::region
+      r08 ~~~ r09 ~~~ r10
+    end
+  end
+  quorum -.->|only these three store locations| permanent
+  limits["SCALE RULES · 10 regions ≠ every database in 10 regions<br/>Database placement stays immutable; RF=2 in each selected region<br/>New regions do not join global R3; separate regional R3 needs at least 3 eligible hosts<br/>GRU / NATS outage pauses new control mutations; admitted data plane keeps serving<br/>10- and 20-region estates are design targets, not launch qualification evidence"]:::note
+  roster ~~~ limits
+  classDef title fill:#0c2436,color:#ffffff,stroke:#0c2436,font-size:24px,font-weight:bold
+  classDef client fill:#e8edf5,stroke:#40566f,color:#102333
+  classDef rest fill:#e3efff,stroke:#3571c1,color:#132f51
+  classDef sync fill:#dff5ee,stroke:#16806a,color:#103e32
+  classDef engine fill:#fff0d7,stroke:#b67b27,color:#50300a
+  classDef storage fill:#fff0d7,stroke:#b67b27,color:#50300a
+  classDef replication fill:#fff0d7,stroke:#b67b27,color:#50300a
+  classDef control fill:#f0e9fa,stroke:#8262ad,color:#35204e
+  classDef region fill:#f3f6fa,stroke:#6d8197,color:#18334a
+  classDef note fill:#f5f7f9,stroke:#a5b2c0,color:#263b4e,font-size:15px

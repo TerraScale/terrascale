@@ -1,0 +1,166 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1382" viewBox="0 0 1600 1382" role="img" aria-labelledby="title desc">
+<title id="title">TerraScale target architecture with 10 regions</title>
+<desc id="desc">REST bootstrap through a Cloudflare Worker then direct regional REST. Reactive delivery through a Snippet and CDN. TerraBase runs SQLite, physical RF=2 and direct QUIC replication. Every member host has a local orchestrator; GRU controls mutations and three fixed global store replicas serve 10 regions.</desc>
+<defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0 0 L8 4 L0 8 Z" fill="#536c83"/></marker></defs>
+<rect width="1600" height="1382" fill="#f7f9fc"/>
+<style>text{font-family:Arial,sans-serif;fill:#18334a}.body{font-size:15px}.small{font-size:15px}.h{font-size:18px;font-weight:700}.section{font-size:18px;font-weight:700;letter-spacing:.6px}</style>
+<rect x="0" y="0" width="1600" height="128" rx="0" fill="#112d43" stroke="#112d43"/>
+<text x="44" y="39" class="section" style="fill:#78d7bb">TERRASCALE / ARCHITECTURE</text>
+<text x="44" y="86" class="h" style="fill:#fff;font-size:34px">10 regions. One v1 architecture.</text>
+<text x="1060" y="52" class="h" style="fill:#fff">20 member hosts minimum</text>
+<text x="1060" y="82" class="body" style="fill:#c4dbe9">20 local orchestrators · 3 control replicas</text>
+<text x="44" y="158" class="small" >TARGET DESIGN  ·  Blue = REST  ·  Green = reactive  ·  Amber = data/replication  ·  Purple = control</text>
+<rect x="32" y="180" width="1536" height="502" rx="12" fill="#fff" stroke="#d2dee8"/>
+<text x="52" y="212" class="section" >01  REQUESTS AND THE DATABASE</text>
+<text x="888" y="212" class="small" >OCI detail = one selected database Region, repeated as placed</text>
+<rect x="56" y="264" width="220" height="116" rx="12" fill="#f0f4f8" stroke="#73889d"/>
+<text x="73" y="293" class="h" >App / SDK</text>
+<text x="73" y="322" class="body" >TS · Go · Rust · .NET</text>
+<text x="73" y="345" class="body" >Sign in / API credential</text>
+<text x="73" y="368" class="body" >Session + idempotency</text>
+<rect x="326" y="264" width="260" height="116" rx="12" fill="#eaf2ff" stroke="#3778bd"/>
+<text x="343" y="293" class="h" >REST load balancer</text>
+<text x="343" y="322" class="body" >api.terrascale.tech</text>
+<text x="343" y="345" class="body" >ts-proxy Worker</text>
+<text x="343" y="368" class="body" >Placement + health + load</text>
+<rect x="646" y="264" width="290" height="116" rx="12" fill="#fff3df" stroke="#b47d2b"/>
+<text x="663" y="293" class="h" >TerraBase public API</text>
+<text x="663" y="322" class="body" >Direct regional TLS endpoint</text>
+<text x="663" y="345" class="body" >Auth · scope · session frontier</text>
+<text x="663" y="368" class="body" >CRUD · read-only SQL · attach</text>
+<rect x="996" y="264" width="260" height="116" rx="12" fill="#fff3df" stroke="#b47d2b"/>
+<text x="1013" y="293" class="h" >SQLite + WAL</text>
+<text x="1013" y="322" class="body" >Per database, one writer</text>
+<text x="1013" y="345" class="body" >Bytes · indexes · history</text>
+<text x="1013" y="368" class="body" >Atomic publication journal</text>
+<rect x="1316" y="264" width="228" height="116" rx="12" fill="#fff3df" stroke="#b47d2b"/>
+<text x="1333" y="293" class="h" >Physical follower</text>
+<text x="1333" y="322" class="body" >Second regional host</text>
+<text x="1333" y="345" class="body" >RF=2 · durable WAL ack</text>
+<text x="1333" y="368" class="body" >Same placement</text>
+<polyline points="276,327 326,327" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />
+<rect x="276" y="293" width="41.2" height="23" rx="3" fill="#f7f9fc" stroke="#f7f9fc"/>
+<text x="281" y="310" class="small" >REST</text>
+<polyline points="586,327 646,327" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />
+<polyline points="936,327 996,327" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />
+<polyline points="1256,327 1316,327" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />
+<rect x="1261" y="293" width="33.4" height="23" rx="3" fill="#f7f9fc" stroke="#f7f9fc"/>
+<text x="1266" y="310" class="small" >WAL</text>
+<polyline points="166,264 166,236 791,236 791,264" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />
+<rect x="281" y="231" width="548.1999999999999" height="23" rx="3" fill="#f7f9fc" stroke="#f7f9fc"/>
+<text x="286" y="248" class="small" >Direct REST pin; failed / overloaded → select another eligible member</text>
+<rect x="56" y="446" width="220" height="116" rx="12" fill="#e4f6f1" stroke="#17816a"/>
+<text x="73" y="475" class="h" >Same SDK, live view</text>
+<text x="73" y="504" class="body" >Attach: scoped capability</text>
+<text x="73" y="527" class="body" >Then HTTP snapshot/log</text>
+<text x="73" y="550" class="body" >Checkpoint stays opaque</text>
+<rect x="326" y="446" width="260" height="116" rx="12" fill="#e4f6f1" stroke="#17816a"/>
+<text x="343" y="475" class="h" >Snippet capability gate</text>
+<text x="343" y="504" class="body" >sync.api.terrascale.tech</text>
+<text x="343" y="527" class="body" >Verify scope + generation</text>
+<text x="343" y="550" class="body" >Remove token before cache</text>
+<rect x="646" y="446" width="290" height="116" rx="12" fill="#e4f6f1" stroke="#17816a"/>
+<text x="663" y="475" class="h" >CDN + Tiered Cache</text>
+<text x="663" y="504" class="body" >HIT returns bytes to the SDK</text>
+<text x="663" y="527" class="body" >MISS collapses origin fills</text>
+<text x="663" y="550" class="body" >No Worker on this path</text>
+<rect x="996" y="446" width="260" height="116" rx="12" fill="#e4f6f1" stroke="#17816a"/>
+<text x="1013" y="475" class="h" >Shared result views</text>
+<text x="1013" y="504" class="body" >Journal → incremental delta</text>
+<text x="1013" y="527" class="body" >100 ms shared publication</text>
+<text x="1013" y="550" class="body" >Encode immutable bytes once</text>
+<rect x="1316" y="446" width="228" height="116" rx="12" fill="#fff3df" stroke="#b47d2b"/>
+<text x="1333" y="475" class="h" >OCI Object Storage</text>
+<text x="1333" y="504" class="body" >Litestream · PITR</text>
+<text x="1333" y="527" class="body" >Restore to a new DB</text>
+<text x="1333" y="550" class="body" >Regional · DEK encrypted</text>
+<polyline points="276,507 326,507" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />
+<rect x="274" y="473" width="41.2" height="23" rx="3" fill="#f7f9fc" stroke="#f7f9fc"/>
+<text x="279" y="490" class="small" >HTTP</text>
+<polyline points="586,507 646,507" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />
+<rect x="589" y="473" width="41.2" height="23" rx="3" fill="#f7f9fc" stroke="#f7f9fc"/>
+<text x="594" y="490" class="small" >gate</text>
+<polyline points="936,507 996,507" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" marker-start="url(#a)"/>
+<polyline points="1126,380 1126,446" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />
+<rect x="1133" y="403" width="64.6" height="23" rx="3" fill="#f7f9fc" stroke="#f7f9fc"/>
+<text x="1138" y="420" class="small" >journal</text>
+<polyline points="1256,356 1284,356 1284,412 1430,412 1430,446" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />
+<rect x="1351" y="388" width="56.8" height="23" rx="3" fill="#f7f9fc" stroke="#f7f9fc"/>
+<text x="1356" y="405" class="small" >backup</text>
+<text x="58" y="593" class="small" >Cache key keeps snapshot cut / log offset. Empty polls are no-store. Optional WebSocket connects directly to the member.</text>
+<rect x="56" y="612" width="1488" height="48" rx="8" fill="#fff6e7" stroke="#e2c893"/>
+<text x="74" y="642" class="body" >CROSS-REGION: member ↔ member QUIC journal + causal CRDT merge + anti-entropy. Only Regions in that database’s immutable placement.</text>
+<rect x="32" y="706" width="1536" height="266" rx="12" fill="#fff" stroke="#d2dee8"/>
+<text x="52" y="740" class="section" >02  CONTROL AND OPERATIONS</text>
+<text x="834" y="740" class="small" >Customer documents, queries, WAL and reactive frames never enter NATS</text>
+<rect x="56" y="772" width="250" height="116" rx="12" fill="#f0eafb" stroke="#7956ad"/>
+<text x="73" y="801" class="h" >ts-deploy / Forgejo</text>
+<text x="73" y="830" class="body" >Check · build · sign · publish</text>
+<text x="73" y="853" class="body" >Submit immutable candidate</text>
+<text x="73" y="876" class="body" >No cluster rollout authority</text>
+<rect x="366" y="772" width="310" height="116" rx="12" fill="#f0eafb" stroke="#7956ad"/>
+<text x="383" y="801" class="h" >GRU global master</text>
+<text x="383" y="830" class="body" >One fenced mutation authority</text>
+<text x="383" y="853" class="body" >Mirrors · canary · rollback</text>
+<text x="383" y="876" class="body" >Controls regional admission</text>
+<rect x="736" y="772" width="360" height="116" rx="12" fill="#f0eafb" stroke="#7956ad"/>
+<text x="753" y="801" class="h" >Regional orchestrators</text>
+<text x="753" y="830" class="body" >Local process on EVERY member host</text>
+<text x="753" y="853" class="body" >GRU-issued, Region-scoped authority</text>
+<text x="753" y="876" class="body" >Durable intent and operation receipts</text>
+<rect x="1156" y="772" width="388" height="116" rx="12" fill="#f0eafb" stroke="#7956ad"/>
+<text x="1173" y="801" class="h" >Local lifecycle on the same host</text>
+<text x="1173" y="830" class="body" >ts-node: signed install + systemd</text>
+<text x="1173" y="853" class="body" >TBEP: health / membership / drain</text>
+<text x="1173" y="876" class="body" >TerraBase decides readiness</text>
+<polyline points="306,826 366,826" fill="none" stroke="#536c83" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a)" />
+<polyline points="676,826 736,826" fill="none" stroke="#536c83" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a)" />
+<polyline points="1096,826 1156,826" fill="none" stroke="#536c83" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#a)" />
+<text x="56" y="922" class="body" >Two hosts per Region to start. Scale from measured demand; admit/catch up before traffic. Fixed control R3: GRU + SFO + FRA.</text>
+<text x="56" y="950" class="small" >Orchestrator → DNS / KV / keys / edge promotion. estate.* → TerraBase → dashboard SDK. Grafana agents → Grafana Cloud.</text>
+<rect x="32" y="996" width="1536" height="278" rx="12" fill="#fff" stroke="#d2dee8"/>
+<text x="52" y="1028" class="section" >03  REGIONAL FOOTPRINT / 10 REGIONS</text>
+<rect x="56" y="1049" width="280" height="92" rx="8" fill="#eee9f8" stroke="#997cc0"/>
+<text x="70" y="1075" class="h" >GRU · home Region</text>
+<text x="70" y="1100" class="small" >2 members + 2 local controllers</text>
+<text x="70" y="1124" class="small" >Global master + 1 store replica</text>
+<rect x="355" y="1049" width="280" height="92" rx="8" fill="#eee9f8" stroke="#997cc0"/>
+<text x="369" y="1075" class="h" >SFO</text>
+<text x="369" y="1100" class="small" >2 members + 2 local controllers</text>
+<text x="369" y="1124" class="small" >1 global store replica</text>
+<rect x="654" y="1049" width="280" height="92" rx="8" fill="#eee9f8" stroke="#997cc0"/>
+<text x="668" y="1075" class="h" >FRA</text>
+<text x="668" y="1100" class="small" >2 members + 2 local controllers</text>
+<text x="668" y="1124" class="small" >1 global store replica</text>
+<rect x="953" y="1049" width="280" height="92" rx="8" fill="#edf3f8" stroke="#99aec0"/>
+<text x="967" y="1075" class="h" >R04 · proposed Region</text>
+<text x="967" y="1100" class="small" >2 members + 2 local controllers</text>
+<text x="967" y="1124" class="small" >Regional authority; uses global R3</text>
+<rect x="1252" y="1049" width="280" height="92" rx="8" fill="#edf3f8" stroke="#99aec0"/>
+<text x="1266" y="1075" class="h" >R05 · proposed Region</text>
+<text x="1266" y="1100" class="small" >2 members + 2 local controllers</text>
+<text x="1266" y="1124" class="small" >Regional authority; uses global R3</text>
+<rect x="56" y="1157" width="280" height="92" rx="8" fill="#edf3f8" stroke="#99aec0"/>
+<text x="70" y="1183" class="h" >R06 · proposed Region</text>
+<text x="70" y="1208" class="small" >2 members + 2 local controllers</text>
+<text x="70" y="1232" class="small" >Regional authority; uses global R3</text>
+<rect x="355" y="1157" width="280" height="92" rx="8" fill="#edf3f8" stroke="#99aec0"/>
+<text x="369" y="1183" class="h" >R07 · proposed Region</text>
+<text x="369" y="1208" class="small" >2 members + 2 local controllers</text>
+<text x="369" y="1232" class="small" >Regional authority; uses global R3</text>
+<rect x="654" y="1157" width="280" height="92" rx="8" fill="#edf3f8" stroke="#99aec0"/>
+<text x="668" y="1183" class="h" >R08 · proposed Region</text>
+<text x="668" y="1208" class="small" >2 members + 2 local controllers</text>
+<text x="668" y="1232" class="small" >Regional authority; uses global R3</text>
+<rect x="953" y="1157" width="280" height="92" rx="8" fill="#edf3f8" stroke="#99aec0"/>
+<text x="967" y="1183" class="h" >R09 · proposed Region</text>
+<text x="967" y="1208" class="small" >2 members + 2 local controllers</text>
+<text x="967" y="1232" class="small" >Regional authority; uses global R3</text>
+<rect x="1252" y="1157" width="280" height="92" rx="8" fill="#edf3f8" stroke="#99aec0"/>
+<text x="1266" y="1183" class="h" >R10 · proposed Region</text>
+<text x="1266" y="1208" class="small" >2 members + 2 local controllers</text>
+<text x="1266" y="1232" class="small" >Regional authority; uses global R3</text>
+<text x="44" y="1301" class="body" >Regional services: TerraBase + ts-orchestrator + ts-node + Grafana agent on each host. Regional backups remain on OCI.</text>
+<text x="44" y="1328" class="body" >Estate growth does not widen database residency. A separate regional R3 needs at least 3 eligible hosts and explicit admission.</text>
+<text x="44" y="1355" class="small" >GRU / NATS outage pauses new control mutations; admitted data-plane service continues. Launch qualifies 3 Regions; 10/20 are design targets.</text>
+</svg>
