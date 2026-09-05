@@ -1,3 +1,4 @@
+import { canonicalRegionCode, regionalApiBaseUrl } from "../../regions.js";
 import {
   decodeTerrascaleSyncV1MsgpackEnvelope,
   encodeTerrascaleSyncV1MsgpackEnvelope,
@@ -535,7 +536,9 @@ export class TerraScaleSyncV1Client {
     } catch (error) {
       throw new TerraScaleSyncV1ClientError("protocol_error", "reactive attach was not valid JSON", { cause: error });
     }
-    return decodeAttachedView(value, this.#syncBaseUrl, message.subscription);
+    const region = canonicalRegionCode(response.headers.get("x-terrascale-region") ?? undefined);
+    const memberOrigin = region === undefined ? this.#apiBaseUrl : regionalApiBaseUrl(this.#apiBaseUrl, region);
+    return decodeAttachedView(value, this.#syncBaseUrl, message.subscription, memberOrigin);
   }
 
   async #getBytes(url: string, state: LiveSubscriptionState, signal?: AbortSignal): Promise<Uint8Array | undefined> {
@@ -725,7 +728,10 @@ export class TerraScaleSyncV1Client {
         "WebSocket transport was requested but no WebSocket implementation is available",
       );
     }
-    const url = state.websocketUrl ?? websocketUrl(this.#syncBaseUrl, state.viewId, state.generation);
+    const url = state.websocketUrl;
+    if (url === undefined || new URL(url).hostname === "api.terrascale.tech") {
+      throw new TerraScaleSyncV1ClientError("protocol_error", "WebSocket attach did not identify a regional member");
+    }
     if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u.test(state.capability)) {
       throw new TerraScaleSyncV1ClientError("protocol_error", "view capability is not a valid WebSocket protocol token");
     }
@@ -1162,7 +1168,7 @@ function canonicalUrl(syncOrigin: string, path: string): string {
   return `${syncOrigin}${path}`;
 }
 
-function decodeAttachedView(value: unknown, syncOrigin: string, subscription: string): AttachedView {
+function decodeAttachedView(value: unknown, syncOrigin: string, subscription: string, memberOrigin: string): AttachedView {
   if (!isRecord(value)) throw new TerraScaleSyncV1ClientError("protocol_error", "reactive attach response is not an object");
   const view = typeof value.viewId === "string"
     ? value.viewId
@@ -1188,9 +1194,9 @@ function decodeAttachedView(value: unknown, syncOrigin: string, subscription: st
     ? capabilityHeader.toLowerCase()
     : "x-terrascale-view-capability";
   const websocketValue = value.websocketUrl ?? value.websocket_url ?? value.wsUrl ?? value.ws_url;
-  const websocketUrl = websocketValue === undefined
-    ? undefined
-    : canonicalWebSocketUrl(websocketValue, syncOrigin, view, generation);
+  const attachedWebsocketUrl = websocketValue === undefined
+    ? websocketUrl(memberOrigin, view, generation)
+    : canonicalWebSocketUrl(websocketValue, memberOrigin, view, generation);
   const expectedLogPath = canonicalViewPath(view, generation, "log");
   const rawLogUrl = value.logUrl ?? value.log_url ?? value.log;
   const logUrl = rawLogUrl === undefined
@@ -1236,10 +1242,10 @@ function decodeAttachedView(value: unknown, syncOrigin: string, subscription: st
         digest: syncV1ResultDigest([]),
         checkpoint,
       },
-      websocketUrl,
+      websocketUrl: attachedWebsocketUrl,
     };
   }
-  return { viewId: view, generation, checkpoint, capability: capabilityValue, capabilityHeader: normalizedCapabilityHeader, snapshotUrls, logUrl, snapshot, websocketUrl };
+  return { viewId: view, generation, checkpoint, capability: capabilityValue, capabilityHeader: normalizedCapabilityHeader, snapshotUrls, logUrl, snapshot, websocketUrl: attachedWebsocketUrl };
 }
 
 function canonicalWebSocketUrl(raw: unknown, apiOrigin: string, view: string, generation: bigint): string {
