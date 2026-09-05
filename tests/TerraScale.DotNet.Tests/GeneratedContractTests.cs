@@ -10,7 +10,7 @@ public sealed class GeneratedContractTests
     {
         await Assert.That(TerraScaleContractPin.Version).IsEqualTo("v1");
         await Assert.That(TerraScaleContractPin.ManifestSha256.Length).IsEqualTo(64);
-        await Assert.That(TerraScaleContractRoutes.All).Count().IsEqualTo(35);
+        await Assert.That(TerraScaleContractRoutes.All).Count().IsEqualTo(36);
 
         var operation = TerraScaleContractRoutes.Find("execute_sql");
         await Assert.That(operation.Method).IsEqualTo("POST");
