@@ -49,8 +49,17 @@ a bounded memo (4,096 records / 8 MiB of accounted data). Unknown predecessors
 after pruning include every view of the collection. Numeric bounds deliberately
 overmatch rounded values; the native evaluator retains exact integer semantics.
 Predicates without a usable scalar interval use collection-wide matching.
-Irrelevant rows advance only the source watermark, before candidate cloning or
-fallback SQL.
+Irrelevant rows advance only the source watermark, before candidate cloning.
+
+All admitted native live plans apply affected journal records incrementally.
+Queries without `LIMIT` retain the complete matching set under the native
+4,096-row limit and the 64 MiB candidate-data budget. Paged queries retain an
+ordered prefix, including rows skipped by `OFFSET`, so a deep page does not
+require retaining the whole collection. Internal candidate fetches can exceed
+the public 1,024-row result-page limit while staying within the native candidate
+bound. A depleted prefix or missing replay history triggers one SQL refill at
+the requested immutable cut. Ordinary affected updates do not rerun snapshot
+SQL. Candidate-limit refusals return a typed error before publishing a revision.
 
 Pending origin polls lease one dispatcher per source. It reads shared journal
 records at the emission cadence and notifies only pending views whose registered

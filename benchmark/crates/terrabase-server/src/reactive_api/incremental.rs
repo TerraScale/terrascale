@@ -130,7 +130,7 @@ impl SqlMaterializer {
                 total.saturating_mul(2).min(LiveQueryPlan::MAX_CANDIDATES),
             )
         };
-        Ok(Self { candidates, plan, offset, limit, complete })
+        Ok(Self { plan, candidates, offset, limit, complete })
     }
 
     pub(super) fn seed(
@@ -275,7 +275,7 @@ fn too_large() -> ApiError {
     ApiError {
         status: axum::http::StatusCode::UNPROCESSABLE_ENTITY,
         code: "view_too_large",
-        message: "the live candidate window exceeds its memory bound".into(),
+        message: "the live candidate set exceeds its row or byte bound".into(),
         fix: "reduce the projection or result window".into(),
         placement: None,
     }
@@ -321,22 +321,16 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn complete_results_and_large_pages_apply_journal_without_snapshot_sql() {
-        let dir =
-            std::env::temp_dir().join(format!("terrabase-complete-native-{}", std::process::id()));
-        let engine = Engine::open(EngineConfig::durable(&dir).unwrap()).unwrap();
-        let tenant = TenantId::try_new("tenant").unwrap();
-        let scope = engine.scope_for(&tenant);
+    fn seed_range(engine: &Engine, scope: &TenantScope, ranks: std::ops::Range<i64>) {
         let collection = CollectionName::try_new("orders").unwrap();
         let mut transaction = engine
             .begin(
-                &scope,
-                engine.read_snapshot(&scope).unwrap(),
+                scope,
+                engine.read_snapshot(scope).unwrap(),
                 OperationId::try_new("seed-complete").unwrap(),
             )
             .unwrap();
-        for rank in 0..2105 {
+        for rank in ranks {
             transaction
                 .put(
                     Document::new(
@@ -351,6 +345,17 @@ mod tests {
                 .unwrap();
         }
         assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    }
+
+    #[test]
+    fn complete_results_and_large_pages_apply_journal_without_snapshot_sql() {
+        let dir =
+            std::env::temp_dir().join(format!("terrabase-complete-native-{}", std::process::id()));
+        let engine = Engine::open(EngineConfig::durable(&dir).unwrap()).unwrap();
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let scope = engine.scope_for(&tenant);
+        let collection = CollectionName::try_new("orders").unwrap();
+        seed_range(&engine, &scope, 0..2105);
         let initial = engine.read_snapshot(&scope).unwrap();
         let mut views = Vec::new();
         for paging in ["", " LIMIT 1024", " LIMIT 1024 OFFSET 1000", " LIMIT 5 OFFSET 2000"] {
@@ -431,28 +436,18 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
-        let mut transaction = engine
-            .begin(
-                &scope,
-                engine.read_snapshot(&scope).unwrap(),
-                OperationId::try_new("grow-paged-source").unwrap(),
-            )
-            .unwrap();
-        for rank in 2105..5000 {
-            transaction
-                .put(
-                    Document::new(
-                        DocumentId::try_new(&format!("row-{rank:04}")).unwrap(),
-                        collection.clone(),
-                        DocumentValue::Object(
-                            [("score".into(), DocumentValue::Integer(rank))].into(),
-                        ),
-                    ),
-                    ExpectedVersion::Any,
-                )
-                .unwrap();
-        }
-        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+        drop(engine);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn deep_page_refills_a_bounded_prefix_from_a_larger_collection() {
+        let dir =
+            std::env::temp_dir().join(format!("terrabase-deep-native-{}", std::process::id()));
+        let engine = Engine::open(EngineConfig::durable(&dir).unwrap()).unwrap();
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let scope = engine.scope_for(&tenant);
+        seed_range(&engine, &scope, 0..5000);
         let plan = engine
             .queries()
             .compile(QueryInput::sql(

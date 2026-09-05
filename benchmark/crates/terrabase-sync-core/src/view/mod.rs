@@ -1794,10 +1794,11 @@ pub mod plan {
         }
     }
 
-    /// A bounded top-k result. At most min(2k, `MAX_TOP_K_ITEMS`) eligible
-    /// candidates are retained, with an ordering fence covering the known
-    /// prefix of the source. Updates beyond that fence are not guessed into
-    /// the result. `RefillRequired` leaves the previous result unchanged.
+    /// An incrementally ordered result under a retained-data byte budget.
+    /// The default top-k mode retains min(2k, `MAX_TOP_K_ITEMS`) candidates.
+    /// Adapters can supply a larger paging prefix or retain a complete set.
+    /// An ordering fence covers each known prefix; updates beyond that fence
+    /// are not guessed into the result. `RefillRequired` leaves it unchanged.
     #[derive(Clone, Debug)]
     pub struct Materializer<P: MaterializerPlan = ViewPlan> {
         plan: P,
@@ -1829,18 +1830,15 @@ pub mod plan {
                 retained_bytes: 0,
             }
         }
-        /// Retains every matching row, subject to `MAX_VIEW_BYTES`. Use this
-        /// for complete results or paging windows beyond the top-k bound.
+        /// Retains every matching row, subject to `MAX_VIEW_BYTES`.
         #[must_use]
         pub fn complete(plan: P) -> Self {
-            let mut materializer = Self::new(plan);
-            materializer.boundary = usize::MAX;
-            materializer
+            Self::with_candidate_capacity(plan, usize::MAX)
         }
         /// Seeds from an authoritative snapshot of unique source identities.
-        /// The iterator may scan the entire source; only the best 2k rows
-        /// remain in memory. A storage adapter may instead stream its ordered
-        /// first 2k+1 eligible rows, using the extra row to prove a tail exists.
+        /// The iterator may scan the entire source; the configured candidate
+        /// capacity bounds retained rows. An adapter may supply the ordered
+        /// prefix plus one extra row to prove a tail exists.
         pub fn seed(
             &mut self,
             rows: impl IntoIterator<Item = P::Row>,
