@@ -4877,7 +4877,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     #[allow(
         clippy::too_many_lines,
         reason = "the route journey verifies attach, snapshot, and delta bytes"
@@ -4944,6 +4944,14 @@ mod tests {
             router.clone().oneshot(put("o-2", 20)).await.expect("put").status(),
             StatusCode::OK
         );
+        assert_eq!(
+            router.clone().oneshot(put("o-coalesced", 30)).await.expect("put").status(),
+            StatusCode::OK
+        );
+        tokio::time::advance(std::time::Duration::from_millis(99)).await;
+        tokio::task::yield_now().await;
+        assert!(!pending.is_finished(), "writes coalesce within the view's 100 ms window");
+        tokio::time::advance(std::time::Duration::from_millis(1)).await;
         let response = tokio::time::timeout(std::time::Duration::from_secs(2), pending)
             .await
             .expect("commit wakes the waiting request")
@@ -4957,6 +4965,8 @@ mod tests {
             panic!("delta envelope")
         };
         assert!(operations.iter().any(|operation| matches!(operation, ResultOperation::Insert { identity, .. } if identity == "o-2")));
+        assert!(operations.iter().any(|operation| matches!(operation, ResultOperation::Insert { identity, .. } if identity == "o-coalesced")));
+        let replay_started = tokio::time::Instant::now();
         let replay = tokio::time::timeout(
             std::time::Duration::from_secs(1),
             router.clone().oneshot(read(log_url)),
@@ -4964,6 +4974,7 @@ mod tests {
         .await
         .expect("another reader gets the existing revision immediately")
         .expect("replay");
+        assert_eq!(tokio::time::Instant::now(), replay_started, "replay bypasses cadence");
         assert_eq!(replay.status(), StatusCode::OK);
         assert_eq!(axum::body::to_bytes(replay.into_body(), 65_536).await.expect("body"), body);
         assert_eq!(from_revision, snapshot.revision);
@@ -5005,6 +5016,10 @@ mod tests {
         let response =
             router.clone().oneshot(attach_request()).await.expect("reattach after write");
         assert_eq!(response.status(), StatusCode::CREATED);
+        tokio::time::advance(std::time::Duration::from_millis(99)).await;
+        tokio::task::yield_now().await;
+        assert!(!waiting.is_finished(), "reattachment cannot bypass the next emission window");
+        tokio::time::advance(std::time::Duration::from_millis(1)).await;
         let response = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
             .await
             .expect("existing subscriber wakes")

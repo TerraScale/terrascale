@@ -32,6 +32,7 @@ pub const MAX_ATTACH_SQL_BYTES: usize = 262_144;
 pub const MAX_ATTACH_BINARY_BYTES: usize = 1_048_576;
 /// Maximum HTTP long-poll duration.
 pub const LONG_POLL_WINDOW: Duration = Duration::from_secs(25);
+const EMISSION_CADENCE: Duration = Duration::from_millis(100);
 const RETENTION: Duration = Duration::from_hours(168);
 const CAPABILITY_BUCKET: u64 = 600;
 const CONFORMANCE_CAPABILITY_KEY: &[u8] = b"terrascale-reactive-capability-v1";
@@ -265,6 +266,7 @@ struct View {
     materializer: Option<Materializer>,
     /// One query execution per shared view, independent of other views.
     refreshing: Arc<Mutex<()>>,
+    refresh_after: Option<tokio::time::Instant>,
 }
 
 impl View {
@@ -404,6 +406,9 @@ fn initial_view(
         log: BTreeMap::new(),
         materializer: materialization.as_ref().and_then(|value| value.materializer.clone()),
         refreshing: Arc::new(Mutex::new(())),
+        refresh_after: materialization
+            .and_then(|value| value.materializer.as_ref())
+            .map(|_| tokio::time::Instant::now() + EMISSION_CADENCE),
     }
 }
 
@@ -567,7 +572,12 @@ impl ViewStore {
             retained => return Ok(retained),
         }
         self.refresh_view(view_id)?;
-        self.read_retained_log(view_id, generation, offset)
+        match self.read_retained_log(view_id, generation, offset)? {
+            ReadResult::Empty => {
+                Ok(self.refresh_deadline(view_id)?.map_or(ReadResult::Empty, ReadResult::Deferred))
+            }
+            retained => Ok(retained),
+        }
     }
 
     /// Replay is independent of the materializer: an existing immutable
@@ -603,6 +613,15 @@ impl ViewStore {
         Ok(Arc::clone(&views.get(view_id).ok_or_else(unknown_view)?.refreshing))
     }
 
+    fn refresh_deadline(&self, view_id: &str) -> Result<Option<tokio::time::Instant>, ApiError> {
+        let views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
+        Ok(views
+            .get(view_id)
+            .ok_or_else(unknown_view)?
+            .refresh_after
+            .filter(|deadline| *deadline > tokio::time::Instant::now()))
+    }
+
     /// Replays the current durable snapshot when the journal sequence moved
     /// since the last materialization. Readers at the same durable cut
     /// observe the same frozen `MessagePack` bytes.
@@ -611,6 +630,13 @@ impl ViewStore {
         // Never wait for a query while holding the registry lock. Concurrent
         // refreshes of this view recheck its durable cut after acquiring it.
         let _singleflight = refreshing.lock().map_err(|_| ApiError::storage_failure())?;
+        if self.refresh_deadline(view_id)?.is_some() {
+            return Ok(());
+        }
+        self.refresh_view_now(view_id)
+    }
+
+    fn refresh_view_now(&self, view_id: &str) -> Result<(), ApiError> {
         let (materializer, previous, generation, identity_digest, observed_sequence) = {
             let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
             let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
@@ -648,6 +674,7 @@ impl ViewStore {
                 // An irrelevant write advances the source watermark, not
                 // the published result revision or its immutable snapshot URL.
                 view.observed_sequence = revision;
+                view.refresh_after = Some(tokio::time::Instant::now() + EMISSION_CADENCE);
                 return Ok(());
             }
         }
@@ -706,6 +733,7 @@ impl ViewStore {
         view.items = items;
         view.digest = next_digest;
         view.head = revision;
+        view.refresh_after = Some(tokio::time::Instant::now() + EMISSION_CADENCE);
         view.prune(SystemTime::now());
         drop(views);
         self.changed.notify_waiters();
@@ -903,19 +931,30 @@ pub async fn view_log(
         let notified = changed.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
-        match store().read_log(&view, generation, offset) {
+        let refresh_deadline = match store().read_log(&view, generation, offset) {
             Ok(ReadResult::Data { revision, frozen }) => {
                 return immutable_response(&frozen, &format!("\"{view}-{generation}-{revision}\""));
             }
             Ok(ReadResult::Reset(bytes)) => return reset_response(bytes),
-            Ok(ReadResult::Empty) => {}
+            Ok(ReadResult::Empty) => None,
+            Ok(ReadResult::Deferred(deadline)) => Some(deadline),
             Err(error) => return error.into_response(),
-        }
+        };
         let remaining = LONG_POLL_WINDOW.saturating_sub(started.elapsed());
         if remaining.is_zero() {
             return empty_timeout();
         }
-        if tokio::time::timeout(remaining, notified).await.is_err() {
+        let wake = async {
+            if let Some(deadline) = refresh_deadline {
+                tokio::select! {
+                    () = notified => {},
+                    () = tokio::time::sleep_until(deadline) => {},
+                }
+            } else {
+                notified.await;
+            }
+        };
+        if tokio::time::timeout(remaining, wake).await.is_err() {
             return empty_timeout();
         }
     }
@@ -1049,6 +1088,7 @@ enum ReadResult {
     Data { revision: u64, frozen: Frozen },
     Reset(Vec<u8>),
     Empty,
+    Deferred(tokio::time::Instant),
 }
 /// Log query fields.
 #[derive(Debug, Deserialize)]
