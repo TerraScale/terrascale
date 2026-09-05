@@ -1809,11 +1809,13 @@ version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
  "axum",
+ "base64",
  "blake3",
  "bytes",
  "http-body-util",
  "hyper",
  "hyper-util",
+ "rcgen",
  "rmp",
  "rustls",
  "serde",

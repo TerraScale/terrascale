@@ -20,6 +20,7 @@ terrabase-tbep = { path = "../terrabase-tbep", default-features = false }
 terrabase-cluster = { path = "../terrabase-cluster", default-features = false }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "ws"] }
 aws-lc-rs = { version = "1.18.0", default-features = false, features = ["non-fips"] }
+base64 = "0.22"
 blake3 = "1.8.2"
 bytes = "1"
 http-body-util = "0.1"
@@ -46,4 +47,5 @@ utoipa-axum = "0.2.0"
 utoipa-scalar = { version = "0.3.0", features = ["axum"] }
 
 [dev-dependencies]
+rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }

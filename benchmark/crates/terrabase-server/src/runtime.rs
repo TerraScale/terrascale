@@ -6,6 +6,7 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
+use base64::Engine as _;
 use terrabase::observability::Component;
 use terrabase::observability::HealthStatus;
 use terrabase::observability::ServiceState;
@@ -540,7 +541,7 @@ fn read_secret_key(path: &Path) -> Result<Vec<u8>, DaemonError> {
 /// Checks PEM framing and base64 syntax before the TLS parser sees the bytes.
 /// The decoded DER is intentionally left to rustls, which owns certificate and
 /// key semantics; this layer only enforces a bounded, structurally complete
-/// PEM document without retaining another copy of the file.
+/// PEM document.
 fn valid_pem(text: &str, private: bool) -> bool {
     let mut blocks = 0usize;
     let mut private_block = false;
@@ -572,68 +573,15 @@ fn valid_pem(text: &str, private: bool) -> bool {
                 ended = true;
                 break;
             }
-            if body.bytes().any(|byte| !byte.is_ascii_whitespace() && byte != b'=')
-                && body
-                    .bytes()
-                    .any(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'+' | b'/'))
-            {
-                return false;
-            }
-            encoded.push_str(body);
+            encoded.extend(body.chars().filter(|character| !character.is_ascii_whitespace()));
         }
-        if !ended || decode_base64(&encoded).is_none() {
+        if !ended || base64::engine::general_purpose::STANDARD.decode(&encoded).is_err() {
             return false;
         }
         blocks = blocks.saturating_add(1);
         private_block |= label.contains("PRIVATE KEY");
     }
     blocks > 0 && (!private || private_block)
-}
-
-fn decode_base64(value: &str) -> Option<Vec<u8>> {
-    let bytes: Vec<u8> = value.bytes().filter(|byte| !byte.is_ascii_whitespace()).collect();
-    if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
-        return None;
-    }
-    let (chunks, _remainder) = bytes.as_chunks::<4>();
-    let chunk_count = chunks.len();
-    let mut decoded = Vec::with_capacity(bytes.len() / 4 * 3);
-    for (index, chunk) in chunks.iter().enumerate() {
-        let padding = if chunk[2] == b'=' {
-            if chunk[3] != b'=' {
-                return None;
-            }
-            2
-        } else {
-            u8::from(chunk[3] == b'=')
-        };
-        if padding != 0 && index + 1 != chunk_count {
-            return None;
-        }
-        let a = base64_value(chunk[0])?;
-        let b = base64_value(chunk[1])?;
-        let c = if padding == 2 { 0 } else { base64_value(chunk[2])? };
-        let d = if padding != 0 { 0 } else { base64_value(chunk[3])? };
-        decoded.push((a << 2) | (b >> 4));
-        if padding < 2 {
-            decoded.push((b << 4) | (c >> 2));
-        }
-        if padding == 0 {
-            decoded.push((c << 6) | d);
-        }
-    }
-    Some(decoded)
-}
-
-fn base64_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    }
 }
 
 fn validate_uds_parent(path: &Path) -> Result<(), DaemonError> {
@@ -785,6 +733,93 @@ mod tests {
         let error = run(config).await.expect_err("production configuration must be present");
         assert!(error.to_string().contains("no typed production configuration"));
         assert!(!engine_location.exists());
+    }
+
+    #[test]
+    fn pem_validation_accepts_base64_padding_and_line_endings() {
+        for body in ["AQ==", "AQI=", "AQID", "AQIDBA==", "AQIDBAU=", "AQIDBAUG"] {
+            for newline in ["\n", "\r\n"] {
+                let certificate = format!(
+                    "-----BEGIN CERTIFICATE-----{newline}{body}{newline}-----END CERTIFICATE-----{newline}"
+                );
+                let key = format!(
+                    "-----BEGIN PRIVATE KEY-----{newline}{body}{newline}-----END PRIVATE KEY-----{newline}"
+                );
+                assert!(valid_pem(&certificate, false), "certificate body {body:?}");
+                assert!(valid_pem(&key, true), "private-key body {body:?}");
+                assert!(valid_pem(&format!("{certificate}{certificate}"), false));
+            }
+        }
+    }
+
+    #[test]
+    fn pem_validation_rejects_invalid_padding_and_noncanonical_encodings() {
+        for body in [
+            "", "=", "====", "AQ", "AQ=", "AQ===", "=Q==", "A=I=", "AQ==AQID", "AQI=AQID", "AR==",
+            "AQJ=", "AQ-_", "AQé=", "AQ!D",
+        ] {
+            let certificate =
+                format!("-----BEGIN CERTIFICATE-----\n{body}\n-----END CERTIFICATE-----\n");
+            assert!(!valid_pem(&certificate, false), "invalid base64 body {body:?}");
+        }
+        assert!(valid_pem(
+            "-----BEGIN CERTIFICATE-----\nAQID\n BAU=\t\n-----END CERTIFICATE-----\n",
+            false
+        ));
+    }
+
+    #[test]
+    fn pem_files_with_every_padding_length_reach_the_tls_parser() {
+        use rcgen::{CertificateParams, DnType, KeyPair, PKCS_ED25519};
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject as _};
+
+        // Ed25519 signatures have fixed length, so extending the subject by
+        // one byte exercises every base64 padding length deterministically.
+        let key = KeyPair::generate_for(&PKCS_ED25519).expect("test key");
+        let key_path = write_temporary("pem-real-key", key.serialize_pem().as_bytes());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+                .expect("private key permissions");
+        }
+        let key_pem = read_pem(&key_path, true).expect("real private key loads");
+        let mut remainders = BTreeSet::new();
+        for length in 1..=8 {
+            let mut params = CertificateParams::new(vec!["localhost".into()]).unwrap();
+            params.serial_number = Some(1.into());
+            params
+                .distinguished_name
+                .push(DnType::CommonName, format!("test-{}", "a".repeat(length)));
+            let certificate = params.self_signed(&key).expect("test certificate");
+            remainders.insert(certificate.der().len() % 3);
+            let pem = certificate.pem();
+            // Load a chain too: padding at the end of one certificate must
+            // not be mistaken for padding in the middle of another block.
+            let chain = format!("{pem}{pem}");
+            let path = write_temporary("pem-real-chain", chain.as_bytes());
+            let loaded = read_pem(&path, false).expect("real padded chain loads");
+            assert_eq!(loaded, chain);
+            let certificates = CertificateDer::pem_slice_iter(loaded.as_bytes())
+                .collect::<Result<Vec<_>, _>>()
+                .expect("TLS parses the chain");
+            let private_key = PrivateKeyDer::from_pem_slice(key_pem.as_bytes())
+                .expect("TLS parses the private key");
+            rustls::ServerConfig::builder_with_provider(Arc::new(
+                rustls::crypto::aws_lc_rs::default_provider(),
+            ))
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(certificates, private_key)
+            .expect("TLS accepts the loaded certificate and matching key");
+            std::fs::remove_file(path).unwrap();
+            if remainders.len() == 3 {
+                break;
+            }
+        }
+        assert_eq!(remainders, BTreeSet::from([0, 1, 2]));
+        std::fs::remove_file(key_path).unwrap();
     }
 
     #[test]
