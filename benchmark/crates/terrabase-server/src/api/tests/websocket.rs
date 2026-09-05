@@ -267,3 +267,92 @@ async fn websocket_multiplexes_views_and_unsubscribes_only_the_named_view() {
     );
     socket.close(None).await.unwrap();
 }
+
+#[tokio::test]
+async fn canonical_websocket_uses_browser_headers_and_refuses_query_widening() {
+    let server = Server::new().await;
+    server.put("one", 1).await;
+    let response = server
+        .app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/reactive/views")
+                .header("authorization", KEY)
+                .body(Body::from(
+                    serde_json::json!({"databaseId":"prod","statement":SQL}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let attached: serde_json::Value =
+        serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 65_536).await.unwrap())
+            .unwrap();
+    let view = attached["view"].as_str().unwrap();
+    let capability = attached["capability"].as_str().unwrap();
+    let url = format!("ws://{}/api/v1/reactive/views/{view}/1/websocket", server.address);
+    let mut request = url.clone().into_client_request().unwrap();
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        format!("terrascale.sync.v1, terrascale.cap.{capability}").parse().unwrap(),
+    );
+    assert!(!request.headers().contains_key("authorization"));
+    let (mut socket, response) = tokio_tungstenite::connect_async(request).await.unwrap();
+    assert_eq!(response.headers()["sec-websocket-protocol"], "terrascale.sync.v1");
+    send(&mut socket, subscribe(view, None)).await;
+    assert_eq!(
+        receive(&mut socket).await,
+        server.read(attached["snapshot_chunks"][0].as_str().unwrap(), capability).await
+    );
+    server.put("two", 2).await;
+    assert_eq!(
+        receive(&mut socket).await,
+        server.read(attached["log"].as_str().unwrap(), capability).await
+    );
+    send(
+        &mut socket,
+        Message::Subscribe {
+            subscription: view.into(),
+            query: "SELECT * FROM secrets LIMIT 10".into(),
+            parameters: Vec::new(),
+            checkpoint: None,
+        },
+    )
+    .await;
+    assert!(matches!(
+        decode_envelope(&receive(&mut socket).await).unwrap().message,
+        Message::Error { code: terrabase_sync_core::wire::ErrorCode::PermissionDenied, .. }
+    ));
+    assert!(
+        tokio_tungstenite::connect_async(url).await.is_err(),
+        "a bare browser upgrade is refused"
+    );
+    let mut wrong = format!("ws://{}/api/v1/reactive/views/{view}/2/websocket", server.address)
+        .into_client_request()
+        .unwrap();
+    wrong.headers_mut().insert(
+        "sec-websocket-protocol",
+        format!("terrascale.sync.v1, terrascale.cap.{capability}").parse().unwrap(),
+    );
+    assert!(
+        tokio_tungstenite::connect_async(wrong).await.is_err(),
+        "the capability cannot cross generations"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires TERRASCALE_TYPESCRIPT_SDK with installed Node dependencies"]
+async fn typescript_browser_websocket_journey() {
+    let server = Server::new().await;
+    let sdk = std::env::var("TERRASCALE_TYPESCRIPT_SDK").expect("SDK checkout");
+    let origin = format!("http://{}", server.address);
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("node")
+            .args(["node_modules/vitest/vitest.mjs", "run", "src/integration/reactive-websocket.test.ts"])
+            .current_dir(sdk)
+            .env("TERRASCALE_REACTIVE_TEST_ORIGIN", origin)
+            .env("TERRASCALE_REACTIVE_TEST_TOKEN", KEY)
+            .output().expect("run SDK test")
+    }).await.unwrap();
+    assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+}

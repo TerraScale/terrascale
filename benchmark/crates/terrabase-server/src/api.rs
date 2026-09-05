@@ -566,6 +566,7 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(crate::reactive_api::attach_view))
         .routes(routes!(crate::reactive_api::snapshot))
         .routes(routes!(crate::reactive_api::view_log))
+        .routes(routes!(crate::reactive_api::view_websocket))
 }
 
 /// Adds the parts of the contract that cannot be inferred from axum extractors.
@@ -583,6 +584,10 @@ fn enrich_openapi(raw: String) -> String {
                 "type": "http",
                 "scheme": "bearer",
                 "bearerFormat": "TerraScale API key"
+            },
+            "viewWebSocketCapability": {
+                "type": "apiKey", "in": "header", "name": "Sec-WebSocket-Protocol",
+                "description": "Offer terrascale.sync.v1 and terrascale.cap.<view capability>; the server selects only terrascale.sync.v1."
             }
         },
         "schemas": openapi_schemas()
@@ -603,7 +608,12 @@ fn enrich_openapi(raw: String) -> String {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default()
                 .to_owned();
-            operation.insert("security".to_owned(), serde_json::json!([{ "bearerAuth": [] }]));
+            let security = if operation_id == "view_websocket" {
+                serde_json::json!([{ "viewWebSocketCapability": [] }])
+            } else {
+                serde_json::json!([{ "bearerAuth": [] }])
+            };
+            operation.insert("security".to_owned(), security);
             for variable in path_variables(path) {
                 add_parameter(operation, &variable, "path", true, "string");
             }
@@ -1191,6 +1201,20 @@ async fn authenticate(
     {
         request.extensions_mut().insert(crate::reactive_api::OriginProofVerified);
         return next.run(request).await;
+    }
+    if request.method() == Method::GET
+        && let Some((view, generation)) =
+            crate::reactive_api::websocket_target(request.uri().path())
+    {
+        return match crate::reactive_api::websocket_capability(
+            request.headers(),
+            view,
+            generation,
+            &state.capability_keys,
+        ) {
+            Ok(_) => next.run(request).await,
+            Err(error) => error.into_response(),
+        };
     }
     let Some(keys) = state.keys.clone() else {
         return ApiError::unauthorized().into_response();
@@ -3714,7 +3738,11 @@ mod tests {
                     .expect("operation id");
                 assert_eq!(
                     operation.get("security"),
-                    Some(&serde_json::json!([{ "bearerAuth": [] }])),
+                    Some(&if id == "view_websocket" {
+                        serde_json::json!([{ "viewWebSocketCapability": [] }])
+                    } else {
+                        serde_json::json!([{ "bearerAuth": [] }])
+                    }),
                     "security for {id}"
                 );
                 if body_operations.contains(&id) {

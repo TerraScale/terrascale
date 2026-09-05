@@ -21,11 +21,15 @@ struct Subscription {
     pending: AbortHandle,
 }
 
+pub(super) enum Authorization {
+    Bearer { principal: crate::api_keys::Principal, credential: String },
+    View { view: String, generation: u64, credential: String },
+}
+
 struct Session {
     state: Arc<ApiState>,
     database: String,
-    principal: crate::api_keys::Principal,
-    credential: String,
+    authorization: Authorization,
     subscriptions: BTreeMap<String, Subscription>,
     aliases: BTreeMap<String, String>,
     deliveries: JoinSet<Delivery>,
@@ -36,15 +40,13 @@ pub(super) async fn serve(
     mut socket: WebSocket,
     state: Arc<ApiState>,
     database: String,
-    principal: crate::api_keys::Principal,
-    credential: String,
+    authorization: Authorization,
     _permit: WsPermit,
 ) {
     let mut session = Session {
         state,
         database,
-        principal,
-        credential,
+        authorization,
         subscriptions: BTreeMap::new(),
         aliases: BTreeMap::new(),
         deliveries: JoinSet::new(),
@@ -95,19 +97,81 @@ async fn send(socket: &mut WebSocket, message: SocketMessage) -> Result<(), Erro
 
 impl Session {
     fn authorized(&self) -> Result<(), ErrorCode> {
-        let admitted = self
-            .state
-            .keys
-            .as_ref()
-            .ok_or(ErrorCode::AuthenticationExpired)?
-            .admit(&self.credential)
-            .map_err(|_| ErrorCode::AuthenticationExpired)?;
-        if admitted != self.principal
-            || !admitted.scope().admits(crate::api_keys::Verbs::READ, &self.database)
-        {
-            return Err(ErrorCode::PermissionDenied);
+        match &self.authorization {
+            Authorization::Bearer { principal, credential } => {
+                let admitted = self
+                    .state
+                    .keys
+                    .as_ref()
+                    .ok_or(ErrorCode::AuthenticationExpired)?
+                    .admit(credential)
+                    .map_err(|_| ErrorCode::AuthenticationExpired)?;
+                if &admitted != principal
+                    || !admitted.scope().admits(crate::api_keys::Verbs::READ, &self.database)
+                {
+                    return Err(ErrorCode::PermissionDenied);
+                }
+                Ok(())
+            }
+            Authorization::View { view, generation, credential } => {
+                super::verify_socket_capability(
+                    view,
+                    *generation,
+                    credential,
+                    &self.state.capability_keys,
+                )
+                .map_err(|_| ErrorCode::AuthenticationExpired)
+            }
         }
-        Ok(())
+    }
+
+    fn attach(
+        &self,
+        request: &AttachRequest,
+    ) -> Result<(super::AttachResponse, String), ErrorCode> {
+        let principal = match &self.authorization {
+            Authorization::Bearer { principal, .. } => principal,
+            Authorization::View { view, generation, .. } => {
+                let views = store().views.lock().map_err(|_| ErrorCode::Unavailable)?;
+                let active = views
+                    .get(view)
+                    .filter(|active| active.generation == *generation)
+                    .ok_or(ErrorCode::PermissionDenied)?;
+                if request.subscription.as_deref() != Some(view)
+                    || super::canonical_sql(request.statement.trim()) != active.statement
+                    || super::decode_base64(&request.parameters)
+                        .map_err(|_| ErrorCode::MalformedFrame)?
+                        != active.parameters
+                {
+                    return Err(ErrorCode::PermissionDenied);
+                }
+                return Ok((
+                    super::attach_response(active, &self.state.capability_keys),
+                    view.clone(),
+                ));
+            }
+        };
+        let scope = format!("{}:{}:{}", self.state.scope.0, self.state.scope.1, self.database);
+        let host = crate::api::document_host(&self.state, &self.database)
+            .map_err(|_| ErrorCode::PermissionDenied)?;
+        crate::api::check_read_guard(
+            &self.state,
+            &self.database,
+            terrabase::observability::Operation::Subscribe,
+        )
+        .map_err(|_| ErrorCode::Overloaded)?;
+        let prepared = prepare_view(&self.state, &host, request, &scope, Some(principal))
+            .map_err(|_| ErrorCode::PermissionDenied)?;
+        store()
+            .attach_materialized(
+                request,
+                &scope,
+                self.state.region,
+                Some(&prepared),
+                &self.state.capability_keys,
+                Some(&self.state.guards),
+            )
+            .map_err(|_| ErrorCode::Unavailable)
     }
 
     fn unsubscribe(&mut self, subscription: &str) {
@@ -171,27 +235,7 @@ impl Session {
             subscription: Some(subscription.clone()),
             entitlement_epoch: 0,
         };
-        let scope = format!("{}:{}:{}", self.state.scope.0, self.state.scope.1, self.database);
-        let host = crate::api::document_host(&self.state, &self.database)
-            .map_err(|_| ErrorCode::PermissionDenied)?;
-        crate::api::check_read_guard(
-            &self.state,
-            &self.database,
-            terrabase::observability::Operation::Subscribe,
-        )
-        .map_err(|_| ErrorCode::Overloaded)?;
-        let prepared = prepare_view(&self.state, &host, &request, &scope, Some(&self.principal))
-            .map_err(|_| ErrorCode::PermissionDenied)?;
-        let (attached, view) = store()
-            .attach_materialized(
-                &request,
-                &scope,
-                self.state.region,
-                Some(&prepared),
-                &self.state.capability_keys,
-                Some(&self.state.guards),
-            )
-            .map_err(|_| ErrorCode::Unavailable)?;
+        let (attached, view) = self.attach(&request)?;
         let resume = checkpoint
             .as_ref()
             .map(|checkpoint| checkpoint_offset(&view, attached.generation, checkpoint))

@@ -251,6 +251,9 @@ struct Frozen {
 
 struct View {
     id: String,
+    database: String,
+    statement: String,
+    parameters: Vec<u8>,
     generation: u64,
     scope: String,
     capability_scope: String,
@@ -400,6 +403,9 @@ fn initial_view(
     snapshot.insert(revision, Frozen { bytes: Arc::from(bytes), created: SystemTime::now() });
     View {
         id: view_id.to_owned(),
+        database: request.database_id.clone(),
+        statement: canonical_sql(request.statement.trim()),
+        parameters: decode_base64(&request.parameters).unwrap_or_default(),
         generation: 1,
         scope: scope.to_owned(),
         capability_scope: capability_scope(scope),
@@ -976,9 +982,119 @@ pub async fn websocket(
     else {
         return capability_error().into_response();
     };
+    upgrade.max_message_size(terrabase_sync_core::wire::MAX_MESSAGE_BYTES).on_upgrade(
+        move |socket| {
+            socket::serve(
+                socket,
+                state,
+                name,
+                socket::Authorization::Bearer { principal, credential },
+                permit,
+            )
+        },
+    )
+}
+
+/// Browser WebSocket upgrade bound to one previously authorized canonical view.
+/// Offer `terrascale.sync.v1` and `terrascale.cap.<capability>` as subprotocols.
+/// The response selects only `terrascale.sync.v1`, never the credential.
+#[utoipa::path(get, path = "/api/v1/reactive/views/{view}/{generation}/websocket",
+    description = "Offer Sec-WebSocket-Protocol: terrascale.sync.v1, terrascale.cap.<view capability>. The capability is header-only and grants only the attached view and generation. The server selects terrascale.sync.v1 and revalidates expiry during delivery.",
+    responses((status = 101, description = "Canonical view WebSocket"), (status = 401, description = "Invalid view capability")))]
+pub async fn view_websocket(
+    State(state): State<Arc<ApiState>>,
+    Path((view, generation)): Path<(String, u64)>,
+    headers: HeaderMap,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let credential = match websocket_capability(&headers, &view, generation, &state.capability_keys)
+    {
+        Ok(credential) => credential,
+        Err(error) => return error.into_response(),
+    };
+    let database = {
+        let Ok(views) = store().views.lock() else {
+            return ApiError::storage_failure().into_response();
+        };
+        let Some(view) = views.get(&view) else { return unknown_view().into_response() };
+        view.database.clone()
+    };
+    if let Err(error) = crate::api::document_host(&state, &database) {
+        return error.into_response();
+    }
+    if let Err(error) = crate::api::check_read_guard(
+        &state,
+        &database,
+        terrabase::observability::Operation::Subscribe,
+    ) {
+        return error.into_response();
+    }
+    if let Err(error) = state.guards.acquire_ws(&database) {
+        return ApiError::abuse_guard(&error).into_response();
+    }
+    let permit = WsPermit { guards: Arc::clone(&state.guards), database: database.clone() };
     upgrade
         .max_message_size(terrabase_sync_core::wire::MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| socket::serve(socket, state, name, principal, credential, permit))
+        .protocols(["terrascale.sync.v1"])
+        .on_upgrade(move |socket| {
+            socket::serve(
+                socket,
+                state,
+                database,
+                socket::Authorization::View { view, generation, credential },
+                permit,
+            )
+        })
+}
+
+pub(crate) fn websocket_target(path: &str) -> Option<(&str, u64)> {
+    let mut parts = path.strip_prefix("/api/v1/reactive/views/")?.split('/');
+    let view = parts.next()?;
+    let generation = parts.next()?.parse().ok()?;
+    (parts.next()? == "websocket" && parts.next().is_none() && !view.is_empty())
+        .then_some((view, generation))
+}
+
+pub(crate) fn websocket_capability(
+    headers: &HeaderMap,
+    view: &str,
+    generation: u64,
+    keys: &CapabilityKeyRing,
+) -> Result<String, ApiError> {
+    let mut protocol = false;
+    let mut credential = None;
+    for header in headers.get_all(axum::http::header::SEC_WEBSOCKET_PROTOCOL) {
+        for token in header.to_str().map_err(|_| capability_error())?.split(',').map(str::trim) {
+            if token == "terrascale.sync.v1" {
+                protocol = true;
+            }
+            if let Some(value) = token.strip_prefix("terrascale.cap.") {
+                if credential.replace(value).is_some() {
+                    return Err(capability_error());
+                }
+            }
+        }
+    }
+    if !protocol {
+        return Err(capability_error());
+    }
+    let credential = credential.ok_or_else(capability_error)?;
+    verify_socket_capability(view, generation, credential, keys)?;
+    Ok(credential.to_owned())
+}
+
+fn verify_socket_capability(
+    view: &str,
+    generation: u64,
+    credential: &str,
+    keys: &CapabilityKeyRing,
+) -> Result<(), ApiError> {
+    let expected = store().capability_claims(view, generation)?;
+    keys.verifier()
+        .ok_or_else(capability_error)?
+        .verify_claims(credential, &expected, now_seconds())
+        .map(|_| ())
+        .map_err(|_| capability_error())
 }
 
 struct WsPermit {
