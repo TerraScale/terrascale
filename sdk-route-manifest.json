@@ -6,7 +6,7 @@
     "bundle": "contracts",
     "openapi": "openapi.json"
   },
-  "routeCount": 36,
+  "routeCount": 27,
   "routes": [
     {
       "base": "api",
@@ -209,78 +209,12 @@
     {
       "base": "api",
       "client": "databases",
-      "operation": "deleteIndex",
-      "operationId": "delete_index",
-      "routeName": "databases.deleteIndex",
-      "method": "DELETE",
-      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
-      "requestType": "void",
-      "responseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "indexRecommendations",
-      "operationId": "index_recommendations",
-      "routeName": "databases.indexRecommendations",
-      "method": "GET",
-      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
-      "requestType": "void",
-      "responseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "getSchema",
-      "operationId": "get_schema",
-      "routeName": "databases.getSchema",
-      "method": "GET",
-      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
-      "requestType": "void",
-      "responseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "putSchema",
-      "operationId": "put_schema",
-      "routeName": "databases.putSchema",
-      "method": "PUT",
-      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
-      "requestType": "JsonValue",
-      "responseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "createExport",
-      "operationId": "create_export",
-      "routeName": "databases.createExport",
-      "method": "POST",
-      "pathTemplate": "/api/v1/databases/{name}/exports",
-      "requestType": "void",
-      "responseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
       "operation": "websocket",
       "operationId": "websocket",
       "routeName": "databases.websocket",
       "method": "GET",
       "pathTemplate": "/api/v1/databases/{name}/reactive",
       "requestType": "void",
-      "responseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "poll",
-      "operationId": "poll",
-      "routeName": "databases.poll",
-      "method": "POST",
-      "pathTemplate": "/api/v1/databases/{name}/reactive/poll",
-      "requestType": "ReactivePollRequest",
       "responseType": "never"
     },
     {
@@ -304,50 +238,6 @@
       "pathTemplate": "/api/v1/databases/{name}/sql",
       "requestType": "SqlRequest",
       "responseType": "SqlResultResponse"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "databaseUsage",
-      "operationId": "database_usage",
-      "routeName": "databases.databaseUsage",
-      "method": "GET",
-      "pathTemplate": "/api/v1/databases/{name}/usage",
-      "requestType": "void",
-      "responseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "listWebhooks",
-      "operationId": "list_webhooks",
-      "routeName": "databases.listWebhooks",
-      "method": "GET",
-      "pathTemplate": "/api/v1/databases/{name}/webhooks",
-      "requestType": "void",
-      "responseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "createWebhook",
-      "operationId": "create_webhook",
-      "routeName": "databases.createWebhook",
-      "method": "POST",
-      "pathTemplate": "/api/v1/databases/{name}/webhooks",
-      "requestType": "WebhookRequest",
-      "responseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "operation": "deleteWebhook",
-      "operationId": "delete_webhook",
-      "routeName": "databases.deleteWebhook",
-      "method": "DELETE",
-      "pathTemplate": "/api/v1/databases/{name}/webhooks/{id}",
-      "requestType": "void",
-      "responseType": "never"
     },
     {
       "base": "api",
@@ -392,6 +282,17 @@
       "pathTemplate": "/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}",
       "requestType": "void",
       "responseType": "ReactiveEnvelope"
+    },
+    {
+      "base": "api",
+      "client": "reactive",
+      "operation": "viewWebsocket",
+      "operationId": "view_websocket",
+      "routeName": "reactive.viewWebsocket",
+      "method": "GET",
+      "pathTemplate": "/api/v1/reactive/views/{view}/{generation}/websocket",
+      "requestType": "void",
+      "responseType": "never"
     },
     {
       "base": "api",

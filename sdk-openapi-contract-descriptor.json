@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
   "descriptorVersion": 2,
-  "routeCount": 36,
+  "routeCount": 27,
   "routes": [
     {
       "base": "api",
@@ -235,6 +235,24 @@
           }
         },
         {
+          "in": "header",
+          "name": "x-terrascale-session",
+          "parameter": {
+            "in": "header",
+            "name": "x-terrascale-session",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "type": "string"
+            }
+          },
+          "required": false,
+          "schema": {
+            "maxLength": 16384,
+            "type": "string"
+          }
+        },
+        {
           "in": "path",
           "name": "collection",
           "parameter": {
@@ -290,7 +308,15 @@
       "responses": [
         {
           "response": {
-            "description": "Document deleted"
+            "description": "Document deleted",
+            "headers": {
+              "X-TerraScale-Session": {
+                "schema": {
+                  "maxLength": 16384,
+                  "type": "string"
+                }
+              }
+            }
           },
           "status": "204"
         }
@@ -298,120 +324,6 @@
       "routeName": "databases.deleteDocument",
       "sdkRequestType": "void",
       "sdkResponseType": "void"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "method": "DELETE",
-      "operation": "deleteIndex",
-      "operationId": "delete_index",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "collection",
-          "parameter": {
-            "in": "path",
-            "name": "collection",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "in": "path",
-          "name": "field",
-          "parameter": {
-            "in": "path",
-            "name": "field",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "in": "path",
-          "name": "name",
-          "parameter": {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
-      "request": {
-        "kind": "void"
-      },
-      "responses": [],
-      "routeName": "databases.deleteIndex",
-      "sdkRequestType": "void",
-      "sdkResponseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "method": "DELETE",
-      "operation": "deleteWebhook",
-      "operationId": "delete_webhook",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "id",
-          "parameter": {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "in": "path",
-          "name": "name",
-          "parameter": {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v1/databases/{name}/webhooks/{id}",
-      "request": {
-        "kind": "void"
-      },
-      "responses": [],
-      "routeName": "databases.deleteWebhook",
-      "sdkRequestType": "void",
-      "sdkResponseType": "never"
     },
     {
       "base": "api",
@@ -2166,14 +2078,14 @@
             "name": "x-terrascale-session",
             "required": false,
             "schema": {
-              "format": "int64",
-              "type": "integer"
+              "maxLength": 16384,
+              "type": "string"
             }
           },
           "required": false,
           "schema": {
-            "format": "int64",
-            "type": "integer"
+            "maxLength": 16384,
+            "type": "string"
           }
         },
         {
@@ -2674,6 +2586,12 @@
                 "schema": {
                   "type": "string"
                 }
+              },
+              "X-TerraScale-Session": {
+                "schema": {
+                  "maxLength": 16384,
+                  "type": "string"
+                }
               }
             }
           },
@@ -3144,104 +3062,6 @@
       "base": "api",
       "client": "databases",
       "method": "GET",
-      "operation": "indexRecommendations",
-      "operationId": "index_recommendations",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "collection",
-          "parameter": {
-            "in": "path",
-            "name": "collection",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "in": "path",
-          "name": "name",
-          "parameter": {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
-      "request": {
-        "kind": "void"
-      },
-      "responses": [],
-      "routeName": "databases.indexRecommendations",
-      "sdkRequestType": "void",
-      "sdkResponseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "method": "GET",
-      "operation": "getSchema",
-      "operationId": "get_schema",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "collection",
-          "parameter": {
-            "in": "path",
-            "name": "collection",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "in": "path",
-          "name": "name",
-          "parameter": {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
-      "request": {
-        "kind": "void"
-      },
-      "responses": [],
-      "routeName": "databases.getSchema",
-      "sdkRequestType": "void",
-      "sdkResponseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "method": "GET",
       "operation": "websocket",
       "operationId": "websocket",
       "parameters": [
@@ -3268,72 +3088,6 @@
       },
       "responses": [],
       "routeName": "databases.websocket",
-      "sdkRequestType": "void",
-      "sdkResponseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "method": "GET",
-      "operation": "databaseUsage",
-      "operationId": "database_usage",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "name",
-          "parameter": {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v1/databases/{name}/usage",
-      "request": {
-        "kind": "void"
-      },
-      "responses": [],
-      "routeName": "databases.databaseUsage",
-      "sdkRequestType": "void",
-      "sdkResponseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "method": "GET",
-      "operation": "listWebhooks",
-      "operationId": "list_webhooks",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "name",
-          "parameter": {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v1/databases/{name}/webhooks",
-      "request": {
-        "kind": "void"
-      },
-      "responses": [],
-      "routeName": "databases.listWebhooks",
       "sdkRequestType": "void",
       "sdkResponseType": "never"
     },
@@ -3893,6 +3647,59 @@
     },
     {
       "base": "api",
+      "client": "reactive",
+      "method": "GET",
+      "operation": "viewWebsocket",
+      "operationId": "view_websocket",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "generation",
+          "parameter": {
+            "in": "path",
+            "name": "generation",
+            "required": true,
+            "schema": {
+              "format": "int64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": true,
+          "schema": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        {
+          "in": "path",
+          "name": "view",
+          "parameter": {
+            "in": "path",
+            "name": "view",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/reactive/views/{view}/{generation}/websocket",
+      "request": {
+        "kind": "void"
+      },
+      "responses": [],
+      "routeName": "reactive.viewWebsocket",
+      "sdkRequestType": "void",
+      "sdkResponseType": "never"
+    },
+    {
+      "base": "api",
       "client": "regions",
       "method": "GET",
       "operation": "regions",
@@ -4037,6 +3844,24 @@
               "regional",
               "global"
             ],
+            "type": "string"
+          }
+        },
+        {
+          "in": "header",
+          "name": "x-terrascale-session",
+          "parameter": {
+            "in": "header",
+            "name": "x-terrascale-session",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "type": "string"
+            }
+          },
+          "required": false,
+          "schema": {
+            "maxLength": 16384,
             "type": "string"
           }
         },
@@ -4989,8 +4814,8 @@
               },
               "X-TerraScale-Session": {
                 "schema": {
-                  "format": "int64",
-                  "type": "integer"
+                  "maxLength": 16384,
+                  "type": "string"
                 }
               }
             }
@@ -5941,6 +5766,24 @@
               "regional",
               "global"
             ],
+            "type": "string"
+          }
+        },
+        {
+          "in": "header",
+          "name": "x-terrascale-session",
+          "parameter": {
+            "in": "header",
+            "name": "x-terrascale-session",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "type": "string"
+            }
+          },
+          "required": false,
+          "schema": {
+            "maxLength": 16384,
             "type": "string"
           }
         },
@@ -7421,7 +7264,15 @@
                 }
               }
             },
-            "description": "Batch result"
+            "description": "Batch result",
+            "headers": {
+              "X-TerraScale-Session": {
+                "schema": {
+                  "maxLength": 16384,
+                  "type": "string"
+                }
+              }
+            }
           },
           "status": "200"
         }
@@ -7645,1118 +7496,6 @@
       "routeName": "databases.createIndex",
       "sdkRequestType": "CreateIndexRequest",
       "sdkResponseType": "IndexCreatedResponse"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "method": "POST",
-      "operation": "createExport",
-      "operationId": "create_export",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "name",
-          "parameter": {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v1/databases/{name}/exports",
-      "request": {
-        "kind": "void"
-      },
-      "responses": [],
-      "routeName": "databases.createExport",
-      "sdkRequestType": "void",
-      "sdkResponseType": "never"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "method": "POST",
-      "operation": "poll",
-      "operationId": "poll",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "name",
-          "parameter": {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v1/databases/{name}/reactive/poll",
-      "request": {
-        "content": [
-          {
-            "mediaType": "application/json",
-            "schema": {
-              "$ref": "#/components/schemas/ReactivePollRequest",
-              "siblings": {
-                "resolved": {
-                  "oneOf": [
-                    {
-                      "properties": {
-                        "collection": {
-                          "type": "string"
-                        },
-                        "conditions": {
-                          "items": {
-                            "$ref": "#/components/schemas/ReactiveCondition",
-                            "siblings": {
-                              "resolved": {
-                                "properties": {
-                                  "field": {
-                                    "type": "string"
-                                  },
-                                  "op": {
-                                    "enum": [
-                                      "equals",
-                                      "less",
-                                      "less_or_equal",
-                                      "greater",
-                                      "greater_or_equal"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  "value": {
-                                    "oneOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "number"
-                                      }
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "field",
-                                  "op",
-                                  "value"
-                                ],
-                                "type": "object"
-                              }
-                            },
-                            "resolved": {
-                              "properties": {
-                                "field": {
-                                  "type": "string"
-                                },
-                                "op": {
-                                  "enum": [
-                                    "equals",
-                                    "less",
-                                    "less_or_equal",
-                                    "greater",
-                                    "greater_or_equal"
-                                  ],
-                                  "type": "string"
-                                },
-                                "value": {
-                                  "oneOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "number"
-                                    }
-                                  ]
-                                }
-                              },
-                              "required": [
-                                "field",
-                                "op",
-                                "value"
-                              ],
-                              "type": "object"
-                            }
-                          },
-                          "type": "array"
-                        },
-                        "op": {
-                          "const": "subscribe"
-                        },
-                        "projection": {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        "resume": {
-                          "$ref": "#/components/schemas/ReactiveResume",
-                          "siblings": {
-                            "resolved": {
-                              "properties": {
-                                "revision": {
-                                  "format": "int64",
-                                  "type": "integer"
-                                },
-                                "subscription": {
-                                  "format": "int64",
-                                  "type": "integer"
-                                }
-                              },
-                              "required": [
-                                "subscription",
-                                "revision"
-                              ],
-                              "type": "object"
-                            }
-                          },
-                          "resolved": {
-                            "properties": {
-                              "revision": {
-                                "format": "int64",
-                                "type": "integer"
-                              },
-                              "subscription": {
-                                "format": "int64",
-                                "type": "integer"
-                              }
-                            },
-                            "required": [
-                              "subscription",
-                              "revision"
-                            ],
-                            "type": "object"
-                          }
-                        }
-                      },
-                      "required": [
-                        "op",
-                        "collection"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "op": {
-                          "const": "poll"
-                        },
-                        "subscription": {
-                          "format": "int64",
-                          "type": "integer"
-                        }
-                      },
-                      "required": [
-                        "op",
-                        "subscription"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "op": {
-                          "const": "unsubscribe"
-                        },
-                        "subscription": {
-                          "format": "int64",
-                          "type": "integer"
-                        }
-                      },
-                      "required": [
-                        "op",
-                        "subscription"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                },
-                "siblings": {
-                  "resolved": {
-                    "oneOf": [
-                      {
-                        "properties": {
-                          "collection": {
-                            "type": "string"
-                          },
-                          "conditions": {
-                            "items": {
-                              "$ref": "#/components/schemas/ReactiveCondition",
-                              "siblings": {
-                                "resolved": {
-                                  "properties": {
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "op": {
-                                      "enum": [
-                                        "equals",
-                                        "less",
-                                        "less_or_equal",
-                                        "greater",
-                                        "greater_or_equal"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "value": {
-                                      "oneOf": [
-                                        {
-                                          "type": "string"
-                                        },
-                                        {
-                                          "type": "number"
-                                        }
-                                      ]
-                                    }
-                                  },
-                                  "required": [
-                                    "field",
-                                    "op",
-                                    "value"
-                                  ],
-                                  "type": "object"
-                                },
-                                "siblings": {
-                                  "resolved": {
-                                    "properties": {
-                                      "field": {
-                                        "type": "string"
-                                      },
-                                      "op": {
-                                        "enum": [
-                                          "equals",
-                                          "less",
-                                          "less_or_equal",
-                                          "greater",
-                                          "greater_or_equal"
-                                        ],
-                                        "type": "string"
-                                      },
-                                      "value": {
-                                        "oneOf": [
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "type": "number"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "required": [
-                                      "field",
-                                      "op",
-                                      "value"
-                                    ],
-                                    "type": "object"
-                                  }
-                                }
-                              },
-                              "resolved": {
-                                "properties": {
-                                  "field": {
-                                    "type": "string"
-                                  },
-                                  "op": {
-                                    "enum": [
-                                      "equals",
-                                      "less",
-                                      "less_or_equal",
-                                      "greater",
-                                      "greater_or_equal"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  "value": {
-                                    "oneOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "number"
-                                      }
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "field",
-                                  "op",
-                                  "value"
-                                ],
-                                "type": "object"
-                              }
-                            },
-                            "type": "array"
-                          },
-                          "op": {
-                            "const": "subscribe"
-                          },
-                          "projection": {
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "resume": {
-                            "$ref": "#/components/schemas/ReactiveResume",
-                            "siblings": {
-                              "resolved": {
-                                "properties": {
-                                  "revision": {
-                                    "format": "int64",
-                                    "type": "integer"
-                                  },
-                                  "subscription": {
-                                    "format": "int64",
-                                    "type": "integer"
-                                  }
-                                },
-                                "required": [
-                                  "subscription",
-                                  "revision"
-                                ],
-                                "type": "object"
-                              },
-                              "siblings": {
-                                "resolved": {
-                                  "properties": {
-                                    "revision": {
-                                      "format": "int64",
-                                      "type": "integer"
-                                    },
-                                    "subscription": {
-                                      "format": "int64",
-                                      "type": "integer"
-                                    }
-                                  },
-                                  "required": [
-                                    "subscription",
-                                    "revision"
-                                  ],
-                                  "type": "object"
-                                }
-                              }
-                            },
-                            "resolved": {
-                              "properties": {
-                                "revision": {
-                                  "format": "int64",
-                                  "type": "integer"
-                                },
-                                "subscription": {
-                                  "format": "int64",
-                                  "type": "integer"
-                                }
-                              },
-                              "required": [
-                                "subscription",
-                                "revision"
-                              ],
-                              "type": "object"
-                            }
-                          }
-                        },
-                        "required": [
-                          "op",
-                          "collection"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "properties": {
-                          "op": {
-                            "const": "poll"
-                          },
-                          "subscription": {
-                            "format": "int64",
-                            "type": "integer"
-                          }
-                        },
-                        "required": [
-                          "op",
-                          "subscription"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "properties": {
-                          "op": {
-                            "const": "unsubscribe"
-                          },
-                          "subscription": {
-                            "format": "int64",
-                            "type": "integer"
-                          }
-                        },
-                        "required": [
-                          "op",
-                          "subscription"
-                        ],
-                        "type": "object"
-                      }
-                    ]
-                  }
-                }
-              },
-              "resolved": {
-                "oneOf": [
-                  {
-                    "properties": {
-                      "collection": {
-                        "type": "string"
-                      },
-                      "conditions": {
-                        "items": {
-                          "$ref": "#/components/schemas/ReactiveCondition",
-                          "resolved": {
-                            "properties": {
-                              "field": {
-                                "type": "string"
-                              },
-                              "op": {
-                                "enum": [
-                                  "equals",
-                                  "less",
-                                  "less_or_equal",
-                                  "greater",
-                                  "greater_or_equal"
-                                ],
-                                "type": "string"
-                              },
-                              "value": {
-                                "oneOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "type": "number"
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "field",
-                              "op",
-                              "value"
-                            ],
-                            "type": "object"
-                          }
-                        },
-                        "type": "array"
-                      },
-                      "op": {
-                        "const": "subscribe"
-                      },
-                      "projection": {
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
-                      },
-                      "resume": {
-                        "$ref": "#/components/schemas/ReactiveResume",
-                        "resolved": {
-                          "properties": {
-                            "revision": {
-                              "format": "int64",
-                              "type": "integer"
-                            },
-                            "subscription": {
-                              "format": "int64",
-                              "type": "integer"
-                            }
-                          },
-                          "required": [
-                            "subscription",
-                            "revision"
-                          ],
-                          "type": "object"
-                        }
-                      }
-                    },
-                    "required": [
-                      "op",
-                      "collection"
-                    ],
-                    "type": "object"
-                  },
-                  {
-                    "properties": {
-                      "op": {
-                        "const": "poll"
-                      },
-                      "subscription": {
-                        "format": "int64",
-                        "type": "integer"
-                      }
-                    },
-                    "required": [
-                      "op",
-                      "subscription"
-                    ],
-                    "type": "object"
-                  },
-                  {
-                    "properties": {
-                      "op": {
-                        "const": "unsubscribe"
-                      },
-                      "subscription": {
-                        "format": "int64",
-                        "type": "integer"
-                      }
-                    },
-                    "required": [
-                      "op",
-                      "subscription"
-                    ],
-                    "type": "object"
-                  }
-                ]
-              }
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReactivePollRequest",
-                "siblings": {
-                  "resolved": {
-                    "oneOf": [
-                      {
-                        "properties": {
-                          "collection": {
-                            "type": "string"
-                          },
-                          "conditions": {
-                            "items": {
-                              "$ref": "#/components/schemas/ReactiveCondition",
-                              "siblings": {
-                                "resolved": {
-                                  "properties": {
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "op": {
-                                      "enum": [
-                                        "equals",
-                                        "less",
-                                        "less_or_equal",
-                                        "greater",
-                                        "greater_or_equal"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "value": {
-                                      "oneOf": [
-                                        {
-                                          "type": "string"
-                                        },
-                                        {
-                                          "type": "number"
-                                        }
-                                      ]
-                                    }
-                                  },
-                                  "required": [
-                                    "field",
-                                    "op",
-                                    "value"
-                                  ],
-                                  "type": "object"
-                                }
-                              },
-                              "resolved": {
-                                "properties": {
-                                  "field": {
-                                    "type": "string"
-                                  },
-                                  "op": {
-                                    "enum": [
-                                      "equals",
-                                      "less",
-                                      "less_or_equal",
-                                      "greater",
-                                      "greater_or_equal"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  "value": {
-                                    "oneOf": [
-                                      {
-                                        "type": "string"
-                                      },
-                                      {
-                                        "type": "number"
-                                      }
-                                    ]
-                                  }
-                                },
-                                "required": [
-                                  "field",
-                                  "op",
-                                  "value"
-                                ],
-                                "type": "object"
-                              }
-                            },
-                            "type": "array"
-                          },
-                          "op": {
-                            "const": "subscribe"
-                          },
-                          "projection": {
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "resume": {
-                            "$ref": "#/components/schemas/ReactiveResume",
-                            "siblings": {
-                              "resolved": {
-                                "properties": {
-                                  "revision": {
-                                    "format": "int64",
-                                    "type": "integer"
-                                  },
-                                  "subscription": {
-                                    "format": "int64",
-                                    "type": "integer"
-                                  }
-                                },
-                                "required": [
-                                  "subscription",
-                                  "revision"
-                                ],
-                                "type": "object"
-                              }
-                            },
-                            "resolved": {
-                              "properties": {
-                                "revision": {
-                                  "format": "int64",
-                                  "type": "integer"
-                                },
-                                "subscription": {
-                                  "format": "int64",
-                                  "type": "integer"
-                                }
-                              },
-                              "required": [
-                                "subscription",
-                                "revision"
-                              ],
-                              "type": "object"
-                            }
-                          }
-                        },
-                        "required": [
-                          "op",
-                          "collection"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "properties": {
-                          "op": {
-                            "const": "poll"
-                          },
-                          "subscription": {
-                            "format": "int64",
-                            "type": "integer"
-                          }
-                        },
-                        "required": [
-                          "op",
-                          "subscription"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "properties": {
-                          "op": {
-                            "const": "unsubscribe"
-                          },
-                          "subscription": {
-                            "format": "int64",
-                            "type": "integer"
-                          }
-                        },
-                        "required": [
-                          "op",
-                          "subscription"
-                        ],
-                        "type": "object"
-                      }
-                    ]
-                  },
-                  "siblings": {
-                    "resolved": {
-                      "oneOf": [
-                        {
-                          "properties": {
-                            "collection": {
-                              "type": "string"
-                            },
-                            "conditions": {
-                              "items": {
-                                "$ref": "#/components/schemas/ReactiveCondition",
-                                "siblings": {
-                                  "resolved": {
-                                    "properties": {
-                                      "field": {
-                                        "type": "string"
-                                      },
-                                      "op": {
-                                        "enum": [
-                                          "equals",
-                                          "less",
-                                          "less_or_equal",
-                                          "greater",
-                                          "greater_or_equal"
-                                        ],
-                                        "type": "string"
-                                      },
-                                      "value": {
-                                        "oneOf": [
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "type": "number"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "required": [
-                                      "field",
-                                      "op",
-                                      "value"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  "siblings": {
-                                    "resolved": {
-                                      "properties": {
-                                        "field": {
-                                          "type": "string"
-                                        },
-                                        "op": {
-                                          "enum": [
-                                            "equals",
-                                            "less",
-                                            "less_or_equal",
-                                            "greater",
-                                            "greater_or_equal"
-                                          ],
-                                          "type": "string"
-                                        },
-                                        "value": {
-                                          "oneOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "type": "number"
-                                            }
-                                          ]
-                                        }
-                                      },
-                                      "required": [
-                                        "field",
-                                        "op",
-                                        "value"
-                                      ],
-                                      "type": "object"
-                                    }
-                                  }
-                                },
-                                "resolved": {
-                                  "properties": {
-                                    "field": {
-                                      "type": "string"
-                                    },
-                                    "op": {
-                                      "enum": [
-                                        "equals",
-                                        "less",
-                                        "less_or_equal",
-                                        "greater",
-                                        "greater_or_equal"
-                                      ],
-                                      "type": "string"
-                                    },
-                                    "value": {
-                                      "oneOf": [
-                                        {
-                                          "type": "string"
-                                        },
-                                        {
-                                          "type": "number"
-                                        }
-                                      ]
-                                    }
-                                  },
-                                  "required": [
-                                    "field",
-                                    "op",
-                                    "value"
-                                  ],
-                                  "type": "object"
-                                }
-                              },
-                              "type": "array"
-                            },
-                            "op": {
-                              "const": "subscribe"
-                            },
-                            "projection": {
-                              "items": {
-                                "type": "string"
-                              },
-                              "type": "array"
-                            },
-                            "resume": {
-                              "$ref": "#/components/schemas/ReactiveResume",
-                              "siblings": {
-                                "resolved": {
-                                  "properties": {
-                                    "revision": {
-                                      "format": "int64",
-                                      "type": "integer"
-                                    },
-                                    "subscription": {
-                                      "format": "int64",
-                                      "type": "integer"
-                                    }
-                                  },
-                                  "required": [
-                                    "subscription",
-                                    "revision"
-                                  ],
-                                  "type": "object"
-                                },
-                                "siblings": {
-                                  "resolved": {
-                                    "properties": {
-                                      "revision": {
-                                        "format": "int64",
-                                        "type": "integer"
-                                      },
-                                      "subscription": {
-                                        "format": "int64",
-                                        "type": "integer"
-                                      }
-                                    },
-                                    "required": [
-                                      "subscription",
-                                      "revision"
-                                    ],
-                                    "type": "object"
-                                  }
-                                }
-                              },
-                              "resolved": {
-                                "properties": {
-                                  "revision": {
-                                    "format": "int64",
-                                    "type": "integer"
-                                  },
-                                  "subscription": {
-                                    "format": "int64",
-                                    "type": "integer"
-                                  }
-                                },
-                                "required": [
-                                  "subscription",
-                                  "revision"
-                                ],
-                                "type": "object"
-                              }
-                            }
-                          },
-                          "required": [
-                            "op",
-                            "collection"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "properties": {
-                            "op": {
-                              "const": "poll"
-                            },
-                            "subscription": {
-                              "format": "int64",
-                              "type": "integer"
-                            }
-                          },
-                          "required": [
-                            "op",
-                            "subscription"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "properties": {
-                            "op": {
-                              "const": "unsubscribe"
-                            },
-                            "subscription": {
-                              "format": "int64",
-                              "type": "integer"
-                            }
-                          },
-                          "required": [
-                            "op",
-                            "subscription"
-                          ],
-                          "type": "object"
-                        }
-                      ]
-                    }
-                  }
-                },
-                "resolved": {
-                  "oneOf": [
-                    {
-                      "properties": {
-                        "collection": {
-                          "type": "string"
-                        },
-                        "conditions": {
-                          "items": {
-                            "$ref": "#/components/schemas/ReactiveCondition",
-                            "resolved": {
-                              "properties": {
-                                "field": {
-                                  "type": "string"
-                                },
-                                "op": {
-                                  "enum": [
-                                    "equals",
-                                    "less",
-                                    "less_or_equal",
-                                    "greater",
-                                    "greater_or_equal"
-                                  ],
-                                  "type": "string"
-                                },
-                                "value": {
-                                  "oneOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "type": "number"
-                                    }
-                                  ]
-                                }
-                              },
-                              "required": [
-                                "field",
-                                "op",
-                                "value"
-                              ],
-                              "type": "object"
-                            }
-                          },
-                          "type": "array"
-                        },
-                        "op": {
-                          "const": "subscribe"
-                        },
-                        "projection": {
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
-                        },
-                        "resume": {
-                          "$ref": "#/components/schemas/ReactiveResume",
-                          "resolved": {
-                            "properties": {
-                              "revision": {
-                                "format": "int64",
-                                "type": "integer"
-                              },
-                              "subscription": {
-                                "format": "int64",
-                                "type": "integer"
-                              }
-                            },
-                            "required": [
-                              "subscription",
-                              "revision"
-                            ],
-                            "type": "object"
-                          }
-                        }
-                      },
-                      "required": [
-                        "op",
-                        "collection"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "op": {
-                          "const": "poll"
-                        },
-                        "subscription": {
-                          "format": "int64",
-                          "type": "integer"
-                        }
-                      },
-                      "required": [
-                        "op",
-                        "subscription"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "op": {
-                          "const": "unsubscribe"
-                        },
-                        "subscription": {
-                          "format": "int64",
-                          "type": "integer"
-                        }
-                      },
-                      "required": [
-                        "op",
-                        "subscription"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "required": true
-        },
-        "required": true
-      },
-      "responses": [],
-      "routeName": "databases.poll",
-      "sdkRequestType": "ReactivePollRequest",
-      "sdkResponseType": "never"
     },
     {
       "base": "api",
@@ -11611,299 +10350,6 @@
     },
     {
       "base": "api",
-      "client": "databases",
-      "method": "POST",
-      "operation": "createWebhook",
-      "operationId": "create_webhook",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "name",
-          "parameter": {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v1/databases/{name}/webhooks",
-      "request": {
-        "content": [
-          {
-            "mediaType": "application/json",
-            "schema": {
-              "$ref": "#/components/schemas/WebhookRequest",
-              "siblings": {
-                "resolved": {
-                  "oneOf": [
-                    {
-                      "properties": {
-                        "endpoint": {
-                          "format": "uri",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "endpoint"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "url": {
-                          "format": "uri",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "url"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                },
-                "siblings": {
-                  "resolved": {
-                    "oneOf": [
-                      {
-                        "properties": {
-                          "endpoint": {
-                            "format": "uri",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "endpoint"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "properties": {
-                          "url": {
-                            "format": "uri",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "url"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id"
-                        ],
-                        "type": "object"
-                      }
-                    ]
-                  }
-                }
-              },
-              "resolved": {
-                "oneOf": [
-                  {
-                    "properties": {
-                      "endpoint": {
-                        "format": "uri",
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "endpoint"
-                    ],
-                    "type": "object"
-                  },
-                  {
-                    "properties": {
-                      "url": {
-                        "format": "uri",
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "url"
-                    ],
-                    "type": "object"
-                  },
-                  {
-                    "properties": {
-                      "id": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "id"
-                    ],
-                    "type": "object"
-                  }
-                ]
-              }
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/WebhookRequest",
-                "siblings": {
-                  "resolved": {
-                    "oneOf": [
-                      {
-                        "properties": {
-                          "endpoint": {
-                            "format": "uri",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "endpoint"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "properties": {
-                          "url": {
-                            "format": "uri",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "url"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id"
-                        ],
-                        "type": "object"
-                      }
-                    ]
-                  },
-                  "siblings": {
-                    "resolved": {
-                      "oneOf": [
-                        {
-                          "properties": {
-                            "endpoint": {
-                              "format": "uri",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "endpoint"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "properties": {
-                            "url": {
-                              "format": "uri",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "url"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "properties": {
-                            "id": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "id"
-                          ],
-                          "type": "object"
-                        }
-                      ]
-                    }
-                  }
-                },
-                "resolved": {
-                  "oneOf": [
-                    {
-                      "properties": {
-                        "endpoint": {
-                          "format": "uri",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "endpoint"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "url": {
-                          "format": "uri",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "url"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "required": true
-        },
-        "required": true
-      },
-      "responses": [],
-      "routeName": "databases.createWebhook",
-      "sdkRequestType": "WebhookRequest",
-      "sdkResponseType": "never"
-    },
-    {
-      "base": "api",
       "client": "reactive",
       "method": "POST",
       "operation": "attachView",
@@ -12370,6 +10816,24 @@
               "regional",
               "global"
             ],
+            "type": "string"
+          }
+        },
+        {
+          "in": "header",
+          "name": "x-terrascale-session",
+          "parameter": {
+            "in": "header",
+            "name": "x-terrascale-session",
+            "required": false,
+            "schema": {
+              "maxLength": 16384,
+              "type": "string"
+            }
+          },
+          "required": false,
+          "schema": {
+            "maxLength": 16384,
             "type": "string"
           }
         },
@@ -13322,8 +11786,8 @@
               },
               "X-TerraScale-Session": {
                 "schema": {
-                  "format": "int64",
-                  "type": "integer"
+                  "maxLength": 16384,
+                  "type": "string"
                 }
               }
             }
@@ -13334,899 +11798,10 @@
       "routeName": "databases.putDocument",
       "sdkRequestType": "JsonValue",
       "sdkResponseType": "DocumentWriteResponse"
-    },
-    {
-      "base": "api",
-      "client": "databases",
-      "method": "PUT",
-      "operation": "putSchema",
-      "operationId": "put_schema",
-      "parameters": [
-        {
-          "in": "path",
-          "name": "collection",
-          "parameter": {
-            "in": "path",
-            "name": "collection",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "in": "path",
-          "name": "name",
-          "parameter": {
-            "in": "path",
-            "name": "name",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
-      "request": {
-        "content": [
-          {
-            "mediaType": "application/json",
-            "schema": {
-              "$ref": "#/components/schemas/JsonValue",
-              "siblings": {
-                "resolved": {
-                  "oneOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "items": {
-                        "$ref": "#/components/schemas/JsonValue",
-                        "resolved": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "type": "boolean"
-                            },
-                            {
-                              "type": "integer"
-                            },
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "items": {
-                                "$ref": "#/components/schemas/JsonValue"
-                              },
-                              "type": "array"
-                            },
-                            {
-                              "additionalProperties": {
-                                "$ref": "#/components/schemas/JsonValue"
-                              },
-                              "type": "object"
-                            }
-                          ]
-                        }
-                      },
-                      "type": "array"
-                    },
-                    {
-                      "additionalProperties": {
-                        "$ref": "#/components/schemas/JsonValue",
-                        "resolved": {
-                          "oneOf": [
-                            {
-                              "type": "null"
-                            },
-                            {
-                              "type": "boolean"
-                            },
-                            {
-                              "type": "integer"
-                            },
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "items": {
-                                "$ref": "#/components/schemas/JsonValue"
-                              },
-                              "type": "array"
-                            },
-                            {
-                              "additionalProperties": {
-                                "$ref": "#/components/schemas/JsonValue"
-                              },
-                              "type": "object"
-                            }
-                          ]
-                        }
-                      },
-                      "type": "object"
-                    }
-                  ]
-                },
-                "siblings": {
-                  "resolved": {
-                    "oneOf": [
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "type": "boolean"
-                      },
-                      {
-                        "type": "integer"
-                      },
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "items": {
-                          "$ref": "#/components/schemas/JsonValue",
-                          "siblings": {
-                            "resolved": {
-                              "oneOf": [
-                                {
-                                  "type": "null"
-                                },
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "integer"
-                                },
-                                {
-                                  "type": "number"
-                                },
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "items": {
-                                    "$ref": "#/components/schemas/JsonValue",
-                                    "resolved": {
-                                      "oneOf": [
-                                        {
-                                          "type": "null"
-                                        },
-                                        {
-                                          "type": "boolean"
-                                        },
-                                        {
-                                          "type": "integer"
-                                        },
-                                        {
-                                          "type": "number"
-                                        },
-                                        {
-                                          "type": "string"
-                                        },
-                                        {
-                                          "items": {
-                                            "$ref": "#/components/schemas/JsonValue"
-                                          },
-                                          "type": "array"
-                                        },
-                                        {
-                                          "additionalProperties": {
-                                            "$ref": "#/components/schemas/JsonValue"
-                                          },
-                                          "type": "object"
-                                        }
-                                      ]
-                                    }
-                                  },
-                                  "type": "array"
-                                },
-                                {
-                                  "additionalProperties": {
-                                    "$ref": "#/components/schemas/JsonValue",
-                                    "resolved": {
-                                      "oneOf": [
-                                        {
-                                          "type": "null"
-                                        },
-                                        {
-                                          "type": "boolean"
-                                        },
-                                        {
-                                          "type": "integer"
-                                        },
-                                        {
-                                          "type": "number"
-                                        },
-                                        {
-                                          "type": "string"
-                                        },
-                                        {
-                                          "items": {
-                                            "$ref": "#/components/schemas/JsonValue"
-                                          },
-                                          "type": "array"
-                                        },
-                                        {
-                                          "additionalProperties": {
-                                            "$ref": "#/components/schemas/JsonValue"
-                                          },
-                                          "type": "object"
-                                        }
-                                      ]
-                                    }
-                                  },
-                                  "type": "object"
-                                }
-                              ]
-                            }
-                          },
-                          "resolved": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "integer"
-                              },
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "items": {
-                                  "$ref": "#/components/schemas/JsonValue"
-                                },
-                                "type": "array"
-                              },
-                              {
-                                "additionalProperties": {
-                                  "$ref": "#/components/schemas/JsonValue"
-                                },
-                                "type": "object"
-                              }
-                            ]
-                          }
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "additionalProperties": {
-                          "$ref": "#/components/schemas/JsonValue",
-                          "siblings": {
-                            "resolved": {
-                              "oneOf": [
-                                {
-                                  "type": "null"
-                                },
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "integer"
-                                },
-                                {
-                                  "type": "number"
-                                },
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "items": {
-                                    "$ref": "#/components/schemas/JsonValue",
-                                    "resolved": {
-                                      "oneOf": [
-                                        {
-                                          "type": "null"
-                                        },
-                                        {
-                                          "type": "boolean"
-                                        },
-                                        {
-                                          "type": "integer"
-                                        },
-                                        {
-                                          "type": "number"
-                                        },
-                                        {
-                                          "type": "string"
-                                        },
-                                        {
-                                          "items": {
-                                            "$ref": "#/components/schemas/JsonValue"
-                                          },
-                                          "type": "array"
-                                        },
-                                        {
-                                          "additionalProperties": {
-                                            "$ref": "#/components/schemas/JsonValue"
-                                          },
-                                          "type": "object"
-                                        }
-                                      ]
-                                    }
-                                  },
-                                  "type": "array"
-                                },
-                                {
-                                  "additionalProperties": {
-                                    "$ref": "#/components/schemas/JsonValue",
-                                    "resolved": {
-                                      "oneOf": [
-                                        {
-                                          "type": "null"
-                                        },
-                                        {
-                                          "type": "boolean"
-                                        },
-                                        {
-                                          "type": "integer"
-                                        },
-                                        {
-                                          "type": "number"
-                                        },
-                                        {
-                                          "type": "string"
-                                        },
-                                        {
-                                          "items": {
-                                            "$ref": "#/components/schemas/JsonValue"
-                                          },
-                                          "type": "array"
-                                        },
-                                        {
-                                          "additionalProperties": {
-                                            "$ref": "#/components/schemas/JsonValue"
-                                          },
-                                          "type": "object"
-                                        }
-                                      ]
-                                    }
-                                  },
-                                  "type": "object"
-                                }
-                              ]
-                            }
-                          },
-                          "resolved": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "integer"
-                              },
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "items": {
-                                  "$ref": "#/components/schemas/JsonValue"
-                                },
-                                "type": "array"
-                              },
-                              {
-                                "additionalProperties": {
-                                  "$ref": "#/components/schemas/JsonValue"
-                                },
-                                "type": "object"
-                              }
-                            ]
-                          }
-                        },
-                        "type": "object"
-                      }
-                    ]
-                  }
-                }
-              },
-              "resolved": {
-                "oneOf": [
-                  {
-                    "type": "null"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "items": {
-                      "$ref": "#/components/schemas/JsonValue"
-                    },
-                    "type": "array"
-                  },
-                  {
-                    "additionalProperties": {
-                      "$ref": "#/components/schemas/JsonValue"
-                    },
-                    "type": "object"
-                  }
-                ]
-              }
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/JsonValue",
-                "siblings": {
-                  "resolved": {
-                    "oneOf": [
-                      {
-                        "type": "null"
-                      },
-                      {
-                        "type": "boolean"
-                      },
-                      {
-                        "type": "integer"
-                      },
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "items": {
-                          "$ref": "#/components/schemas/JsonValue",
-                          "resolved": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "integer"
-                              },
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "items": {
-                                  "$ref": "#/components/schemas/JsonValue"
-                                },
-                                "type": "array"
-                              },
-                              {
-                                "additionalProperties": {
-                                  "$ref": "#/components/schemas/JsonValue"
-                                },
-                                "type": "object"
-                              }
-                            ]
-                          }
-                        },
-                        "type": "array"
-                      },
-                      {
-                        "additionalProperties": {
-                          "$ref": "#/components/schemas/JsonValue",
-                          "resolved": {
-                            "oneOf": [
-                              {
-                                "type": "null"
-                              },
-                              {
-                                "type": "boolean"
-                              },
-                              {
-                                "type": "integer"
-                              },
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "string"
-                              },
-                              {
-                                "items": {
-                                  "$ref": "#/components/schemas/JsonValue"
-                                },
-                                "type": "array"
-                              },
-                              {
-                                "additionalProperties": {
-                                  "$ref": "#/components/schemas/JsonValue"
-                                },
-                                "type": "object"
-                              }
-                            ]
-                          }
-                        },
-                        "type": "object"
-                      }
-                    ]
-                  },
-                  "siblings": {
-                    "resolved": {
-                      "oneOf": [
-                        {
-                          "type": "null"
-                        },
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "type": "integer"
-                        },
-                        {
-                          "type": "number"
-                        },
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "items": {
-                            "$ref": "#/components/schemas/JsonValue",
-                            "siblings": {
-                              "resolved": {
-                                "oneOf": [
-                                  {
-                                    "type": "null"
-                                  },
-                                  {
-                                    "type": "boolean"
-                                  },
-                                  {
-                                    "type": "integer"
-                                  },
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "items": {
-                                      "$ref": "#/components/schemas/JsonValue",
-                                      "resolved": {
-                                        "oneOf": [
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "integer"
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "items": {
-                                              "$ref": "#/components/schemas/JsonValue"
-                                            },
-                                            "type": "array"
-                                          },
-                                          {
-                                            "additionalProperties": {
-                                              "$ref": "#/components/schemas/JsonValue"
-                                            },
-                                            "type": "object"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "type": "array"
-                                  },
-                                  {
-                                    "additionalProperties": {
-                                      "$ref": "#/components/schemas/JsonValue",
-                                      "resolved": {
-                                        "oneOf": [
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "integer"
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "items": {
-                                              "$ref": "#/components/schemas/JsonValue"
-                                            },
-                                            "type": "array"
-                                          },
-                                          {
-                                            "additionalProperties": {
-                                              "$ref": "#/components/schemas/JsonValue"
-                                            },
-                                            "type": "object"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "type": "object"
-                                  }
-                                ]
-                              }
-                            },
-                            "resolved": {
-                              "oneOf": [
-                                {
-                                  "type": "null"
-                                },
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "integer"
-                                },
-                                {
-                                  "type": "number"
-                                },
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "items": {
-                                    "$ref": "#/components/schemas/JsonValue"
-                                  },
-                                  "type": "array"
-                                },
-                                {
-                                  "additionalProperties": {
-                                    "$ref": "#/components/schemas/JsonValue"
-                                  },
-                                  "type": "object"
-                                }
-                              ]
-                            }
-                          },
-                          "type": "array"
-                        },
-                        {
-                          "additionalProperties": {
-                            "$ref": "#/components/schemas/JsonValue",
-                            "siblings": {
-                              "resolved": {
-                                "oneOf": [
-                                  {
-                                    "type": "null"
-                                  },
-                                  {
-                                    "type": "boolean"
-                                  },
-                                  {
-                                    "type": "integer"
-                                  },
-                                  {
-                                    "type": "number"
-                                  },
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "items": {
-                                      "$ref": "#/components/schemas/JsonValue",
-                                      "resolved": {
-                                        "oneOf": [
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "integer"
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "items": {
-                                              "$ref": "#/components/schemas/JsonValue"
-                                            },
-                                            "type": "array"
-                                          },
-                                          {
-                                            "additionalProperties": {
-                                              "$ref": "#/components/schemas/JsonValue"
-                                            },
-                                            "type": "object"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "type": "array"
-                                  },
-                                  {
-                                    "additionalProperties": {
-                                      "$ref": "#/components/schemas/JsonValue",
-                                      "resolved": {
-                                        "oneOf": [
-                                          {
-                                            "type": "null"
-                                          },
-                                          {
-                                            "type": "boolean"
-                                          },
-                                          {
-                                            "type": "integer"
-                                          },
-                                          {
-                                            "type": "number"
-                                          },
-                                          {
-                                            "type": "string"
-                                          },
-                                          {
-                                            "items": {
-                                              "$ref": "#/components/schemas/JsonValue"
-                                            },
-                                            "type": "array"
-                                          },
-                                          {
-                                            "additionalProperties": {
-                                              "$ref": "#/components/schemas/JsonValue"
-                                            },
-                                            "type": "object"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "type": "object"
-                                  }
-                                ]
-                              }
-                            },
-                            "resolved": {
-                              "oneOf": [
-                                {
-                                  "type": "null"
-                                },
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "type": "integer"
-                                },
-                                {
-                                  "type": "number"
-                                },
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "items": {
-                                    "$ref": "#/components/schemas/JsonValue"
-                                  },
-                                  "type": "array"
-                                },
-                                {
-                                  "additionalProperties": {
-                                    "$ref": "#/components/schemas/JsonValue"
-                                  },
-                                  "type": "object"
-                                }
-                              ]
-                            }
-                          },
-                          "type": "object"
-                        }
-                      ]
-                    }
-                  }
-                },
-                "resolved": {
-                  "oneOf": [
-                    {
-                      "type": "null"
-                    },
-                    {
-                      "type": "boolean"
-                    },
-                    {
-                      "type": "integer"
-                    },
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "items": {
-                        "$ref": "#/components/schemas/JsonValue"
-                      },
-                      "type": "array"
-                    },
-                    {
-                      "additionalProperties": {
-                        "$ref": "#/components/schemas/JsonValue"
-                      },
-                      "type": "object"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "required": true
-        },
-        "required": true
-      },
-      "responses": [],
-      "routeName": "databases.putSchema",
-      "sdkRequestType": "JsonValue",
-      "sdkResponseType": "never"
     }
   ],
   "sources": {
-    "openApiSha256": "e28d87f5121e94bfe67006da0e7cbefdd18f84e5952762fae0c33f6a5ec82601",
-    "routeManifestSha256": "4ef2a163b4dd3218be567d3c84bb787a0b3a1bd6912296eb70561cc1475fdb8e"
+    "openApiSha256": "827943a5c31273a02d5db08fa1c3f391cede8f53f0081973122225a836434194",
+    "routeManifestSha256": "6f1a3e165c6b26e506426aca94d576ca6f79913fe2c9d1d0f0b6d582ff7c026d"
   }
 }

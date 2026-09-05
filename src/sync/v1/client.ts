@@ -55,7 +55,8 @@ export type SyncV1WebSocket = {
   removeEventListener: (type: "open" | "message" | "error" | "close", listener: (event: unknown) => void) => void;
 };
 
-export type SyncV1WebSocketFactory = (url: string) => SyncV1WebSocket;
+/** The protocols carry the view capability in a browser-supported request header. */
+export type SyncV1WebSocketFactory = (url: string, protocols?: readonly string[]) => SyncV1WebSocket;
 
 export type SyncV1ClientOptions = {
   /** The member/API origin used for the authenticated view attach. */
@@ -230,7 +231,7 @@ export class TerraScaleSyncV1Client {
     current.view.setOnline(false);
     this.#subscriptions.delete(subscription);
     if (this.#subscriptions.size === 0) this.#online = false;
-    return Object.freeze({ kind: "unsubscribe", subscription });
+    return Object.freeze({ kind: "unsubscribe", subscription: live?.viewId ?? subscription });
   }
 
   /**
@@ -274,6 +275,7 @@ export class TerraScaleSyncV1Client {
     const state: LiveSubscriptionState = {
       opened,
       databaseId,
+      viewId: attached.viewId,
       generation: attached.generation,
       capability: attached.capability,
       capabilityHeader: attached.capabilityHeader,
@@ -300,7 +302,7 @@ export class TerraScaleSyncV1Client {
         for (const snapshotUrl of attached.snapshotUrls) {
           const frame = await this.#getBytes(snapshotUrl, state, options.signal);
           if (frame === undefined) continue;
-          this.receive(frame);
+          this.#receive(frame, state);
         }
       }
     } catch (error) {
@@ -347,7 +349,7 @@ export class TerraScaleSyncV1Client {
     }
     return Object.freeze({
       kind: "checkpoint_ack",
-      subscription,
+      subscription: this.#live.get(subscription)?.viewId ?? subscription,
       checkpoint: checkpoint.toBytes(),
     });
   }
@@ -377,6 +379,10 @@ export class TerraScaleSyncV1Client {
 
   /** Decodes and atomically applies one server frame. */
   public receive(frame: Uint8Array): SyncV1Envelope {
+    return this.#receive(frame);
+  }
+
+  #receive(frame: Uint8Array, state?: LiveSubscriptionState): SyncV1Envelope {
     let envelope: SyncV1Envelope;
     try {
       envelope = decodeTerrascaleSyncV1MsgpackEnvelope(frame);
@@ -394,14 +400,24 @@ export class TerraScaleSyncV1Client {
       );
     }
 
+    const subscription = (wireId: string): SyncV1Subscription => {
+      if (state === undefined) return this.#requireSubscription(wireId);
+      if (wireId !== state.viewId) {
+        throw new TerraScaleSyncV1ClientError("protocol_error", "frame belongs to another attached view");
+      }
+      return state.opened.subscription;
+    };
+
     switch (envelope.message.kind) {
       case "snapshot":
-        this.#requireSubscription(envelope.message.subscription).view.bootstrap(
-          resultSnapshot(envelope.message.snapshot),
-        );
+        if (state === undefined) {
+          subscription(envelope.message.subscription).view.bootstrap(resultSnapshot(envelope.message.snapshot));
+        } else {
+          installAttachedSnapshot(subscription(envelope.message.subscription).view, envelope.message.snapshot);
+        }
         break;
       case "delta": {
-        const view = this.#requireSubscription(envelope.message.subscription).view;
+        const view = subscription(envelope.message.subscription).view;
         const outcome = view.applyDelta(resultDelta(envelope.message));
         if (outcome !== "applied" && outcome !== "duplicate") {
           throw new TerraScaleSyncV1ClientError(
@@ -412,12 +428,12 @@ export class TerraScaleSyncV1Client {
         break;
       }
       case "reset":
-        this.#requireSubscription(envelope.message.subscription).view.reset(
+        subscription(envelope.message.subscription).view.reset(
           resultSnapshot(envelope.message.snapshot),
         );
         break;
       case "authorization_changed":
-        this.#requireSubscription(envelope.message.subscription).view.transitionAuthorization(
+        subscription(envelope.message.subscription).view.transitionAuthorization(
           envelope.message.authorization_generation,
           envelope.message.removed,
           resultSnapshot(envelope.message.snapshot),
@@ -586,7 +602,7 @@ export class TerraScaleSyncV1Client {
       if (bytes.length === 0) return undefined;
       let envelope: SyncV1Envelope;
       try {
-        envelope = this.receive(bytes);
+        envelope = this.#receive(bytes, state);
       } catch (error) {
         if (error instanceof TerraScaleSyncV1ClientError && error.reset !== undefined) state.reset = error.reset;
         throw error;
@@ -678,6 +694,7 @@ export class TerraScaleSyncV1Client {
       linked.dispose();
     }
     if (state.closed) return;
+    state.viewId = attached.viewId;
     state.generation = attached.generation;
     state.capability = attached.capability;
     state.capabilityHeader = attached.capabilityHeader;
@@ -689,7 +706,7 @@ export class TerraScaleSyncV1Client {
     } else {
       for (const snapshotUrl of attached.snapshotUrls) {
         const bytes = await this.#getBytes(snapshotUrl, state, signal);
-        if (bytes !== undefined) this.receive(bytes);
+        if (bytes !== undefined) this.#receive(bytes, state);
       }
     }
     if (state.transport === "websocket") await this.#openWebSocket(state, signal);
@@ -700,7 +717,7 @@ export class TerraScaleSyncV1Client {
 
   async #openWebSocket(state: LiveSubscriptionState, signal?: AbortSignal): Promise<void> {
     const factory = this.#webSocketFactory ?? (typeof globalThis.WebSocket === "function"
-      ? (url: string) => new globalThis.WebSocket(url) as unknown as SyncV1WebSocket
+      ? (url: string, protocols?: readonly string[]) => new globalThis.WebSocket(url, protocols === undefined ? undefined : [...protocols]) as unknown as SyncV1WebSocket
       : undefined);
     if (factory === undefined) {
       throw new TerraScaleSyncV1ClientError(
@@ -708,8 +725,11 @@ export class TerraScaleSyncV1Client {
         "WebSocket transport was requested but no WebSocket implementation is available",
       );
     }
-    const url = state.websocketUrl ?? websocketUrl(this.#syncBaseUrl, state.opened.subscription.id, state.generation);
-    const socket = factory(url);
+    const url = state.websocketUrl ?? websocketUrl(this.#syncBaseUrl, state.viewId, state.generation);
+    if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u.test(state.capability)) {
+      throw new TerraScaleSyncV1ClientError("protocol_error", "view capability is not a valid WebSocket protocol token");
+    }
+    const socket = factory(url, ["terrascale.sync.v1", `terrascale.cap.${state.capability}`]);
     if (socket === undefined || socket === null || typeof socket.send !== "function" || typeof socket.close !== "function") {
       throw new TerraScaleSyncV1ClientError("transport", "the WebSocket factory returned an invalid socket");
     }
@@ -734,7 +754,8 @@ export class TerraScaleSyncV1Client {
           return;
         }
         try {
-          socket.send(this.encode(state.opened.message, this.#correlation++));
+          socket.send(this.encode({ ...state.opened.message, subscription: state.viewId,
+            checkpoint: checkpointBytes(state.opened.subscription.view.getCheckpoint()) }, this.#correlation++));
           if (!settled) {
             settled = true;
             resolve();
@@ -751,7 +772,8 @@ export class TerraScaleSyncV1Client {
           try {
             const frame = await socketFrame(event);
             if (frame === undefined) throw new TerraScaleSyncV1ClientError("protocol_error", "WebSocket data was not binary MessagePack");
-            this.receiveMany(frame);
+            if (state.closed || state.socket !== socket) return;
+            this.#receive(frame, state);
           } catch (error) {
             this.setOnline(false);
             socket.close(1002, "invalid reactive frame");
@@ -763,6 +785,7 @@ export class TerraScaleSyncV1Client {
         })();
       };
       const onError = (event: unknown) => {
+        if (state.socket !== socket) return;
         this.setOnline(false);
         if (!opened && !settled) {
           settled = true;
@@ -770,6 +793,13 @@ export class TerraScaleSyncV1Client {
         }
       };
       const onClose = () => {
+        cleanupOpen();
+        socket.removeEventListener("message", onMessage);
+        socket.removeEventListener("error", onError);
+        socket.removeEventListener("close", onClose);
+        state.abortController.signal.removeEventListener("abort", abort);
+        signal?.removeEventListener("abort", abort);
+        if (state.socket !== socket) return;
         this.setOnline(false);
         if (!opened && !settled) {
           settled = true;
@@ -876,6 +906,7 @@ export class TerraScaleSyncV1Client {
 }
 
 type AttachedView = {
+  readonly viewId: string;
   readonly generation: bigint;
   readonly checkpoint: Uint8Array | undefined;
   readonly capability: string;
@@ -889,6 +920,7 @@ type AttachedView = {
 type LiveSubscriptionState = {
   readonly opened: SyncV1OpenSubscription;
   readonly databaseId: string;
+  viewId: string;
   generation: bigint;
   capability: string;
   capabilityHeader: string;
@@ -1189,6 +1221,7 @@ function decodeAttachedView(value: unknown, syncOrigin: string, subscription: st
   // installed at revision zero; subsequent deltas advance from that cut.
   if (snapshot === undefined && snapshotUrls.length === 0 && checkpoint !== undefined) {
     return {
+      viewId: view,
       generation,
       checkpoint,
       capability: capabilityValue,
@@ -1206,7 +1239,7 @@ function decodeAttachedView(value: unknown, syncOrigin: string, subscription: st
       websocketUrl,
     };
   }
-  return { generation, checkpoint, capability: capabilityValue, capabilityHeader: normalizedCapabilityHeader, snapshotUrls, logUrl, snapshot, websocketUrl };
+  return { viewId: view, generation, checkpoint, capability: capabilityValue, capabilityHeader: normalizedCapabilityHeader, snapshotUrls, logUrl, snapshot, websocketUrl };
 }
 
 function canonicalWebSocketUrl(raw: unknown, apiOrigin: string, view: string, generation: bigint): string {
