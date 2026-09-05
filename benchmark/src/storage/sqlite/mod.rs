@@ -989,6 +989,11 @@ CREATE TABLE IF NOT EXISTS origin_prefixes (
     PRIMARY KEY (tenant, origin)
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS journal_pruning (
+    tenant TEXT PRIMARY KEY,
+    pruned_through INTEGER NOT NULL CHECK (pruned_through > 0)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS consumer_frontiers (
     name TEXT    PRIMARY KEY,
     seq  INTEGER NOT NULL
@@ -1616,7 +1621,30 @@ impl SqliteStorage {
             }
         }
         configure_connection(&writer)?;
-        writer.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
+        {
+            let transaction = writer.transaction().map_err(|_| StorageOpenError::Unavailable)?;
+            let has_pruning_watermarks: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'journal_pruning')",
+                [], |row| row.get(0),
+            ).map_err(|_| StorageOpenError::Unavailable)?;
+            transaction.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
+            if !has_pruning_watermarks {
+                // Legacy files have no exact deletion evidence. Refuse the
+                // potentially pruned prefix rather than infer completeness
+                // from retained rows (which can have legitimate holes).
+                transaction
+                    .execute(
+                        "INSERT INTO journal_pruning (tenant, pruned_through)
+                     SELECT tenant, frontier - 1 FROM
+                       (SELECT tenant FROM documents UNION SELECT tenant FROM origin_prefixes)
+                     CROSS JOIN (SELECT MAX(seq) AS frontier FROM consumer_frontiers)
+                     WHERE frontier > 1",
+                        [],
+                    )
+                    .map_err(|_| StorageOpenError::Unavailable)?;
+            }
+            transaction.commit().map_err(|_| StorageOpenError::Unavailable)?;
+        }
         migrate_fts_keys(&mut writer).map_err(|()| StorageOpenError::Unavailable)?;
         writer
             .execute(
@@ -1855,9 +1883,12 @@ impl SqliteStorage {
                 ).map_err(|_| ())?;
             }
         }
-        let pruned = transaction
-            .execute(
-                "DELETE FROM documents
+        let mut pruned = 0_u64;
+        let mut watermarks = std::collections::BTreeMap::<String, i64>::new();
+        {
+            let mut statement = transaction
+                .prepare(
+                    "DELETE FROM documents
                  WHERE commit_seq < ?1
                    AND commit_seq NOT IN (
                    SELECT pin.commit_seq FROM documents pin
@@ -1871,12 +1902,32 @@ impl SqliteStorage {
                        AND newer.id = pin.id
                        AND newer.commit_seq > pin.commit_seq
                    )
-                 )",
-                rusqlite::params![floor as i64, now, 24_i64 * 60 * 60 * 1000],
-            )
-            .map_err(|_| ())?;
+                 ) RETURNING tenant, commit_seq",
+                )
+                .map_err(|_| ())?;
+            let rows = statement
+                .query_map(rusqlite::params![floor as i64, now, 24_i64 * 60 * 60 * 1000], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map_err(|_| ())?;
+            for row in rows {
+                let (tenant, sequence) = row.map_err(|_| ())?;
+                watermarks
+                    .entry(tenant)
+                    .and_modify(|value| *value = (*value).max(sequence))
+                    .or_insert(sequence);
+                pruned += 1;
+            }
+        }
+        for (tenant, sequence) in watermarks {
+            transaction.execute(
+                "INSERT INTO journal_pruning (tenant, pruned_through) VALUES (?1, ?2)
+                 ON CONFLICT(tenant) DO UPDATE SET pruned_through = MAX(pruned_through, excluded.pruned_through)",
+                rusqlite::params![tenant, sequence],
+            ).map_err(|_| ())?;
+        }
         transaction.commit().map_err(|_| ())?;
-        Ok(u64::try_from(pruned).unwrap_or(0))
+        Ok(pruned)
     }
 
     /// The minimum consumer frontier — the pruning floor — when any
@@ -5205,10 +5256,22 @@ impl StoragePort for SqliteStorage {
         tenant: &TenantId,
         after: StorageSequence,
         limit: u32,
-    ) -> Result<Vec<PublishedCommit>, ()> {
+    ) -> Result<Vec<PublishedCommit>, super::JournalReadError> {
         let after = i64::try_from(after.get()).map_err(|_| ())?;
         let reader = self.reader();
-        let connection = reader.connection();
+        let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
+        let connection = &transaction;
+        let pruned: Option<i64> = connection
+            .query_row(
+                "SELECT pruned_through FROM journal_pruning WHERE tenant = ?1",
+                [tenant.as_str()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| ())?;
+        if pruned.is_some_and(|sequence| after < sequence) {
+            return Err(super::JournalReadError::HistoryExpired);
+        }
         let mut statement = connection
             .prepare_cached(
                 "SELECT commit_seq, commit_ulid, collection, id, deleted, version,
@@ -5263,7 +5326,7 @@ impl StoragePort for SqliteStorage {
             ) = row.map_err(|_| ())?;
             let sequence = u64::try_from(sequence).map_err(|_| ())?;
             if sequence == 0 {
-                return Err(());
+                return Err(super::JournalReadError::StorageFailure);
             }
             let version = u64::try_from(version).map_err(|_| ())?;
             let write = match deleted {
@@ -5271,7 +5334,7 @@ impl StoragePort for SqliteStorage {
                     let document = decode_document_body(&body).ok_or(())?;
                     if document.collection().as_str() != collection || document.id().as_str() != id
                     {
-                        return Err(());
+                        return Err(super::JournalReadError::StorageFailure);
                     }
                     PublishedWrite::Put { document }
                 }
@@ -5280,7 +5343,7 @@ impl StoragePort for SqliteStorage {
                     id: DocumentId::try_new(&id).map_err(|_| ())?,
                     version_at_delete: version,
                 },
-                _ => return Err(()),
+                _ => return Err(super::JournalReadError::StorageFailure),
             };
             let durability =
                 u8::try_from(requested).ok().and_then(codec::durability_of).ok_or(())?;
@@ -5288,7 +5351,7 @@ impl StoragePort for SqliteStorage {
             let kind = match kind.as_str() {
                 ROW_KIND_ORIGIN => JournalKind::Origin,
                 ROW_KIND_REPLICATED => JournalKind::Replicated,
-                _ => return Err(()),
+                _ => return Err(super::JournalReadError::StorageFailure),
             };
             let provenance = JournalProvenance::new(
                 kind,
@@ -5303,7 +5366,7 @@ impl StoragePort for SqliteStorage {
                         || last.durability() != durability
                         || last.provenance() != &provenance
                     {
-                        return Err(());
+                        return Err(super::JournalReadError::StorageFailure);
                     }
                     let writes = last.writes_mut();
                     writes.push(write);
@@ -5419,9 +5482,18 @@ impl StoragePort for SqliteStorage {
     fn servable_history_start(&self) -> Result<Option<StorageSequence>, ()> {
         let reader = self.reader();
         let connection = reader.connection();
+        let pruned: Option<i64> = connection
+            .query_row("SELECT MAX(pruned_through) FROM journal_pruning", [], |row| row.get(0))
+            .map_err(|_| ())?;
+        let retained_start = pruned
+            .map(|value| u64::try_from(value).map(|sequence| sequence + 1).map_err(|_| ()))
+            .transpose()?;
         // With no consumer registered, use the oldest retained row.
         if let Some(floor) = history_floor_on(connection)? {
-            return Ok(Some(StorageSequence::new(floor)));
+            return Ok(Some(StorageSequence::new(floor.max(retained_start.unwrap_or(0)))));
+        }
+        if let Some(start) = retained_start {
+            return Ok(Some(StorageSequence::new(start)));
         }
         let sequence = connection
             .query_row("SELECT MIN(commit_seq) FROM documents", [], |row| {

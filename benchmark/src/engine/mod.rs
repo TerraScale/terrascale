@@ -651,6 +651,8 @@ pub enum EngineError {
     Cancelled,
     /// Durable storage returned a typed failure.
     StorageFailure,
+    /// The replay cursor predates journal history removed by retention.
+    HistoryExpired,
     /// A snapshot page requested more rows than the bounded seam permits.
     SnapshotPageLimitExceeded,
     /// The requested snapshot boundary is newer than the published view or
@@ -3894,7 +3896,10 @@ impl Engine {
     ) -> Result<Vec<PublishedCommit>, EngineError> {
         self.validate_tenant(tenant)?;
         let storage = self.lock_storage()?;
-        storage.port.tenant_commits(tenant, after, limit).map_err(|()| EngineError::StorageFailure)
+        storage.port.tenant_commits(tenant, after, limit).map_err(|error| match error {
+            storage::JournalReadError::StorageFailure => EngineError::StorageFailure,
+            storage::JournalReadError::HistoryExpired => EngineError::HistoryExpired,
+        })
     }
 
     /// Returns one bounded page of retained publication-journal rows for

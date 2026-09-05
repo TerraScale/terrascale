@@ -786,6 +786,7 @@ fn map_begin_error(error: &EngineError) -> FamilyError {
         | EngineError::Cancelled
         | EngineError::StorageFailure
         | EngineError::SnapshotPageLimitExceeded
+        | EngineError::HistoryExpired
         | EngineError::SnapshotBoundaryUnavailable
         | EngineError::InvalidDocument => FamilyError::StorageFailure,
     }

@@ -1136,7 +1136,11 @@ fn pruning_preserves_complete_commits_across_history_windows_and_reopen() {
     assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 2);
     drop(storage);
     let storage = SqliteStorage::open(&dir).unwrap();
-    let page = storage.tenant_commits(&tenant(), StorageSequence::new(0), 10).unwrap();
+    assert_eq!(
+        storage.tenant_commits(&tenant(), StorageSequence::new(0), 10),
+        Err(crate::storage::JournalReadError::HistoryExpired)
+    );
+    let page = storage.tenant_commits(&tenant(), StorageSequence::new(1), 10).unwrap();
     assert_eq!(page.len(), 1);
     assert_eq!(page[0].sequence().get(), 2);
     assert_eq!(page[0].writes().len(), 2);
@@ -1151,6 +1155,109 @@ fn pruning_preserves_complete_commits_across_history_windows_and_reopen() {
         assert_eq!(current.metadata().version(), 2);
     }
     drop(storage);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn journal_pruning_watermark_is_atomic_durable_and_tenant_scoped() {
+    use crate::storage::JournalReadError;
+    use crate::streaming::{ChangeCheckpoint, StreamError};
+    use crate::types::Cancellation;
+
+    let (dir, engine) = open_sqlite_engine("journal-pruning-watermark");
+    drop(engine);
+    let mut storage = SqliteStorage::open(&dir).unwrap();
+    assert_eq!(
+        stored_sequence(&commit(
+            &mut storage,
+            "first",
+            vec![put(document("a", "users", "old"), ExpectedVersion::New)]
+        )),
+        1
+    );
+    let mut other = fresh_intent(
+        &mut storage,
+        "other",
+        vec![put(document("b", "users", "kept"), ExpectedVersion::New)],
+        LocalDurability::Written,
+    );
+    other.tenant = TenantId::try_new("tenant-b").unwrap();
+    other.digest = write_set_digest(&other.tenant, &other.writes);
+    assert_eq!(stored_sequence(&storage.commit(other)), 2);
+    assert_eq!(
+        stored_sequence(&commit(
+            &mut storage,
+            "replacement",
+            vec![put(document("a", "users", "new"), ExpectedVersion::Exact(1))]
+        )),
+        3
+    );
+    storage.advance_consumer_frontier("consumer", 3).unwrap();
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 0);
+    assert_eq!(
+        storage.tenant_commits(&tenant(), StorageSequence::new(0), 10).unwrap().len(),
+        2,
+        "advancing consumers alone does not expire replay"
+    );
+    backdate_all_rows(&storage);
+    storage.raw_writer_connection().execute_batch(
+        "CREATE TRIGGER refuse_watermark BEFORE INSERT ON journal_pruning BEGIN SELECT RAISE(ABORT, 'fault'); END;"
+    ).unwrap();
+    assert!(storage.prune_below_consumer_frontiers().is_err());
+    assert_eq!(
+        storage.tenant_commits(&tenant(), StorageSequence::new(0), 10).unwrap().len(),
+        2,
+        "failed watermark persistence rolls back deletion"
+    );
+    storage.raw_writer_connection().execute_batch("DROP TRIGGER refuse_watermark").unwrap();
+    assert_eq!(storage.prune_below_consumer_frontiers().unwrap(), 1);
+    assert_eq!(
+        storage.tenant_commits(&tenant(), StorageSequence::new(0), 10),
+        Err(JournalReadError::HistoryExpired)
+    );
+    assert_eq!(
+        storage
+            .tenant_commits(&TenantId::try_new("tenant-b").unwrap(), StorageSequence::new(0), 10)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        storage.tenant_commits(&tenant(), StorageSequence::new(1), 10).unwrap()[0].sequence().get(),
+        3,
+        "legitimate sequence holes do not expire replay"
+    );
+    drop(storage);
+    let engine = reopen_sqlite_engine(&dir);
+    let scope = tenant_scope(&engine, "tenant-a");
+    assert_eq!(
+        engine.tenant_commits(scope.tenant(), StorageSequence::new(0), 10),
+        Err(crate::engine::EngineError::HistoryExpired)
+    );
+    let checkpoint = ChangeCheckpoint::after(0, 0);
+    assert_eq!(
+        engine
+            .streams()
+            .replay_sync_journal(&scope, Some(checkpoint), 10, &Cancellation::new())
+            .unwrap_err(),
+        StreamError::HistoryExpired
+    );
+    drop(engine);
+    // Simulate a file last opened before deletion watermarks existed.
+    let connection = Connection::open(dir.join("terrabase.sqlite3")).unwrap();
+    connection.execute_batch("DROP TABLE journal_pruning").unwrap();
+    drop(connection);
+    let engine = reopen_sqlite_engine(&dir);
+    assert_eq!(
+        engine.tenant_commits(&tenant(), StorageSequence::new(1), 10),
+        Err(crate::engine::EngineError::HistoryExpired),
+        "legacy recovery refuses the potentially pruned prefix"
+    );
+    assert_eq!(
+        engine.tenant_commits(&tenant(), StorageSequence::new(2), 10).unwrap()[0].sequence().get(),
+        3
+    );
+    drop(engine);
     std::fs::remove_dir_all(dir).unwrap();
 }
 

@@ -79,6 +79,7 @@ pub(crate) fn map_engine_error(error: &crate::engine::EngineError) -> QueryError
         crate::engine::EngineError::Closed(_) => QueryError::EngineClosed,
         crate::engine::EngineError::StorageFailure
         | crate::engine::EngineError::SnapshotPageLimitExceeded
+        | crate::engine::EngineError::HistoryExpired
         | crate::engine::EngineError::SnapshotBoundaryUnavailable
         | crate::engine::EngineError::Conflict
         | crate::engine::EngineError::InvalidDocument

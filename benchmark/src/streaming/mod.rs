@@ -821,6 +821,8 @@ pub enum StreamError {
     NotSubscribable(crate::query::NotSubscribable),
     /// The continuation cursor does not bind to this source and `Engine`.
     InvalidCursor,
+    /// Retention removed journal history after the supplied checkpoint.
+    HistoryExpired,
     /// A blocking call could not proceed within its buffer bound because the
     /// consumer is slow.
     SlowConsumer,

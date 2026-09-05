@@ -36,6 +36,19 @@ pub(crate) use sqlite::SqliteStorage;
 pub use sqlite::database_file;
 pub(crate) use sqlite::import_backup_file;
 
+/// A retained journal page could not be served.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum JournalReadError {
+    StorageFailure,
+    HistoryExpired,
+}
+
+impl From<()> for JournalReadError {
+    fn from((): ()) -> Self {
+        Self::StorageFailure
+    }
+}
+
 /// Failures opening one durable location.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StorageOpenError {
@@ -1022,7 +1035,7 @@ pub(crate) trait StoragePort: Send {
         tenant: &TenantId,
         after: StorageSequence,
         limit: u32,
-    ) -> Result<Vec<PublishedCommit>, ()>;
+    ) -> Result<Vec<PublishedCommit>, JournalReadError>;
 
     /// Returns one bounded page of retained journal rows. `after` is only a
     /// paging cursor in global storage order; reconciliation identities are

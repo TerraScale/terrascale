@@ -139,6 +139,7 @@ pub(crate) fn map_engine_error(error: &EngineError) -> StreamError {
         EngineError::SnapshotEngineMismatch | EngineError::ScopeMismatch => {
             StreamError::SnapshotEngineMismatch
         }
+        EngineError::HistoryExpired => StreamError::HistoryExpired,
         EngineError::SnapshotTenantMismatch => StreamError::TenantMismatch,
         EngineError::Closed(_) => StreamError::EngineClosed,
         // The frozen stream error set has no storage-failure case; an

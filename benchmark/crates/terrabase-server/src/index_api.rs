@@ -953,6 +953,7 @@ fn map_engine_error(error: &terrabase::EngineError) -> IndexAdapterError {
         | terrabase::EngineError::Deadline
         | terrabase::EngineError::Cancelled
         | terrabase::EngineError::SnapshotPageLimitExceeded
+        | terrabase::EngineError::HistoryExpired
         | terrabase::EngineError::SnapshotBoundaryUnavailable => IndexAdapterError::StorageFailure,
     }
 }

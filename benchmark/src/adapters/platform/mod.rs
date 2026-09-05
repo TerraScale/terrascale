@@ -520,6 +520,7 @@ fn map_engine_error(error: EngineError, identity: Option<OperationId>) -> Platfo
         EngineError::Cancelled => PlatformError::Cancelled { operation_id: identity },
         EngineError::StorageFailure
         | EngineError::SnapshotPageLimitExceeded
+        | EngineError::HistoryExpired
         | EngineError::SnapshotBoundaryUnavailable => {
             PlatformError::EngineFailure { operation_id: identity }
         }
