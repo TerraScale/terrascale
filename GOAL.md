@@ -115,3 +115,14 @@ TypeScript responsibilities specified by D-13.
 contract output, verifies format, builds Release, and runs TUnit. Exercise
 success and failure for the generated MessagePack envelope and the handwritten
 HTTP decoder. Keep live product tests environment-gated and label skips.
+
+## Load balancing and initial capacity
+
+Every Region begins with two member servers, then the orchestrator scales from
+measured demand while preserving RF=2, residency, and same-host management.
+`ts-proxy` balances REST across eligible healthy members and routes around host
+failure, draining, or overload. Existing regional pins must recover through
+selection without losing session or idempotency guarantees. Tenant quota
+rejection is not a reason to evade guards by choosing another server. A single
+SQLite file retains one regional writer; read distribution and database/shard
+placement provide additional capacity. Reactive delivery stays on Snippet/CDN.
