@@ -1,42 +1,39 @@
-# ADR 0004: owner-published public contract parity
+# ADR 0004: terrabase-published public contract parity
 
 Status: Accepted boundary; the hand-copied route binding was deleted; the pinned contract (product item P-2b) is the mechanism.
 
 Date: 2026-08-29
 
-## Proposed decision
+## Context
 
-The .NET SDK implements only named operations published by Dashboard or
-`TerraScale.Database`. Each operation binds method, versioned path or frame,
-operation identity, parameters, media types, typed models, nullability,
-security scope, limits, errors, partial outcomes, idempotency, retry,
-pagination, checkpoints, and cancellation behavior.
+`terrabase` is the Rust engine and the owner and producer of TerraScale's
+public database and reactive API. Its versioned REST and reactive contracts
+are the only server contracts that the customer SDKs consume. TBEP is the
+private protobuf/gRPC control protocol for the orchestrator and CLI; it is not
+on the customer request path and is not a .NET customer SDK surface.
 
-The SDK is generated from the contract terrabase publishes (D-33); CI fails on
-drift. A missing or changed server operation blocks the affected SDK member or
-requires a versioned compatibility decision. No generic request, arbitrary
-path, custom header, private route, or direct engine path hides a contract
-gap.
+This repository owns only the customer-facing .NET SDK. It does not own a
+server, gateway, adapter, or private control-protocol client.
+
+## Decision
+
+The .NET SDK implements only named customer operations published by
+terrabase. Each operation binds method, versioned path or frame, operation
+identity, parameters, media types, typed models, nullability, security scope,
+limits, errors, partial outcomes, idempotency, retry, pagination, checkpoints,
+and cancellation behavior.
+
+terrabase publishes `openapi.json`, the MessagePack manifest, and TBEP protos
+as a versioned contract package (D-33). The SDK pins that package and
+generates its public bindings from it; CI fails on drift. A missing or changed
+public operation blocks the affected SDK member or requires an explicit,
+versioned compatibility decision. No generic request, arbitrary path, custom
+header, private route, direct engine path, or TBEP escape hatch may hide a
+contract gap.
 
 ## Exit evidence
 
 Every published member needs a parity record and success plus expected-failure
-tests against the same schema revision. Breaking behavior requires an explicit
-version and migration record.
-
-## Compatibility disposition: unpublished saved-query versions
-
-The SDK previously carried unpublished conditional-revision and field-merge
-snapshot-pagination saved-query clients. Dashboard's OpenAPI, the TypeScript
-route manifest, and the shared contract descriptor publish only the five
-`/api/v1` saved-query operations. The unsupported clients entered the
-repository in commits `3d9896ba1332e4bbbbc27e79816d5bc511910af2` and
-`d5437a0d1bc4fb0413f5249f297dc39dc79657b1`. No release tag contains either
-commit.
-
-The unsupported clients, models, routes, and tests are therefore removed
-before the `0.1.0` package candidate. `TerraScaleClient.SavedQueries` is the
-only saved-query entry point. It binds list, create, get, update, and delete to
-the owner-published `/api/v1` operations. Conditional revisions or snapshot
-pagination require a new owner contract and compatibility record before an SDK
-member may expose them.
+tests against the same terrabase schema revision. Breaking behavior requires
+an explicit version and migration record. The SDK must not retain clients,
+models, routes, or tests for operations that terrabase no longer publishes.
