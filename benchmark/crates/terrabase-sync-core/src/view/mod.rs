@@ -1436,6 +1436,11 @@ pub mod plan {
         #[must_use]
         pub fn matches(&self, row: &ExtractedRow) -> bool {
             let Some(actual) = row.values.get(&self.field) else { return false };
+            // SQL comparisons with NULL are unknown, so WHERE rejects them.
+            // Explicit IS NULL / IS NOT NULL require distinct operators.
+            if matches!(actual, Value::Null) || matches!(self.value, Value::Null) {
+                return false;
+            }
             let ordering = actual.cmp(&self.value);
             match self.compare {
                 Compare::Equal => ordering == Ordering::Equal,
@@ -1573,10 +1578,7 @@ pub mod plan {
         /// Returns the row's projected result, or `None` when it is filtered.
         #[must_use]
         pub fn evaluate(&self, row: &ExtractedRow) -> Option<ResultItem> {
-            if row.collection != self.collection
-                || !self.predicates.iter().all(|predicate| predicate.matches(row))
-                || self.fts.as_ref().is_some_and(|fts| !fts.matches(row))
-            {
+            if !self.matches(row) {
                 return None;
             }
             let fields = if self.projection.is_empty() {
@@ -1599,6 +1601,12 @@ pub mod plan {
                     .collect()
             };
             Some(ResultItem { identity: row.identity.clone(), fields })
+        }
+
+        fn matches(&self, row: &ExtractedRow) -> bool {
+            row.collection == self.collection
+                && self.predicates.iter().all(|predicate| predicate.matches(row))
+                && self.fts.as_ref().is_none_or(|fts| fts.matches(row))
         }
 
         /// Creates the canonical shared-view identity for this plan.
@@ -1694,7 +1702,9 @@ pub mod plan {
         pub fn seed(&mut self, rows: impl IntoIterator<Item = ExtractedRow>) {
             self.rows.clear();
             for row in rows {
-                self.rows.insert(row.identity.clone(), row);
+                if row.collection == self.plan.collection {
+                    self.rows.insert(row.identity.clone(), row);
+                }
             }
             self.rebuild();
         }
@@ -1702,6 +1712,9 @@ pub mod plan {
         pub fn apply(&mut self, delta: &ZSetDelta) -> Vec<crate::wire::ResultOperation> {
             let before = self.result.clone();
             for entry in &delta.entries {
+                if entry.row.collection != self.plan.collection {
+                    continue;
+                }
                 if entry.weight < 0 {
                     self.rows.remove(&entry.row.identity);
                 } else if entry.weight > 0 {
@@ -1720,7 +1733,8 @@ pub mod plan {
             self.rows.len().min(self.boundary)
         }
         fn rebuild(&mut self) {
-            let mut rows: Vec<&ExtractedRow> = self.rows.values().collect();
+            let mut rows: Vec<&ExtractedRow> =
+                self.rows.values().filter(|row| self.plan.matches(row)).collect();
             rows.sort_by(|left, right| compare_rows(&self.plan, left, right));
             rows.truncate(self.boundary);
             self.result = rows
@@ -1733,8 +1747,8 @@ pub mod plan {
 
     fn compare_rows(plan: &ViewPlan, left: &ExtractedRow, right: &ExtractedRow) -> Ordering {
         for key in &plan.order {
-            let l = left.values.get(&key.field);
-            let r = right.values.get(&key.field);
+            let l = left.values.get(&key.field).filter(|value| **value != Value::Null);
+            let r = right.values.get(&key.field).filter(|value| **value != Value::Null);
             let ordering = match (l, r) {
                 (None, None) => Ordering::Equal,
                 (None, Some(_)) => {
@@ -1751,10 +1765,16 @@ pub mod plan {
                         Ordering::Greater
                     }
                 }
-                (Some(l), Some(r)) => l.cmp(r),
+                (Some(l), Some(r)) => {
+                    if key.descending {
+                        r.cmp(l)
+                    } else {
+                        l.cmp(r)
+                    }
+                }
             };
             if ordering != Ordering::Equal {
-                return if key.descending { ordering.reverse() } else { ordering };
+                return ordering;
             }
         }
         left.identity.cmp(&right.identity)
