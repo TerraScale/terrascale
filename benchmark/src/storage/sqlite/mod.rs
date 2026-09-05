@@ -4599,7 +4599,7 @@ impl StoragePort for SqliteStorage {
                 if document.collection() != collection || document.id() != id {
                     return Err(());
                 }
-                Ok(super::JournalBeforeImage::Document(document))
+                Ok(super::JournalBeforeImage::Document(Box::new(document)))
             }
             _ => Err(()),
         }

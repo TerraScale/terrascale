@@ -35,13 +35,23 @@ or origin-dependent response bytes.
 
 SQL views on one member host and tenant share a publication watch and a bounded
 journal replay buffer. The buffer retains up to 4,096 records and 8 MiB of
-accounted record data, including causal context. Concurrent views reuse the
+accounted record data, including causal context and retained before-images. Concurrent views reuse the
 same immutable record allocations and select only records within their own
 snapshot cuts. Byte eviction, excessive backlog, or expired source history
 requires a view to rebuild at its exact immutable snapshot; none can become a
 silently skipped delta prefix. The source watch detaches when its last owner
-is dropped. Interval-based selection of affected views is not yet connected;
-the shared publication signal still wakes the views on that source.
+is dropped.
+
+Each view registers a conservative interval from its compiled predicate.
+The source matches both old and new row values, so updates that leave a
+predicate and deletes still reach the old view. Match decisions are shared in
+a bounded memo (4,096 records / 8 MiB of accounted data). Unknown predecessors
+after pruning include every view of the collection. Numeric bounds deliberately
+overmatch rounded values; the native evaluator retains exact integer semantics.
+Predicates without a usable scalar interval use collection-wide matching.
+Irrelevant rows advance only the source watermark, before candidate cloning or
+fallback SQL. The shared publication signal still wakes all views on the source;
+targeted notification dispatch remains separate work.
 
 ## Result digest
 

@@ -1243,7 +1243,7 @@ pub enum JournalBeforeImage {
     /// No live row preceded the publication.
     Absent,
     /// The previous published document, including its version.
-    Document(crate::types::Document),
+    Document(Box<crate::types::Document>),
     /// Retention removed the evidence, or this replay did not request it.
     /// Dependency dispatch must conservatively include the collection.
     Unknown,
