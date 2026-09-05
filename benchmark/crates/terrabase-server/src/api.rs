@@ -1129,7 +1129,59 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .layer(Extension(openapi_json))
         .layer(from_fn_with_state(Arc::clone(&state), placement_headers))
         .layer(from_fn_with_state(Arc::clone(&state), authenticate))
+        .layer(browser_cors())
         .with_state(state)
+}
+
+// Credentials are explicit bearer/capability headers, never browser cookies.
+// A fixed wildcard origin lets immutable responses remain shared across apps.
+fn browser_cors() -> tower_http::cors::CorsLayer {
+    tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods([
+            Method::GET,
+            Method::HEAD,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+        ])
+        .allow_headers(
+            [
+                "authorization",
+                "content-type",
+                "if-match",
+                "if-none-match",
+                "idempotency-key",
+                "x-terrascale-capability",
+                "x-terrascale-view-capability",
+                "x-terrascale-session",
+                "x-terrascale-region",
+                "x-terrascale-project-id",
+                "x-terrascale-preferred-region",
+                "x-terrascale-durability",
+                "x-terrascale-allow-stale",
+                "x-terrascale-delete-confirmation",
+                "traceparent",
+                "tracestate",
+            ]
+            .map(HeaderName::from_static),
+        )
+        .expose_headers(
+            [
+                "etag",
+                "retry-after",
+                "x-request-id",
+                "traceparent",
+                "x-terrascale-session",
+                "x-terrascale-region",
+                "x-terrascale-placement",
+                "x-terrascale-residency",
+            ]
+            .map(HeaderName::from_static),
+        )
+        .max_age(std::time::Duration::from_mins(10))
+        .vary(Vec::<HeaderName>::new())
 }
 
 /// Adds the database's placement contract to every database-scoped response.
@@ -3489,6 +3541,7 @@ pub(crate) fn json_response(status: StatusCode, body: String) -> Response {
 
 #[cfg(test)]
 mod tests {
+    mod cors;
     mod websocket;
     use super::API_PREFIX;
     use super::ApiError;

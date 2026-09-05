@@ -368,3 +368,36 @@ async fn typescript_browser_websocket_journey() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[tokio::test]
+#[ignore = "requires TERRASCALE_TYPESCRIPT_SDK and installed Playwright browsers"]
+async fn packed_sdk_cross_origin_browser_journey() {
+    let server = Server::new().await;
+    let sdk = std::env::var("TERRASCALE_TYPESCRIPT_SDK").expect("SDK checkout");
+    let origin = format!("http://{}", server.address);
+    let output = tokio::task::spawn_blocking(move || {
+        let build = std::process::Command::new("npm")
+            .args(["run", "build"])
+            .current_dir(&sdk)
+            .output()
+            .expect("build SDK browser candidate");
+        if !build.status.success() {
+            return build;
+        }
+        std::process::Command::new("node")
+            .args(["node_modules/@playwright/test/cli.js", "test", "reactive-member.spec.ts"])
+            .current_dir(sdk)
+            .env("TERRASCALE_REACTIVE_TEST_ORIGIN", origin)
+            .env("TERRASCALE_REACTIVE_TEST_TOKEN", KEY)
+            .output()
+            .expect("run packed SDK browser test")
+    })
+    .await
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

@@ -26,6 +26,13 @@ the same immutable bytes as HTTP. Unsubscribe stops the named subscription.
 Expired retained history returns a reset and current snapshot. Sends have a
 five-second deadline; disconnected sockets release their pending shared polls.
 
+Cross-origin HTTP uses explicit bearer/capability headers, without cookies.
+Members answer browser preflights before authentication and expose ETags,
+session, placement, Region, and retry headers. The Snippet answers view-read
+preflights locally with `no-store`; the subsequent read still requires a valid
+capability. Both use `Access-Control-Allow-Origin: *` without credential mode
+or origin-dependent response bytes.
+
 ## Result digest
 
 Wire producers and SDKs use the native result-view core's four-lane FNV-1a digest.
@@ -58,6 +65,19 @@ TERRASCALE_TYPESCRIPT_SDK="$PWD/../ts-typescript" nice -n 19 cargo test --locked
 The SDK's standalone test is environment-gated; the Rust harness supplies its
 isolated endpoint and ephemeral fixture credential. This gate does not require
 OCI or Cloudflare credentials.
+
+To test actual browser CORS enforcement, install the SDK's Playwright browsers
+and run:
+
+```sh
+TERRASCALE_TYPESCRIPT_SDK="$PWD/../ts-typescript" nice -n 19 cargo test --locked \
+  -p terrabase-server --lib packed_sdk_cross_origin_browser_journey -- --ignored
+```
+
+This harness builds and packs the SDK, serves it on a different local origin,
+and runs the Chrome, Firefox, Safari/WebKit, and Edge Playwright projects against
+the real member. It checks HTTP and WebSocket updates, reconnect, Region-header
+visibility, and readable authentication errors. It does not exercise Cloudflare.
 
 Attach reports `X-TerraScale-Region`; the SDK uses that Region's member host for
 optional WebSockets, as required by D-24/D-48. Snapshot and log requests retain

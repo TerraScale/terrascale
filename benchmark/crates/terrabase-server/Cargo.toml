@@ -45,6 +45,7 @@ terrabase-sync-core = { version = "0.1.0", path = "../terrabase-sync-core" }
 utoipa = { version = "5.5.0", features = ["axum_extras"] }
 utoipa-axum = "0.2.0"
 utoipa-scalar = { version = "0.3.0", features = ["axum"] }
+tower-http = { version = "0.6", default-features = false, features = ["cors"] }
 
 [dev-dependencies]
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std", "async-await"] }
