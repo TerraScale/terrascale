@@ -142,6 +142,13 @@ impl SqlMaterializer {
         snapshot: &ReadSnapshot,
         after: u64,
     ) -> Result<Vec<ResultItem>, ApiError> {
+        self.plan.live = Arc::new(
+            self.plan
+                .live
+                .as_ref()
+                .clone()
+                .with_execution_bounds(super::view_refresh_deadline()?, Cancellation::new()),
+        );
         let mut cursor = Some(ChangeCheckpoint::after(after, 0));
         // Bound one cadence's replay work. A larger backlog is materialized
         // at this exact snapshot cut through the same storage refill path.
@@ -269,6 +276,16 @@ mod tests {
         assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
     }
 
+    fn expire_journal(dir: &std::path::Path, tenant: &TenantId, cut: u64) {
+        let connection = rusqlite::Connection::open(dir.join("terrabase.sqlite3")).unwrap();
+        connection
+            .execute(
+                "INSERT INTO journal_pruning (tenant, pruned_through) VALUES (?1, ?2)",
+                rusqlite::params![tenant.as_str(), i64::try_from(cut).unwrap()],
+            )
+            .unwrap();
+    }
+
     #[test]
     fn native_journal_updates_avoid_sql_and_refill_at_the_requested_cut() {
         let dir =
@@ -288,9 +305,15 @@ mod tests {
                 .unwrap(),
             ))
             .unwrap();
-        let mut view = SqlMaterializer::for_plan(&plan).unwrap().unwrap();
+        let attach_cancellation = Cancellation::new();
+        let attach_plan = plan.clone().with_execution_bounds(
+            super::super::view_refresh_deadline().unwrap(),
+            attach_cancellation.clone(),
+        );
+        let mut view = SqlMaterializer::for_plan(&attach_plan).unwrap().unwrap();
         let initial = engine.read_snapshot(&scope).unwrap();
         view.seed(&engine, &initial).unwrap();
+        attach_cancellation.cancel();
         let queries = engine.queries().recent_index_selections(&tenant).len();
         assert!(queries > 0);
         put(&engine, &scope, "row-19", -1);
@@ -338,16 +361,7 @@ mod tests {
         // materialized document state available for an exact snapshot refill.
         put(&engine, &scope, "row-17", -3);
         let recovery_cut = engine.read_snapshot(&scope).unwrap();
-        let connection = rusqlite::Connection::open(dir.join("terrabase.sqlite3")).unwrap();
-        connection
-            .execute(
-                "INSERT INTO journal_pruning (tenant, pruned_through) VALUES (?1, ?2)",
-                rusqlite::params![
-                    tenant.as_str(),
-                    i64::try_from(recovery_cut.sequence().get()).unwrap()
-                ],
-            )
-            .unwrap();
+        expire_journal(&dir, &tenant, recovery_cut.sequence().get());
         assert_eq!(
             engine
                 .streams()
@@ -369,7 +383,6 @@ mod tests {
         let latest = engine.read_snapshot(&scope).unwrap();
         view.refresh(&engine, &scope, &latest, recovery_cut.sequence().get()).unwrap();
         assert_eq!(view.items()[0].identity, "row-16", "replay resumes after recovery");
-        drop(connection);
         drop(engine);
         std::fs::remove_dir_all(dir).unwrap();
     }

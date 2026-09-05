@@ -661,22 +661,7 @@ impl ViewStore {
         if snapshot.sequence().get() <= observed_sequence {
             return Ok(());
         }
-        let engine = materializer.host.engine();
-        let items = if let Some(incremental) = &mut materializer.incremental {
-            incremental.refresh(
-                engine,
-                &engine.scope_for(&materializer.tenant),
-                &snapshot,
-                observed_sequence,
-            )?
-        } else {
-            result_items(
-                &engine
-                    .queries()
-                    .execute(&materializer.plan, &snapshot)
-                    .map_err(ApiError::query)?,
-            )
-        };
+        let items = materializer.refresh_items(&snapshot, observed_sequence)?;
         let next_digest = digest_items(&items);
         let revision = snapshot.sequence().get();
         {
@@ -1234,6 +1219,42 @@ fn materialize_view(
             _watch: watch,
         }),
     })
+}
+
+impl Materializer {
+    fn refresh_items(
+        &mut self,
+        snapshot: &terrabase::types::ReadSnapshot,
+        observed_sequence: u64,
+    ) -> Result<Vec<terrabase_sync_core::wire::ResultItem>, ApiError> {
+        let engine = self.host.engine();
+        if let Some(incremental) = &mut self.incremental {
+            incremental.refresh(
+                engine,
+                &engine.scope_for(&self.tenant),
+                snapshot,
+                observed_sequence,
+            )
+        } else {
+            Ok(result_items(
+                &engine
+                    .queries()
+                    .execute(
+                        &self.plan.clone().with_execution_bounds(
+                            view_refresh_deadline()?,
+                            terrabase::Cancellation::new(),
+                        ),
+                        snapshot,
+                    )
+                    .map_err(ApiError::query)?,
+            ))
+        }
+    }
+}
+
+fn view_refresh_deadline() -> Result<terrabase::Deadline, ApiError> {
+    terrabase::Deadline::after(Duration::from_secs(30))
+        .map_err(|_| ApiError::query(terrabase::QueryError::Deadline))
 }
 
 fn view_parameters(bytes: &[u8]) -> Result<terrabase::query::sql::SqlParameters, ApiError> {

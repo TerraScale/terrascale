@@ -162,6 +162,16 @@ impl NormalizedQuery {
         self.paging
     }
 
+    pub(crate) fn with_execution_bounds(
+        mut self,
+        deadline: Deadline,
+        cancellation: Cancellation,
+    ) -> Self {
+        self.deadline = Some(deadline);
+        self.cancellation = Some(cancellation);
+        self
+    }
+
     pub(crate) fn with_paging(mut self, paging: QueryPaging) -> Self {
         self.paging = paging;
         self

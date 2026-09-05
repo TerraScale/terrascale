@@ -109,7 +109,7 @@ use crate::{
     engine::Engine,
     index::IndexCatalog,
     operations::{QueryInput, QueryInputError},
-    types::{ReadSnapshot, StorageSequence, TenantId},
+    types::{Cancellation, Deadline, ReadSnapshot, StorageSequence, TenantId},
 };
 use model::NormalizedQuery;
 
@@ -247,6 +247,13 @@ impl QueryPlan {
 
     pub(crate) fn new_sql(query: NormalizedQuery, runtime: sql::SqlRuntime) -> Self {
         Self { query, sql_runtime: Some(Box::new(runtime)) }
+    }
+
+    /// Reuses this compiled query for a new operation with fresh execution bounds.
+    #[must_use]
+    pub fn with_execution_bounds(mut self, deadline: Deadline, cancellation: Cancellation) -> Self {
+        self.query = self.query.with_execution_bounds(deadline, cancellation);
+        self
     }
 
     /// Binds the score-rank request of a relevance-ordered search.

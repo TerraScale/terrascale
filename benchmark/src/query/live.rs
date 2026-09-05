@@ -47,6 +47,17 @@ impl QueryPlan {
 }
 
 impl LiveQueryPlan {
+    /// Reuses this live query for a new maintenance operation with fresh bounds.
+    #[must_use]
+    pub fn with_execution_bounds(
+        mut self,
+        deadline: crate::types::Deadline,
+        cancellation: crate::types::Cancellation,
+    ) -> Self {
+        self.plan = self.plan.with_execution_bounds(deadline, cancellation);
+        self
+    }
+
     /// Returns the source collection bound by the compiled plan.
     #[must_use]
     pub fn collection(&self) -> &CollectionName {
