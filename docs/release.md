@@ -28,7 +28,7 @@ receipt is diagnostic and records the missing runtime as a limitation. The
 command refuses a dirty worktree unless `--allow-dirty` is explicitly supplied;
 dirty receipts are diagnostic and bind the uncommitted path list only by digest.
 Receipt schema version 2 also binds the exact packed route manifest, reviewed
-OpenAPI descriptor, Dashboard OpenAPI SHA-256, exact Node executables, and the
+OpenAPI descriptor, `terrabase` OpenAPI SHA-256, exact Node executables, and the
 absence of release limitations. It binds npm 11.18.0 by reviewed archive
 integrity, CLI entrypoint digest, package manifest digest, and a digest of every
 regular file in the npm package tree. `.tools/` is explicitly ignored and
@@ -62,20 +62,22 @@ build before testing or packing; do not rely on artifacts from another job.
 
 Release admission runs strict OpenAPI drift validation. The normal-CI debt
 baseline does not permit promotion: unresolved entries stop production release
-until the owning service publishes the matching typed schemas. Dashboard owns
-identity and product routes; the independently deployable `TerraScale.Database`
-service, sourced permanently in `TerraScale.Internals`, owns database and
-reactive routes.
+until the owning service publishes the matching typed schemas. `terrabase`, the
+Rust member process, serves the public REST, read-only SQL, and reactive API
+directly; there is no separate database service or API gateway. TBEP remains a
+private control protocol for the orchestrator and CLI and never carries
+customer requests. SQL is the only query language. Reactive subscriptions use
+CDN-backed HTTP long-polling by default, with WebSocket as an explicit opt-in.
 It also regenerates and compares the committed comprehensive OpenAPI descriptor;
 operation IDs, parameters, request contracts, and every 2xx response shape must
 match the reviewed pin before the trusted candidate can be created. Descriptor
-version 2 records the SHA-256 of the exact Dashboard OpenAPI bytes and the exact
-SDK route-manifest bytes, so a replacement or reformat requires explicit
+version 2 records the SHA-256 of the exact `terrabase` OpenAPI bytes and the
+exact SDK route-manifest bytes, so a replacement or reformat requires explicit
 regeneration and review even when the parsed operations are unchanged.
 
-The OpenAPI snapshot is owned by Dashboard. If the snapshot and SDK disagree,
-stop and resolve ownership or refresh the snapshot. Do not add a local debt
-baseline entry for an unreviewed route.
+The OpenAPI snapshot is published from the `terrabase` Rust routes. If the
+snapshot and SDK disagree, stop and resolve ownership or refresh the snapshot.
+Do not add a local debt baseline entry for an unreviewed route.
 
 ## Publish
 
