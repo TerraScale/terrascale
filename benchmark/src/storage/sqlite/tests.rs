@@ -921,7 +921,9 @@ fn journal_metadata_distinguishes_empty_storage_from_failed_reads() {
 
 #[test]
 fn journal_metadata_rejects_invalid_tenants_and_negative_frontiers() {
-    let (dir, storage) = sqlite_store("invalid-journal-metadata");
+    let (dir, engine) = open_sqlite_engine("invalid-journal-metadata");
+    drop(engine);
+    let storage = SqliteStorage::open(&dir).unwrap();
     {
         let writer = storage.raw_writer_connection();
         writer.execute_batch(
