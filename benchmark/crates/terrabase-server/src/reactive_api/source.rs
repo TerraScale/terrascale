@@ -39,7 +39,7 @@ impl Sources {
         let signal = Arc::clone(&changed);
         let watch = host
             .engine()
-            .watch_publications(move || signal.notify_one())
+            .watch_publications(move || signal.notify_waiters())
             .map_err(|_| ApiError::storage_failure())?;
         let source = Arc::new(JournalSource {
             host: Arc::clone(host),
@@ -92,6 +92,11 @@ impl JournalSource {
             std::ptr::from_ref(self) as usize,
             self.replay.lock().unwrap().as_ref().map_or(0, |replay| replay.reads),
         )
+    }
+
+    #[cfg(test)]
+    pub(super) fn dispatch_stats(&self) -> (usize, usize, usize, bool) {
+        self.dispatch.lock().unwrap().stats()
     }
 
     pub(super) fn start_at(&self, revision: u64) -> Result<(), ApiError> {
@@ -151,6 +156,7 @@ impl ReplayBuffer {
 
     // None means this view must rebuild at its supplied immutable snapshot.
     // The cache is never an authority for source history or result revisions.
+    #[cfg(test)]
     pub(super) fn records(
         &mut self,
         engine: &Engine,
@@ -169,7 +175,9 @@ impl ReplayBuffer {
         through: u64,
         cancellation: &Cancellation,
     ) -> Result<Option<Vec<Arc<SyncJournalRecord>>>, ApiError> {
-        if cancellation.is_cancelled() { return Err(ApiError::storage_failure()); }
+        if cancellation.is_cancelled() {
+            return Err(ApiError::storage_failure());
+        }
         if through > self.through {
             self.extend(engine, scope, through, cancellation)?;
         }
@@ -420,6 +428,61 @@ mod tests {
             ))
             .unwrap();
         source.register(&plan).unwrap()
+    }
+
+    #[tokio::test]
+    async fn dispatcher_targets_waiters_stops_when_idle_and_restarts_from_the_listener_cut() {
+        use std::time::Duration;
+        let host = host("targeted-dispatch");
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let source = Sources::default().get(&host, &tenant).unwrap();
+        let initial = host
+            .engine()
+            .read_snapshot(&host.engine().scope_for(&tenant))
+            .unwrap()
+            .sequence()
+            .get();
+        source.start_at(initial).unwrap();
+        let x = register(&source, "payload = 'x'");
+        let y = register(&source, "payload = 'y'");
+        let first = x.listen(initial).unwrap();
+        let duplicate = x.listen(initial).unwrap();
+        let unrelated = y.listen(initial).unwrap();
+        assert_eq!(source.dispatch_stats(), (2, 3, 1, true));
+        let signal = Arc::clone(first.changed());
+        let other_signal = Arc::clone(unrelated.changed());
+        let wake = signal.notified();
+        let other = other_signal.notified();
+        tokio::pin!(wake, other);
+        wake.as_mut().enable();
+        other.as_mut().enable();
+        replace(&host, &tenant, "one", Some(DocumentValue::String("x".into())));
+        tokio::time::timeout(Duration::from_secs(2), wake).await.unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(200), other).await.is_err());
+        assert_eq!(source.stats().1, 1, "both views share one source pass");
+        let wake = signal.notified();
+        tokio::pin!(wake);
+        wake.as_mut().enable();
+        let noise = replace(&host, &tenant, "noise", Some(DocumentValue::String("z".into())));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), wake).await.is_err(),
+            "an irrelevant commit must not wake the matching view again"
+        );
+        drop(first);
+        drop(duplicate);
+        drop(unrelated);
+        assert_eq!(source.dispatch_stats(), (0, 0, 1, false));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let reads = source.stats().1;
+        replace(&host, &tenant, "idle", Some(DocumentValue::String("y".into())));
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(source.stats().1, reads, "no journal worker runs without listeners");
+        let resumed = y.listen(noise).unwrap();
+        let wake = resumed.changed().notified();
+        tokio::pin!(wake);
+        wake.as_mut().enable();
+        tokio::time::timeout(Duration::from_secs(2), wake).await.unwrap();
+        assert_eq!(source.dispatch_stats(), (1, 1, 2, true));
     }
 
     #[test]

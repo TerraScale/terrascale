@@ -55,14 +55,19 @@ impl ViewStore {
     ) -> Result<ReadResult, ApiError> {
         #[cfg(test)]
         self.poll_starts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let changed = {
+        let registration = {
             let views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
             let view = views.get(&key.view).ok_or_else(unknown_view)?;
             view.materializer
                 .as_ref()
-                .and_then(|materializer| materializer.source.as_ref())
-                .map_or_else(|| Arc::clone(&self.changed), |source| Arc::clone(&source.changed))
+                .and_then(|materializer| materializer.dependency.as_ref())
+                .map(|registration| (Arc::clone(registration), view.observed_sequence))
         };
+        let listener =
+            registration.map(|(registration, after)| registration.listen(after)).transpose()?;
+        let changed = listener
+            .as_ref()
+            .map_or_else(|| Arc::clone(&self.changed), |listener| Arc::clone(listener.changed()));
         loop {
             // Register before checking the journal so a racing commit cannot be lost.
             let notified = changed.notified();

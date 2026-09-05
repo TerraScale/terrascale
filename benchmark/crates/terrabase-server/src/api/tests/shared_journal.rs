@@ -1,6 +1,82 @@
 use super::*;
 
 #[tokio::test]
+async fn pending_http_views_share_dispatch_and_cancel_the_last_worker() {
+    use std::time::Duration;
+    let app = router(state_with_keys_and_control());
+    let key = "Bearer tskey_test_abcdefghijklmnop";
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/databases")
+                .header("authorization", key)
+                .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let mut attached = Vec::new();
+    for total in [1, 2] {
+        let response = app.clone().oneshot(Request::post("/api/v1/reactive/views")
+            .header("authorization", key).body(Body::from(serde_json::json!({
+                "databaseId": "prod", "statement": format!("SELECT total FROM orders WHERE total = {total} LIMIT 10")
+            }).to_string())).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        attached.push(
+            serde_json::from_slice::<serde_json::Value>(
+                &axum::body::to_bytes(response.into_body(), 65_536).await.unwrap(),
+            )
+            .unwrap(),
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(110)).await;
+    let mut polls = Vec::new();
+    for view in &attached {
+        let app = app.clone();
+        let request = Request::get(view["log"].as_str().unwrap())
+            .header("authorization", key)
+            .header("x-terrascale-view-capability", view["capability"].as_str().unwrap())
+            .body(Body::empty())
+            .unwrap();
+        polls.push(tokio::spawn(async move { app.oneshot(request).await.unwrap() }));
+    }
+    let view = attached[0]["view"].as_str().unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while crate::reactive_api::source_dispatch_stats(view).0 != 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(crate::reactive_api::source_dispatch_stats(view), (2, 2, 1, true));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::put("/api/v1/databases/prod/collections/orders/documents/one")
+                .header("authorization", key)
+                .body(Body::from(r#"{"total":1}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let matching = polls.remove(0);
+    let response = tokio::time::timeout(Duration::from_secs(2), matching).await.unwrap().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 65_536).await.unwrap();
+    assert!(matches!(
+        terrabase_sync_core::wire::decode_envelope(&bytes).unwrap().message,
+        terrabase_sync_core::wire::Message::Delta { .. }
+    ));
+    let unrelated = polls.remove(0);
+    assert!(!unrelated.is_finished());
+    unrelated.abort();
+    assert!(unrelated.await.unwrap_err().is_cancelled());
+    assert_eq!(crate::reactive_api::source_dispatch_stats(view), (0, 0, 1, false));
+}
+
+#[tokio::test]
 async fn distinct_sql_views_share_one_journal_pass() {
     let app = router(state_with_keys_and_control());
     let key = "Bearer tskey_test_abcdefghijklmnop";

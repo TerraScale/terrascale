@@ -863,6 +863,23 @@ pub(crate) fn source_stats(view: &str) -> (usize, usize) {
         .stats()
 }
 
+#[cfg(test)]
+pub(crate) fn source_dispatch_stats(view: &str) -> (usize, usize, usize, bool) {
+    store()
+        .views
+        .lock()
+        .unwrap()
+        .get(view)
+        .unwrap()
+        .materializer
+        .as_ref()
+        .unwrap()
+        .source
+        .as_ref()
+        .unwrap()
+        .dispatch_stats()
+}
+
 /// Returns the process-shared view store for the journal integration seam.
 #[must_use]
 pub fn view_store() -> Arc<ViewStore> {
