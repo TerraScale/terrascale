@@ -109,3 +109,14 @@ must express the launch schema/query contract.
 script tests, Go vet, and race tests. Public API integration exercises the real
 engine; the SDK imports neither TerraBase's internal `terrabase-go` module nor
 NATS, OCI provider clients, or orchestrator code.
+
+## Load balancing and initial capacity
+
+Every Region begins with two member servers, then the orchestrator scales from
+measured demand while preserving RF=2, residency, and same-host management.
+`ts-proxy` balances REST across eligible healthy members and routes around host
+failure, draining, or overload. Existing regional pins must recover through
+selection without losing session or idempotency guarantees. Tenant quota
+rejection is not a reason to evade guards by choosing another server. A single
+SQLite file retains one regional writer; read distribution and database/shard
+placement provide additional capacity. Reactive delivery stays on Snippet/CDN.
