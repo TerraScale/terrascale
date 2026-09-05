@@ -748,6 +748,116 @@ fn query_input_normalizes_typed_and_sql_text_through_one_compile_seam() {
 }
 
 #[test]
+fn live_row_evaluation_matches_snapshot_and_replayed_revisions() {
+    let (dir, engine) = open_engine("live-row-evaluation");
+    let tenant_scope = scope(&engine, "tenant-a");
+    let values = [
+        ("a", DocumentValue::Integer(9_007_199_254_740_993)),
+        ("b", DocumentValue::Number(9_007_199_254_740_992.0)),
+        ("c", DocumentValue::Integer(9_007_199_254_740_992)),
+        ("d", DocumentValue::Null),
+    ];
+    let mut documents: Vec<_> = values
+        .into_iter()
+        .map(|(id, score)| {
+            object_document(
+                id,
+                "items",
+                &[("score", score), ("body", DocumentValue::String("a needle in text".into()))],
+            )
+        })
+        .collect();
+    documents.extend([
+        object_document("missing", "items", &[("body", DocumentValue::String("unrelated".into()))]),
+        object_document("deleted", "items", &[("score", DocumentValue::Integer(0))]),
+        object_document("a", "other", &[("score", DocumentValue::Integer(-1))]),
+    ]);
+    commit_documents(&engine, &tenant_scope, "seed", documents);
+    commit_documents(
+        &engine,
+        &tenant_scope,
+        "replace",
+        vec![object_document(
+            "a",
+            "items",
+            &[
+                ("score", DocumentValue::Integer(9_007_199_254_740_993)),
+                ("body", DocumentValue::String("new needle".into())),
+            ],
+        )],
+    );
+    let snapshot = engine.read_snapshot(&tenant_scope).unwrap();
+    let mut transaction =
+        engine.begin(&tenant_scope, snapshot, OperationId::try_new("delete").unwrap()).unwrap();
+    transaction.delete_in_collection(
+        &CollectionName::try_new("items").unwrap(),
+        DocumentId::try_new("deleted").unwrap(),
+        ExpectedVersion::Any,
+    );
+    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    let journal = engine
+        .streams()
+        .replay_sync_journal(&tenant_scope, None, 100, &Cancellation::new())
+        .unwrap();
+    assert!(journal.drained());
+    let mut reconstructed = BTreeMap::new();
+    for record in journal.records() {
+        let key = (record.collection().clone(), record.document().clone());
+        if let Some(document) = record.published_document() {
+            reconstructed.insert(key, document);
+        } else {
+            reconstructed.remove(&key);
+        }
+    }
+    for sql in [
+        "SELECT _id, _rev, score AS rank FROM items ORDER BY score DESC NULLS LAST LIMIT 3 OFFSET 1",
+        "SELECT score AS rank FROM items WHERE score > 9007199254740992 ORDER BY score",
+        "SELECT body, _rev FROM items WHERE body MATCH 'needle' ORDER BY score ASC NULLS FIRST LIMIT 4",
+    ] {
+        let plan =
+            engine.queries().compile(QueryInput::sql(SqlQueryText::try_new(sql).unwrap())).unwrap();
+        let live = plan.live_plan().unwrap();
+        let snapshot = engine.read_snapshot(&tenant_scope).unwrap();
+        let expected = engine.queries().execute(&plan, &snapshot).unwrap();
+        let mut rows: Vec<_> = reconstructed
+            .values()
+            .filter_map(|document| live.evaluate(document).unwrap())
+            .collect();
+        rows.sort_by(|left, right| live.compare(left.document(), right.document()));
+        let page: Vec<_> = rows
+            .iter()
+            .skip(usize::try_from(live.paging().offset()).unwrap())
+            .take(live.paging().limit().map_or(usize::MAX, |limit| usize::try_from(limit).unwrap()))
+            .cloned()
+            .collect();
+        assert_eq!(page, expected.rows(), "{sql}");
+        let window = engine.queries().execute(&live.window_plan(6).unwrap(), &snapshot).unwrap();
+        assert_eq!(
+            window.rows(),
+            rows.as_slice(),
+            "refill uses the same projection and order: {sql}"
+        );
+    }
+    let updated = &reconstructed
+        [&(CollectionName::try_new("items").unwrap(), DocumentId::try_new("a").unwrap())];
+    assert_eq!(updated.metadata().version(), 2);
+    drop(engine);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn live_row_evaluator_refuses_execute_only_sql() {
+    let (dir, engine) = open_engine("live-row-refusal");
+    let plan = engine
+        .queries()
+        .compile(QueryInput::sql(SqlQueryText::try_new("SELECT count(*) FROM items").unwrap()))
+        .unwrap();
+    assert_eq!(plan.live_plan().unwrap_err().operator(), "aggregate");
+    drop(engine);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn sql_projection_keeps_durable_source_identity_when_id_is_not_selected() {
     let (dir, engine) = open_engine("sql-source-identity");
     let tenant_scope = scope(&engine, "tenant-a");

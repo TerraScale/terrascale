@@ -29,6 +29,7 @@
 mod analyzer;
 mod execute;
 pub mod includes;
+mod live;
 mod model;
 pub mod optimizer;
 mod result;
@@ -98,6 +99,7 @@ pub use crate::families::{TimeSeriesPaging, TimeSeriesRange};
 pub use statistics::{DiagnosticDuration, QueryStatistics, ResultEtag};
 // The public SqlQueryText constructor validates through the read-only SQL
 // front end (`sql`); the full SQL planner is track item E-4.
+pub use live::LiveQueryPlan;
 pub(crate) use sql::SqlErrorClass;
 /// The launch live-subset tag and the typed subscribe refusal (E-4, D-78):
 /// the whole `NotSubscribable` decision, pinned for SDK conformance.

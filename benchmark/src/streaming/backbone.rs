@@ -208,6 +208,7 @@ pub struct SyncJournalRecord {
     collection: CollectionName,
     document: DocumentId,
     mutation: SyncJournalMutation,
+    version: u64,
     provenance: JournalProvenance,
 }
 
@@ -246,6 +247,20 @@ impl SyncJournalRecord {
     #[must_use]
     pub const fn mutation(&self) -> &SyncJournalMutation {
         &self.mutation
+    }
+
+    /// Reconstructs a published put with its durable document version. Delete
+    /// records return `None`; their identity still names the row to remove.
+    #[must_use]
+    pub fn published_document(&self) -> Option<crate::types::Document> {
+        let SyncJournalMutation::Put(value) = &self.mutation else { return None };
+        let mut document = crate::types::Document::new(
+            self.document.clone(),
+            self.collection.clone(),
+            value.clone(),
+        );
+        document.set_version(self.version);
+        Some(document)
     }
 
     /// Returns the commit's replication provenance (D-35).
@@ -492,15 +507,23 @@ pub(crate) fn replay_sync_journal(
                 }
                 let position =
                     ChangeCheckpoint::after(commit.sequence().get(), index.saturating_add(1));
-                let (collection, document, mutation) = match write {
+                let (collection, document, mutation, version) = match write {
                     PublishedWrite::Put { document } => (
                         document.collection().clone(),
                         document.id().clone(),
                         SyncJournalMutation::Put(document.value().clone()),
+                        document.metadata().version(),
                     ),
-                    PublishedWrite::Delete { collection: Some(collection), id, .. } => {
-                        (collection.clone(), id.clone(), SyncJournalMutation::Delete)
-                    }
+                    PublishedWrite::Delete {
+                        collection: Some(collection),
+                        id,
+                        version_at_delete,
+                    } => (
+                        collection.clone(),
+                        id.clone(),
+                        SyncJournalMutation::Delete,
+                        *version_at_delete,
+                    ),
                     PublishedWrite::Delete { collection: None, .. } => {
                         boundary = Some(position);
                         examined += 1;
@@ -516,6 +539,7 @@ pub(crate) fn replay_sync_journal(
                     collection,
                     document,
                     mutation,
+                    version,
                     provenance: commit.provenance().clone(),
                 });
                 boundary = Some(position);

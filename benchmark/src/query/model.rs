@@ -162,6 +162,11 @@ impl NormalizedQuery {
         self.paging
     }
 
+    pub(crate) fn with_paging(mut self, paging: QueryPaging) -> Self {
+        self.paging = paging;
+        self
+    }
+
     /// Returns the typed staleness policy.
     pub(crate) const fn staleness(&self) -> &StalenessPolicy {
         &self.staleness

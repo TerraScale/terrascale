@@ -1246,7 +1246,7 @@ fn retain_candidate(
     Ok(())
 }
 
-fn document_bytes(document: &Document) -> usize {
+pub(crate) fn document_bytes(document: &Document) -> usize {
     document
         .id()
         .as_str()
@@ -1477,6 +1477,13 @@ fn resolve_loads<'a>(
 /// that document's field, a null binding projects null, and an absent field
 /// of a resolved reference is omitted exactly as an absent source field is.
 /// Every other name reads the matched source document.
+pub(crate) fn project_live(
+    query: &NormalizedQuery,
+    document: &Document,
+) -> Vec<(String, DocumentValue)> {
+    project(query, document, &[])
+}
+
 fn project(
     query: &NormalizedQuery,
     document: &Document,
