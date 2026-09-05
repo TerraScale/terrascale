@@ -356,13 +356,13 @@ were also pushed before their follow-up tests.
 | `ts-cli` | `make check` passed | `make check` passed; one invocation with an incompatible source environment was corrected |
 | `ts-rust` | Format, Clippy, tests passed | Same lanes passed; immutable package acquisition is a separate gate |
 | `ts-dotnet` | Release build and 90 tests passed | Release build and all 90 tests passed after HTTP decoder and catalog-count fixes |
-| `ts-typescript` | Typecheck passed; 231 tests passed, 3 failed, 10 skipped | Build, typecheck and test suite passed with explicit committed 36-operation producer bundle; 10 tests skipped |
+| `ts-typescript` | Typecheck passed; 231 tests passed, 3 failed, 10 skipped | Build, typecheck and 234 tests passed with explicit committed 36-operation producer bundle; 10 tests skipped |
 | `ts-dashboard` | 167 files / 1,053 tests passed; six formatting failures | MCP slice: 7 files / 54 tests passed, with Vite shutdown warning |
 | `ts-proxy` | Typecheck, 115 Worker, 4 production, 35 Snippet, 8 local edge tests, Wrangler dry-run passed | Member/capacity balancing remains an accepted implementation gap, not a new passing claim |
 | `terrabase` | `make check` stopped at Clippy's `chunks_exact_to_as_chunks` lint before tests | Sync crate tests passed after v1 correction; full engine/production gates remain separate |
 | `ts-orchestrator` | Portable gate initially stopped at preexisting formatting work | Full portable `make check` passed after the concurrent integration and rename |
 | `ts-deploy` | `make check` passed | `make check` passed after correcting the Rust binary name |
-| `ts-docs` | Site build and 3 stub snippets passed; 4 management snippets skipped | Rendered architecture sources and pictures inspected; site build and stub snippet verification recorded in the delivery evidence |
+| `ts-docs` | Site build and 3 stub snippets passed; 4 management snippets skipped | Site build and 3 stub snippets passed; 4 management snippets skipped. Default live test blocked by missing cloud sandbox configuration. All 5 Mermaid graphs rendered; 3 overview pictures inspected |
 
 No Firecracker qualification, live sandbox journey, Stripe billing journey,
 production CDN ramp, or deployment was run here. Passing unit and stub results
@@ -525,3 +525,16 @@ contract, control RPO/RTO and supported release skew. Reconcile the human-owned
 instructions. Retain the existing launch feature scope unless the owner chooses
 to reduce it; this review does not delete promised product features to make a
 gate appear green.
+
+## Final delivery evidence
+
+All eleven repositories had HEAD equal to `origin/develop`, one primary worktree,
+and no staged changes at the final inventory. Unrelated working edits remained
+in their original repositories. The review and architecture atlas were committed
+and pushed to `ts-docs`; workspace goals are also preserved as explicitly labeled
+review-time snapshots in `workspace-goals-2026-09-04/`.
+
+The default docs live gate was attempted and refused missing sandbox URL, API
+key and database ID. The explicitly selected stub lane passed independently;
+it is not a substitute for the cloud gate. Temporary migration source exports
+were removed after qualification; the private recovery archive was retained.
