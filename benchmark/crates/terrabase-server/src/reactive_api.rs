@@ -749,8 +749,7 @@ impl ViewStore {
 
     fn refresh_view_now(&self, view_id: &str) -> Result<(), ApiError> {
         // Match before cloning retained candidates or result rows. Irrelevant
-        // publications update only the source watermark, including for plans
-        // whose affected refresh still requires snapshot SQL.
+        // publications update only the source watermark.
         let Some(RefreshBatch { snapshot, records }) = self.prepare_refresh(view_id)? else {
             return Ok(());
         };

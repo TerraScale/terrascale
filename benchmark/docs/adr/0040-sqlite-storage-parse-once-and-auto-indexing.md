@@ -53,15 +53,23 @@ source, per [ADR 0046](0046-native-rust-backup-subsystem.md). Shared background
 workers replace the external process per database. Improved throughput,
 restore time, CPU, memory, and I/O efficiency require benchmark evidence.
 
-One native backup stream per database file to OCI Object Storage **in the
-same region** (free traffic), syncing every **10 s** (durability comes
+One native backup stream per database file sends all restore artifacts to
+**OCI Object Storage, Tigris, or both**, selected by plan policy with
+operator-managed overrides for specific users (ADR 0046). OCI stays **in the same region** (free traffic);
+When selected, Tigris placement must satisfy the database residency policy before admission.
+Track independent upload frontiers, retry failures, and prove restores from
+each provider. Full backup readiness requires complete verified chains on
+all selected providers. Sync every **10 s** (durability comes
 from the RF=2 follower; the backup tier's RPO is 10 s). Disaster
 recovery and PITR only — never a replication mechanism and never in the
 hot path. Restore always lands as a NEW database. Backup streams are
 encrypted under the same per-database keys, so crypto-shredding a database
 covers its backups. Bucket lifecycle is orchestrator-owned, per region:
 segments older than 24 h move to Infrequent Access, older than 7 days to
-Archive.
+Archive. Tigris uses supported mechanisms for the same logical retention
+and deletion policy; its storage classes need not match OCI. Account for
+both providers and OCI outbound costs. Completely remove the external
+Litestream dependency and integration in the native replacement series.
 
 ### D-30 — Parse once, bytes everywhere
 

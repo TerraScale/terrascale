@@ -112,8 +112,14 @@ child processes, packaging, and obsolete integration in the replacement
 series. The rebuild is required work; the existing subprocess adapter is
 not completion of this decision.
 
-The native subsystem backs each file to its own Region's OCI Object Storage with the
-workspace retention and 10-second backup interval. Restore creates a new
+Completely remove Litestream from runtime, dependencies, packaging, and
+configuration in the native replacement series; no fallback or shim remains.
+The native subsystem sends backups to OCI Object Storage, Tigris, or both
+according to plan policy with operator-managed overrides for specific users, with the workspace retention and 10-second backup interval.
+When selected, verify Tigris placement against the database residency policy before admission.
+Track upload progress and retries per destination; full backup readiness
+requires a complete verified restore chain in every selected provider. Restore from either
+provider independently and test each provider outage. Restore creates a new
 database and proves content against the journal. Encrypt files, WAL, backup,
 export, and branch data under the database DEK. Enforce residency and safe
 crypto-shred. Rehearse restoration and never silently lose acknowledged writes.
@@ -150,3 +156,28 @@ selection without losing session or idempotency guarantees. Tenant quota
 rejection is not a reason to evade guards by choosing another server. A single
 SQLite file retains one regional writer; read distribution and database/shard
 placement provide additional capacity. Reactive delivery stays on Snippet/CDN.
+
+## Feature and module gate enforcement
+
+Implement the workspace goal's feature gates by plan tier, organization, and
+user. Consume versioned policy from the control-plane authority and publish
+stable feature IDs, scope declarations, effective capability responses, and
+typed `FeatureDisabled` errors in the shared contracts. Enforce gates inside
+TerraBase for direct API/SDK requests, private operations, reactive attach and
+resume, and background-module admission. Dashboard visibility is not authority.
+
+User-scoped resolution is user override, organization override, plan default,
+then registered default; a global operator disable wins. Shared database/org
+modules use the owning organization and plan, never a collaborator's override;
+personal databases use their owner's policy. Overrides support inherit,
+enabled, and disabled. Authorization and mandatory safety invariants always
+remain enforced. Backup destinations stay a typed policy with safe transitions.
+
+Evaluate locally with bounded resource use. Apply policy revisions, define a
+maximum revocation bound, invalidate caches and affected entitlement epochs,
+and refuse new gated work if required policy authority is missing or expired.
+No remote flag lookup or Worker enters the hot path. Define safe per-module
+drain/pause/cancel and idempotent resume; disabling does not delete data or
+weaken required durability, encryption, or isolation. Test precedence, scope,
+direct API bypass, stale policy, revocation, recovery, and lifecycle transitions
+against the same effective-capability contract consumed by the dashboard.

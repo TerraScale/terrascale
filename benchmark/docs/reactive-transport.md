@@ -76,6 +76,20 @@ Materialization and frame encoding remain demand-driven. The dispatcher reads
 the durable journal and hydrates predecessors from storage; direct dispatch
 from old/new extracted values on commit remains separate work.
 
+A minute sweep retires views after 20 minutes without origin activity, covering
+the maximum issued capability lifetime. Retirement releases the materializer,
+journal registration, host references, and distinct-view quota slot. An
+in-flight refresh prevents retirement. Retained snapshot and delta bytes stay
+readable; a request beyond the archived log receives `view_retired` and must
+reattach. Archived reads do not keep a materializer alive.
+
+Reattachment must reacquire a quota slot. It takes a fresh authorized snapshot
+and appends any result change to the existing revision history, preserving old
+immutable response bytes. A rejected admission leaves the view archived. After
+the archive has spent another retention window without reactivation, the sweep
+removes it. The sweep runs without new requests and releases storage outside
+the registry lock.
+
 ## Result digest
 
 Wire producers and SDKs use the native result-view core's four-lane FNV-1a digest.

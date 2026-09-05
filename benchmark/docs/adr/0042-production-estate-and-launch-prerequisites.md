@@ -54,11 +54,12 @@ profile is ARM-first (D-43). OS: Oracle Linux 9 or Ubuntu 24.04 ARM, binaries
 supervised by systemd units, unattended security updates, `chrony` against
 OCI NTP (HLC skew guard), no password login, no public SSH.
 
-## Managed OCI services (per region unless stated)
+## Managed storage and OCI services (per region unless stated)
 
 | Service | Purpose | Configuration |
 | --- | --- | --- |
 | Object Storage bucket | native TerraBase backup targets, analytics snapshots (D-53), Parquet export | One bucket per region, versioning on, retention rule on, lifecycle per D-29 (segments older than 24 h to Infrequent Access, older than 7 days to Archive), **never replicated across regions** (residency, D-52) |
+| Tigris S3-compatible backup storage | Independent backup destination selected by plan/user policy (ADR 0046) | Verify residency-compatible placement, scoped credentials, encryption, logical retention/deletion, and independent restore; one or both are required according to effective plan/user policy |
 | Block Volume backup policy | Second layer under native TerraBase backups | Daily, 7-day retention, per member host |
 | Vault + Key | Per-database encryption keys (M2-1, ADR 0030) | One master key per region; keys never leave their region |
 | IAM (tenancy-wide) | Least privilege | One compartment per region; **instance principals** for members and control hosts; no API keys on disk; CI gets a scoped user per secret (GOAL O-3) |
@@ -130,3 +131,9 @@ mistakes "the servers are up" for "we are in production".
   definitions; its licence and soak paragraphs are void.
 - Anything that would add a machine class (dedicated analytics nodes,
   dedicated edge nodes, a bastion) is a new ADR, not a quiet addition.
+
+The native backup rebuild completely removes external Litestream integration.
+The budget above predates the policy-selected Tigris copy: recalculate storage,
+requests, retrieval, and OCI outbound costs for each supported provider policy before launch.
+Restore qualification must recover independently from OCI and from Tigris,
+including loss of the other provider (ADR 0046).

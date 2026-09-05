@@ -7,7 +7,8 @@ remain document operations, with canonical JSON bytes, extracted indexes,
 causal replication and live result views. The accepted backup design is an
 internal native Rust rebuild informed by Litestream’s source, with measured
 performance and efficiency improvements; replacement of the existing external
-process adapter is required work. See [ADR 0046](docs/adr/0046-native-rust-backup-subsystem.md).
+process adapter is required work. Backup policy selects OCI Object Storage, Tigris, or both by plan, with
+operator-managed overrides for specific users. See [ADR 0046](docs/adr/0046-native-rust-backup-subsystem.md).
 
 The workspace [GOAL.md](../GOAL.md) is authoritative. This repository's
 [GOAL.md](GOAL.md) is only the pointer above, while [AGENTS.md](AGENTS.md)

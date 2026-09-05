@@ -6,7 +6,10 @@ use std::time::{Duration, SystemTime};
 use super::{ApiError, Materialization, ViewStore};
 
 const IDLE: Duration = Duration::from_secs(2 * super::CAPABILITY_BUCKET);
-const SWEEP: Duration = Duration::from_secs(60);
+const SWEEP: Duration = Duration::from_mins(1);
+
+#[cfg(test)]
+mod tests;
 
 impl ViewStore {
     pub(super) fn start_maintenance(self: &Arc<Self>) {
@@ -20,11 +23,12 @@ impl ViewStore {
             loop {
                 tokio::time::sleep(SWEEP).await;
                 let weak = weak.clone();
+                let now = tokio::time::Instant::now();
                 // Releasing a last host can close storage. Keep it off the
                 // runtime worker, and hold no strong owner across idle waits.
                 let alive = tokio::task::spawn_blocking(move || {
                     let Some(store) = weak.upgrade() else { return false };
-                    store.retire_idle(tokio::time::Instant::now());
+                    store.retire_idle(now);
                     true
                 })
                 .await;
@@ -101,6 +105,24 @@ impl ViewStore {
         view.last_access = tokio::time::Instant::now();
         view.guard = guards.map(Arc::downgrade);
         Ok(())
+    }
+}
+
+impl Drop for super::View {
+    fn drop(&mut self) {
+        if let Some(guard) = self.guard.take().and_then(|guard| guard.upgrade()) {
+            guard.detach_view(&self.database, &self.id);
+        }
+    }
+}
+
+impl Drop for ViewStore {
+    fn drop(&mut self) {
+        if let Ok(worker) = self.maintenance.get_mut()
+            && let Some(worker) = worker.take()
+        {
+            worker.abort();
+        }
     }
 }
 

@@ -49,15 +49,73 @@ overflow and outage behavior; never silently discard unarchived data or
 report a stale backup as healthy. Pause idle streams only after preserving
 their pending backup state, release their active resources, and resume safely.
 
-Preserve D-29: same-Region OCI Object Storage, 10-second sync interval and
+Preserve D-29's 10-second sync interval and
 10-second backup RPO target, per-database DEK encryption, PITR,
 restore-to-new-database, branching, and bootstrap snapshots carrying a
 consistent journal frontier. A configured interval alone does not prove RPO:
 measure the latest remotely recoverable commit and expose lag/failure through
-Prometheus. Object lifecycle remains orchestrator-owned: Infrequent Access
-after 24 hours and Archive after 7 days. Retention must preserve complete
+Prometheus. Object lifecycle remains orchestrator-owned: OCI Infrequent Access
+after 24 hours and Archive after 7 days, with equivalent logical retention
+and deletion on Tigris using its supported mechanisms. Do not assume Tigris
+offers OCI storage classes. Retention must preserve complete
 restore chains. Restores validate integrity before publication; Region
 bootstrap tails peers and reconciles before serving, as in ADR 0044.
+
+## Destinations selected by plan and user policy
+
+Support OCI Object Storage and Tigris through their S3-compatible APIs.
+An operator-managed policy selects OCI only, Tigris only, or both for each
+plan. An explicit override for a specific user takes precedence over the
+plan default; removing the override restores plan inheritance. Resolve the
+policy using the database's owning account, not the user making a request.
+For organization-owned databases, ownership must resolve to one designated
+billing account; collaborator overrides must not change shared backup policy.
+Persist the effective destination set and policy revision per database.
+Reject an empty set and invalid or residency-incompatible destinations.
+
+Send each snapshot, incremental segment, and restore manifest to every
+selected provider. Each must hold a complete independently restorable chain.
+Two buckets at one provider do not provide the independence of OCI plus
+Tigris. A provider outage never silently reduces the configured destination
+set. Policies control redundancy, not RF=2 write durability or backup billing.
+
+Audit policy edits and apply them through durable lifecycle operations.
+Adding a provider bootstraps a complete restore chain and catches up before
+reporting the new policy as fully protected; preserve existing protection
+while the new destination initializes. Removing a provider requires an
+explicit policy change, a verified surviving restore chain, and retention-
+and deletion-aware cleanup of the retired destination. Do not bulk-delete
+retained backups merely because a plan changed. Test plan changes, user
+override precedence/removal, ownership changes, retries, and interrupted
+policy transitions. Expose configured policy separately from actual health.
+
+OCI uses the database's Region. Tigris is the explicit backup-only exception
+to OCI-only durable storage in D-04. Verify its configured placement against
+the database's permitted geography before admission; do not assume Tigris
+regions map to OCI Regions or that encryption waives residency. When Tigris is selected, an unavailable
+or unverified compliant location fails placement qualification. Compute and
+live replication remain on OCI.
+
+Keep separate durable upload frontiers, retry state, credentials, and health
+for each destination. Full backup readiness through a recovery point requires
+complete verified artifacts on every selected provider. In a two-provider policy, one successful upload cannot mask the
+other provider's failure. Preserve pending work and report degraded backup
+health during an outage, while RF=2 write acknowledgements remain independent
+of object storage. Bound and test staging exhaustion behavior explicitly.
+
+Restore from either provider without depending on the other provider's object
+listing or metadata. Test independent restores, single-provider loss,
+partial uploads, retries, retention/deletion, and corruption. Daily restore
+drills exercise every selected provider; qualification covers all three
+policies. Encrypt all copies under the database DEK;
+key recovery remains governed by D-70. Provider redundancy alone does not
+prove recovery during a simultaneous loss of key access.
+
+Measure lag and recoverability per provider, combined backup readiness,
+duplicated storage and requests, and outbound traffic from OCI to Tigris.
+The single-provider cost estimate is superseded; publish measured costs for
+OCI-only, Tigris-only, and two-provider configurations with the performance
+benchmarks.
 
 ## Performance and correctness gates
 
@@ -84,7 +142,8 @@ This is an accepted design and required rebuild, not a completed implementation
 or a measured performance claim. E-7 remains incomplete until the native path,
 recovery evidence, and comparative benchmarks satisfy this decision.
 
-In the replacement series, delete the external process adapter, binary
+Completely remove Litestream from the product in the replacement series:
+delete the external process adapter, dependencies, binary
 packaging, subprocess supervision, Litestream-specific runtime configuration,
 and obsolete tests and documentation. Replace their coverage with native
 integration and recovery tests. Keep no compatibility shim or permanent
