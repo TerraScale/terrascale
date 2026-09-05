@@ -1647,31 +1647,31 @@ pub mod plan {
 
     /// One row with a signed Z-set multiplicity.
     #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct ZSetEntry {
-        pub row: ExtractedRow,
+    pub struct ZSetEntry<R = ExtractedRow> {
+        pub row: R,
         pub weight: i32,
     }
     /// A batch of inserts/removals. A row's transition is represented by -1
     /// for the old value and +1 for the new value.
-    #[derive(Clone, Debug, Eq, PartialEq, Default)]
-    pub struct ZSetDelta {
-        pub entries: Vec<ZSetEntry>,
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct ZSetDelta<R = ExtractedRow> {
+        pub entries: Vec<ZSetEntry<R>>,
     }
-    impl ZSetDelta {
+    impl<R> ZSetDelta<R> {
         #[must_use]
-        pub fn new(entries: Vec<ZSetEntry>) -> Self {
+        pub fn new(entries: Vec<ZSetEntry<R>>) -> Self {
             Self { entries }
         }
         #[must_use]
-        pub fn insert(row: ExtractedRow) -> Self {
+        pub fn insert(row: R) -> Self {
             Self { entries: vec![ZSetEntry { row, weight: 1 }] }
         }
         #[must_use]
-        pub fn remove(row: ExtractedRow) -> Self {
+        pub fn remove(row: R) -> Self {
             Self { entries: vec![ZSetEntry { row, weight: -1 }] }
         }
         #[must_use]
-        pub fn transition(old: Option<ExtractedRow>, new: Option<ExtractedRow>) -> Self {
+        pub fn transition(old: Option<R>, new: Option<R>) -> Self {
             let mut entries = Vec::with_capacity(2);
             if let Some(row) = old {
                 entries.push(ZSetEntry { row, weight: -1 });
@@ -1680,6 +1680,12 @@ pub mod plan {
                 entries.push(ZSetEntry { row, weight: 1 });
             }
             Self { entries }
+        }
+    }
+
+    impl<R> Default for ZSetDelta<R> {
+        fn default() -> Self {
+            Self { entries: Vec::new() }
         }
     }
 
@@ -1695,7 +1701,7 @@ pub mod plan {
     }
 
     #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-    struct RankKey {
+    pub struct RankKey {
         parts: Vec<RankPart>,
         identity: String,
     }
@@ -1729,25 +1735,92 @@ pub mod plan {
         ByteBudgetExceeded,
     }
 
+    /// Immutable row semantics supplied by a compiled query adapter. Keys
+    /// must provide a total order including identity, and matches/evaluate
+    /// must agree. The materializer owns all candidate and refill mechanics.
+    pub trait MaterializerPlan: Clone + fmt::Debug {
+        type Row: Clone + fmt::Debug;
+        type Key: Clone + fmt::Debug + Ord;
+        fn limit(&self) -> usize;
+        fn owns(&self, row: &Self::Row) -> bool;
+        fn identity<'a>(&self, row: &'a Self::Row) -> &'a str;
+        fn key_identity<'a>(&self, key: &'a Self::Key) -> &'a str;
+        fn matches(&self, row: &Self::Row) -> bool;
+        fn key(&self, row: &Self::Row) -> Self::Key;
+        fn evaluate(&self, row: &Self::Row) -> Option<ResultItem>;
+        fn row_bytes(&self, row: &Self::Row) -> usize;
+    }
+
+    impl MaterializerPlan for ViewPlan {
+        type Row = ExtractedRow;
+        type Key = RankKey;
+        fn limit(&self) -> usize {
+            self.limit
+        }
+        fn owns(&self, row: &ExtractedRow) -> bool {
+            row.collection == self.collection
+        }
+        fn identity<'a>(&self, row: &'a ExtractedRow) -> &'a str {
+            &row.identity
+        }
+        fn key_identity<'a>(&self, key: &'a RankKey) -> &'a str {
+            &key.identity
+        }
+        fn matches(&self, row: &ExtractedRow) -> bool {
+            Self::matches(self, row)
+        }
+        fn key(&self, row: &ExtractedRow) -> RankKey {
+            RankKey::new(self, row)
+        }
+        fn evaluate(&self, row: &ExtractedRow) -> Option<ResultItem> {
+            Self::evaluate(self, row)
+        }
+        fn row_bytes(&self, row: &ExtractedRow) -> usize {
+            fn value_bytes(value: &Value) -> usize {
+                std::mem::size_of::<Value>()
+                    + match value {
+                        Value::Text(value) => value.len(),
+                        Value::Bytes(value) => value.len(),
+                        _ => 0,
+                    }
+            }
+            let fields = row.values.iter().chain(&row.fields).fold(0_usize, |sum, (key, value)| {
+                sum.saturating_add(key.len())
+                    .saturating_add(std::mem::size_of::<String>())
+                    .saturating_add(value_bytes(value))
+            });
+            let order = self
+                .order
+                .iter()
+                .filter_map(|key| row.values.get(&key.field))
+                .fold(0_usize, |sum, value| sum.saturating_add(value_bytes(value)));
+            fields
+                .saturating_add(order)
+                .saturating_add(row.identity.len().saturating_mul(3))
+                .saturating_add(row.collection.len())
+                .saturating_add(row.fts.len())
+        }
+    }
+
     /// A bounded top-k result. At most min(2k, `MAX_TOP_K_ITEMS`) eligible
     /// candidates are retained, with an ordering fence covering the known
     /// prefix of the source. Updates beyond that fence are not guessed into
     /// the result. `RefillRequired` leaves the previous result unchanged.
     #[derive(Clone, Debug)]
-    pub struct Materializer {
-        plan: ViewPlan,
-        rows: BTreeMap<String, ExtractedRow>,
-        eligible: BTreeSet<RankKey>,
+    pub struct Materializer<P: MaterializerPlan = ViewPlan> {
+        plan: P,
+        rows: BTreeMap<String, P::Row>,
+        eligible: BTreeSet<P::Key>,
         result: Vec<ResultItem>,
         boundary: usize,
-        fence: Option<RankKey>,
+        fence: Option<P::Key>,
         retained_bytes: usize,
     }
 
-    impl Materializer {
+    impl<P: MaterializerPlan> Materializer<P> {
         #[must_use]
-        pub fn new(plan: ViewPlan) -> Self {
-            let boundary = plan.limit.saturating_mul(2).min(MAX_TOP_K_ITEMS);
+        pub fn new(plan: P) -> Self {
+            let boundary = plan.limit().saturating_mul(2).min(MAX_TOP_K_ITEMS);
             Self {
                 plan,
                 rows: BTreeMap::new(),
@@ -1764,7 +1837,7 @@ pub mod plan {
         /// first 2k+1 eligible rows, using the extra row to prove a tail exists.
         pub fn seed(
             &mut self,
-            rows: impl IntoIterator<Item = ExtractedRow>,
+            rows: impl IntoIterator<Item = P::Row>,
         ) -> Result<(), MaterializeError> {
             let mut next = Self::new(self.plan.clone());
             for row in rows {
@@ -1778,7 +1851,7 @@ pub mod plan {
         /// pending delta's cut, and diffs against the last published result.
         pub fn refill(
             &mut self,
-            rows: impl IntoIterator<Item = ExtractedRow>,
+            rows: impl IntoIterator<Item = P::Row>,
         ) -> Result<Vec<crate::wire::ResultOperation>, MaterializeError> {
             let before = self.result.clone();
             self.seed(rows)?;
@@ -1788,20 +1861,20 @@ pub mod plan {
         /// nor the candidates advance; refill from storage before publishing.
         pub fn apply(
             &mut self,
-            delta: &ZSetDelta,
+            delta: &ZSetDelta<P::Row>,
         ) -> Result<Vec<crate::wire::ResultOperation>, MaterializeError> {
             let mut next = self.clone();
             for entry in &delta.entries {
-                if entry.row.collection != next.plan.collection {
+                if !next.plan.owns(&entry.row) {
                     continue;
                 }
                 if entry.weight < 0 {
-                    next.remove(&entry.row.identity);
+                    next.remove(next.plan.identity(&entry.row));
                 } else if entry.weight > 0 {
                     next.insert(&entry.row, true)?;
                 }
             }
-            if next.fence.is_some() && next.rows.len() < next.plan.limit {
+            if next.fence.is_some() && next.rows.len() < next.plan.limit() {
                 return Err(MaterializeError::RefillRequired);
             }
             next.refresh_result();
@@ -1824,27 +1897,23 @@ pub mod plan {
         }
         fn remove(&mut self, identity: &str) {
             if let Some(previous) = self.rows.remove(identity) {
-                self.eligible.remove(&RankKey::new(&self.plan, &previous));
-                self.retained_bytes -= self.row_bytes(&previous);
+                self.eligible.remove(&self.plan.key(&previous));
+                self.retained_bytes -= self.plan.row_bytes(&previous);
             }
         }
-        fn insert(
-            &mut self,
-            row: &ExtractedRow,
-            respect_fence: bool,
-        ) -> Result<(), MaterializeError> {
-            if row.collection != self.plan.collection {
+        fn insert(&mut self, row: &P::Row, respect_fence: bool) -> Result<(), MaterializeError> {
+            if !self.plan.owns(row) {
                 return Ok(());
             }
-            let bytes = self.row_bytes(row);
+            let bytes = self.plan.row_bytes(row);
             if bytes > super::MAX_VIEW_BYTES {
                 return Err(MaterializeError::ByteBudgetExceeded);
             }
-            self.remove(&row.identity);
+            self.remove(self.plan.identity(row));
             if !self.plan.matches(row) {
                 return Ok(());
             }
-            let key = RankKey::new(&self.plan, row);
+            let key = self.plan.key(row);
             if respect_fence && self.fence.as_ref().is_some_and(|fence| &key > fence) {
                 return Ok(());
             }
@@ -1854,7 +1923,7 @@ pub mod plan {
                     self.fence = Some(worst.clone());
                     return Ok(());
                 }
-                let identity = worst.identity.clone();
+                let identity = self.plan.key_identity(worst).to_owned();
                 self.remove(&identity);
                 // A candidate was discarded, so only the retained prefix is
                 // known complete. The fence can widen only after a refill.
@@ -1866,44 +1935,18 @@ pub mod plan {
             }
             self.retained_bytes = retained;
             self.eligible.insert(key);
-            self.rows.insert(row.identity.clone(), row.clone());
+            self.rows.insert(self.plan.identity(row).to_owned(), row.clone());
             if self.fence.is_some() && self.rows.len() == self.boundary {
                 self.fence = self.eligible.last().cloned();
             }
             Ok(())
         }
-        fn row_bytes(&self, row: &ExtractedRow) -> usize {
-            fn value_bytes(value: &Value) -> usize {
-                std::mem::size_of::<Value>()
-                    + match value {
-                        Value::Text(value) => value.len(),
-                        Value::Bytes(value) => value.len(),
-                        _ => 0,
-                    }
-            }
-            let fields = row.values.iter().chain(&row.fields).fold(0_usize, |sum, (key, value)| {
-                sum.saturating_add(key.len())
-                    .saturating_add(std::mem::size_of::<String>())
-                    .saturating_add(value_bytes(value))
-            });
-            let order = self
-                .plan
-                .order
-                .iter()
-                .filter_map(|key| row.values.get(&key.field))
-                .fold(0_usize, |sum, value| sum.saturating_add(value_bytes(value)));
-            fields
-                .saturating_add(order)
-                .saturating_add(row.identity.len().saturating_mul(3))
-                .saturating_add(row.collection.len())
-                .saturating_add(row.fts.len())
-        }
         fn refresh_result(&mut self) {
             self.result = self
                 .eligible
                 .iter()
-                .take(self.plan.limit)
-                .filter_map(|key| self.rows.get(&key.identity))
+                .take(self.plan.limit())
+                .filter_map(|key| self.rows.get(self.plan.key_identity(key)))
                 .filter_map(|row| self.plan.evaluate(row))
                 .collect();
         }
