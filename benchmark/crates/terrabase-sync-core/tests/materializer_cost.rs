@@ -17,8 +17,10 @@ fn row(id: u32, score: f64) -> ExtractedRow {
 #[ignore = "manual release-mode benchmark; writes Markdown rows to stdout"]
 fn ordered_materializer_cost() {
     let updates = 200_u32;
-    println!("| Source rows | Updates | Full scan/sort ms | Ordered index ms | Speedup |");
-    println!("| ---: | ---: | ---: | ---: | ---: |");
+    println!(
+        "| Source rows | Updates | Full scan/sort ms | Bounded index ms | Speedup | Retained rows | Estimated candidate bytes |"
+    );
+    println!("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
     for count in [1_000_u32, 10_000, 100_000] {
         let plan = ViewPlan::new(
             "orders",
@@ -36,7 +38,7 @@ fn ordered_materializer_cost() {
             })
             .collect();
         let mut materializer = Materializer::new(plan.clone());
-        materializer.seed(source.values().cloned());
+        materializer.seed(source.values().cloned()).unwrap();
         let mut previous = materializer.result().to_vec();
         let changes: Vec<_> =
             (0..updates).map(|step| row(step * 7_919 % count, -f64::from(step) - 1.0)).collect();
@@ -60,13 +62,15 @@ fn ordered_materializer_cost() {
         let baseline = start.elapsed().as_secs_f64() * 1_000.0;
         let start = Instant::now();
         for change in changes {
-            black_box(materializer.apply(&ZSetDelta::insert(change)));
+            black_box(materializer.apply(&ZSetDelta::insert(change)).unwrap());
         }
         let indexed = start.elapsed().as_secs_f64() * 1_000.0;
         assert_eq!(materializer.result(), previous);
         println!(
-            "| {count} | {updates} | {baseline:.3} | {indexed:.3} | {:.1}x |",
-            baseline / indexed
+            "| {count} | {updates} | {baseline:.3} | {indexed:.3} | {:.1}x | {} | {} |",
+            baseline / indexed,
+            materializer.boundary_len(),
+            materializer.retained_bytes()
         );
     }
 }

@@ -53,14 +53,14 @@ fn filtering_precedes_top_k_and_deletions_refill_the_result() {
     let a = row("a", 100.0);
     let b = row("b", 101.0);
     rows.extend([a.clone(), b.clone(), row("c", 102.0), row("d", 103.0)]);
-    materializer.seed(rows);
+    materializer.seed(rows).unwrap();
     assert_eq!(ids(&materializer), ["a", "b"]);
     assert_eq!(materializer.boundary_len(), 4);
-    materializer.apply(&ZSetDelta::remove(a));
+    materializer.apply(&ZSetDelta::remove(a)).unwrap();
     assert_eq!(ids(&materializer), ["b", "c"]);
     assert_eq!(materializer.boundary_len(), 3);
     let changed = b.clone().with_value("status", Value::Text("open".into()));
-    materializer.apply(&ZSetDelta::transition(Some(b), Some(changed)));
+    materializer.apply(&ZSetDelta::transition(Some(b), Some(changed))).unwrap();
     assert_eq!(ids(&materializer), ["c", "d"]);
     assert_eq!(materializer.boundary_len(), 2);
 }
@@ -89,11 +89,11 @@ fn explicit_null_placement_is_independent_of_sort_direction() {
             row("c-low", 1.0),
             row("d-high", 2.0),
         ];
-        materializer.seed(rows.iter().rev().cloned());
+        materializer.seed(rows.iter().rev().cloned()).unwrap();
         assert_eq!(ids(&materializer), expected);
-        materializer.seed([]);
+        materializer.seed([]).unwrap();
         for value in rows {
-            materializer.apply(&ZSetDelta::insert(value));
+            materializer.apply(&ZSetDelta::insert(value)).unwrap();
         }
         assert_eq!(ids(&materializer), expected);
     }
@@ -106,12 +106,12 @@ fn foreign_collection_cannot_replace_or_remove_an_owned_identity() {
     let owned = row("same-id", 1.0);
     let mut foreign = row("same-id", 2.0);
     foreign.collection = "foreign".into();
-    materializer.seed([owned, foreign.clone()]);
+    materializer.seed([owned, foreign.clone()]).unwrap();
     let original = materializer.result().to_vec();
     assert_eq!(original.len(), 1);
-    assert!(materializer.apply(&ZSetDelta::insert(foreign.clone())).is_empty());
+    assert!(materializer.apply(&ZSetDelta::insert(foreign.clone())).unwrap().is_empty());
     assert_eq!(materializer.result(), original);
-    assert!(materializer.apply(&ZSetDelta::remove(foreign)).is_empty());
+    assert!(materializer.apply(&ZSetDelta::remove(foreign)).unwrap().is_empty());
     assert_eq!(materializer.result(), original);
 }
 
@@ -184,12 +184,24 @@ fn ordered_index_matches_recomputation_through_replacements_and_refills() {
                     }
                     _ => {}
                 }
-                if step % 5 == 0 {
+                let before = materializer.result().to_vec();
+                let applied = if step % 5 == 0 {
                     source.remove(&id);
-                    materializer.apply(&ZSetDelta::remove(next));
+                    materializer.apply(&ZSetDelta::remove(next))
                 } else {
                     source.insert(id, next.clone());
-                    materializer.apply(&ZSetDelta::insert(next));
+                    materializer.apply(&ZSetDelta::insert(next))
+                };
+                if applied == Err(terrabase_sync_core::view::plan::MaterializeError::RefillRequired)
+                {
+                    assert_eq!(
+                        materializer.result(),
+                        before,
+                        "refusal must not publish partial state"
+                    );
+                    materializer.refill(source.values().cloned()).unwrap();
+                } else {
+                    applied.unwrap();
                 }
                 let mut eligible: Vec<_> =
                     source.values().filter(|row| plan.evaluate(row).is_some()).collect();
@@ -233,13 +245,71 @@ fn ordered_index_matches_recomputation_through_replacements_and_refills() {
                     expected,
                     "step {step}, descending={descending}, nulls_last={nulls_last}"
                 );
-                assert_eq!(materializer.boundary_len(), eligible.len().min(14));
+                assert!(materializer.boundary_len() <= eligible.len().min(14));
                 if step % 137 == 0 {
                     // Reseeding must clear both row state and its ordering index.
-                    materializer.seed(source.values().cloned());
+                    materializer.seed(source.values().cloned()).unwrap();
                     assert_eq!(materializer.result(), expected);
                 }
             }
         }
     }
+}
+
+#[test]
+fn bounded_candidates_refuse_an_incomplete_result_until_storage_refills() {
+    use terrabase_sync_core::view::plan::MaterializeError;
+    let plan = ViewPlan::new(
+        "orders",
+        vec![],
+        vec!["score".into()],
+        None,
+        vec![OrderKey { field: "score".into(), descending: false, nulls_last: true }],
+        2,
+    )
+    .unwrap();
+    let mut materializer = Materializer::new(plan);
+    materializer.seed((0..10_000).map(|id| row(&id.to_string(), f64::from(id)))).unwrap();
+    assert_eq!(materializer.boundary_len(), 4);
+    assert!(materializer.retained_bytes() < 10_000);
+    materializer.apply(&ZSetDelta::remove(row("0", 0.0))).unwrap();
+    materializer.apply(&ZSetDelta::insert(row("1", 20_000.0))).unwrap();
+    assert_eq!(ids(&materializer), ["2", "3"], "the moved row must leave the known prefix");
+    let before = materializer.result().to_vec();
+    let bytes = materializer.retained_bytes();
+    assert_eq!(
+        materializer.apply(&ZSetDelta::remove(row("2", 2.0))),
+        Err(MaterializeError::RefillRequired)
+    );
+    assert_eq!(materializer.result(), before);
+    assert_eq!(materializer.retained_bytes(), bytes);
+    let operations = materializer
+        .refill(
+            (3..10_000).map(|id| row(&id.to_string(), f64::from(id))).chain([row("1", 20_000.0)]),
+        )
+        .unwrap();
+    assert!(!operations.is_empty());
+    assert_eq!(ids(&materializer), ["3", "4"]);
+    assert_eq!(materializer.boundary_len(), 4);
+}
+
+#[test]
+fn candidate_byte_refusal_preserves_the_last_result() {
+    use terrabase_sync_core::view::{MAX_VIEW_BYTES, plan::MaterializeError};
+    let plan = ViewPlan::new("orders", vec![], vec![], None, vec![], 2).unwrap();
+    let mut materializer = Materializer::new(plan);
+    materializer.seed([row("kept", 1.0)]).unwrap();
+    let before = materializer.result().to_vec();
+    let bytes = materializer.retained_bytes();
+    let mut oversized = ExtractedRow::new("orders", "oversized");
+    oversized.values.insert("payload".into(), Value::Bytes(vec![0; MAX_VIEW_BYTES]));
+    let delta = ZSetDelta::insert(oversized);
+    assert_eq!(materializer.apply(&delta), Err(MaterializeError::ByteBudgetExceeded));
+    assert_eq!(materializer.result(), before);
+    assert_eq!(materializer.retained_bytes(), bytes);
+    assert_eq!(
+        materializer.refill(delta.entries.into_iter().map(|entry| entry.row)),
+        Err(MaterializeError::ByteBudgetExceeded)
+    );
+    assert_eq!(materializer.result(), before);
 }

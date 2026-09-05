@@ -1720,11 +1720,19 @@ pub mod plan {
         }
     }
 
-    /// An incremental result over the supplied rows. Eligible rows have a
-    /// maintained ordering index, so a delta updates only its changed keys
-    /// and projects the first k rows without scanning or sorting the source.
-    /// Source rows and ordering keys remain in memory for refill after
-    /// deletions. This does not bound source-row memory.
+    /// A candidate window could not safely produce a complete result.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum MaterializeError {
+        /// Fetch an authoritative window at the delta's journal cut and refill.
+        RefillRequired,
+        /// Retained candidate data exceeds the per-view byte budget.
+        ByteBudgetExceeded,
+    }
+
+    /// A bounded top-k result. At most min(2k, `MAX_TOP_K_ITEMS`) eligible
+    /// candidates are retained, with an ordering fence covering the known
+    /// prefix of the source. Updates beyond that fence are not guessed into
+    /// the result. `RefillRequired` leaves the previous result unchanged.
     #[derive(Clone, Debug)]
     pub struct Materializer {
         plan: ViewPlan,
@@ -1732,6 +1740,8 @@ pub mod plan {
         eligible: BTreeSet<RankKey>,
         result: Vec<ResultItem>,
         boundary: usize,
+        fence: Option<RankKey>,
+        retained_bytes: usize,
     }
 
     impl Materializer {
@@ -1744,33 +1754,60 @@ pub mod plan {
                 eligible: BTreeSet::new(),
                 result: Vec::new(),
                 boundary,
+                fence: None,
+                retained_bytes: 0,
             }
         }
-        pub fn seed(&mut self, rows: impl IntoIterator<Item = ExtractedRow>) {
-            self.rows.clear();
-            self.eligible.clear();
+        /// Seeds from an authoritative snapshot of unique source identities.
+        /// The iterator may scan the entire source; only the best 2k rows
+        /// remain in memory. A storage adapter may instead stream its ordered
+        /// first 2k+1 eligible rows, using the extra row to prove a tail exists.
+        pub fn seed(
+            &mut self,
+            rows: impl IntoIterator<Item = ExtractedRow>,
+        ) -> Result<(), MaterializeError> {
+            let mut next = Self::new(self.plan.clone());
             for row in rows {
-                if row.collection == self.plan.collection {
-                    self.insert(row);
-                }
+                next.insert(&row, false)?;
             }
-            self.refresh_result();
+            next.refresh_result();
+            *self = next;
+            Ok(())
         }
-        /// Applies a Z-set delta and returns the deterministic result delta.
-        pub fn apply(&mut self, delta: &ZSetDelta) -> Vec<crate::wire::ResultOperation> {
+        /// Replaces candidates from the authoritative storage snapshot at the
+        /// pending delta's cut, and diffs against the last published result.
+        pub fn refill(
+            &mut self,
+            rows: impl IntoIterator<Item = ExtractedRow>,
+        ) -> Result<Vec<crate::wire::ResultOperation>, MaterializeError> {
             let before = self.result.clone();
+            self.seed(rows)?;
+            Ok(diff(&before, &self.result))
+        }
+        /// Applies a whole delta atomically. On refusal, neither the result
+        /// nor the candidates advance; refill from storage before publishing.
+        pub fn apply(
+            &mut self,
+            delta: &ZSetDelta,
+        ) -> Result<Vec<crate::wire::ResultOperation>, MaterializeError> {
+            let mut next = self.clone();
             for entry in &delta.entries {
-                if entry.row.collection != self.plan.collection {
+                if entry.row.collection != next.plan.collection {
                     continue;
                 }
                 if entry.weight < 0 {
-                    self.remove(&entry.row.identity);
+                    next.remove(&entry.row.identity);
                 } else if entry.weight > 0 {
-                    self.insert(entry.row.clone());
+                    next.insert(&entry.row, true)?;
                 }
             }
-            self.refresh_result();
-            diff(&before, &self.result)
+            if next.fence.is_some() && next.rows.len() < next.plan.limit {
+                return Err(MaterializeError::RefillRequired);
+            }
+            next.refresh_result();
+            let operations = diff(&self.result, &next.result);
+            *self = next;
+            Ok(operations)
         }
         #[must_use]
         pub fn result(&self) -> &[ResultItem] {
@@ -1778,19 +1815,88 @@ pub mod plan {
         }
         #[must_use]
         pub fn boundary_len(&self) -> usize {
-            self.eligible.len().min(self.boundary)
+            self.rows.len()
+        }
+        /// Estimated retained row and ordering-key bytes, excluding results.
+        #[must_use]
+        pub fn retained_bytes(&self) -> usize {
+            self.retained_bytes
         }
         fn remove(&mut self, identity: &str) {
             if let Some(previous) = self.rows.remove(identity) {
                 self.eligible.remove(&RankKey::new(&self.plan, &previous));
+                self.retained_bytes -= self.row_bytes(&previous);
             }
         }
-        fn insert(&mut self, row: ExtractedRow) {
-            self.remove(&row.identity);
-            if self.plan.matches(&row) {
-                self.eligible.insert(RankKey::new(&self.plan, &row));
+        fn insert(
+            &mut self,
+            row: &ExtractedRow,
+            respect_fence: bool,
+        ) -> Result<(), MaterializeError> {
+            if row.collection != self.plan.collection {
+                return Ok(());
             }
-            self.rows.insert(row.identity.clone(), row);
+            let bytes = self.row_bytes(row);
+            if bytes > super::MAX_VIEW_BYTES {
+                return Err(MaterializeError::ByteBudgetExceeded);
+            }
+            self.remove(&row.identity);
+            if !self.plan.matches(row) {
+                return Ok(());
+            }
+            let key = RankKey::new(&self.plan, row);
+            if respect_fence && self.fence.as_ref().is_some_and(|fence| &key > fence) {
+                return Ok(());
+            }
+            if self.rows.len() == self.boundary {
+                let worst = self.eligible.last().expect("full candidate window has a last key");
+                if &key > worst {
+                    self.fence = Some(worst.clone());
+                    return Ok(());
+                }
+                let identity = worst.identity.clone();
+                self.remove(&identity);
+                // A candidate was discarded, so only the retained prefix is
+                // known complete. The fence can widen only after a refill.
+                self.fence = Some(key.clone());
+            }
+            let retained = self.retained_bytes.saturating_add(bytes);
+            if retained > super::MAX_VIEW_BYTES {
+                return Err(MaterializeError::ByteBudgetExceeded);
+            }
+            self.retained_bytes = retained;
+            self.eligible.insert(key);
+            self.rows.insert(row.identity.clone(), row.clone());
+            if self.fence.is_some() && self.rows.len() == self.boundary {
+                self.fence = self.eligible.last().cloned();
+            }
+            Ok(())
+        }
+        fn row_bytes(&self, row: &ExtractedRow) -> usize {
+            fn value_bytes(value: &Value) -> usize {
+                std::mem::size_of::<Value>()
+                    + match value {
+                        Value::Text(value) => value.len(),
+                        Value::Bytes(value) => value.len(),
+                        _ => 0,
+                    }
+            }
+            let fields = row.values.iter().chain(&row.fields).fold(0_usize, |sum, (key, value)| {
+                sum.saturating_add(key.len())
+                    .saturating_add(std::mem::size_of::<String>())
+                    .saturating_add(value_bytes(value))
+            });
+            let order = self
+                .plan
+                .order
+                .iter()
+                .filter_map(|key| row.values.get(&key.field))
+                .fold(0_usize, |sum, value| sum.saturating_add(value_bytes(value)));
+            fields
+                .saturating_add(order)
+                .saturating_add(row.identity.len().saturating_mul(3))
+                .saturating_add(row.collection.len())
+                .saturating_add(row.fts.len())
         }
         fn refresh_result(&mut self) {
             self.result = self
