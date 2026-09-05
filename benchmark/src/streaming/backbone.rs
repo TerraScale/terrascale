@@ -203,6 +203,7 @@ pub enum SyncJournalMutation {
 /// delivery cache can never create a revision on its own.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SyncJournalRecord {
+    before: crate::storage::JournalBeforeImage,
     position: ChangeCheckpoint,
     operation_id: OperationId,
     collection: CollectionName,
@@ -213,6 +214,12 @@ pub struct SyncJournalRecord {
 }
 
 impl SyncJournalRecord {
+    /// Returns the predecessor supplied by view replay. Ordinary replication
+    /// replay leaves this unknown and pays no predecessor lookup cost.
+    #[must_use]
+    pub const fn before_image(&self) -> &crate::storage::JournalBeforeImage {
+        &self.before
+    }
     /// Returns the exclusive durable cursor after this write.
     #[must_use]
     pub const fn position(&self) -> ChangeCheckpoint {
@@ -534,6 +541,7 @@ pub(crate) fn replay_sync_journal(
                     break 'pages;
                 }
                 records.push(SyncJournalRecord {
+                    before: crate::storage::JournalBeforeImage::Unknown,
                     position,
                     operation_id: commit.operation_id().clone(),
                     collection,
@@ -552,6 +560,30 @@ pub(crate) fn replay_sync_journal(
         journal_after = last.sequence();
     }
     Ok(SyncJournalBatch { records, next: boundary, drained })
+}
+
+pub(crate) fn replay_view_journal(
+    engine: &Engine,
+    scope: &TenantScope,
+    after: Option<ChangeCheckpoint>,
+    limit: u32,
+    cancellation: &Cancellation,
+) -> Result<SyncJournalBatch, StreamError> {
+    let mut batch = replay_sync_journal(engine, scope, after, limit, cancellation)?;
+    for record in &mut batch.records {
+        if cancellation.is_cancelled() {
+            return Err(StreamError::Cancelled);
+        }
+        record.before = engine
+                .journal_before_image(
+                    scope.tenant(),
+                    record.collection(),
+                    record.document(),
+                    StorageSequence::new(record.storage_sequence()),
+                )
+                .map_err(|error| sources::map_engine_error(&error))?;
+    }
+    Ok(batch)
 }
 
 /// Offers one conflict observation to the change-event backbone (SE-03).

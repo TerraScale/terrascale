@@ -4553,6 +4553,52 @@ impl StoragePort for SqliteStorage {
             .and_then(|(_, _, _, body)| decode_document_body(&body))
     }
 
+    fn journal_before_image(
+        &self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        id: &DocumentId,
+        sequence: StorageSequence,
+    ) -> Result<super::JournalBeforeImage, ()> {
+        let reader = self.reader();
+        let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
+        let pruned: Option<i64> = transaction.query_row(
+            "SELECT pruned_through FROM journal_pruning WHERE tenant = ?1", [tenant.as_str()],
+            |row| row.get(0),
+        ).optional().map_err(|_| ())?;
+        let previous = transaction
+            .query_row(
+                "SELECT deleted, body, commit_seq FROM documents
+             WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq < ?4
+             ORDER BY commit_seq DESC LIMIT 1",
+                rusqlite::params![
+                    tenant.as_str(),
+                    collection.as_str(),
+                    id.as_str(),
+                    i64::try_from(sequence.get()).map_err(|_| ())?
+                ],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, i64>(2)?)),
+            )
+            .optional()
+            .map_err(|_| ())?;
+        match previous {
+            None if pruned.is_none() => Ok(super::JournalBeforeImage::Absent),
+            None => Ok(super::JournalBeforeImage::Unknown),
+            Some((_, _, prior)) if pruned.is_some_and(|floor| prior <= floor) => Ok(super::JournalBeforeImage::Unknown),
+            Some((1, _, _)) => Ok(super::JournalBeforeImage::Absent),
+            Some((0, body, _)) => {
+                // Historical dispatch must not apply today's TTL filter: a
+                // view may still own the row that the expiry removed.
+                let document = decode_document_body(&body).ok_or(())?;
+                if document.collection() != collection || document.id() != id {
+                    return Err(());
+                }
+                Ok(super::JournalBeforeImage::Document(document))
+            }
+            _ => Err(()),
+        }
+    }
+
     fn read_document_in_collection_at(
         &self,
         sequence: StorageSequence,

@@ -3902,6 +3902,20 @@ impl Engine {
         })
     }
 
+    pub(crate) fn journal_before_image(
+        &self,
+        tenant: &TenantId,
+        collection: &crate::types::CollectionName,
+        id: &crate::types::DocumentId,
+        sequence: StorageSequence,
+    ) -> Result<storage::JournalBeforeImage, EngineError> {
+        self.validate_tenant(tenant)?;
+        self.lock_storage()?
+            .port
+            .journal_before_image(tenant, collection, id, sequence)
+            .map_err(|()| EngineError::StorageFailure)
+    }
+
     /// Returns one bounded page of retained publication-journal rows for
     /// anti-entropy. The global sequence is only a paging cursor; each row's
     /// reconciliation identity is its persisted origin and origin sequence.

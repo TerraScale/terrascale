@@ -725,6 +725,18 @@ pub(crate) trait StoragePort: Send {
         id: &DocumentId,
     ) -> Option<Document>;
 
+    /// Resolves the raw version before a journal publication. An unavailable
+    /// predecessor must remain unknown, never be mistaken for an insert.
+    fn journal_before_image(
+        &self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _id: &DocumentId,
+        _sequence: StorageSequence,
+    ) -> Result<JournalBeforeImage, ()> {
+        Ok(JournalBeforeImage::Unknown)
+    }
+
     /// Returns one document's current replication stamp: the newest
     /// row's `hlc`, `origin`, and tombstone flag — the deterministic
     /// merge's comparison input. `None` when the key has no row.
@@ -1223,6 +1235,18 @@ pub struct JournalProvenance {
     /// interpreting its bytes. An empty value is retained for journal rows
     /// written before causal-context persistence was introduced.
     context: Vec<u8>,
+}
+
+/// The predecessor of a durable document publication, for result-view routing.
+#[derive(Clone, Debug, PartialEq)]
+pub enum JournalBeforeImage {
+    /// No live row preceded the publication.
+    Absent,
+    /// The previous published document, including its version.
+    Document(crate::types::Document),
+    /// Retention removed the evidence, or this replay did not request it.
+    /// Dependency dispatch must conservatively include the collection.
+    Unknown,
 }
 
 impl JournalProvenance {

@@ -46,6 +46,7 @@ use crate::{
     },
 };
 
+pub use crate::storage::JournalBeforeImage;
 pub use crate::storage::{JournalKind, JournalProvenance};
 pub use backbone::{
     ChangeCheckpoint, ChangeNotification, ChangeNotificationTap, ChangeReplayBatch,
@@ -221,6 +222,22 @@ impl<'engine> StreamStore<'engine> {
         cancellation: &Cancellation,
     ) -> Result<SyncJournalBatch, StreamError> {
         backbone::replay_sync_journal(self.engine, scope, after, limit, cancellation)
+    }
+
+    /// Replays publication rows with their retained before-images for shared
+    /// view dependency dispatch. Missing history is explicitly unknown.
+    ///
+    /// # Errors
+    /// Returns the same scope, retention, cancellation, and storage refusals
+    /// as [`Self::replay_sync_journal`].
+    pub fn replay_view_journal(
+        &self,
+        scope: &TenantScope,
+        after: Option<ChangeCheckpoint>,
+        limit: u32,
+        cancellation: &Cancellation,
+    ) -> Result<SyncJournalBatch, StreamError> {
+        backbone::replay_view_journal(self.engine, scope, after, limit, cancellation)
     }
 
     /// Acquires one bounded change-notification tap for this `Engine`
