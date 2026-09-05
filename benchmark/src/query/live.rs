@@ -47,6 +47,9 @@ impl QueryPlan {
 }
 
 impl LiveQueryPlan {
+    /// Maximum retained source rows for one native live-query operation.
+    pub const MAX_CANDIDATES: usize = super::execute::MAX_RETAINED_CANDIDATES;
+
     /// Returns the compiled predicate for conservative dependency registration.
     #[must_use]
     pub fn predicate(&self) -> &super::QueryPredicate {
@@ -122,8 +125,20 @@ impl LiveQueryPlan {
     /// # Errors
     /// Returns [`QueryError::InvalidSpec`] for a limit outside the query paging bounds.
     pub fn window_plan(&self, limit: u32) -> Result<QueryPlan, QueryError> {
-        let paging = QueryPaging::try_new(0, Some(limit)).map_err(|_| QueryError::InvalidSpec)?;
+        let paging = QueryPaging::candidate_window(limit)?;
         let mut plan = self.plan.clone();
+        plan.query = plan.query.with_paging(paging);
+        Ok(plan)
+    }
+
+    /// Builds the complete matching source used to seed incremental paging.
+    /// The consumer applies the original offset and limit after ordering.
+    ///
+    /// # Errors
+    /// Returns [`QueryError::InvalidSpec`] if the paging bounds are invalid.
+    pub fn complete_plan(&self) -> Result<QueryPlan, QueryError> {
+        let mut plan = self.plan.clone();
+        let paging = QueryPaging::try_new(0, None).map_err(|_| QueryError::InvalidSpec)?;
         plan.query = plan.query.with_paging(paging);
         Ok(plan)
     }

@@ -641,6 +641,14 @@ pub struct QueryPaging {
 }
 
 impl QueryPaging {
+    /// Internal candidate fetches include rows beyond the public result page.
+    pub(super) fn candidate_window(limit: u32) -> Result<Self, super::QueryError> {
+        if limit == 0 || u64::from(limit) > super::execute::MAX_RETAINED_CANDIDATES as u64 {
+            return Err(super::QueryError::InvalidSpec);
+        }
+        Ok(Self { offset: 0, limit: Some(limit) })
+    }
+
     /// Creates a page request after validating its boundaries.
     ///
     /// # Errors

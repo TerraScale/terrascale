@@ -98,22 +98,39 @@ pub(super) struct SqlMaterializer {
     candidates: Materializer<SqlPlan>,
     offset: usize,
     limit: usize,
+    complete: bool,
 }
 
 impl SqlMaterializer {
-    pub(super) fn for_plan(plan: &QueryPlan) -> Result<Option<Self>, ApiError> {
+    pub(super) fn for_plan(plan: &QueryPlan) -> Result<Self, ApiError> {
         let live = plan
             .live_plan()
             .map_err(|_| super::sql_error("the plan cannot maintain individual rows"))?;
-        let Some(limit) = live.paging().limit() else { return Ok(None) };
-        let limit = usize::try_from(limit).map_err(|_| too_large())?;
+        let limit = live
+            .paging()
+            .limit()
+            .map(usize::try_from)
+            .transpose()
+            .map_err(|_| too_large())?
+            .unwrap_or(usize::MAX);
         let offset = usize::try_from(live.paging().offset()).map_err(|_| too_large())?;
-        let Some(total) = offset.checked_add(limit) else { return Ok(None) };
-        if limit == 0 || total > MAX_TOP_K_ITEMS {
-            return Ok(None);
+        let total = offset.saturating_add(limit);
+        let complete = live.paging().limit().is_none();
+        if !complete && total > LiveQueryPlan::MAX_CANDIDATES {
+            return Err(too_large());
         }
         let plan = SqlPlan { live: Arc::new(live), limit: total };
-        Ok(Some(Self { candidates: Materializer::new(plan.clone()), plan, offset, limit }))
+        let candidates = if complete {
+            Materializer::complete(plan.clone())
+        } else if total <= MAX_TOP_K_ITEMS {
+            Materializer::new(plan.clone())
+        } else {
+            Materializer::with_candidate_capacity(
+                plan.clone(),
+                total.saturating_mul(2).min(LiveQueryPlan::MAX_CANDIDATES),
+            )
+        };
+        Ok(Self { candidates, plan, offset, limit, complete })
     }
 
     pub(super) fn seed(
@@ -121,18 +138,35 @@ impl SqlMaterializer {
         engine: &Engine,
         snapshot: &ReadSnapshot,
     ) -> Result<(), ApiError> {
-        let size = self.plan.limit.saturating_mul(2).min(MAX_TOP_K_ITEMS) + 1;
-        let plan = self
+        let bound = if self.plan.limit <= MAX_TOP_K_ITEMS {
+            MAX_TOP_K_ITEMS
+        } else {
+            LiveQueryPlan::MAX_CANDIDATES
+        };
+        let size = self
             .plan
-            .live
-            .window_plan(u32::try_from(size).map_err(|_| too_large())?)
-            .map_err(ApiError::query)?;
+            .limit
+            .saturating_mul(2)
+            .min(bound)
+            .saturating_add(1)
+            .min(LiveQueryPlan::MAX_CANDIDATES);
+        let plan = if self.complete {
+            self.plan.live.complete_plan().map_err(ApiError::query)?
+        } else {
+            self.plan
+                .live
+                .window_plan(u32::try_from(size).map_err(|_| too_large())?)
+                .map_err(ApiError::query)?
+        };
         let window = engine.queries().execute(&plan, snapshot).map_err(ApiError::query)?;
         self.candidates
-            .seed(window.rows().iter().map(|row| SqlRow {
-                document: Arc::new(row.document().clone()),
-                item: Some(item(row)),
-            }))
+            .seed_prefix(
+                window.rows().iter().map(|row| SqlRow {
+                    document: Arc::new(row.document().clone()),
+                    item: Some(item(row)),
+                }),
+                window.matched() > window.rows().len() as u64,
+            )
             .map_err(|_| too_large())
     }
 
@@ -215,6 +249,9 @@ impl SqlMaterializer {
                     Err(MaterializeError::ByteBudgetExceeded) => return Err(too_large()),
                 }
             }
+            if self.complete && self.candidates.boundary_len() > LiveQueryPlan::MAX_CANDIDATES {
+                return Err(too_large());
+            }
         }
         Ok(self.items())
     }
@@ -285,6 +322,176 @@ mod tests {
     }
 
     #[test]
+    fn complete_results_and_large_pages_apply_journal_without_snapshot_sql() {
+        let dir =
+            std::env::temp_dir().join(format!("terrabase-complete-native-{}", std::process::id()));
+        let engine = Engine::open(EngineConfig::durable(&dir).unwrap()).unwrap();
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let scope = engine.scope_for(&tenant);
+        let collection = CollectionName::try_new("orders").unwrap();
+        let mut transaction = engine
+            .begin(
+                &scope,
+                engine.read_snapshot(&scope).unwrap(),
+                OperationId::try_new("seed-complete").unwrap(),
+            )
+            .unwrap();
+        for rank in 0..2105 {
+            transaction
+                .put(
+                    Document::new(
+                        DocumentId::try_new(&format!("row-{rank:04}")).unwrap(),
+                        collection.clone(),
+                        DocumentValue::Object(
+                            [("score".into(), DocumentValue::Integer(rank))].into(),
+                        ),
+                    ),
+                    ExpectedVersion::Any,
+                )
+                .unwrap();
+        }
+        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+        let initial = engine.read_snapshot(&scope).unwrap();
+        let mut views = Vec::new();
+        for paging in ["", " LIMIT 1024", " LIMIT 1024 OFFSET 1000", " LIMIT 5 OFFSET 2000"] {
+            let plan = engine.queries().compile(QueryInput::sql(SqlQueryText::try_new(
+                &format!("SELECT score AS rank, _rev FROM orders WHERE score >= 0 ORDER BY score{paging}")
+            ).unwrap())).unwrap();
+            let mut view = SqlMaterializer::for_plan(&plan).unwrap();
+            view.seed(&engine, &initial).unwrap();
+            if view.complete {
+                assert_eq!(view.candidates.boundary_len(), 2105);
+            }
+            assert_eq!(
+                view.items(),
+                engine
+                    .queries()
+                    .execute(&plan, &initial)
+                    .unwrap()
+                    .rows()
+                    .iter()
+                    .map(item)
+                    .collect::<Vec<_>>()
+            );
+            views.push((plan, view));
+        }
+        put(&engine, &scope, "row-0000", -1);
+        put(&engine, &scope, "row-2104", 1);
+        put(&engine, &scope, "new-row", 2200);
+        let mut transaction = engine
+            .begin(
+                &scope,
+                engine.read_snapshot(&scope).unwrap(),
+                OperationId::try_new("delete-complete").unwrap(),
+            )
+            .unwrap();
+        transaction.delete_in_collection(
+            &collection,
+            DocumentId::try_new("row-0001").unwrap(),
+            ExpectedVersion::Any,
+        );
+        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+        let cut = engine.read_snapshot(&scope).unwrap();
+        put(&engine, &scope, "new-row", -2);
+        for (plan, mut view) in views {
+            let queries = engine.queries().recent_index_selections(&tenant).len();
+            let actual = view.refresh(&engine, &scope, &cut, initial.sequence().get()).unwrap();
+            assert_eq!(
+                engine.queries().recent_index_selections(&tenant).len(),
+                queries,
+                "affected complete views must not rerun SQL"
+            );
+            let expected = engine
+                .queries()
+                .execute(&plan, &cut)
+                .unwrap()
+                .rows()
+                .iter()
+                .map(item)
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+            assert_eq!(
+                view.refresh_records(&engine, &cut, None).unwrap(),
+                expected,
+                "lost replay history refills the same complete cut"
+            );
+            let latest = engine.read_snapshot(&scope).unwrap();
+            let queries = engine.queries().recent_index_selections(&tenant).len();
+            let actual = view.refresh(&engine, &scope, &latest, cut.sequence().get()).unwrap();
+            assert_eq!(engine.queries().recent_index_selections(&tenant).len(), queries);
+            assert_eq!(
+                actual,
+                engine
+                    .queries()
+                    .execute(&plan, &latest)
+                    .unwrap()
+                    .rows()
+                    .iter()
+                    .map(item)
+                    .collect::<Vec<_>>()
+            );
+        }
+        let mut transaction = engine
+            .begin(
+                &scope,
+                engine.read_snapshot(&scope).unwrap(),
+                OperationId::try_new("grow-paged-source").unwrap(),
+            )
+            .unwrap();
+        for rank in 2105..5000 {
+            transaction
+                .put(
+                    Document::new(
+                        DocumentId::try_new(&format!("row-{rank:04}")).unwrap(),
+                        collection.clone(),
+                        DocumentValue::Object(
+                            [("score".into(), DocumentValue::Integer(rank))].into(),
+                        ),
+                    ),
+                    ExpectedVersion::Any,
+                )
+                .unwrap();
+        }
+        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+        let plan = engine
+            .queries()
+            .compile(QueryInput::sql(
+                SqlQueryText::try_new(
+                    "SELECT score FROM orders WHERE score >= 0 ORDER BY score LIMIT 5 OFFSET 4091",
+                )
+                .unwrap(),
+            ))
+            .unwrap();
+        let mut view = SqlMaterializer::for_plan(&plan).unwrap();
+        let initial = engine.read_snapshot(&scope).unwrap();
+        view.seed(&engine, &initial).unwrap();
+        assert_eq!(view.candidates.boundary_len(), LiveQueryPlan::MAX_CANDIDATES);
+        put(&engine, &scope, "row-0002", -10);
+        let cut = engine.read_snapshot(&scope).unwrap();
+        put(&engine, &scope, "row-0003", -11);
+        let queries = engine.queries().recent_index_selections(&tenant).len();
+        let actual = view.refresh(&engine, &scope, &cut, initial.sequence().get()).unwrap();
+        assert_eq!(
+            engine.queries().recent_index_selections(&tenant).len(),
+            queries + 1,
+            "depleting a full deep-page prefix refills once"
+        );
+        assert_eq!(
+            actual,
+            engine
+                .queries()
+                .execute(&plan, &cut)
+                .unwrap()
+                .rows()
+                .iter()
+                .map(item)
+                .collect::<Vec<_>>()
+        );
+        drop(engine);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn native_journal_updates_avoid_sql_and_refill_at_the_requested_cut() {
         let dir =
             std::env::temp_dir().join(format!("terrabase-http-native-{}", std::process::id()));
@@ -308,7 +515,7 @@ mod tests {
             super::super::view_refresh_deadline().unwrap(),
             attach_cancellation.clone(),
         );
-        let mut view = SqlMaterializer::for_plan(&attach_plan).unwrap().unwrap();
+        let mut view = SqlMaterializer::for_plan(&attach_plan).unwrap();
         let initial = engine.read_snapshot(&scope).unwrap();
         view.seed(&engine, &initial).unwrap();
         attach_cancellation.cancel();

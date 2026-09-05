@@ -264,21 +264,22 @@ fn bounded_candidates_refuse_an_incomplete_result_until_storage_refills() {
 fn candidate_byte_refusal_preserves_the_last_result() {
     use terrabase_sync_core::view::{MAX_VIEW_BYTES, plan::MaterializeError};
     let plan = ViewPlan::new("orders", vec![], vec![], None, vec![], 2).unwrap();
-    let mut materializer = Materializer::new(plan);
-    materializer.seed([row("kept", 1.0)]).unwrap();
-    let before = materializer.result().to_vec();
-    let bytes = materializer.retained_bytes();
-    let mut oversized = ExtractedRow::new("orders", "oversized");
-    oversized.values.insert("payload".into(), Value::Bytes(vec![0; MAX_VIEW_BYTES]));
-    let delta = ZSetDelta::insert(oversized);
-    assert_eq!(materializer.apply(&delta), Err(MaterializeError::ByteBudgetExceeded));
-    assert_eq!(materializer.result(), before);
-    assert_eq!(materializer.retained_bytes(), bytes);
-    assert_eq!(
-        materializer.refill(delta.entries.into_iter().map(|entry| entry.row)),
-        Err(MaterializeError::ByteBudgetExceeded)
-    );
-    assert_eq!(materializer.result(), before);
+    for mut materializer in [Materializer::new(plan.clone()), Materializer::complete(plan)] {
+        materializer.seed([row("kept", 1.0)]).unwrap();
+        let before = materializer.result().to_vec();
+        let bytes = materializer.retained_bytes();
+        let mut oversized = ExtractedRow::new("orders", "oversized");
+        oversized.values.insert("payload".into(), Value::Bytes(vec![0; MAX_VIEW_BYTES]));
+        let delta = ZSetDelta::insert(oversized);
+        assert_eq!(materializer.apply(&delta), Err(MaterializeError::ByteBudgetExceeded));
+        assert_eq!(materializer.result(), before);
+        assert_eq!(materializer.retained_bytes(), bytes);
+        assert_eq!(
+            materializer.refill(delta.entries.into_iter().map(|entry| entry.row)),
+            Err(MaterializeError::ByteBudgetExceeded)
+        );
+        assert_eq!(materializer.result(), before);
+    }
 }
 
 fn oracle_order(

@@ -1813,6 +1813,12 @@ pub mod plan {
         #[must_use]
         pub fn new(plan: P) -> Self {
             let boundary = plan.limit().saturating_mul(2).min(MAX_TOP_K_ITEMS);
+            Self::with_candidate_capacity(plan, boundary)
+        }
+        /// Uses an adapter's bounded candidate window, including any offset
+        /// prefix required to produce its result page.
+        #[must_use]
+        pub fn with_candidate_capacity(plan: P, boundary: usize) -> Self {
             Self {
                 plan,
                 rows: BTreeMap::new(),
@@ -1823,6 +1829,14 @@ pub mod plan {
                 retained_bytes: 0,
             }
         }
+        /// Retains every matching row, subject to `MAX_VIEW_BYTES`. Use this
+        /// for complete results or paging windows beyond the top-k bound.
+        #[must_use]
+        pub fn complete(plan: P) -> Self {
+            let mut materializer = Self::new(plan);
+            materializer.boundary = usize::MAX;
+            materializer
+        }
         /// Seeds from an authoritative snapshot of unique source identities.
         /// The iterator may scan the entire source; only the best 2k rows
         /// remain in memory. A storage adapter may instead stream its ordered
@@ -1831,9 +1845,22 @@ pub mod plan {
             &mut self,
             rows: impl IntoIterator<Item = P::Row>,
         ) -> Result<(), MaterializeError> {
+            self.seed_prefix(rows, false)
+        }
+        /// Seeds an ordered snapshot prefix whose source reports whether a
+        /// tail exists. Depleting that prefix requires an authoritative refill.
+        pub fn seed_prefix(
+            &mut self,
+            rows: impl IntoIterator<Item = P::Row>,
+            has_more: bool,
+        ) -> Result<(), MaterializeError> {
             let mut next = Self::new(self.plan.clone());
+            next.boundary = self.boundary;
             for row in rows {
                 next.insert(&row, false)?;
+            }
+            if has_more {
+                next.fence = next.eligible.last().cloned();
             }
             next.refresh_result();
             *self = next;

@@ -318,7 +318,7 @@ struct Materialization {
 struct Materializer {
     host: Arc<terrabase_tbep::member_host::MemberHost>,
     plan: terrabase::query::QueryPlan,
-    incremental: Option<incremental::SqlMaterializer>,
+    incremental: incremental::SqlMaterializer,
     tenant: terrabase::types::TenantId,
     source: Option<Arc<source::JournalSource>>,
     dependency: Option<Arc<source::Registration>>,
@@ -1340,14 +1340,8 @@ impl Materialization {
         journal.start_at(snapshot.sequence().get())?;
         source.dependency = Some(journal.register(&source.plan)?);
         source.source = Some(journal);
-        value.items = if let Some(incremental) = &mut source.incremental {
-            incremental.seed(engine, &snapshot)?;
-            incremental.items()
-        } else {
-            result_items(
-                &engine.queries().execute(&source.plan, &snapshot).map_err(ApiError::query)?,
-            )
-        };
+        source.incremental.seed(engine, &snapshot)?;
+        value.items = source.incremental.items();
         value.revision = snapshot.sequence().get();
         value.digest = digest_items(&value.items);
         Ok(value)
@@ -1361,22 +1355,7 @@ impl Materializer {
         records: Option<&[Arc<terrabase::streaming::SyncJournalRecord>]>,
     ) -> Result<Vec<terrabase_sync_core::wire::ResultItem>, ApiError> {
         let engine = self.host.engine();
-        if let Some(incremental) = &mut self.incremental {
-            incremental.refresh_records(engine, snapshot, records)
-        } else {
-            Ok(result_items(
-                &engine
-                    .queries()
-                    .execute(
-                        &self.plan.clone().with_execution_bounds(
-                            view_refresh_deadline()?,
-                            terrabase::Cancellation::new(),
-                        ),
-                        snapshot,
-                    )
-                    .map_err(ApiError::query)?,
-            ))
-        }
+        self.incremental.refresh_records(engine, snapshot, records)
     }
 }
 
@@ -1400,12 +1379,6 @@ fn view_parameters(bytes: &[u8]) -> Result<terrabase::query::sql::SqlParameters,
         }
     }
     Ok(parameters)
-}
-
-fn result_items(
-    result: &terrabase::query::QueryResult,
-) -> Vec<terrabase_sync_core::wire::ResultItem> {
-    result.rows().iter().map(incremental::item).collect()
 }
 
 fn document_value(value: &serde_json::Value) -> Option<terrabase::types::DocumentValue> {
