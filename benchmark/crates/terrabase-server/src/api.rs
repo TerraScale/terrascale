@@ -3801,7 +3801,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(operation_count, 26, "registered route count changed");
+        assert_eq!(operation_count, 27, "registered route count changed");
     }
 
     #[tokio::test]

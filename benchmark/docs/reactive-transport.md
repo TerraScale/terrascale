@@ -58,3 +58,8 @@ TERRASCALE_TYPESCRIPT_SDK="$PWD/../ts-typescript" nice -n 19 cargo test --locked
 The SDK's standalone test is environment-gated; the Rust harness supplies its
 isolated endpoint and ephemeral fixture credential. This gate does not require
 OCI or Cloudflare credentials.
+
+This qualification covers direct member connections. The current `ts-proxy`
+Snippet accepts snapshot and log paths only and rejects the canonical WebSocket
+path. WebSocket delivery through `sync.api.terrascale.tech` remains unqualified;
+the SDK's default HTTP transport uses the existing Snippet path.
