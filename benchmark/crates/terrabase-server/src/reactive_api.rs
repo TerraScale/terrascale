@@ -24,6 +24,7 @@ use crate::view_capability::{
 mod incremental;
 mod polling;
 mod socket;
+mod source;
 
 /// Fixed capability header; it never appears in a URL or cache key.
 pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-View-Capability";
@@ -313,12 +314,12 @@ struct Materializer {
     plan: terrabase::query::QueryPlan,
     incremental: Option<incremental::SqlMaterializer>,
     tenant: terrabase::types::TenantId,
-    changed: Arc<Notify>,
-    watch: Option<Arc<terrabase::engine::PublicationWatch>>,
+    source: Option<Arc<source::JournalSource>>,
 }
 
 /// Process-wide canonical shared-view registry.
 pub struct ViewStore {
+    sources: source::Sources,
     log_polls: Mutex<BTreeMap<polling::LogKey, Weak<polling::LogPoll>>>,
     #[cfg(test)]
     poll_starts: std::sync::atomic::AtomicUsize,
@@ -463,6 +464,7 @@ impl ViewStore {
             #[cfg(test)]
             poll_starts: std::sync::atomic::AtomicUsize::new(0),
             initializing: Mutex::new(BTreeMap::new()),
+            sources: source::Sources::default(),
             views: Mutex::new(BTreeMap::new()),
             changed: Arc::new(Notify::new()),
         }
@@ -527,7 +529,7 @@ impl ViewStore {
         let initialized = if existing {
             None
         } else {
-            materialization.map(Materialization::initialize).transpose()?
+            materialization.map(|value| value.initialize(&self.sources)).transpose()?
         };
         let materialization = initialized.as_ref().or(materialization);
         let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
@@ -807,6 +809,23 @@ impl ViewStore {
 static STORE: OnceLock<Arc<ViewStore>> = OnceLock::new();
 fn store() -> &'static Arc<ViewStore> {
     STORE.get_or_init(|| Arc::new(ViewStore::new()))
+}
+
+#[cfg(test)]
+pub(crate) fn source_stats(view: &str) -> (usize, usize) {
+    store()
+        .views
+        .lock()
+        .unwrap()
+        .get(view)
+        .unwrap()
+        .materializer
+        .as_ref()
+        .unwrap()
+        .source
+        .as_ref()
+        .unwrap()
+        .stats()
 }
 
 /// Returns the process-shared view store for the journal integration seam.
@@ -1174,7 +1193,6 @@ fn prepare_view(
         .map_err(|_| ApiError::query(terrabase::QueryError::Deadline))?;
     let cancellation = terrabase::Cancellation::new();
     let engine = host.engine();
-    let changed = Arc::new(Notify::new());
     let plan = engine
         .queries()
         .compile(terrabase::QueryInput::sql_bounded_with_parameters(
@@ -1252,26 +1270,22 @@ fn prepare_view(
             plan,
             incremental,
             tenant,
-            changed,
-            watch: None,
+            source: None,
         }),
     })
 }
 
 impl Materialization {
-    fn initialize(&self) -> Result<Self, ApiError> {
+    fn initialize(&self, sources: &source::Sources) -> Result<Self, ApiError> {
         let mut value = self.clone();
         let Some(source) = &mut value.materializer else { return Ok(value) };
         let engine = source.host.engine();
-        let signal = Arc::clone(&source.changed);
-        source.watch = Some(Arc::new(
-            engine
-                .watch_publications(move || signal.notify_waiters())
-                .map_err(|_| ApiError::storage_failure())?,
-        ));
+        let journal = sources.get(&source.host, &source.tenant)?;
         let snapshot = engine
             .read_snapshot(&engine.scope_for(&source.tenant))
             .map_err(|_| ApiError::storage_failure())?;
+        journal.start_at(snapshot.sequence().get())?;
+        source.source = Some(journal);
         value.items = if let Some(incremental) = &mut source.incremental {
             incremental.seed(engine, &snapshot)?;
             incremental.items()
@@ -1294,12 +1308,12 @@ impl Materializer {
     ) -> Result<Vec<terrabase_sync_core::wire::ResultItem>, ApiError> {
         let engine = self.host.engine();
         if let Some(incremental) = &mut self.incremental {
-            incremental.refresh(
-                engine,
-                &engine.scope_for(&self.tenant),
-                snapshot,
-                observed_sequence,
-            )
+            let records = self
+                .source
+                .as_ref()
+                .ok_or_else(ApiError::storage_failure)?
+                .records(observed_sequence, snapshot.sequence().get())?;
+            incremental.refresh_records(engine, snapshot, records.as_deref())
         } else {
             Ok(result_items(
                 &engine

@@ -2,11 +2,16 @@
 
 use std::{cmp::Ordering, sync::Arc};
 
-use terrabase::streaming::{ChangeCheckpoint, StreamError};
+use terrabase::streaming::SyncJournalRecord;
 use terrabase::{
     Engine,
     query::{LiveQueryPlan, QueryPlan, QueryRow},
-    types::{Cancellation, Document, DocumentValue, ReadSnapshot, TenantScope},
+    types::{Cancellation, Document, DocumentValue, ReadSnapshot},
+};
+#[cfg(test)]
+use terrabase::{
+    streaming::{ChangeCheckpoint, StreamError},
+    types::TenantScope,
 };
 use terrabase_sync_core::{
     view::{
@@ -135,12 +140,28 @@ impl SqlMaterializer {
         self.candidates.result().iter().skip(self.offset).take(self.limit).cloned().collect()
     }
 
-    pub(super) fn refresh(
+    #[cfg(test)]
+    fn refresh(
         &mut self,
         engine: &Engine,
         scope: &TenantScope,
         snapshot: &ReadSnapshot,
         after: u64,
+    ) -> Result<Vec<ResultItem>, ApiError> {
+        let records = super::source::ReplayBuffer::new(after).records(
+            engine,
+            scope,
+            after,
+            snapshot.sequence().get(),
+        )?;
+        self.refresh_records(engine, snapshot, records.as_deref())
+    }
+
+    pub(super) fn refresh_records(
+        &mut self,
+        engine: &Engine,
+        snapshot: &ReadSnapshot,
+        records: Option<&[Arc<SyncJournalRecord>]>,
     ) -> Result<Vec<ResultItem>, ApiError> {
         self.plan.live = Arc::new(
             self.plan
@@ -149,33 +170,15 @@ impl SqlMaterializer {
                 .clone()
                 .with_execution_bounds(super::view_refresh_deadline()?, Cancellation::new()),
         );
-        let mut cursor = Some(ChangeCheckpoint::after(after, 0));
-        // Bound one cadence's replay work. A larger backlog is materialized
-        // at this exact snapshot cut through the same storage refill path.
-        for _ in 0..16 {
-            let page = match engine.streams().replay_sync_journal(
-                scope,
-                cursor,
-                256,
-                &Cancellation::new(),
-            ) {
-                Ok(page) => page,
-                Err(StreamError::HistoryExpired) => {
-                    // The published result remains available for the HTTP diff.
-                    // Rebuild its candidates at the exact target cut when source
-                    // retention has overtaken this view's replay watermark.
-                    self.seed(engine, snapshot)?;
-                    return Ok(self.items());
-                }
-                Err(_) => return Err(ApiError::storage_failure()),
-            };
+        let Some(records) = records else {
+            self.seed(engine, snapshot)?;
+            return Ok(self.items());
+        };
+        // Keep evaluation and temporary projected rows bounded even when a
+        // shared source retained multiple journal pages for this view.
+        for records in records.chunks(256) {
             let mut entries = Vec::new();
-            let mut reached_cut = page.drained();
-            for record in page.records() {
-                if record.storage_sequence() > snapshot.sequence().get() {
-                    reached_cut = true;
-                    break;
-                }
+            for record in records {
                 if record.collection() != self.plan.live.collection() {
                     continue;
                 }
@@ -212,12 +215,7 @@ impl SqlMaterializer {
                     Err(MaterializeError::ByteBudgetExceeded) => return Err(too_large()),
                 }
             }
-            if reached_cut {
-                return Ok(self.items());
-            }
-            cursor = page.next_checkpoint();
         }
-        self.seed(engine, snapshot)?;
         Ok(self.items())
     }
 }

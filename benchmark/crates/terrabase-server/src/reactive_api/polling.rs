@@ -60,6 +60,7 @@ impl ViewStore {
             let view = views.get(&key.view).ok_or_else(unknown_view)?;
             view.materializer
                 .as_ref()
+                .and_then(|materializer| materializer.source.as_ref())
                 .map_or_else(|| Arc::clone(&self.changed), |source| Arc::clone(&source.changed))
         };
         loop {

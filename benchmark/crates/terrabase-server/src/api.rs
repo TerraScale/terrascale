@@ -3542,6 +3542,7 @@ pub(crate) fn json_response(status: StatusCode, body: String) -> Response {
 #[cfg(test)]
 mod tests {
     mod cors;
+    mod shared_journal;
     mod websocket;
     use super::API_PREFIX;
     use super::ApiError;
