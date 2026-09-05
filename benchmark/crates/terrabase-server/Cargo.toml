@@ -47,6 +47,7 @@ utoipa-axum = "0.2.0"
 utoipa-scalar = { version = "0.3.0", features = ["axum"] }
 
 [dev-dependencies]
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 tokio = { version = "1", features = ["test-util"] }
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }

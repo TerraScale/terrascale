@@ -22,6 +22,8 @@ use crate::view_capability::{
     ViewCapabilityClaims, ViewCapabilityIssuer, ViewCapabilityVerifier, hmac_sha256_hex,
 };
 
+mod incremental;
+
 /// Fixed capability header; it never appears in a URL or cache key.
 pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-View-Capability";
 /// `MessagePack` media type for snapshots, logs, resets, and protocol errors.
@@ -304,6 +306,7 @@ struct Materialization {
 struct Materializer {
     host: Arc<terrabase_tbep::member_host::MemberHost>,
     plan: terrabase::query::QueryPlan,
+    incremental: Option<incremental::SqlMaterializer>,
     tenant: terrabase::types::TenantId,
     changed: Arc<Notify>,
     _watch: Arc<terrabase::engine::PublicationWatch>,
@@ -622,8 +625,8 @@ impl ViewStore {
             .filter(|deadline| *deadline > tokio::time::Instant::now()))
     }
 
-    /// Replays the current durable snapshot when the journal sequence moved
-    /// since the last materialization. Readers at the same durable cut
+    /// Maintains bounded SQL views from the journal, refilling candidates
+    /// from storage when needed. Readers at the same durable cut
     /// observe the same frozen `MessagePack` bytes.
     fn refresh_view(&self, view_id: &str) -> Result<(), ApiError> {
         let refreshing = self.view_refresh_lock(view_id)?;
@@ -649,7 +652,7 @@ impl ViewStore {
                 view.observed_sequence,
             )
         };
-        let Some(materializer) = materializer else { return Ok(()) };
+        let Some(mut materializer) = materializer else { return Ok(()) };
         let snapshot = materializer
             .host
             .engine()
@@ -658,13 +661,22 @@ impl ViewStore {
         if snapshot.sequence().get() <= observed_sequence {
             return Ok(());
         }
-        let result = materializer
-            .host
-            .engine()
-            .queries()
-            .execute(&materializer.plan, &snapshot)
-            .map_err(ApiError::query)?;
-        let items = result_items(&result);
+        let engine = materializer.host.engine();
+        let items = if let Some(incremental) = &mut materializer.incremental {
+            incremental.refresh(
+                engine,
+                &engine.scope_for(&materializer.tenant),
+                &snapshot,
+                observed_sequence,
+            )?
+        } else {
+            result_items(
+                &engine
+                    .queries()
+                    .execute(&materializer.plan, &snapshot)
+                    .map_err(ApiError::query)?,
+            )
+        };
         let next_digest = digest_items(&items);
         let revision = snapshot.sequence().get();
         {
@@ -673,6 +685,7 @@ impl ViewStore {
             if next_digest == view.digest {
                 // An irrelevant write advances the source watermark, not
                 // the published result revision or its immutable snapshot URL.
+                view.materializer = Some(materializer);
                 view.observed_sequence = revision;
                 view.refresh_after = Some(tokio::time::Instant::now() + EMISSION_CADENCE);
                 return Ok(());
@@ -717,6 +730,7 @@ impl ViewStore {
                 created: SystemTime::now(),
             },
         );
+        view.materializer = Some(materializer);
         view.observed_sequence = revision;
         view.items = items;
         view.digest = next_digest;
@@ -1128,19 +1142,7 @@ fn materialize_view(
         .map_err(|_| sql_error("the statement is not valid read-only SQL"))?;
     let parameter_bytes =
         decode_base64(&request.parameters).map_err(|()| invalid_attach("parameters"))?;
-    let mut parameters = terrabase::query::sql::SqlParameters::new();
-    if !parameter_bytes.is_empty() {
-        let value: serde_json::Value =
-            serde_json::from_slice(&parameter_bytes).map_err(|_| invalid_attach("parameters"))?;
-        let Some(object) = value.as_object() else {
-            return Err(invalid_attach("parameters"));
-        };
-        for (name, value) in object {
-            parameters
-                .insert(name, document_value(value).ok_or_else(|| invalid_attach("parameters"))?)
-                .map_err(|_| invalid_attach("parameters"))?;
-        }
-    }
+    let parameters = view_parameters(&parameter_bytes)?;
     let deadline = terrabase::Deadline::after(Duration::from_secs(30))
         .map_err(|_| ApiError::query(terrabase::QueryError::Deadline))?;
     let cancellation = terrabase::Cancellation::new();
@@ -1185,8 +1187,13 @@ fn materialize_view(
         .map_err(|_| ApiError::storage_failure())?;
     let engine_scope = engine.scope_for(&tenant);
     let snapshot = engine.read_snapshot(&engine_scope).map_err(|_| ApiError::storage_failure())?;
-    let result = engine.queries().execute(&plan, &snapshot).map_err(ApiError::query)?;
-    let items = result_items(&result);
+    let mut incremental = incremental::SqlMaterializer::for_plan(&plan)?;
+    let items = if let Some(incremental) = &mut incremental {
+        incremental.seed(engine, &snapshot)?;
+        incremental.items()
+    } else {
+        result_items(&engine.queries().execute(&plan, &snapshot).map_err(ApiError::query)?)
+    };
     let digest = digest_items(&items);
     let mut identity = Vec::new();
     put_identity(&mut identity, b"database-incarnation", &engine.database_id().as_bytes());
@@ -1221,6 +1228,7 @@ fn materialize_view(
         materializer: Some(Materializer {
             host: Arc::clone(host),
             plan,
+            incremental,
             tenant,
             changed,
             _watch: watch,
@@ -1228,24 +1236,27 @@ fn materialize_view(
     })
 }
 
+fn view_parameters(bytes: &[u8]) -> Result<terrabase::query::sql::SqlParameters, ApiError> {
+    let mut parameters = terrabase::query::sql::SqlParameters::new();
+    if !bytes.is_empty() {
+        let value: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|_| invalid_attach("parameters"))?;
+        let Some(object) = value.as_object() else {
+            return Err(invalid_attach("parameters"));
+        };
+        for (name, value) in object {
+            parameters
+                .insert(name, document_value(value).ok_or_else(|| invalid_attach("parameters"))?)
+                .map_err(|_| invalid_attach("parameters"))?;
+        }
+    }
+    Ok(parameters)
+}
+
 fn result_items(
     result: &terrabase::query::QueryResult,
 ) -> Vec<terrabase_sync_core::wire::ResultItem> {
-    result
-        .rows()
-        .iter()
-        .map(|row| terrabase_sync_core::wire::ResultItem {
-            identity: row.document().id().as_str().to_owned(),
-            fields: row
-                .projected()
-                .iter()
-                .map(|(path, value)| terrabase_sync_core::wire::ProjectedField {
-                    path: path.clone(),
-                    value: terrabase_tbep::reactive::canonical_json_bytes(value),
-                })
-                .collect(),
-        })
-        .collect::<Vec<_>>()
+    result.rows().iter().map(incremental::item).collect()
 }
 
 fn document_value(value: &serde_json::Value) -> Option<terrabase::types::DocumentValue> {

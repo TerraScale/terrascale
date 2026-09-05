@@ -4910,7 +4910,7 @@ mod tests {
         let attach_request = || {
             Request::post("/api/v1/reactive/views")
             .header("authorization", key)
-            .body(Body::from(r#"{"databaseId":"prod","statement":"SELECT total FROM orders WHERE status = 'paid'"}"#)).expect("request")
+            .body(Body::from(r#"{"databaseId":"prod","statement":"SELECT total FROM orders WHERE status = 'paid' LIMIT 100"}"#)).expect("request")
         };
         let response = router.clone().oneshot(attach_request()).await.expect("attach");
         let status = response.status();
