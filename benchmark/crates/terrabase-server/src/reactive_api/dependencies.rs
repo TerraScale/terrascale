@@ -42,6 +42,10 @@ impl Dependencies {
     }
 
     pub(super) fn affects(&mut self, id: u64, record: &SyncJournalRecord) -> bool {
+        self.affected(record).binary_search(&id).is_ok()
+    }
+
+    pub(super) fn affected(&mut self, record: &SyncJournalRecord) -> std::borrow::Cow<'_, [u64]> {
         let position = (record.storage_sequence(), record.position().write_index());
         if !self.memo.contains_key(&position) {
             let affected = self.match_record(record);
@@ -51,12 +55,12 @@ impl Dependencies {
                 self.clear_memo();
             }
             if bytes > MAX_MEMO_BYTES {
-                return affected.binary_search(&id).is_ok();
+                return std::borrow::Cow::Owned(affected);
             }
             self.memo_bytes += bytes;
             self.memo.insert(position, affected);
         }
-        self.memo[&position].binary_search(&id).is_ok()
+        std::borrow::Cow::Borrowed(&self.memo[&position])
     }
 
     fn clear_memo(&mut self) {

@@ -11,6 +11,8 @@ use tokio::sync::Notify;
 
 use super::ApiError;
 
+mod dispatch;
+
 const MAX_RECORDS: usize = 4096;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
 const PAGE_SIZE: u32 = 64;
@@ -37,7 +39,7 @@ impl Sources {
         let signal = Arc::clone(&changed);
         let watch = host
             .engine()
-            .watch_publications(move || signal.notify_waiters())
+            .watch_publications(move || signal.notify_one())
             .map_err(|_| ApiError::storage_failure())?;
         let source = Arc::new(JournalSource {
             host: Arc::clone(host),
@@ -45,6 +47,7 @@ impl Sources {
             changed,
             replay: Mutex::new(None),
             dependencies: Mutex::new(super::dependencies::Dependencies::default()),
+            dispatch: Mutex::new(dispatch::State::default()),
             _watch: watch,
         });
         sources.insert(key, Arc::downgrade(&source));
@@ -53,10 +56,11 @@ impl Sources {
 }
 
 pub(super) struct JournalSource {
+    dispatch: Mutex<dispatch::State>,
     dependencies: Mutex<super::dependencies::Dependencies>,
     host: Arc<MemberHost>,
     tenant: TenantId,
-    pub(super) changed: Arc<Notify>,
+    changed: Arc<Notify>,
     replay: Mutex<Option<ReplayBuffer>>,
     _watch: terrabase::engine::PublicationWatch,
 }
@@ -103,13 +107,23 @@ impl JournalSource {
         after: u64,
         through: u64,
     ) -> Result<Option<Vec<Arc<SyncJournalRecord>>>, ApiError> {
+        self.records_with_cancellation(after, through, &Cancellation::new())
+    }
+
+    fn records_with_cancellation(
+        &self,
+        after: u64,
+        through: u64,
+        cancellation: &Cancellation,
+    ) -> Result<Option<Vec<Arc<SyncJournalRecord>>>, ApiError> {
         let mut replay = self.replay.lock().map_err(|_| ApiError::storage_failure())?;
         let engine = self.host.engine();
-        replay.get_or_insert_with(|| ReplayBuffer::new(after)).records(
+        replay.get_or_insert_with(|| ReplayBuffer::new(after)).records_with_cancellation(
             engine,
             &engine.scope_for(&self.tenant),
             after,
             through,
+            cancellation,
         )
     }
 }
@@ -144,8 +158,20 @@ impl ReplayBuffer {
         after: u64,
         through: u64,
     ) -> Result<Option<Vec<Arc<SyncJournalRecord>>>, ApiError> {
+        self.records_with_cancellation(engine, scope, after, through, &Cancellation::new())
+    }
+
+    fn records_with_cancellation(
+        &mut self,
+        engine: &Engine,
+        scope: &TenantScope,
+        after: u64,
+        through: u64,
+        cancellation: &Cancellation,
+    ) -> Result<Option<Vec<Arc<SyncJournalRecord>>>, ApiError> {
+        if cancellation.is_cancelled() { return Err(ApiError::storage_failure()); }
         if through > self.through {
-            self.extend(engine, scope, through)?;
+            self.extend(engine, scope, through, cancellation)?;
         }
         if after < self.floor {
             return Ok(None);
@@ -166,6 +192,7 @@ impl ReplayBuffer {
         engine: &Engine,
         scope: &TenantScope,
         through: u64,
+        cancellation: &Cancellation,
     ) -> Result<(), ApiError> {
         let mut cursor = Some(ChangeCheckpoint::after(self.through, 0));
         // Read into a separate bounded candidate, so a storage error cannot
@@ -182,7 +209,7 @@ impl ReplayBuffer {
                 scope,
                 cursor,
                 PAGE_SIZE,
-                &Cancellation::new(),
+                cancellation,
             ) {
                 Ok(page) => page,
                 Err(StreamError::HistoryExpired) => {
