@@ -23,12 +23,15 @@ describe.skipIf(origin === undefined || accessToken === undefined)("real member 
   test("canonical views preserve local names across HTTP, WebSocket, and reconnect", async () => {
     const fetch = globalThis.fetch.bind(globalThis);
     const rest = createTerraScaleClient({ apiBaseUrl: origin!, accessToken: accessToken!, fetch });
-    const client = new TerraScaleSyncV1Client({ apiBaseUrl: origin!, syncBaseUrl: origin!, accessToken, fetch });
+    const client = new TerraScaleSyncV1Client({ apiBaseUrl: origin!, syncBaseUrl: origin!, accessToken: accessToken!, fetch });
     assert.equal((await rest.documents.put("prod", "orders", "sdk-one", { total: 1 })).ok, true);
     const options = { databaseId: "prod", query: "SELECT total FROM orders LIMIT 10", parameters: new Uint8Array() };
     const socket = await client.subscribe({ ...options, subscription: "local-websocket", transport: "websocket" });
     const http = await client.subscribe({ ...options, subscription: "local-http", autoStart: false });
     try {
+      const empty = await client.subscribe({ ...options, query: "SELECT total FROM absent LIMIT 10", subscription: "empty-result", autoStart: false });
+      assert.deepEqual(empty.view.getItems(), []);
+      empty.close();
       assert.equal(socket.id, "local-websocket");
       assert.deepEqual(socket.view.getItems(), http.view.getItems());
       assert.equal(socket.view.getItems()[0]?.identity, "sdk-one");

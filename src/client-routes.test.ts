@@ -6,6 +6,7 @@ import {
   capturePublicClientRoutes,
   contractGapExpectations,
   expectedContractGapRouteNames,
+  reactiveTransportRouteNames,
 } from "./client-route-capture.js";
 import { createTerraScaleClient } from "./factory.js";
 import type { TerraScaleClient } from "./factory.js";
@@ -54,10 +55,12 @@ describe("TerraScaleClient route contracts", () => {
     const capturedRoutes = await capturePublicClientRoutes();
 
     const gaps = new Set(expectedContractGapRouteNames);
-    const publishedRoutes = manifest.routes.filter((route) => !gaps.has(route.routeName as never));
+    const transports = new Set<string>(reactiveTransportRouteNames);
+    const publishedRoutes = manifest.routes.filter((route) => !gaps.has(route.routeName as never) && !transports.has(route.routeName));
+    assert.deepEqual(manifest.routes.filter(route => transports.has(route.routeName)).map(route => route.routeName).sort(), [...transports].sort());
     assert.deepEqual(publishedRoutes.map(routeManifestCore), capturedRoutes.map(routeManifestCore));
     assert.equal(manifest.routeCount, manifest.routes.length);
-    assert.equal(manifest.routeCount, capturedRoutes.length + contractGapExpectations.length);
+    assert.equal(manifest.routeCount, capturedRoutes.length + contractGapExpectations.length + transports.size);
     assert.deepEqual(
       manifest.routes.filter((route) => gaps.has(route.routeName as never)).map((route) => route.routeName).sort(),
       [...expectedContractGapRouteNames].sort(),

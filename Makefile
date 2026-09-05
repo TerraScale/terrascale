@@ -3,8 +3,9 @@
 CONTRACT_VERSION := $(shell tr -d '[:space:]' < CONTRACT_VERSION 2>/dev/null)
 
 # check is the TypeScript SDK verification set from the workspace GOAL.
-check: contracts
-	git diff --exit-code
+check:
+	node scripts/generate-client-route-manifest.ts --check
+	node scripts/generate-openapi-contract-descriptor.ts --check
 	npm ci
 	npm run typecheck
 	npm run build

@@ -13,13 +13,30 @@ const pathTemplateSegments = new Map<string, string>([
 
 /** Canonical producer operations not implemented by this SDK slice. */
 export const expectedContractGapRouteNames = [
-  "databases.listDatabases", "databases.createDatabase", "databases.deleteDatabase", "databases.getDatabase",
-  "databases.listBackups", "databases.restoreBackup", "databases.listBranches", "databases.createBranch",
-  "databases.listCollections", "databases.documentHistory", "databases.batchDocuments", "databases.listIndexes",
-  "databases.createIndex", "databases.deleteIndex", "databases.indexRecommendations", "databases.getSchema",
-  "databases.putSchema", "databases.createExport", "databases.websocket", "databases.poll",
-  "databases.restoreDatabase", "databases.databaseUsage", "databases.listWebhooks", "databases.createWebhook",
-  "databases.deleteWebhook", "health.health", "reactive.attachView", "reactive.viewLog", "reactive.snapshot",
+  "databases.listDatabases",
+  "databases.createDatabase",
+  "databases.deleteDatabase",
+  "databases.getDatabase",
+  "databases.listBackups",
+  "databases.restoreBackup",
+  "databases.listBranches",
+  "databases.createBranch",
+  "databases.listCollections",
+  "databases.documentHistory",
+  "databases.batchDocuments",
+  "databases.listIndexes",
+  "databases.createIndex",
+  "databases.websocket",
+  "databases.restoreDatabase",
+  "health.health",
+] as const;
+
+/** Operations exercised by the real reactive TCP journey. */
+export const reactiveTransportRouteNames = [
+  "reactive.attachView",
+  "reactive.viewLog",
+  "reactive.snapshot",
+  "reactive.viewWebsocket",
 ] as const;
 
 export type ContractGapExpectation = {

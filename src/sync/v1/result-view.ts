@@ -421,6 +421,7 @@ function emptyResultDigest(): string {
 /** Computes the same four-lane FNV-1a digest as the Rust result-view core. */
 export function syncV1ResultDigest(items: readonly SyncV1ResultItem[]): string {
   validateItems(items);
+  if (items.length === 0) return emptyResultDigest();
   const bytes: number[] = [];
   for (const item of items) {
     pushU64(bytes, BigInt(textEncoder.encode(item.identity).length));

@@ -530,7 +530,7 @@ describe("P-3 journey chapter 2: live+sync (mock)", () => {
       return new Response(
         serverFrame({
           kind: "delta",
-          subscription: "orders",
+          subscription: "journey-orders",
           view_generation: 3n,
           from_revision: 7n,
           to_revision: 8n,
