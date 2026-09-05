@@ -102,7 +102,17 @@ TerraBase owns membership acceptance, writer/follower transitions, drain,
 catch-up evidence, and permission to serve. Host health never substitutes for
 replication readiness. Survive loss of control services after admission.
 
-Litestream backs each file to its own Region's OCI Object Storage with the
+Rebuild [Litestream](https://github.com/benbjohnson/litestream) as an internal
+native Rust backup subsystem, per [ADR 0046](docs/adr/0046-native-rust-backup-subsystem.md).
+Read and pin the upstream source before implementation; improve resource
+sharing, WAL/checkpoint coordination, and backup/restore efficiency for our
+multi-database member. Prove improvements with comparative benchmarks in
+`bench/` and fault-tested restores. Remove the external binary, per-database
+child processes, packaging, and obsolete integration in the replacement
+series. The rebuild is required work; the existing subprocess adapter is
+not completion of this decision.
+
+The native subsystem backs each file to its own Region's OCI Object Storage with the
 workspace retention and 10-second backup interval. Restore creates a new
 database and proves content against the journal. Encrypt files, WAL, backup,
 export, and branch data under the database DEK. Enforce residency and safe

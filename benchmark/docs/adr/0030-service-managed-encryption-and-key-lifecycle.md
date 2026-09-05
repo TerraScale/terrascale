@@ -17,7 +17,7 @@ and credentials remain inside that adapter.
 Each selected Region wraps a random 256-bit per-database data-encryption key.
 The catalog stores the regional wrappers with key-version identifiers. A
 database is not placed in a Region until its wrapper exists and a member has
-successfully opened it. SQLite files, WAL, Litestream snapshots and backup
+successfully opened it. SQLite files, WAL, native backup snapshots and backup
 objects, exports, and branches are encrypted under keys derived from the active
 database key with HKDF-SHA-256 and domain-separated artifact identifiers.
 

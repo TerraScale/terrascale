@@ -123,8 +123,8 @@ periodic sweep; the former tree-based reconciler is deleted.
 
 ### 2.6 Region bootstrap and repair
 
-A joining Region restores the newest Litestream snapshot of each database
-into its own Object Storage (residency, D-52), opens it, tails all peers
+A joining Region restores the newest native TerraBase backup snapshot
+(ADR 0046) of each database into its own Object Storage (residency, D-52), opens it, tails all peers
 from the snapshot's frontier vector, then runs one full reconciliation to
 prove equality before placement marks it serving.
 

@@ -58,8 +58,8 @@ OCI NTP (HLC skew guard), no password login, no public SSH.
 
 | Service | Purpose | Configuration |
 | --- | --- | --- |
-| Object Storage bucket | Litestream targets, analytics snapshots (D-53), Parquet export | One bucket per region, versioning on, retention rule on, lifecycle per D-29 (segments older than 24 h to Infrequent Access, older than 7 days to Archive), **never replicated across regions** (residency, D-52) |
-| Block Volume backup policy | Second layer under Litestream | Daily, 7-day retention, per member host |
+| Object Storage bucket | native TerraBase backup targets, analytics snapshots (D-53), Parquet export | One bucket per region, versioning on, retention rule on, lifecycle per D-29 (segments older than 24 h to Infrequent Access, older than 7 days to Archive), **never replicated across regions** (residency, D-52) |
+| Block Volume backup policy | Second layer under native TerraBase backups | Daily, 7-day retention, per member host |
 | Vault + Key | Per-database encryption keys (M2-1, ADR 0030) | One master key per region; keys never leave their region |
 | IAM (tenancy-wide) | Least privilege | One compartment per region; **instance principals** for members and control hosts; no API keys on disk; CI gets a scoped user per secret (GOAL O-3) |
 | VCN + NSG | Network | Public ingress only on 443 (API) and the QUIC replication port (member ↔ member, source-restricted to the other regions' public IPs); everything else via Tailscale |
@@ -100,7 +100,7 @@ mistakes "the servers are up" for "we are in production".
 1. **Soak**: seven days on the exact launch digests with the fault matrix
    green (M5-1, M4-2).
 2. **Restore drill performed**: a region rebuilt from Object Storage alone
-   (`add-region` into an empty region, Litestream restore, catch-up) with
+   (`add-region` into an empty region, native TerraBase backup restore, catch-up) with
    the time recorded (M3-6, M4-2).
 3. **Runbooks** for the ten most likely alerts, each rehearsed once (M4-4).
 4. **On-call**: a rotation with a primary and an escalation phone, even if

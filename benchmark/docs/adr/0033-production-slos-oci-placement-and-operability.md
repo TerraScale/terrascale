@@ -56,8 +56,9 @@ durably accepted the row and its causal dependencies; it fails closed before
 acknowledgement when fewer than two selected Regions are active. A one-Region
 database uses `RegionalDurable` or `BackupDurable` instead.
 
-Litestream backs up each SQLite file to Object Storage in the same Region and
-is not a replication mechanism or hot-path dependency. Restore creates a new
+The native TerraBase backup subsystem (ADR 0046) backs up each SQLite file
+to Object Storage in the same Region. It is not a replication mechanism or
+hot-path dependency. Restore creates a new
 database, key version, and verified frontier before traffic moves. A healthy
 multi-Region database has a five-minute target to recover routing after loss
 of one Region; PITR restore has a size-dependent target and uses the durable

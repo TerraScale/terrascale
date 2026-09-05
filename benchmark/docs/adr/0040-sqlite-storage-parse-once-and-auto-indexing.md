@@ -46,9 +46,14 @@ over 5 minutes, or > 10 GB, or sustained write-p99 breach. CRDT merge is
 reserved for cross-region replication; intra-region RF=2 durability copies
 are journal-followers with promotion, not second writers.
 
-### D-29 — Litestream backup
+### D-29 — Native Rust backup
 
-One Litestream stream per database file to OCI Object Storage **in the
+Rebuild Litestream inside TerraBase in Rust, after reading its pinned upstream
+source, per [ADR 0046](0046-native-rust-backup-subsystem.md). Shared background
+workers replace the external process per database. Improved throughput,
+restore time, CPU, memory, and I/O efficiency require benchmark evidence.
+
+One native backup stream per database file to OCI Object Storage **in the
 same region** (free traffic), syncing every **10 s** (durability comes
 from the RF=2 follower; the backup tier's RPO is 10 s). Disaster
 recovery and PITR only — never a replication mechanism and never in the
@@ -119,7 +124,7 @@ a rule auto-creates its descriptors.
 - Auto-indexing is benchmarked head-to-head against RavenDB (time-to-index,
   indexed latency, write-amplification curve, staleness behavior) and
   auto-published.
-- Implementation is split across the SQLite storage, Litestream backup,
+- Implementation is split across the SQLite storage, native TerraBase backup,
   auto-indexing, and shard-routing modules. Public gateway and SDK behavior
   follows the current contracts; verification runs through the repository
   checks and benchmark tables without a separate evidence ledger.

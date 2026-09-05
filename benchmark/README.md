@@ -4,7 +4,10 @@ TerraBase is TerraScale's Rust multi-Region database engine and public API.
 Each member serves the REST and reactive APIs directly with axum and stores
 one customer database per SQLite file. SQL is the only query language; writes
 remain document operations, with canonical JSON bytes, extracted indexes,
-causal replication, live result views, and Litestream backup.
+causal replication and live result views. The accepted backup design is an
+internal native Rust rebuild informed by Litestream’s source, with measured
+performance and efficiency improvements; replacement of the existing external
+process adapter is required work. See [ADR 0046](docs/adr/0046-native-rust-backup-subsystem.md).
 
 The workspace [GOAL.md](../GOAL.md) is authoritative. This repository's
 [GOAL.md](GOAL.md) is only the pointer above, while [AGENTS.md](AGENTS.md)

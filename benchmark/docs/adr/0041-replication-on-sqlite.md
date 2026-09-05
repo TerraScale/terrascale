@@ -37,8 +37,8 @@ dictionary trained on canonical JSON; credit-window pipelining (never
 wait for wave *k*'s ack before sending *k+1*); same-document writes
 coalesced within a wave (last bytes + merged causal context).
 Range-based set reconciliation exchanges fingerprints over `seq` ranges and
-refines only mismatches. A joining region bootstraps from a peer's Litestream
-snapshot in its own region's object storage, then tails. Peer lists
+refines only mismatches. A joining region bootstraps from a peer's native
+TerraBase backup snapshot (ADR 0046) in its own region's object storage, then tails. Peer lists
 come from the orchestrator over control gRPC; NATS exists only inside
 the orchestrator.
 

@@ -66,8 +66,8 @@ conditional cancellation.
 
 Adding a Region is one parent operation with child operations for each
 database. It validates policy and capacity, allocates two active Members,
-transfers and verifies a Litestream snapshot, tails causal deltas, reaches
-stored/applied/reconciled frontiers, joins membership, proves reads, writes,
+transfers and verifies a native TerraBase backup snapshot, tails causal deltas,
+reaches stored/applied/reconciled frontiers, joins membership, proves reads, writes,
 repair, recovery, and isolation, then publishes the Region as selectable.
 The Region is not selectable until all required children and the final catalog
 decision are durable.

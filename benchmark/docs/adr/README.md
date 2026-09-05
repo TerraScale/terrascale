@@ -26,6 +26,7 @@ choices, not release authorization.
 - [0043 — Edge routing contract](0043-edge-routing-contract.md)
 - [0044 — The two engines: replication and sync, on a research base](0044-sync-and-replication-engines.md)
 - [0045 — The auto-indexing engine, on a research base](0045-auto-indexing-engine.md)
+- [0046 — Native Rust backup subsystem informed by Litestream](0046-native-rust-backup-subsystem.md)
 
 ## Authoring
 

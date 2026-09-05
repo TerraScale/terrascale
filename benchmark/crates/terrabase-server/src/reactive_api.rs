@@ -24,6 +24,7 @@ use crate::view_capability::{
 mod dependencies;
 mod incremental;
 mod polling;
+mod retirement;
 mod socket;
 mod source;
 
@@ -275,6 +276,9 @@ struct View {
     /// One query execution per shared view, independent of other views.
     refreshing: Arc<Mutex<()>>,
     refresh_after: Option<tokio::time::Instant>,
+    last_access: tokio::time::Instant,
+    retired_at: Option<tokio::time::Instant>,
+    guard: Option<Weak<crate::guards::AbuseGuards>>,
 }
 
 impl View {
@@ -327,6 +331,7 @@ struct Materializer {
 /// Process-wide canonical shared-view registry.
 pub struct ViewStore {
     sources: source::Sources,
+    maintenance: Mutex<Option<tokio::task::JoinHandle<()>>>,
     log_polls: Mutex<BTreeMap<polling::LogKey, Weak<polling::LogPoll>>>,
     #[cfg(test)]
     poll_starts: std::sync::atomic::AtomicUsize,
@@ -430,6 +435,9 @@ fn initial_view(
         log: BTreeMap::new(),
         materializer: materialization.as_ref().and_then(|value| value.materializer.clone()),
         refreshing: Arc::new(Mutex::new(())),
+        last_access: tokio::time::Instant::now(),
+        retired_at: None,
+        guard: None,
         refresh_after: materialization
             .and_then(|value| value.materializer.as_ref())
             .map(|_| tokio::time::Instant::now() + EMISSION_CADENCE),
@@ -472,6 +480,7 @@ impl ViewStore {
             poll_starts: std::sync::atomic::AtomicUsize::new(0),
             initializing: Mutex::new(BTreeMap::new()),
             sources: source::Sources::default(),
+            maintenance: Mutex::new(None),
             views: Mutex::new(BTreeMap::new()),
             changed: Arc::new(Notify::new()),
         }
@@ -510,7 +519,7 @@ impl ViewStore {
         region: terrabase::regions::RegionCode,
         materialization: Option<&Materialization>,
         capability_keys: &CapabilityKeyRing,
-        guards: Option<&crate::guards::AbuseGuards>,
+        guards: Option<&Arc<crate::guards::AbuseGuards>>,
     ) -> Result<(AttachResponse, String), ApiError> {
         let key = attach_identity(request, scope, region, materialization)?;
         let view_id = format!("v-{}", blake3::hash(&key).to_hex());
@@ -528,9 +537,18 @@ impl ViewStore {
         let _initializing = initializing.lock().map_err(|_| ApiError::storage_failure())?;
         // Reattachment must publish changes through the same log as existing
         // readers. Installing a newer snapshot directly would skip their delta.
-        let existing =
-            self.views.lock().map_err(|_| ApiError::storage_failure())?.contains_key(&view_id);
-        if existing {
+        let (existing, retired) = {
+            let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
+            if let Some(view) = views.get_mut(&view_id) {
+                view.last_access = tokio::time::Instant::now();
+                (true, view.retired_at.is_some())
+            } else {
+                (false, false)
+            }
+        };
+        if retired {
+            self.reactivate(&view_id, materialization, guards)?;
+        } else if existing {
             self.refresh_view(&view_id)?;
         }
         let initialized = if existing {
@@ -561,6 +579,9 @@ impl ViewStore {
         let view = views.entry(view_id.clone()).or_insert_with(|| {
             initial_view(request, scope, region, materialization, &key, &view_id)
         });
+        view.last_access = tokio::time::Instant::now();
+        view.retired_at = None;
+        view.guard = guards.map(Arc::downgrade);
         Ok((attach_response(view, capability_keys), view.id.clone()))
     }
 
@@ -643,6 +664,9 @@ impl ViewStore {
         if generation != view.generation {
             return Err(unknown_view());
         }
+        if view.retired_at.is_none() {
+            view.last_access = tokio::time::Instant::now();
+        }
         view.prune(SystemTime::now());
         if offset < view.floor {
             return Ok(ReadResult::Reset(reset_bytes(view)));
@@ -655,6 +679,10 @@ impl ViewStore {
         {
             return Ok(ReadResult::Data { revision: *revision, frozen: frozen.clone() });
         }
+        if view.retired_at.is_some() {
+            return Err(retirement::retired_view());
+        }
+        view.last_access = tokio::time::Instant::now();
         Ok(ReadResult::Empty)
     }
 
@@ -726,19 +754,32 @@ impl ViewStore {
         let Some(RefreshBatch { snapshot, records }) = self.prepare_refresh(view_id)? else {
             return Ok(());
         };
-        let (mut materializer, previous, generation, identity_digest) = {
+        let mut materializer = self
+            .views
+            .lock()
+            .map_err(|_| ApiError::storage_failure())?
+            .get(view_id)
+            .ok_or_else(unknown_view)?
+            .materializer
+            .clone()
+            .ok_or_else(ApiError::storage_failure)?;
+        let items = materializer.refresh_items(&snapshot, records.as_deref())?;
+        self.publish_items(view_id, materializer, items, snapshot.sequence().get())
+    }
+
+    fn publish_items(
+        &self,
+        view_id: &str,
+        materializer: Materializer,
+        items: Vec<terrabase_sync_core::wire::ResultItem>,
+        revision: u64,
+    ) -> Result<(), ApiError> {
+        let (previous, generation, identity_digest) = {
             let views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
             let view = views.get(view_id).ok_or_else(unknown_view)?;
-            (
-                view.materializer.clone().ok_or_else(ApiError::storage_failure)?,
-                view.items.clone(),
-                view.generation,
-                view.identity_digest.clone(),
-            )
+            (view.items.clone(), view.generation, view.identity_digest.clone())
         };
-        let items = materializer.refresh_items(&snapshot, records.as_deref())?;
         let next_digest = digest_items(&items);
-        let revision = snapshot.sequence().get();
         {
             let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
             let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
@@ -818,6 +859,9 @@ impl ViewStore {
             return Err(unknown_view());
         }
         view.prune(SystemTime::now());
+        if view.retired_at.is_none() {
+            view.last_access = tokio::time::Instant::now();
+        }
         view.snapshot.get(&cut).cloned().ok_or_else(unknown_view)
     }
 
@@ -843,7 +887,9 @@ impl ViewStore {
 
 static STORE: OnceLock<Arc<ViewStore>> = OnceLock::new();
 fn store() -> &'static Arc<ViewStore> {
-    STORE.get_or_init(|| Arc::new(ViewStore::new()))
+    let store = STORE.get_or_init(|| Arc::new(ViewStore::new()));
+    store.start_maintenance();
+    store
 }
 
 #[cfg(test)]
@@ -1934,7 +1980,7 @@ mod tests {
     #[test]
     fn concurrent_admission_never_publishes_or_deletes_a_rejected_view() {
         let store = ViewStore::new();
-        let guards = crate::guards::AbuseGuards::new();
+        let guards = Arc::new(crate::guards::AbuseGuards::new());
         guards.set_plan(
             "db",
             crate::guards::Plan::Custom(crate::guards::AbuseLimits {
