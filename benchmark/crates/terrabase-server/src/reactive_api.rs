@@ -6,7 +6,7 @@
 //! used by this transport.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::extract::ws::{Message, WebSocket};
@@ -292,6 +292,7 @@ impl View {
     }
 }
 
+#[derive(Clone)]
 struct Materialization {
     revision: u64,
     items: Vec<terrabase_sync_core::wire::ResultItem>,
@@ -309,11 +310,12 @@ struct Materializer {
     incremental: Option<incremental::SqlMaterializer>,
     tenant: terrabase::types::TenantId,
     changed: Arc<Notify>,
-    _watch: Arc<terrabase::engine::PublicationWatch>,
+    watch: Option<Arc<terrabase::engine::PublicationWatch>>,
 }
 
 /// Process-wide canonical shared-view registry.
 pub struct ViewStore {
+    initializing: Mutex<BTreeMap<String, Weak<Mutex<()>>>>,
     views: Mutex<BTreeMap<String, View>>,
     changed: Arc<Notify>,
 }
@@ -445,7 +447,11 @@ fn attach_response(view: &View, capability_keys: &CapabilityKeyRing) -> AttachRe
 
 impl ViewStore {
     fn new() -> Self {
-        Self { views: Mutex::new(BTreeMap::new()), changed: Arc::new(Notify::new()) }
+        Self {
+            initializing: Mutex::new(BTreeMap::new()),
+            views: Mutex::new(BTreeMap::new()),
+            changed: Arc::new(Notify::new()),
+        }
     }
 
     /// Attaches request metadata without resolving a database. The HTTP
@@ -485,6 +491,18 @@ impl ViewStore {
     ) -> Result<(AttachResponse, String), ApiError> {
         let key = attach_identity(request, scope, region, materialization)?;
         let view_id = format!("v-{}", blake3::hash(&key).to_hex());
+        let initializing = {
+            let mut pending = self.initializing.lock().map_err(|_| ApiError::storage_failure())?;
+            pending.retain(|_, lock| lock.strong_count() > 0);
+            if let Some(lock) = pending.get(&view_id).and_then(Weak::upgrade) {
+                lock
+            } else {
+                let lock = Arc::new(Mutex::new(()));
+                pending.insert(view_id.clone(), Arc::downgrade(&lock));
+                lock
+            }
+        };
+        let _initializing = initializing.lock().map_err(|_| ApiError::storage_failure())?;
         // Reattachment must publish changes through the same log as existing
         // readers. Installing a newer snapshot directly would skip their delta.
         let existing =
@@ -492,6 +510,12 @@ impl ViewStore {
         if existing {
             self.refresh_view(&view_id)?;
         }
+        let initialized = if existing {
+            None
+        } else {
+            materialization.map(Materialization::initialize).transpose()?
+        };
+        let materialization = initialized.as_ref().or(materialization);
         let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
         if views.get(&view_id).is_some_and(|view| {
             view.scope != scope || view.entitlement_epoch != request.entitlement_epoch
@@ -825,8 +849,7 @@ pub async fn attach_view(
         return error.into_response();
     }
     let scope = format!("{}:{}:{}", state.scope.0, state.scope.1, request.database_id);
-    let materialization = match materialize_view(&state, &host, &request, &scope, Some(&principal))
-    {
+    let materialization = match prepare_view(&state, &host, &request, &scope, Some(&principal)) {
         Ok(materialization) => materialization,
         Err(error) => return error.into_response(),
     };
@@ -1040,8 +1063,7 @@ async fn serve_socket(
                 .await;
             return;
         };
-        let Ok(materialization) =
-            materialize_view(&state, &host, &request, &scope, Some(&principal))
+        let Ok(materialization) = prepare_view(&state, &host, &request, &scope, Some(&principal))
         else {
             let _ = socket
                 .send(Message::Binary(
@@ -1116,7 +1138,7 @@ fn immutable_response(frozen: &Frozen, etag: &str) -> Response {
 /// and turns the result into the generated wire item shape. The same engine
 /// snapshot sequence becomes the first view revision, tying the result to the
 /// durable journal rather than a process-local revision-0 placeholder.
-fn materialize_view(
+fn prepare_view(
     state: &ApiState,
     host: &std::sync::Arc<terrabase_tbep::member_host::MemberHost>,
     request: &AttachRequest,
@@ -1133,13 +1155,6 @@ fn materialize_view(
     let cancellation = terrabase::Cancellation::new();
     let engine = host.engine();
     let changed = Arc::new(Notify::new());
-    let signal = Arc::clone(&changed);
-    let watch = Arc::new(
-        engine
-            .watch_publications(move || signal.notify_waiters())
-            .map_err(|_| ApiError::storage_failure())?,
-    );
-
     let plan = engine
         .queries()
         .compile(terrabase::QueryInput::sql_bounded_with_parameters(
@@ -1170,16 +1185,7 @@ fn materialize_view(
     }
     let tenant = terrabase::types::TenantId::try_new(&state.scope.0)
         .map_err(|_| ApiError::storage_failure())?;
-    let engine_scope = engine.scope_for(&tenant);
-    let snapshot = engine.read_snapshot(&engine_scope).map_err(|_| ApiError::storage_failure())?;
-    let mut incremental = incremental::SqlMaterializer::for_plan(&plan)?;
-    let items = if let Some(incremental) = &mut incremental {
-        incremental.seed(engine, &snapshot)?;
-        incremental.items()
-    } else {
-        result_items(&engine.queries().execute(&plan, &snapshot).map_err(ApiError::query)?)
-    };
-    let digest = digest_items(&items);
+    let incremental = incremental::SqlMaterializer::for_plan(&plan)?;
     let mut identity = Vec::new();
     put_identity(&mut identity, b"database-incarnation", &engine.database_id().as_bytes());
     put_identity(
@@ -1206,9 +1212,9 @@ fn materialize_view(
     put_identity(&mut identity, b"entitlement-version", &request.entitlement_epoch.to_be_bytes());
     put_identity(&mut identity, b"region", &state.region.as_bytes());
     Ok(Materialization {
-        revision: snapshot.sequence().get(),
-        items,
-        digest,
+        revision: 0,
+        items: Vec::new(),
+        digest: digest_items(&[]),
         identity,
         materializer: Some(Materializer {
             host: Arc::clone(host),
@@ -1216,9 +1222,37 @@ fn materialize_view(
             incremental,
             tenant,
             changed,
-            _watch: watch,
+            watch: None,
         }),
     })
+}
+
+impl Materialization {
+    fn initialize(&self) -> Result<Self, ApiError> {
+        let mut value = self.clone();
+        let Some(source) = &mut value.materializer else { return Ok(value) };
+        let engine = source.host.engine();
+        let signal = Arc::clone(&source.changed);
+        source.watch = Some(Arc::new(
+            engine
+                .watch_publications(move || signal.notify_waiters())
+                .map_err(|_| ApiError::storage_failure())?,
+        ));
+        let snapshot = engine
+            .read_snapshot(&engine.scope_for(&source.tenant))
+            .map_err(|_| ApiError::storage_failure())?;
+        value.items = if let Some(incremental) = &mut source.incremental {
+            incremental.seed(engine, &snapshot)?;
+            incremental.items()
+        } else {
+            result_items(
+                &engine.queries().execute(&source.plan, &snapshot).map_err(ApiError::query)?,
+            )
+        };
+        value.revision = snapshot.sequence().get();
+        value.digest = digest_items(&value.items);
+        Ok(value)
+    }
 }
 
 impl Materializer {

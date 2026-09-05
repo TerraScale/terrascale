@@ -2299,7 +2299,7 @@ fn live_revision(
     id: &DocumentId,
 ) -> Result<String, ApiError> {
     let snapshot = engine.read_snapshot(scope).map_err(|_| ApiError::storage_failure())?;
-    let operation = OperationId::try_new("api-read").map_err(|_| ApiError::storage_failure())?;
+    let operation = crate::read_operation::next().map_err(|()| ApiError::storage_failure())?;
     let transaction =
         engine.begin(scope, snapshot, operation).map_err(|_| ApiError::storage_failure())?;
     transaction
@@ -2369,7 +2369,7 @@ async fn get_document(
         Ok(snapshot) => snapshot,
         Err(error) => return error.into_response(),
     };
-    let Ok(operation) = OperationId::try_new("api-read") else {
+    let Ok(operation) = crate::read_operation::next() else {
         return ApiError::storage_failure().into_response();
     };
     let Ok(transaction) = engine.begin(&scope, snapshot, operation) else {
@@ -5067,6 +5067,60 @@ mod tests {
         };
         assert!(matches!(operations.as_slice(), [ResultOperation::Update { identity, fields }]
             if identity == "o-2" && fields.iter().any(|field| field.value == b"21")));
+    }
+
+    #[tokio::test]
+    async fn concurrent_sql_attachments_share_one_seed_query() {
+        let state = state_with_keys_and_control();
+        let app = router(Arc::clone(&state));
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header("authorization", key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let host = super::document_host(&state, "prod").unwrap();
+        let tenant = terrabase::types::TenantId::try_new(&state.scope.0).unwrap();
+        let before = host.engine().queries().recent_index_selections(&tenant).len();
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let app = app.clone();
+            let barrier = Arc::clone(&barrier);
+            let runtime = tokio::runtime::Handle::current();
+            tasks.push(tokio::task::spawn_blocking(move || {
+                barrier.wait();
+                runtime.block_on(app.oneshot(
+                    Request::post("/api/v1/reactive/views").header("authorization", key)
+                        .body(Body::from(r#"{"databaseId":"prod","statement":"SELECT total FROM orders LIMIT 10"}"#)).unwrap(),
+                )).unwrap()
+            }));
+        }
+        let mut first = None;
+        for task in tasks {
+            let response = task.await.unwrap();
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), 65_536).await.unwrap();
+            assert_eq!(status, StatusCode::CREATED, "{}", String::from_utf8_lossy(&body));
+            let metadata: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let identity = (metadata["view"].clone(), metadata["snapshot_chunks"].clone());
+            if let Some(expected) = &first {
+                assert_eq!(&identity, expected);
+            } else {
+                first = Some(identity);
+            }
+        }
+        assert_eq!(
+            host.engine().queries().recent_index_selections(&tenant).len(),
+            before + 1,
+            "concurrent readers initialize one canonical view with one snapshot query"
+        );
     }
 
     #[tokio::test]

@@ -17,6 +17,7 @@ pub mod http;
 pub mod index_api;
 pub mod production;
 pub mod reactive_api;
+mod read_operation;
 pub mod runtime;
 pub mod schema_api;
 pub mod tenant_api;

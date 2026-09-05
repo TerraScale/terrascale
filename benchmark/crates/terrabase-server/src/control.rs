@@ -302,7 +302,13 @@ impl ControlPlane {
             .map_err(|error| ControlError::Registry(format!("{error:?}")))?;
         let transaction = self
             .engine
-            .begin(&self.scope, snapshot, read_operation()?)
+            .begin(
+                &self.scope,
+                snapshot,
+                crate::read_operation::next().map_err(|()| {
+                    ControlError::Registry("read operation identities exhausted".into())
+                })?,
+            )
             .map_err(|error| registry_error(&error))?;
         transaction.read(&id).map_err(|error| registry_error(&error))
     }
@@ -584,13 +590,6 @@ fn unix_millis() -> i64 {
 
 fn registry_error(error: &EngineError) -> ControlError {
     ControlError::Registry(format!("{error:?}"))
-}
-
-/// One registry-scope read operation identity. Reads stage nothing, so one
-/// shared identity cannot collide with a writer's reservation.
-fn read_operation() -> Result<OperationId, ControlError> {
-    OperationId::try_new("control-read")
-        .map_err(|error| ControlError::Registry(format!("{error:?}")))
 }
 
 #[cfg(test)]

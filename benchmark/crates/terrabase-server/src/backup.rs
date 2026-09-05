@@ -1071,8 +1071,7 @@ fn read_document(
     };
     let scope = engine.scope_for(tenant);
     let snapshot = engine.read_snapshot(&scope).map_err(|_| stale("snapshot"))?;
-    let operation = terrabase::types::OperationId::try_new("timetravel-read")
-        .map_err(|_| stale("operation"))?;
+    let operation = crate::read_operation::next().map_err(|()| stale("operation"))?;
     let transaction = engine.begin(&scope, snapshot, operation).map_err(|_| stale("begin"))?;
     let revision =
         transaction.revision_in_collection(collection, id).map_err(|_| stale("revision"))?;
