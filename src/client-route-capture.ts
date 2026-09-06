@@ -145,6 +145,14 @@ function pathToTemplate(pathname: string): string {
 
 const captureOperations: readonly CaptureOperation[] = [
   {
+    client: "databases", operation: "listExports", routeName: "databases.listExports",
+    invoke: (_client, management) => management.exports.list(sampleIds.database, { limit: 25, after: "export-previous" }),
+  },
+  {
+    client: "databases", operation: "cancelExport", routeName: "databases.cancelExport",
+    invoke: (_client, management) => management.exports.cancel(sampleIds.database, "export-1"),
+  },
+  {
     client: "databases", operation: "getProvisioningOperation", routeName: "databases.getProvisioningOperation",
     invoke: (_client, management) => management.operations.get("operation-1"),
   },
@@ -194,7 +202,7 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "databases", operation: "createWebhook", routeName: "databases.createWebhook",
-    invoke: (_client, management) => management.webhooks.create(sampleIds.database, { endpoint: "https://hooks.example.test/events" }),
+    invoke: (_client, management) => management.webhooks.create(sampleIds.database, { endpoint: "https://hooks.example.test/events" }, { idempotencyKey: "webhook-create-1" }),
   },
   {
     client: "databases", operation: "deleteWebhook", routeName: "databases.deleteWebhook",

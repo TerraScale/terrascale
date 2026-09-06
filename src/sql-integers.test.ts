@@ -78,12 +78,50 @@ test("management uint64 fields preserve full range and reject out-of-range value
   }
 });
 
-test("database metadata keeps uint64 timestamps in list envelopes", async () => {
-  const result = await createTerraScaleManagementClient({
-    fetch: async () => new Response('{"databases":[{"created_at":18446744073709551615,"name":"demo","deleted":false,"placement":"GRU","residency":"br-only","parent":null}]}', {
+test("database metadata preserves signed int64 timestamps and rejects overflow", async () => {
+  const read = (timestamp: string) => createTerraScaleManagementClient({
+    fetch: async () => new Response(`{"databases":[{"created_at":${timestamp},"name":"demo","deleted":false,"placement":"GRU","residency":"br-only","parent":null}]}`, {
       headers: { "content-type": "application/json" },
     }),
   }).databases.list();
-  assert.ok(result.ok);
-  assert.equal(result.value.databases[0]?.created_at, 18446744073709551615n);
+  for (const timestamp of [-9223372036854775808n, 9223372036854775807n, -1, 0]) {
+    const result = await read(String(timestamp));
+    assert.ok(result.ok);
+    assert.equal(result.value.databases[0]?.created_at, timestamp);
+  }
+  for (const timestamp of ["-9223372036854775809", "9223372036854775808", "18446744073709551615"]) {
+    const result = await read(timestamp);
+    assert.ok(!result.ok);
+    assert.equal(result.error.code, "invalid_response");
+  }
+});
+
+test("export lifecycle methods preserve uint64 values in statuses and list envelopes", async () => {
+  const status = '{"job_id":"job-1","status":"Running","created_at_millis":18446744073709551615,"phase":"Documents","cancellation":"available","pages":9007199254740993,"records":18446744073709551615,"estimated_records":null,"progress_basis_points":50,"resume_cursor":"cursor","manifest":{"path":"manifest","length":9007199254740993,"checksum":"checksum"},"error":null}';
+  const client = createTerraScaleManagementClient({
+    fetch: async input => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      return new Response(url.pathname.endsWith("/exports") ? `{"exports":[${status}],"next_cursor":null}` : status, {
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  const listed = await client.exports.list("demo");
+  assert.ok(listed.ok);
+  const expected = listed.value.exports[0]!;
+  assert.equal(expected.created_at_millis, 18446744073709551615n);
+  assert.equal(expected.pages, 9007199254740993n);
+  assert.equal(expected.records, 18446744073709551615n);
+  assert.equal(expected.manifest?.length, 9007199254740993n);
+  assert.equal(expected.estimated_records, null);
+  assert.equal(expected.progress_basis_points, 50);
+  const results = await Promise.all([
+    client.exports.get("demo", "job-1"),
+    client.exports.resume("demo", "job-1", { resume_cursor: "cursor" }),
+    client.exports.cancel("demo", "job-1"),
+  ]);
+  for (const result of results) {
+    assert.ok(result.ok);
+    assert.deepEqual(result.value, expected);
+  }
 });

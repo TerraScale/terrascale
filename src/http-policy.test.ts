@@ -93,6 +93,32 @@ describe("TerraScaleHttp request policy", () => {
     assert.equal(captured.headers.get("x-terrascale-project-id"), "project");
   });
 
+  test("sends typed tenant scope and create-only PUT preconditions without header overrides", async () => {
+    let captured: Request | undefined;
+    const client = createTerraScaleClient({
+      tenantId: "authorized-tenant", projectId: projectId,
+      accessToken: "scoped-token",
+      fetch: async input => {
+        captured = new Request(input);
+        return Response.json({ revision: "created" });
+      },
+    });
+    const result = await client.documents.put("demo", "records", "admission", { pending: true }, {
+      ifNoneMatch: "*", idempotencyKey: "stable-admission",
+    });
+    assert.ok(result.ok);
+    assert.equal(captured?.headers.get("x-terrascale-tenant-id"), "authorized-tenant");
+    assert.equal(captured?.headers.get("x-terrascale-project-id"), projectId);
+    assert.equal(captured?.headers.get("if-none-match"), "*");
+    assert.equal(captured?.headers.get("idempotency-key"), "stable-admission");
+    assert.throws(() => client.documents.put("demo", "records", "admission", {}, {
+      ifNoneMatch: "*", ifMatch: '"existing"',
+    }), /cannot be combined/);
+    assert.throws(() => client.documents.patch("demo", "records", "admission", {}, {
+      ifNoneMatch: "*",
+    }), /only for document PUT/);
+  });
+
   test("uses the named access-token credential option", async () => {
     let captured: Request | undefined;
     const http = new TerraScaleHttp({

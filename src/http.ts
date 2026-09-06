@@ -269,6 +269,9 @@ export class TerraScaleHttp {
     const headers = new Headers();
 
     headers.set("accept", options.routeName === "databases.downloadExport" ? "application/octet-stream" : "application/json");
+    if (this.config.tenantId !== undefined) {
+      headers.set("x-terrascale-tenant-id", this.config.tenantId);
+    }
     if (this.config.projectId !== undefined) {
       headers.set("x-terrascale-project-id", this.config.projectId);
     }
@@ -578,9 +581,11 @@ function parseSuccessResponse(raw: string, routeName: TerraScaleRouteName): unkn
   // Keep response metadata and ordinary DTOs on the normal JSON contract.
   const ordinary: unknown = JSON.parse(raw);
   const integerPaths = responseUint64Paths[routeName];
-  if (integerPaths !== undefined) {
+  const signedPaths = responseInt64Paths[routeName];
+  if (integerPaths !== undefined || signedPaths !== undefined) {
     const precise = parseDocumentValue(raw);
-    for (const fieldPath of integerPaths) installUint64Field(ordinary, precise, fieldPath.split("."));
+    for (const fieldPath of integerPaths ?? []) installIntegerField(ordinary, precise, fieldPath.split("."), false);
+    for (const fieldPath of signedPaths ?? []) installIntegerField(ordinary, precise, fieldPath.split("."), true);
     return ordinary;
   }
   const key = routeName === "databases.executeSql" ? "rows"
@@ -615,8 +620,13 @@ const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly
   "databases.deleteWebhook": ["created_at"],
   "databases.listDeliveries": ["deliveries.*.revision", "deliveries.*.retry_started_at", "deliveries.*.next_attempt_at"],
   "databases.replayWebhook": ["revision", "retry_started_at", "next_attempt_at"],
-  "databases.getExport": ["records", "estimated_records", "manifest.length"],
-  "databases.resumeExport": ["records", "estimated_records", "manifest.length"],
+  "databases.getExport": ["created_at_millis", "pages", "records", "estimated_records", "manifest.length"],
+  "databases.resumeExport": ["created_at_millis", "pages", "records", "estimated_records", "manifest.length"],
+  "databases.cancelExport": ["created_at_millis", "pages", "records", "estimated_records", "manifest.length"],
+  "databases.listExports": ["exports.*.created_at_millis", "exports.*.pages", "exports.*.records", "exports.*.estimated_records", "exports.*.manifest.length"],
+};
+
+const responseInt64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly string[]>>> = {
   "databases.listDatabases": ["databases.*.created_at"],
   "databases.listBranches": ["branches.*.created_at"],
   "databases.createDatabase": ["created_at"],
@@ -627,24 +637,26 @@ const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly
   "databases.restoreBackup": ["created_at"],
 };
 
-function installUint64Field(target: unknown, source: unknown, parts: readonly string[]): void {
+function installIntegerField(target: unknown, source: unknown, parts: readonly string[], signed: boolean): void {
   const [part, ...rest] = parts;
   if (part === "*") {
     if (Array.isArray(target) && Array.isArray(source)) {
-      target.forEach((entry: unknown, index: number) => installUint64Field(entry, source[index], rest));
+      target.forEach((entry: unknown, index: number) => installIntegerField(entry, source[index], rest, signed));
     }
     return;
   }
   if (part === undefined || !isRecord(target) || !isRecord(source)) return;
   const value = source[part];
   if (rest.length > 0) {
-    installUint64Field(target[part], value, rest);
+    installIntegerField(target[part], value, rest, signed);
     return;
   }
   if (value === undefined || value === null) return;
-  if (!(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
-    && !(typeof value === "bigint" && value >= 0n && value <= 18446744073709551615n)) {
-    throw new TypeError(`Response field ${part} must be an unsigned 64-bit integer.`);
+  const minimum = signed ? -9223372036854775808n : 0n;
+  const maximum = signed ? 9223372036854775807n : 18446744073709551615n;
+  if (!(typeof value === "number" && Number.isSafeInteger(value) && (signed || value >= 0))
+    && !(typeof value === "bigint" && value >= minimum && value <= maximum)) {
+    throw new TypeError(`Response field ${part} must be ${signed ? "a signed" : "an unsigned"} 64-bit integer.`);
   }
   target[part] = value;
 }

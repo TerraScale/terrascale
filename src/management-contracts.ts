@@ -2,6 +2,7 @@ import type { CollectionSchema } from "./schema.js";
 
 /** Safe integers remain numbers; larger producer u64 values retain bigint precision. */
 export type UInt64Value = number | bigint;
+export type Int64Value = number | bigint;
 
 export type SchemaDocument = {
   readonly target: { readonly database: string; readonly branch: string; readonly collection: string };
@@ -66,7 +67,11 @@ export type ResumeExportRequest = { readonly resume_cursor: string };
 export type ExportAccepted = { readonly job_id: string; readonly status_path: string; readonly resume_cursor: string };
 export type ExportStatus = {
   readonly job_id: string;
-  readonly status: "Accepted" | "Running" | "Complete" | "Failed";
+  readonly status: "Accepted" | "Running" | "Cancelled" | "Complete" | "Failed";
+  readonly created_at_millis: UInt64Value;
+  readonly phase: "Documents" | "History" | "Done";
+  readonly cancellation: "available" | "requested" | "complete" | "unavailable";
+  readonly pages: UInt64Value;
   readonly records: UInt64Value;
   readonly estimated_records: UInt64Value | null;
   readonly progress_basis_points: number;
@@ -87,3 +92,5 @@ export type DevelopmentLogResponse = {
   readonly entries: readonly { readonly sequence: UInt64Value; readonly action: string; readonly atMillis: UInt64Value }[];
   readonly truncated: boolean;
 };
+
+export type ExportList = { readonly exports: readonly ExportStatus[]; readonly next_cursor: string | null };

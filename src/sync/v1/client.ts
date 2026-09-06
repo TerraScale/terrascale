@@ -66,6 +66,9 @@ export type SyncV1ClientOptions = {
   readonly syncBaseUrl?: string;
   readonly fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   readonly accessToken?: SyncV1AccessToken;
+  /** Authenticated attach scope; never sent to snapshot or log delivery. */
+  readonly tenantId?: string;
+  readonly projectId?: string;
   /** Optional direct WebSocket constructor. HTTP remains the default. */
   readonly webSocketFactory?: SyncV1WebSocketFactory;
   /** Bounded server long-poll window. The contract ceiling is 25 seconds. */
@@ -155,6 +158,8 @@ export class TerraScaleSyncV1Client {
   readonly #apiBaseUrl: string;
   readonly #syncBaseUrl: string;
   readonly #accessToken: SyncV1AccessToken | undefined;
+  readonly #tenantId: string | undefined;
+  readonly #projectId: string | undefined;
   readonly #webSocketFactory: SyncV1WebSocketFactory | undefined;
   readonly #pollWindowMs: number;
   readonly #reconnectDelayMs: number;
@@ -168,6 +173,8 @@ export class TerraScaleSyncV1Client {
     this.#apiBaseUrl = normalizeOrigin(options.apiBaseUrl ?? "https://api.terrascale.tech", options.fetch !== undefined);
     this.#syncBaseUrl = normalizeOrigin(options.syncBaseUrl ?? "https://sync.api.terrascale.tech", options.fetch !== undefined);
     this.#accessToken = options.accessToken;
+    this.#tenantId = options.tenantId;
+    this.#projectId = options.projectId;
     this.#webSocketFactory = options.webSocketFactory;
     this.#pollWindowMs = boundedDuration(options.pollWindowMs ?? 25_000, "pollWindowMs", 25_000);
     this.#reconnectDelayMs = boundedDuration(options.reconnectDelayMs ?? 250, "reconnectDelayMs", 30_000);
@@ -512,6 +519,8 @@ export class TerraScaleSyncV1Client {
     signal?: AbortSignal,
   ): Promise<AttachedView> {
     const headers = await this.#headers("application/json", undefined);
+    if (this.#tenantId !== undefined) headers.set("x-terrascale-tenant-id", this.#tenantId);
+    if (this.#projectId !== undefined) headers.set("x-terrascale-project-id", this.#projectId);
     headers.set("Content-Type", "application/json");
     const response = await this.#request(
       `${this.#apiBaseUrl}/api/v1/reactive/views`,
@@ -852,10 +861,7 @@ export class TerraScaleSyncV1Client {
     const headers = new Headers({ accept });
     if (capability !== undefined) {
       headers.set(capabilityHeader, capability);
-      // Keep compatibility with early E-5 members while the declared
-      // response header is being rolled out. The server verifies the
-      // canonical view header; the alias is harmless and can be removed once
-      // old members are no longer supported.
+      // The active edge delivery contract accepts this capability header.
       if (capabilityHeader !== "x-terrascale-capability") {
         headers.set("x-terrascale-capability", capability);
       }
@@ -868,7 +874,7 @@ export class TerraScaleSyncV1Client {
   async #request(input: RequestInfo | URL, init: RequestInit, operation: string): Promise<Response> {
     if (this.#fetch === undefined) throw new TerraScaleSyncV1ClientError("transport", `no fetch implementation is available for ${operation}`);
     try {
-      return await this.#fetch(input, init);
+      return await this.#fetch(input, { ...init, redirect: "error" });
     } catch (error) {
       throw new TerraScaleSyncV1ClientError("transport", `${operation} failed`, { cause: error });
     }

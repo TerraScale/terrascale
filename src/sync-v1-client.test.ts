@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "vitest";
+import { createTerraScaleClient } from "./factory.js";
 
 import {
   decodeTerrascaleSyncV1MsgpackEnvelope,
@@ -354,12 +355,13 @@ describe("current reactive client", () => {
       return new Response(serverFrame(next).buffer as ArrayBuffer, { headers: { "content-type": "application/msgpack" } });
     };
 
-    const client = new TerraScaleSyncV1Client({
+    const client = createTerraScaleClient({
       apiBaseUrl: "https://member.example",
-      syncBaseUrl: "https://sync.api.terrascale.tech",
       accessToken: "session-token",
+      tenantId: "tenant-scope",
+      projectId: "project-scope",
       fetch,
-    });
+    }).reactive;
     const live = await client.subscribe({
       subscription: "orders",
       databaseId: "db-1",
@@ -371,6 +373,8 @@ describe("current reactive client", () => {
     assert.equal(live.logUrl, "https://sync.api.terrascale.tech/api/v1/reactive/views/orders/3/log");
     assert.equal(live.snapshotUrls[0], "https://sync.api.terrascale.tech/api/v1/reactive/views/orders/3/snapshot/0?cut=9");
     assert.equal(requests[0]!.headers.get("authorization"), "Bearer session-token");
+    assert.equal(requests[0]!.headers.get("x-terrascale-tenant-id"), "tenant-scope");
+    assert.equal(requests[0]!.headers.get("x-terrascale-project-id"), "project-scope");
     const attach = JSON.parse(await requests[0]!.clone().text()) as { parameters: string; checkpoint: string | null };
     assert.equal(attach.parameters, "AP8B");
     assert.equal(attach.checkpoint, null);
@@ -379,6 +383,13 @@ describe("current reactive client", () => {
     await live.poll();
     assert.equal(live.view.getRevision(), 8n);
     assert.deepEqual(live.view.getItems()[0]!.value.value, encoder.encode("changed"));
+    for (const request of requests) {
+      assert.equal(request.redirect, "error");
+      if (request.method === "GET") {
+        assert.equal(request.headers.get("x-terrascale-tenant-id"), null);
+        assert.equal(request.headers.get("x-terrascale-project-id"), null);
+      }
+    }
   });
 
   test("resumes with an opaque checkpoint and reports typed retention expiry", async () => {

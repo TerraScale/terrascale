@@ -172,3 +172,32 @@ it("distinguishes accepted production provisioning from a ready database", async
   expect(rejected.ok).toBe(false);
   if (!rejected.ok) expect(rejected.error.kind).toBe("invalid-response");
 });
+
+it("requires exact branch confirmation and bounds admission faults before transport", async () => {
+  const requests: Request[] = [];
+  const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests) });
+  const request = { confirmBranch: "branch", fault: "latency", durationMs: 1000, maxOperations: 1, delayMs: 10 } as const;
+  expect(() => client.development.setFault("primary", request)).toThrow(TypeError);
+  for (const changed of [{ durationMs: 30001 }, { maxOperations: 101 }, { delayMs: 1001 }, { fault: "unavailable" as const, delayMs: 1 }]) {
+    expect(() => client.development.setFault("branch", { ...request, ...changed })).toThrow(TypeError);
+  }
+  expect(() => client.development.logs("branch", { limit: 101 })).toThrow(TypeError);
+  expect(requests).toHaveLength(0);
+});
+
+it("retries webhook creation only with an explicit stable identity and never retries rotation", async () => {
+  for (const operation of ["create", "keyed-create", "rotate"] as const) {
+    const requests: Request[] = [];
+    const client = createTerraScaleManagementClient({
+      maxRetryAttempts: 1, retryDelayMs: 0,
+      fetch: async input => {
+        requests.push(new Request(input));
+        return Response.json({ error: { code: "unavailable", message: "key provider unavailable", fix: "retry when available" } }, { status: 503 });
+      },
+    });
+    if (operation === "rotate") await client.webhooks.rotateSecret("db", "hook", { overlap_seconds: 300 });
+    else await client.webhooks.create("db", { endpoint: "https://example.test/hooks" }, operation === "keyed-create" ? { idempotencyKey: "stable-one" } : {});
+    expect(requests).toHaveLength(operation === "keyed-create" ? 2 : 1);
+    expect(requests.map(request => request.headers.get("idempotency-key"))).toEqual(operation === "keyed-create" ? ["stable-one", "stable-one"] : [null]);
+  }
+});

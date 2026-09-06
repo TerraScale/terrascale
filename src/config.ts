@@ -16,6 +16,8 @@ import type { TerraScaleRequestMetricRecorder } from "./http.js";
 export type TerraScaleRuntimeConfig = {
   readonly apiBaseUrl?: string;
   readonly projectId?: ProjectId;
+  /** Authorized tenant selector; it grants no permissions by itself. */
+  readonly tenantId?: string;
   readonly accessToken?: AccessTokenProvider;
   readonly fetch?: FetchLike;
   readonly requestMetricRecorder?: TerraScaleRequestMetricRecorder;
@@ -30,6 +32,8 @@ export type TerraScaleRuntimeConfig = {
 export type ResolvedTerraScaleRuntimeConfig = {
   readonly apiBaseUrl: string;
   readonly projectId?: ProjectId;
+  /** Authorized tenant selector; it grants no permissions by itself. */
+  readonly tenantId?: string;
   readonly preferredRegion?: TerraScaleRegionCode | undefined;
   readonly regionAffinity: "failover" | "strict";
   readonly maxRetryAttempts: number;
@@ -83,6 +87,7 @@ export function resolveRuntimeConfig(
   return {
     apiBaseUrl,
     ...(config.projectId === undefined ? {} : { projectId: config.projectId }),
+    ...(config.tenantId === undefined ? {} : { tenantId: config.tenantId }),
     preferredRegion,
     regionAffinity,
     maxRetryAttempts,

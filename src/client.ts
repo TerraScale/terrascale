@@ -65,6 +65,8 @@ export class TerraScaleClient {
       ...(config.apiBaseUrl === undefined ? {} : { apiBaseUrl: config.apiBaseUrl }),
       ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
       ...(config.accessToken === undefined ? {} : { accessToken: config.accessToken }),
+      ...(config.tenantId === undefined ? {} : { tenantId: config.tenantId }),
+      ...(config.projectId === undefined ? {} : { projectId: config.projectId }),
     });
 
     // Keep these additional public surfaces out of the ordinary client route
@@ -109,6 +111,8 @@ export type DocumentOperationOptions = {
   readonly signal?: AbortSignal | undefined;
   /** Optimistic concurrency precondition, sent as `If-Match`. */
   readonly ifMatch?: string | undefined;
+  /** Create only when no live document exists. */
+  readonly ifNoneMatch?: "*" | undefined;
   /** Requested acknowledgement class for a write. */
   readonly durability?: "regional" | "global" | undefined;
 };
@@ -209,7 +213,7 @@ export class DocumentsClient {
     options: DocumentOperationOptions = {},
   ): Promise<TerraScaleResult<DocumentWriteResponse>> {
     const path = documentPath(database, collection, id);
-    validateDocumentOperationOptions(options);
+    validateDocumentOperationOptions(options, true);
     validateJsonPayload(value, "document value");
     return directRequest(this.#http, "databases.putDocument", {
       method: "PUT",
@@ -1463,9 +1467,18 @@ function isOpaqueSessionToken(value: unknown): value is string {
   return /^[A-Za-z0-9_-]+$/u.test(value);
 }
 
-function validateDocumentOperationOptions(options: DocumentOperationOptions): void {
+function validateDocumentOperationOptions(options: DocumentOperationOptions, allowCreateOnly = false): void {
   if (options === null || typeof options !== "object") {
     throw new TypeError("operation options must be an object.");
+  }
+  if (options.ifNoneMatch !== undefined && !allowCreateOnly) {
+    throw new TypeError("write ifNoneMatch is supported only for document PUT.");
+  }
+  if (options.ifNoneMatch !== undefined && options.ifNoneMatch !== "*") {
+    throw new TypeError('write ifNoneMatch must be "*".');
+  }
+  if (options.ifNoneMatch !== undefined && options.ifMatch !== undefined) {
+    throw new TypeError("ifNoneMatch and ifMatch cannot be combined.");
   }
   if (options.ifMatch !== undefined &&
     (typeof options.ifMatch !== "string" || options.ifMatch.trim().length === 0 || options.ifMatch.length > 1024)) {
@@ -1483,9 +1496,10 @@ function documentRequestOptions(options: DocumentOperationOptions): {
   readonly signal?: AbortSignal | undefined;
 } {
   return {
-    ...(options.ifMatch === undefined && options.durability === undefined ? {} : {
+    ...(options.ifMatch === undefined && options.ifNoneMatch === undefined && options.durability === undefined ? {} : {
       headers: {
         ...(options.ifMatch === undefined ? {} : { "if-match": options.ifMatch }),
+        ...(options.ifNoneMatch === undefined ? {} : { "if-none-match": options.ifNoneMatch }),
         ...(options.durability === undefined ? {} : { "x-terrascale-durability": options.durability }),
       },
     }),

@@ -43,7 +43,7 @@ export class ManagementContractGapError extends Error {
 }
 
 export type Database = {
-  readonly created_at: Contracts.UInt64Value;
+  readonly created_at: Contracts.Int64Value;
   readonly deleted: boolean;
   readonly name: string;
   readonly placement: string;
@@ -342,6 +342,15 @@ export class ManagementExportsClient {
   readonly #http: TerraScaleHttp;
   constructor(http: TerraScaleHttp) { this.#http = http; }
 
+  list(databaseId: string, options: ManagementRequestOptions & { readonly after?: string; readonly limit?: number } = {}): Promise<TerraScaleResult<Contracts.ExportList>> {
+    if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 50)) throw new TypeError("limit must be an integer between 1 and 50.");
+    return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/exports`, routeName: "databases.listExports", signal: options.signal, query: { after: options.after, limit: options.limit } });
+  }
+
+  cancel(databaseId: string, jobId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ExportStatus>> {
+    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}/cancel`, routeName: "databases.cancelExport", signal: options.signal, idempotencyKey: false });
+  }
+
   create(databaseId: string, request: Contracts.CreateExportRequest, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.ExportAccepted>> {
     requireText(request?.idempotency_key, "idempotency_key", 512);
     return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/exports`, routeName: "databases.createExport", signal: options.signal, body: request, idempotencyKey: false });
@@ -361,6 +370,8 @@ export class ManagementExportsClient {
   }
 }
 
+export type WebhookCreateOptions = ManagementRequestOptions & { readonly idempotencyKey?: string };
+
 export class ManagementWebhooksClient {
   readonly #http: TerraScaleHttp;
   constructor(http: TerraScaleHttp) { this.#http = http; }
@@ -369,10 +380,11 @@ export class ManagementWebhooksClient {
     return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/webhooks`, routeName: "databases.listWebhooks", signal: options.signal });
   }
 
-  create(databaseId: string, request: Contracts.CreateWebhookRequest, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.WebhookSecretResponse>> {
+  create(databaseId: string, request: Contracts.CreateWebhookRequest, options: WebhookCreateOptions = {}): Promise<TerraScaleResult<Contracts.WebhookSecretResponse>> {
+    if (options.idempotencyKey !== undefined) requireText(options.idempotencyKey, "idempotencyKey", 128);
     const endpoint = new URL(request?.endpoint);
     if (endpoint.protocol !== "https:") throw new TypeError("webhook endpoint must use HTTPS.");
-    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/webhooks`, routeName: "databases.createWebhook", signal: options.signal, body: request, idempotencyKey: false });
+    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/webhooks`, routeName: "databases.createWebhook", signal: options.signal, body: request, idempotencyKey: options.idempotencyKey ?? false });
   }
 
   rotateSecret(databaseId: string, webhookId: string, request: Contracts.RotateWebhookSecretRequest = {}, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.WebhookSecretResponse>> {
@@ -536,7 +548,7 @@ function webhookPath(databaseId: string, webhookId: string): string {
 }
 
 function requireText(value: string, name: string, maximumBytes?: number): void {
-  if (typeof value !== "string" || value.trim().length === 0 || (maximumBytes !== undefined && new TextEncoder().encode(value).length > maximumBytes)) throw new TypeError(`${name} must be nonblank${maximumBytes === undefined ? "" : ` and at most ${maximumBytes} UTF-8 bytes`}.`);
+  if (typeof value !== "string" || value.trim().length === 0 || /\p{Cc}/u.test(value) || (maximumBytes !== undefined && new TextEncoder().encode(value).length > maximumBytes)) throw new TypeError(`${name} must be nonblank${maximumBytes === undefined ? "" : ` and at most ${maximumBytes} UTF-8 bytes`}.`);
 }
 
 function decodeCreateDatabaseResult(result: TerraScaleResult<unknown>): CreateDatabaseResult {

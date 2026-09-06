@@ -65,11 +65,14 @@ function schemaName(value: OpenApiSchemaRef | undefined): string | undefined {
 }
 function requestType(body: OpenApiSchemaRef | undefined): string { return body === undefined ? "void" : schemaName(body.content?.["application/json"]?.schema) ?? "json"; }
 function responseType(responses: Record<string, OpenApiResponse> | undefined): string {
-  const response = Object.entries(responses ?? {}).filter(([status]) => /^2(?:\d\d|xx)$/iu.test(status)).sort(([left], [right]) => left.localeCompare(right))[0]?.[1];
-  if (response === undefined) return "never";
-  if (response.content?.["application/octet-stream"] !== undefined) return "Uint8Array";
-  const content = response.content?.["application/json"] ?? Object.values(response.content ?? {})[0];
-  return schemaName(content?.schema) ?? (content?.schema === undefined ? "void" : "json");
+  const successful = Object.entries(responses ?? {}).filter(([status]) => /^2(?:\d\d|xx)$/iu.test(status)).sort(([left], [right]) => left.localeCompare(right));
+  if (successful.length === 0) return "never";
+  const types = successful.map(([, response]) => {
+    if (response.content?.["application/octet-stream"] !== undefined) return "Uint8Array";
+    const content = response.content?.["application/json"] ?? Object.values(response.content ?? {})[0];
+    return schemaName(content?.schema) ?? (content?.schema === undefined ? "void" : "json");
+  });
+  return [...new Set(types)].join(" | ");
 }
 function camelCase(value: string): string { return value.replace(/[-_ ]+(.)/gu, (_, character: string) => character.toUpperCase()); }
 function clientName(pathTemplate: string): string {
