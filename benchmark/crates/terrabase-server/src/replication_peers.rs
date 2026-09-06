@@ -297,6 +297,7 @@ impl ReplicationPeers {
                         live_workers: worker_lifecycle.clone(),
                         progress: progress.clone(),
                         observations: worker_observations.clone(),
+                        retirement: None,
                     },
                     worker_cuts.clone(),
                 ));
@@ -381,15 +382,12 @@ impl ReplicationPeers {
             return result;
         }
         let peers = {
-            let mut admitted = self.admitted.lock().map_err(failure)?;
+            let admitted = self.admitted.lock().map_err(failure)?;
             if self.draining.load(Ordering::Acquire) || *self.stop.borrow() {
                 return Err("replication peer owner is draining".into());
             }
-            if !self.retiring.swap(true, Ordering::AcqRel) {
-                admitted.clone()
-            } else {
-                admitted.clone()
-            }
+            self.retiring.store(true, Ordering::Release);
+            admitted.clone()
         };
         let mut responses = BTreeMap::new();
         for peer in self.admissions.keys() {
@@ -405,13 +403,21 @@ impl ReplicationPeers {
                 if !peers.contains(&(peer.clone(), scope)) {
                     return Err("retirement worker returned an unadmitted lane".into());
                 }
-                responses.insert((peer.clone(), scope), lane);
+                if responses.insert((peer.clone(), scope), lane).is_some() {
+                    return Err("retirement worker returned a duplicate lane".into());
+                }
             }
         }
         if responses.keys().copied().collect::<std::collections::BTreeSet<_>>() != peers {
             return Err("retirement response lane set is incomplete".into());
         }
-        let result = Ok(RetirementEvidence { lanes: responses });
+        if self.draining.load(Ordering::Acquire)
+            || *self.stop.borrow()
+            || self.live_workers.lock().map_err(failure)?.len() != self.admissions.len()
+        {
+            return Err("replication peer owner stopped during retirement capture".into());
+        }
+        let result = Ok(responses);
         *self.retirement_result.lock().map_err(failure)? = Some(result.clone());
         result
     }
@@ -488,6 +494,12 @@ impl ReplicationPeers {
     /// # Errors
     /// Rejects stopped workers; acknowledgments follow all in-flight disk work.
     pub async fn remove_database(&self, scope: DatabaseRouteScope) -> Result<(), String> {
+        if self.draining.load(Ordering::Acquire)
+            || self.retiring.load(Ordering::Acquire)
+            || *self.stop.borrow()
+        {
+            return Err("replication peer owner is draining".into());
+        }
         self.progress.fence_database(scope);
         self.cuts.forget(scope)?;
         let peers = self
@@ -612,7 +624,27 @@ async fn peer_worker(
     loop {
         let connection = tokio::select! {
             _ = stopped.changed() => return,
-            command = new_lanes.recv() => { if let Some(command) = command { apply_command(command, &mut lanes, &observations, id.as_str()); } else { return; } continue; },
+            command = new_lanes.recv() => {
+                if let Some(command) = command {
+                    if let PeerCommand::Retire { done } = command {
+                        let result = match new_lanes.retirement.clone() {
+                            Some(result) => result,
+                            None => {
+                                let result = retirement::capture_lanes(&lanes).await;
+                                if result.is_ok() {
+                                    new_lanes.retirement = Some(result.clone());
+                                }
+                                result
+                            }
+                        };
+                        let _ = done.send(result);
+                        retirement_park(&mut new_lanes, &mut stopped, &lanes).await;
+                        return;
+                    }
+                    apply_command(command, &mut lanes, &observations, id.as_str());
+                } else { return; }
+                continue;
+            },
             connection = async {
                 if dial { endpoint.connect(&id, ProductionConnectionClass::Replication).await.ok() } else { incoming.recv().await }
             } => connection,
@@ -622,7 +654,7 @@ async fn peer_worker(
                 continue;
             }
             observe(&observations, id.as_str(), &lanes, true);
-            let _ = session(
+            let session_result = session(
                 connection,
                 &runtime,
                 &progress,
@@ -633,6 +665,10 @@ async fn peer_worker(
                 &cuts,
             )
             .await;
+            if matches!(session_result, Err(ref error) if error == "__retire__") {
+                retirement_park(&mut new_lanes, &mut stopped, &lanes).await;
+                return;
+            }
             observe(&observations, id.as_str(), &lanes, false);
         } else if !dial {
             return;
@@ -640,6 +676,36 @@ async fn peer_worker(
         tokio::select! {
             _ = stopped.changed() => return,
             () = tokio::time::sleep(Duration::from_secs(1)) => {}
+        }
+    }
+}
+
+async fn retirement_park(
+    inbox: &mut PeerInbox,
+    stopped: &mut watch::Receiver<bool>,
+    lanes: &[PeerDatabase],
+) {
+    loop {
+        tokio::select! {
+            _ = stopped.changed() => return,
+            command = inbox.recv() => match command {
+                Some(PeerCommand::Retire { done }) => {
+                    let result = match inbox.retirement.clone() {
+                        Some(result) => result,
+                        None => {
+                            let result = retirement::capture_lanes(lanes).await;
+                            if result.is_ok() {
+                                inbox.retirement = Some(result.clone());
+                            }
+                            result
+                        }
+                    };
+                    let _ = done.send(result);
+                }
+                Some(PeerCommand::Remove { done, .. }) => { let _ = done.send(()); }
+                Some(PeerCommand::Add(_)) => {}
+                None => return,
+            }
         }
     }
 }
@@ -730,7 +796,27 @@ async fn session(
             return Ok(());
         }
         tokio::select! {
-            command = new_lanes.recv() => { if let Some(command) = command { apply_command(command, lanes, observations, connection.peer().member().as_str()); } return Ok(()); },
+            command = new_lanes.recv() => {
+                match command {
+                    Some(PeerCommand::Retire { done }) => {
+                        let result = match new_lanes.retirement.clone() {
+                            Some(result) => result,
+                            None => {
+                                let result = retirement::capture_lanes(lanes).await;
+                                if result.is_ok() {
+                                    new_lanes.retirement = Some(result.clone());
+                                }
+                                result
+                            }
+                        };
+                        let _ = done.send(result);
+                        return Err("__retire__".into());
+                    }
+                    Some(command) => apply_command(command, lanes, observations, connection.peer().member().as_str()),
+                    None => return Ok(()),
+                }
+                return Ok(())
+            },
             frame = frames.recv() => {
                 let bytes = frame.ok_or_else(|| "replication reader closed".to_owned())?.map_err(failure)?;
                 let scope = frame_scope(&bytes)?;
@@ -1193,7 +1279,15 @@ struct RepairLane {
 
 enum PeerCommand {
     Add(Vec<PeerDatabase>),
-    Remove { scope: DatabaseRouteScope, done: tokio::sync::oneshot::Sender<()> },
+    Remove {
+        scope: DatabaseRouteScope,
+        done: tokio::sync::oneshot::Sender<()>,
+    },
+    Retire {
+        done: tokio::sync::oneshot::Sender<
+            Result<Vec<(DatabaseRouteScope, RetiredPeerLane)>, String>,
+        >,
+    },
 }
 
 /// Receiver closure and multi-peer admission share one synchronous commit boundary.
@@ -1203,6 +1297,7 @@ struct PeerInbox {
     live_workers: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
     progress: Arc<ReplicationProgress>,
     observations: PeerObservations,
+    retirement: Option<Result<Vec<(DatabaseRouteScope, RetiredPeerLane)>, String>>,
 }
 
 impl PeerInbox {
@@ -1243,6 +1338,7 @@ fn apply_command(
             }
             let _ = done.send(());
         }
+        PeerCommand::Retire { .. } => {}
     }
 }
 

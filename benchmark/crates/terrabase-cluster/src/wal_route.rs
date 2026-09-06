@@ -543,4 +543,18 @@ mod tests {
         drop(runtime);
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn poisoned_admission_lock_cannot_authorize_retired_capture() {
+        let binding = binding();
+        let poisoned = binding.active.clone();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = poisoned.lock().unwrap();
+            panic!("poison admission lock");
+        }));
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        runtime.block_on(async {
+            assert!(matches!(binding.reserve_retired_worker().await, Err(WalRouteError::Fenced)));
+        });
+    }
 }

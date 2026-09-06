@@ -1189,8 +1189,9 @@ mod tests {
             assert_eq!(proof.snapshot_digest(), manifest.identity());
             assert_eq!(proof.scope(), scope);
             assert_eq!(proof.sequence(), manifest.sequence());
+            let replacement_binding = binding(follower_id);
             let mut replacement = WalSnapshotSink::begin_local(
-                binding(follower_id),
+                replacement_binding.clone(),
                 manifest.clone(),
                 root.join("installed"),
                 64 * 1024 * 1024,
@@ -1210,14 +1211,44 @@ mod tests {
                         .unwrap();
                 }
             }
-            let (replaced, replacement_receipt) =
+            let (mut replaced, replacement_receipt) =
                 replacement.finish_replacing_admitted(follower).await.unwrap();
             assert_eq!(replacement_receipt.checkpoint, Some(manifest.checkpoint()));
             assert_eq!(
                 replaced.installed_snapshot().unwrap().snapshot_digest(),
                 manifest.identity()
             );
+            let before = replaced.physical_boundary().await.unwrap().unwrap();
+            assert!(matches!(
+                replaced.retired_physical_boundary().await,
+                Err(WalQuicError::Route(WalRouteError::Unauthorized))
+            ));
+            let held = replacement_binding.reserve_worker().unwrap();
+            replacement_binding.fence();
+            let mut pending = Box::pin(replaced.retired_physical_boundary());
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(20), &mut pending)
+                    .await
+                    .is_err()
+            );
+            drop(held);
+            let retired = pending.await.unwrap();
+            assert_eq!(retired.scope(), before.scope());
+            assert_eq!(retired.generation(), before.generation());
+            assert_eq!(retired.epoch(), before.epoch());
+            assert_eq!(retired.snapshot_digest(), before.snapshot_digest());
+            assert_eq!(retired.checkpoint_digest(), before.checkpoint_digest());
+            assert_eq!(retired.sequence(), before.sequence());
+
             drop(replaced);
+            let missing_binding = binding(follower_id);
+            let (raw, _) = WalFollower::open_existing(&root.join("installed")).unwrap();
+            let mut missing = WalFollowerDriver::new(missing_binding.clone(), raw);
+            missing_binding.fence();
+            assert!(matches!(
+                missing.retired_physical_boundary().await,
+                Err(WalQuicError::Route(WalRouteError::Unauthorized))
+            ));
             let (_, recovered) = WalFollower::open_existing(&root.join("installed")).unwrap();
             assert_eq!(recovered, manifest.checkpoint());
         });

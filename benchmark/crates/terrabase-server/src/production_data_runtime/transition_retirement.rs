@@ -52,22 +52,8 @@ impl ProductionDataLifecycle {
         runtime: Arc<ProductionMemberRuntime>,
         prepared: &VerifiedPreparedTransition,
     ) -> Result<TransitionWriterFences, String> {
-        let config = runtime.transport().config();
-        let identity = config.local_identity();
-        if prepared.scope_id() != format!("{}/{}", identity.environment(), identity.cluster())
-            || prepared.prior_epoch() != config.replica_set_epoch()
-            || prepared.prior_generation() != config.placement_generation()
-        {
-            return Err("prepared transition does not name this runtime".into());
-        }
         let startup = Arc::clone(&self.startup).lock_owned().await;
-        let owner = self
-            .get()
-            .and_then(|data| data.runtime.upgrade())
-            .ok_or("transition has no retained replication runtime")?;
-        if !Arc::ptr_eq(&owner, &runtime) {
-            return Err("transition runtime does not own this lifecycle".into());
-        }
+        self.validate_retirement_owner(&runtime, prepared)?;
         let expected = self
             .expected
             .lock()
@@ -93,6 +79,28 @@ impl ProductionDataLifecycle {
         })
         .await
         .map_err(|_| "transition origin fencing worker failed".to_owned())?
+    }
+    pub(super) fn validate_retirement_owner(
+        &self,
+        runtime: &Arc<ProductionMemberRuntime>,
+        prepared: &VerifiedPreparedTransition,
+    ) -> Result<(), String> {
+        let config = runtime.transport().config();
+        let identity = config.local_identity();
+        if prepared.scope_id() != format!("{}/{}", identity.environment(), identity.cluster())
+            || prepared.prior_epoch() != config.replica_set_epoch()
+            || prepared.prior_generation() != config.placement_generation()
+        {
+            return Err("prepared transition does not name this runtime".into());
+        }
+        let owner = self
+            .get()
+            .and_then(|data| data.runtime.upgrade())
+            .ok_or("transition has no retained replication runtime")?;
+        if !Arc::ptr_eq(&owner, &runtime) {
+            return Err("transition runtime does not own this lifecycle".into());
+        }
+        Ok(())
     }
 }
 

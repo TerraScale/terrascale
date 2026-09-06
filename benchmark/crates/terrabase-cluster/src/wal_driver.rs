@@ -661,6 +661,12 @@ impl WalFollowerDriver {
     ) -> Result<WalRetiredPhysicalBoundary, WalQuicError> {
         let installed =
             self.installed.clone().ok_or(WalQuicError::Route(WalRouteError::Unauthorized))?;
+        if installed.scope() != self.binding.scope()
+            || installed.generation() != self.binding.generation()
+            || installed.epoch() != self.binding.epoch()
+        {
+            return Err(WalQuicError::Route(WalRouteError::Unauthorized));
+        }
         let permit = self.binding.reserve_retired_worker().await.map_err(WalQuicError::Route)?;
         let follower = self.follower.clone();
         tokio::task::spawn_blocking(move || {

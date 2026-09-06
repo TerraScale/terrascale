@@ -24,12 +24,14 @@ use terrabase_tbep::registry::BoundScope;
 mod host_readiness;
 mod public_server;
 mod readiness_inventory;
+mod replication_retirement;
 mod transition_retirement;
 #[cfg(test)]
 mod transition_retirement_tests;
 
 pub use host_readiness::WriterHostReadiness;
 pub use public_server::{PreparedProductionPublic, PublicServingStatus};
+pub use replication_retirement::{RetiredReplicationFrontiers, RetiredWriterFrontier};
 pub use transition_retirement::TransitionWriterFences;
 
 /// Filesystem and residency bounds of an authenticated admission record.
@@ -62,6 +64,8 @@ pub struct ProductionDataRuntime {
 pub struct ProductionDataLifecycle {
     data: OnceLock<ProductionDataRuntime>,
     startup: Arc<tokio::sync::Mutex<()>>,
+    retirement: tokio::sync::Mutex<replication_retirement::RetirementState>,
+    retired_frontiers: OnceLock<Arc<RetiredReplicationFrontiers>>,
     draining: AtomicBool,
     progress: Arc<ReplicationProgress>,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
@@ -79,6 +83,8 @@ impl ProductionDataLifecycle {
         Self {
             data: OnceLock::new(),
             startup: Arc::new(tokio::sync::Mutex::new(())),
+            retirement: tokio::sync::Mutex::new(replication_retirement::RetirementState::default()),
+            retired_frontiers: OnceLock::new(),
             draining: AtomicBool::new(false),
             progress,
             registry,

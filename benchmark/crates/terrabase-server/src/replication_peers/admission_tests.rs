@@ -52,6 +52,7 @@ fn synthetic() -> Synthetic {
                 live_workers: live_workers.clone(),
                 progress: progress.clone(),
                 observations: observations.clone(),
+                retirement: None,
             },
         );
     }
@@ -70,6 +71,8 @@ fn synthetic() -> Synthetic {
             worker_status: join.abort_handle(),
             join: tokio::sync::Mutex::new(Some(join)),
             drain_result: std::sync::Mutex::new(None),
+            retiring: std::sync::atomic::AtomicBool::new(false),
+            retirement_result: std::sync::Mutex::new(None),
         },
         receivers,
         progress,
