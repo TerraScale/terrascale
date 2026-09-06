@@ -1,8 +1,7 @@
 # TerraScale.DotNet
 
 The C#/.NET 10 client SDK for TerraScale. The workspace
-[`../GOAL.md`](../GOAL.md) is the single authority for the product; this
-repository's [`GOAL.md`](GOAL.md) points to it. The SDK is generated from the
+[workspace goal](../GOAL.md#ts-dotnet) defines the product and SDK responsibilities. The SDK is generated from the
 pinned contract that terrabase publishes (D-13/D-33) and rebuilt by product
 item P-2b; what is checked in today is the surviving hand-written core from
 before that regeneration.

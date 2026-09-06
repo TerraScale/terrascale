@@ -1,8 +1,8 @@
 # TerraScale.DotNet ADR index
 
 These records define the public .NET SDK boundary. The workspace
-[`../../../GOAL.md`](../../../GOAL.md) and repository [`../../GOAL.md`](../../GOAL.md)
-control the product target. An accepted SDK boundary is not live service or
+[`../../../GOAL.md`](../../../GOAL.md)
+controls the product target. An accepted SDK boundary is not live service or
 production evidence.
 
 | ADR | Status | Decision |

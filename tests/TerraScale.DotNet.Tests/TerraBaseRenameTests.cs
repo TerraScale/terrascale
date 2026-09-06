@@ -29,7 +29,7 @@ public sealed class TerraBaseRenameTests
 
     private static IEnumerable<string> EnumerateActiveConsumerFiles(string repositoryRoot)
     {
-        foreach (var fileName in new[] { "GOAL.md", "README.md", "Directory.Build.props", "BannedSymbols.txt", "TerraScale.DotNet.slnx" })
+        foreach (var fileName in new[] { "README.md", "Directory.Build.props", "BannedSymbols.txt", "TerraScale.DotNet.slnx" })
         {
             yield return Path.Combine(repositoryRoot, fileName);
         }
