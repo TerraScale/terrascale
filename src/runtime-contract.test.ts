@@ -10,6 +10,7 @@ test("package metadata declares the supported Node and browser matrix", async ()
   const packageJson = JSON.parse(await readFile(path.join(repositoryRoot, "package.json"), "utf8")) as {
     readonly engines?: { readonly node?: string; readonly npm?: string };
     readonly peerDependencies?: Record<string, string>;
+    readonly peerDependenciesMeta?: Record<string, { readonly optional?: boolean }>;
     readonly browserslist?: { readonly production?: readonly string[] };
     readonly exports?: Record<string, {
       readonly types?: string;
@@ -25,7 +26,8 @@ test("package metadata declares the supported Node and browser matrix", async ()
     "last 1 Safari major version",
     "last 1 Edge major version",
   ]);
-  assert.deepEqual(packageJson.peerDependencies, { react: ">=18.2.0 <20.0.0" });
+  assert.deepEqual(packageJson.peerDependencies, { "@better-auth/core": "1.7.2", react: ">=18.2.0 <20.0.0" });
+  assert.equal(packageJson.peerDependenciesMeta?.["@better-auth/core"]?.optional, true);
   assert.deepEqual(packageJson.exports?.["."], {
     types: "./dist/index.d.ts",
     import: "./dist/index.js",

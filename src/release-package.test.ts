@@ -138,7 +138,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
         new RegExp(`\\b${method}\\b`, "u"),
       );
     }
-    await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], { cwd: consumer });
+    await run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball, "@better-auth/core@1.7.2"], { cwd: consumer });
     const journey = path.join(consumer, "packed-journey.ts");
     await writeFile(journey, packedConsumerJourney);
     await run("node", [journey], { cwd: consumer });

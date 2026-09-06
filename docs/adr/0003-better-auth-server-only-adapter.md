@@ -45,7 +45,7 @@ It receives the final Better Auth options, applies the maintained schema, ID,
 date, and field transformations, and sends normalized explicit joins to the
 producer. The internal options copy enables native joins for both ordinary and
 transactional operations so related reads use the same producer snapshot.
-Schema fields marked unique are provisioned through named index operations
+Schema fields and compound indexes marked unique are provisioned through named index operations
 before data operations or transaction begin; provisioning failures block use.
 Fresh provisioning attempts use bounded keys, with each transport retry retaining
 its original key, so a persisted failed index attempt cannot permanently poison

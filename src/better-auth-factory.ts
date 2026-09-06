@@ -192,19 +192,34 @@ function customAdapter(
   const ensure = async (): Promise<void> => {
     if (!provisionIndexes) return;
     if (ready === undefined) {
-      const attempt = Promise.all(Object.entries(config.schema).flatMap(([model, table]) => Object.entries(table.fields)
-        .filter(([, field]) => field.unique === true)
-        .map(([field]) => {
-          const physicalModel = config.getModelName(model);
-          const physicalField = config.getFieldName({ model, field });
-          return port.index({ model: physicalModel, fields: [physicalField] }, { idempotencyKey: `better-auth-index-${globalThis.crypto.randomUUID()}` });
-        })))
-        .then((results) => {
-          for (const result of results) {
-            const value = unwrap(result);
-            if (value.matched !== true || value.record !== null) throw new TypeError("Auth index operation returned an invalid success result.");
+      const attempt = (async () => {
+        const provisioned = new Set<string>();
+        for (const [model, table] of Object.entries(config.schema)) {
+          const indexes = [
+            ...Object.entries(table.fields).filter(([, field]) => field.unique === true)
+              .map(([field]) => [field]),
+            ...(table.indexes ?? []).filter(index => index.unique === true)
+              .map(index => index.fields),
+          ];
+          for (const fields of indexes) {
+            const request = {
+              model: config.getModelName(model),
+              fields: fields.map(field => config.getFieldName({ model, field })),
+            };
+            const identity = JSON.stringify(request);
+            if (provisioned.has(identity)) continue;
+            // Provision sequentially so cold-start schema work cannot saturate
+            // the same bounded consensus lane required to install the indexes.
+            const value = unwrap(await port.index(request, {
+              idempotencyKey: `better-auth-index-${globalThis.crypto.randomUUID()}`,
+            }));
+            if (value.matched !== true || value.record !== null) {
+              throw new TypeError("Auth index operation returned an invalid success result.");
+            }
+            provisioned.add(identity);
           }
-        });
+        }
+      })();
       ready = attempt.catch((error: unknown) => {
         ready = undefined;
         throw error;

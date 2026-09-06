@@ -204,3 +204,22 @@ function echoMutations(request: Request, body: unknown): Response {
   if (request.url.endsWith("/insertUnique")) return Response.json({matched:true, record:(body as {record:unknown}).record});
   return Response.json({record:null, matched:true});
 }
+
+
+test("provisions mapped core and plugin compound uniqueness before data operations", async () => {
+  const seen: Seen[] = [];
+  const adapter = createTerraScaleAuthAdapter(client(seen), "auth")({
+    ...options,
+    account: {modelName:"identities", fields:{issuer:"identity_issuer", accountId:"external_id"}},
+    plugins: [{id:"compound-test", schema:{claim:{
+      modelName:"claims",
+      fields:{realm:{type:"string", fieldName:"realm_name"}, subject:{type:"string", fieldName:"subject_id"}},
+      indexes:[{fields:["realm", "subject"], unique:true}],
+    }}}],
+  });
+  await adapter.findMany({model:"user", limit:1});
+  const indexes = seen.filter(({request}) => request.url.endsWith("/index")).map(({body}) => body);
+  assert.ok(indexes.some(value => JSON.stringify(value) === JSON.stringify({model:"identities", fields:["identity_issuer", "external_id"]})));
+  assert.ok(indexes.some(value => JSON.stringify(value) === JSON.stringify({model:"claims", fields:["realm_name", "subject_id"]})));
+  assert.equal(seen.at(-1)?.request.url.endsWith("/findPage"), true);
+});
