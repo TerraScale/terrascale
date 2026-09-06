@@ -34,7 +34,7 @@ type ContractFrame struct {
 
 const (
 	ContractVersion           = "v1"
-	ContractOpenAPIBLAKE3     = "b45d567ddf3b32638611e7b7c94ee27a9f21e93933bd1d946a0c402b6aa02d91"
+	ContractOpenAPIBLAKE3     = "742cfc08269cebdf7d486f8606fab0154fb3b828bf774c13524f4f30d3b69da0"
 	ContractMessagePackBLAKE3 = "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27"
 )
 
