@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
-  "openapiBlake3": "bf10b17a5abce282a305ddc845da372318c09df1b27b99b40acb42f7c45d73ae",
-  "openapiSha256": "b6372b590409906d9b87db3c3852e27d79a6f1c48c203360ec3c618b9fdff18f",
+  "openapiBlake3": "f3d7e27f297c105934fd34ded7d11e39daaef455fbe28f7ca267ae78f311e934",
+  "openapiSha256": "a0c1c6df925b3cc1a7514145382e7c576b592fd6d6e006e381c8f95138d669b0",
   "operations": [
     {
       "errors": [
@@ -4721,10 +4721,13 @@
         "body": {
           "mediaType": "application/json",
           "value": {
+            "joins": [],
             "limit": 0,
             "model": "sample",
             "offset": 0,
-            "predicates": []
+            "predicates": [],
+            "select": null,
+            "sortBy": null
           }
         },
         "headers": {

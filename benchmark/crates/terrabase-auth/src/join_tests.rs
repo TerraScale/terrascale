@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use crate::*;
-use openraft::{CommittedLeaderId, Entry, EntryPayload, LogId};
 use openraft::storage::RaftStateMachine;
+use openraft::{CommittedLeaderId, Entry, EntryPayload, LogId};
 
 fn command(key: &str, action: Action) -> Command {
     Command { idempotency_key: key.into(), observed_at_ms: 1, action }
@@ -167,33 +167,38 @@ async fn joined_response_over_one_megabyte_is_rejected_atomically() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "join-bytes").unwrap();
     let payload = "x".repeat(200_000);
-    for index in 0..6_u64 {
+    let mut index = 1;
+    for child_index in 0..6_u64 {
         assert!(matches!(
             apply(
                 &mut store,
-                index + 1,
-                &format!("base-{index}"),
+                index,
+                &format!("base-{child_index}"),
                 Action::InsertUnique {
                     model: "base".into(),
-                    record: record(json!({"id":format!("b{index}"),"key":"k"})),
+                    record: record(json!({"id":format!("b{child_index}"),"key":"k"})),
                 }
             )
             .await,
             Outcome::Record { .. }
         ));
+        index += 1;
         assert!(matches!(
             apply(
                 &mut store,
-                index + 10,
-                &format!("child-{index}"),
+                index,
+                &format!("child-{child_index}"),
                 Action::InsertUnique {
                     model: "child".into(),
-                    record: record(json!({"id":format!("c{index}"),"key":"k","payload":payload})),
+                    record: record(
+                        json!({"id":format!("c{child_index}"),"key":"k","payload":payload})
+                    ),
                 }
             )
             .await,
             Outcome::Record { .. }
         ));
+        index += 1;
     }
     let result = apply(
         &mut store,
@@ -211,4 +216,112 @@ async fn joined_response_over_one_megabyte_is_rejected_atomically() {
     )
     .await;
     assert!(matches!(result, Outcome::Invalid { .. }));
+}
+
+#[tokio::test]
+async fn joins_enforce_duplicate_outputs_one_to_one_and_retained_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "join-bounds").unwrap();
+    let mut index = 1;
+    for id in ["a", "b"] {
+        assert!(matches!(
+            apply(
+                &mut store,
+                index,
+                id,
+                Action::InsertUnique {
+                    model: "base".into(),
+                    record: record(json!({"id":id,"key":"k","sort":1})),
+                }
+            )
+            .await,
+            Outcome::Record { .. }
+        ));
+        index += 1;
+    }
+    for id in ["first", "second"] {
+        assert!(matches!(
+            apply(
+                &mut store,
+                index,
+                id,
+                Action::InsertUnique {
+                    model: "related".into(),
+                    record: record(json!({"id":id,"key":"k"})),
+                }
+            )
+            .await,
+            Outcome::Record { .. }
+        ));
+        index += 1;
+    }
+    let one = apply(
+        &mut store,
+        index,
+        "one",
+        Action::Find {
+            model: "base".into(),
+            predicates: vec![],
+            offset: 0,
+            limit: 1,
+            select: None,
+            sort: None,
+            joins: vec![join("related", "related", "key", "key", JoinRelation::OneToOne)],
+        },
+    )
+    .await;
+    let Outcome::Records { records } = one else { panic!("expected records") };
+    assert_eq!(records[0]["related"]["id"], "first");
+    let duplicate = apply(
+        &mut store,
+        index + 1,
+        "duplicate",
+        Action::Find {
+            model: "base".into(),
+            predicates: vec![],
+            offset: 0,
+            limit: 1,
+            select: None,
+            sort: None,
+            joins: vec![
+                join("related", "same", "key", "key", JoinRelation::OneToOne),
+                join("related", "same", "key", "key", JoinRelation::OneToMany),
+            ],
+        },
+    )
+    .await;
+    assert!(matches!(duplicate, Outcome::Invalid { .. }));
+
+    let large = "x".repeat(600_000);
+    for n in 0..8 {
+        assert!(matches!(
+            apply(
+                &mut store,
+                index + 2 + n,
+                &format!("large-{n}"),
+                Action::InsertUnique {
+                    model: "large".into(),
+                    record: record(json!({"id":format!("large-{n}"),"sort":n,"body":large})),
+                }
+            )
+            .await,
+            Outcome::Record { .. }
+        ));
+    }
+    let retained = apply(
+        &mut store,
+        index + 20,
+        "retained",
+        Action::Find {
+            model: "large".into(),
+            predicates: vec![],
+            offset: 0,
+            limit: 8,
+            select: Some(vec!["id".into()]),
+            sort: Some(QuerySort { field: "sort".into(), direction: SortDirection::Asc }),
+            joins: vec![],
+        },
+    )
+    .await;
+    assert!(matches!(retained, Outcome::Invalid { .. }));
 }
