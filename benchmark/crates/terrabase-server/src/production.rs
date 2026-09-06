@@ -16,8 +16,8 @@ use std::time::Duration;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 use terrabase::member::{
-    AdmissionLimits, DatabaseScope, DatabaseSpec, Member, MemberError, MemberOpenError,
-    MAX_ADMISSION_PERMITS,
+    AdmissionLimits, DatabaseScope, DatabaseSpec, MAX_ADMISSION_PERMITS, Member, MemberError,
+    MemberOpenError,
 };
 use terrabase_cluster::production::{
     DatabaseRouteScope, DatabaseRoutingCatalog, ProductionMemberError, ProductionPlacement,
@@ -655,7 +655,7 @@ fn close_with<T>(
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -676,15 +676,15 @@ mod tests {
     use terrabase::regions::RegionCode;
     use terrabase_cluster::production::{
         MemberWorkloadIdentity, ProductionDataPlane, ProductionDataPlaneDrain,
-        ProductionDataPlaneError, ProductionDataPlaneFacts, ProductionMemberRuntime,
-        ProductionPeerAdmission, ProductionQuicEndpoint, ProductionRegion, ProductionTlsMaterial,
-        ProductionTransportConfig, ProductionTransportLimits,
+        ProductionDataPlaneError, ProductionDataPlaneFacts, ProductionMemberError,
+        ProductionMemberRuntime, ProductionPeerAdmission, ProductionQuicEndpoint, ProductionRegion,
+        ProductionTlsMaterial, ProductionTransportConfig, ProductionTransportLimits,
     };
 
     use super::{
-        close_with, derive_root, normalize_location, DatabaseRouteScope, DatabaseRoutingCatalog,
-        ProductionCatalogBootstrap, ProductionCatalogError, ProductionComponent,
-        ProductionComponentError, ProductionPlacement, ProductionRegionSeats,
+        DatabaseRouteScope, DatabaseRoutingCatalog, ProductionCatalogBootstrap,
+        ProductionCatalogError, ProductionComponent, ProductionComponentError, ProductionPlacement,
+        ProductionRegionSeats, close_with, derive_root, normalize_location,
     };
 
     #[test]
@@ -758,9 +758,11 @@ mod tests {
 
     struct AsyncDrainPlane {
         member: Member,
-        pending: bool,
+        pending: AtomicBool,
         lease: Mutex<Option<terrabase::member::DatabaseLease>>,
         completed: Arc<AtomicBool>,
+        calls: Arc<AtomicUsize>,
+        started: Arc<tokio::sync::Notify>,
     }
 
     impl ProductionDataPlane for AsyncDrainPlane {
@@ -772,8 +774,10 @@ mod tests {
 
         fn drain(&self, _: Duration) -> ProductionDataPlaneDrain<'_> {
             Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                self.started.notify_waiters();
                 tokio::task::yield_now().await;
-                if self.pending {
+                if self.pending.load(Ordering::Acquire) {
                     return std::future::pending().await;
                 }
                 drop(self.lease.lock().expect("drain lease lock").take());
@@ -840,13 +844,15 @@ mod tests {
             ProductionRegion::Gru,
             placement.generation(),
             placement.epoch(),
-            vec![ProductionPeerAdmission::try_new(
-                peer_identity.clone(),
-                ProductionRegion::Gru,
-                peer_addr,
-                "peer.internal",
-            )
-            .expect("peer admission")],
+            vec![
+                ProductionPeerAdmission::try_new(
+                    peer_identity.clone(),
+                    ProductionRegion::Gru,
+                    peer_addr,
+                    "peer.internal",
+                )
+                .expect("peer admission"),
+            ],
             limits.clone(),
         )
         .expect("local transport");
@@ -856,13 +862,15 @@ mod tests {
             ProductionRegion::Gru,
             placement.generation(),
             placement.epoch(),
-            vec![ProductionPeerAdmission::try_new(
-                local_identity.clone(),
-                ProductionRegion::Gru,
-                local_addr,
-                "local.internal",
-            )
-            .expect("local admission")],
+            vec![
+                ProductionPeerAdmission::try_new(
+                    local_identity.clone(),
+                    ProductionRegion::Gru,
+                    local_addr,
+                    "local.internal",
+                )
+                .expect("local admission"),
+            ],
             limits,
         )
         .expect("peer transport");
@@ -890,11 +898,15 @@ mod tests {
         let runtime = ProductionMemberRuntime::try_new(placement, routes, parts.member, transport)
             .expect("production member runtime");
         let completed = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(tokio::sync::Notify::new());
         let plane = Arc::new(AsyncDrainPlane {
             member,
-            pending,
+            pending: AtomicBool::new(pending),
             lease: Mutex::new(Some(lease)),
             completed,
+            calls,
+            started,
         });
         runtime.attach_data_plane(plane.clone()).expect("data plane attachment");
         (runtime, root, spec, plane)
@@ -934,6 +946,85 @@ mod tests {
         assert!(report.storage.is_err(), "unfinished drain released storage");
         drop(plane.lease.lock().unwrap().take());
         plane.member.close(Duration::from_secs(1)).expect("close after lease released");
+        reopen(&root, spec);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_member_concurrent_drains_run_data_plane_once() {
+        let (runtime, root, spec, plane) =
+            runtime_with_async_drain("async-member-concurrent", false);
+        let (first, second) = tokio::join!(runtime.drain(), runtime.drain());
+        assert!(first.data_plane.is_ok() && second.data_plane.is_ok());
+        assert_eq!(plane.calls.load(Ordering::Acquire), 1);
+        assert!(plane.lease.lock().unwrap().is_none());
+        reopen(&root, spec);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_member_drain_timeout_retries_and_closes_storage() {
+        let (runtime, root, spec, plane) =
+            runtime_with_async_drain("async-member-timeout-retry", true);
+        let first = runtime.drain().await;
+        assert_eq!(first.data_plane, Err(ProductionDataPlaneError::Timeout));
+        assert!(first.storage.is_err());
+        plane.pending.store(false, Ordering::Release);
+        let second = runtime.drain().await;
+        assert!(second.data_plane.is_ok() && second.storage.is_ok());
+        assert!(plane.lease.lock().unwrap().is_none());
+        assert_eq!(plane.calls.load(Ordering::Acquire), 2);
+        reopen(&root, spec);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_member_cancelled_drain_can_retry() {
+        let (runtime, root, spec, plane) =
+            runtime_with_async_drain("async-member-cancel-retry", true);
+        let cancelled = tokio::time::timeout(Duration::from_millis(20), runtime.drain()).await;
+        assert!(cancelled.is_err());
+        plane.pending.store(false, Ordering::Release);
+        let report = runtime.drain().await;
+        assert!(report.data_plane.is_ok() && report.storage.is_ok());
+        assert!(plane.lease.lock().unwrap().is_none());
+        reopen(&root, spec);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_member_retirement_rejects_cancelled_normal_drain() {
+        let (runtime, root, spec, plane) =
+            runtime_with_async_drain("async-member-retire-cancelled", true);
+        let cancelled = tokio::time::timeout(Duration::from_millis(20), runtime.drain()).await;
+        assert!(cancelled.is_err());
+        let retirement = runtime.retire_epoch().await;
+        assert_eq!(retirement.data_plane, Err(ProductionDataPlaneError::Persistence));
+        drop(plane.lease.lock().unwrap().take());
+        retirement.member.close(Duration::from_secs(1)).expect("retired member close");
+        reopen(&root, spec);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_member_rejects_late_data_plane_attachment() {
+        let (runtime, root, spec, plane) =
+            runtime_with_async_drain("async-member-late-attach", true);
+        let runtime = Arc::new(runtime);
+        let started = plane.started.notified();
+        tokio::pin!(started);
+        let drain = tokio::spawn({
+            let runtime = Arc::clone(&runtime);
+            async move { runtime.drain().await }
+        });
+        started.await;
+        assert_eq!(
+            runtime.attach_data_plane(plane.clone()),
+            Err(ProductionMemberError::MembershipMismatch)
+        );
+        plane.pending.store(false, Ordering::Release);
+        let report = drain.await.expect("drain task");
+        assert!(report.data_plane.is_ok() && report.storage.is_ok());
         reopen(&root, spec);
         fs::remove_dir_all(root).unwrap();
     }

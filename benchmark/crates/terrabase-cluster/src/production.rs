@@ -430,7 +430,8 @@ pub trait ProductionDataPlane: Send + Sync {
     /// Returns current durable integration facts.
     fn facts(&self) -> ProductionDataPlaneFacts;
 
-    /// Stops admitting new replication and serving work.
+    /// Stops admitting new replication and serving work. Repeated calls must
+    /// preserve the same fence and unfinished worker ownership.
     fn begin_drain(&self);
 
     /// Persists frontiers and drains bounded work.
@@ -523,6 +524,7 @@ pub struct ProductionMemberFacts {
 
 /// One production Member process around one local durable seat.
 pub struct ProductionMemberRuntime {
+    shutdown: tokio::sync::Mutex<ShutdownProgress>,
     // Revoke retained replication handles before dropping storage or transport.
     wal_bindings: Mutex<WalBindings>,
     placement: ProductionPlacement,
@@ -533,6 +535,14 @@ pub struct ProductionMemberRuntime {
     membership_admission: Mutex<MembershipAdmission>,
     data_plane: Mutex<Option<Arc<dyn ProductionDataPlane>>>,
     draining: AtomicBool,
+}
+
+#[derive(Default)]
+struct ShutdownProgress {
+    normal_started: bool,
+    transport: Option<TransportDrainReport>,
+    data_plane_done: bool,
+    storage_closed: bool,
 }
 
 /// Owns revocation even when the runtime is dropped without graceful drain.
@@ -701,6 +711,7 @@ impl ProductionMemberRuntime {
             published_routes: Mutex::new(published_routes),
             member,
             transport: Arc::new(transport),
+            shutdown: tokio::sync::Mutex::new(ShutdownProgress::default()),
             membership_admission: Mutex::new(MembershipAdmission::Pending),
             wal_bindings: Mutex::new(WalBindings::default()),
             data_plane: Mutex::new(None),
@@ -790,6 +801,10 @@ impl ProductionMemberRuntime {
         &self,
         data_plane: Arc<dyn ProductionDataPlane>,
     ) -> Result<(), ProductionMemberError> {
+        let _admission = lock_unpoisoned(&self.membership_admission);
+        if self.draining.load(Ordering::Acquire) {
+            return Err(ProductionMemberError::MembershipMismatch);
+        }
         let mut slot = lock_unpoisoned(&self.data_plane);
         if slot.is_some() {
             return Err(ProductionMemberError::DataPlaneAlreadyAttached);
@@ -948,8 +963,12 @@ impl ProductionMemberRuntime {
     }
 
     /// Stops admission, drains the data plane and QUIC endpoint, then flushes
-    /// every isolated engine within bounded component deadlines.
-    pub async fn drain(self) -> ProductionMemberDrainReport {
+    /// every isolated engine within bounded component deadlines. Shared callers
+    /// serialize cleanup; successful components are retained and failures can
+    /// be retried after their remaining work completes.
+    pub async fn drain(&self) -> ProductionMemberDrainReport {
+        let mut shutdown = self.shutdown.lock().await;
+        shutdown.normal_started = true;
         {
             let _admission = lock_unpoisoned(&self.membership_admission);
             self.draining.store(true, Ordering::Release);
@@ -960,12 +979,22 @@ impl ProductionMemberRuntime {
             data_plane.begin_drain();
         }
         let timeout = self.transport.config().limits().drain_timeout();
-        let transport = self.transport.drain().await;
-        let data_plane = match data_plane {
-            Some(plane) => drain_data_plane(&*plane, timeout).await,
-            None => Err(ProductionDataPlaneError::Persistence),
+        let transport = match shutdown.transport {
+            Some(report) if report.operations_drained && report.remaining_operations == 0 => report,
+            _ => self.transport.drain().await,
         };
-        let storage = self.member.close(timeout);
+        shutdown.transport = Some(transport);
+        let data_plane = if shutdown.data_plane_done {
+            Ok(())
+        } else {
+            match data_plane {
+                Some(plane) => drain_data_plane(&*plane, timeout).await,
+                None => Err(ProductionDataPlaneError::Persistence),
+            }
+        };
+        shutdown.data_plane_done = data_plane.is_ok();
+        let storage = if shutdown.storage_closed { Ok(()) } else { self.member.close(timeout) };
+        shutdown.storage_closed = storage.is_ok();
         ProductionMemberDrainReport { transport, data_plane, storage }
     }
 
@@ -973,7 +1002,20 @@ impl ProductionMemberRuntime {
     /// for a separately authenticated successor runtime. All external data-plane
     /// tasks must first relinquish their runtime handles and database leases.
     /// The returned catalog grants no successor membership or writer authority.
+    /// A prior normal shutdown attempt refuses retirement even if its future was
+    /// cancelled, because storage may already have entered irreversible drain.
     pub async fn retire_epoch(self) -> ProductionEpochRetirement {
+        let normal_started = self.shutdown.lock().await.normal_started;
+        if normal_started {
+            let routes = lock_unpoisoned(&self.routes).clone();
+            let transport = self.transport.drain().await;
+            return ProductionEpochRetirement {
+                member: self.member,
+                routes,
+                transport,
+                data_plane: Err(ProductionDataPlaneError::Persistence),
+            };
+        }
         {
             let mut admission = lock_unpoisoned(&self.membership_admission);
             *admission = MembershipAdmission::Fenced;

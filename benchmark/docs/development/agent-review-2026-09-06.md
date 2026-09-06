@@ -870,3 +870,30 @@ alone does not make that owner consumable. Transferring `data` out of admission
 also requires changing reconciliation ownership so it cannot start a second
 receiver. The next composition step must preserve a single worker owner, await
 joins without blocking Tokio, and close storage only after leases are released.
+
+
+The data-plane drain contract now returns an object-safe boxed Send future.
+Both normal Member shutdown and epoch retirement await it under a bounded Tokio
+deadline before closing or returning storage. Tokio time is an explicit cluster
+crate feature. This removes the synchronous join requirement without introducing
+a production adapter or claiming that shared runtime ownership is solved.
+
+Nine cluster production tests passed (`79244`), including asynchronous completion,
+persistence-error propagation, and timeout. Cluster all-target Clippy passed
+with warnings denied (`16014`). Real encrypted Member/QUIC fixtures retain a
+DatabaseLease in a test adapter until its async future finishes. Normal shutdown
+and retirement prove the lease is released before close/return; a pending drain
+retains its lease on cancellation, returns Timeout, and reports failed storage
+closure until explicit lease release. These three tests passed (`81595`), then
+all ten server production tests passed after fixture cleanup (`86274`). Logs:
+`/tmp/terrascale-async-plane-contract-tests.log`,
+`/tmp/terrascale-async-plane-contract-clippy.log`, and
+`/tmp/terrascale-async-plane-production-tests-final.log`.
+
+Independent review found no material defect in the contract or ordering tests.
+The timeout fixture intentionally keeps an external adapter Arc, so it proves
+that fixture's cancellation behavior, not ownership retention by a future
+production adapter. The server Clippy run (`70416`) failed with 76 test-build
+diagnostics including one new redundant Copy clone in the TLS fixture; that
+clone was removed and the ten production tests rerun. The pre-existing server
+lint backlog remains. No full-workspace or production-readiness claim is made.
