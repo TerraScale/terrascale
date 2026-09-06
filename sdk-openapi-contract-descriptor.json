@@ -15072,6 +15072,9 @@
                                           "OR"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                       }
                                     },
                                     "resolved": {
@@ -15101,6 +15104,9 @@
                                           "insensitive"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
                                       }
                                     },
                                     "resolved": {
@@ -15157,7 +15163,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -15176,6 +15184,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -15196,6 +15207,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -15232,7 +15246,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -15278,6 +15294,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -15307,6 +15326,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -15363,7 +15385,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -15397,6 +15421,9 @@
                                                 "OR"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                             }
                                           }
                                         },
@@ -15435,6 +15462,9 @@
                                                 "insensitive"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "Insensitive membership folds strings only for homogeneous string lists."
                                             }
                                           }
                                         },
@@ -15510,7 +15540,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -15530,6 +15562,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -15550,6 +15585,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -15586,7 +15624,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -15625,6 +15665,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                "siblings": {
+                                  "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "AND",
@@ -15645,6 +15688,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateModeSchema",
+                                "siblings": {
+                                  "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "sensitive",
@@ -15681,7 +15727,9 @@
                               }
                             ]
                           },
-                          "value": {}
+                          "value": {
+                            "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                          }
                         },
                         "required": [
                           "field",
@@ -15735,6 +15783,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -15764,6 +15815,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -15820,7 +15874,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -15839,6 +15895,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -15859,6 +15918,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -15895,7 +15957,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -15941,6 +16005,9 @@
                                               "OR"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                           }
                                         },
                                         "resolved": {
@@ -15970,6 +16037,9 @@
                                               "insensitive"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "Insensitive membership folds strings only for homogeneous string lists."
                                           }
                                         },
                                         "resolved": {
@@ -16026,7 +16096,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -16060,6 +16132,9 @@
                                                   "OR"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                               }
                                             }
                                           },
@@ -16098,6 +16173,9 @@
                                                   "insensitive"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "Insensitive membership folds strings only for homogeneous string lists."
                                               }
                                             }
                                           },
@@ -16173,7 +16251,9 @@
                                         }
                                       ]
                                     },
-                                    "value": {}
+                                    "value": {
+                                      "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                    }
                                   },
                                   "required": [
                                     "field",
@@ -16193,6 +16273,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "AND",
@@ -16213,6 +16296,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateModeSchema",
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "sensitive",
@@ -16249,7 +16335,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -16288,6 +16376,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -16308,6 +16399,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -16344,7 +16438,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -17092,6 +17188,9 @@
                                           "OR"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                       }
                                     },
                                     "resolved": {
@@ -17121,6 +17220,9 @@
                                           "insensitive"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
                                       }
                                     },
                                     "resolved": {
@@ -17177,7 +17279,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -17196,6 +17300,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -17216,6 +17323,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -17252,7 +17362,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -17298,6 +17410,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -17327,6 +17442,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -17383,7 +17501,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -17417,6 +17537,9 @@
                                                 "OR"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                             }
                                           }
                                         },
@@ -17455,6 +17578,9 @@
                                                 "insensitive"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "Insensitive membership folds strings only for homogeneous string lists."
                                             }
                                           }
                                         },
@@ -17530,7 +17656,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -17550,6 +17678,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -17570,6 +17701,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -17606,7 +17740,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -17645,6 +17781,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                "siblings": {
+                                  "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "AND",
@@ -17665,6 +17804,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateModeSchema",
+                                "siblings": {
+                                  "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "sensitive",
@@ -17701,7 +17843,9 @@
                               }
                             ]
                           },
-                          "value": {}
+                          "value": {
+                            "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                          }
                         },
                         "required": [
                           "field",
@@ -17755,6 +17899,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -17784,6 +17931,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -17840,7 +17990,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -17859,6 +18011,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -17879,6 +18034,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -17915,7 +18073,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -17961,6 +18121,9 @@
                                               "OR"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                           }
                                         },
                                         "resolved": {
@@ -17990,6 +18153,9 @@
                                               "insensitive"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "Insensitive membership folds strings only for homogeneous string lists."
                                           }
                                         },
                                         "resolved": {
@@ -18046,7 +18212,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -18080,6 +18248,9 @@
                                                   "OR"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                               }
                                             }
                                           },
@@ -18118,6 +18289,9 @@
                                                   "insensitive"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "Insensitive membership folds strings only for homogeneous string lists."
                                               }
                                             }
                                           },
@@ -18193,7 +18367,9 @@
                                         }
                                       ]
                                     },
-                                    "value": {}
+                                    "value": {
+                                      "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                    }
                                   },
                                   "required": [
                                     "field",
@@ -18213,6 +18389,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "AND",
@@ -18233,6 +18412,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateModeSchema",
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "sensitive",
@@ -18269,7 +18451,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -18308,6 +18492,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -18328,6 +18515,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -18364,7 +18554,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -18677,6 +18869,9 @@
                                           "OR"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                       }
                                     },
                                     "resolved": {
@@ -18706,6 +18901,9 @@
                                           "insensitive"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
                                       }
                                     },
                                     "resolved": {
@@ -18762,7 +18960,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -18781,6 +18981,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -18801,6 +19004,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -18837,7 +19043,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -18883,6 +19091,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -18912,6 +19123,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -18968,7 +19182,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -19002,6 +19218,9 @@
                                                 "OR"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                             }
                                           }
                                         },
@@ -19040,6 +19259,9 @@
                                                 "insensitive"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "Insensitive membership folds strings only for homogeneous string lists."
                                             }
                                           }
                                         },
@@ -19115,7 +19337,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -19135,6 +19359,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -19155,6 +19382,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -19191,7 +19421,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -19230,6 +19462,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                "siblings": {
+                                  "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "AND",
@@ -19250,6 +19485,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateModeSchema",
+                                "siblings": {
+                                  "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "sensitive",
@@ -19286,7 +19524,9 @@
                               }
                             ]
                           },
-                          "value": {}
+                          "value": {
+                            "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                          }
                         },
                         "required": [
                           "field",
@@ -19340,6 +19580,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -19369,6 +19612,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -19425,7 +19671,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -19444,6 +19692,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -19464,6 +19715,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -19500,7 +19754,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -19546,6 +19802,9 @@
                                               "OR"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                           }
                                         },
                                         "resolved": {
@@ -19575,6 +19834,9 @@
                                               "insensitive"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "Insensitive membership folds strings only for homogeneous string lists."
                                           }
                                         },
                                         "resolved": {
@@ -19631,7 +19893,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -19665,6 +19929,9 @@
                                                   "OR"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                               }
                                             }
                                           },
@@ -19703,6 +19970,9 @@
                                                   "insensitive"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "Insensitive membership folds strings only for homogeneous string lists."
                                               }
                                             }
                                           },
@@ -19778,7 +20048,9 @@
                                         }
                                       ]
                                     },
-                                    "value": {}
+                                    "value": {
+                                      "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                    }
                                   },
                                   "required": [
                                     "field",
@@ -19798,6 +20070,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "AND",
@@ -19818,6 +20093,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateModeSchema",
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "sensitive",
@@ -19854,7 +20132,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -19893,6 +20173,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -19913,6 +20196,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -19949,7 +20235,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -20262,6 +20550,9 @@
                                           "OR"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                       }
                                     },
                                     "resolved": {
@@ -20291,6 +20582,9 @@
                                           "insensitive"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
                                       }
                                     },
                                     "resolved": {
@@ -20347,7 +20641,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -20366,6 +20662,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -20386,6 +20685,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -20422,7 +20724,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -20468,6 +20772,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -20497,6 +20804,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -20553,7 +20863,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -20587,6 +20899,9 @@
                                                 "OR"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                             }
                                           }
                                         },
@@ -20625,6 +20940,9 @@
                                                 "insensitive"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "Insensitive membership folds strings only for homogeneous string lists."
                                             }
                                           }
                                         },
@@ -20700,7 +21018,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -20720,6 +21040,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -20740,6 +21063,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -20776,7 +21102,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -20815,6 +21143,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                "siblings": {
+                                  "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "AND",
@@ -20835,6 +21166,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateModeSchema",
+                                "siblings": {
+                                  "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "sensitive",
@@ -20871,7 +21205,9 @@
                               }
                             ]
                           },
-                          "value": {}
+                          "value": {
+                            "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                          }
                         },
                         "required": [
                           "field",
@@ -20925,6 +21261,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -20954,6 +21293,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -21010,7 +21352,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -21029,6 +21373,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -21049,6 +21396,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -21085,7 +21435,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -21131,6 +21483,9 @@
                                               "OR"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                           }
                                         },
                                         "resolved": {
@@ -21160,6 +21515,9 @@
                                               "insensitive"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "Insensitive membership folds strings only for homogeneous string lists."
                                           }
                                         },
                                         "resolved": {
@@ -21216,7 +21574,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -21250,6 +21610,9 @@
                                                   "OR"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                               }
                                             }
                                           },
@@ -21288,6 +21651,9 @@
                                                   "insensitive"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "Insensitive membership folds strings only for homogeneous string lists."
                                               }
                                             }
                                           },
@@ -21363,7 +21729,9 @@
                                         }
                                       ]
                                     },
-                                    "value": {}
+                                    "value": {
+                                      "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                    }
                                   },
                                   "required": [
                                     "field",
@@ -21383,6 +21751,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "AND",
@@ -21403,6 +21774,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateModeSchema",
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "sensitive",
@@ -21439,7 +21813,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -21478,6 +21854,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -21498,6 +21877,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -21534,7 +21916,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -21964,6 +22348,9 @@
                                           "OR"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                       }
                                     },
                                     "resolved": {
@@ -21993,6 +22380,9 @@
                                           "insensitive"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
                                       }
                                     },
                                     "resolved": {
@@ -22049,7 +22439,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -22068,6 +22460,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -22088,6 +22483,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -22124,7 +22522,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -22423,6 +22823,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -22452,6 +22855,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -22508,7 +22914,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -22542,6 +22950,9 @@
                                                 "OR"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                             }
                                           }
                                         },
@@ -22580,6 +22991,9 @@
                                                 "insensitive"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "Insensitive membership folds strings only for homogeneous string lists."
                                             }
                                           }
                                         },
@@ -22655,7 +23069,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -22675,6 +23091,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -22695,6 +23114,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -22731,7 +23153,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -22953,6 +23377,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                "siblings": {
+                                  "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "AND",
@@ -22973,6 +23400,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateModeSchema",
+                                "siblings": {
+                                  "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "sensitive",
@@ -23009,7 +23439,9 @@
                               }
                             ]
                           },
-                          "value": {}
+                          "value": {
+                            "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                          }
                         },
                         "required": [
                           "field",
@@ -23221,6 +23653,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -23250,6 +23685,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -23306,7 +23744,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -23325,6 +23765,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -23345,6 +23788,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -23381,7 +23827,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -23680,6 +24128,9 @@
                                               "OR"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                           }
                                         },
                                         "resolved": {
@@ -23709,6 +24160,9 @@
                                               "insensitive"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "Insensitive membership folds strings only for homogeneous string lists."
                                           }
                                         },
                                         "resolved": {
@@ -23765,7 +24219,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -23799,6 +24255,9 @@
                                                   "OR"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                               }
                                             }
                                           },
@@ -23837,6 +24296,9 @@
                                                   "insensitive"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "Insensitive membership folds strings only for homogeneous string lists."
                                               }
                                             }
                                           },
@@ -23912,7 +24374,9 @@
                                         }
                                       ]
                                     },
-                                    "value": {}
+                                    "value": {
+                                      "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                    }
                                   },
                                   "required": [
                                     "field",
@@ -23932,6 +24396,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "AND",
@@ -23952,6 +24419,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateModeSchema",
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "sensitive",
@@ -23988,7 +24458,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -24210,6 +24682,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -24230,6 +24705,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -24266,7 +24744,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -24637,6 +25117,9 @@
                                           "OR"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                       }
                                     },
                                     "resolved": {
@@ -24666,6 +25149,9 @@
                                           "insensitive"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
                                       }
                                     },
                                     "resolved": {
@@ -24722,7 +25208,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -24741,6 +25229,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -24761,6 +25252,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -24797,7 +25291,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -24861,6 +25357,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -24890,6 +25389,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -24946,7 +25448,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -24980,6 +25484,9 @@
                                                 "OR"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                             }
                                           }
                                         },
@@ -25018,6 +25525,9 @@
                                                 "insensitive"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "Insensitive membership folds strings only for homogeneous string lists."
                                             }
                                           }
                                         },
@@ -25093,7 +25603,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -25113,6 +25625,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -25133,6 +25648,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -25169,7 +25687,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -25226,6 +25746,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                "siblings": {
+                                  "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "AND",
@@ -25246,6 +25769,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateModeSchema",
+                                "siblings": {
+                                  "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "sensitive",
@@ -25282,7 +25808,9 @@
                               }
                             ]
                           },
-                          "value": {}
+                          "value": {
+                            "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                          }
                         },
                         "required": [
                           "field",
@@ -25354,6 +25882,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -25383,6 +25914,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -25439,7 +25973,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -25458,6 +25994,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -25478,6 +26017,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -25514,7 +26056,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -25578,6 +26122,9 @@
                                               "OR"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                           }
                                         },
                                         "resolved": {
@@ -25607,6 +26154,9 @@
                                               "insensitive"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "Insensitive membership folds strings only for homogeneous string lists."
                                           }
                                         },
                                         "resolved": {
@@ -25663,7 +26213,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -25697,6 +26249,9 @@
                                                   "OR"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                               }
                                             }
                                           },
@@ -25735,6 +26290,9 @@
                                                   "insensitive"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "Insensitive membership folds strings only for homogeneous string lists."
                                               }
                                             }
                                           },
@@ -25810,7 +26368,9 @@
                                         }
                                       ]
                                     },
-                                    "value": {}
+                                    "value": {
+                                      "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                    }
                                   },
                                   "required": [
                                     "field",
@@ -25830,6 +26390,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "AND",
@@ -25850,6 +26413,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateModeSchema",
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "sensitive",
@@ -25886,7 +26452,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -25943,6 +26511,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -25963,6 +26534,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -25999,7 +26573,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -28139,6 +28715,9 @@
                                           "OR"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                       }
                                     },
                                     "resolved": {
@@ -28168,6 +28747,9 @@
                                           "insensitive"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
                                       }
                                     },
                                     "resolved": {
@@ -28224,7 +28806,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -28243,6 +28827,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -28263,6 +28850,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -28299,7 +28889,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -28353,6 +28945,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -28382,6 +28977,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -28438,7 +29036,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -28472,6 +29072,9 @@
                                                 "OR"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                             }
                                           }
                                         },
@@ -28510,6 +29113,9 @@
                                                 "insensitive"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "Insensitive membership folds strings only for homogeneous string lists."
                                             }
                                           }
                                         },
@@ -28585,7 +29191,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -28605,6 +29213,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -28625,6 +29236,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -28661,7 +29275,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -28708,6 +29324,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                "siblings": {
+                                  "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "AND",
@@ -28728,6 +29347,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateModeSchema",
+                                "siblings": {
+                                  "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "sensitive",
@@ -28764,7 +29386,9 @@
                               }
                             ]
                           },
-                          "value": {}
+                          "value": {
+                            "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                          }
                         },
                         "required": [
                           "field",
@@ -28826,6 +29450,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -28855,6 +29482,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -28911,7 +29541,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -28930,6 +29562,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -28950,6 +29585,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -28986,7 +29624,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -29040,6 +29680,9 @@
                                               "OR"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                           }
                                         },
                                         "resolved": {
@@ -29069,6 +29712,9 @@
                                               "insensitive"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "Insensitive membership folds strings only for homogeneous string lists."
                                           }
                                         },
                                         "resolved": {
@@ -29125,7 +29771,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -29159,6 +29807,9 @@
                                                   "OR"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                               }
                                             }
                                           },
@@ -29197,6 +29848,9 @@
                                                   "insensitive"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "Insensitive membership folds strings only for homogeneous string lists."
                                               }
                                             }
                                           },
@@ -29272,7 +29926,9 @@
                                         }
                                       ]
                                     },
-                                    "value": {}
+                                    "value": {
+                                      "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                    }
                                   },
                                   "required": [
                                     "field",
@@ -29292,6 +29948,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "AND",
@@ -29312,6 +29971,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateModeSchema",
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "sensitive",
@@ -29348,7 +30010,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -29395,6 +30059,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -29415,6 +30082,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -29451,7 +30121,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -29772,6 +30444,9 @@
                                           "OR"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                       }
                                     },
                                     "resolved": {
@@ -29801,6 +30476,9 @@
                                           "insensitive"
                                         ],
                                         "type": "string"
+                                      },
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
                                       }
                                     },
                                     "resolved": {
@@ -29857,7 +30535,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -29876,6 +30556,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -29896,6 +30579,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -29932,7 +30618,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -29986,6 +30674,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -30015,6 +30706,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -30071,7 +30765,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -30105,6 +30801,9 @@
                                                 "OR"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                             }
                                           }
                                         },
@@ -30143,6 +30842,9 @@
                                                 "insensitive"
                                               ],
                                               "type": "string"
+                                            },
+                                            "siblings": {
+                                              "description": "Insensitive membership folds strings only for homogeneous string lists."
                                             }
                                           }
                                         },
@@ -30218,7 +30920,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -30238,6 +30942,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -30258,6 +30965,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -30294,7 +31004,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -30341,6 +31053,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                "siblings": {
+                                  "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "AND",
@@ -30361,6 +31076,9 @@
                               },
                               {
                                 "$ref": "#/components/schemas/PredicateModeSchema",
+                                "siblings": {
+                                  "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                },
                                 "resolved": {
                                   "enum": [
                                     "sensitive",
@@ -30397,7 +31115,9 @@
                               }
                             ]
                           },
-                          "value": {}
+                          "value": {
+                            "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                          }
                         },
                         "required": [
                           "field",
@@ -30459,6 +31179,9 @@
                                             "OR"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                         }
                                       },
                                       "resolved": {
@@ -30488,6 +31211,9 @@
                                             "insensitive"
                                           ],
                                           "type": "string"
+                                        },
+                                        "siblings": {
+                                          "description": "Insensitive membership folds strings only for homogeneous string lists."
                                         }
                                       },
                                       "resolved": {
@@ -30544,7 +31270,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -30563,6 +31291,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                    "siblings": {
+                                      "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "AND",
@@ -30583,6 +31314,9 @@
                                   },
                                   {
                                     "$ref": "#/components/schemas/PredicateModeSchema",
+                                    "siblings": {
+                                      "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                    },
                                     "resolved": {
                                       "enum": [
                                         "sensitive",
@@ -30619,7 +31353,9 @@
                                   }
                                 ]
                               },
-                              "value": {}
+                              "value": {
+                                "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                              }
                             },
                             "required": [
                               "field",
@@ -30673,6 +31409,9 @@
                                               "OR"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                           }
                                         },
                                         "resolved": {
@@ -30702,6 +31441,9 @@
                                               "insensitive"
                                             ],
                                             "type": "string"
+                                          },
+                                          "siblings": {
+                                            "description": "Insensitive membership folds strings only for homogeneous string lists."
                                           }
                                         },
                                         "resolved": {
@@ -30758,7 +31500,9 @@
                                       }
                                     ]
                                   },
-                                  "value": {}
+                                  "value": {
+                                    "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                  }
                                 },
                                 "required": [
                                   "field",
@@ -30792,6 +31536,9 @@
                                                   "OR"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
                                               }
                                             }
                                           },
@@ -30830,6 +31577,9 @@
                                                   "insensitive"
                                                 ],
                                                 "type": "string"
+                                              },
+                                              "siblings": {
+                                                "description": "Insensitive membership folds strings only for homogeneous string lists."
                                               }
                                             }
                                           },
@@ -30905,7 +31655,9 @@
                                         }
                                       ]
                                     },
-                                    "value": {}
+                                    "value": {
+                                      "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                    }
                                   },
                                   "required": [
                                     "field",
@@ -30925,6 +31677,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                      "siblings": {
+                                        "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "AND",
@@ -30945,6 +31700,9 @@
                                     },
                                     {
                                       "$ref": "#/components/schemas/PredicateModeSchema",
+                                      "siblings": {
+                                        "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                      },
                                       "resolved": {
                                         "enum": [
                                           "sensitive",
@@ -30981,7 +31739,9 @@
                                     }
                                   ]
                                 },
-                                "value": {}
+                                "value": {
+                                  "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                                }
                               },
                               "required": [
                                 "field",
@@ -31028,6 +31788,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateConnectorSchema",
+                                  "siblings": {
+                                    "description": "All AND terms must match, plus at least one OR term when present,\nindependent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping)."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "AND",
@@ -31048,6 +31811,9 @@
                                 },
                                 {
                                   "$ref": "#/components/schemas/PredicateModeSchema",
+                                  "siblings": {
+                                    "description": "Insensitive membership folds strings only for homogeneous string lists."
+                                  },
                                   "resolved": {
                                     "enum": [
                                       "sensitive",
@@ -31084,7 +31850,9 @@
                                 }
                               ]
                             },
-                            "value": {}
+                            "value": {
+                              "description": "Missing fields are null. Eq/ne against null are null checks; ne against\na non-null value excludes null records. Empty in/not_in match none/all.\nNonempty not_in excludes null records and matches nothing with a null list member."
+                            }
                           },
                           "required": [
                             "field",
@@ -48660,7 +49428,7 @@
     }
   ],
   "sources": {
-    "openApiSha256": "a0c1c6df925b3cc1a7514145382e7c576b592fd6d6e006e381c8f95138d669b0",
+    "openApiSha256": "22eb23ef8075d8f8a31167f8bf58e7992ee7b98327ad141a7ad85e83e0864a68",
     "routeManifestSha256": "d17509fb2f1cfbbc30de40176461c2047472161964b587581774ffd5c0926973"
   }
 }
