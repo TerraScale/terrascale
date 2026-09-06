@@ -76,3 +76,42 @@ rollback. These development tests do not qualify production auth persistence.
 The adapter accepts only the named `index` operation. The unconsumed
 `ensureIndex` and `createIndex` aliases were removed after checking callers and
 producer contracts; no published producer supplied those alternate spellings.
+
+## Maintained suite against the local authority
+
+`src/integration/auth-authority.test.ts` runs the published
+`@better-auth/test-utils@1.7.2` normal, transaction, auth-flow, joins,
+case-insensitive, and UUID suites. The package is MIT licensed and comes from
+Better Auth tag `v1.7.2`, commit
+`ba12fcdfa774ca27d417079dbac0b1b5894ccaf2`. Its exact dependency and registry
+integrity are recorded in `package-lock.json`. Database-generated numeric IDs
+are unsupported, so that suite is outside the selected contract.
+
+Build this SDK with `npm run build`. From the sibling `terrabase` repository,
+run the following with absolute paths to Node and the consumer script:
+
+```sh
+TERRASCALE_AUTH_CONSUMER_EXECUTABLE=/absolute/path/to/node \
+TERRASCALE_AUTH_CONSUMER_SCRIPT=/absolute/path/to/ts-typescript/scripts/qualify-auth-authority.ts \
+nice -n 19 cargo test --locked -p terrabase-server --lib \
+  auth_runtime::tests::admitted_http_router_serves_external_node_consumer \
+  -- --ignored --exact --nocapture
+```
+
+The producer creates a disposable two-voter encrypted SQLite authority with
+QUIC and member certificates, serves the public auth router on loopback, and
+passes its URL and credentials directly to the child process. The consumer
+imports the built SDK and uses its network transport. Upstream cleanup deletes
+test records; this runner accepts only a loopback fixture. Ordinary SDK checks
+skip this test when the fixture environment is absent. The dedicated runner
+rejects failures, skipped cases, empty runs, and unhandled errors.
+
+Automatic unique-schema provisioning shares validated successes and in-flight
+installs across adapters from the same client/database factory, keyed by
+physical model and ordered fields. Failed installs remain retryable. Explicit
+index operations and transaction-scoped indexes always reach the producer.
+
+This fixture does not qualify daemon startup, OCI deployment, production key
+delivery, WAN behavior, or multi-Region failure recovery. Its second voter uses
+a test receiver loop. Passing local suites is required evidence, but does not
+establish production readiness.

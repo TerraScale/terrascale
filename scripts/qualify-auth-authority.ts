@@ -12,6 +12,7 @@ const runner = await startVitest("test", ["src/integration/auth-authority.test.t
   pool: "threads",
   maxWorkers: 1,
   fileParallelism: false,
+  bail: 1,
   reporters: ["verbose"],
   disableConsoleIntercept: true,
   testTimeout: 30_000,
