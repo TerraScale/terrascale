@@ -61,6 +61,7 @@ pub mod native_snapshot_backup;
 
 /// Signed verified native recovery facts for scoped control consumers.
 pub mod native_recovery_receipt;
+pub mod native_recovery;
 
 /// Joined live delivery catchup observations.
 pub mod catchup_observation;

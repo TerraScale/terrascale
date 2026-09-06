@@ -503,7 +503,7 @@ fn auth_result_keeps_transaction_identity_and_camel_case_shape() {
 }
 
 #[tokio::test]
-async fn error_responses_are_uncacheable_and_have_stable_envelope() {
+async fn error_responses_have_stable_envelope() {
     let response = error(StatusCode::BAD_REQUEST, "idempotency_key_required");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
@@ -512,6 +512,66 @@ async fn error_responses_are_uncacheable_and_have_stable_envelope() {
     assert_eq!(value["error"]["code"], "idempotency_key_required");
     assert!(value["error"]["message"].as_str().is_some());
     assert!(value["error"]["fix"].as_str().is_some());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn auth_http_errors_keep_status_envelope_and_headers() {
+    let fixture = admitted_fixture::create().await;
+    let auth = format!("Bearer {}", fixture.key);
+    fixture.runtime.keys.register(
+        "auth-error-read-only-key-01234567890123456789",
+        "read-only",
+        Scope::every_database(Verbs::READ),
+    );
+    let read_only_auth = "Bearer auth-error-read-only-key-01234567890123456789";
+    let mut authorized = HeaderMap::new();
+    authorized.insert("authorization", auth.parse().unwrap());
+    let missing = fixture.runtime.domain(&fixture.database, &HeaderMap::new(), Verbs::READ);
+    let missing = match missing {
+        Err(error) => error,
+        Ok(_) => panic!("missing token admitted"),
+    };
+    assert_eq!(missing.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(missing.code, "unauthorized");
+    let mut read_only_headers = HeaderMap::new();
+    read_only_headers.insert("authorization", read_only_auth.parse().unwrap());
+    let denied = fixture.runtime.domain(&fixture.database, &read_only_headers, Verbs::ADMIN);
+    let denied = match denied {
+        Err(error) => error,
+        Ok(_) => panic!("denied scope admitted"),
+    };
+    assert_eq!(denied.status, StatusCode::FORBIDDEN);
+    assert_eq!(denied.code, "forbidden");
+    let domains = fixture.runtime.domains.read().unwrap().clone();
+    fixture.runtime.domains.write().unwrap().clear();
+    let unavailable = fixture.runtime.domain(&fixture.database, &authorized, Verbs::READ);
+    let unavailable = match unavailable {
+        Err(error) => error,
+        Ok(_) => panic!("missing domain admitted"),
+    };
+    assert_eq!(unavailable.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(unavailable.code, "auth_authority_unavailable");
+    *fixture.runtime.domains.write().unwrap() = domains;
+    let (status, body, headers) = admitted_fixture::request(
+        &fixture.runtime,
+        Request::post(format!("/api/v1/databases/{}/auth/count", fixture.database))
+            .header("authorization", &auth)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"model":"users","predicates":[{"field":"x","value":"x","operator":"invalid"}]}"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "invalid_auth_operation");
+    assert_eq!(headers.get(CACHE_CONTROL).and_then(|value| value.to_str().ok()), Some("no-store"));
+    fixture.runtime.shutdown().await;
+    fixture.remote.shutdown().await.unwrap();
+    let _ = fixture.local_receive.await;
+    let _ = fixture.remote_receive.await;
+    let _ = std::fs::remove_dir_all(fixture.root);
 }
 
 #[test]
