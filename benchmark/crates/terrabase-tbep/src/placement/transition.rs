@@ -16,10 +16,74 @@ mod prepared_tests;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Signed {
+pub struct Signed {
     pub key_id: String,
     pub payload: String,
     pub signature: String,
+}
+
+/// Signs the existing member fence receipt envelope for an admitted transition.
+/// The key is provisioned by the host and the domain is distinct from readiness
+/// receipts; callers must supply measured durable frontier evidence.
+pub struct TransitionReceiptSigner {
+    key_id: String,
+    key: signature::Ed25519KeyPair,
+}
+
+impl TransitionReceiptSigner {
+    /// Loads a dedicated member receipt key from PKCS#8 bytes.
+    pub fn from_pkcs8(key_id: String, der: &[u8]) -> Result<Self, PlacementError> {
+        if !token(&key_id) || der.len() > 16 * 1024 {
+            return Err(PlacementError::Invalid);
+        }
+        let key =
+            signature::Ed25519KeyPair::from_pkcs8(der).map_err(|_| PlacementError::Invalid)?;
+        Ok(Self { key_id, key })
+    }
+
+    /// Signs the canonical `old_epoch_drained_fenced` receipt consumed by the
+    /// transition verifier. `frontier_digest` must cover measured final data.
+    pub fn sign_old_epoch_fenced(
+        &self,
+        prepared: &VerifiedPreparedTransition,
+        member_identity: &str,
+        frontier_digest: &str,
+    ) -> Result<Vec<u8>, PlacementError> {
+        if self.key_id != member_identity || !token(member_identity) || !valid_hash(frontier_digest)
+        {
+            return Err(PlacementError::Invalid);
+        }
+        #[derive(Serialize)]
+        struct Receipt<'a> {
+            kind: &'static str,
+            member_identity: &'a str,
+            scope_id: &'a str,
+            prior_epoch: u64,
+            prior_generation: u64,
+            request_digest: &'a str,
+            frontier_digest: &'a str,
+        }
+        let payload = serde_json::to_vec(&Receipt {
+            kind: "old_epoch_drained_fenced",
+            member_identity,
+            scope_id: prepared.scope_id(),
+            prior_epoch: prepared.prior_epoch(),
+            prior_generation: prepared.prior_generation(),
+            request_digest: prepared.request_digest(),
+            frontier_digest,
+        })
+        .map_err(|_| PlacementError::Storage)?;
+        let mut input = Vec::with_capacity(DOMAIN.len() + payload.len());
+        input.extend_from_slice(DOMAIN);
+        input.extend_from_slice(&payload);
+        let envelope = Signed {
+            key_id: self.key_id.clone(),
+            payload: base64::engine::general_purpose::STANDARD.encode(&payload),
+            signature: base64::engine::general_purpose::STANDARD
+                .encode(self.key.sign(&input).as_ref()),
+        };
+        serde_json::to_vec(&envelope).map_err(|_| PlacementError::Storage)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

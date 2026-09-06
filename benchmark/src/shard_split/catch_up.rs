@@ -119,6 +119,7 @@ pub enum CatchUpError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JournalCatchUp {
     applied_through: u64,
+    lower: Option<Vec<u8>>,
     upper: Option<Vec<u8>>,
 }
 
@@ -126,15 +127,19 @@ impl JournalCatchUp {
     /// Starts tailing after the supplied durable checkpoint.
     #[must_use]
     pub const fn new(applied_through: u64) -> Self {
-        Self { applied_through, upper: None }
+        Self { applied_through, lower: None, upper: None }
     }
 
     /// Starts tailing a moved range below the upper-exclusive `upper` bound.
-    pub fn for_range(applied_through: u64, upper: Vec<u8>) -> Result<Self, CatchUpError> {
-        if upper.is_empty() {
+    pub fn for_range(
+        applied_through: u64,
+        lower: Option<Vec<u8>>,
+        upper: Vec<u8>,
+    ) -> Result<Self, CatchUpError> {
+        if upper.is_empty() || lower.as_deref().is_some_and(|lower| lower.is_empty() || lower >= upper.as_slice()) {
             return Err(CatchUpError::EmptyKey);
         }
-        Ok(Self { applied_through, upper: Some(upper) })
+        Ok(Self { applied_through, lower, upper: Some(upper) })
     }
 
     /// Returns the last successfully applied sequence.
@@ -178,7 +183,10 @@ impl JournalCatchUp {
         }
         let selected: Vec<_> = entries
             .iter()
-            .filter(|entry| self.upper.as_deref().is_none_or(|upper| entry.key() < upper))
+            .filter(|entry| {
+                self.lower.as_deref().is_none_or(|lower| entry.key() >= lower)
+                    && self.upper.as_deref().is_none_or(|upper| entry.key() < upper)
+            })
             .cloned()
             .collect();
         // The checkpoint is for the source journal, rather than only for the

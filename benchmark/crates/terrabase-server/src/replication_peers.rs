@@ -574,7 +574,6 @@ fn spawn_peer_owner(
                 _ = stopped.changed() => break,
                 result = workers.join_next(), if !workers.is_empty() => {
                     worker_error = Some(match result { Some(Err(error)) => failure(error), _ => "replication peer worker stopped unexpectedly".into() });
-                    progress.fence(); break;
                 },
                 _ = classifiers.join_next(), if !classifiers.is_empty() => {},
                 accepted = endpoint.accept() => match accepted {
@@ -817,8 +816,8 @@ async fn session(
                     let Some(PhysicalDriver::Follower(follower) | PhysicalDriver::InstalledFollower { driver: follower, .. }) = lane.physical.as_mut() else { return Err("readiness cut requires physical follower".into()); };
                     let boundary = follower.verify_boundary(&peer, frame.snapshot_digest(), frame.checkpoint_digest(), frame.sequence(), frame.digest().map_err(failure)?).await.map_err(failure)?;
                     let verified = frame.authenticate(&boundary).map_err(failure)?;
-                    progress.advance_regional(scope, frame.sequence());
-                    progress.advance_region(scope, runtime.transport().config().local_region().as_str(), frame.frontier()).map_err(failure)?;
+                    progress.advance_regional_from_peer(scope, connection.peer().member().as_str(), frame.sequence());
+                    progress.advance_region_from_peer(scope, connection.peer().member().as_str(), runtime.transport().config().local_region().as_str(), frame.frontier()).map_err(failure)?;
                     if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.readiness = Some(verified); }
                 } else if bytes.starts_with(b"TBRP") {
                     let selected_cut = select_cut(cuts, runtime, progress, observations, scope, &connection).await?;
@@ -895,7 +894,7 @@ async fn session(
                             if let Some(repair) = repair_lanes.get(&scope) { repair.lock().map_err(failure)?.driver.trigger(); }
                         },
                         CausalReceive::Receipt { .. } => {
-                            progress.advance_region(scope, region, &frontier).map_err(failure)?;
+                            progress.advance_region_from_peer(scope, connection.peer().member().as_str(), region, &frontier).map_err(failure)?;
                             if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.causal_receipt_observed = true; }
                         },
                     }
@@ -943,8 +942,8 @@ async fn session(
                                     let proof = writer.physical_boundary(tenant).await.map_err(failure)?;
                                     if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical = proof; }
                                     if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical_caught_up = facts.physical.is_some(); }
-                                    progress.advance_regional(scope, sequence.get());
-                                    progress.advance_region(scope, runtime.transport().config().local_region().as_str(), &frontier).map_err(failure)?;
+                                    progress.advance_regional_from_peer(scope, connection.peer().member().as_str(), sequence.get());
+                                    progress.advance_region_from_peer(scope, connection.peer().member().as_str(), runtime.transport().config().local_region().as_str(), &frontier).map_err(failure)?;
                                     let selected_cut = select_cut(cuts, runtime, progress, observations, scope, &connection).await?;
                                     let physical = observations.lock().map_err(failure)?.get(&(connection.peer().member().as_str().to_owned(), scope)).and_then(|facts| facts.physical.clone());
                                     if let Some((physical, cut)) = physical.zip(selected_cut) {
@@ -1347,11 +1346,19 @@ impl Drop for PeerInbox {
         drop(self.receiver.take());
         // Losing a worker cannot leave a host acknowledging receipt waits or
         // advertising observations from a session whose owner no longer exists.
-        self.progress.fence();
         if let Ok(mut observations) = self.observations.lock() {
-            for ((peer, _), facts) in observations.iter_mut() {
-                if peer == &self.peer {
-                    *facts = PeerFacts::default();
+            // A replacement authenticated session may have published fresh
+            // evidence before this stale inbox is dropped. Its cleanup must
+            // not revoke that newer session's receipts.
+            let replacement_live = observations.iter().any(|((peer, _), facts)| {
+                peer == &self.peer && facts.connected
+            });
+            if !replacement_live {
+                self.progress.fence_peer(&self.peer);
+                for ((peer, _), facts) in observations.iter_mut() {
+                    if peer == &self.peer {
+                        *facts = PeerFacts::default();
+                    }
                 }
             }
         }

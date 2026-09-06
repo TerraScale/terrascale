@@ -79,16 +79,21 @@ pub(super) fn fail_pending(connection: &Connection) -> Result<bool, NativeRecove
     let rows = statement
         .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
         .map_err(|_| NativeRecoveryError::Unavailable)?;
+    let rows: Vec<_> = rows
+        .map(|row| row.map_err(|_| NativeRecoveryError::Unavailable))
+        .collect::<Result<_, _>>()?;
+    drop(statement);
     let mut changed = false;
     for row in rows {
-        let (operation_id, source_database_id) =
-            row.map_err(|_| NativeRecoveryError::Unavailable)?;
+        let (operation_id, source_database_id) = row;
         let operation = NativeRecoveryOperation {
             operation_id,
             source_database_id,
             phase: super::NativeRecoveryPhase::Failed,
             facts: None,
-            error: Some("native recovery drain deadline reached; retry the existing operation".into()),
+            error: Some(
+                "native recovery drain deadline reached; retry the existing operation".into(),
+            ),
         };
         save_record_only(connection, &operation)?;
         changed = true;

@@ -198,11 +198,19 @@ mod tests {
         )
         .unwrap();
         let transaction = connection.transaction().unwrap();
-        let result =
-            close(&transaction, scope, 3, MeasurementWindow::interval(1000, 2000).unwrap())
-                .unwrap();
+        let window = MeasurementWindow::interval(1000, 2000).unwrap();
+        let result = close(&transaction, scope.clone(), 3, window).unwrap();
         assert_eq!(result.byte_seconds(), 0);
         assert_eq!(result.fact_count(), 0);
+        assert_eq!(close(&transaction, scope, 3, window).unwrap(), result);
+        assert_eq!(
+            transaction
+                .query_row::<i64, _, _>("SELECT COUNT(*) FROM storage_usage_intervals", [], |row| {
+                    row.get(0)
+                })
+                .unwrap(),
+            0
+        );
         transaction.commit().unwrap();
         assert_eq!(
             connection
@@ -212,6 +220,47 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn zero_usage_closure_replays_after_reopen() {
+        let path = std::env::temp_dir().join(format!(
+            "terrabase-storage-closure-zero-{}-{}.sqlite3",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let scope = UsageScope::try_new(
+            TenantId::try_new("db").unwrap(),
+            "project",
+            "database",
+            "partition",
+            RegionCode::SFO,
+        )
+        .unwrap();
+        let window = MeasurementWindow::interval(1000, 2000).unwrap();
+        let receipt = {
+            let mut connection = Connection::open(&path).unwrap();
+            connection.execute_batch(super::super::SCHEMA).unwrap();
+            super::super::accounting::initialize_at(&connection, 1000).unwrap();
+            initialize(&connection).unwrap();
+            super::super::storage_intervals::initialize(&connection).unwrap();
+            let transaction = connection.transaction().unwrap();
+            let receipt = close(&transaction, scope.clone(), 3, window).unwrap();
+            transaction.commit().unwrap();
+            receipt
+        };
+        let replay = {
+            let mut connection = Connection::open(&path).unwrap();
+            super::super::accounting::initialize_at(&connection, 2000).unwrap();
+            initialize(&connection).unwrap();
+            super::super::storage_intervals::initialize(&connection).unwrap();
+            let transaction = connection.transaction().unwrap();
+            let replay = close(&transaction, scope, 3, window).unwrap();
+            transaction.commit().unwrap();
+            replay
+        };
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(replay, receipt);
     }
     #[test]
     fn regional_arrival_and_retention_are_measured_independently() {

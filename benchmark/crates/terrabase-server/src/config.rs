@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
+use terrabase::backup::object_store::Provider;
 use terrabase::encryption::{DatabaseKeyVersion, KeyProviderIdentity};
 use terrabase::identity::{ClusterUlid, DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
 use terrabase::member::EnvironmentName;
@@ -85,6 +86,48 @@ pub struct ProductionDatabase {
     pub quotas: DatabaseQuotas,
     /// Whether this catalog entry is enabled for admission.
     pub enabled: bool,
+    /// Optional native backup policy. Production composition refuses an
+    /// enabled database without this policy before publishing readiness.
+    pub backup: Option<ProductionBackupConfig>,
+}
+
+/// Provider credentials and placement facts for one native backup copy.
+/// Credential files are references only; secret bytes never enter this type.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionBackupDestination {
+    /// Selected object provider.
+    pub provider: Provider,
+    /// HTTPS S3-compatible endpoint.
+    pub endpoint: String,
+    /// SigV4 signing region.
+    pub signing_region: String,
+    /// Object bucket name.
+    pub bucket: String,
+    /// Operator-verified provider geography.
+    pub verified_geography: String,
+    /// Geographies admitted by the database policy.
+    pub permitted_geographies: Vec<String>,
+    /// Placement verification revision.
+    pub placement_revision: String,
+    /// File containing the access key.
+    pub access_key_file: PathBuf,
+    /// File containing the secret key.
+    pub secret_key_file: PathBuf,
+    /// Maximum artifact bytes.
+    pub max_artifact_bytes: u64,
+    /// Maximum recovery point bytes.
+    pub max_point_bytes: u64,
+}
+
+/// Typed native backup policy for one production database.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionBackupConfig {
+    /// Durable effective policy revision.
+    pub policy_revision: String,
+    /// PITR retention in days.
+    pub retention_days: u8,
+    /// Independently verified object destinations.
+    pub destinations: Vec<ProductionBackupDestination>,
 }
 
 /// An exact authenticated peer endpoint in one placement generation.
@@ -564,6 +607,32 @@ struct FileProductionDatabase {
     encryption_key: String,
     quotas: FileDatabaseQuotas,
     enabled: Option<bool>,
+    #[serde(default)]
+    backup: Option<FileProductionBackup>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionBackup {
+    policy_revision: String,
+    retention_days: u8,
+    destinations: Vec<FileProductionBackupDestination>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionBackupDestination {
+    provider: String,
+    endpoint: String,
+    signing_region: String,
+    bucket: String,
+    verified_geography: String,
+    permitted_geographies: Vec<String>,
+    placement_revision: String,
+    access_key_file: PathBuf,
+    secret_key_file: PathBuf,
+    max_artifact_bytes: u64,
+    max_point_bytes: u64,
 }
 
 #[derive(Deserialize)]
@@ -898,6 +967,70 @@ impl ServerConfig {
             {
                 return Err(ConfigError::InvalidProductionBoundary);
             }
+            let backup = entry
+                .backup
+                .map(|backup| {
+                    if backup.policy_revision.trim().is_empty()
+                        || backup.policy_revision.len() > 256
+                        || backup.policy_revision.chars().any(char::is_control)
+                        || !matches!(backup.retention_days, 1 | 7 | 30 | 35)
+                        || backup.destinations.is_empty()
+                        || backup.destinations.len() > 2
+                    {
+                        return Err(ConfigError::InvalidProductionBoundary);
+                    }
+                    let mut destinations = Vec::with_capacity(backup.destinations.len());
+                    let mut providers = BTreeSet::new();
+                    for destination in backup.destinations {
+                        let provider = match destination.provider.as_str() {
+                            "oci" => Provider::Oci,
+                            "tigris" => Provider::Tigris,
+                            _ => return Err(ConfigError::InvalidProductionBoundary),
+                        };
+                        if !providers.insert(provider)
+                            || !destination.endpoint.starts_with("https://")
+                            || destination.signing_region.is_empty()
+                            || destination.bucket.is_empty()
+                            || destination.verified_geography.is_empty()
+                            || destination.placement_revision.is_empty()
+                            || !destination
+                                .permitted_geographies
+                                .contains(&destination.verified_geography)
+                            || destination.max_artifact_bytes == 0
+                            || destination.max_artifact_bytes > 256 * 1024 * 1024
+                            || destination.max_point_bytes < destination.max_artifact_bytes
+                            || (provider == Provider::Oci
+                                && destination.signing_region != region.as_str())
+                        {
+                            return Err(ConfigError::InvalidProductionBoundary);
+                        }
+                        let access_key_file = production_path(&destination.access_key_file)?;
+                        let secret_key_file = production_path(&destination.secret_key_file)?;
+                        paths.extend([access_key_file.clone(), secret_key_file.clone()]);
+                        destinations.push(ProductionBackupDestination {
+                            provider,
+                            endpoint: destination.endpoint,
+                            signing_region: destination.signing_region,
+                            bucket: destination.bucket,
+                            verified_geography: destination.verified_geography,
+                            permitted_geographies: destination.permitted_geographies,
+                            placement_revision: destination.placement_revision,
+                            access_key_file,
+                            secret_key_file,
+                            max_artifact_bytes: destination.max_artifact_bytes,
+                            max_point_bytes: destination.max_point_bytes,
+                        });
+                    }
+                    Ok(ProductionBackupConfig {
+                        policy_revision: backup.policy_revision,
+                        retention_days: backup.retention_days,
+                        destinations,
+                    })
+                })
+                .transpose()?;
+            if entry.enabled == Some(true) && backup.is_none() {
+                return Err(ConfigError::InvalidProductionBoundary);
+            }
             databases.push(ProductionDatabase {
                 tenant,
                 project,
@@ -911,6 +1044,7 @@ impl ServerConfig {
                 encryption_key,
                 quotas,
                 enabled: entry.enabled.unwrap_or(false),
+                backup,
             });
         }
         if !databases.iter().any(|database| database.enabled) && file.member_admission.is_none() {
@@ -1716,6 +1850,11 @@ encryption_provider = "oci-vault"
 encryption_key = "01ARZ3NDEKTSV4RRFFQ69G5FB0"
 quotas = { max_storage_bytes = 1073741824, max_documents = 100000, max_inflight = 64 }
 enabled = true
+
+[databases.backup]
+policy_revision = "backup-policy-1"
+retention_days = 7
+destinations = [{ provider = "oci", endpoint = "https://objectstorage.GRU.compat.objectstorage.GRU.oraclecloud.com", signing_region = "GRU", bucket = "backup-a", verified_geography = "br", permitted_geographies = ["br"], placement_revision = "placement-4", access_key_file = "/run/secrets/backup-access", secret_key_file = "/run/secrets/backup-secret", max_artifact_bytes = 1048576, max_point_bytes = 16777216 }]
 
 [placement]
 generation = 4

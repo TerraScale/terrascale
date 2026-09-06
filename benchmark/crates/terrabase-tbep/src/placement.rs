@@ -853,6 +853,24 @@ impl PlacementJournal {
         Ok(accepted_response(*revision, proof))
     }
 
+    /// Returns the digest of the canonical proposal backing the accepted proof.
+    /// This is the placement binding used by data-plane readiness receipts.
+    pub fn accepted_placement_digest(&self) -> Result<String, PlacementError> {
+        let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
+        let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
+        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let chain = self.verified_chain(&connection, trust)?;
+        let (_, revision, _) = chain.last().ok_or(PlacementError::NotFound)?;
+        let bytes: Vec<u8> = connection
+            .query_row(
+                "SELECT proposal FROM proposals WHERE revision=?1",
+                [i64::try_from(*revision).map_err(|_| PlacementError::Storage)?],
+                |row| row.get(0),
+            )
+            .map_err(|_| PlacementError::Storage)?;
+        Ok(transition::hash(&bytes))
+    }
+
     fn verified_chain(
         &self,
         connection: &Connection,

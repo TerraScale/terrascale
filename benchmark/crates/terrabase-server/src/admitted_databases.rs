@@ -331,8 +331,8 @@ impl AdmittedDatabaseRegistry {
     ///
     /// # Errors
     /// Returns an error when the Member is not ready or draining, a registry
-    /// lock is poisoned, lifecycle state cannot be read, or observations are
-    /// unavailable for multi-region records.
+    /// lock is poisoned or lifecycle state cannot be read. Multi-region records
+    /// are omitted because this local member cannot certify their global state.
     pub fn lifecycle_snapshots(
         &self,
         now: u64,
@@ -353,10 +353,10 @@ impl AdmittedDatabaseRegistry {
             .collect();
         let mut snapshots = Vec::with_capacity(databases.len());
         for database in databases {
-            // A local observation cannot certify database-wide inactivity while
+            // A local observation cannot certify database-wide state while
             // another selected Region may still be serving authorized requests.
             if database.record.regions.len() != 1 {
-                return Err("regional lifecycle aggregation unavailable".into());
+                continue;
             }
             let engine = database.host.engine();
             let tenant = terrabase::types::TenantId::try_new(database.host.tenant())
@@ -749,6 +749,35 @@ pub(crate) mod tests {
         assert_eq!(unrelated.deleted_at, None);
 
         drop(first);
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_snapshots_skip_multi_region_and_publish_healthy_records() {
+        let (registry, member, records, root) = fixture();
+        {
+            let mut databases = registry.databases.write().unwrap();
+            Arc::get_mut(databases.get_mut(&records[1].database_id).unwrap())
+                .unwrap()
+                .record
+                .regions = vec!["GRU".into(), "SFO".into()];
+        }
+        let snapshots = registry.lifecycle_snapshots(1).unwrap();
+        assert_eq!(snapshots.len(), 1, "unsupported scope must not fabricate a global fact");
+        assert_eq!(snapshots[0].database_id, records[0].database_id);
+
+        {
+            let mut databases = registry.databases.write().unwrap();
+            Arc::get_mut(databases.get_mut(&records[1].database_id).unwrap())
+                .unwrap()
+                .record
+                .regions = vec!["GRU".into()];
+        }
+        let snapshots = registry.lifecycle_snapshots(1).unwrap();
+        assert_eq!(snapshots.len(), 2, "healthy records remain publishable");
+
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();

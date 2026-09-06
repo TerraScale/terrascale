@@ -82,6 +82,9 @@ pub(super) fn load(
     start: i64,
     end: i64,
 ) -> Result<Vec<StorageUsageInterval>, ()> {
+    if start >= end {
+        return Err(());
+    }
     let mut statement=connection.prepare("SELECT start_millis,end_millis,logical_bytes FROM storage_usage_intervals WHERE tenant=?1 AND window_start=?2 AND window_end=?3 ORDER BY ordinal").map_err(|_| ())?;
     let rows = statement
         .query_map(params![tenant, start, end], |row| {
@@ -99,6 +102,13 @@ pub(super) fn load(
             end_millis: u64::try_from(to).map_err(|_| ())?,
             logical_bytes: bytes.parse().map_err(|_| ())?,
         });
+    }
+    // An empty timeline is the canonical representation of a valid zero-use
+    // closure. It still covers the complete window: there are simply no
+    // logical byte levels to record. The closure checksum binds this empty
+    // list, so exact replay can safely return it after a reopen.
+    if result.is_empty() {
+        return Ok(result);
     }
     if result.windows(2).any(|pair| pair[0].end_millis != pair[1].start_millis) {
         return Err(());

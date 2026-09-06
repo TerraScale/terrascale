@@ -40,6 +40,7 @@ pub struct CopyBatch {
 /// between its commit and persistence of this cursor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CopyCheckpoint {
+    lower: Option<Vec<u8>>,
     upper: Vec<u8>,
     after_key: Option<Vec<u8>>,
     through: u64,
@@ -48,6 +49,9 @@ pub struct CopyCheckpoint {
 }
 
 impl CopyCheckpoint {
+    /// Returns the lower-inclusive bound, when the range is bounded below.
+    #[must_use]
+    pub fn lower(&self) -> Option<&[u8]> { self.lower.as_deref() }
     /// Returns the upper-exclusive bound.
     #[must_use]
     pub fn upper(&self) -> &[u8] {
@@ -132,13 +136,15 @@ pub trait RangeCopySource {
     /// Source-specific I/O failure.
     type Error;
 
-    /// Reads one bounded page strictly after `after_key` and below `upper`.
+    /// Reads one bounded page at or above `lower`, strictly after `after_key`,
+    /// and below `upper`.
     ///
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the source scan fails.
     fn read_range(
         &mut self,
+        lower: Option<&[u8]>,
         after_key: Option<&[u8]>,
         upper: &[u8],
         limit: usize,
@@ -161,6 +167,7 @@ pub trait RangeCopyTarget {
 /// Resumable, bounded range-copy driver.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RangeCopier {
+    lower: Option<Vec<u8>>,
     upper: Vec<u8>,
     after_key: Option<Vec<u8>>,
     through: u64,
@@ -174,16 +181,17 @@ impl RangeCopier {
     /// # Errors
     ///
     /// Returns [`CopyError::EmptyKey`] when `upper` is empty.
-    pub fn new(upper: Vec<u8>) -> Result<Self, CopyError> {
-        if upper.is_empty() {
+    pub fn new(lower: Option<Vec<u8>>, upper: Vec<u8>) -> Result<Self, CopyError> {
+        if upper.is_empty() || lower.as_deref().is_some_and(|lower| lower.is_empty() || lower >= upper.as_slice()) {
             return Err(CopyError::EmptyKey);
         }
-        Ok(Self { upper, after_key: None, through: 0, copied: 0, done: false })
+        Ok(Self { lower, upper, after_key: None, through: 0, copied: 0, done: false })
     }
 
     /// Resumes from a previously durable cursor.
     pub fn resume(checkpoint: CopyCheckpoint) -> Result<Self, CopyError> {
         if checkpoint.upper.is_empty()
+            || checkpoint.lower.as_deref().is_some_and(|lower| lower.is_empty() || lower >= checkpoint.upper.as_slice())
             || checkpoint
                 .after_key
                 .as_deref()
@@ -192,6 +200,7 @@ impl RangeCopier {
             return Err(CopyError::EmptyKey);
         }
         Ok(Self {
+            lower: checkpoint.lower,
             upper: checkpoint.upper,
             after_key: checkpoint.after_key,
             through: checkpoint.through,
@@ -205,6 +214,10 @@ impl RangeCopier {
     pub fn upper(&self) -> &[u8] {
         &self.upper
     }
+
+    /// Returns the lower-inclusive bound, when the range is bounded below.
+    #[must_use]
+    pub fn lower(&self) -> Option<&[u8]> { self.lower.as_deref() }
 
     /// Returns the last durable source checkpoint.
     #[must_use]
@@ -228,6 +241,7 @@ impl RangeCopier {
     #[must_use]
     pub fn checkpoint(&self) -> CopyCheckpoint {
         CopyCheckpoint {
+            lower: self.lower.clone(),
             upper: self.upper.clone(),
             after_key: self.after_key.clone(),
             through: self.through,
@@ -261,7 +275,7 @@ impl RangeCopier {
             return Ok(true);
         }
         let batch = source
-            .read_range(self.after_key.as_deref(), &self.upper, limit.max(1))
+            .read_range(self.lower.as_deref(), self.after_key.as_deref(), &self.upper, limit.max(1))
             .map_err(|_| CopyError::SourceFailed)?;
         if batch.through() < self.through {
             return Err(CopyError::CheckpointRegressed {
@@ -277,7 +291,8 @@ impl RangeCopier {
             if entry.key().is_empty() {
                 return Err(CopyError::EmptyKey);
             }
-            if entry.key() >= self.upper.as_slice()
+            if self.lower.as_deref().is_some_and(|lower| entry.key() < lower)
+                || entry.key() >= self.upper.as_slice()
                 || previous.is_some_and(|key| entry.key() <= key)
             {
                 return Err(CopyError::KeysOutOfOrder);

@@ -23,8 +23,8 @@ use terrabase::CommitOutcome;
 use terrabase::Engine;
 use terrabase::EngineConfig;
 use terrabase::engine::EngineError;
-use terrabase::regions::RegionCode;
 use terrabase::regions::RegionCatalog;
+use terrabase::regions::RegionCode;
 use terrabase::types::CollectionName;
 use terrabase::types::Document;
 use terrabase::types::DocumentId;
@@ -140,10 +140,7 @@ impl ControlPlane {
     /// Opens the registry with the authoritative orchestrator Region catalog.
     /// The catalog is supplied by the caller so future admitted Regions are
     /// accepted without changing this control-plane code.
-    pub fn open_with_catalog(
-        root: &Path,
-        catalog: RegionCatalog,
-    ) -> Result<Self, ControlError> {
+    pub fn open_with_catalog(root: &Path, catalog: RegionCatalog) -> Result<Self, ControlError> {
         let engine = Engine::open(
             EngineConfig::durable(root.join("control-plane"))
                 .map_err(|error| ControlError::Registry(format!("{error:?}")))?,

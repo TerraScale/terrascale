@@ -52,7 +52,8 @@ impl NativeRecoveryWorker {
         let _ = self.stop.send(());
         let deadline = self.join.await.map_err(|_| NativeRecoveryError::Unavailable)?;
         if deadline {
-            let connection = self.runtime.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            let connection =
+                self.runtime.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
             persistence::fail_pending(&connection)?;
             *self.runtime.worker_error.lock().map_err(|_| NativeRecoveryError::Unavailable)? =
                 Some(NativeRecoveryError::Unavailable);
@@ -320,37 +321,68 @@ impl NativeRecoveryRuntime {
                 })
                 .map_err(|_| NativeRecoveryError::Unavailable)?;
             let mut found = None;
+            let mut malformed = None;
             for row in rows {
                 let (source, operation, phase, bytes) =
                     row.map_err(|_| NativeRecoveryError::Unavailable)?;
-                if matches!(phase.as_str(), "accepted" | "capturing" | "measuring") {
-                    let state: NativeRecoveryOperation = serde_json::from_slice(&bytes)
-                        .map_err(|_| NativeRecoveryError::VerificationFailed)?;
-                    if status::validate(&state, &source, &operation, &phase).is_err() {
-                        if state.operation_id == operation && state.source_database_id == source {
-                            let mut failed = state;
-                            failed.phase = NativeRecoveryPhase::Failed;
-                            failed.error = Some("native recovery record verification failed; retry the existing operation".into());
-                            self.save_record_only(&failed)?;
-                        }
-                        return Ok(true);
+                let state = match serde_json::from_slice::<NativeRecoveryOperation>(&bytes) {
+                    Ok(state) => state,
+                    Err(_) => {
+                        malformed = Some((source, operation));
+                        break;
                     }
+                };
+                if status::validate(&state, &source, &operation, &phase).is_err() {
+                    malformed = Some((source, operation));
+                    break;
+                }
+                if matches!(phase.as_str(), "accepted" | "capturing" | "measuring") {
                     found = Some((source, operation, state));
                     break;
                 }
             }
-            found
+            (found, malformed)
         };
+        let (pending, malformed) = pending;
+        if let Some((source, operation)) = malformed {
+            let connection =
+                self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            persistence::fail_row(
+                &connection,
+                &operation,
+                &source,
+                "native recovery record verification failed; retry the existing operation",
+            )?;
+            self.notify.notify_one();
+            return Ok(true);
+        }
         let Some((source, operation, _state)) = pending else {
             return Ok(false);
         };
-        let admitted = self
-            .registry
-            .resolve(&source)
-            .map_err(|_| NativeRecoveryError::Unavailable)?
-            .ok_or(NativeRecoveryError::Unavailable)?;
+        let admitted = match self.registry.resolve(&source) {
+            Ok(Some(admitted)) => admitted,
+            Ok(None) | Err(_) => {
+                let connection =
+                    self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+                persistence::fail_row(
+                    &connection,
+                    &operation,
+                    &source,
+                    "native recovery source is temporarily unavailable; retry the existing operation",
+                )?;
+                return Ok(true);
+            }
+        };
         if admitted.host.engine().database_id().to_text() != source {
-            return Err(NativeRecoveryError::VerificationFailed);
+            let connection =
+                self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            persistence::fail_row(
+                &connection,
+                &operation,
+                &source,
+                "native recovery record verification failed; retry the existing operation",
+            )?;
+            return Ok(true);
         }
         let placement = admitted.record.regions.clone();
         let result = self.run_capture(&admitted.host, placement, &source, &operation);
@@ -505,13 +537,9 @@ mod tests {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let registry = Arc::new(registry);
         let runtime_root = root.join("native-recovery-idle");
-        let (runtime, worker) = NativeRecoveryRuntime::new(
-            &runtime_root,
-            fleet(),
-            Arc::clone(&registry),
-            limits(),
-        )
-        .unwrap();
+        let (runtime, worker) =
+            NativeRecoveryRuntime::new(&runtime_root, fleet(), Arc::clone(&registry), limits())
+                .unwrap();
         worker.shutdown().await.unwrap();
         assert_eq!(
             runtime.capture(records[0].database_id.clone(), "retry".into()).await,
@@ -526,13 +554,9 @@ mod tests {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let registry = Arc::new(registry);
         let runtime_root = root.join("native-recovery-drain");
-        let (runtime, worker) = NativeRecoveryRuntime::new(
-            &runtime_root,
-            fleet(),
-            Arc::clone(&registry),
-            limits(),
-        )
-        .unwrap();
+        let (runtime, worker) =
+            NativeRecoveryRuntime::new(&runtime_root, fleet(), Arc::clone(&registry), limits())
+                .unwrap();
         let source = records[0].database_id.clone();
         let state = NativeRecoveryOperation {
             operation_id: "drain-operation".into(),

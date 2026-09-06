@@ -116,6 +116,9 @@ pub struct AuthorizationPolicyStore {
     generations: BTreeMap<ResourceScope, u64>,
     revoked_principals: BTreeMap<(ResourceScope, PrincipalUlid), u64>,
     revoked_grants: BTreeMap<(ResourceScope, PrincipalGrantUlid), u64>,
+    /// Serializes policy mutations with authorized engine commit windows.
+    /// This is shared by every gateway handle referring to this store.
+    commit_fence: Arc<std::sync::Mutex<()>>,
 }
 
 struct RecoveredState {
@@ -235,6 +238,7 @@ impl AuthorizationPolicyStore {
             generations,
             revoked_principals,
             revoked_grants,
+            commit_fence: Arc::new(std::sync::Mutex::new(())),
         })
     }
 
@@ -262,6 +266,17 @@ impl AuthorizationPolicyStore {
     ///
     /// Returns a typed generation, bound, or durable-I/O refusal.
     pub fn publish_with_expiry(
+        &mut self,
+        scope: ResourceScope,
+        policy: Policy,
+        expires_at: u64,
+    ) -> Result<(), AuthorizationError> {
+        let commit_fence = Arc::clone(&self.commit_fence);
+        let _fence = commit_fence.lock().map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
+        self.publish_with_expiry_unfenced(scope, policy, expires_at)
+    }
+
+    fn publish_with_expiry_unfenced(
         &mut self,
         scope: ResourceScope,
         policy: Policy,
@@ -326,6 +341,8 @@ impl AuthorizationPolicyStore {
         principal_id: PrincipalUlid,
         generation: u64,
     ) -> Result<(), AuthorizationError> {
+        let commit_fence = Arc::clone(&self.commit_fence);
+        let _fence = commit_fence.lock().map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
         self.append_revocation(Revocation::Principal { scope, principal_id, generation })
     }
 
@@ -341,7 +358,13 @@ impl AuthorizationPolicyStore {
         grant_id: PrincipalGrantUlid,
         generation: u64,
     ) -> Result<(), AuthorizationError> {
+        let commit_fence = Arc::clone(&self.commit_fence);
+        let _fence = commit_fence.lock().map_err(|_| AuthorizationError::PolicyStoreUnavailable)?;
         self.append_revocation(Revocation::Grant { scope, grant_id, generation })
+    }
+
+    pub(crate) fn commit_fence(&self) -> Arc<std::sync::Mutex<()>> {
+        Arc::clone(&self.commit_fence)
     }
 
     /// Evaluates against the current durable publication and refuses missing,
@@ -1184,7 +1207,13 @@ mod tests {
     use std::{
         fs::OpenOptions,
         io::{Seek, SeekFrom, Write},
-        sync::atomic::{AtomicU64, Ordering},
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+            mpsc,
+        },
+        thread,
+        time::Duration,
     };
 
     use super::*;
@@ -1428,6 +1457,38 @@ mod tests {
         drop(first);
         let reopened = AuthorizationPolicyStore::open(&path, [16; 32]).expect("reopen");
         assert_eq!(reopened.expiries.get(&scope()), Some(&5));
+        std::fs::remove_file(path).expect("remove journal");
+    }
+
+    #[test]
+    fn shared_store_revocation_waits_for_commit_fence_and_completes() {
+        let path = test_path("commit-fence");
+        let store = Arc::new(std::sync::Mutex::new(
+            AuthorizationPolicyStore::open(&path, [17; 32]).expect("open"),
+        ));
+        store.lock().expect("store").publish(scope(), policy(1)).expect("publish");
+
+        let fence = store.lock().expect("store").commit_fence();
+        let fence_guard = fence.lock().expect("fence");
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker_store = Arc::clone(&store);
+        let worker = thread::spawn(move || {
+            let mut store = worker_store.lock().expect("store");
+            started_tx.send(()).expect("started");
+            store
+                .revoke_principal(scope(), PrincipalUlid::from_wire_bytes([6; 16]), 2)
+                .expect("revoke");
+            done_tx.send(()).expect("completed");
+        });
+
+        started_rx.recv_timeout(Duration::from_secs(1)).expect("worker started");
+        assert!(done_rx.recv_timeout(Duration::from_millis(25)).is_err());
+        drop(fence_guard);
+        done_rx.recv_timeout(Duration::from_secs(1)).expect("worker completed");
+        worker.join().expect("worker completed");
+        assert_eq!(store.lock().expect("store").revision(&scope()), Ok(2));
+        drop(store);
         std::fs::remove_file(path).expect("remove journal");
     }
 }

@@ -50,7 +50,10 @@ where
                     if tokio::time::Instant::now() >= until {
                         return true;
                     }
-                    tokio::time::sleep(backoff.min(until.saturating_duration_since(tokio::time::Instant::now()))).await;
+                    tokio::time::sleep(
+                        backoff.min(until.saturating_duration_since(tokio::time::Instant::now())),
+                    )
+                    .await;
                 } else {
                     tokio::time::sleep(backoff).await;
                 }

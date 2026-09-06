@@ -1691,8 +1691,8 @@ fn reset_bytes(view: &View) -> Vec<u8> {
         view_generation: view.generation,
         authorization_generation: view.entitlement_epoch,
         revision: view.head,
-        items: Vec::new(),
-        digest: digest_items(&[]),
+        items: view.items.clone(),
+        digest: view.digest.clone(),
         checkpoint: checkpoint_bytes_with_identity(
             &view.id,
             view.generation,
@@ -1934,6 +1934,43 @@ mod tests {
             assert_eq!(view.snapshot.len(), 1, "idle views retain their latest snapshot");
             assert_eq!(view.snapshot[&2].bytes, current.bytes);
         }
+    }
+
+    #[test]
+    fn retention_reset_embeds_the_current_snapshot_at_the_current_head() {
+        let store = ViewStore::new();
+        let (_, id) = store
+            .attach(
+                &AttachRequest {
+                    database_id: "db".into(),
+                    statement: "SELECT * FROM users".into(),
+                    parameters: String::new(),
+                    checkpoint: None,
+                    subscription: None,
+                    entitlement_epoch: 0,
+                },
+                "tenant",
+            )
+            .expect("attach");
+        let mut views = store.views.lock().unwrap();
+        let view = views.get_mut(&id).unwrap();
+        view.head = 7;
+        view.floor = 3;
+        view.items = vec![terrabase_sync_core::wire::ResultItem {
+            identity: "row-1".into(),
+            fields: Vec::new(),
+        }];
+        view.digest = digest_items(&view.items);
+        let bytes = reset_bytes(view);
+        let terrabase_sync_core::wire::Message::Reset { snapshot, .. } =
+            terrabase_sync_core::wire::decode_envelope(&bytes).unwrap().message
+        else {
+            panic!("retention response must be a reset");
+        };
+        assert_eq!(snapshot.revision, 7);
+        assert_eq!(snapshot.items, view.items);
+        assert_eq!(snapshot.digest, digest_items(&view.items));
+        assert_eq!(snapshot.checkpoint.len(), checkpoint_bytes(&id, 1, 7).len() + 16);
     }
 
     #[test]

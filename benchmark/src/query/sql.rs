@@ -1463,3 +1463,37 @@ fn literal(
         _ => Err(unsupported("literal")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{SqlErrorClass, SqlParameters, validate_parameters};
+    use crate::types::DocumentValue;
+
+    #[test]
+    fn numbered_question_mark_bindings_use_their_numeric_names() {
+        let parameters = SqlParameters::try_new(&[("1", DocumentValue::Integer(30))]).unwrap();
+        validate_parameters("SELECT * FROM users WHERE age >= ?1", &parameters).unwrap();
+    }
+
+    #[test]
+    fn bare_question_mark_bindings_keep_sequential_slot_behavior() {
+        let parameters = SqlParameters::try_new(&[
+            ("1", DocumentValue::Integer(18)),
+            ("2", DocumentValue::Integer(65)),
+        ])
+        .unwrap();
+        validate_parameters("SELECT * FROM users WHERE age >= ? AND age <= ?", &parameters)
+            .unwrap();
+    }
+
+    #[test]
+    fn missing_numbered_binding_remains_a_typed_refusal() {
+        let parameters = SqlParameters::new();
+        assert_eq!(
+            validate_parameters("SELECT * FROM users WHERE age >= ?1", &parameters)
+                .unwrap_err()
+                .class(),
+            SqlErrorClass::UnboundParameter
+        );
+    }
+}

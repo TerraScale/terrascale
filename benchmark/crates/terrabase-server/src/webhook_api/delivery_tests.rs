@@ -6,6 +6,7 @@ use std::time::Duration;
 struct TestPorts {
     now: AtomicU64,
     sent: AtomicU64,
+    destruction_attempts: AtomicU64,
     destruction_unavailable: std::sync::atomic::AtomicBool,
     provision_unavailable: std::sync::atomic::AtomicBool,
     creation_unavailable: std::sync::atomic::AtomicBool,
@@ -114,6 +115,7 @@ impl WebhookSecrets for TestPorts {
         Ok(())
     }
     fn destroy(&self, _: &TenantScope, _: &str, _: &str) -> Result<(), SecretError> {
+        self.destruction_attempts.fetch_add(1, Ordering::SeqCst);
         if self.destruction_unavailable.load(Ordering::SeqCst) {
             Err(SecretError::Unavailable)
         } else {
@@ -566,13 +568,15 @@ fn non_idempotent_creation_failure_rolls_back_endpoint_and_quota() {
     let ports = Arc::new(TestPorts::default());
     let service = service(&engine, &ports);
     ports.provision_unavailable.store(true, Ordering::SeqCst);
-    assert!(service
-        .create_with_secret(
-            &scope,
-            &CreateWebhook { endpoint: "https://hooks.example/keyed".into() },
-            Some("recoverable"),
-        )
-        .is_err());
+    assert!(
+        service
+            .create_with_secret(
+                &scope,
+                &CreateWebhook { endpoint: "https://hooks.example/keyed".into() },
+                Some("recoverable"),
+            )
+            .is_err()
+    );
     ports.provision_unavailable.store(false, Ordering::SeqCst);
     let recovered = service
         .create_with_secret(
@@ -584,29 +588,82 @@ fn non_idempotent_creation_failure_rolls_back_endpoint_and_quota() {
     service.delete(&scope, &recovered.webhook.id).expect("cleanup recovered endpoint");
 
     ports.provision_unavailable.store(true, Ordering::SeqCst);
-    assert!(service
-        .create_with_secret(
-            &scope,
-            &CreateWebhook { endpoint: "https://hooks.example/events".into() },
-            None,
-        )
-        .is_err());
+    assert!(
+        service
+            .create_with_secret(
+                &scope,
+                &CreateWebhook { endpoint: "https://hooks.example/events".into() },
+                None,
+            )
+            .is_err()
+    );
     assert!(service.list(&scope).expect("list").is_empty());
 
     ports.provision_unavailable.store(false, Ordering::SeqCst);
     ports.creation_unavailable.store(true, Ordering::SeqCst);
-    assert!(service
-        .create_with_secret(
-            &scope,
-            &CreateWebhook { endpoint: "https://hooks.example/events".into() },
-            None,
-        )
-        .is_err());
+    assert!(
+        service
+            .create_with_secret(
+                &scope,
+                &CreateWebhook { endpoint: "https://hooks.example/events".into() },
+                None,
+            )
+            .is_err()
+    );
     assert!(service.list(&scope).expect("list").is_empty());
 
     drop(service);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
     engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[tokio::test]
+fn failed_cleanup_is_retried_from_deleted_tombstone_after_restart() {
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-cleanup-{}", terrabase::identity::generate()));
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("engine"),
+    );
+    let owner = engine.database_owner();
+    let scope = TenantScope::new(
+        owner.tenant().to_text(),
+        owner.project().to_text(),
+        owner.database().to_text(),
+    )
+    .expect("scope");
+    let ports = Arc::new(TestPorts::default());
+    let service = service(&engine, &ports);
+    ports.creation_unavailable.store(true, Ordering::SeqCst);
+    ports.destruction_unavailable.store(true, Ordering::SeqCst);
+    assert!(
+        service
+            .create_with_secret(
+                &scope,
+                &CreateWebhook { endpoint: "https://hooks.example/events".into() },
+                None,
+            )
+            .is_err()
+    );
+    assert_eq!(ports.destruction_attempts.load(Ordering::SeqCst), 1);
+    assert!(service.list(&scope).expect("active list").is_empty());
+    drop(service);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
+    engine.shutdown().expect("shutdown");
+
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("reopen"),
+    );
+    let reopened = service(&engine, &ports);
+    ports.destruction_unavailable.store(false, Ordering::SeqCst);
+    reopened.dispatch(&scope, None).await.expect("cleanup retry");
+    assert_eq!(ports.destruction_attempts.load(Ordering::SeqCst), 2);
+    assert!(reopened.list(&scope).expect("active list after cleanup").is_empty());
+    drop(reopened);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole reopened engine") };
+    engine.shutdown().expect("shutdown reopened");
     std::fs::remove_dir_all(root).expect("cleanup");
 }
 

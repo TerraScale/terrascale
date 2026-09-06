@@ -1113,6 +1113,7 @@ struct PendingPut {
 struct PendingCommit {
     operation: OperationId,
     receipt: crate::engine::CommitReceipt,
+    baseline: SessionFrontier,
     puts: BTreeMap<DocKey, (DocumentValue, ExpectedVersion)>,
     deletes: Vec<(DocKey, ExpectedVersion)>,
     generated: Vec<DocKey>,
@@ -1148,6 +1149,8 @@ pub struct Session<'engine> {
     operation_counter: u64,
     identity: u64,
     pending_commit: Option<PendingCommit>,
+    #[cfg(test)]
+    post_commit_frontier_fault: bool,
 }
 
 impl fmt::Debug for Session<'_> {
@@ -1219,6 +1222,8 @@ impl<'engine> Session<'engine> {
             operation_counter: 0,
             identity: next_session_identity(),
             pending_commit: None,
+            #[cfg(test)]
+            post_commit_frontier_fault: false,
         })
     }
 
@@ -1779,6 +1784,53 @@ impl<'engine> Session<'engine> {
         self.hooks.after_save.push(hook);
     }
 
+    /// Arms the test-only response-side frontier fault used to exercise
+    /// publication/retry idempotency.
+    #[cfg(test)]
+    pub(crate) fn arm_post_commit_frontier_fault(&mut self) {
+        self.post_commit_frontier_fault = true;
+    }
+
+    fn complete_committed_save(
+        &mut self,
+        pending: PendingCommit,
+        observed: SessionFrontier,
+    ) -> Result<CommitOutcome, SessionError> {
+        let PendingCommit { receipt, puts, deletes, generated, .. } = pending;
+        for (key, (value, _)) in &puts {
+            let document = Document::new(key.1.clone(), key.0.clone(), value.clone());
+            self.pending_puts.remove(key);
+            self.known_missing.remove(key);
+            self.tracked.insert(
+                key.clone(),
+                TrackedDocument {
+                    original: document.clone(),
+                    current: document,
+                    ignored: false,
+                    expected: ExpectedVersion::Any,
+                },
+            );
+        }
+        for (key, _) in &deletes {
+            self.tracked.remove(key);
+            self.known_missing.remove(key);
+            self.pending_puts.remove(key);
+        }
+        self.pending_deletes.clear();
+        self.deferred.clear();
+        self.pending_generated.clear();
+        self.generated = generated;
+        let event = AfterSaveEvent {
+            operation_id: receipt.operation_id().clone(),
+            sequence: receipt.sequence(),
+        };
+        for hook in &mut self.hooks.after_save {
+            hook(&event);
+        }
+        self.session_token.merge(&SessionToken::from_frontier(observed))?;
+        Ok(CommitOutcome::Committed(receipt))
+    }
+
     // -- R7: the unit-of-work boundary -------------------------------------------
 
     /// Saves every queued change: pending lazy reads execute as one batch,
@@ -1811,6 +1863,46 @@ impl<'engine> Session<'engine> {
         self.require_tracking()?;
         if self.options.transaction_mode == SessionTransactionMode::ClusterWide {
             return Err(SessionError::ClusterWideUnavailable);
+        }
+
+        // A publication may have succeeded while the response-side frontier
+        // read failed. Resolve that operation before preparing any new save;
+        // reissuing the staged writes under a new identity could duplicate an
+        // ExpectedVersion::Any write and its usage fact.
+        if let Some(pending) = self.pending_commit.take() {
+            let resolution =
+                match self.engine.resolve_commit(&self.scope, pending.operation.clone()) {
+                    Ok(resolution) => resolution,
+                    Err(error) => {
+                        self.pending_commit = Some(pending);
+                        return Err(SessionError::from(error));
+                    }
+                };
+            let receipt = match resolution {
+                crate::engine::DurableResolution::Committed(receipt) => receipt,
+                crate::engine::DurableResolution::Pending => {
+                    self.pending_commit = Some(pending);
+                    return Err(SessionError::WriteFrontierUnavailable);
+                }
+                crate::engine::DurableResolution::Rejected(_) => {
+                    self.pending_commit = Some(pending);
+                    return Err(SessionError::WriteFrontierUnavailable);
+                }
+            };
+            let observed = match self.engine.session_frontier(&self.scope) {
+                Ok(frontier) => frontier,
+                Err(error) => {
+                    self.pending_commit = Some(PendingCommit { receipt, ..pending });
+                    return Err(SessionError::from(error));
+                }
+            };
+            if !frontier_advanced(&pending.baseline, &observed) {
+                self.pending_commit = Some(PendingCommit { receipt, ..pending });
+                return Err(SessionError::WriteFrontierUnavailable);
+            }
+            return self
+                .complete_committed_save(PendingCommit { receipt, ..pending }, observed)
+                .map(Some);
         }
         self.execute_all_pending_lazy_operations()?;
 
@@ -1907,7 +1999,7 @@ impl<'engine> Session<'engine> {
         // Hooks: deletes first, then puts, matching V1's save preparation.
         // Hook edits persist to the session's staged state, like V1's
         // mutated entities, so a retried save keeps them.
-        let SessionHooks { before_store, before_delete, after_save } = &mut self.hooks;
+        let SessionHooks { before_store, before_delete, .. } = &mut self.hooks;
         for ((collection, id), _) in &deletes {
             let event = BeforeDeleteEvent { collection: collection.clone(), id: id.clone() };
             for hook in before_delete.iter_mut() {
@@ -1979,51 +2071,33 @@ impl<'engine> Session<'engine> {
         }
         let outcome = transaction.commit(self.options.durability);
 
-        if let CommitOutcome::Committed(receipt) = &outcome {
-            let observed = self.engine.session_frontier(&self.scope).map_err(SessionError::from)?;
-            if !frontier_advanced(&write_baseline, &observed) {
+        if let CommitOutcome::Committed(receipt) = outcome.clone() {
+            let pending = PendingCommit {
+                operation: receipt.operation_id().clone(),
+                receipt,
+                baseline: write_baseline.clone(),
+                puts,
+                deletes,
+                generated,
+            };
+            #[cfg(test)]
+            if self.post_commit_frontier_fault {
+                self.post_commit_frontier_fault = false;
+                self.pending_commit = Some(pending);
                 return Err(SessionError::WriteFrontierUnavailable);
             }
-            // Committed state clears (V1
-            // ClearSessionStateAfterSuccessfulSaveChanges): stored
-            // documents re-base (the checked expectation is consumed),
-            // deleted documents leave the map.
-            for (key, (value, _)) in &puts {
-                let document = Document::new(key.1.clone(), key.0.clone(), value.clone());
-                self.pending_puts.remove(key);
-                self.known_missing.remove(key);
-                self.tracked.insert(
-                    key.clone(),
-                    TrackedDocument {
-                        original: document.clone(),
-                        current: document,
-                        ignored: false,
-                        expected: ExpectedVersion::Any,
-                    },
-                );
-            }
-            for (key, _) in &deletes {
-                self.tracked.remove(key);
-                self.known_missing.remove(key);
-                // Defensive: no delete-masked pending put survives its own
-                // save to resurrect on the next one.
-                self.pending_puts.remove(key);
-            }
-            self.pending_deletes.clear();
-            self.deferred.clear();
-            self.pending_generated.clear();
-            self.generated = generated;
-            let event = AfterSaveEvent {
-                operation_id: receipt.operation_id().clone(),
-                sequence: receipt.sequence(),
+            let observed = match self.engine.session_frontier(&self.scope) {
+                Ok(frontier) => frontier,
+                Err(error) => {
+                    self.pending_commit = Some(pending);
+                    return Err(SessionError::from(error));
+                }
             };
-            for hook in after_save.iter_mut() {
-                hook(&event);
+            if !frontier_advanced(&write_baseline, &observed) {
+                self.pending_commit = Some(pending);
+                return Err(SessionError::WriteFrontierUnavailable);
             }
-            // The commit's provenance is now part of the durable frontier.
-            // Merge the exact post-commit observation only after the durable
-            // advancement check above succeeds.
-            self.session_token.merge(&SessionToken::from_frontier(observed))?;
+            return self.complete_committed_save(pending, observed).map(Some);
         }
         Ok(Some(outcome))
     }

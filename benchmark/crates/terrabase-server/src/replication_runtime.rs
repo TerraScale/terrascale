@@ -28,6 +28,10 @@ struct DatabaseProgress {
     regional_sequence: u64,
     regional_observed: bool,
     regions: BTreeMap<String, BTreeMap<String, u64>>,
+    /// Receipt evidence split by authenticated peer so one lost session can
+    /// be discarded without revoking surviving local RF2 evidence.
+    regional_by_peer: BTreeMap<String, (u64, bool)>,
+    regions_by_peer: BTreeMap<String, BTreeMap<String, BTreeMap<String, u64>>>,
     fenced: bool,
 }
 
@@ -209,6 +213,8 @@ impl ReplicationProgress {
                 regional_sequence: 0,
                 regional_observed: false,
                 regions: BTreeMap::new(),
+                regional_by_peer: BTreeMap::new(),
+                regions_by_peer: BTreeMap::new(),
                 fenced: false,
             });
         }
@@ -218,12 +224,25 @@ impl ReplicationProgress {
     /// Advances the `SQLite` boundary covered by a verified local RF=2 receipt.
     /// This is called only after the physical driver proves the entire boundary.
     pub(crate) fn advance_regional(&self, scope: DatabaseRouteScope, sequence: u64) {
+        self.advance_regional_from_peer(scope, "__local__", sequence);
+    }
+
+    pub(crate) fn advance_regional_from_peer(
+        &self,
+        scope: DatabaseRouteScope,
+        peer: &str,
+        sequence: u64,
+    ) {
         if let Ok(mut databases) = self.databases.lock()
             && let Some(progress) = databases.get_mut(&scope)
             && !progress.fenced
         {
-            progress.regional_sequence = progress.regional_sequence.max(sequence);
-            progress.regional_observed = true;
+            let observed = progress.regional_by_peer.entry(peer.to_owned()).or_default();
+            observed.0 = observed.0.max(sequence);
+            observed.1 = true;
+            progress.regional_sequence =
+                progress.regional_by_peer.values().map(|entry| entry.0).max().unwrap_or(0);
+            progress.regional_observed = progress.regional_by_peer.values().any(|entry| entry.1);
             self.changed.send_modify(|generation| *generation = generation.wrapping_add(1));
         }
     }
@@ -233,6 +252,16 @@ impl ReplicationProgress {
     pub(crate) fn advance_region(
         &self,
         scope: DatabaseRouteScope,
+        region: &str,
+        frontier: &BTreeMap<String, u64>,
+    ) -> Result<(), ReplicationWaitError> {
+        self.advance_region_from_peer(scope, "__local__", region, frontier)
+    }
+
+    pub(crate) fn advance_region_from_peer(
+        &self,
+        scope: DatabaseRouteScope,
+        peer: &str,
         region: &str,
         frontier: &BTreeMap<String, u64>,
     ) -> Result<(), ReplicationWaitError> {
@@ -246,13 +275,54 @@ impl ReplicationProgress {
         {
             return Err(ReplicationWaitError::NotAdmitted);
         }
-        let observed = progress.regions.entry(region.to_owned()).or_default();
+        let observed = progress
+            .regions_by_peer
+            .entry(peer.to_owned())
+            .or_default()
+            .entry(region.to_owned())
+            .or_default();
         for (origin, sequence) in frontier {
             let previous = observed.entry(origin.clone()).or_default();
             *previous = (*previous).max(*sequence);
         }
+        progress.regions.clear();
+        for peer_regions in progress.regions_by_peer.values() {
+            for (region, frontier) in peer_regions {
+                let merged = progress.regions.entry(region.clone()).or_default();
+                for (origin, sequence) in frontier {
+                    let previous = merged.entry(origin.clone()).or_default();
+                    *previous = (*previous).max(*sequence);
+                }
+            }
+        }
         self.changed.send_modify(|generation| *generation = generation.wrapping_add(1));
         Ok(())
+    }
+
+    /// Drops all receipt evidence sourced from one authenticated peer while
+    /// retaining the assignment and evidence from every surviving peer.
+    pub(crate) fn fence_peer(&self, peer: &str) {
+        if let Ok(mut databases) = self.databases.lock() {
+            for progress in databases.values_mut() {
+                progress.regional_by_peer.remove(peer);
+                progress.regions_by_peer.remove(peer);
+                progress.regional_sequence =
+                    progress.regional_by_peer.values().map(|entry| entry.0).max().unwrap_or(0);
+                progress.regional_observed =
+                    progress.regional_by_peer.values().any(|entry| entry.1);
+                progress.regions.clear();
+                for peer_regions in progress.regions_by_peer.values() {
+                    for (region, frontier) in peer_regions {
+                        let merged = progress.regions.entry(region.clone()).or_default();
+                        for (origin, sequence) in frontier {
+                            let previous = merged.entry(origin.clone()).or_default();
+                            *previous = (*previous).max(*sequence);
+                        }
+                    }
+                }
+            }
+        }
+        self.changed.send_modify(|generation| *generation = generation.wrapping_add(1));
     }
 
     /// Permanently fences all progress and wakes pending requests.
@@ -501,6 +571,33 @@ mod tests {
         progress.advance_regional(scope(), 7);
         progress.admit_many(BTreeMap::from([(scope(), BTreeSet::from(["GRU".into()]))])).unwrap();
         assert_eq!(progress.boundaries().unwrap()[&scope()].regional_sequence, 7);
+    }
+
+    #[test]
+    fn fencing_one_peer_preserves_surviving_peer_evidence() {
+        let progress = ReplicationProgress::default();
+        progress.admit(scope(), BTreeSet::from(["GRU".into(), "SFO".into()])).unwrap();
+        progress.advance_regional_from_peer(scope(), "local-rf2", 9);
+        progress
+            .advance_region_from_peer(
+                scope(),
+                "remote-a",
+                "GRU",
+                &BTreeMap::from([("GRU".into(), 4)]),
+            )
+            .unwrap();
+        progress
+            .advance_region_from_peer(
+                scope(),
+                "remote-b",
+                "SFO",
+                &BTreeMap::from([("GRU".into(), 4)]),
+            )
+            .unwrap();
+        progress.fence_peer("remote-a");
+        assert_eq!(progress.boundaries().unwrap()[&scope()].regional_sequence, 9);
+        assert!(progress.boundaries().unwrap()[&scope()].regions.contains_key("SFO"));
+        assert!(!progress.boundaries().unwrap()[&scope()].regions.contains_key("GRU"));
     }
 
     #[test]

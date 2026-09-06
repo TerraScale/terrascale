@@ -4,7 +4,11 @@
 //! gateway envelope before obtaining an engine snapshot, and it consults the
 //! durable policy store for every operation.
 
-use std::{collections::BTreeMap, fmt, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    sync::{Arc, Mutex},
+};
 
 use crate::{
     authorization::{
@@ -64,7 +68,8 @@ pub struct AuthorizedEngine {
     gateway_spiffe_principal: String,
     verifier: PrincipalContextVerifier,
     replay_guard: Mutex<PrincipalContextReplayGuard>,
-    policy_store: Mutex<AuthorizationPolicyStore>,
+    policy_store: Arc<Mutex<AuthorizationPolicyStore>>,
+    commit_fence: Arc<Mutex<()>>,
 }
 
 impl fmt::Debug for AuthorizedEngine {
@@ -95,6 +100,7 @@ impl AuthorizedEngine {
         if environment.is_empty() || gateway_spiffe_principal.is_empty() {
             return Err(AuthorizedEngineError::BindingMismatch);
         }
+        let commit_fence = policy_store.commit_fence();
         Ok(Self {
             engine,
             expected_scope,
@@ -102,7 +108,41 @@ impl AuthorizedEngine {
             gateway_spiffe_principal,
             verifier,
             replay_guard: Mutex::new(PrincipalContextReplayGuard::new()),
-            policy_store: Mutex::new(policy_store),
+            policy_store: Arc::new(Mutex::new(policy_store)),
+            commit_fence,
+        })
+    }
+
+    /// Binds a gateway to an already shared policy store. All gateways made
+    /// from the handle share both policy state and commit serialization.
+    pub fn new_shared(
+        engine: Engine,
+        expected_scope: ResourceScope,
+        environment: impl Into<String>,
+        gateway_spiffe_principal: impl Into<String>,
+        verifier: PrincipalContextVerifier,
+        policy_store: Arc<Mutex<AuthorizationPolicyStore>>,
+    ) -> Result<Self, AuthorizedEngineError> {
+        let environment = environment.into();
+        let gateway_spiffe_principal = gateway_spiffe_principal.into();
+        if environment.is_empty() || gateway_spiffe_principal.is_empty() {
+            return Err(AuthorizedEngineError::BindingMismatch);
+        }
+        let commit_fence = policy_store
+            .lock()
+            .map_err(|_| {
+                AuthorizedEngineError::Authorization(AuthorizationError::PolicyStoreUnavailable)
+            })?
+            .commit_fence();
+        Ok(Self {
+            engine,
+            expected_scope,
+            environment,
+            gateway_spiffe_principal,
+            verifier,
+            replay_guard: Mutex::new(PrincipalContextReplayGuard::new()),
+            policy_store,
+            commit_fence,
         })
     }
 
@@ -336,7 +376,13 @@ impl AuthorizedEngine {
             now,
         )
         .map_err(AuthorizedEngineError::Authorization)?;
-        if !self.policy_decision(context, &request)?.is_allowed() {
+        let store = self.policy_store.lock().map_err(|_| {
+            AuthorizedEngineError::Authorization(AuthorizationError::PolicyStoreUnavailable)
+        })?;
+        let fence = self.commit_fence.lock().map_err(|_| {
+            AuthorizedEngineError::Authorization(AuthorizationError::PolicyStoreUnavailable)
+        })?;
+        if !store.evaluate(context, &request).is_allowed() {
             return Err(AuthorizedEngineError::Denied);
         }
         let tenant = self.tenant_for(context)?;
@@ -346,10 +392,12 @@ impl AuthorizedEngine {
             .begin(&tenant, snapshot, operation)
             .map_err(AuthorizedEngineError::Engine)?;
         transaction.put(document, expected).map_err(AuthorizedEngineError::Engine)?;
-        if !self.policy_decision(context, &request)?.is_allowed() {
+        if !store.evaluate(context, &request).is_allowed() {
             return Err(AuthorizedEngineError::Denied);
         }
-        Ok(transaction.commit(crate::types::LocalDurability::Synced))
+        let outcome = transaction.commit(crate::types::LocalDurability::Synced);
+        drop(fence);
+        Ok(outcome)
     }
 
     /// Stages and commits one authorized collection-scoped deletion.
@@ -389,20 +437,28 @@ impl AuthorizedEngine {
             now,
         )
         .map_err(AuthorizedEngineError::Authorization)?;
-        if !self.policy_decision(context, &request)?.is_allowed() {
+        let tenant = self.tenant_for(context)?;
+        let store = self.policy_store.lock().map_err(|_| {
+            AuthorizedEngineError::Authorization(AuthorizationError::PolicyStoreUnavailable)
+        })?;
+        let fence = self.commit_fence.lock().map_err(|_| {
+            AuthorizedEngineError::Authorization(AuthorizationError::PolicyStoreUnavailable)
+        })?;
+        if !store.evaluate(context, &request).is_allowed() {
             return Err(AuthorizedEngineError::Denied);
         }
-        let tenant = self.tenant_for(context)?;
         let snapshot = self.engine.read_snapshot(&tenant).map_err(AuthorizedEngineError::Engine)?;
         let mut transaction = self
             .engine
             .begin(&tenant, snapshot, operation)
             .map_err(AuthorizedEngineError::Engine)?;
         transaction.delete_in_collection(collection, document_id, expected);
-        if !self.policy_decision(context, &request)?.is_allowed() {
+        if !store.evaluate(context, &request).is_allowed() {
             return Err(AuthorizedEngineError::Denied);
         }
-        Ok(transaction.commit(crate::types::LocalDurability::Synced))
+        let outcome = transaction.commit(crate::types::LocalDurability::Synced);
+        drop(fence);
+        Ok(outcome)
     }
 
     /// Returns the owned Engine after the authorization wrapper is retired.

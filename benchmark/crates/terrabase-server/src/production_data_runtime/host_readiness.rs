@@ -88,6 +88,22 @@ pub(super) fn evaluate_writer_hosts(
     result
 }
 
+/// Validates encryption for every activated retained host, including followers.
+pub(super) fn all_activated_hosts_encrypted(
+    snapshots: &[AdmittedDatabaseSnapshot],
+) -> bool {
+    snapshots.iter().filter(|snapshot| snapshot.activated).all(|snapshot| {
+        let engine = snapshot.database.host.engine();
+        let owner = engine.database_owner();
+        engine.validate_storage_authorization().is_ok()
+            && owner.environment().as_str() == snapshot.database.record.environment
+            && owner.tenant().to_text() == snapshot.database.record.tenant_id
+            && owner.project().to_text() == snapshot.database.record.project_id
+            && owner.database().to_text() == snapshot.database.record.database_id
+            && owner.region().as_str() == snapshot.database.record.region
+    })
+}
+
 fn snapshot_scope(snapshot: &AdmittedDatabaseSnapshot) -> Option<DatabaseRouteScope> {
     DatabaseRouteScope::try_new(
         &snapshot.database.record.tenant_id,

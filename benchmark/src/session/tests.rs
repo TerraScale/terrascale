@@ -874,6 +874,28 @@ fn store_new_refuses_an_existing_document_at_commit_and_keeps_session_state() {
 }
 
 #[test]
+fn post_commit_frontier_retry_reuses_one_any_operation() {
+    let (dir, engine) = open_engine("post-commit-frontier-retry");
+    let mut session = open_session(&engine, "tenant-a");
+    session.store(collection("users"), doc_id("u1"), text("v1")).expect("stages");
+    session.arm_post_commit_frontier_fault();
+    assert!(matches!(session.save_changes(), Err(SessionError::WriteFrontierUnavailable)));
+
+    committed(session.save_changes().expect("resolves the published operation"));
+    let scope = scope(&engine, "tenant-a");
+    assert_eq!(engine.journal_rows(&scope, 0, 10).expect("journal rows").len(), 1);
+    assert_eq!(
+        read_engine_document(&engine, "tenant-a", "users", "u1")
+            .expect("published document")
+            .metadata()
+            .version(),
+        1,
+        "retry did not publish a second ExpectedVersion::Any operation"
+    );
+    drop(dir);
+}
+
+#[test]
 fn checked_store_sends_the_expected_version() {
     let (dir, engine) = open_engine("checked-store");
     commit_document(&engine, "tenant-a", "users", "u1", text("v1"));

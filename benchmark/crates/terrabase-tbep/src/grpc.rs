@@ -29,6 +29,7 @@
 //! The sync host seam is synchronous, so every host call rides
 //! `spawn_blocking`; the tonic runtime never blocks on engine work.
 
+pub mod lifecycle_control;
 pub mod placement_control;
 pub mod reloadable_tls;
 
@@ -958,6 +959,11 @@ fn serve_routes(
         )
         .add_service(
             UsageServiceServer::new(server)
+                .max_decoding_message_size(message_bytes)
+                .max_encoding_message_size(message_bytes),
+        )
+        .add_service(
+            lifecycle_control::server(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         ))

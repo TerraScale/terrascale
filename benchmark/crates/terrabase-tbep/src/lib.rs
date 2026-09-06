@@ -63,6 +63,7 @@ pub mod catalog;
 pub mod engine_host;
 pub mod grpc;
 pub mod host;
+pub mod lifecycle;
 pub mod member_host;
 pub mod placement;
 pub mod production_causal;

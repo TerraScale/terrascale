@@ -3777,16 +3777,15 @@ fn flush_metering_db_facts(
             .map_err(|_| ())?;
         for row in rows {
             let (tenant, seq, writes, bytes) = row.map_err(|_| ())?;
-            let tenant_name = tenant.as_str();
+            let multiplier = placement
+                .as_ref()
+                .filter(|(placement_tenant, _)| placement_tenant == &tenant)
+                .map_or(1, |(_, regions)| *regions);
             let seq = u64::try_from(seq).map_err(|_| ())?;
             let writes = u64::try_from(writes).map_err(|_| ())?;
             let bytes = u64::try_from(bytes).map_err(|_| ())?;
             let entry = billed.entry(tenant).or_insert((0, 0, 0));
             entry.0 = entry.0.max(seq);
-            let multiplier = placement
-                .as_ref()
-                .filter(|(placement_tenant, _)| placement_tenant == tenant_name)
-                .map_or(1, |(_, regions)| *regions);
             entry.1 = entry.1.checked_add(writes.checked_mul(multiplier).ok_or(())?).ok_or(())?;
             entry.2 = entry.2.saturating_add(bytes);
         }
@@ -3867,15 +3866,57 @@ fn reconcile_metering_db_facts(connection: &Connection) -> Result<(), ()> {
     // high-water comparison alone cannot detect corruption. Operation facts
     // are the durable source of truth and include sequence-only deletes.
     connection.execute_batch("DELETE FROM metering_db_facts;").map_err(|_| ())?;
-    connection
-        .execute_batch(
-            "INSERT INTO metering_db_facts (db, seq_hi, writes, bytes)
-             SELECT tenant, MAX(sequence), SUM(writes), SUM(bytes)
+    let placement: Option<(String, u64)> = connection
+        .query_row(
+            "SELECT tenant, selected_regions FROM usage_placement WHERE singleton = 1",
+            [],
+            |row| {
+                let tenant = row.get::<_, String>(0)?;
+                let selected = row.get::<_, String>(1)?;
+                let regions = selected.split(',').filter(|region| !region.is_empty()).count();
+                Ok((tenant, regions as u64))
+            },
+        )
+        .optional()
+        .map_err(|_| ())?;
+    if placement.as_ref().is_some_and(|(_, regions)| *regions == 0) {
+        return Err(());
+    }
+    let mut statement = connection
+        .prepare(
+            "SELECT tenant, MAX(sequence), SUM(writes), SUM(bytes)
              FROM operation_facts
              WHERE committed = 1
              GROUP BY tenant",
         )
-        .map_err(|_| ())
+        .map_err(|_| ())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .map_err(|_| ())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| ())?;
+    drop(statement);
+    for (tenant, sequence, writes, bytes) in rows {
+        let multiplier = placement
+            .as_ref()
+            .filter(|(placement_tenant, _)| placement_tenant == &tenant)
+            .map_or(1, |(_, regions)| *regions);
+        let writes = u64::try_from(writes).map_err(|_| ())?.checked_mul(multiplier).ok_or(())?;
+        connection
+            .execute(
+                "INSERT INTO metering_db_facts (db, seq_hi, writes, bytes) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![tenant, sequence, writes as i64, bytes],
+            )
+            .map_err(|_| ())?;
+    }
+    Ok(())
 }
 
 /// The highest sequence any durable row names. Commits' folded document rows,

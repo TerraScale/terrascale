@@ -21,7 +21,7 @@ use terrabase_cluster::wal_snapshot::WalSnapshotSource;
 use terrabase_tbep::production_causal::CausalDriver;
 use terrabase_tbep::registry::BoundScope;
 
-mod host_readiness;
+pub(crate) mod host_readiness;
 mod public_server;
 mod readiness_inventory;
 mod replication_retirement;
@@ -159,6 +159,24 @@ impl ProductionDataLifecycle {
         } else {
             facts
         }
+    }
+
+    /// Validates storage authorization across every activated retained host.
+    /// Followers are included even though writer readiness has a separate role.
+    #[must_use]
+    pub fn all_hosts_encrypted(&self) -> bool {
+        let Ok(snapshots) = self.registry.retained_snapshot() else {
+            return false;
+        };
+        host_readiness::all_activated_hosts_encrypted(&snapshots)
+    }
+
+    /// Reports whether the live worker and progress ledger can persist a drain frontier.
+    #[must_use]
+    pub fn frontiers_persistable(&self) -> bool {
+        self.data.get().is_some_and(|data| {
+            data.ensure_running().is_ok() && self.progress.boundaries().is_ok()
+        })
     }
 
     fn record_inventory(

@@ -1705,6 +1705,17 @@ impl WebhookService {
             return Err(WebhookError::misconfigured());
         }
         let endpoints = self.list(scope)?;
+        // Deleted endpoint tombstones retain key metadata when a provider is
+        // temporarily unavailable. Retry destruction from the durable worker
+        // so a failed create/delete cannot strand encrypted material after a
+        // process restart.
+        for endpoint in self.storage.list_endpoints(scope, true).map_err(WebhookError::storage)? {
+            if endpoint.deleted {
+                self.secrets
+                    .destroy(scope, &endpoint.id, &self.region)
+                    .map_err(WebhookError::secret)?;
+            }
+        }
         let page =
             self.journal.page(scope, cursor, MAX_JOURNAL_PAGE).map_err(WebhookError::storage)?;
         let publications = page.publications;

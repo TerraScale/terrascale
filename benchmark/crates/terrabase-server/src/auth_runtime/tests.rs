@@ -222,6 +222,7 @@ mod admitted_fixture {
                     max_inflight: 16,
                 },
                 enabled: true,
+                backup: None,
             }],
             placement: ProductionPlacement {
                 generation: 1,

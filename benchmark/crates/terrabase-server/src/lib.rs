@@ -28,7 +28,9 @@ pub mod production;
 pub mod production_admission;
 pub mod production_data_runtime;
 pub mod production_metrics;
+pub mod production_placement_control;
 pub mod production_readiness;
+pub mod production_runtime;
 pub mod provisioning;
 pub mod reactive_api;
 mod read_operation;
@@ -58,10 +60,15 @@ pub mod replication_peers;
 
 /// Encrypted native backup bridge for complete physical bootstrap snapshots.
 pub mod native_snapshot_backup;
+pub mod production_lifecycle_control;
 
+/// Shared production composition for the native backup fleet.
+pub mod native_backup_runtime;
 pub mod native_recovery;
 /// Signed verified native recovery facts for scoped control consumers.
 pub mod native_recovery_receipt;
+/// Typed production backup policy composition boundary.
+pub mod production_backup;
 
 /// Joined live delivery catchup observations.
 pub mod catchup_observation;

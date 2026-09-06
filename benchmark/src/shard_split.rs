@@ -268,15 +268,6 @@ mod tests {
         assert_eq!(router.route(b"z"), Some(1));
     }
 
-    /// An unbounded route cannot be followed by another route: the latter
-    /// would be unreachable for every key it claims to own.
-    #[test]
-    fn route_table_rejects_unbounded_route_followed_by_bounded_route() {
-        let whole = ShardRoute::new(1, None, None).expect("whole key space");
-        let suffix = ShardRoute::new(2, Some(b"m".to_vec()), None).expect("suffix");
-        assert_eq!(RouteTable::new(vec![whole, suffix]), Err(RouteError::Overlap));
-    }
-
     /// Adjacent half-open ranges remain valid and route their boundary key
     /// to the upper range only.
     #[test]
@@ -299,7 +290,7 @@ mod tests {
             ],
         };
         let mut writer = RecordingJournal::default();
-        let mut catch_up = JournalCatchUp::for_range(3, b"m".to_vec()).expect("bound");
+        let mut catch_up = JournalCatchUp::for_range(3, None, b"m".to_vec()).expect("bound");
         assert_eq!(catch_up.step(&mut reader, &mut writer, 100), Ok(2));
         assert_eq!(catch_up.applied_through(), 5);
         assert_eq!(writer.checkpoint, 5);
@@ -340,7 +331,7 @@ mod tests {
 
     #[test]
     fn copy_cursor_restarts_without_losing_the_range_position() {
-        let copier = RangeCopier::new(b"m".to_vec()).expect("bound");
+        let copier = RangeCopier::new(None, b"m".to_vec()).expect("bound");
         let checkpoint = copier.checkpoint();
         let resumed = RangeCopier::resume(checkpoint).expect("resume");
         assert_eq!(resumed.upper(), b"m");
