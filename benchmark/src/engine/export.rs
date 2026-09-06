@@ -40,138 +40,6 @@ pub struct ExportHistoryRow {
     pub body: Vec<u8>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        engine::EngineConfig,
-        types::{Document, DocumentValue, ExpectedVersion, OperationId, TenantId},
-    };
-
-    #[test]
-    fn export_boundary_excludes_later_writes_and_rejects_foreign_scopes() {
-        let directory =
-            std::env::temp_dir().join(format!("terrabase-export-seam-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&directory);
-        let engine =
-            Engine::open(EngineConfig::durable(&directory).expect("config")).expect("engine");
-        let tenant = TenantId::try_new("export-test").expect("tenant");
-        let scope = engine.scope_for(&tenant);
-        let collection = CollectionName::try_new("items").expect("collection");
-        for id in ["a", "b"] {
-            let snapshot = engine.read_snapshot(&scope).expect("snapshot");
-            let mut tx = engine
-                .begin(&scope, snapshot, OperationId::try_new(id).expect("operation"))
-                .expect("transaction");
-            tx.put(
-                Document::new(
-                    DocumentId::try_new(id).expect("id"),
-                    collection.clone(),
-                    DocumentValue::String(id.to_owned()),
-                ),
-                ExpectedVersion::New,
-            )
-            .expect("put");
-            assert!(matches!(
-                tx.commit(LocalDurability::Synced),
-                super::super::CommitOutcome::Committed(_)
-            ));
-        }
-        let boundary = 1;
-        let records = engine.export_snapshot_records(&scope, boundary, 0, None, 1).expect("page");
-        assert_eq!(records[0].document().id().as_str(), "a");
-        assert!(
-            engine
-                .export_snapshot_records(
-                    &scope,
-                    boundary,
-                    0,
-                    Some((collection, records[0].document().id().clone())),
-                    1
-                )
-                .expect("last page")
-                .is_empty()
-        );
-        let history = engine.export_history_rows(&scope, boundary, None, 256).expect("history");
-        assert_eq!(history.len(), 1);
-        assert_eq!(history[0].sequence, boundary);
-        let foreign = TenantScope::from_parts(tenant, engine.identity() + 1);
-        assert!(matches!(
-            engine.export_snapshot_records(&foreign, boundary, 0, None, 1),
-            Err(EngineError::ScopeMismatch)
-        ));
-        assert!(matches!(
-            engine.export_history_rows(&scope, boundary, None, 257),
-            Err(EngineError::SnapshotPageLimitExceeded)
-        ));
-        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
-        let mut transaction = engine
-            .begin(&scope, snapshot, OperationId::try_new("multi").expect("operation"))
-            .expect("transaction");
-        for id in ["c", "d"] {
-            transaction
-                .put(
-                    Document::new(
-                        DocumentId::try_new(id).expect("id"),
-                        CollectionName::try_new("items").expect("collection"),
-                        DocumentValue::String(id.to_owned()),
-                    ),
-                    ExpectedVersion::New,
-                )
-                .expect("put");
-        }
-        assert!(matches!(
-            transaction.commit(LocalDurability::Synced),
-            super::super::CommitOutcome::Committed(_)
-        ));
-        let first = engine
-            .export_history_rows(&scope, 3, Some((2, "items".to_owned(), "b".to_owned())), 1)
-            .expect("first revision");
-        assert_eq!(first[0].id, "c");
-        let second = engine
-            .export_history_rows(
-                &scope,
-                3,
-                Some((first[0].sequence, first[0].collection.clone(), first[0].id.clone())),
-                1,
-            )
-            .expect("second revision");
-        assert_eq!(second[0].id, "d");
-        assert_eq!(second[0].sequence, first[0].sequence);
-        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
-        let mut transaction = engine
-            .begin(&scope, snapshot, OperationId::try_new("ttl").expect("operation"))
-            .expect("transaction");
-        transaction
-            .put(
-                Document::new(
-                    DocumentId::try_new("expiring").expect("id"),
-                    CollectionName::try_new("ttl").expect("collection"),
-                    DocumentValue::Object(std::collections::BTreeMap::from([(
-                        "expires_at".to_owned(),
-                        DocumentValue::Integer(1),
-                    )])),
-                ),
-                ExpectedVersion::New,
-            )
-            .expect("put");
-        assert!(matches!(
-            transaction.commit(LocalDurability::Synced),
-            super::super::CommitOutcome::Committed(_)
-        ));
-        assert_eq!(
-            engine.export_snapshot_records(&scope, 4, 0, None, 256).expect("before expiry").len(),
-            5
-        );
-        assert_eq!(
-            engine.export_snapshot_records(&scope, 4, 2, None, 256).expect("after expiry").len(),
-            4
-        );
-        engine.shutdown().expect("shutdown");
-        std::fs::remove_dir_all(directory).expect("cleanup");
-    }
-}
-
 impl Engine {
     /// Captures durable schema envelopes and index descriptors with a fixed
     /// document boundary. The authenticated adapter supplies database and branch.
@@ -262,7 +130,7 @@ impl Engine {
         scope: &TenantScope,
         boundary: u64,
         captured_at_millis: u64,
-        after: Option<(CollectionName, DocumentId)>,
+        after: Option<&(CollectionName, DocumentId)>,
         limit: u32,
     ) -> Result<Vec<SnapshotRecord>, EngineError> {
         self.validate_scope(scope)?;
@@ -428,4 +296,140 @@ fn validate_export_boundary(
         return Err(EngineError::SnapshotBoundaryUnavailable);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        engine::EngineConfig,
+        types::{Document, DocumentValue, ExpectedVersion, OperationId, TenantId},
+    };
+
+    fn verify_export_ttl(engine: &Engine, scope: &TenantScope) {
+        let snapshot = engine.read_snapshot(scope).expect("snapshot");
+        let mut transaction = engine
+            .begin(scope, snapshot, OperationId::try_new("ttl").expect("operation"))
+            .expect("transaction");
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new("expiring").expect("id"),
+                    CollectionName::try_new("ttl").expect("collection"),
+                    DocumentValue::Object(std::collections::BTreeMap::from([(
+                        "expires_at".to_owned(),
+                        DocumentValue::Integer(1),
+                    )])),
+                ),
+                ExpectedVersion::New,
+            )
+            .expect("put");
+        assert!(matches!(
+            transaction.commit(LocalDurability::Synced),
+            super::super::CommitOutcome::Committed(_)
+        ));
+        assert_eq!(
+            engine.export_snapshot_records(scope, 4, 0, None, 256).expect("before expiry").len(),
+            5
+        );
+        assert_eq!(
+            engine.export_snapshot_records(scope, 4, 2, None, 256).expect("after expiry").len(),
+            4
+        );
+    }
+
+    #[test]
+    fn export_boundary_excludes_later_writes_and_rejects_foreign_scopes() {
+        let directory =
+            std::env::temp_dir().join(format!("terrabase-export-seam-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        let engine =
+            Engine::open(EngineConfig::durable(&directory).expect("config")).expect("engine");
+        let tenant = TenantId::try_new("export-test").expect("tenant");
+        let scope = engine.scope_for(&tenant);
+        let collection = CollectionName::try_new("items").expect("collection");
+        for id in ["a", "b"] {
+            let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+            let mut tx = engine
+                .begin(&scope, snapshot, OperationId::try_new(id).expect("operation"))
+                .expect("transaction");
+            tx.put(
+                Document::new(
+                    DocumentId::try_new(id).expect("id"),
+                    collection.clone(),
+                    DocumentValue::String(id.to_owned()),
+                ),
+                ExpectedVersion::New,
+            )
+            .expect("put");
+            assert!(matches!(
+                tx.commit(LocalDurability::Synced),
+                super::super::CommitOutcome::Committed(_)
+            ));
+        }
+        let boundary = 1;
+        let records = engine.export_snapshot_records(&scope, boundary, 0, None, 1).expect("page");
+        assert_eq!(records[0].document().id().as_str(), "a");
+        assert!(
+            engine
+                .export_snapshot_records(
+                    &scope,
+                    boundary,
+                    0,
+                    Some(&(collection, records[0].document().id().clone())),
+                    1
+                )
+                .expect("last page")
+                .is_empty()
+        );
+        let history = engine.export_history_rows(&scope, boundary, None, 256).expect("history");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].sequence, boundary);
+        let foreign = TenantScope::from_parts(tenant, engine.identity() + 1);
+        assert!(matches!(
+            engine.export_snapshot_records(&foreign, boundary, 0, None, 1),
+            Err(EngineError::ScopeMismatch)
+        ));
+        assert!(matches!(
+            engine.export_history_rows(&scope, boundary, None, 257),
+            Err(EngineError::SnapshotPageLimitExceeded)
+        ));
+        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+        let mut transaction = engine
+            .begin(&scope, snapshot, OperationId::try_new("multi").expect("operation"))
+            .expect("transaction");
+        for id in ["c", "d"] {
+            transaction
+                .put(
+                    Document::new(
+                        DocumentId::try_new(id).expect("id"),
+                        CollectionName::try_new("items").expect("collection"),
+                        DocumentValue::String(id.to_owned()),
+                    ),
+                    ExpectedVersion::New,
+                )
+                .expect("put");
+        }
+        assert!(matches!(
+            transaction.commit(LocalDurability::Synced),
+            super::super::CommitOutcome::Committed(_)
+        ));
+        let first = engine
+            .export_history_rows(&scope, 3, Some((2, "items".to_owned(), "b".to_owned())), 1)
+            .expect("first revision");
+        assert_eq!(first[0].id, "c");
+        let second = engine
+            .export_history_rows(
+                &scope,
+                3,
+                Some((first[0].sequence, first[0].collection.clone(), first[0].id.clone())),
+                1,
+            )
+            .expect("second revision");
+        assert_eq!(second[0].id, "d");
+        assert_eq!(second[0].sequence, first[0].sequence);
+        verify_export_ttl(&engine, &scope);
+        engine.shutdown().expect("shutdown");
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
 }

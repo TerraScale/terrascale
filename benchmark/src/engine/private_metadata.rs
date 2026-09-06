@@ -50,7 +50,7 @@ impl Transaction<'_> {
 impl Transaction<'_> {
     /// Stages an exact-byte schema envelope CAS with this transaction's validation changes.
     ///
-    /// The comparison runs under the SQLite commit transaction. A conflict
+    /// The comparison runs under the `SQLite` commit transaction. A conflict
     /// rejects the entire transaction, including documents and validation state.
     ///
     /// # Errors
@@ -167,7 +167,7 @@ mod tests {
         Document::new(
             DocumentId::try_new(id).unwrap(),
             CollectionName::try_new("users").unwrap(),
-            DocumentValue::Object(Default::default()),
+            DocumentValue::Object(std::collections::BTreeMap::default()),
         )
     }
 

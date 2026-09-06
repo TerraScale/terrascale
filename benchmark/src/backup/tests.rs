@@ -11,7 +11,7 @@
 //! performance claim: restore receipts are checked for native round trips,
 //! while formal recovery drills belong to the exclusive recovery lane.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -49,6 +49,22 @@ pub(super) fn open_engine(tag: &str) -> (PathBuf, Engine) {
     let engine =
         Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens");
     (dir, engine)
+}
+
+#[derive(Debug)]
+struct UnavailableKeys;
+impl crate::encryption::DatabaseKeySource for UnavailableKeys {
+    fn current_lease(
+        &self,
+    ) -> Result<Arc<crate::encryption::DatabaseKeyLease>, crate::encryption::EncryptionError> {
+        Err(crate::encryption::EncryptionError::InvalidKeyMetadata)
+    }
+    fn lease(
+        &self,
+        _: crate::encryption::DatabaseKeyVersion,
+    ) -> Result<Arc<crate::encryption::DatabaseKeyLease>, crate::encryption::EncryptionError> {
+        self.current_lease()
+    }
 }
 
 fn local_backup_encryption(
@@ -419,27 +435,6 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
     let reopened = Engine::open(config).unwrap();
     assert_eq!(reopened.database_owner(), &owner);
     drop(reopened);
-    #[derive(Debug)]
-    struct UnavailableKeys;
-    impl crate::encryption::DatabaseKeySource for UnavailableKeys {
-        fn current_lease(
-            &self,
-        ) -> Result<
-            std::sync::Arc<crate::encryption::DatabaseKeyLease>,
-            crate::encryption::EncryptionError,
-        > {
-            Err(crate::encryption::EncryptionError::InvalidKeyMetadata)
-        }
-        fn lease(
-            &self,
-            _: crate::encryption::DatabaseKeyVersion,
-        ) -> Result<
-            std::sync::Arc<crate::encryption::DatabaseKeyLease>,
-            crate::encryption::EncryptionError,
-        > {
-            self.current_lease()
-        }
-    }
     let rejected = location("encrypted-restore-unavailable-key");
     let unavailable = EngineConfig::durable(&rejected)
         .unwrap()
@@ -1639,7 +1634,7 @@ fn encrypted_incremental_chain_survives_fresh_artifact_contexts() {
         DatabaseKeyLease::test_oci_vault(
             KeyVersionMetadata::new(scope, DatabaseKeyVersion::generate()),
             DatabaseKey::from_bytes([51; 32]),
-            std::time::Duration::from_secs(60),
+            std::time::Duration::from_mins(1),
         )
         .unwrap(),
     );
@@ -1724,6 +1719,26 @@ fn staging_byte_limit_preserves_preexisting_recovery_point() {
     full.archive().verify(&destination).unwrap();
 }
 
+fn assert_timestamp_restore_cases(destination: &Path, cipher: &ArtifactCipher) {
+    for (requested, expected, sequence) in
+        [(1_000, 1, 1), (1_999, 1, 1), (2_000, 3, 2), (2_001, 3, 2), (3_000, 4, 3)]
+    {
+        let target = location("timestamp-target");
+        let receipt = RestorePlan::restore_at_unix_millis_encrypted_in_region(
+            requested,
+            destination,
+            &target,
+            cipher,
+            &super::PlacementLock::br_only(),
+            RegionCode::GRU,
+        )
+        .unwrap();
+        assert_eq!(receipt.restored_documents(), expected);
+        assert_eq!(receipt.restored_source_sequence().get(), sequence);
+        assert_eq!(receipt.requested_unix_millis(), Some(requested));
+    }
+}
+
 #[test]
 fn timestamp_pitr_replays_whole_commits_at_exact_cutoffs_and_rejects_retention_gaps() {
     let owner = DatabaseOwner::local_development();
@@ -1746,7 +1761,7 @@ fn timestamp_pitr_replays_whole_commits_at_exact_cutoffs_and_rejects_retention_g
         |sequence: StorageSequence, millis: i64| {
             assert_eq!(connection.execute(
             "UPDATE replication_publications SET committed_at = ?1 WHERE local_seq = ?2",
-            rusqlite::params![millis, sequence.get() as i64],
+            rusqlite::params![millis, sequence.get().cast_signed()],
         ).unwrap(), 1);
         };
     let first = committed(put(
@@ -1802,23 +1817,7 @@ fn timestamp_pitr_replays_whole_commits_at_exact_cutoffs_and_rejects_retention_g
     )
     .unwrap();
     let cipher = encryption.cipher.lock().unwrap();
-    for (requested, expected, sequence) in
-        [(1_000, 1, first), (1_999, 1, first), (2_000, 3, pair), (2_001, 3, pair), (3_000, 4, last)]
-    {
-        let target = location("timestamp-target");
-        let receipt = RestorePlan::restore_at_unix_millis_encrypted_in_region(
-            requested,
-            &destination,
-            &target,
-            &*cipher,
-            &super::PlacementLock::br_only(),
-            RegionCode::GRU,
-        )
-        .unwrap();
-        assert_eq!(receipt.restored_documents(), expected);
-        assert_eq!(receipt.restored_source_sequence(), sequence);
-        assert_eq!(receipt.requested_unix_millis(), Some(requested));
-    }
+    assert_timestamp_restore_cases(&destination, &cipher);
     for requested in [999, 3_501] {
         let target = location("timestamp-outside");
         assert_eq!(
@@ -1903,13 +1902,13 @@ fn timestamp_pitr_fails_closed_on_a_clock_regression_inside_incremental() {
     connection
         .execute(
             "UPDATE replication_publications SET committed_at = 3000 WHERE local_seq = ?1",
-            [second.get() as i64],
+            [second.get().cast_signed()],
         )
         .unwrap();
     connection
         .execute(
             "UPDATE replication_publications SET committed_at = 2000 WHERE local_seq = ?1",
-            [third.get() as i64],
+            [third.get().cast_signed()],
         )
         .unwrap();
     run_backup(&source, BackupPlan::incremental_since(first, encryption.clone()), &destination)

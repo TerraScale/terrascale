@@ -449,7 +449,7 @@ mod tests {
             DatabaseKeyLease::from_adapter(
                 metadata.clone(),
                 DatabaseKey::from_bytes([91; 32]),
-                Duration::from_secs(60),
+                Duration::from_mins(1),
                 KeyProviderIdentity::OciVault,
             )
             .unwrap()

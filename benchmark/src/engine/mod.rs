@@ -596,7 +596,7 @@ impl EngineConfig {
         self
     }
 
-    /// Opens SQLite, WAL and rollback journals through authenticated encrypted
+    /// Opens `SQLite`, WAL and rollback journals through authenticated encrypted
     /// storage with renewable, owner-bound key leases. Production owners must
     /// supply this source; plaintext locations are never adopted or converted.
     #[must_use]
@@ -824,11 +824,13 @@ pub struct SnapshotRecord {
 
 impl SnapshotRecord {
     /// Returns the final-state document.
+    #[must_use]
     pub fn document(&self) -> &Document {
         &self.document
     }
 
     /// Returns the durability of the write that won at the snapshot boundary.
+    #[must_use]
     pub fn durability(&self) -> LocalDurability {
         self.durability
     }
@@ -1199,23 +1201,13 @@ impl Drop for LeaderGuard {
     }
 }
 
-impl Engine {
-    /// Opens a durable `SQLite` Engine.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EngineOpenError::InvalidConfig`] for an unusable
-    /// configuration, [`EngineOpenError::FormatMismatch`] when the location
-    /// is not an owned `SQLite` database directory, and
-    /// [`EngineOpenError::StorageUnavailable`] when the location cannot be
-    /// opened.
-    #[allow(clippy::needless_pass_by_value)]
-    pub fn open(config: EngineConfig) -> Result<Self, EngineOpenError> {
-        let location = config.location().clone();
+impl EngineConfig {
+    fn open_owner(&self) -> Result<crate::storage::DatabaseOwner, EngineOpenError> {
+        let location = self.location();
         if location.as_os_str().is_empty() {
             return Err(EngineOpenError::InvalidConfig);
         }
-        match (&config.owner, &config.storage_keys) {
+        match (&self.owner, &self.storage_keys) {
             (Some(owner), Some(keys)) => {
                 let lease =
                     keys.current_lease().map_err(|_| EngineOpenError::StorageUnavailable)?;
@@ -1233,11 +1225,11 @@ impl Engine {
             (Some(_), None) | (None, Some(_)) => return Err(EngineOpenError::InvalidConfig),
             (None, None) => {}
         }
-        let owner = if config.allow_create {
+        if self.allow_create {
             crate::storage::load_or_create(
-                &location,
-                config.owner.as_ref(),
-                if config.owner.is_some() {
+                location,
+                self.owner.as_ref(),
+                if self.owner.is_some() {
                     crate::storage::OwnershipMode::Production
                 } else {
                     crate::storage::OwnershipMode::LocalDevelopment
@@ -1245,9 +1237,9 @@ impl Engine {
             )
         } else {
             crate::storage::load_existing(
-                &location,
-                config.owner.as_ref(),
-                if config.owner.is_some() {
+                location,
+                self.owner.as_ref(),
+                if self.owner.is_some() {
                     crate::storage::OwnershipMode::Production
                 } else {
                     crate::storage::OwnershipMode::LocalDevelopment
@@ -1262,7 +1254,24 @@ impl Engine {
             | crate::storage::OwnershipError::Corrupt
             | crate::storage::OwnershipError::Mismatch
             | crate::storage::OwnershipError::ModeMismatch => EngineOpenError::FormatMismatch,
-        })?;
+        })
+    }
+}
+
+impl Engine {
+    /// Opens a durable `SQLite` Engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineOpenError::InvalidConfig`] for an unusable
+    /// configuration, [`EngineOpenError::FormatMismatch`] when the location
+    /// is not an owned `SQLite` database directory, and
+    /// [`EngineOpenError::StorageUnavailable`] when the location cannot be
+    /// opened.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn open(config: EngineConfig) -> Result<Self, EngineOpenError> {
+        let location = config.location().clone();
+        let owner = config.open_owner()?;
         let metrics = Arc::new(MetricsRegistry::new());
         // Production owners use the authenticated VFS for every connection.
         let open_storage = if config.allow_create {
@@ -2791,7 +2800,7 @@ impl Engine {
         storage.port.flush().map_err(|()| EngineShutdownError::StorageFailure)
     }
 
-    /// Revalidates authorization even when SQLite satisfies a read from cache.
+    /// Revalidates authorization even when `SQLite` satisfies a read from cache.
     ///
     /// # Errors
     /// Returns storage failure after lease revocation or failed renewal.
@@ -4425,7 +4434,7 @@ impl Transaction<'_> {
     ///
     /// # Errors
     ///
-    /// Returns InvalidDocument for malformed or unbounded frontier entries.
+    /// Returns `InvalidDocument` for malformed or unbounded frontier entries.
     pub fn require_uniform_context(
         &mut self,
         frontier: std::collections::BTreeMap<String, u64>,

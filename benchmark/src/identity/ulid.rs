@@ -55,6 +55,11 @@ const fn ambiguous(byte: u8) -> bool {
 }
 
 /// Parses exactly the canonical uppercase Crockford text form.
+///
+/// # Errors
+///
+/// Returns an error when the input has the wrong length, contains a
+/// non-canonical or ambiguous character, or exceeds the ULID value range.
 pub fn from_text(text: &str) -> Result<Ulid, UlidError> {
     let bytes = text.as_bytes();
     if bytes.len() != ULID_TEXT_LENGTH {
@@ -79,6 +84,11 @@ pub fn from_text(text: &str) -> Result<Ulid, UlidError> {
 }
 
 /// Parses exactly one 16-byte ULID value.
+///
+/// # Errors
+///
+/// Returns [`UlidError::WrongBinaryLength`] when the input is not exactly
+/// 16 bytes long.
 pub fn from_binary(bytes: &[u8]) -> Result<Ulid, UlidError> {
     bytes.try_into().map(Ulid::from_bytes).map_err(|_| UlidError::WrongBinaryLength(bytes.len()))
 }

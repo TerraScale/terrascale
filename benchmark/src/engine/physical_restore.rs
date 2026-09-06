@@ -80,6 +80,24 @@ mod tests {
         OperationId, TenantId,
     };
 
+    fn placement(tenant: &TenantId, database: &str) -> crate::usage::UsagePlacement {
+        crate::usage::UsagePlacement::try_new(
+            tenant.clone(),
+            "project",
+            database,
+            database,
+            crate::RegionCode::GRU,
+            vec![crate::RegionCode::GRU],
+            database,
+        )
+        .expect("placement")
+    }
+
+    fn usage_request() -> crate::usage::UsagePageRequest {
+        crate::usage::UsagePageRequest::try_new(None, crate::usage::MAX_USAGE_PAGE_SIZE, None)
+            .expect("usage request")
+    }
+
     #[test]
     fn physical_restore_verifies_source_and_preserves_existing_targets() {
         let root = std::env::temp_dir()
@@ -89,19 +107,7 @@ mod tests {
         let source_id = engine.database_id();
         let tenant = TenantId::try_new("tenant-a").expect("tenant");
         let scope = engine.scope_for(&tenant);
-        let placement = |database: &str| {
-            crate::usage::UsagePlacement::try_new(
-                tenant.clone(),
-                "project",
-                database,
-                database,
-                crate::RegionCode::GRU,
-                vec![crate::RegionCode::GRU],
-                database,
-            )
-            .expect("placement")
-        };
-        engine.configure_usage_placement(placement("source")).expect("source placement");
+        engine.configure_usage_placement(placement(&tenant, "source")).expect("source placement");
         let snapshot = engine.read_snapshot(&scope).expect("snapshot");
         let mut transaction = engine
             .begin(&scope, snapshot, OperationId::try_new("write").expect("operation"))
@@ -134,14 +140,12 @@ mod tests {
         assert_ne!(restored.database_id(), source_id, "restore mints a new database identity");
         let scope = restored.scope_for(&tenant);
         assert!(restored.usage_placement(&scope).expect("child placement").is_none());
-        let usage_request = || {
-            crate::usage::UsagePageRequest::try_new(None, crate::usage::MAX_USAGE_PAGE_SIZE, None)
-                .expect("usage request")
-        };
         assert!(
             restored.usage_page(&scope, usage_request()).expect("child usage").facts().is_empty()
         );
-        restored.configure_usage_placement(placement("target")).expect("fresh child placement");
+        restored
+            .configure_usage_placement(placement(&tenant, "target"))
+            .expect("fresh child placement");
         let snapshot = restored.read_snapshot(&scope).expect("snapshot");
         let transaction = restored
             .begin(&scope, snapshot, OperationId::try_new("read").expect("operation"))

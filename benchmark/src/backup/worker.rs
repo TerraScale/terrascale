@@ -351,7 +351,7 @@ impl NativeBackupFleet {
         // independently verifies a complete chain through the same boundary.
         persist_upload_journal(&stream.config.staging.join("policy-active"), revision, &names)?;
         stream.config.destinations = destinations;
-        stream.config.policy_revision = revision.to_owned();
+        revision.clone_into(&mut stream.config.policy_revision);
         stream.health.protected_sequence =
             chain.last().ok_or(FleetError::Capture)?.boundary_sequence().get();
         stream.health.providers =
@@ -734,6 +734,28 @@ async fn sync_stream(
         }
     }
     let points = point_paths(&stream.config.staging, limits.points_per_stream)?;
+    let failed = upload_destinations(identity, stream, &points, limits).await?;
+    if failed {
+        return Err(FleetError::Upload);
+    }
+    // Advance only after complete read-back verification on EVERY destination.
+    stream
+        .config
+        .engine
+        .engine()
+        .advance_backup_frontier(captured_boundary)
+        .map_err(|_| FleetError::Capture)?;
+    stream.health.protected_sequence = captured_boundary.get();
+    stream.health.protected = capture_refusal.is_none();
+    capture_refusal.map_or(Ok(()), Err)
+}
+
+async fn upload_destinations(
+    identity: &str,
+    stream: &mut Stream,
+    points: &[PathBuf],
+    limits: FleetLimits,
+) -> Result<bool, FleetError> {
     stream.health.providers.clear();
     let mut failed = false;
     for (provider, destination) in &stream.config.destinations {
@@ -747,7 +769,7 @@ async fn sync_stream(
             &stream.config.policy_revision,
             limits.points_per_stream,
         )?;
-        for point in &points {
+        for point in points {
             let name =
                 point.file_name().and_then(|name| name.to_str()).ok_or(FleetError::Capture)?;
             if acknowledged.contains(name) {
@@ -763,19 +785,7 @@ async fn sync_stream(
         stream.health.providers.push((*provider, succeeded));
         failed |= !succeeded;
     }
-    if failed {
-        return Err(FleetError::Upload);
-    }
-    // Advance only after complete read-back verification on EVERY destination.
-    stream
-        .config
-        .engine
-        .engine()
-        .advance_backup_frontier(captured_boundary)
-        .map_err(|_| FleetError::Capture)?;
-    stream.health.protected_sequence = captured_boundary.get();
-    stream.health.protected = capture_refusal.is_none();
-    capture_refusal.map_or(Ok(()), Err)
+    Ok(failed)
 }
 
 async fn enforce_retention(
@@ -994,7 +1004,7 @@ mod tests {
             DatabaseKeyLease::test_oci_vault(
                 KeyVersionMetadata::new(scope, DatabaseKeyVersion::generate()),
                 DatabaseKey::from_bytes([91; 32]),
-                Duration::from_secs(60),
+                Duration::from_mins(1),
             )
             .unwrap(),
         )))
@@ -1110,6 +1120,66 @@ mod tests {
         });
     }
 
+    async fn verify_fleet_retention(
+        fleet: &mut NativeBackupFleet,
+        engine: &Engine,
+        staging: &std::path::Path,
+        limits: FleetLimits,
+    ) {
+        let identity = engine.database_id().to_string();
+        let key_provider = fleet.streams.get(&identity).unwrap().config.keys.clone();
+        // A new full root lets retention remove older complete chains;
+        // each remaining provider still restores without those predecessors.
+        std::thread::sleep(Duration::from_millis(2));
+        committed(put(
+            &engine,
+            engine.database_owner().tenant().to_text().as_str(),
+            "op-3",
+            "doc-3",
+            "users",
+            text("three"),
+            LocalDurability::Synced,
+        ));
+        let lease = key_provider.lease().unwrap();
+        let root = run_backup(
+            &engine,
+            BackupPlan::full(
+                BackupEncryption::from_database_key_lease(
+                    &lease,
+                    engine.database_owner().region(),
+                    0,
+                )
+                .unwrap(),
+            ),
+            &staging,
+        )
+        .unwrap();
+        fleet.streams.get_mut(&identity).unwrap().due = Instant::now();
+        assert!(fleet.sync_once().await.is_empty());
+        enforce_retention_at(
+            &identity,
+            fleet.streams.get(&identity).unwrap(),
+            limits,
+            root.manifest().captured_unix_millis() + 86_400_001,
+        )
+        .await
+        .unwrap();
+        assert_eq!(point_paths(&staging, 8).unwrap().len(), 1);
+        for provider in [Provider::Oci, Provider::Tigris] {
+            let receipt = fleet
+                .restore_from_provider(
+                    &identity,
+                    provider,
+                    None,
+                    &restore_config("retained-root-restore", engine.database_owner()),
+                )
+                .await
+                .unwrap();
+            assert_eq!(receipt.restored_documents(), 3);
+            assert_eq!(receipt.chain_depth(), 1);
+        }
+    }
+
     #[test]
     fn native_fleet_restores_both_providers_and_reopens_encrypted_chain() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -1192,56 +1262,7 @@ mod tests {
                 fleet.health(&identity).unwrap().providers,
                 vec![(Provider::Oci, true), (Provider::Tigris, true)]
             );
-            // A new full root lets retention remove older complete chains;
-            // each remaining provider still restores without those predecessors.
-            std::thread::sleep(Duration::from_millis(2));
-            committed(put(
-                &engine,
-                engine.database_owner().tenant().to_text().as_str(),
-                "op-3",
-                "doc-3",
-                "users",
-                text("three"),
-                LocalDurability::Synced,
-            ));
-            let lease = key_provider.lease().unwrap();
-            let root = run_backup(
-                &engine,
-                BackupPlan::full(
-                    BackupEncryption::from_database_key_lease(
-                        &lease,
-                        engine.database_owner().region(),
-                        0,
-                    )
-                    .unwrap(),
-                ),
-                &staging,
-            )
-            .unwrap();
-            fleet.streams.get_mut(&identity).unwrap().due = Instant::now();
-            assert!(fleet.sync_once().await.is_empty());
-            enforce_retention_at(
-                &identity,
-                fleet.streams.get(&identity).unwrap(),
-                limits,
-                root.manifest().captured_unix_millis() + 86_400_001,
-            )
-            .await
-            .unwrap();
-            assert_eq!(point_paths(&staging, 8).unwrap().len(), 1);
-            for provider in [Provider::Oci, Provider::Tigris] {
-                let receipt = fleet
-                    .restore_from_provider(
-                        &identity,
-                        provider,
-                        None,
-                        &restore_config("retained-root-restore", engine.database_owner()),
-                    )
-                    .await
-                    .unwrap();
-                assert_eq!(receipt.restored_documents(), 3);
-                assert_eq!(receipt.chain_depth(), 1);
-            }
+            verify_fleet_retention(&mut fleet, &engine, &staging, limits).await;
             fleet
                 .change_policy(&identity, "policy-2", vec![(Provider::Tigris, second.clone())])
                 .await

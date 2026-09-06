@@ -38,7 +38,7 @@ fn strict_parser_rejects_noncanonical_text() {
         from_text("01arz3ndektsv4rrffq69g5fav"),
         Err(UlidError::NonCanonicalCharacter { index: 2, byte: b'a' })
     );
-    for character in [b'I', b'L', b'O', b'U', b'i', b'l', b'o', b'u'] {
+    for character in *b"ILOUilou" {
         let mut text = EXAMPLE.as_bytes().to_vec();
         text[25] = character;
         let text = String::from_utf8(text).unwrap();
@@ -47,7 +47,7 @@ fn strict_parser_rejects_noncanonical_text() {
             Err(UlidError::AmbiguousCharacter { index: 25, byte: character })
         );
     }
-    for first in [b'8', b'9', b'A', b'Z'] {
+    for first in *b"89AZ" {
         let mut text = EXAMPLE.as_bytes().to_vec();
         text[0] = first;
         let text = String::from_utf8(text).unwrap();
@@ -89,7 +89,7 @@ fn process_generator_is_safe_for_concurrent_callers() {
 #[test]
 fn upstream_generator_handles_fixed_and_backward_times() {
     let mut generator = ::ulid::Generator::new();
-    let fixed = UNIX_EPOCH + Duration::from_millis(1_700_000_000_000);
+    let fixed = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
     let earlier = fixed - Duration::from_millis(1);
     let first = generator.generate_from_datetime(fixed).unwrap();
     let second = generator.generate_from_datetime(fixed).unwrap();

@@ -1,5 +1,5 @@
 //! Logical physical replication I/O. Encrypted production files never pass
-//! through the operating system's plaintext SQLite stub.
+//! through the operating system's plaintext `SQLite` stub.
 
 use super::sqlite::{encrypted_file::EncryptedFile, encrypted_vfs::EncryptedVfs};
 use std::{
@@ -10,9 +10,9 @@ use std::{
 };
 
 /// Keeps an authenticated database VFS available for offline follower or restore
-/// I/O. Production callers supply the same owner-bound source as EngineConfig.
+/// I/O. Production callers supply the same owner-bound source as `EngineConfig`.
 pub struct EncryptedStorage {
-    _registration: Arc<EncryptedVfs>,
+    registration: Arc<EncryptedVfs>,
 }
 
 impl EncryptedStorage {
@@ -26,7 +26,7 @@ impl EncryptedStorage {
     ) -> io::Result<Self> {
         std::fs::create_dir_all(location)?;
         Ok(Self {
-            _registration: EncryptedVfs::register(&location.join("terrabase.sqlite3"), keys)?,
+            registration: EncryptedVfs::register(&location.join("terrabase.sqlite3"), keys)?,
         })
     }
 }
@@ -97,7 +97,7 @@ fn open(path: &Path, create: bool) -> io::Result<PhysicalFile> {
 }
 
 impl PhysicalFile {
-    /// Returns the logical SQLite byte length.
+    /// Returns the logical `SQLite` byte length.
     ///
     /// # Errors
     /// Fails if the backing handle is unavailable.
@@ -148,7 +148,11 @@ impl PhysicalFile {
 
 impl Read for PhysicalFile {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let count = buffer.len().min(self.len()?.saturating_sub(self.position) as usize);
+        let remaining = self.len()?.saturating_sub(self.position);
+        let count = match usize::try_from(remaining) {
+            Ok(remaining) => buffer.len().min(remaining),
+            Err(_) => buffer.len(),
+        };
         if count == 0 {
             return Ok(0);
         }
@@ -203,7 +207,7 @@ impl Seek for PhysicalFile {
     }
 }
 
-/// Opens a mainline SQLite connection whose database and journals use the
+/// Opens a mainline `SQLite` connection whose database and journals use the
 /// authenticated VFS. The connection's file handles retain the registration.
 /// Callers must bind the supplied source to their authorized database scope.
 ///
@@ -247,7 +251,7 @@ impl EncryptedStorage {
     }
 }
 
-/// Opens SQLite using an already-admitted physical storage registration.
+/// Opens `SQLite` using an already-admitted physical storage registration.
 ///
 /// # Errors
 /// Refuses encrypted companions without a live key source.
@@ -269,14 +273,14 @@ pub fn open_physical_sqlite(
 
 impl EncryptedStorage {
     /// Rewrites one logical database or journal file under the source's active
-    /// key version. The caller must quiesce SQLite writes/checkpoints first.
+    /// key version. The caller must quiesce `SQLite` writes/checkpoints first.
     /// Each file publishes an atomic replacement, so interrupted multi-file
     /// rotation can resume while historical leases remain available.
     ///
     /// # Errors
     /// Fails for out-of-scope paths, unavailable historical keys or I/O errors.
     pub fn reencrypt_file(&self, path: &Path) -> io::Result<()> {
-        self._registration
+        self.registration
             .shared_file(path)?
             .lock()
             .map_err(|_| io::Error::other("encrypted file poisoned"))?

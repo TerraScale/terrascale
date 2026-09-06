@@ -29,6 +29,7 @@ pub struct DeletionPreparation {
 
 impl LifecycleState {
     /// Whether preparation or acceptance has revoked public access.
+    #[must_use]
     pub fn access_revoked(&self) -> bool {
         self.deletion_preparation.is_some() || self.deletion.is_some()
     }
@@ -175,10 +176,11 @@ mod tests {
         let observed = engine.lifecycle_flush_activity(&scope, 123).unwrap();
         assert_eq!(engine.lifecycle_flush_activity(&scope, 122).unwrap(), observed);
         engine.lifecycle_set_protection(&scope, true).unwrap();
-        let at =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
-                as u64
-                + 1000;
+        let at = u64::try_from(
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+        )
+        .unwrap()
+            + 1000;
         let intent = DeletionIntent {
             operation_id: "delete-1".into(),
             usage_stopped_at: at,

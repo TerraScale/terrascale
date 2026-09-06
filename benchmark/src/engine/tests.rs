@@ -2742,7 +2742,7 @@ fn replicated_group(ids: &[&str], stamp: u64) -> super::ReplicatedPublication {
             .map(|id| ReplicatedRecord {
                 collection: CollectionName::try_new("users").unwrap(),
                 id: document_id(id),
-                body: DocumentValue::Integer(stamp as i64),
+                body: DocumentValue::Integer(i64::try_from(stamp).expect("timestamp fits i64")),
                 deleted: false,
                 commit_ulid: "group-source-operation".into(),
                 hlc: stamp,
@@ -2972,7 +2972,7 @@ pub(crate) fn test_storage_keys(
         DatabaseKeyLease::test_oci_vault(
             metadata,
             DatabaseKey::from_bytes([byte; 32]),
-            std::time::Duration::from_secs(300),
+            std::time::Duration::from_mins(5),
         )
         .unwrap(),
     )))

@@ -1,5 +1,5 @@
 //! Trusted placement binding for same-transaction automatic usage accounting.
-use super::*;
+use super::{Engine, TenantScope, UsageCommandError};
 use crate::usage::UsagePlacement;
 
 impl Engine {
@@ -8,6 +8,7 @@ impl Engine {
     ///
     /// # Errors
     /// Returns scope mismatch, invalid placement, or durable storage errors.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn configure_usage_placement(
         &self,
         placement: UsagePlacement,

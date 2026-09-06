@@ -1174,8 +1174,6 @@ fn commit_step(
     }
 }
 
-/// Renders one chain's running digest as hex evidence.
-
 /// Maps an engine failure into the migration vocabulary.
 fn map_engine_error(error: &EngineError) -> MigrationError {
     match error {

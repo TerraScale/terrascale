@@ -37,7 +37,9 @@ pub(crate) use intent::{
 pub(crate) use ownership::validate_local_restore_source;
 pub use ownership::{DatabaseOwner, EnvironmentName, OwnershipError};
 pub(crate) use ownership::{OwnershipMode, load_existing, load_or_create};
-pub(crate) use sqlite::branch_import::{copy_encrypted_snapshot, rebind_owner};
+pub(crate) use sqlite::branch_import::{
+    copy_encrypted_snapshot, rebind_owner, transform_branch_schema,
+};
 pub(crate) use sqlite::branch_provenance::transform_provenance;
 pub use sqlite::database_file;
 pub(crate) use sqlite::import_backup_file;
@@ -737,7 +739,7 @@ pub(crate) trait StoragePort: Send {
     /// Reads persisted origin authority and its closed state.
     fn origin_epoch(&self) -> Result<(u64, bool), ()>;
 
-    /// Monotonically changes origin authority under the SQLite writer transaction.
+    /// Monotonically changes origin authority under the `SQLite` writer transaction.
     fn set_origin_epoch(&mut self, epoch: u64, closed: bool) -> Result<(), ()>;
 
     /// Runs the publication order for one validated commit intent.

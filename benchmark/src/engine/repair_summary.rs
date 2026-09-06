@@ -63,7 +63,7 @@ impl Engine {
             local_sequence,
             frontier,
             baseline,
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(300),
+            expires: std::time::Instant::now() + std::time::Duration::from_mins(5),
         })
     }
     fn validate_repair_cut(

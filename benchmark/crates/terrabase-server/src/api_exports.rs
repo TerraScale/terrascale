@@ -121,7 +121,7 @@ impl ExportSource for MemberSource {
                         &scope,
                         snapshot.boundary,
                         snapshot.captured_at_millis,
-                        cursor,
+                        cursor.as_ref(),
                         u32::try_from(limit.min(256)).map_err(|_| source_error())?,
                     )
                     .map_err(|_| source_error())?;

@@ -695,6 +695,12 @@ normal Engine, after source binding validation. Its physical restore regression
 passed (`84368`), and independent review found no material issue. The large case
 measured 11.779108996 seconds (`30040`); that performance gate remains unpassed.
 
+The replication-core Clippy selection passed (`91210`). Final workspace
+`make check` (`80298`) passed formatting and reached the engine's Clippy backlog,
+reporting 37 library and 54 test-build diagnostics. The added physical-restore
+test's size warning was addressed by extracting its placement and usage-request
+helpers. No normal push or complete-check success is claimed.
+
 The existing `src/engine/branch_restore.rs` is not declared by `engine/mod.rs`
 and references an absent `transform_branch_schema` integration. It remains
 unfinished work, not a qualified native import path. Its future connection setup

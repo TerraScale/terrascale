@@ -1682,109 +1682,123 @@ impl Replay {
                 StorageSequence::new(self.restored_source_sequence.get().max(source_sequence));
         }
         match record {
-            Record::Document { tenant, document, durability, .. } => {
-                let collection = document.collection().as_str().to_owned();
-                let id = document.id().as_str().to_owned();
-                if collection == RESERVED_FAMILY_COLLECTION {
-                    counts.family_records += 1;
-                    counts.tenants.entry(tenant.clone()).or_default().1 += 1;
-                } else {
-                    counts.documents += 1;
-                    counts.tenants.entry(tenant.clone()).or_default().0 += 1;
-                }
-                if *durability != LocalDurability::Synced {
-                    counts.disclosures += 1;
-                }
-                if !include {
-                    return Ok(());
-                }
-                *self.tenant_archive_bytes.entry(tenant.clone()).or_insert(0) += frame_bytes;
-                let keys = self.presence.entry(tenant.clone()).or_default();
-                if !keys.insert((collection.clone(), id.clone())) {
-                    self.duplicate_put_replays += 1;
-                }
-                // The retained sample is the newest decoded document of this
-                // tenant, and a put makes its key live right now. A later
-                // delete retires the sample with its key (see `Delete`
-                // below), so a retained sample is always one of the tenant's
-                // final live keys and verification can never mismatch on a
-                // document the chain itself removed.
-                self.content_hashes.insert(
-                    (tenant.clone(), collection.clone(), id.clone()),
-                    crate::engine::logical_document_digest(tenant, document),
-                );
-                self.samples.insert(tenant.clone(), document.clone());
-                self.stage(
-                    engine,
-                    tenant,
-                    StagedWrite::Put { document: document.clone(), expected: ExpectedVersion::Any },
-                    (collection, id),
-                )
+            Record::Document { tenant, .. } => {
+                self.apply_document(engine, tenant, record, frame_bytes, counts, include)
             }
-            Record::Delete { tenant, collection, id, .. } => {
-                counts.deletes += 1;
-                // A delete-only link still binds the tenant with zero put
-                // counts; retain that zero entry for exact scope/count
-                // comparison against the manifest.
-                counts.tenants.entry(tenant.clone()).or_default();
-                let durability = record_durability(record);
-                if durability != LocalDurability::Synced {
-                    counts.disclosures += 1;
-                }
-                if !include {
-                    return Ok(());
-                }
-                let keys = self.presence.entry(tenant.clone()).or_default();
-                let removed_key = match collection {
-                    Some(name) => {
-                        let key = (name.as_str().to_owned(), id.clone());
-                        keys.remove(&key).then_some(key)
-                    }
-                    None => keys
-                        .iter()
-                        .find(|(_, document)| document == id)
-                        .map(|(collection, document)| (collection.clone(), document.clone()))
-                        .filter(|key| keys.remove(key)),
-                };
-                match removed_key {
-                    // A key the chain removes takes the retained sample with
-                    // it when they name the same document: verification never
-                    // compares a value against a key the archive's own chain
-                    // deleted.
-                    Some(removed_key) => {
-                        self.content_hashes.remove(&(
-                            tenant.clone(),
-                            removed_key.0.clone(),
-                            removed_key.1.clone(),
-                        ));
-                        self.retire_sample(tenant, &removed_key);
-                    }
-                    None => self.missing_key_deletes += 1,
-                }
-                let staged_collection = match collection {
-                    Some(name) => Some(
-                        CollectionName::try_new(name).map_err(|_| BackupError::ChecksumMismatch)?,
-                    ),
-                    None => None,
-                };
-                let staged_id =
-                    DocumentId::try_new(id).map_err(|_| BackupError::ChecksumMismatch)?;
-                let batch_key = match collection {
-                    Some(name) => (name.as_str().to_owned(), id.clone()),
-                    None => (String::new(), id.clone()),
-                };
-                self.stage(
-                    engine,
-                    tenant,
-                    StagedWrite::Delete {
-                        collection: staged_collection,
-                        id: staged_id,
-                        expected: ExpectedVersion::Any,
-                    },
-                    batch_key,
-                )
+            Record::Delete { tenant, .. } => {
+                self.apply_delete(engine, tenant, record, counts, include)
             }
         }
+    }
+
+    fn apply_document(
+        &mut self,
+        engine: &Engine,
+        tenant: &TenantId,
+        record: &Record,
+        frame_bytes: u64,
+        counts: &mut LinkCounts,
+        include: bool,
+    ) -> Result<(), BackupError> {
+        let Record::Document { document, durability, .. } = record else {
+            unreachable!("apply_document receives only document records");
+        };
+        let collection = document.collection().as_str().to_owned();
+        let id = document.id().as_str().to_owned();
+        if collection == RESERVED_FAMILY_COLLECTION {
+            counts.family_records += 1;
+            counts.tenants.entry(tenant.clone()).or_default().1 += 1;
+        } else {
+            counts.documents += 1;
+            counts.tenants.entry(tenant.clone()).or_default().0 += 1;
+        }
+        if *durability != LocalDurability::Synced {
+            counts.disclosures += 1;
+        }
+        if !include {
+            return Ok(());
+        }
+        *self.tenant_archive_bytes.entry(tenant.clone()).or_insert(0) += frame_bytes;
+        let keys = self.presence.entry(tenant.clone()).or_default();
+        if !keys.insert((collection.clone(), id.clone())) {
+            self.duplicate_put_replays += 1;
+        }
+        self.content_hashes.insert(
+            (tenant.clone(), collection.clone(), id.clone()),
+            crate::engine::logical_document_digest(tenant, document),
+        );
+        self.samples.insert(tenant.clone(), document.clone());
+        self.stage(
+            engine,
+            tenant,
+            StagedWrite::Put { document: document.clone(), expected: ExpectedVersion::Any },
+            (collection, id),
+        )
+    }
+
+    fn apply_delete(
+        &mut self,
+        engine: &Engine,
+        tenant: &TenantId,
+        record: &Record,
+        counts: &mut LinkCounts,
+        include: bool,
+    ) -> Result<(), BackupError> {
+        let Record::Delete { collection, id, .. } = record else {
+            unreachable!("apply_delete receives only delete records");
+        };
+        counts.deletes += 1;
+        counts.tenants.entry(tenant.clone()).or_default();
+        if record_durability(record) != LocalDurability::Synced {
+            counts.disclosures += 1;
+        }
+        if !include {
+            return Ok(());
+        }
+        let keys = self.presence.entry(tenant.clone()).or_default();
+        let removed_key = match collection {
+            Some(name) => {
+                let key = (name.as_str().to_owned(), id.clone());
+                keys.remove(&key).then_some(key)
+            }
+            None => keys
+                .iter()
+                .find(|(_, document)| document == id)
+                .map(|(collection, document)| (collection.clone(), document.clone()))
+                .filter(|key| keys.remove(key)),
+        };
+        match removed_key {
+            Some(removed_key) => {
+                self.content_hashes.remove(&(
+                    tenant.clone(),
+                    removed_key.0.clone(),
+                    removed_key.1.clone(),
+                ));
+                self.retire_sample(tenant, &removed_key);
+            }
+            None => self.missing_key_deletes += 1,
+        }
+        let staged_collection = match collection {
+            Some(name) => {
+                Some(CollectionName::try_new(name).map_err(|_| BackupError::ChecksumMismatch)?)
+            }
+            None => None,
+        };
+        let staged_id = DocumentId::try_new(id).map_err(|_| BackupError::ChecksumMismatch)?;
+        let batch_key = match collection {
+            Some(name) => (name.as_str().to_owned(), id.clone()),
+            None => (String::new(), id.clone()),
+        };
+        self.stage(
+            engine,
+            tenant,
+            StagedWrite::Delete {
+                collection: staged_collection,
+                id: staged_id,
+                expected: ExpectedVersion::Any,
+            },
+            batch_key,
+        )
     }
 
     /// Stages one write into the tenant's open batch, flushing first when

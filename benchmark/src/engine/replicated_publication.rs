@@ -1,5 +1,9 @@
 //! Atomic application of a complete source transaction.
-use super::*;
+use super::{
+    AppliedReplication, CommitError, CommitOutcome, CommitReceipt, DocumentValue, Engine,
+    EngineError, IndexGenerationSet, LocalDurability, OperationId, ReadSnapshot, ReplicatedRecord,
+    TenantScope, merge, replication_fingerprint, storage,
+};
 
 /// Maximum records in one bounded source transaction.
 pub const MAX_REPLICATION_PUBLICATION_RECORDS: usize = 100_000;
@@ -26,6 +30,21 @@ pub struct ReplicatedPublication {
 }
 
 impl ReplicatedPublication {
+    fn commit_intent(&self) -> storage::ReplicationPublicationIntent {
+        storage::ReplicationPublicationIntent {
+            origin: self.origin.clone(),
+            origin_sequence: self.origin_sequence,
+            hlc: self.hlc,
+            commit_ulid: self.commit_ulid.clone(),
+            context: self.context.clone(),
+            records: self.records.clone(),
+            private_payload: self.private_payload.clone(),
+            observations: Vec::new(),
+            schema_observations: Vec::new(),
+            conflicts: Vec::new(),
+        }
+    }
+
     /// Canonical source fingerprint, invariant under document delivery order.
     ///
     /// # Errors
@@ -122,18 +141,7 @@ impl Engine {
                 error
             }
         })?;
-        let mut group = storage::ReplicationPublicationIntent {
-            origin: publication.origin.clone(),
-            origin_sequence: publication.origin_sequence,
-            hlc: publication.hlc,
-            commit_ulid: publication.commit_ulid.clone(),
-            context: publication.context.clone(),
-            records: publication.records.clone(),
-            private_payload: publication.private_payload.clone(),
-            observations: Vec::new(),
-            schema_observations: Vec::new(),
-            conflicts: Vec::new(),
-        };
+        let mut group = publication.commit_intent();
         for (record, ((winner, conflict), schema)) in publication.records.iter().zip(plans) {
             group.schema_observations.push((record.collection.clone(), schema));
             group.observations.push((record.collection.clone(), record.id.clone()));
@@ -193,13 +201,13 @@ fn publication_binding(
     identity.update(&publication.origin_sequence.to_be_bytes());
     let operation = OperationId::try_new(&format!("repl-group-{}", identity.finalize().to_hex()))
         .map_err(|_| EngineError::InvalidDocument)?;
-    let mut content = identity;
-    content.update(&publication.hlc.to_be_bytes());
+    let mut fingerprint = identity;
+    fingerprint.update(&publication.hlc.to_be_bytes());
     for bytes in
         [publication.commit_ulid.as_bytes(), &publication.context, &publication.private_payload]
     {
-        content.update(&(bytes.len() as u64).to_be_bytes());
-        content.update(bytes);
+        fingerprint.update(&(bytes.len() as u64).to_be_bytes());
+        fingerprint.update(bytes);
     }
     let mut ordered = publication.records.iter().collect::<Vec<_>>();
     ordered.sort_by(|a, b| (&a.collection, &a.id).cmp(&(&b.collection, &b.id)));
@@ -229,7 +237,7 @@ fn publication_binding(
         if canonical.deleted {
             canonical.body = DocumentValue::Null;
         }
-        content.update(&replication_fingerprint(&canonical)?);
+        fingerprint.update(&replication_fingerprint(&canonical)?);
         let body_bytes = if canonical.deleted {
             0
         } else {
@@ -247,7 +255,7 @@ fn publication_binding(
             return Err(EngineError::InvalidDocument);
         }
     }
-    Ok((operation, *content.finalize().as_bytes()))
+    Ok((operation, *fingerprint.finalize().as_bytes()))
 }
 
 type MergePlan = (Option<ReplicatedRecord>, Option<storage::MergeConflictEntry>);
@@ -304,7 +312,7 @@ fn plan_record(
         let current_wins = current.body.as_ref() == Some(&winner.body);
         if current_stamp > incoming_stamp {
             winner.hlc = current.hlc;
-            winner.origin = current.origin.clone();
+            winner.origin.clone_from(&current.origin);
             winner.origin_sequence = current.origin_sequence;
         }
         (current_wins, policy, explanation)

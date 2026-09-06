@@ -349,7 +349,7 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
         // files, and per-artifact lock stubs beside the logical database.
         // They are all regular files owned by the encrypted VFS and must
         // survive a Member restart so the owner record can be revalidated.
-        let encrypted_artifact = name.to_str().is_some_and(|name| encrypted_artifact_name(name));
+        let encrypted_artifact = name.to_str().is_some_and(encrypted_artifact_name);
         if encrypted_artifact {
             if !entry_type.is_file() {
                 return Err(OwnershipError::ForeignLocation);

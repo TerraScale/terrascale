@@ -122,7 +122,7 @@ impl ReplicatedPublication {
             return Err(invalid());
         }
         let publication =
-            Self { origin, origin_sequence, hlc, commit_ulid, context, private_payload, records };
+            Self { origin, origin_sequence, hlc, commit_ulid, context, records, private_payload };
         publication.fingerprint()?;
         Ok(publication)
     }

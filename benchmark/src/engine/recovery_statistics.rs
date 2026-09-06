@@ -48,8 +48,13 @@ impl Engine {
         let mut row_count = 0_u64;
         loop {
             check_cancelled(cancellation)?;
-            let records =
-                self.export_snapshot_records(scope, boundary, captured_at_millis, cursor, 256)?;
+            let records = self.export_snapshot_records(
+                scope,
+                boundary,
+                captured_at_millis,
+                cursor.as_ref(),
+                256,
+            )?;
             if records.is_empty() {
                 break;
             }
