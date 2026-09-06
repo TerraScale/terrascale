@@ -3,3 +3,4 @@
 **/TestResults/
 **/__pycache__/
 *.py[cod]
+contracts/

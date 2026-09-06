@@ -407,7 +407,12 @@ public sealed class TerraScaleReactiveHttpClient
         return operations;
     }
     private static TerraScaleReactiveItem ReadItemWithIdentity(ref ReactiveMsgpackReader reader) => new(reader.Text(1, 256), ReadFields(ref reader));
-    private static TerraScaleReactiveInsert ReadInsert(ref ReactiveMsgpackReader reader) => new(new TerraScaleReactiveItem(reader.Text(1, 256), ReadFields(ref reader)), checked((int)reader.U32()));
+    private static TerraScaleReactiveInsert ReadInsert(ref ReactiveMsgpackReader reader)
+    {
+        var identity = reader.Text(1, 256);
+        var position = checked((int)reader.U32());
+        return new TerraScaleReactiveInsert(new TerraScaleReactiveItem(identity, ReadFields(ref reader)), position);
+    }
     private static IReadOnlyList<TerraScaleReactiveFieldChange> ReadChanges(ref ReactiveMsgpackReader reader)
     {
         var count = reader.Array(MaxFields); var changes = new List<TerraScaleReactiveFieldChange>(count); var total = 0;
@@ -789,7 +794,20 @@ internal ref struct ReactiveMsgpackReader
     private uint U16() => BinaryPrimitives.ReadUInt16BigEndian(Read(2));
     private uint U32Raw() => BinaryPrimitives.ReadUInt32BigEndian(Read(4));
     private ulong U64Raw() => BinaryPrimitives.ReadUInt64BigEndian(Read(8));
-    private int Length(byte code, bool text) { var length = code switch { >= 0xa0 and <= 0xbf => code & 31, 0xd9 or 0xc4 => Take(), 0xda or 0xc5 => checked((int)U16()), 0xdb or 0xc6 => checked((int)U32Raw()), _ => throw Invalid() }; var max = text ? TerraScaleReactiveHttpClient.MaxStringBytes : TerraScaleReactiveHttpClient.MaxBinaryBytes; if (length > max) throw Invalid(); return length; }
+    private int Length(byte code, bool text)
+    {
+        var length = (text, code) switch
+        {
+            (true, >= 0xa0 and <= 0xbf) => code & 31,
+            (true, 0xd9) or (false, 0xc4) => Take(),
+            (true, 0xda) or (false, 0xc5) => checked((int)U16()),
+            (true, 0xdb) or (false, 0xc6) => checked((int)U32Raw()),
+            _ => throw Invalid(),
+        };
+        var max = text ? TerraScaleReactiveHttpClient.MaxStringBytes : TerraScaleReactiveHttpClient.MaxBinaryBytes;
+        if (length > max) throw Invalid();
+        return length;
+    }
     private static TerraScaleReactiveProtocolException Invalid() => new("The reactive MessagePack frame is malformed or exceeds a declared bound.");
     private static void Scan(ReadOnlySpan<byte> bytes) { var scanner = new ReactiveMsgpackScanner(bytes); scanner.Value(0); scanner.End(); }
 }

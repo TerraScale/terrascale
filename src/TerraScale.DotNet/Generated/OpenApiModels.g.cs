@@ -107,17 +107,6 @@ public sealed record IndexListResponse(
     [property: JsonPropertyName("indexes")] IReadOnlyList<IndexDescriptor> Indexes
 );
 
-public sealed record ReactiveCondition(
-    [property: JsonPropertyName("field")] string Field,
-    [property: JsonPropertyName("op")] string Op,
-    [property: JsonPropertyName("value")] JsonElement Value
-);
-
-public sealed record ReactiveResume(
-    [property: JsonPropertyName("revision")] long Revision,
-    [property: JsonPropertyName("subscription")] long Subscription
-);
-
 public sealed record RestoreRequest(
     [property: JsonPropertyName("at")] long? At,
     [property: JsonPropertyName("name")] string Name

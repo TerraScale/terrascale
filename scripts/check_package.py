@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Build and run a standalone NuGet consumer without SDK project references."""
+
+from pathlib import Path
+import subprocess
+import tempfile
+import uuid
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def run(*arguments: str, cwd: Path = ROOT) -> None:
+    subprocess.run(arguments, cwd=cwd, check=True)
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory(prefix="terrascale-dotnet-consumer-") as directory:
+        workspace = Path(directory)
+        feed = workspace / "feed"
+        consumer = workspace / "consumer"
+        consumer.mkdir()
+        version = f"0.1.0-conformance.{uuid.uuid4().hex}"
+        run("dotnet", "pack", "src/TerraScale.DotNet/TerraScale.DotNet.csproj",
+            "--configuration", "Release", "--no-build", "--output", str(feed),
+            f"-p:PackageVersion={version}")
+        (consumer / "Consumer.csproj").write_text(f"""<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TerraScale.DotNet" Version="{version}" />
+  </ItemGroup>
+</Project>
+""")
+        (consumer / "Program.cs").write_text("""using TerraScale.DotNet;
+using TerraScale.DotNet.Generated;
+
+using var http = new HttpClient();
+var client = new TerraScaleClient(http, new TerraScaleClientOptions
+{
+    BaseAddress = new Uri("https://api.terrascale.tech"),
+    SessionConsistency = TerraScaleSessionConsistency.Automatic,
+});
+var parameters = TerraScaleSqlParameters.FromOrdinal(long.MaxValue, long.MinValue);
+if (parameters["1"].GetInt64() != long.MaxValue || parameters["2"].GetInt64() != long.MinValue)
+    throw new InvalidOperationException("Packaged SQL parameters lost 64-bit precision.");
+if (client.Documents is null || client.Reactive is null || client.Management is null)
+    throw new InvalidOperationException("Packaged client surfaces are missing.");
+if (TerraScaleContractRoutes.Find("execute_sql").Method != "POST")
+    throw new InvalidOperationException("Packaged generated contract is missing.");
+Console.WriteLine("Standalone NuGet consumer passed.");
+""")
+        run("dotnet", "restore", "--source", str(feed), "--source", "https://api.nuget.org/v3/index.json",
+            "--packages", str(workspace / "packages"), cwd=consumer)
+        run("dotnet", "run", "--configuration", "Release", "--no-restore", cwd=consumer)
+
+
+if __name__ == "__main__":
+    main()

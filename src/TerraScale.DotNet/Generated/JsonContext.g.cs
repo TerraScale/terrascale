@@ -25,8 +25,6 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(IndexCreatedResponse))]
 [JsonSerializable(typeof(IndexDescriptor))]
 [JsonSerializable(typeof(IndexListResponse))]
-[JsonSerializable(typeof(ReactiveCondition))]
-[JsonSerializable(typeof(ReactiveResume))]
 [JsonSerializable(typeof(RestoreRequest))]
 [JsonSerializable(typeof(SqlExplainResponse))]
 [JsonSerializable(typeof(SqlRequest))]

@@ -79,7 +79,7 @@ public sealed class TerraScaleReactiveHttpClientTests
     [Test]
     public async Task DeltaOperationsUpdateTheCurrentSnapshot()
     {
-        var insert = new byte[] { 0x91, 0x94, 0x01, 0xa1, (byte)'x', 0x90, 0x00 };
+        var insert = new byte[] { 0x91, 0x94, 0x01, 0xa1, (byte)'x', 0x00, 0x90 };
         using var handler = new ReactiveHandler(pollFrame: Envelope(4, body: Delta("sub", 3, 0, 1, "Y3AtMQ==", operations: insert)));
         using var httpClient = new HttpClient(handler);
         var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
@@ -114,6 +114,46 @@ public sealed class TerraScaleReactiveHttpClientTests
             await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
             await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
         }
+    }
+
+    [Test]
+    public async Task TextAndBinaryWireTypesCannotBeInterchanged()
+    {
+        var textField = new byte[] { 0x91, 0x94, 0x01, 0xa1, (byte)'x', 0x00, 0x91, 0x92, 0xa1, (byte)'p', 0xa1, (byte)'v' };
+        foreach (var frame in new[]
+        {
+            Envelope(10, body: [0x92, 0x01, 0xc4, 0x01, (byte)'x']),
+            Envelope(4, body: Delta("sub", 3, 0, 1, "Y3AtMQ==", operations: textField)),
+        })
+        {
+            using var handler = new ReactiveHandler(pollFrame: frame);
+            using var httpClient = new HttpClient(handler);
+            var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+            await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+            await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+            await Assert.That(subscription.Offset).IsEqualTo(0ul);
+            await Assert.That(subscription.CurrentSnapshot.Items.Count).IsEqualTo(0);
+        }
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task InvalidDeltaAfterValidInsertDoesNotPartiallyPublish(bool unknownDiscriminant)
+    {
+        var operations = new byte[] { 0x92, 0x94, 0x01, 0xa1, (byte)'x', 0x00, 0x90 }
+            .Concat(unknownDiscriminant ? new byte[] { 0x91, 0x07 } : new byte[] { 0x92, 0x04, 0xa1, (byte)'y' }).ToArray();
+        using var handler = new ReactiveHandler(pollFrame: Envelope(4, body: Delta("sub", 3, 0, 1, "Y3AtMQ==", operations: operations)));
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        var before = subscription.CurrentSnapshot;
+
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+
+        await Assert.That(ReferenceEquals(subscription.CurrentSnapshot, before)).IsTrue();
+        await Assert.That(subscription.Offset).IsEqualTo(0ul);
+        await Assert.That(subscription.CurrentSnapshot.Items.Count).IsEqualTo(0);
     }
 
     [Test]

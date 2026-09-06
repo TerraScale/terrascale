@@ -1,10 +1,7 @@
 # TerraScale.DotNet
 
 The C#/.NET 10 client SDK for TerraScale. The workspace
-[workspace goal](../GOAL.md#ts-dotnet) defines the product and SDK responsibilities. The SDK is generated from the
-pinned contract that terrabase publishes (D-13/D-33) and rebuilt by product
-item P-2b; what is checked in today is the surviving hand-written core from
-before that regeneration.
+[workspace goal](../GOAL.md#ts-dotnet) defines the product and SDK responsibilities. Generated models and route metadata consume the pinned contract published by terrabase; named clients implement customer operations against that contract.
 
 ## What is here
 
@@ -16,8 +13,8 @@ before that regeneration.
   regions, backups, tenant lifecycle, SQL, and reactive HTTP views.
 - `TerraScaleSyncV1ViewEngine`: the transport-independent result-view state
   machine (bounded snapshots, atomic deltas, opaque checkpoints, typed resets,
-  reversible optimistic presentation) that awaits the pinned reactive contract
-  (ADR 0002). No transport, route, or wire protocol ships here yet.
+  reversible optimistic presentation). `TerraScaleReactiveHttpClient` supplies
+  MessagePack snapshot bootstrap, HTTP log delivery, and WebSocket delivery.
 
 Retired product concepts are deleted per the workspace decisions, not
 deprecated: this SDK ships only the launch surface above.
@@ -44,10 +41,20 @@ authentication; the provider is called before each request and retry.
 ## Verification
 
 ```bash
-dotnet build TerraScale.DotNet.slnx --configuration Release
-dotnet test TerraScale.DotNet.slnx --configuration Release --no-build --no-progress
+# Published immutable bundle:
+make check CONTRACT_URL="$CONTRACT_URL" CONTRACT_ARCHIVE_SHA256="$CONTRACT_ARCHIVE_SHA256"
+
+# Explicit local producer input for development:
+make check CONTRACT_SOURCE=../terrabase/contracts
 ```
 
-`dotnet format TerraScale.DotNet.slnx --verify-no-changes --no-restore` keeps
-the tree style-clean. CI is the repository-wide D-68 five-line `ts-deploy`
-workflow, added by a coordinated wave across all repositories.
+`make check` verifies and installs the pinned artifacts, checks generated sources
+and formatting, builds, and runs tests. Tests consume the producer OpenAPI,
+HTTP error corpus, reactive snapshot/delta/reset/timeout fixtures, and hostile
+MessagePack vectors. The package check then restores and runs a separate NuGet
+consumer with an isolated package directory and no SDK project reference.
+
+The installed `contracts/` directory is disposable input and is not tracked.
+Tests intentionally fail when their producer fixtures are missing. Local
+contract checks do not qualify immutable publication, real-service behavior,
+or complete four-SDK semantic conformance.

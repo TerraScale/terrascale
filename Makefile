@@ -1,4 +1,4 @@
-.PHONY: check contracts generated-check
+.PHONY: check contracts generated-check package-check
 
 CONTRACT_VERSION_FILE := CONTRACT_VERSION
 CONTRACT_VERSION := $(shell tr -d '[:space:]' < "$(CONTRACT_VERSION_FILE)" 2>/dev/null)
@@ -9,6 +9,10 @@ check: contracts generated-check
 	dotnet format TerraScale.DotNet.slnx --verify-no-changes
 	dotnet build TerraScale.DotNet.slnx --configuration Release
 	dotnet test TerraScale.DotNet.slnx --configuration Release --no-build
+	$(MAKE) package-check
+
+package-check:
+	python3 scripts/check_package.py
 
 contracts:
 	@test -f "$(CONTRACT_VERSION_FILE)" || { echo "missing pinned contract version: $(CONTRACT_VERSION_FILE)" >&2; exit 1; }
