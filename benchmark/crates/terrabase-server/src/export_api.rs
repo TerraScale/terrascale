@@ -1140,6 +1140,7 @@ impl Worker {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn run_inner(
         &self,
         state: &mut ExportJobState,

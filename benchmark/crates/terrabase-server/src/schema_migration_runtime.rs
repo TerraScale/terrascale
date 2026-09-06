@@ -1,6 +1,9 @@
 //! Member-owned schema migration polling and restart recovery.
 
-use super::*;
+use super::{
+    ApiState, Arc, CollectionName, LocalDurability, OperationId, database_records, document_host,
+    document_scope,
+};
 use crate::schema_api::{
     DurableSchemaRecord, MigrationState, SchemaJson, canonical_schema_document,
 };
@@ -119,7 +122,7 @@ fn persist(
     let snapshot =
         engine.read_snapshot(&scope).map_err(|_| "schema status snapshot failed".to_owned())?;
     let operation =
-        OperationId::try_new(&format!("schema-progress-{}", terrabase::identity::generate(),))
+        OperationId::try_new(&format!("schema-progress-{}", terrabase::identity::generate()))
             .map_err(|_| "schema status operation identity failed".to_owned())?;
     let mut transaction = engine
         .begin(&scope, snapshot, operation.clone())
@@ -320,6 +323,10 @@ pub(super) fn spawn(state: &Arc<ApiState>) -> Option<tokio::task::JoinHandle<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::{
+        Document, DocumentId, DocumentValue, ExpectedVersion, RegionCode, Request, Router,
+        StatusCode, router,
+    };
     use axum::body::Body;
     use tower::ServiceExt;
 

@@ -308,7 +308,8 @@ impl AdmissionHost {
                 _ => StatusCode::CONFLICT.into_response(),
             }
         }
-        let usage_router = self.usage_delivery.clone().map(|usage| usage.router());
+        let usage_router =
+            self.usage_delivery.clone().map(super::usage_admission::UsageAdmissionJournal::router);
         let router = Router::new()
             .route("/internal/v1/databases/admit", post(admit))
             .route("/internal/v1/databases/stop", post(stop))

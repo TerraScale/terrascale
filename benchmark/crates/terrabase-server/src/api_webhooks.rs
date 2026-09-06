@@ -1,7 +1,12 @@
 //! Webhook routes on the authenticated database API.
-use super::*;
+use super::{ApiState, check_read_guard, document_host};
 use crate::webhook_api::{self as webhook, TenantScope, WebhookService};
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::http::header::{CONTENT_TYPE, HeaderValue};
+use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
+use std::sync::Arc;
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
 struct WebhookList {
@@ -15,16 +20,16 @@ fn unavailable() -> Response {
 fn service(
     state: &ApiState,
     database: &str,
-) -> Result<(Arc<WebhookService>, TenantScope), Response> {
-    let host = document_host(state, database).map_err(IntoResponse::into_response)?;
-    let keys = state.webhook_keys.clone().ok_or_else(unavailable)?;
+) -> Result<(Arc<WebhookService>, TenantScope), Box<Response>> {
+    let host = document_host(state, database).map_err(|e| Box::new(e.into_response()))?;
+    let keys = state.webhook_keys.clone().ok_or_else(|| Box::new(unavailable()))?;
     let owner = host.engine().database_owner();
     let scope = TenantScope::new(
         owner.tenant().to_text(),
         owner.project().to_text(),
         owner.database().to_text(),
     )
-    .map_err(IntoResponse::into_response)?;
+    .map_err(|e| Box::new(e.into_response()))?;
     let ports = webhook::WebhookPorts::native_https(
         Arc::new(webhook::EngineWebhookStorage::from_host(Arc::clone(&host))),
         Arc::new(webhook::EngineWebhookJournal::from_host(Arc::clone(&host))),
@@ -35,13 +40,13 @@ fn service(
         )),
         tokio::runtime::Handle::current(),
     )
-    .map_err(|_| unavailable())?;
+    .map_err(|_| Box::new(unavailable()))?;
     let service = WebhookService::from_ports(
         ports,
         Arc::new(webhook::SystemWebhookClock),
         state.region.as_str(),
     )
-    .map_err(|_| unavailable())?;
+    .map_err(|_| Box::new(unavailable()))?;
     Ok((service, scope))
 }
 
@@ -53,7 +58,8 @@ async fn resolve(
         .map_err(IntoResponse::into_response)?;
     tokio::task::spawn_blocking(move || service(&state, &name))
         .await
-        .unwrap_or_else(|_| Err(unavailable()))
+        .unwrap_or_else(|_| Err(Box::new(unavailable())))
+        .map_err(|response| *response)
 }
 
 fn json<T: serde::Serialize>(status: StatusCode, value: &T) -> Response {
@@ -132,12 +138,8 @@ pub(super) async fn create_webhook(
     if body.len() > webhook::MAX_WEBHOOK_BODY_BYTES {
         return webhook::WebhookError::payload_too_large().into_response();
     }
-    let input = match serde_json::from_slice::<webhook::CreateWebhook>(&body) {
-        Ok(input) => input,
-        Err(_) => {
-            return webhook::WebhookError::invalid_request("invalid webhook request")
-                .into_response();
-        }
+    let Ok(input) = serde_json::from_slice::<webhook::CreateWebhook>(&body) else {
+        return webhook::WebhookError::invalid_request("invalid webhook request").into_response();
     };
     let (service, scope) = match resolve(state, name).await {
         Ok(value) => value,
@@ -223,9 +225,7 @@ impl DispatchWorker {
 /// Starts one serial database dispatcher. A weak state reference ends the loop
 /// when the serving runtime drops its router; no request or subscriber starts a task.
 pub(super) fn spawn_dispatcher(state: &Arc<ApiState>) -> Option<DispatchWorker> {
-    if state.webhook_keys.is_none() {
-        return None;
-    }
+    state.webhook_keys.as_ref()?;
     let state = Arc::downgrade(state);
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop);

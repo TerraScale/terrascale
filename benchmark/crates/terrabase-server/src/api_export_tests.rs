@@ -1,7 +1,11 @@
 use super::*;
+use crate::api::router;
 use crate::export_api::{ExportAccepted, ExportRuntime, ExportStatus, ExportStore, JobStatus};
 use axum::body::Body;
 use axum::http::Request;
+use axum::{Router, response::Response};
+use std::sync::Arc;
+use terrabase::RegionCode;
 use tower::util::ServiceExt;
 
 async fn request(app: &Router, method: &str, path: &str, payload: &str) -> Response {
@@ -53,7 +57,7 @@ async fn http_export_reads_real_documents_and_recovers_after_runtime_restart() {
     let mut state = super::super::tests::state_with_keys_and_control();
     let root = state.backup_root.with_file_name("exports");
     Arc::get_mut(&mut state).unwrap().exports =
-        Some(Arc::new(ExportRuntime::local(root.clone(), RegionCode::GRU).unwrap()));
+        Some(Arc::new(ExportRuntime::local(&root, RegionCode::GRU).unwrap()));
     let app = router(Arc::clone(&state));
     database(&app, "prod").await;
     database(&app, "other").await;
@@ -228,7 +232,7 @@ async fn http_export_reads_real_documents_and_recovers_after_runtime_restart() {
     store.save(&interrupted).unwrap();
     drop(lease);
     Arc::get_mut(&mut state).unwrap().exports =
-        Some(Arc::new(ExportRuntime::local(root.clone(), RegionCode::GRU).unwrap()));
+        Some(Arc::new(ExportRuntime::local(&root, RegionCode::GRU).unwrap()));
     let app = router(Arc::clone(&state));
     let interrupted: ExportStatus =
         decode(request(&app, "GET", &accepted.status_path, "").await).await;
@@ -272,7 +276,7 @@ async fn http_export_refuses_destination_outside_database_placement() {
     let mut state = super::super::tests::state_with_keys_and_control();
     let root = state.backup_root.with_file_name("exports");
     Arc::get_mut(&mut state).unwrap().exports =
-        Some(Arc::new(ExportRuntime::local(root.clone(), RegionCode::FRA).unwrap()));
+        Some(Arc::new(ExportRuntime::local(&root, RegionCode::FRA).unwrap()));
     let app = router(state);
     database(&app, "locked").await;
     let response = request(

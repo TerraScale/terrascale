@@ -1,6 +1,9 @@
 //! Schema routes bound to the same admitted database lease as document operations.
 
-use super::*;
+use super::{
+    ApiError, ApiState, Arc, CollectionName, CommitOutcome, IntoResponse, LocalDurability,
+    OperationId, Path, Response, State, database_record, document_host, document_scope,
+};
 use crate::schema_api::{
     DatabaseIdentity, DurableCommit, DurablePortError, DurableSchemaRecord, SchemaDurablePort,
     SchemaError, SchemaHttpState, SchemaIdentityPort, SchemaService, SchemaTarget,
@@ -36,7 +39,7 @@ impl SchemaDurablePort for EngineSchemaStore {
         let scope = document_scope(engine).map_err(|()| storage_error())?;
         let snapshot = engine.read_snapshot(&scope).map_err(|_| storage_error())?;
         let operation =
-            OperationId::try_new(&format!("schema-{}", terrabase::identity::generate(),))
+            OperationId::try_new(&format!("schema-{}", terrabase::identity::generate()))
                 .map_err(|_| storage_error())?;
         let mut transaction =
             engine.begin(&scope, snapshot, operation.clone()).map_err(|_| storage_error())?;
@@ -177,6 +180,10 @@ pub(super) async fn put_schema(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::{
+        Document, DocumentId, DocumentValue, ExpectedVersion, Method, RegionCode, Request,
+        StatusCode, Verbs, router,
+    };
     use axum::body::Body;
     use tower::ServiceExt;
 

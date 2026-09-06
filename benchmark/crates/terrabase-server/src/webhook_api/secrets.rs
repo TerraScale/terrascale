@@ -1,9 +1,16 @@
 //! Durable, scope-bound encrypted signing keys. Plaintext never enters documents.
-use super::*;
+use super::{
+    EngineWebhookStorage, ExpectedVersion, MetadataValue, SecretError, StorageError, TenantScope,
+    WebhookSecrets, unsigned_from_value, unsigned_value, webhook_engine_scope,
+};
 use base64::Engine as _;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use terrabase::encryption::{
     ArtifactCipher, Compression, DatabaseKeyLease, DatabaseKeyVersion, EncryptionContext,
 };
+#[cfg(test)]
+use terrabase::engine::Engine;
 
 pub(super) const COLLECTION: &str = "__terrascale_webhook_secrets";
 
@@ -209,12 +216,9 @@ impl WebhookSecrets for EngineWebhookSecrets {
         let mut cipher = self.cipher(scope, &format!("{id}-{artifact}"), &lease)?;
         let mut secret = vec![0_u8; 32];
         aws_lc_rs::rand::fill(&mut secret).map_err(|_| SecretError::Unavailable)?;
-        let encrypted = match cipher.seal(&secret) {
-            Ok(encrypted) => encrypted,
-            Err(_) => {
-                secret.fill(0);
-                return Err(SecretError::Unavailable);
-            }
+        let Ok(encrypted) = cipher.seal(&secret) else {
+            secret.fill(0);
+            return Err(SecretError::Unavailable);
         };
         let mut fields = BTreeMap::from([
             ("artifact".into(), MetadataValue::String(artifact)),

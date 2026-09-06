@@ -738,8 +738,9 @@ impl TbepGrpcServer {
         key_pem: &str,
         client_ca_pem: Option<&str>,
     ) -> std::io::Result<TbepGrpcHandle> {
-        let trust =
-            client_ca_pem.ok_or_else(|| std::io::Error::other("mTLS trust bundle required"))?;
+        let trust = client_ca_pem.filter(|pem| !pem.trim().is_empty()).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "mTLS trust bundle required")
+        })?;
         self.serve_tls_reloadable(
             address,
             reloadable_tls::ReloadableTls::new(server_pem, key_pem, trust)?,

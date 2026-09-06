@@ -1,6 +1,6 @@
 use super::*;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use terrabase::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
 
@@ -15,9 +15,9 @@ fn scope(seed: u8) -> DatabaseRouteScope {
         _ => "01ARZ3NDEKTSV4RRFFQ69G5FB1",
     };
     DatabaseRouteScope::new(
-        TenantUlid::from_text(&value).unwrap(),
-        ProjectUlid::from_text(&value).unwrap(),
-        DatabaseUlid::from_text(&value).unwrap(),
+        TenantUlid::from_text(value).unwrap(),
+        ProjectUlid::from_text(value).unwrap(),
+        DatabaseUlid::from_text(value).unwrap(),
     )
 }
 
@@ -101,7 +101,7 @@ async fn incomplete_or_conflicting_metadata_leaves_queues_and_progress_unchanged
                 request.selected_regions.insert(scope(3), ["GRU".into()].into_iter().collect());
             }
             _ => {
-                request.selected_regions.insert(b, Default::default());
+                request.selected_regions.insert(b, BTreeSet::default());
             }
         }
         assert!(state.peers.add_databases(request).await.is_err());

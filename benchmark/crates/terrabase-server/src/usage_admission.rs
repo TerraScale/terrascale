@@ -58,7 +58,7 @@ pub struct AdmissionReceipt {
     /// Successful durable registration state.
     pub state: &'static str,
 }
-/// Private SQLite control metadata; never customer records or invented billing authority.
+/// Private `SQLite` control metadata; never customer records or invented billing authority.
 pub struct UsageAdmissionJournal {
     environment: String,
     member_id: String,

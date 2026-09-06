@@ -1,5 +1,5 @@
 //! Exact member-bound deletion stop commands on the authenticated native socket.
-use super::*;
+use super::{AdmissionHost, AdmissionRecord, Arc, Deserialize, Serialize};
 
 /// A durable authority stop command for one admitted member.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -31,6 +31,10 @@ pub struct StopRequest {
 
 impl StopRequest {
     /// Parses the exact millisecond boundary; submillisecond truncation is refused.
+    ///
+    /// # Errors
+    /// Returns an error for invalid RFC3339 input, submillisecond precision, or
+    /// timestamps before the Unix epoch.
     pub fn cutoff_millis(&self) -> Result<u64, String> {
         let timestamp = chrono::DateTime::parse_from_rfc3339(&self.cutoff)
             .map_err(|_| "invalid deletion cutoff")?;
@@ -59,12 +63,17 @@ pub type StorageStop =
 
 impl AdmissionHost {
     /// Installs the native durable stop implementation; absence refuses every stop.
+    #[must_use]
     pub fn with_storage_stop(mut self, stop: StorageStop) -> Self {
         self.stop_storage = Some(stop);
         self
     }
 
     /// Validates immutable membership before executing a durable stop.
+    ///
+    /// # Errors
+    /// Returns an error when the request identity, cutoff, or durable stop
+    /// callback is unavailable or mismatched.
     pub fn stop(&self, request: StopRequest) -> Result<StopReceipt, String> {
         request.cutoff_millis()?;
         if request.operation_id.is_empty() || request.operation_id.len() > 255 {
@@ -160,11 +169,16 @@ pub type StoragePrepareStop =
 
 impl AdmissionHost {
     /// Installs the first-phase durable fence implementation.
+    #[must_use]
     pub fn with_storage_prepare_stop(mut self, prepare: StoragePrepareStop) -> Self {
         self.prepare_stop_storage = Some(prepare);
         self
     }
     /// Prepares a member-bound stop without inventing a final usage cutoff.
+    ///
+    /// # Errors
+    /// Returns an error when the member identity is not admitted or durable
+    /// preparation is unavailable or rejects the request.
     pub fn prepare_stop(&self, request: PrepareStopRequest) -> Result<PrepareStopReceipt, String> {
         let record = self
             .records
@@ -220,11 +234,16 @@ pub type StorageStopPreflight = Arc<
 >;
 impl AdmissionHost {
     /// Installs the durable policy observation callback; no callback means unavailable.
+    #[must_use]
     pub fn with_storage_stop_preflight(mut self, preflight: StorageStopPreflight) -> Self {
         self.preflight_stop_storage = Some(preflight);
         self
     }
     /// Validates exact native identity before reading protection and retention facts.
+    ///
+    /// # Errors
+    /// Returns an error when the request identity is not admitted or the
+    /// durable protection/preflight callback rejects the request.
     pub fn preflight_stop(
         &self,
         request: PrepareStopRequest,

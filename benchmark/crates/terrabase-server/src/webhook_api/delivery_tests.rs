@@ -385,13 +385,13 @@ fn journal_page_resumes_inside_a_large_commit_after_restart() {
             terrabase::OperationId::try_new("large-webhook-batch").expect("operation"),
         )
         .expect("transaction");
-    for index in 0..MAX_JOURNAL_PAGE + 1 {
+    for index in 0..=MAX_JOURNAL_PAGE {
         transaction
             .put(
                 Document::new(
                     DocumentId::try_new(&format!("item-{index}")).expect("id"),
                     CollectionName::try_new("orders").expect("collection"),
-                    DocumentValue::Integer(index as i64),
+                    DocumentValue::Integer(i64::try_from(index).expect("test index fits")),
                 ),
                 ExpectedVersion::New,
             )
@@ -406,7 +406,10 @@ fn journal_page_resumes_inside_a_large_commit_after_restart() {
     assert_eq!(page.publications.len(), MAX_JOURNAL_PAGE);
     assert!(page.publications.iter().all(|row| row.revision == page.publications[0].revision));
     let first = page.publications[0].clone();
-    assert_eq!(page.next.expect("cursor").write_index(), MAX_JOURNAL_PAGE as u32);
+    assert_eq!(
+        page.next.expect("cursor").write_index(),
+        u32::try_from(MAX_JOURNAL_PAGE).expect("page bound fits")
+    );
     let storage = EngineWebhookStorage::new(Arc::clone(&engine));
     storage.checkpoint_dispatch(&scope, None, page.next).expect("checkpoint");
     let cursor = page.next;
@@ -423,7 +426,10 @@ fn journal_page_resumes_inside_a_large_commit_after_restart() {
     let journal = EngineWebhookJournal::new(Arc::clone(&engine));
     let tail = journal.page(&scope, cursor, MAX_JOURNAL_PAGE).expect("next page");
     assert_eq!(tail.publications.len(), 1);
-    assert_eq!(tail.publications[0].write_index, (MAX_JOURNAL_PAGE + 1) as u32);
+    assert_eq!(
+        tail.publications[0].write_index,
+        u32::try_from(MAX_JOURNAL_PAGE + 1).expect("page bound fits")
+    );
     assert_eq!(tail.publications[0].revision, first.revision);
     assert_ne!(tail.publications[0].event_id, first.event_id);
     let endpoint =

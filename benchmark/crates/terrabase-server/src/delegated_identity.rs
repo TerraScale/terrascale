@@ -79,7 +79,7 @@ impl IdentityVerifier {
     /// Rejects non-HTTPS, ambiguous endpoints, or missing authority credentials.
     pub fn new(config: IdentityConfig) -> Result<Self, IdentityError> {
         let roots =
-            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect::<rustls::RootCertStore>();
         let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
             rustls::crypto::aws_lc_rs::default_provider(),
         ))

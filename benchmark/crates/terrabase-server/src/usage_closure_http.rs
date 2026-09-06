@@ -118,9 +118,8 @@ async fn close(
         return unavailable();
     };
     let scope = engine.scope_for(&tenant);
-    let placement = match engine.usage_placement(&scope) {
-        Ok(Some(value)) => value,
-        _ => return unavailable(),
+    let Ok(Some(placement)) = engine.usage_placement(&scope) else {
+        return unavailable();
     };
     if placement.scope.partition_id().as_str() != request.partition_id
         || placement.scope.region_id().as_str() != request.region
@@ -147,15 +146,14 @@ async fn close(
         return unavailable();
     };
     let close_host = Arc::clone(&admitted);
-    let receipt = match tokio::task::spawn_blocking(move || {
+    let Ok(Ok(receipt)) = tokio::task::spawn_blocking(move || {
         let engine = close_host.host.engine();
         let scope = engine.scope_for(&tenant);
         engine.close_storage_usage(&scope, window)
     })
     .await
-    {
-        Ok(Ok(value)) => value,
-        _ => return unavailable(),
+    else {
+        return unavailable();
     };
     if progress.wait_regional(route, receipt.sequence(), Duration::from_secs(5)).await.is_err() {
         return unavailable();

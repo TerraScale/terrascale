@@ -6,7 +6,10 @@ use crate::replication_runtime::ReplicationProgress;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use terrabase::encryption::DatabaseKeySource;
+use terrabase::encryption::{
+    DatabaseKeySource, DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata,
+    OciVaultDatabaseKeys, OciVaultKeyDelivery,
+};
 use terrabase_cluster::production::{DatabaseRouteScope, ProductionMemberRuntime};
 use terrabase_cluster::wal_driver::{WalEngineHandle, WalWriterDriver};
 use terrabase_cluster::wal_follower::WalTail;
@@ -618,26 +621,21 @@ impl ProductionAdmissionRuntime {
             // in the Member catalog without publishing it to customer routes.
             if let Some(assignment) =
                 assignments.iter().find(|assignment| assignment.region == record.region)
+                && assignment.writer_member == self.config.environment.member.to_text()
             {
-                if assignment.writer_member == self.config.environment.member.to_text() {
-                    let lease = self.member.acquire(&id).map_err(failure)?;
-                    let tenant =
-                        terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
-                    let lifecycle = lease
-                        .engine()
-                        .lifecycle_state(&lease.engine().scope_for(&tenant))
-                        .map_err(failure)?;
-                    if lifecycle.access_revoked() {
-                        continue;
-                    }
+                let lease = self.member.acquire(&id).map_err(failure)?;
+                let tenant =
+                    terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
+                let lifecycle = lease
+                    .engine()
+                    .lifecycle_state(&lease.engine().scope_for(&tenant))
+                    .map_err(failure)?;
+                if lifecycle.access_revoked() {
+                    continue;
                 }
             }
             self.runtime.register_route(scope, id).map_err(failure)?;
             let keys = self.config.keys.as_ref().ok_or("production key delivery missing")?;
-            use terrabase::encryption::{
-                DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata, OciVaultDatabaseKeys,
-                OciVaultKeyDelivery,
-            };
             let provider = OciVaultKeyDelivery::new(
                 keys.socket.clone(),
                 keys.orchestrator_uid,

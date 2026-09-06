@@ -87,7 +87,7 @@ pub enum PhysicalDriver {
     },
     /// The engine lease is acquired from the production Member.
     Writer(WalWriterDriver),
-    /// Raw physical files; no SQLite engine may open these files concurrently.
+    /// Raw physical files; no `SQLite` engine may open these files concurrently.
     Follower(WalFollowerDriver),
 }
 /// Local filesystem authorization for initial snapshot installation.
@@ -107,7 +107,7 @@ pub struct SnapshotReceiver {
     offsets: [u64; 3],
 }
 impl SnapshotReceiver {
-    /// Creates a bounded receive assignment without opening SQLite.
+    /// Creates a bounded receive assignment without opening `SQLite`.
     #[must_use]
     pub fn new(
         binding: WalReplicaBinding,
@@ -178,6 +178,10 @@ fn failure(error: impl std::fmt::Debug) -> String {
 }
 impl ReplicationPeers {
     /// Starts workers after atomically validating and admitting one batch.
+    ///
+    /// # Errors
+    /// Returns an admission or worker startup error without partially starting
+    /// the requested batch.
     pub fn start(
         runtime: Arc<ProductionMemberRuntime>,
         progress: Arc<ReplicationProgress>,
@@ -188,6 +192,10 @@ impl ReplicationPeers {
     }
 
     /// Starts workers with an application-control dispatcher.
+    ///
+    /// # Errors
+    /// Returns an admission or worker startup error without partially starting
+    /// the requested batch.
     pub fn start_with_dispatch(
         runtime: Arc<ProductionMemberRuntime>,
         progress: Arc<ReplicationProgress>,
@@ -542,7 +550,7 @@ async fn session(
             if let Some(facts) =
                 facts.get_mut(&(connection.peer().member().as_str().to_owned(), lane.scope))
             {
-                facts.region = region.to_owned();
+                region.clone_into(&mut facts.region);
             }
         }
     }
@@ -1141,7 +1149,7 @@ async fn select_cut(
     let generation = connection.placement_generation();
     let epoch = connection.replica_set_epoch();
     tokio::task::spawn_blocking(move || {
-        cuts.select(&runtime, &progress, &observations, scope, &peer, generation, epoch)
+        cuts.select(&runtime, &progress, &observations, scope, &peer, (generation, epoch))
     })
     .await
     .map_err(failure)?

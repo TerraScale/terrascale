@@ -1,5 +1,8 @@
 //! Branch-only, bounded faults at public request admission and safe diagnostic tails.
-use super::*;
+use super::{
+    ApiError, ApiState, Arc, CONTENT_TYPE, Extension, IntoResponse, Path, Response, State,
+    StatusCode, Verbs, account_direct_read, check_read_guard, database_of, document_host, extract,
+};
 use crate::api_keys::Principal;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -312,6 +315,7 @@ pub(super) async fn admit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::{RegionCode, Router, router};
     use axum::body::Body;
     use tower::util::ServiceExt;
 

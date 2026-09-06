@@ -15,7 +15,9 @@ use terrabase_auth::{
     Action, AuthAuthority, AuthNetwork, AuthorityError, Command, Connector, JoinRelation, Mode,
     Operator, Outcome, Predicate, QueryJoin, QuerySort, SortDirection, SqliteStore,
 };
-use terrabase_cluster::production::{ProductionQuicEndpoint, ProductionRegion};
+use terrabase_cluster::production::{
+    ProductionQuicEndpoint, ProductionRegion, ProductionTransportError,
+};
 use terrabase_member_transport::production::{ProductionConnection, ProductionConnectionClass};
 use terrabase_tbep::auth_bootstrap::AuthBootstrapJournal;
 use terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapGrant;
@@ -278,7 +280,6 @@ impl AuthRuntime {
             if work.len() >= 32 {
                 let _ = work.join_next().await;
             }
-            use terrabase_cluster::production::ProductionTransportError;
             let connection = match self.endpoint.accept().await {
                 Ok(Some(connection)) => connection,
                 Ok(None) | Err(ProductionTransportError::Draining) => break,
@@ -457,8 +458,8 @@ struct UniqueIndex {
 struct PredicateInput {
     field: String,
     /// Missing fields are null. Eq/ne against null are null checks; ne against
-    /// a non-null value excludes null records. Empty in/not_in match none/all.
-    /// Nonempty not_in excludes null records and matches nothing with a null list member.
+    /// a non-null value excludes null records. Empty `in`/`not_in` match none/all.
+    /// Nonempty `not_in` excludes null records and matches nothing with a null list member.
     value: serde_json::Value,
     #[schema(value_type = Option<PredicateOperatorSchema>)]
     #[serde(default)]
@@ -715,8 +716,7 @@ async fn query(
         Err(AuthorityError::Deadline) => {
             error(StatusCode::SERVICE_UNAVAILABLE, "auth_outcome_unknown")
         }
-        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"),
-        Ok(_) => error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"),
+        Err(_) | Ok(_) => error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"),
     };
     placement_response(response, &domain.grant)
 }
@@ -975,8 +975,7 @@ async fn find_one(
             Err(AuthorityError::Deadline) => {
                 error(StatusCode::SERVICE_UNAVAILABLE, "auth_outcome_unknown")
             }
-            Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"),
-            Ok(_) => error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"),
+            Err(_) | Ok(_) => error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"),
         };
         return placement_response(response, &domain.grant);
     }
@@ -987,7 +986,7 @@ async fn find_one(
     placement_response(response, &domain.grant)
 }
 
-/// Actual public routes and their producer-owned OpenAPI document.
+/// Actual public routes and their producer-owned `OpenAPI` document.
 pub fn routes() -> utoipa_axum::router::OpenApiRouter<Arc<AuthRuntime>> {
     use utoipa_axum::{router::OpenApiRouter, routes};
     OpenApiRouter::new()
@@ -1025,10 +1024,13 @@ pub fn router(runtime: Arc<AuthRuntime>) -> Router {
 }
 
 fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|value| u64::try_from(value.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(value) => match u64::try_from(value.as_millis()) {
+            Ok(milliseconds) => milliseconds,
+            Err(_) => u64::MAX,
+        },
+        Err(_) => 0,
+    }
 }
 
 #[cfg(test)]

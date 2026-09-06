@@ -20,6 +20,9 @@ pub struct AdmittedDatabase {
 
 impl AdmittedDatabase {
     /// Public record addressed exclusively by canonical database identity.
+    ///
+    /// # Errors
+    /// Returns an error when the admitted identity or lifecycle state cannot be read.
     pub fn public_record(&self) -> Result<DatabaseRecord, String> {
         let tenant = terrabase::types::TenantId::try_new(&self.record.tenant_id)
             .map_err(|_| "invalid admitted tenant")?;
@@ -106,12 +109,19 @@ impl AdmittedDatabaseRegistry {
         let host = Arc::new(MemberHost::from_admitted(lease, location, instance));
         databases.insert(
             record.database_id.clone(),
-            Arc::new(AdmittedDatabase { record, host, activity: Default::default() }),
+            Arc::new(AdmittedDatabase {
+                record,
+                host,
+                activity: terrabase::engine::lifecycle_state::AuthorizedActivity::default(),
+            }),
         );
         Ok(())
     }
 
     /// Resolves an exact canonical admitted database identity.
+    ///
+    /// # Errors
+    /// Returns an error when the Member is not ready or the registry lock is unavailable.
     pub fn resolve(&self, database: &str) -> Result<Option<Arc<AdmittedDatabase>>, String> {
         if !(self.ready)() {
             return Err("Member is not ready to serve".into());
@@ -126,6 +136,9 @@ impl AdmittedDatabaseRegistry {
 
     /// Publishes a validated batch only after replication lanes are committed.
     /// Missing entries refuse the entire batch; identical retries are harmless.
+    ///
+    /// # Errors
+    /// Returns an error when an entry is not retained or the registry is unavailable.
     pub fn activate(&self, databases: &[String]) -> Result<(), String> {
         let mut serving = self.serving.write().map_err(|_| "admitted activation unavailable")?;
         let retained = self.databases.read().map_err(|_| "admitted registry unavailable")?;
@@ -137,6 +150,9 @@ impl AdmittedDatabaseRegistry {
     }
 
     /// Public lookup excludes retained entries whose lanes are still pending.
+    ///
+    /// # Errors
+    /// Returns an error when the Member is not ready or the registry is unavailable.
     pub fn resolve_serving(&self, database: &str) -> Result<Option<Arc<AdmittedDatabase>>, String> {
         let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
         if !serving.contains(database) {
@@ -146,6 +162,9 @@ impl AdmittedDatabaseRegistry {
     }
 
     /// Metadata can describe a terminal deletion without reopening document access.
+    ///
+    /// # Errors
+    /// Returns an error when readiness, registry state, or lifecycle metadata is unavailable.
     pub fn resolve_metadata(
         &self,
         database: &str,
@@ -161,6 +180,9 @@ impl AdmittedDatabaseRegistry {
     }
 
     /// Public metadata excludes pending entries but retains terminal deletion records.
+    ///
+    /// # Errors
+    /// Returns an error when the Member is not ready or an admitted lifecycle state cannot be read.
     pub fn public_records(&self) -> Result<Vec<DatabaseRecord>, String> {
         if !(self.ready)() {
             return Err("Member is not ready to serve".into());
@@ -179,17 +201,19 @@ impl AdmittedDatabaseRegistry {
     }
 
     /// Enumerates admitted databases for bounded maintenance drivers.
+    ///
+    /// # Errors
+    /// Returns an error when the Member is not ready, the registry is unavailable, or metadata is invalid.
     pub fn records(&self) -> Result<Vec<DatabaseRecord>, String> {
         if !(self.ready)() {
             return Err("Member is not ready to serve".into());
         }
-        Ok(self
-            .databases
+        self.databases
             .read()
             .map_err(|_| "admitted registry unavailable")?
             .values()
             .map(|database| database.public_record())
-            .collect::<Result<Vec<_>, _>>()?)
+            .collect::<Result<Vec<_>, _>>()
     }
 }
 

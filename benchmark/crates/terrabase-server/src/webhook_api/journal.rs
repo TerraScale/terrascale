@@ -105,16 +105,16 @@ fn encode_value(bytes: &mut Vec<u8>, value: &DocumentValue) -> Result<(), Storag
     match value {
         DocumentValue::Null => encode::write_nil(bytes).map_err(|_| StorageError::Unavailable)?,
         DocumentValue::Boolean(value) => {
-            encode::write_bool(bytes, *value).map_err(|_| StorageError::Unavailable)?
+            encode::write_bool(bytes, *value).map_err(|_| StorageError::Unavailable)?;
         }
         DocumentValue::Integer(value) => {
             encode::write_sint(bytes, *value).map_err(|_| StorageError::Unavailable)?;
         }
         DocumentValue::Number(value) => {
-            encode::write_f64(bytes, *value).map_err(|_| StorageError::Unavailable)?
+            encode::write_f64(bytes, *value).map_err(|_| StorageError::Unavailable)?;
         }
         DocumentValue::String(value) => {
-            encode::write_str(bytes, value).map_err(|_| StorageError::Unavailable)?
+            encode::write_str(bytes, value).map_err(|_| StorageError::Unavailable)?;
         }
         DocumentValue::Array(values) => {
             encode::write_array_len(

@@ -39,7 +39,7 @@ mod admitted_fixture {
     use terrabase_auth::{AuthAuthority, AuthNetwork, SqliteStore};
     use terrabase_cluster::production::{
         ProductionPeerAdmission, ProductionQuicEndpoint, ProductionRegion, ProductionTlsMaterial,
-        ProductionTransportConfig, ProductionTransportLimits,
+        ProductionTransportConfig, ProductionTransportError, ProductionTransportLimits,
     };
     use terrabase_tbep::auth_bootstrap::{AuthBootstrapBoundary, AuthBootstrapJournal};
     use terrabase_tbep::proto::terrabase::v1::{AuthGroupBootstrapGrant, AuthGroupVoter};
@@ -197,7 +197,7 @@ mod admitted_fixture {
         cluster: ClusterUlid,
         member: MemberUlid,
         peer: MemberUlid,
-        root: &PathBuf,
+        root: &std::path::Path,
         keys: &crate::test_keys::KeyDeliveryFixture,
     ) -> ProductionConfig {
         let (tenant, project, database) = scope;
@@ -397,7 +397,6 @@ mod admitted_fixture {
         let remote_listener = Arc::clone(&remote_endpoint);
         let remote_receive = tokio::spawn(async move {
             loop {
-                use terrabase_cluster::production::ProductionTransportError;
                 let connection = match remote_listener.accept().await {
                     Ok(Some(connection)) => connection,
                     Ok(None) | Err(ProductionTransportError::Draining) => break,
@@ -420,11 +419,8 @@ mod admitted_fixture {
                 let authority = remote_for_task.clone();
                 let network = remote_network_for_task.clone();
                 tokio::spawn(async move {
-                    match connection.receive_frame().await {
-                        Ok(bytes) => {
-                            let _ = network.receive_frame(&connection, &authority, &bytes).await;
-                        }
-                        Err(_) => {}
+                    if let Ok(bytes) = connection.receive_frame().await {
+                        let _ = network.receive_frame(&connection, &authority, &bytes).await;
                     }
                 });
             }
@@ -1157,20 +1153,24 @@ async fn admitted_http_router_serves_external_node_consumer() {
         let mut child = process.spawn().map_err(|error| error.to_string())?;
         // The maintained suites perform thousands of encrypted quorum writes,
         // including schema provisioning and cleanup between cases.
-        let deadline = Instant::now() + Duration::from_secs(15 * 60);
+        let deadline = Instant::now() + Duration::from_mins(15);
         loop {
             match child.try_wait() {
                 Err(error) => {
-                    let _ =
-                        kill_process_group(Pid::from_raw(child.id() as i32).unwrap(), Signal::KILL);
+                    let _ = kill_process_group(
+                        Pid::from_raw(child.id().cast_signed()).unwrap(),
+                        Signal::KILL,
+                    );
                     let _ = child.kill();
                     let _ = child.wait();
                     break Err(format!("failed waiting for external auth consumer: {error}"));
                 }
                 Ok(Some(status)) => break Ok(status),
                 Ok(None) if Instant::now() >= deadline => {
-                    let _ =
-                        kill_process_group(Pid::from_raw(child.id() as i32).unwrap(), Signal::KILL);
+                    let _ = kill_process_group(
+                        Pid::from_raw(child.id().cast_signed()).unwrap(),
+                        Signal::KILL,
+                    );
                     let _ = child.kill();
                     let _ = child.wait();
                     break Err("external auth consumer exceeded 15 minutes".into());
@@ -1182,14 +1182,14 @@ async fn admitted_http_router_serves_external_node_consumer() {
     let consumer_result = child.await;
 
     let _ = stop_tx.send(());
-    let server_result = match tokio::time::timeout(Duration::from_secs(10), &mut server).await {
-        Ok(result) => result.map_err(|error| error.to_string()),
-        Err(_) => {
+    let server_result =
+        if let Ok(result) = tokio::time::timeout(Duration::from_secs(10), &mut server).await {
+            result.map_err(|error| error.to_string())
+        } else {
             server.abort();
             let _ = server.await;
             Err("HTTP router graceful shutdown exceeded 10 seconds".into())
-        }
-    };
+        };
     fixture.runtime.shutdown().await;
     fixture.local_receive.abort();
     fixture.remote_receive.abort();

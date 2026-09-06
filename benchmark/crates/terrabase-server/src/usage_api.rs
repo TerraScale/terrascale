@@ -819,7 +819,7 @@ pub fn engine_summary(
         )
         .map_err(|_| UsageApiError::InvalidCursor)?;
         let page = engine
-            .usage_page(&scope, request)
+            .usage_page(scope, request)
             .map_err(map_engine_usage_error)
             .map_err(map_source_error)?;
         let high_water = page.snapshot_sequence().get();
@@ -884,7 +884,7 @@ pub fn engine_summary(
                 units: totals.storage_byte_seconds.to_string(),
             },
         ],
-        reads: ReadAttribution { total_reads: engine.metering_read_count(&scope) },
+        reads: ReadAttribution { total_reads: engine.metering_read_count(scope) },
     })
 }
 

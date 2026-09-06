@@ -10,7 +10,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    io,
+    io::{self, Write},
+    os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
     time::{SystemTime, UNIX_EPOCH},
@@ -188,7 +189,6 @@ pub struct BoundRotation {
 }
 
 fn private_dir(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let metadata = std::fs::symlink_metadata(path)?;
     if !metadata.is_dir()
         || metadata.uid() != rustix::process::geteuid().as_raw()
@@ -199,7 +199,6 @@ fn private_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 fn persist(path: &Path, state: &Durable) -> io::Result<()> {
-    use std::{io::Write, os::unix::fs::OpenOptionsExt};
     let bytes = zeroize::Zeroizing::new(serde_json::to_vec(state)?);
     let tmp = path.with_extension("rotation-tmp");
     // A leftover temporary file is never trusted after a crash.
@@ -253,13 +252,11 @@ fn bind_inner(
     capability: CapabilityKeyRing,
     tls: Option<(terrabase_tbep::grpc::reloadable_tls::ReloadableTls, TlsMaterial)>,
 ) -> io::Result<BoundRotation> {
-    use std::os::unix::fs::PermissionsExt;
     if token.len() < 32 || token.len() > 4096 {
         return Err(io::Error::other("rotation token must contain 32..4096 bytes"));
     }
     private_dir(socket.parent().ok_or_else(|| io::Error::other("missing socket directory"))?)?;
     private_dir(state_file.parent().ok_or_else(|| io::Error::other("missing state directory"))?)?;
-    use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
     let lock_path = state_file.with_extension("rotation-lock");
     let lock = std::fs::OpenOptions::new()
         .read(true)
@@ -267,7 +264,7 @@ fn bind_inner(
         .create(true)
         .truncate(false)
         .mode(0o600)
-        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits().cast_signed())
         .open(lock_path)?;
     lock.try_lock().map_err(io::Error::other)?;
     if let Ok(metadata) = std::fs::symlink_metadata(socket) {

@@ -1,8 +1,12 @@
 //! Durable export service composition shared by member HTTP handlers.
 
-use super::*;
+use super::{
+    ActiveJob, Arc, ArtifactPort, BTreeSet, ExportDestination, ExportError, ExportService,
+    ExportSource, ExportStore, FileExportStore, JobStatus, Mutex, PathBuf, RegionCode,
+};
 use crate::export_store::SqliteExportStore;
-use std::sync::atomic::AtomicBool;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Resolves an encrypted artifact provider for one database incarnation.
 pub trait ExportArtifactFactory: Send + Sync + 'static {
@@ -55,14 +59,14 @@ impl ExportRuntime {
     ///
     /// # Errors
     /// Refuses inaccessible private keys and durable storage.
-    pub fn local(root: PathBuf, region: RegionCode) -> Result<Self, ExportError> {
+    pub fn local(root: &Path, region: RegionCode) -> Result<Self, ExportError> {
         struct LocalFactory(PathBuf);
         impl ExportArtifactFactory for LocalFactory {
             fn artifacts(&self, database_id: &str) -> Result<Arc<dyn ArtifactPort>, ExportError> {
                 crate::export_local::local_artifacts(&self.0, database_id, "local")
             }
         }
-        let key = crate::export_local::local_cursor_key(&root)?;
+        let key = crate::export_local::local_cursor_key(root)?;
         let artifacts = root.join("artifacts");
         Self::new(
             root.join("jobs"),

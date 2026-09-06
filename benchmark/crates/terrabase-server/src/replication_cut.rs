@@ -43,9 +43,9 @@ impl ReplicationCuts {
         observations: &PeerObservations,
         scope: DatabaseRouteScope,
         peer: &MemberId,
-        generation: u64,
-        epoch: u64,
+        placement: (u64, u64),
     ) -> Result<Option<LocalRepairCut>, String> {
+        let (generation, epoch) = placement;
         let regions = progress.selected_regions(scope).map_err(failure)?;
         let source = regions.first().ok_or("empty readiness Region selection")?;
         let endpoint = runtime.transport();

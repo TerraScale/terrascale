@@ -15,19 +15,19 @@ use terrabase::encryption::{
     ArtifactCipher, Compression, DatabaseKey, EncryptionContext, ProviderMode,
 };
 
-fn io_error(error: io::Error) -> ExportError {
+fn io_error(error: &io::Error) -> ExportError {
     ExportError::Io(error.to_string())
 }
 
 fn bounded_read(path: &Path, limit: usize) -> Result<Vec<u8>, ExportError> {
     ensure_no_symlink_components(path)?;
-    let file = File::open(path).map_err(io_error)?;
-    let metadata = file.metadata().map_err(io_error)?;
+    let file = File::open(path).map_err(|error| io_error(&error))?;
+    let metadata = file.metadata().map_err(|error| io_error(&error))?;
     if !metadata.is_file() || metadata.len() > limit as u64 {
         return Err(ExportError::DestinationUnavailable);
     }
     let mut bytes = Vec::new();
-    file.take(limit as u64 + 1).read_to_end(&mut bytes).map_err(io_error)?;
+    file.take(limit as u64 + 1).read_to_end(&mut bytes).map_err(|error| io_error(&error))?;
     if bytes.len() > limit {
         return Err(ExportError::DestinationUnavailable);
     }
@@ -40,11 +40,11 @@ fn encrypted_member(path: &Path) -> Result<Vec<u8>, ExportError> {
 
 fn private_key(root: &Path, name: &str) -> Result<[u8; 32], ExportError> {
     ensure_no_symlink_components(root)?;
-    fs::create_dir_all(root).map_err(io_error)?;
+    fs::create_dir_all(root).map_err(|error| io_error(&error))?;
     ensure_no_symlink_components(root)?;
     let path = root.join(name);
     ensure_no_symlink_components(&path)?;
-    if !path.try_exists().map_err(io_error)? {
+    if !path.try_exists().map_err(|error| io_error(&error))? {
         let mut key = [0; 32];
         aws_lc_rs::rand::fill(&mut key).map_err(|_| ExportError::EncryptionUnavailable)?;
         let temporary =
@@ -62,17 +62,20 @@ fn private_key(root: &Path, name: &str) -> Result<[u8; 32], ExportError> {
             Ok(())
         })();
         let _ = fs::remove_file(&temporary);
-        result.map_err(io_error)?;
+        result.map_err(|error| io_error(&error))?;
     }
     ensure_no_symlink_components(&path)?;
-    let file = File::open(&path).map_err(io_error)?;
-    let metadata = file.metadata().map_err(io_error)?;
+    let file = File::open(&path).map_err(|error| io_error(&error))?;
+    let metadata = file.metadata().map_err(|error| io_error(&error))?;
     if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 || metadata.len() != 32 {
         return Err(ExportError::EncryptionUnavailable);
     }
-    file.sync_all().map_err(io_error)?;
-    sync_directory_ancestors(root).map_err(io_error)?;
-    fs::read(path).map_err(io_error)?.try_into().map_err(|_| ExportError::EncryptionUnavailable)
+    file.sync_all().map_err(|error| io_error(&error))?;
+    sync_directory_ancestors(root).map_err(|error| io_error(&error))?;
+    fs::read(path)
+        .map_err(|error| io_error(&error))?
+        .try_into()
+        .map_err(|_| ExportError::EncryptionUnavailable)
 }
 
 /// Loads or atomically creates the private local resume-cursor signing key.
@@ -251,7 +254,7 @@ impl ArtifactPort for LocalPort {
         }
         let directory = self.root.join(database).join(job_id);
         ensure_no_symlink_components(&directory)?;
-        fs::create_dir_all(&directory).map_err(io_error)?;
+        fs::create_dir_all(&directory).map_err(|error| io_error(&error))?;
         ensure_no_symlink_components(&directory)?;
         Ok(Box::new(LocalWriter {
             directory,

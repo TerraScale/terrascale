@@ -38,6 +38,9 @@ pub struct LifecyclePublicationSnapshot {
 }
 impl LifecyclePublicationSnapshot {
     /// Builds a snapshot from actual durable engine lifecycle state.
+    ///
+    /// # Errors
+    /// Returns [`PublicationError::Invalid`] when a timestamp cannot be represented.
     pub fn from_native(
         organization: String,
         project: String,
@@ -106,6 +109,9 @@ struct Ack {
 }
 impl NativeLifecyclePublisher {
     /// Opens the native durable outbox. The key is separate from lifecycle policy credentials.
+    ///
+    /// # Errors
+    /// Returns an error for invalid endpoint/key/path configuration or unavailable storage/TLS setup.
     pub fn open(path: &Path, endpoint: &str, key: String) -> Result<Self, PublicationError> {
         let uri: hyper::Uri = endpoint.parse().map_err(|_| PublicationError::Invalid)?;
         if !path.is_absolute()
@@ -181,20 +187,20 @@ impl NativeLifecyclePublisher {
         .map_err(|_| PublicationError::Invalid)?;
         let mut store = self.store.lock().map_err(|_| PublicationError::Storage)?;
         let tx = store.transaction().map_err(|_| PublicationError::Storage)?;
-        let prior: Option<(i64,Option<String>,Option<i64>,Option<Vec<u8>>)> = tx.query_row(
+        type PriorPublication = (i64, Option<String>, Option<i64>, Option<Vec<u8>>);
+        let prior: Option<PriorPublication> = tx.query_row(
             "SELECT generation, observed, pending_generation, payload FROM lifecycle_publication_outbox WHERE scope=?1", [&scope],
             |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|_| PublicationError::Storage)?;
         if let Some((_, _, Some(generation), Some(payload))) = &prior {
             return Ok((scope, generation.to_string(), payload.clone()));
         }
         let generation = prior.as_ref().map_or(0, |p| p.0);
-        if let Some(last) = prior.as_ref().and_then(|p| p.1.as_ref()) {
-            if observation
+        if let Some(last) = prior.as_ref().and_then(|p| p.1.as_ref())
+            && observation
                 < chrono::DateTime::parse_from_rfc3339(last)
                     .map_err(|_| PublicationError::Storage)?
-            {
-                return Err(PublicationError::Invalid);
-            }
+        {
+            return Err(PublicationError::Invalid);
         }
         let next = generation.checked_add(1).ok_or(PublicationError::Storage)?;
         let mut state = serde_json::to_value(snapshot).map_err(|_| PublicationError::Invalid)?;
@@ -223,6 +229,10 @@ impl NativeLifecyclePublisher {
 
     /// Sends one observation; retries always recover the exact previously committed payload.
     /// Call from a periodic aggregate task at most once per scope per 60 seconds.
+    ///
+    /// # Errors
+    /// Returns an error when staging, transport, acknowledgement, or durable
+    /// acknowledgement commit fails.
     pub async fn publish(
         &self,
         snapshot: &LifecyclePublicationSnapshot,
@@ -306,6 +316,9 @@ impl LifecyclePublicationTask {
 /// Opens validated configuration and starts one 60-second aggregate task.
 /// Missing regional aggregation or source state leaves the projection stale,
 /// so the dashboard fails closed instead of accepting invented observations.
+///
+/// # Errors
+/// Returns an error when the key file, outbox, endpoint, or publisher setup is invalid.
 pub fn spawn(
     config: &crate::config::LifecyclePublicationConfig,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
@@ -321,7 +334,7 @@ pub fn spawn(
     )?);
     let (stop, mut signal) = tokio::sync::oneshot::channel();
     let join = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        let mut interval = tokio::time::interval(Duration::from_mins(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! { biased; _=&mut signal=>break, _=interval.tick()=>{} }

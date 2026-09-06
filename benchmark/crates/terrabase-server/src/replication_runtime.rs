@@ -41,7 +41,7 @@ pub struct ReplicationProgress {
 /// Conservative receipt evidence captured after the transport drain barrier.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplicationBoundary {
-    /// SQLite sequence verified on the physical follower.
+    /// `SQLite` sequence verified on the physical follower.
     pub regional_sequence: u64,
     /// Distinguishes an observed empty physical prefix from default zero state.
     pub regional_observed: bool,
@@ -160,6 +160,10 @@ impl ReplicationProgress {
 
     /// Atomically registers a batch of immutable selected-region assignments.
     /// Validation completes before any ledger mutation.
+    ///
+    /// # Errors
+    /// Returns `NotAdmitted` for invalid, conflicting, oversized, or fenced
+    /// assignments, or when the database cardinality bound is exceeded.
     pub fn admit_many(
         &self,
         entries: BTreeMap<DatabaseRouteScope, BTreeSet<String>>,
@@ -182,10 +186,10 @@ impl ReplicationProgress {
             return Err(ReplicationWaitError::NotAdmitted);
         }
         for (scope, selected) in &entries {
-            if let Some(existing) = databases.get(scope) {
-                if existing.fenced || existing.selected != *selected {
-                    return Err(ReplicationWaitError::NotAdmitted);
-                }
+            if let Some(existing) = databases.get(scope)
+                && (existing.fenced || existing.selected != *selected)
+            {
+                return Err(ReplicationWaitError::NotAdmitted);
             }
         }
         for (scope, selected) in entries {
@@ -200,7 +204,7 @@ impl ReplicationProgress {
         Ok(())
     }
 
-    /// Advances the SQLite boundary covered by a verified local RF=2 receipt.
+    /// Advances the `SQLite` boundary covered by a verified local RF=2 receipt.
     /// This is called only after the physical driver proves the entire boundary.
     pub(crate) fn advance_regional(&self, scope: DatabaseRouteScope, sequence: u64) {
         if let Ok(mut databases) = self.databases.lock()
@@ -260,7 +264,7 @@ impl ReplicationProgress {
         self.changed.send_modify(|generation| *generation = generation.wrapping_add(1));
     }
 
-    /// Waits until the regional physical follower covers a SQLite commit sequence.
+    /// Waits until the regional physical follower covers a `SQLite` commit sequence.
     ///
     /// # Errors
     /// Returns an admission, fencing, or bounded timeout error.

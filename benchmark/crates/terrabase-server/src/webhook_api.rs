@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -140,7 +141,7 @@ pub struct Publication {
     pub write_index: u32,
     /// Stable operation identity from the publication journal.
     pub event_id: String,
-    /// Deterministic MessagePack event bytes reconstructed from the retained commit.
+    /// Deterministic `MessagePack` event bytes reconstructed from the retained commit.
     pub body: Vec<u8>,
 }
 
@@ -1792,10 +1793,11 @@ impl WebhookService {
             .previous(scope, endpoint_id, &self.region, now)
             .map_err(WebhookError::secret)?
         {
-            signature.push_str(&format!(
+            let _ = write!(
+                signature,
                 ",v1={}",
                 sign_delivery(&previous, &timestamp, &publication.body)
-            ));
+            );
         }
         let mut headers = BTreeMap::new();
         headers.insert("content-type".into(), "application/msgpack".into());

@@ -1,4 +1,4 @@
-//! Durable SQLite export jobs with independent cancellation and OS job leases.
+//! Durable `SQLite` export jobs with independent cancellation and OS job leases.
 
 use std::{path::PathBuf, sync::Mutex, time::Duration};
 
@@ -12,7 +12,7 @@ use crate::export_api::{
 const MAX_STATE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PROGRESS_BYTES: usize = 256 * 1024;
 
-/// SQLite control records and cancellation flags for resumable exports.
+/// `SQLite` control records and cancellation flags for resumable exports.
 /// Job leases use persistent lock files, released by the OS on process exit.
 pub struct SqliteExportStore {
     connection: Mutex<Connection>,
@@ -259,6 +259,21 @@ fn io_error(error: impl std::fmt::Display) -> ExportError {
     ExportError::Io(error.to_string())
 }
 
+fn bounded_state_bytes(row: &rusqlite::Row<'_>) -> rusqlite::Result<Vec<u8>> {
+    let length = row.get::<_, i64>(0)?;
+    if length < 0 || usize::try_from(length).map_or(true, |length| length > MAX_STATE_BYTES) {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    row.get(1)
+}
+
+fn encode_progress(state: &ExportJobState) -> Result<Vec<u8>, ExportError> {
+    let progress = status_from_state(state, ExportCancellation::Available)?;
+    let mut bytes = BoundedStateBytes::<MAX_PROGRESS_BYTES>(Vec::new());
+    serde_json::to_writer(&mut bytes, &progress).map_err(io_error)?;
+    Ok(bytes.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,19 +411,4 @@ mod tests {
         drop(second);
         std::fs::remove_dir_all(root).expect("cleanup");
     }
-}
-
-fn bounded_state_bytes(row: &rusqlite::Row<'_>) -> rusqlite::Result<Vec<u8>> {
-    let length = row.get::<_, i64>(0)?;
-    if length < 0 || usize::try_from(length).map_or(true, |length| length > MAX_STATE_BYTES) {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    row.get(1)
-}
-
-fn encode_progress(state: &ExportJobState) -> Result<Vec<u8>, ExportError> {
-    let progress = status_from_state(state, ExportCancellation::Available)?;
-    let mut bytes = BoundedStateBytes::<MAX_PROGRESS_BYTES>(Vec::new());
-    serde_json::to_writer(&mut bytes, &progress).map_err(io_error)?;
-    Ok(bytes.0)
 }

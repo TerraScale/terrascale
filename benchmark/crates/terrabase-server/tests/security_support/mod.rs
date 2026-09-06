@@ -44,6 +44,9 @@ impl Fixture {
         let backups = Arc::new(BackupStreams::new(root.join("missing-litestream")));
         let state = Arc::new(ApiState {
             admitted_databases: None,
+            replication_progress: None,
+            development: Arc::default(),
+            provisioning: None,
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
             delegated_identity: None,

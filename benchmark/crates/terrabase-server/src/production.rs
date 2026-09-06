@@ -24,7 +24,7 @@ use terrabase_cluster::production::{
     ProductionRegionSeats,
 };
 
-use crate::config::ProductionConfig;
+use crate::config::{ProductionConfig, ProductionDatabase};
 
 /// A production dependency whose health is required before serving.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -176,32 +176,7 @@ impl ProductionCatalogBootstrap {
     /// quotas cannot be represented without weakening them, storage refuses
     /// an entry, or placement does not cover every enabled database Region.
     pub fn open(config: &ProductionConfig) -> Result<Self, ProductionCatalogError> {
-        let enabled =
-            config.databases.iter().filter(|database| database.enabled).collect::<Vec<_>>();
-        if enabled.is_empty() && config.member_admission.is_none() {
-            return Err(ProductionCatalogError::EmptyCatalog);
-        }
-
-        let locations = enabled
-            .iter()
-            .map(|database| normalize_location(&database.location))
-            .collect::<Result<Vec<_>, _>>()?;
-        let root = if let Some(admission) = &config.member_admission {
-            normalize_location(&admission.data_root)?
-        } else {
-            derive_root(&locations)?
-        };
-        ensure_root(&root)?;
-
-        let limits = if enabled.is_empty() {
-            let bound = config.transport.max_inflight;
-            if bound == 0 || bound > MAX_ADMISSION_PERMITS {
-                return Err(ProductionCatalogError::InvalidQuota);
-            }
-            AdmissionLimits::new(bound, bound)
-        } else {
-            derive_limits(&enabled)?
-        };
+        let (enabled, locations, root, limits) = catalog_inputs(config)?;
         let mut specs = Vec::with_capacity(enabled.len());
         let mut route_scopes = Vec::with_capacity(enabled.len());
         for (database, location) in enabled.iter().zip(&locations) {
@@ -369,6 +344,38 @@ impl ProductionCatalogBootstrap {
             limits: self.limits,
         }
     }
+}
+
+fn catalog_inputs(
+    config: &ProductionConfig,
+) -> Result<
+    (Vec<&ProductionDatabase>, Vec<PathBuf>, PathBuf, AdmissionLimits),
+    ProductionCatalogError,
+> {
+    let enabled = config.databases.iter().filter(|database| database.enabled).collect::<Vec<_>>();
+    if enabled.is_empty() && config.member_admission.is_none() {
+        return Err(ProductionCatalogError::EmptyCatalog);
+    }
+    let locations = enabled
+        .iter()
+        .map(|database| normalize_location(&database.location))
+        .collect::<Result<Vec<_>, _>>()?;
+    let root = if let Some(admission) = &config.member_admission {
+        normalize_location(&admission.data_root)?
+    } else {
+        derive_root(&locations)?
+    };
+    ensure_root(&root)?;
+    let limits = if enabled.is_empty() {
+        let bound = config.transport.max_inflight;
+        if bound == 0 || bound > MAX_ADMISSION_PERMITS {
+            return Err(ProductionCatalogError::InvalidQuota);
+        }
+        AdmissionLimits::new(bound, bound)
+    } else {
+        derive_limits(&enabled)?
+    };
+    Ok((enabled, locations, root, limits))
 }
 
 impl Drop for ProductionCatalogBootstrap {

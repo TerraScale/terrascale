@@ -178,7 +178,7 @@ pub struct ProductionMemberAdmission {
 /// Durable pending-placement control policy. It cannot grant membership or readiness.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductionControl {
-    /// Owner-private SQLite proposal and retry journal.
+    /// Owner-private `SQLite` proposal and retry journal.
     pub proposal_journal: PathBuf,
     /// Exact SPIFFE principals allowed to stage host-scoped intent over mTLS.
     pub orchestrator_principals: BTreeSet<String>,
@@ -286,7 +286,7 @@ pub struct LifecyclePublicationConfig {
     pub endpoint: String,
     /// Separate publisher credential file.
     pub key_file: PathBuf,
-    /// Durable native publication outbox SQLite file.
+    /// Durable native publication outbox `SQLite` file.
     pub outbox_path: PathBuf,
 }
 
@@ -1452,19 +1452,41 @@ fn parse_public_api(
             return Err(ConfigError::InvalidBound);
         }
     }
-    if let Some(key_file) = &section.bootstrap_key_file {
-        absolute(key_file)?;
+    validate_public_api_paths(section)?;
+    // Every named region must parse; duplicates collapse (the count is
+    // the durability class's input, not a placement).
+    let named: std::collections::BTreeSet<String> = section.regions.iter().cloned().collect();
+    for region in &named {
+        terrabase::regions::RegionCode::from_text(region)
+            .map_err(|_| ConfigError::InvalidRegion)?;
     }
-    if let Some(key_file) = &section.origin_proof_key_file {
-        absolute(key_file)?;
-    }
-    if let Some(key_file) = &section.origin_proof_previous_key_file {
-        absolute(key_file)?;
-    }
-    if let Some(key_file) = &section.capability_key_file {
-        absolute(key_file)?;
-    }
-    if let Some(key_file) = &section.capability_previous_key_file {
+    Ok(Some(PublicApiConfig {
+        lifecycle_publication: section.lifecycle_publication.clone(),
+        billing_closure: section.billing_closure.clone(),
+        credential_rotation: section.credential_rotation.clone(),
+        provisioning: section.provisioning.clone(),
+        identity: section.identity.clone(),
+        listen,
+        data_root: section.data_root.clone(),
+        bootstrap_key_file: section.bootstrap_key_file.clone(),
+        origin_proof_key_file: section.origin_proof_key_file.clone(),
+        origin_proof_previous_key_file: section.origin_proof_previous_key_file.clone(),
+        capability_key_file: section.capability_key_file.clone(),
+        capability_previous_key_file: section.capability_previous_key_file.clone(),
+    }))
+}
+
+fn validate_public_api_paths(section: &FilePublicApi) -> Result<(), ConfigError> {
+    for key_file in [
+        section.bootstrap_key_file.as_ref(),
+        section.origin_proof_key_file.as_ref(),
+        section.origin_proof_previous_key_file.as_ref(),
+        section.capability_key_file.as_ref(),
+        section.capability_previous_key_file.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
         absolute(key_file)?;
     }
     if let Some(provisioning) = &section.provisioning {
@@ -1494,13 +1516,6 @@ fn parse_public_api(
             }
         }
     }
-    // Every named region must parse; duplicates collapse (the count is
-    // the durability class's input, not a placement).
-    let named: std::collections::BTreeSet<String> = section.regions.iter().cloned().collect();
-    for region in &named {
-        terrabase::regions::RegionCode::from_text(region)
-            .map_err(|_| ConfigError::InvalidRegion)?;
-    }
     if let Some(rotation) = &section.credential_rotation {
         absolute(&rotation.socket)?;
         absolute(&rotation.state_file)?;
@@ -1515,20 +1530,7 @@ fn parse_public_api(
     if let Some(billing) = &section.billing_closure {
         absolute(&billing.key_file)?;
     }
-    Ok(Some(PublicApiConfig {
-        lifecycle_publication: section.lifecycle_publication.clone(),
-        billing_closure: section.billing_closure.clone(),
-        credential_rotation: section.credential_rotation.clone(),
-        provisioning: section.provisioning.clone(),
-        identity: section.identity.clone(),
-        listen,
-        data_root: section.data_root.clone(),
-        bootstrap_key_file: section.bootstrap_key_file.clone(),
-        origin_proof_key_file: section.origin_proof_key_file.clone(),
-        origin_proof_previous_key_file: section.origin_proof_previous_key_file.clone(),
-        capability_key_file: section.capability_key_file.clone(),
-        capability_previous_key_file: section.capability_previous_key_file.clone(),
-    }))
+    Ok(())
 }
 
 fn socket(value: &str, _field: &'static str) -> Result<SocketAddr, ConfigError> {

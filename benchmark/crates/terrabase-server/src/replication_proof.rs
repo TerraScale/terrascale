@@ -35,7 +35,7 @@ pub struct ReadinessBinding {
     pub membership_epoch: u64,
     /// Accepted placement generation.
     pub generation: u64,
-    /// SHA-256 of canonical deterministic PlacementProposal protobuf bytes.
+    /// SHA-256 of canonical deterministic `PlacementProposal` protobuf bytes.
     pub placement_digest: String,
     /// Complete selected Region inventory from that accepted placement.
     pub selected_regions: BTreeSet<String>,
@@ -229,7 +229,7 @@ impl VerifiedReadinessCut {
     pub const fn epoch(&self) -> u64 {
         self.epoch
     }
-    /// Conservative SQLite sequence containing the measured logical cut.
+    /// Conservative `SQLite` sequence containing the measured logical cut.
     /// This is a lower bound, not a claim to cover the writer's current head.
     #[must_use]
     pub const fn cut_sequence(&self) -> u64 {
@@ -344,7 +344,7 @@ impl ReadinessCutFrame {
     pub const fn checkpoint_digest(&self) -> [u8; 32] {
         self.body.checkpoint_digest
     }
-    /// Writer's SQLite sequence containing the logical cut.
+    /// Writer's `SQLite` sequence containing the logical cut.
     #[must_use]
     pub const fn sequence(&self) -> u64 {
         self.body.sequence
@@ -488,7 +488,7 @@ fn unix_millis() -> Result<u64, ReadinessProofError> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|duration| u64::try_from(duration.as_millis()).ok())
-        .filter(|millis| *millis > 0 && *millis <= i64::MAX as u64)
+        .filter(|millis| *millis > 0 && i64::try_from(*millis).is_ok())
         .ok_or(ReadinessProofError::Encoding)
 }
 
@@ -642,13 +642,13 @@ mod tests {
         let envelope: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
         let raw = STANDARD.decode(envelope["payload"].as_str().unwrap()).unwrap();
         let signature = STANDARD.decode(envelope["signature"].as_str().unwrap()).unwrap();
-        let mut signed = READINESS_SIGNATURE_DOMAIN.to_vec();
-        signed.extend_from_slice(&raw);
+        let mut signed_payload = READINESS_SIGNATURE_DOMAIN.to_vec();
+        signed_payload.extend_from_slice(&raw);
         let verifier = UnparsedPublicKey::new(&ED25519, public);
-        verifier.verify(&signed, &signature).unwrap();
+        verifier.verify(&signed_payload, &signature).unwrap();
         assert!(verifier.verify(&raw, &signature).is_err());
-        signed[0] ^= 1;
-        assert!(verifier.verify(&signed, &signature).is_err());
+        signed_payload[0] ^= 1;
+        assert!(verifier.verify(&signed_payload, &signature).is_err());
         let json = String::from_utf8(raw).unwrap();
         assert!(json.contains("\"frontier\":{\"gru\":7,\"sfo\":5}"));
         let changed = json.replace(&hex(&[6; 32]), &hex(&[7; 32]));

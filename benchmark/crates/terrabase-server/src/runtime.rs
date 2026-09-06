@@ -297,137 +297,11 @@ async fn serve_pending_placement_control(
     config: &ServerConfig,
     production: &crate::config::ProductionConfig,
 ) -> Result<(), ProductionStartupError> {
-    use terrabase_tbep::grpc::placement_control::PlacementControlServer;
-    let unavailable = |detail| {
-        ProductionStartupError::Component(crate::production::ProductionComponentError {
-            component: crate::production::ProductionComponent::ControlApi,
-            detail,
-        })
-    };
-    let control = production
-        .control
-        .as_ref()
-        .ok_or_else(|| unavailable("placement control configuration missing"))?;
-    let journal =
-        open_production_placement_journal(production).map_err(|detail| unavailable(detail))?;
-    let grpc = TbepGrpcConfig::try_new(
-        config.max_message_bytes,
-        config.max_inflight,
-        config.request_timeout,
-        config.tls_handshake_timeout,
-        config.shutdown_grace,
-        control.orchestrator_principals.clone(),
-    )
-    .map_err(|_| unavailable("placement control transport limits are invalid"))?;
-    let auth_boundary = terrabase_tbep::auth_bootstrap::AuthBootstrapBoundary::new(
-        production.environment.name.as_str(),
-        &production.environment.cluster.to_text(),
-        &production.environment.member.to_text(),
-        production
-            .databases
-            .iter()
-            .filter(|database| database.enabled)
-            .map(|database| {
-                terrabase_cluster::production::DatabaseRouteScope::new(
-                    database.tenant,
-                    database.project,
-                    database.database,
-                )
-            })
-            .collect(),
-        production
-            .placement
-            .regions
-            .iter()
-            .flat_map(|(region, members)| {
-                members
-                    .iter()
-                    .map(|member| (member.to_text(), region.as_str().to_owned()))
-                    .collect::<Vec<_>>()
-            })
-            .collect(),
-    )
-    .map_err(|_| unavailable("auth bootstrap host boundary is invalid"))?;
-    let auth_journal_path = control
-        .proposal_journal
-        .parent()
-        .ok_or_else(|| unavailable("auth bootstrap journal directory missing"))?
-        .join("auth-bootstrap.sqlite");
-    let auth_journal = Arc::new(
-        terrabase_tbep::auth_bootstrap::AuthBootstrapJournal::open(
-            &auth_journal_path,
-            auth_boundary,
-        )
-        .map_err(|_| unavailable("auth bootstrap journal unavailable or identity mismatch"))?,
-    );
-    let server = Arc::new(
-        PlacementControlServer::new(
-            journal,
-            Arc::clone(&auth_journal),
-            grpc,
-            control.observer_principals.clone(),
-        )
-        .map_err(|_| unavailable("placement control principal policy is invalid"))?,
-    );
-    let certificate = read_pem(&production.transport.server_certificate, false)
-        .map_err(|_| unavailable("placement control TLS certificate is unavailable"))?;
-    let key = read_pem(&production.transport.server_private_key, true)
-        .map_err(|_| unavailable("placement control TLS private key is unavailable"))?;
-    let ca = read_pem(&production.transport.client_ca, false)
-        .map_err(|_| unavailable("placement control TLS CA is unavailable"))?;
-    let live_tls =
-        terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(&certificate, &key, &ca)
-            .map_err(|_| unavailable("placement TLS identity is invalid"))?;
-    let rotation = production
-        .transport
-        .credential_rotation
-        .as_ref()
-        .map(|rotation| {
-            let token = read_secret_key(&rotation.token_file)
-                .map_err(|_| unavailable("rotation token unavailable"))?;
-            crate::credential_rotation::bind_with_tls(
-                &rotation.socket,
-                &rotation.state_file,
-                token,
-                crate::reactive_api::OriginProofKeyRing::disabled(),
-                crate::reactive_api::CapabilityKeyRing::disabled(),
-                live_tls.clone(),
-                format!("{certificate}\n{key}").into_bytes(),
-                ca.as_bytes().to_vec(),
-            )
-            .map_err(|_| unavailable("durable credential rotation controller unavailable"))
-        })
-        .transpose()?;
-    let listener = server
-        .bind_tls_reloadable(production.transport.tbep_listen, live_tls)
-        .await
-        .map_err(|_| unavailable("placement control mTLS listener cannot bind"))?;
-    let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
-    metrics.set_component_health(Component::Metrics, HealthStatus::Healthy);
-    // Starting is retained. A persisted proposal is not a membership proof.
-    let observations = tokio::net::TcpListener::bind(production.transport.metrics_listen)
-        .await
-        .map_err(|_| unavailable("pending placement metrics listener cannot bind"))?;
+    let unavailable = pending_control_error;
+    let setup = prepare_pending_control(config, production).await?;
+    let PendingControlSetup { server, listener, observations, metrics, auth_runtime, rotation } =
+        setup;
     let (auth_stop, auth_signal) = oneshot::channel();
-    let auth_runtime = if let Some(public) = &config.public_api {
-        let endpoint = Arc::new(
-            build_production_transport(production)
-                .map_err(|_| unavailable("auth member transport cannot bind"))?,
-        );
-        Some(
-            crate::auth_runtime::AuthRuntime::new(
-                endpoint,
-                Arc::clone(&auth_journal),
-                production.clone(),
-                public,
-            )
-            .map_err(|_| {
-                unavailable("auth runtime credentials or key delivery configuration missing")
-            })?,
-        )
-    } else {
-        None
-    };
     let auth_listen = config.public_api.as_ref().map(|public| public.listen);
     let mut auth_task = tokio::spawn(async move {
         if let (Some(runtime), Some(listen)) = (auth_runtime, auth_listen) {
@@ -526,6 +400,173 @@ async fn serve_pending_placement_control(
     .map_err(|_| unavailable("pending placement shutdown deadline elapsed"))?;
     drained?;
     outcome
+}
+
+fn pending_control_error(detail: &'static str) -> ProductionStartupError {
+    ProductionStartupError::Component(crate::production::ProductionComponentError {
+        component: crate::production::ProductionComponent::ControlApi,
+        detail,
+    })
+}
+
+struct PendingControlSetup {
+    server: Arc<terrabase_tbep::grpc::placement_control::PlacementControlServer>,
+    listener: terrabase_tbep::grpc::placement_control::PlacementControlListener,
+    observations: tokio::net::TcpListener,
+    metrics: Arc<terrabase::observability::MetricsRegistry>,
+    auth_runtime: Option<Arc<crate::auth_runtime::AuthRuntime>>,
+    rotation: Option<crate::credential_rotation::BoundRotation>,
+}
+
+async fn prepare_pending_control(
+    config: &ServerConfig,
+    production: &crate::config::ProductionConfig,
+) -> Result<PendingControlSetup, ProductionStartupError> {
+    use terrabase_tbep::grpc::placement_control::PlacementControlServer;
+    let control = production
+        .control
+        .as_ref()
+        .ok_or_else(|| pending_control_error("placement control configuration missing"))?;
+    let journal = open_production_placement_journal(production).map_err(pending_control_error)?;
+    let grpc = TbepGrpcConfig::try_new(
+        config.max_message_bytes,
+        config.max_inflight,
+        config.request_timeout,
+        config.tls_handshake_timeout,
+        config.shutdown_grace,
+        control.orchestrator_principals.clone(),
+    )
+    .map_err(|_| pending_control_error("placement control transport limits are invalid"))?;
+    let auth_journal = open_pending_auth_journal(control, production)?;
+    let server = Arc::new(
+        PlacementControlServer::new(
+            journal,
+            Arc::clone(&auth_journal),
+            grpc,
+            control.observer_principals.clone(),
+        )
+        .map_err(|_| pending_control_error("placement control principal policy is invalid"))?,
+    );
+    let (live_tls, rotation) = prepare_pending_tls(production)?;
+    let listener = server
+        .bind_tls_reloadable(production.transport.tbep_listen, live_tls)
+        .await
+        .map_err(|_| pending_control_error("placement control mTLS listener cannot bind"))?;
+    let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
+    metrics.set_component_health(Component::Metrics, HealthStatus::Healthy);
+    let observations = tokio::net::TcpListener::bind(production.transport.metrics_listen)
+        .await
+        .map_err(|_| pending_control_error("pending placement metrics listener cannot bind"))?;
+    let auth_runtime = if let Some(public) = &config.public_api {
+        let endpoint = Arc::new(
+            build_production_transport(production)
+                .map_err(|_| pending_control_error("auth member transport cannot bind"))?,
+        );
+        Some(
+            crate::auth_runtime::AuthRuntime::new(
+                endpoint,
+                auth_journal,
+                production.clone(),
+                public,
+            )
+            .map_err(|_| {
+                pending_control_error(
+                    "auth runtime credentials or key delivery configuration missing",
+                )
+            })?,
+        )
+    } else {
+        None
+    };
+    Ok(PendingControlSetup { server, listener, observations, metrics, auth_runtime, rotation })
+}
+
+fn open_pending_auth_journal(
+    control: &crate::config::ProductionControl,
+    production: &crate::config::ProductionConfig,
+) -> Result<Arc<terrabase_tbep::auth_bootstrap::AuthBootstrapJournal>, ProductionStartupError> {
+    let boundary = terrabase_tbep::auth_bootstrap::AuthBootstrapBoundary::new(
+        production.environment.name.as_str(),
+        &production.environment.cluster.to_text(),
+        &production.environment.member.to_text(),
+        production
+            .databases
+            .iter()
+            .filter(|database| database.enabled)
+            .map(|database| {
+                terrabase_cluster::production::DatabaseRouteScope::new(
+                    database.tenant,
+                    database.project,
+                    database.database,
+                )
+            })
+            .collect(),
+        production
+            .placement
+            .regions
+            .iter()
+            .flat_map(|(region, members)| {
+                members
+                    .iter()
+                    .map(|member| (member.to_text(), region.as_str().to_owned()))
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+    )
+    .map_err(|_| pending_control_error("auth bootstrap host boundary is invalid"))?;
+    let path = control
+        .proposal_journal
+        .parent()
+        .ok_or_else(|| pending_control_error("auth bootstrap journal directory missing"))?
+        .join("auth-bootstrap.sqlite");
+    terrabase_tbep::auth_bootstrap::AuthBootstrapJournal::open(&path, boundary)
+        .map(Arc::new)
+        .map_err(|_| {
+            pending_control_error("auth bootstrap journal unavailable or identity mismatch")
+        })
+}
+
+fn prepare_pending_tls(
+    production: &crate::config::ProductionConfig,
+) -> Result<
+    (
+        terrabase_tbep::grpc::reloadable_tls::ReloadableTls,
+        Option<crate::credential_rotation::BoundRotation>,
+    ),
+    ProductionStartupError,
+> {
+    let certificate = read_pem(&production.transport.server_certificate, false)
+        .map_err(|_| pending_control_error("placement control TLS certificate is unavailable"))?;
+    let key = read_pem(&production.transport.server_private_key, true)
+        .map_err(|_| pending_control_error("placement control TLS private key is unavailable"))?;
+    let ca = read_pem(&production.transport.client_ca, false)
+        .map_err(|_| pending_control_error("placement control TLS CA is unavailable"))?;
+    let live_tls =
+        terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(&certificate, &key, &ca)
+            .map_err(|_| pending_control_error("placement TLS identity is invalid"))?;
+    let rotation = production
+        .transport
+        .credential_rotation
+        .as_ref()
+        .map(|rotation| {
+            let token = read_secret_key(&rotation.token_file)
+                .map_err(|_| pending_control_error("rotation token unavailable"))?;
+            crate::credential_rotation::bind_with_tls(
+                &rotation.socket,
+                &rotation.state_file,
+                token,
+                crate::reactive_api::OriginProofKeyRing::disabled(),
+                crate::reactive_api::CapabilityKeyRing::disabled(),
+                live_tls.clone(),
+                format!("{certificate}\n{key}").into_bytes(),
+                ca.as_bytes().to_vec(),
+            )
+            .map_err(|_| {
+                pending_control_error("durable credential rotation controller unavailable")
+            })
+        })
+        .transpose()?;
+    Ok((live_tls, rotation))
 }
 
 /// Opens the one durable placement authority shared by pending control and the
@@ -876,7 +917,7 @@ async fn serve_public_api(
         origin_proof_keys: Arc::new(origin_proof_keys),
         webhook_keys: None,
         exports: Some(Arc::new(
-            crate::export_api::ExportRuntime::local(backup_root.with_file_name("exports"), region)
+            crate::export_api::ExportRuntime::local(&backup_root.with_file_name("exports"), region)
                 .map_err(|_| DaemonError::Engine("local export dependencies unavailable".into()))?,
         )),
         delegated_identity,

@@ -1,9 +1,17 @@
 //! Public usage and index administration backed by the serving database Engine.
 
-use super::*;
+use super::{
+    ApiError, ApiState, account_direct_read, check_read_guard, document_host,
+    document_scope, invalid_identifier, json_response, response_bytes,
+};
 use crate::api_keys::Principal;
 use crate::index_api::{EngineIndexAdapter, IndexScope, IndexService, IndexServiceError};
 use crate::usage_api::UsageApiError;
+use axum::extract::{self, Path, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use std::sync::Arc;
+use terrabase::types::CollectionName;
 
 /// Reports only authoritative billable meter totals and free read attribution.
 #[utoipa::path(get, path = "/api/v1/databases/{name}/usage", responses((status = 200, description = "Authoritative database usage", body = crate::usage_api::UsageSummary)))]
@@ -18,17 +26,16 @@ pub(super) async fn database_usage(
     if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
         return error.into_response();
     }
-    let scope = match document_scope(host.engine()) {
-        Ok(scope) => scope,
-        Err(()) => return ApiError::control_unavailable().into_response(),
+    let Ok(scope) = document_scope(host.engine()) else {
+        return ApiError::control_unavailable().into_response();
     };
     match crate::usage_api::engine_summary(host.engine(), &scope) {
         Ok(summary) => accounted_json(&state, &name, &summary),
-        Err(error) => usage_error(error).into_response(),
+        Err(error) => usage_error(&error).into_response(),
     }
 }
 
-fn usage_error(error: UsageApiError) -> ApiError {
+fn usage_error(error: &UsageApiError) -> ApiError {
     let status = match error {
         UsageApiError::SourceUnavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
         UsageApiError::CorruptSource { .. } => StatusCode::INTERNAL_SERVER_ERROR,
@@ -161,8 +168,11 @@ fn accounted_json(state: &ApiState, name: &str, value: &impl serde::Serialize) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::{router, PLACEMENT_HEADER};
+    use crate::api_keys::Verbs;
     use axum::body::Body;
     use axum::http::Request;
+    use axum::Router;
     use tower::util::ServiceExt;
 
     const KEY: &str = "Bearer tskey_test_abcdefghijklmnop";

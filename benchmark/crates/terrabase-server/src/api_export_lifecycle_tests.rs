@@ -1,6 +1,10 @@
 use super::*;
+use crate::api::router;
+use axum::Router;
 use axum::body::Body;
 use axum::http::Request;
+use std::sync::Arc;
+use terrabase::RegionCode;
 use tower::util::ServiceExt;
 
 async fn call(app: &Router, method: &str, path: &str, body: &str) -> serde_json::Value {
@@ -27,7 +31,7 @@ async fn call(app: &Router, method: &str, path: &str, body: &str) -> serde_json:
 async fn disconnected_client_discovers_cancels_and_resumes_the_same_durable_export() {
     let mut state = super::super::tests::state_with_keys_and_control();
     let root = state.backup_root.with_file_name("exports");
-    let runtime = Arc::new(export::ExportRuntime::local(root.clone(), RegionCode::GRU).unwrap());
+    let runtime = Arc::new(export::ExportRuntime::local(&root, RegionCode::GRU).unwrap());
     // A process shutdown yields accepted workers before their first page.
     // Reconstructing the runtime below exercises the real startup recovery path.
     runtime.stop();
@@ -50,7 +54,7 @@ async fn disconnected_client_discovers_cancels_and_resumes_the_same_durable_expo
     assert_eq!(requested["cancellation"], "requested");
     drop(app);
     Arc::get_mut(&mut state).unwrap().exports =
-        Some(Arc::new(export::ExportRuntime::local(root, RegionCode::GRU).unwrap()));
+        Some(Arc::new(export::ExportRuntime::local(&root, RegionCode::GRU).unwrap()));
     let recovering = state.clone();
     tokio::task::spawn_blocking(move || recover_exports(&recovering)).await.unwrap().unwrap();
     let app = router(state);
