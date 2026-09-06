@@ -121,15 +121,6 @@ impl PlacementBoundary {
         })
     }
 
-    fn canonicalize(
-        &self,
-        proposal: &mut pb::PlacementProposal,
-        require_declared_databases: bool,
-    ) -> Result<(), PlacementError> {
-        let databases = self.databases.read().map_err(|_| PlacementError::Storage)?;
-        self.canonicalize_with(proposal, require_declared_databases, &databases)
-    }
-
     fn canonicalize_with(
         &self,
         proposal: &mut pb::PlacementProposal,
@@ -374,7 +365,9 @@ impl PlacementJournal {
                 };
                 let selected =
                     scopes.get(&scope).map(|(_, selected)| selected.clone()).unwrap_or_default();
-                if scopes.get(&scope).is_some_and(|(existing, _)| existing.as_deref() != local_region.as_deref())
+                if scopes.get(&scope).is_some_and(|(existing, _)| {
+                    existing.as_ref().is_some_and(|region| Some(region) != local_region.as_ref())
+                })
                     || (!scopes.contains_key(&scope) && scopes.len() >= 1024)
                     || database_ids
                         .insert(scope.database(), scope)
@@ -486,18 +479,52 @@ impl PlacementJournal {
             || operation.len() > 128
             || principal.chars().any(char::is_control)
             || operation.chars().any(char::is_control)
+            || request.declarations.len() > 1024
+            || request.encoded_len() > MAX_PLACEMENT_PROPOSAL_BYTES * 2
         {
             return Err(PlacementError::Invalid);
         }
         let proposal = request.proposal.as_mut().ok_or(PlacementError::Invalid)?;
-        self.boundary.canonicalize(proposal, true)?;
-        let encoded = proposal.encode_to_vec();
         let expected =
             i64::try_from(request.expected_revision).map_err(|_| PlacementError::Conflict)?;
         let mut connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| PlacementError::Storage)?;
+        let durable = read_declarations(&transaction)?;
+        let mut candidate = durable.clone();
+        let mut provided = BTreeSet::new();
+        let mut represented = BTreeSet::new();
+        for assignment in &proposal.assignments {
+            represented.insert(DatabaseRouteScope::try_new(
+                &assignment.tenant, &assignment.project, &assignment.database,
+            ).map_err(|_| PlacementError::Invalid)?);
+        }
+        for declaration in &request.declarations {
+            let scope = DatabaseRouteScope::try_new(
+                &declaration.tenant, &declaration.project, &declaration.database,
+            ).map_err(|_| PlacementError::Invalid)?;
+            let selected: BTreeSet<_> = declaration.selected_regions.iter().cloned().collect();
+            if !provided.insert(scope.database()) || !represented.contains(&scope)
+                || selected.is_empty() || selected.len() > 3
+                || selected.len() != declaration.selected_regions.len()
+                || selected.iter().any(|region| RegionCatalog::production().parse(region).is_err())
+            {
+                return Err(PlacementError::Invalid);
+            }
+            if let Some((_, existing)) = candidate.get(&scope) {
+                if existing != &selected { return Err(PlacementError::Conflict); }
+            } else {
+                if candidate.len() >= 1024
+                    || candidate.keys().any(|existing| existing.database() == scope.database())
+                { return Err(PlacementError::Conflict); }
+                candidate.insert(scope, (None, selected));
+            }
+        }
+        // Declarations are redundant with the exact represented owner/residency
+        // sets. They supply missing control metadata, never a local admission.
+        self.boundary.canonicalize_with(proposal, false, &candidate)?;
+        let encoded = proposal.encode_to_vec();
         let retained: Option<(u64, String, i64, Vec<u8>)> = transaction.query_row(
             "SELECT revision,principal,expected_revision,proposal FROM proposals WHERE operation=?1", [operation],
             |row| Ok((row_revision(row)?, row.get(1)?, row.get(2)?, row.get(3)?)),
@@ -509,8 +536,9 @@ impl PlacementJournal {
             {
                 return Err(PlacementError::RetryMismatch);
             }
-            return self.response(revision, &previous);
+            return self.response(&transaction, revision, &previous);
         }
+        self.boundary.canonicalize_with(proposal, true, &candidate)?;
         if proposal.generation < self.boundary.generation || proposal.epoch < self.boundary.epoch {
             return Err(PlacementError::Conflict);
         }
@@ -528,7 +556,7 @@ impl PlacementJournal {
         }
         if let Some((_, bytes)) = head {
             let previous =
-                self.response(revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
+                self.response(&transaction, revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
             if proposal.generation <= previous.generation || proposal.epoch <= previous.epoch {
                 return Err(PlacementError::Conflict);
             }
@@ -537,6 +565,11 @@ impl PlacementJournal {
             return Err(PlacementError::Exhausted);
         }
         let next = revision + 1;
+        for (scope, (local, selected)) in &candidate {
+            if !durable.contains_key(scope) {
+                insert_declaration(&transaction, *scope, local.as_deref(), selected)?;
+            }
+        }
         transaction
             .execute(
                 "INSERT INTO proposals VALUES (?1,?2,?3,?4,?5)",
@@ -550,7 +583,8 @@ impl PlacementJournal {
             )
             .map_err(|_| PlacementError::Storage)?;
         transaction.commit().map_err(|_| PlacementError::Storage)?;
-        self.response(next, &encoded)
+        *self.boundary.databases.write().map_err(|_| PlacementError::Storage)? = candidate;
+        self.response(&connection, next, &encoded)
     }
 
     /// Reads the latest persisted proposal; never infers admission from its presence.
@@ -568,11 +602,12 @@ impl PlacementJournal {
             .optional()
             .map_err(|_| PlacementError::Storage)?;
         let (revision, bytes) = head.ok_or(PlacementError::NotFound)?;
-        self.response(revision, &bytes)
+        self.response(&connection, revision, &bytes)
     }
 
     fn response(
         &self,
+        connection: &Connection,
         revision: u64,
         bytes: &[u8],
     ) -> Result<pb::PlacementProposalResponse, PlacementError> {
@@ -584,7 +619,9 @@ impl PlacementJournal {
         }
         let mut proposal =
             pb::PlacementProposal::decode(bytes).map_err(|_| PlacementError::Storage)?;
-        self.boundary.canonicalize(&mut proposal, false).map_err(|_| PlacementError::Storage)?;
+        let catalog = read_declarations(connection)?;
+        self.boundary.canonicalize_with(&mut proposal, false, &catalog)
+            .map_err(|_| PlacementError::Storage)?;
         if proposal.encode_to_vec() != bytes {
             return Err(PlacementError::Storage);
         }
@@ -800,7 +837,7 @@ impl PlacementJournal {
             .optional()
             .map_err(|_| PlacementError::Storage)?
             .ok_or(PlacementError::NotFound)?;
-        let proposal = self.response(revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
+        let proposal = self.response(connection, revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
         if proof.proof.request.scope_id
             != format!("{}/{}", self.boundary.environment, self.boundary.cluster)
             || proof.proof.request.epoch != proposal.epoch
@@ -878,7 +915,7 @@ impl terrabase_cluster::production::DurableMembershipSource for PlacementJournal
                 )
                 .map_err(|_| PlacementError::Storage)?;
             let proposal =
-                self.response(*revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
+                self.response(&connection, *revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
             let regions = proposal
                 .regions
                 .into_iter()
@@ -935,12 +972,8 @@ impl terrabase_cluster::wal_route::DurableWalAssignmentSource for PlacementJourn
                 )
                 .map_err(|_| PlacementError::Storage)?;
             let proposal =
-                self.response(*revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
-            let local_region = self
-                .boundary
-                .databases
-                .read()
-                .map_err(|_| PlacementError::Storage)?
+                self.response(&connection, *revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
+            let local_region = read_declarations(&connection)?
                 .get(&scope)
                 .cloned()
                 .map(|(local_region, _)| local_region)
@@ -984,6 +1017,9 @@ impl terrabase_cluster::wal_route::DurableWalAssignmentSource for PlacementJourn
 #[cfg(test)]
 mod transition_tests;
 
+#[cfg(test)]
+mod declaration_tests;
+
 impl PlacementJournal {
     /// Registers a durably installed CLOSED database scope for future proposals.
     /// The authenticated admission receiver calls this only after persisting the
@@ -1008,26 +1044,23 @@ impl PlacementJournal {
         {
             return Err(PlacementError::Invalid);
         }
-        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
-        let mut scopes = self.boundary.databases.write().map_err(|_| PlacementError::Storage)?;
-        if let Some(existing) = scopes.get(&scope) {
-            if existing.0.as_deref() == Some(local_region) && existing.1 == *selected_regions {
-                Ok(())
-            } else if existing.0.is_none() && existing.1 == *selected_regions {
-                let transaction = connection
-                    .unchecked_transaction()
-                    .map_err(|_| PlacementError::Storage)?;
-                transaction
-                    .execute(
-                        "UPDATE declared SET region=?1 WHERE tenant=?2 AND project=?3 AND database=?4",
-                        params![local_region, scope.tenant().to_text(), scope.project().to_text(), scope.database().to_text()],
-                    )
-                    .map_err(|_| PlacementError::Storage)?;
-                transaction.commit().map_err(|_| PlacementError::Storage)?;
-                scopes.insert(scope, (Some(local_region.to_owned()), selected_regions.clone()));
-                Ok(())
-            } else {
-                Err(PlacementError::Conflict)
+        let mut connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| PlacementError::Storage)?;
+        let mut scopes = read_declarations(&transaction)?;
+        if let Some((local, selected)) = scopes.get(&scope) {
+            if selected != selected_regions
+                || local.as_deref().is_some_and(|existing| existing != local_region)
+            {
+                return Err(PlacementError::Conflict);
+            }
+            if local.is_none() {
+                let changed = transaction.execute(
+                    "UPDATE declared SET region=?1 WHERE tenant=?2 AND project=?3 AND database=?4 AND region=''",
+                    params![local_region, scope.tenant().to_text(), scope.project().to_text(), scope.database().to_text()],
+                ).map_err(|_| PlacementError::Storage)?;
+                if changed != 1 { return Err(PlacementError::Conflict); }
             }
         } else {
             if scopes.len() >= 1024
@@ -1035,37 +1068,12 @@ impl PlacementJournal {
             {
                 return Err(PlacementError::Conflict);
             }
-            let transaction = connection
-                .unchecked_transaction()
-                .map_err(|_| PlacementError::Storage)?;
-            transaction
-                .execute(
-                    "INSERT INTO declared VALUES (?1,?2,?3,?4)",
-                    params![
-                        scope.tenant().to_text(),
-                        scope.project().to_text(),
-                        scope.database().to_text(),
-                        local_region
-                    ],
-                )
-                .map_err(|_| PlacementError::Storage)?;
-            for region in selected_regions {
-                transaction
-                    .execute(
-                        "INSERT INTO selected_regions VALUES (?1,?2,?3,?4)",
-                        params![
-                            scope.tenant().to_text(),
-                            scope.project().to_text(),
-                            scope.database().to_text(),
-                            region
-                        ],
-                    )
-                    .map_err(|_| PlacementError::Storage)?;
-            }
-            transaction.commit().map_err(|_| PlacementError::Storage)?;
-            scopes.insert(scope, (Some(local_region.to_owned()), selected_regions.clone()));
-            Ok(())
+            insert_declaration(&transaction, scope, Some(local_region), selected_regions)?;
         }
+        transaction.commit().map_err(|_| PlacementError::Storage)?;
+        scopes.insert(scope, (Some(local_region.to_owned()), selected_regions.clone()));
+        *self.boundary.databases.write().map_err(|_| PlacementError::Storage)? = scopes;
+        Ok(())
     }
 }
 
@@ -1087,6 +1095,6 @@ impl PlacementJournal {
                 |row| row.get(0),
             )
             .map_err(|_| PlacementError::Storage)?;
-        self.response(*revision, &bytes)
+        self.response(&connection, *revision, &bytes)
     }
 }

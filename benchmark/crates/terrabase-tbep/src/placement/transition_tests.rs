@@ -25,7 +25,7 @@ fn envelope(value: &Value) -> Vec<u8> {
     serde_json::to_vec(&sign("authority", &serde_json::to_vec(value).unwrap(), 1)).unwrap()
 }
 
-fn trust(proposal: &pb::PlacementProposal) -> TransitionTrust {
+pub(super) fn trust(proposal: &pb::PlacementProposal) -> TransitionTrust {
     let members = proposal
         .regions
         .iter()
@@ -45,7 +45,7 @@ fn trust(proposal: &pb::PlacementProposal) -> TransitionTrust {
     .unwrap()
 }
 
-fn proof(
+pub(super) fn proof(
     proposal: &pb::PlacementProposal,
     operation: &str,
     previous: Option<&Value>,
@@ -112,7 +112,7 @@ fn stage(
     journal.stage("authenticated-orchestrator", operation, request).unwrap().proposal.unwrap()
 }
 
-fn acceptance(value: &Value, revision: u64) -> pb::PlacementAcceptRequest {
+pub(super) fn acceptance(value: &Value, revision: u64) -> pb::PlacementAcceptRequest {
     pb::PlacementAcceptRequest { proposal_revision: revision, proof: envelope(value) }
 }
 
@@ -310,10 +310,22 @@ fn accepted_proposal_survives_new_local_database_registration() {
 
 #[test]
 fn control_only_declaration_survives_restart_but_never_loads_wal() {
-    let fixture = tests::Fixture::with_selected_and_local(
+    let mut fixture = tests::Fixture::with_selected_and_local(
         std::collections::BTreeSet::from(["GRU".into(), "SFO".into()]),
         None,
     );
+    let proposal = fixture.request.proposal.as_mut().unwrap();
+    let members = vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()];
+    proposal.regions.push(pb::PlacementRegionSeats {
+        region: "SFO".into(),
+        members: members.clone(),
+    });
+    proposal.assignments.push(pb::PlacementDatabaseAssignment {
+        region: "SFO".into(),
+        writer_member: members[0].clone(),
+        follower_member: members[1].clone(),
+        ..proposal.assignments[0].clone()
+    });
     let journal = fixture.open();
     let proposal = stage(&journal, fixture.request.clone(), "control");
     journal.configure_transition_trust(trust(&proposal)).unwrap();
