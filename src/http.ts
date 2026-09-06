@@ -49,6 +49,8 @@ export type TerraScaleRequestOptions<TBody = unknown> = {
   readonly body?: TBody | undefined;
   readonly headers?: HeadersInit | undefined;
   readonly idempotencyKey?: string | false | undefined;
+  /** Opt in only for named read operations whose POST body is safe to repeat. */
+  readonly retryableRead?: boolean | undefined;
   /** Abort the underlying fetch, including while a retry is pending. */
   readonly signal?: AbortSignal | undefined;
   /** A per-request REST Region hint. It is never used for reactive traffic. */
@@ -207,7 +209,7 @@ export class TerraScaleHttp {
           }
 
           const error = errorFromResponse(response, body.ok ? body.value : body.raw);
-          if (this.canRetry(options.method, idempotencyKey, attempt, response.status)) {
+          if (this.canRetry(options.method, idempotencyKey, attempt, response.status, options.retryableRead)) {
             const delayMs = retryDelay(response, this.config.retryDelayMs, attempt);
             // Preserve the server response when its backoff exceeds our automatic
             // retry window. Capping Retry-After would send the request too early.
@@ -226,7 +228,7 @@ export class TerraScaleHttp {
             body.ok ? body.value : body.raw,
           );
         } catch (error) {
-          if (fetchStarted && !responseReceived && !options.signal?.aborted && this.canRetry(options.method, idempotencyKey, attempt)) {
+          if (fetchStarted && !responseReceived && !options.signal?.aborted && this.canRetry(options.method, idempotencyKey, attempt, undefined, options.retryableRead)) {
             await delayForRetry(retryDelay(undefined, this.config.retryDelayMs, attempt), options.signal);
             attempt++;
             continue;
@@ -335,6 +337,7 @@ export class TerraScaleHttp {
     idempotencyKey: string | undefined,
     attempt: number,
     status?: number,
+    retryableRead = false,
   ): boolean {
     if (attempt >= this.config.maxRetryAttempts) {
       return false;
@@ -343,7 +346,7 @@ export class TerraScaleHttp {
     // GET is safe to repeat by contract. Mutations require the caller's
     // stable idempotency identity; other POSTs (SQL/reactive) are not
     // assumed idempotent merely because they use HTTP POST.
-    const retryableOperation = method === "GET" || (isMutation(method) && idempotencyKey !== undefined);
+    const retryableOperation = (retryableRead && method === "POST") || method === "GET" || (isMutation(method) && idempotencyKey !== undefined);
     if (!retryableOperation) {
       return false;
     }

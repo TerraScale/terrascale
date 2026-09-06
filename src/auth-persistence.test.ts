@@ -91,6 +91,47 @@ it("maps predicate auth routes and keeps ordinary queries read-scoped", async ()
   expect(await requests[6]?.json()).toEqual({ model: "user", predicates, increment: { attempts: 1 }, set: { active: true } });
 });
 
+it("retries ordinary auth query reads after transient failures without adding mutation identity", async () => {
+  const requests: Request[] = [];
+  const attempts = new Map<string, number>();
+  let factoryCalls = 0;
+  const client = createAuthPersistenceClient({ maxRetryAttempts: 1, retryDelayMs: 0, idempotencyKeyFactory: () => {
+    factoryCalls++;
+    return "unexpected-global-key";
+  }, fetch: async input => {
+    const request = new Request(input);
+    requests.push(request);
+    const path = new URL(request.url).pathname;
+    const attempt = (attempts.get(path) ?? 0) + 1;
+    attempts.set(path, attempt);
+    if (attempt === 1) return Response.json({ error: { code: "auth_authority_unavailable", message: "retry" } }, { status: 503 });
+    return Response.json({ record: null, matched: true, count: 2 });
+  } });
+
+  await expect(client.count("db", { model: "user", predicates: [] })).resolves.toMatchObject({ ok: true });
+  await expect(client.findPage("db", { model: "user", predicates: [], offset: 0, limit: 10 })).resolves.toMatchObject({ ok: true });
+
+  expect(requests).toHaveLength(4);
+  expect(factoryCalls).toBe(0);
+  for (const request of requests) {
+    expect(request.headers.has("idempotency-key")).toBe(false);
+    expect(request.headers.has("x-terrascale-auth-transaction")).toBe(false);
+  }
+});
+
+it("does not retry ordinary auth queries on denial statuses", async () => {
+  let calls = 0;
+  const client = createAuthPersistenceClient({ maxRetryAttempts: 2, retryDelayMs: 0, fetch: async () => {
+    calls++;
+    return Response.json({ error: { code: "forbidden", message: "denied" } }, { status: 403 });
+  } });
+
+  const result = await client.count("db", { model: "user", predicates: [] });
+  expect(calls).toBe(1);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.status).toBe(403);
+});
+
 it("preserves full-width auth result counts as bigint", async () => {
   const client = createAuthPersistenceClient({ fetch: async () => new Response(
     '{"record":null,"matched":true,"count":18446744073709551615}',

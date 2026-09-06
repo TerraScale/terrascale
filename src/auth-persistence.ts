@@ -153,7 +153,7 @@ function queryOptions(options: AuthQueryOptions) {
   const { transactionId, idempotencyKey } = options;
   if (transactionId === undefined) {
     if (idempotencyKey !== undefined) throw new TypeError("Query idempotencyKey requires transactionId.");
-    return { signal: options.signal };
+    return { signal: options.signal, idempotencyKey: false as const, retryableRead: true };
   }
   if (idempotencyKey === undefined) throw new TypeError("Query transactionId requires idempotencyKey.");
   identity(transactionId, "transactionId", 128);
