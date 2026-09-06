@@ -152,7 +152,10 @@ mod tests {
             DatabaseScope, DatabaseSpec, Member,
         },
         regions::RegionCode,
-        types::TenantId,
+        types::{
+            CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
+            OperationId, TenantId,
+        },
     };
 
     fn record(scope: &DatabaseScope, member: &str) -> AdmissionRecord {
@@ -201,10 +204,8 @@ mod tests {
         let unrelated_id = DatabaseId::from(unrelated.database());
         let fixture = crate::test_keys::key_delivery();
         let open = || {
-            let mut keys = crate::test_keys::storage_keys_with_provider(
-                &fenced,
-                fixture.provider.clone(),
-            );
+            let mut keys =
+                crate::test_keys::storage_keys_with_provider(&fenced, fixture.provider.clone());
             keys.extend(crate::test_keys::storage_keys_with_provider(
                 &unrelated,
                 fixture.provider.clone(),
@@ -237,7 +238,7 @@ mod tests {
         let host =
             AdmissionHost::open(&root, "production".into(), RegionCode::GRU, member_id, callback)
                 .unwrap();
-        assert!(member.acquire(&fenced_id).is_ok());
+        drop(member.acquire(&fenced_id).expect("initial encrypted writer acquisition"));
         host.admit(record(&fenced, &member_id.to_text())).unwrap();
         host.admit(record(&unrelated, &member_id.to_text())).unwrap();
         let fenced_host = registry.resolve(&fenced.database().to_text()).unwrap().unwrap();
@@ -263,7 +264,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert_eq!(fenced_host.host.engine().origin_epoch().unwrap().0, 1);
+        assert_eq!(fenced_host.host.engine().origin_epoch().unwrap(), (1, true));
         drop(fenced_host);
         drop(host);
         drop(registry);
@@ -288,10 +289,34 @@ mod tests {
         let scope = fenced_host.host.engine().scope_for(&fenced_tenant);
         let state = fenced_host.host.engine().lifecycle_state(&scope).unwrap();
         assert!(state.access_revoked());
-        assert_eq!(fenced_host.host.engine().origin_epoch().unwrap().0, 1);
+        assert_eq!(fenced_host.host.engine().origin_epoch().unwrap(), (1, true));
         let unrelated_host = registry.resolve(&unrelated.database().to_text()).unwrap().unwrap();
-        assert_eq!(unrelated_host.host.engine().origin_epoch().unwrap().0, 1);
+        assert_eq!(unrelated_host.host.engine().origin_epoch().unwrap(), (1, false));
         assert!(unrelated_host.host.engine().activate_origin_epoch(1).is_ok());
+        let unrelated_scope = unrelated_host
+            .host
+            .engine()
+            .scope_for(&TenantId::try_new(&unrelated.tenant().to_text()).unwrap());
+        let snapshot = unrelated_host.host.engine().read_snapshot(&unrelated_scope).unwrap();
+        let mut transaction = unrelated_host
+            .host
+            .engine()
+            .begin(&unrelated_scope, snapshot, OperationId::try_new("restart-write").unwrap())
+            .unwrap();
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new("restart-doc").unwrap(),
+                    CollectionName::try_new("users").unwrap(),
+                    DocumentValue::Object(Default::default()),
+                ),
+                ExpectedVersion::Any,
+            )
+            .unwrap();
+        assert!(matches!(
+            transaction.commit(LocalDurability::Synced),
+            terrabase::engine::CommitOutcome::Committed(_)
+        ));
         assert_eq!(
             fenced_host.host.engine().lifecycle_prepare_deletion(&scope, "delete-replay").unwrap(),
             state

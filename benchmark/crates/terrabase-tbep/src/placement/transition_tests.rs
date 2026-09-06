@@ -258,7 +258,11 @@ fn successor_needs_one_fence_from_each_old_pair_and_exact_predecessor() {
 
 #[test]
 fn accepted_proposal_survives_new_local_database_registration() {
-    let fixture = tests::Fixture::new();
+    let mut fixture = tests::Fixture::new();
+    fixture.request.proposal.as_mut().unwrap().regions.push(pb::PlacementRegionSeats {
+        region: "SFO".into(),
+        members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
+    });
     let journal = fixture.open();
     let proposal = stage(&journal, fixture.request.clone(), "first");
     journal.configure_transition_trust(trust(&proposal)).unwrap();
@@ -272,7 +276,11 @@ fn accepted_proposal_survives_new_local_database_registration() {
         DatabaseUlid::generate(),
     );
     journal
-        .register_database(added_scope, "GRU", &std::collections::BTreeSet::from(["GRU".into()]))
+        .register_database(
+            added_scope,
+            "GRU",
+            &std::collections::BTreeSet::from(["GRU".into(), "SFO".into()]),
+        )
         .unwrap();
     assert_eq!(journal.load_assignment(original_scope).unwrap().epoch, 1);
     assert_eq!(journal.accepted_proposal().unwrap().revision, 1);
@@ -282,6 +290,7 @@ fn accepted_proposal_survives_new_local_database_registration() {
     let successor_proposal = successor.proposal.as_mut().unwrap();
     successor_proposal.generation = 2;
     successor_proposal.epoch = 2;
+    let sfo_members = successor_proposal.regions[1].members.clone();
     let seats = successor_proposal.regions[0].members.clone();
     successor_proposal.assignments.push(pb::PlacementDatabaseAssignment {
         tenant: added_scope.tenant().to_text(),
@@ -290,6 +299,14 @@ fn accepted_proposal_survives_new_local_database_registration() {
         region: "GRU".into(),
         writer_member: seats[0].clone(),
         follower_member: seats[1].clone(),
+    });
+    successor_proposal.assignments.push(pb::PlacementDatabaseAssignment {
+        tenant: added_scope.tenant().to_text(),
+        project: added_scope.project().to_text(),
+        database: added_scope.database().to_text(),
+        region: "SFO".into(),
+        writer_member: sfo_members[0].clone(),
+        follower_member: sfo_members[1].clone(),
     });
     let successor = stage(&journal, successor, "second");
     let second = proof(&successor, "second", Some(&first), &[]);

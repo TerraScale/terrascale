@@ -1924,12 +1924,25 @@ fn open_database_engine(
         let scope = scope;
         drop(catalog);
 
-        let result = revalidate_created_location(&inner.root, location)
+        let result = location
+            .strip_prefix(&inner.root)
+            .map_err(|_| CatalogValidationError::InvalidDatabaseLocation)
+            .and_then(|relative| validate_location(&inner.root, relative))
             .map_err(MemberError::Validation)
-            .and_then(|()| {
+            .and_then(|validated| {
+                if validated != location {
+                    return Err(MemberError::Validation(
+                        CatalogValidationError::InvalidDatabaseLocation,
+                    ));
+                }
                 let config = EngineConfig::durable(location).map_err(|error| {
                     MemberError::EngineConfig { database: database.clone(), error }
                 })?;
+                // Production entries stay closed until writer acceptance. Their
+                // first acquisition creates the directory, then checks it again
+                // before SQLite can open any files.
+                revalidate_created_location(&inner.root, location)
+                    .map_err(MemberError::Validation)?;
                 let config = scope.as_ref().map_or(config.clone(), |scope| {
                     config.with_owner(scope.owner().clone()).with_replication_origin(
                         crate::types::RegionId::try_new(scope.owner().region().as_str())

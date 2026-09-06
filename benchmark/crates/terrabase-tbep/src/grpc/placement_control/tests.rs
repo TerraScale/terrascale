@@ -150,7 +150,7 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
     );
     let _ = stop.send(());
     serving.await.unwrap().unwrap();
-    server.drain().await.unwrap();
+    PlacementControlServer::drain(&server).await.unwrap();
 }
 
 #[tokio::test]

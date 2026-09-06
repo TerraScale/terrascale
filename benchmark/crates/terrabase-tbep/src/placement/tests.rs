@@ -110,6 +110,157 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn boundary_rejects_duplicate_database_identity_across_scopes() {
+    let tenant = TenantUlid::generate();
+    let database = DatabaseUlid::generate();
+    let first = DatabaseRouteScope::new(tenant, ProjectUlid::generate(), database);
+    let second = DatabaseRouteScope::new(tenant, ProjectUlid::generate(), database);
+    let selected = std::collections::BTreeSet::from(["GRU".to_owned()]);
+    assert_eq!(
+        PlacementBoundary::new(
+            "production",
+            &ClusterUlid::generate().to_text(),
+            &MemberUlid::generate().to_text(),
+            1,
+            1,
+            [
+                (first, "GRU".to_owned(), selected.clone()),
+                (second, "GRU".to_owned(), selected),
+            ],
+        )
+        .map(|_| ()),
+        Err(PlacementError::Invalid)
+    );
+}
+
+#[test]
+fn reopen_rejects_persisted_scope_with_configured_owner_conflict() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    drop(journal);
+    let original = *fixture.boundary.databases.read().unwrap().keys().next().unwrap();
+    let conflicting = DatabaseRouteScope::new(
+        TenantUlid::generate(),
+        ProjectUlid::generate(),
+        original.database(),
+    );
+    let boundary = PlacementBoundary::new(
+        &fixture.boundary.environment,
+        &fixture.boundary.cluster,
+        &fixture.boundary.member,
+        fixture.boundary.generation,
+        fixture.boundary.epoch,
+        [(
+            conflicting,
+            "GRU".to_owned(),
+            std::collections::BTreeSet::from(["GRU".to_owned()]),
+        )],
+    )
+    .unwrap();
+    assert!(matches!(
+        PlacementJournal::open(&fixture.root.join("proposals.sqlite"), boundary),
+        Err(PlacementError::Storage)
+    ));
+}
+
+#[test]
+fn boundary_catalog_accepts_1024_scopes_and_rejects_1025() {
+    let cluster = ClusterUlid::generate().to_text();
+    let member = MemberUlid::generate().to_text();
+    let selected = std::collections::BTreeSet::from(["GRU".to_owned()]);
+    let scopes = (0..1024)
+        .map(|_| {
+            (
+                DatabaseRouteScope::new(
+                    TenantUlid::generate(),
+                    ProjectUlid::generate(),
+                    DatabaseUlid::generate(),
+                ),
+                "GRU".to_owned(),
+                selected.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(PlacementBoundary::new("production", &cluster, &member, 1, 1, scopes).is_ok());
+
+    let mut too_many = (0..1025)
+        .map(|_| {
+            (
+                DatabaseRouteScope::new(
+                    TenantUlid::generate(),
+                    ProjectUlid::generate(),
+                    DatabaseUlid::generate(),
+                ),
+                "GRU".to_owned(),
+                selected.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        PlacementBoundary::new("production", &cluster, &member, 1, 1, too_many.drain(..)),
+        Err(PlacementError::Invalid)
+    ));
+}
+
+#[test]
+fn reopen_accepts_exact_1024_union_and_rejects_1025_union() {
+    let cluster = ClusterUlid::generate().to_text();
+    let member = MemberUlid::generate().to_text();
+    let root = std::env::temp_dir().join(format!("terrabase-placement-{cluster}"));
+    std::fs::create_dir(&root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let selected = std::collections::BTreeSet::from(["GRU".to_owned()]);
+    let entries = (0..1023)
+        .map(|_| {
+            (
+                DatabaseRouteScope::new(
+                    TenantUlid::generate(),
+                    ProjectUlid::generate(),
+                    DatabaseUlid::generate(),
+                ),
+                "GRU".to_owned(),
+                selected.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let boundary = PlacementBoundary::new("production", &cluster, &member, 1, 1, entries).unwrap();
+    let path = root.join("proposals.sqlite");
+    let journal = PlacementJournal::open(&path, boundary.clone()).unwrap();
+    let added = DatabaseRouteScope::new(
+        TenantUlid::generate(),
+        ProjectUlid::generate(),
+        DatabaseUlid::generate(),
+    );
+    journal.register_database(added, "GRU", &selected).unwrap();
+    drop(journal);
+    assert!(PlacementJournal::open(&path, boundary.clone()).is_ok());
+
+    let extra = DatabaseRouteScope::new(
+        TenantUlid::generate(),
+        ProjectUlid::generate(),
+        DatabaseUlid::generate(),
+    );
+    let overfull = PlacementBoundary::new(
+        "production",
+        &cluster,
+        &member,
+        1,
+        1,
+        [(extra, "GRU".to_owned(), selected)],
+    )
+    .unwrap();
+    assert!(matches!(
+        PlacementJournal::open(&path, overfull),
+        Err(PlacementError::Storage)
+    ));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn restart_retains_pending_proposal_and_exact_retry_after_successor() {
     let fixture = Fixture::new();
     let journal = fixture.open();
@@ -233,6 +384,14 @@ fn canonicalizes_one_assignment_per_scope_and_selected_region() {
         region: "SFO".into(),
         members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
     });
+    let sfo_members = extra_proposal.regions[1].members.clone();
+    let extra_scope = extra_proposal.assignments[0].clone();
+    extra_proposal.assignments.push(pb::PlacementDatabaseAssignment {
+        region: "SFO".into(),
+        writer_member: sfo_members[0].clone(),
+        follower_member: sfo_members[1].clone(),
+        ..extra_scope
+    });
     extra_proposal.regions.push(pb::PlacementRegionSeats {
         region: "FRA".into(),
         members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
@@ -296,6 +455,20 @@ fn different_identity_and_corrupt_payload_fail_on_reopen() {
     ));
     let connection = Connection::open(fixture.root.join("proposals.sqlite")).unwrap();
     connection.execute("UPDATE proposals SET proposal=?1", [vec![0_u8]]).unwrap();
+    drop(connection);
+    assert!(matches!(
+        PlacementJournal::open(&fixture.root.join("proposals.sqlite"), fixture.boundary.clone()),
+        Err(PlacementError::Storage)
+    ));
+}
+
+#[test]
+fn missing_persisted_selected_regions_fail_closed_on_reopen() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    drop(journal);
+    let connection = Connection::open(fixture.root.join("proposals.sqlite")).unwrap();
+    connection.execute("DELETE FROM selected_regions", []).unwrap();
     drop(connection);
     assert!(matches!(
         PlacementJournal::open(&fixture.root.join("proposals.sqlite"), fixture.boundary.clone()),

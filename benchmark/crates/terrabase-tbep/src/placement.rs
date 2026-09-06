@@ -85,6 +85,7 @@ impl PlacementBoundary {
         MemberWorkloadIdentity::try_new(environment, cluster, member)
             .map_err(|_| PlacementError::Invalid)?;
         let mut scopes = BTreeMap::new();
+        let mut database_ids = BTreeSet::new();
         for (scope, local_region, selected_regions) in databases {
             RegionCatalog::production().parse(&local_region).map_err(|_| PlacementError::Invalid)?;
             if selected_regions.is_empty()
@@ -93,6 +94,7 @@ impl PlacementBoundary {
                 || selected_regions.iter().any(|region| {
                     RegionCatalog::production().parse(region).is_err()
                 })
+                || !database_ids.insert(scope.database())
                 || scopes.insert(scope, (local_region, selected_regions)).is_some()
                 || scopes.len() > 1024
             {
@@ -160,8 +162,10 @@ impl PlacementBoundary {
                 &assignment.database,
             )
             .map_err(|_| PlacementError::Invalid)?;
-            let (local_region, selected_regions) =
-                databases.get(&scope).ok_or(PlacementError::Invalid)?;
+            let local_region = &databases
+                .get(&scope)
+                .ok_or(PlacementError::Invalid)?
+                .0;
             if !assignments.insert((scope, assignment.region.clone()))
                 || !seats.contains_key(&assignment.region)
                 || assignment.writer_member == assignment.follower_member
@@ -263,6 +267,11 @@ impl PlacementJournal {
         {
             let mut scopes = boundary.databases.write().map_err(|_| PlacementError::Storage)?;
             let configured = scopes.clone();
+            let mut database_ids: BTreeMap<_, DatabaseRouteScope> = configured
+                .keys()
+                .map(|scope| (scope.database(), *scope))
+                .collect();
+            let mut persisted_declared = BTreeSet::new();
             let mut persisted_selected: BTreeMap<DatabaseRouteScope, BTreeSet<String>> = BTreeMap::new();
             let mut statement = transaction
                 .prepare("SELECT tenant,project,database,region FROM declared")
@@ -275,19 +284,24 @@ impl PlacementJournal {
                 let region: String = row.get(3).map_err(|_| PlacementError::Storage)?;
                 let scope = DatabaseRouteScope::try_new(&tenant, &project, &database)
                     .map_err(|_| PlacementError::Storage)?;
+                persisted_declared.insert(scope);
                 RegionCatalog::production().parse(&region).map_err(|_| PlacementError::Storage)?;
                 let selected = scopes
                     .get(&scope)
-                    .filter(|(_, selected)| selected.contains(&region))
                     .map(|(_, selected)| selected.clone())
-                    .unwrap_or_else(|| BTreeSet::from([region.clone()]));
+                    .unwrap_or_default();
                 if scopes.get(&scope).is_some_and(|(existing, _)| existing != &region)
-                    || scopes.len() > 1024
+                    || (!scopes.contains_key(&scope) && scopes.len() >= 1024)
+                    || database_ids
+                        .insert(scope.database(), scope)
+                        .is_some_and(|existing| existing != scope)
                 {
                     return Err(PlacementError::Storage);
                 }
                 scopes.insert(scope, (region, selected));
             }
+            drop(rows);
+            drop(statement);
             let mut statement = transaction
                 .prepare("SELECT tenant,project,database,region FROM selected_regions")
                 .map_err(|_| PlacementError::Storage)?;
@@ -299,26 +313,38 @@ impl PlacementJournal {
                 let region: String = row.get(3).map_err(|_| PlacementError::Storage)?;
                 let scope = DatabaseRouteScope::try_new(&tenant, &project, &database)
                     .map_err(|_| PlacementError::Storage)?;
+                if database_ids.get(&scope.database()) != Some(&scope) {
+                    return Err(PlacementError::Storage);
+                }
                 RegionCatalog::production().parse(&region).map_err(|_| PlacementError::Storage)?;
                 persisted_selected.entry(scope).or_default().insert(region);
             }
+            drop(rows);
+            drop(statement);
+            if persisted_selected.keys().any(|scope| !scopes.contains_key(scope)) {
+                return Err(PlacementError::Storage);
+            }
             for (scope, (local_region, selected_regions)) in scopes.iter_mut() {
-                if let Some(persisted) = persisted_selected.get(scope) {
+                if persisted_declared.contains(scope) {
+                    let persisted = persisted_selected.get(scope).ok_or(PlacementError::Storage)?;
                     if configured.get(scope).is_some_and(|(_, selected)| selected != persisted) {
                         return Err(PlacementError::Storage);
                     }
                     *selected_regions = persisted.clone();
                 }
-                if !selected_regions.contains(local_region) {
+                if selected_regions.is_empty() || !selected_regions.contains(local_region) {
+                    return Err(PlacementError::Storage);
+                }
+                if selected_regions.len() > 3 {
                     return Err(PlacementError::Storage);
                 }
                 transaction
                     .execute(
                         "INSERT OR IGNORE INTO declared VALUES (?1,?2,?3,?4)",
-                        params![scope.tenant().to_text(), scope.project().to_text(), scope.database().to_text(), local_region],
+                        params![scope.tenant().to_text(), scope.project().to_text(), scope.database().to_text(), local_region.as_str()],
                     )
                     .map_err(|_| PlacementError::Storage)?;
-                for region in selected_regions {
+                for region in selected_regions.iter() {
                     transaction
                         .execute(
                             "INSERT OR IGNORE INTO selected_regions VALUES (?1,?2,?3,?4)",

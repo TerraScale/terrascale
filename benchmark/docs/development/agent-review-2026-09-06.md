@@ -28,3 +28,26 @@ The initial encrypted admission restart run, session `50243`, compiled but
 failed all three tests at production root validation. The fixture is being
 corrected; this run is not evidence that deletion replay passes. No full
 repository check or production readiness claim follows from the library check.
+
+The engine regression
+`baseline_digest_distinguishes_branch_provenance_and_is_stable` passed with
+`nice -n 19 cargo test -p terrabase --lib -j 2` and that test filter, session
+`37416`: one passed, zero failed. This verifies the retained branch provenance
+digest distinction, not the full TBEP repair exchange.
+
+Further execution found a production lazy-open defect: a new writer's directory
+was checked for existence before `EngineConfig::durable` could create it. The
+Member now validates the confined path, creates its directory, and revalidates
+before opening SQLite. Independent review found no material defect in this
+ordering change.
+
+Session `13278` passed all 17 server configuration tests, including required
+selected residency. All three deletion tests now reach encrypted restart but
+fail there, with the direct Member test reporting `FormatMismatch`. That storage
+failure is under investigation. First admission passing does not establish
+successful restart.
+
+The Go VM configuration producer now carries an explicit selected Region set,
+renders each database only in selected Regions, and uses the host's local Region
+for its physical owner. Focused `vmengineconfig` and `internal/testengineconfig`
+tests passed. Independent review of this producer integration remains pending.

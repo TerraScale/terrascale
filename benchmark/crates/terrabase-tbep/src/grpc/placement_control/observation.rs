@@ -161,6 +161,7 @@ mod tests {
         let server = Arc::new(
             PlacementControlServer::new(
                 Arc::new(fixture.open()),
+                Arc::new(fixture.open_auth()),
                 config,
                 [OBSERVER.to_owned(), OTHER_OBSERVER.to_owned()].into(),
             )
