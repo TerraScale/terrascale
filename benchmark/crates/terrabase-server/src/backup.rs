@@ -135,13 +135,82 @@ impl BackupDestination {
         match self {
             Self::File { root, .. } => !root.as_os_str().is_empty(),
             Self::ObjectStorage { endpoint, bucket, prefix, .. } => {
-                endpoint.starts_with("https://")
+                valid_https_endpoint(endpoint)
                     && !bucket.is_empty()
                     && !prefix.contains("..")
                     && !prefix.chars().any(char::is_control)
             }
         }
     }
+}
+
+/// Accept only an HTTPS endpoint with a syntactically valid authority.
+///
+/// The endpoint is passed into generated Litestream configuration, so this
+/// validation must reject credentials and delimiters that could alter the
+/// destination or inject configuration lines.  A full URL dependency is not
+/// needed here: the endpoint's scheme, authority, and delimiter rules are
+/// intentionally small and explicit.
+fn valid_https_endpoint(endpoint: &str) -> bool {
+    if !endpoint.starts_with("https://")
+        || endpoint.chars().any(|character| character.is_control() || character.is_whitespace())
+    {
+        return false;
+    }
+
+    let remainder = &endpoint["https://".len()..];
+    if remainder.contains('?') || remainder.contains('#') {
+        return false;
+    }
+    let authority_end =
+        remainder.find(|character| matches!(character, '/' | '?' | '#')).unwrap_or(remainder.len());
+    valid_authority(&remainder[..authority_end])
+}
+
+fn valid_authority(authority: &str) -> bool {
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+
+    if let Some(host_and_port) = authority.strip_prefix('[') {
+        let Some(close) = host_and_port.find(']') else {
+            return false;
+        };
+        let host = &host_and_port[..close];
+        let suffix = &host_and_port[close + 1..];
+        if host.is_empty()
+            || !host
+                .chars()
+                .all(|character| character.is_ascii_hexdigit() || matches!(character, ':' | '.'))
+        {
+            return false;
+        }
+        valid_port(suffix)
+    } else {
+        let (host, port) = authority.find(':').map_or((authority, ""), |separator| {
+            (&authority[..separator], &authority[separator..])
+        });
+        host_is_valid(host) && valid_port(port)
+    }
+}
+
+fn host_is_valid(host: &str) -> bool {
+    !host.is_empty()
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        })
+}
+
+fn valid_port(port: &str) -> bool {
+    port.is_empty()
+        || (port.starts_with(':')
+            && port.len() > 1
+            && port[1..].chars().all(|c| c.is_ascii_digit()))
 }
 
 /// The complete, validated input needed to attach one stream.
@@ -1174,6 +1243,53 @@ mod tests {
             region: RegionCode::GRU,
         };
         assert!(secure.valid());
+    }
+
+    #[test]
+    fn object_storage_destination_rejects_endpoint_injection_and_malformed_hosts() {
+        for endpoint in [
+            "https:///bucket",
+            "https://:443/bucket",
+            "https://object-storage.example: /bucket",
+            "https://user:secret@object-storage.example/bucket",
+            "https://object-storage.example/bucket?access_key=secret",
+            "https://object-storage.example/bucket#fragment",
+            "https://object-storage.example/bucket\nendpoint: evil",
+            "https://object-storage.example/bucket\t",
+        ] {
+            let destination = BackupDestination::ObjectStorage {
+                endpoint: endpoint.into(),
+                bucket: "backups".into(),
+                prefix: "terrabase".into(),
+                region: RegionCode::GRU,
+            };
+            assert!(!destination.valid(), "endpoint must be rejected: {endpoint:?}");
+        }
+    }
+
+    #[test]
+    fn attach_with_config_rejects_invalid_object_storage_endpoint_before_spawn() {
+        let streams = BackupStreams::new(PathBuf::from("/missing/litestream"));
+        let config = BackupAttachConfig::new(
+            PathBuf::from("/tmp/database.sqlite"),
+            BackupDestination::ObjectStorage {
+                endpoint: "https://user:secret@object-storage.example/bucket?x=1".into(),
+                bucket: "backups".into(),
+                prefix: "terrabase".into(),
+                region: RegionCode::GRU,
+            },
+            "168h".into(),
+            BackupEncryptionConfig::new(
+                KeyProviderIdentity::LocalFile,
+                DatabaseKeyVersion::generate(),
+            ),
+        );
+
+        let error = streams
+            .attach_with_config("database", RegionCode::GRU, config)
+            .expect_err("invalid endpoint must fail configuration validation");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(!streams.attached("database"));
     }
 
     struct TestLocation(PathBuf);

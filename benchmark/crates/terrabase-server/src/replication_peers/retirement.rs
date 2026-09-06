@@ -25,8 +25,8 @@ pub struct RetiredPeerLane {
 /// Complete retirement evidence keyed by exact authenticated peer and scope.
 pub type RetirementEvidence = BTreeMap<(String, DatabaseRouteScope), RetiredPeerLane>;
 
-pub(super) async fn capture_lane(lane: &PeerDatabase) -> Result<RetiredPeerLane, String> {
-    let physical = match &lane.physical {
+pub(super) async fn capture_lane(lane: &mut PeerDatabase) -> Result<RetiredPeerLane, String> {
+    let physical = match lane.physical.as_mut() {
         Some(PhysicalDriver::Writer(_)) | Some(PhysicalDriver::BootstrapWriter { .. }) => {
             Some(RetiredPhysicalLane::Writer)
         }
@@ -44,9 +44,13 @@ pub(super) async fn capture_lane(lane: &PeerDatabase) -> Result<RetiredPeerLane,
     let causal = lane.causal.clone();
     let causal_frontier = tokio::task::spawn_blocking(move || {
         causal
-            .map(|causal| causal.lock().map(|driver| driver.durable_peer_frontier().clone()))
+            .map(|causal| {
+                let driver = causal
+                    .lock()
+                    .map_err(|_| "causal frontier lock poisoned".to_owned())?;
+                Ok::<BTreeMap<String, u64>, String>(driver.durable_peer_frontier().clone())
+            })
             .transpose()
-            .map_err(|_| "causal frontier lock poisoned".to_owned())
     })
     .await
     .map_err(|error| format!("causal capture task: {error:?}"))??;
@@ -57,7 +61,7 @@ pub(super) async fn capture_lane(lane: &PeerDatabase) -> Result<RetiredPeerLane,
 }
 
 pub(super) async fn capture_lanes(
-    lanes: &[PeerDatabase],
+    lanes: &mut [PeerDatabase],
 ) -> Result<Vec<(DatabaseRouteScope, RetiredPeerLane)>, String> {
     let mut captured = Vec::with_capacity(lanes.len());
     for lane in lanes {
@@ -81,7 +85,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_lane_without_physical_or_causal_evidence_is_refused() {
-        let lane = PeerDatabase { scope: scope(), physical: None, causal: None };
-        assert!(capture_lanes(&[lane]).await.is_err());
+        let mut lanes = [PeerDatabase { scope: scope(), physical: None, causal: None }];
+        assert!(capture_lanes(&mut lanes).await.is_err());
     }
 }

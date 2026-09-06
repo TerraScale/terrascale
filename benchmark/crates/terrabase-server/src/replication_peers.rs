@@ -31,7 +31,7 @@ mod retirement;
 #[cfg(test)]
 pub(crate) use admission_tests::failed_peer_owner;
 
-pub use retirement::{RetiredPeerLane, RetirementEvidence};
+pub use retirement::{RetiredPeerLane, RetiredPhysicalLane, RetirementEvidence};
 
 /// Application control frames multiplexed on the same authenticated endpoint.
 pub trait PeerControlDispatcher: Send + Sync {
@@ -408,7 +408,7 @@ impl ReplicationPeers {
                 }
             }
         }
-        if responses.keys().copied().collect::<std::collections::BTreeSet<_>>() != peers {
+        if responses.keys().cloned().collect::<std::collections::BTreeSet<_>>() != peers {
             return Err("retirement response lane set is incomplete".into());
         }
         if self.draining.load(Ordering::Acquire)
@@ -630,7 +630,7 @@ async fn peer_worker(
                         let result = match new_lanes.retirement.clone() {
                             Some(result) => result,
                             None => {
-                                let result = retirement::capture_lanes(&lanes).await;
+                                let result = retirement::capture_lanes(&mut lanes).await;
                                 if result.is_ok() {
                                     new_lanes.retirement = Some(result.clone());
                                 }
@@ -638,7 +638,7 @@ async fn peer_worker(
                             }
                         };
                         let _ = done.send(result);
-                        retirement_park(&mut new_lanes, &mut stopped, &lanes).await;
+                        retirement_park(&mut new_lanes, &mut stopped, &mut lanes).await;
                         return;
                     }
                     apply_command(command, &mut lanes, &observations, id.as_str());
@@ -666,7 +666,7 @@ async fn peer_worker(
             )
             .await;
             if matches!(session_result, Err(ref error) if error == "__retire__") {
-                retirement_park(&mut new_lanes, &mut stopped, &lanes).await;
+                retirement_park(&mut new_lanes, &mut stopped, &mut lanes).await;
                 return;
             }
             observe(&observations, id.as_str(), &lanes, false);
@@ -683,7 +683,7 @@ async fn peer_worker(
 async fn retirement_park(
     inbox: &mut PeerInbox,
     stopped: &mut watch::Receiver<bool>,
-    lanes: &[PeerDatabase],
+    lanes: &mut [PeerDatabase],
 ) {
     loop {
         tokio::select! {

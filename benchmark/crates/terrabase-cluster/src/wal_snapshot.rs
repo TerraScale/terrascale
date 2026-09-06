@@ -1226,11 +1226,9 @@ mod tests {
             let held = replacement_binding.reserve_worker().unwrap();
             replacement_binding.fence();
             let mut pending = Box::pin(replaced.retired_physical_boundary());
-            assert!(
-                tokio::time::timeout(std::time::Duration::from_millis(20), &mut pending)
-                    .await
-                    .is_err()
-            );
+            assert!(tokio::time::timeout(std::time::Duration::from_millis(20), &mut pending)
+                .await
+                .is_err());
             drop(held);
             let retired = pending.await.unwrap();
             assert_eq!(retired.scope(), before.scope());
