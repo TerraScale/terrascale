@@ -848,7 +848,7 @@ impl PlacementJournal {
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
         let chain = self.verified_chain(&connection, trust)?;
         let (_, revision, proof) = chain.last().ok_or(PlacementError::NotFound)?;
-        Ok(acceptance_response(*revision, proof))
+        Ok(accepted_response(*revision, proof))
     }
 
     fn verified_chain(
@@ -950,6 +950,19 @@ impl PlacementJournal {
 }
 
 fn acceptance_response(
+    revision: u64,
+    proof: &transition::VerifiedProof,
+) -> pb::PlacementControlServiceAcceptResponse {
+    pb::PlacementControlServiceAcceptResponse {
+        proposal_revision: revision,
+        epoch: proof.proof.request.epoch,
+        generation: proof.proof.request.generation,
+        proof_digest: proof.digest.clone(),
+        status: pb::PlacementAcceptanceStatus::AdmittedCatchingUp as i32,
+    }
+}
+
+fn accepted_response(
     revision: u64,
     proof: &transition::VerifiedProof,
 ) -> pb::PlacementControlServiceGetAcceptedResponse {

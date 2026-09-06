@@ -296,6 +296,10 @@ mod tests {
             .expect("response");
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
+        assert_restricted_schema_access(body).await;
+    }
+
+    async fn assert_restricted_schema_access(body: &str) {
         let mut restricted = super::super::tests::state_with_keys_and_control();
         Arc::get_mut(&mut restricted).expect("sole state").keys =
             Some(Arc::new(crate::api_keys::KeyStore::with_keys(&[(

@@ -257,6 +257,10 @@ mod tests {
         }
     }
 
+    fn tenant(scope: &DatabaseScope) -> TenantId {
+        TenantId::try_new(&scope.tenant().to_text()).unwrap()
+    }
+
     fn replay_case(accepted: bool) {
         let root = std::env::temp_dir()
             .join(format!("terrabase-admission-host-replay-{}", DatabaseUlid::generate()));
@@ -367,7 +371,33 @@ mod tests {
         drop(registry);
         member.close(Duration::from_secs(1)).unwrap();
 
+        replay_after_restart(
+            accepted,
+            &root,
+            member_id,
+            &fenced,
+            &unrelated,
+            &fixture,
+            authority,
+            fenced_tenant,
+            open,
+        );
+    }
+
+    fn replay_after_restart(
+        accepted: bool,
+        root: &std::path::Path,
+        member_id: terrabase::identity::MemberUlid,
+        fenced: &DatabaseScope,
+        unrelated: &DatabaseScope,
+        fixture: &crate::test_keys::KeyDeliveryFixture,
+        authority: AdmissionAuthority,
+        fenced_tenant: TenantId,
+        open: impl Fn() -> Member,
+    ) {
         let reopened = open();
+        let fenced_id = DatabaseId::from(fenced.database());
+        let unrelated_id = DatabaseId::from(unrelated.database());
         reopened.accept_database_role(&fenced_id, &Writer(if accepted { 2 } else { 1 })).unwrap();
         reopened.accept_database_role(&unrelated_id, &Writer(1)).unwrap();
         let registry = Arc::new(AdmittedDatabaseRegistry::new(Arc::new(|| true)));
@@ -380,7 +410,7 @@ mod tests {
             2,
         );
         let host =
-            AdmissionHost::open(&root, "production".into(), RegionCode::GRU, member_id, callback)
+            AdmissionHost::open(root, "production".into(), RegionCode::GRU, member_id, callback)
                 .unwrap();
         let fenced_host = registry.resolve(&fenced.database().to_text()).unwrap().unwrap();
         let scope = fenced_host.host.engine().scope_for(&fenced_tenant);
@@ -425,7 +455,7 @@ mod tests {
                 .engine()
                 .lifecycle_accept_deletion(
                     &scope,
-                    terrabase::engine::lifecycle_state::DeletionIntent {
+                    DeletionIntent {
                         operation_id: "delete-replay".into(),
                         usage_stopped_at: cutoff,
                         retain_until: state.deletion.as_ref().unwrap().retain_until,
@@ -434,11 +464,7 @@ mod tests {
                 .unwrap();
             assert!(retried.deletion.is_some());
         }
-        drop(fenced_host);
-        drop(unrelated_host);
-        drop(host);
-        drop(registry);
-        drop(fixture);
+        drop((fenced_host, unrelated_host, host, registry));
         reopened.close(Duration::from_secs(1)).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
@@ -469,80 +495,36 @@ mod tests {
         };
         let fenced = make_scope();
         let unrelated = make_scope();
-        fs::create_dir_all(&root).unwrap();
         let specs = [
             DatabaseSpec::scoped(fenced.clone(), fenced.database().to_text()),
             DatabaseSpec::scoped(unrelated.clone(), unrelated.database().to_text()),
         ];
-        let mut keys = crate::test_keys::storage_keys(&fenced);
-        keys.extend(crate::test_keys::storage_keys(&unrelated));
-        let member =
-            Member::open_production(&root, specs.clone(), AdmissionLimits::new(4, 2), keys)
-                .unwrap();
-        let writer = Writer(1);
         let fenced_id = DatabaseId::from(fenced.database());
         let unrelated_id = DatabaseId::from(unrelated.database());
-        member.accept_database_role(&fenced_id, &writer).unwrap();
-        member.accept_database_role(&unrelated_id, &writer).unwrap();
-        let fenced_lease = member.acquire(&fenced_id).unwrap();
-        fenced_lease
-            .configure_usage_placement(
-                terrabase::usage::UsagePlacement::try_new(
-                    TenantId::try_new(&fenced.tenant().to_text()).unwrap(),
-                    &fenced.project().to_text(),
-                    &fenced.database().to_text(),
-                    "partition",
-                    RegionCode::GRU,
-                    vec![RegionCode::GRU],
-                    "revision",
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        fenced_lease.activate_origin_epoch(1).unwrap();
-        fenced_lease
-            .lifecycle_prepare_deletion(
-                &fenced_lease.scope_for(&TenantId::try_new(&fenced.tenant().to_text()).unwrap()),
-                "delete-replay",
-            )
-            .unwrap();
-        drop(fenced_lease);
-        member.close(Duration::from_secs(1)).unwrap();
+        prepare_fenced_database(&root, &specs, &fenced, &unrelated, fenced_id, unrelated_id);
 
         let mut keys = crate::test_keys::storage_keys(&fenced);
         keys.extend(crate::test_keys::storage_keys(&unrelated));
         let reopened =
             Member::open_production(&root, specs, AdmissionLimits::new(4, 2), keys).unwrap();
+        let writer = Writer(1);
         reopened.accept_database_role(&fenced_id, &writer).unwrap();
         reopened.accept_database_role(&unrelated_id, &writer).unwrap();
         let fenced_lease = reopened.acquire(&fenced_id).unwrap();
         let unrelated_lease = reopened.acquire(&unrelated_id).unwrap();
+        assert!(!lifecycle_allows_origin_activation(&fenced_lease, &tenant(&fenced),).unwrap());
         assert!(
-            !lifecycle_allows_origin_activation(
-                &fenced_lease,
-                &TenantId::try_new(&fenced.tenant().to_text()).unwrap(),
-            )
-            .unwrap()
-        );
-        assert!(
-            lifecycle_allows_origin_activation(
-                &unrelated_lease,
-                &TenantId::try_new(&unrelated.tenant().to_text()).unwrap(),
-            )
-            .unwrap()
+            lifecycle_allows_origin_activation(&unrelated_lease, &tenant(&unrelated),).unwrap()
         );
         assert!(unrelated_lease.activate_origin_epoch(1).is_ok());
         assert_eq!(fenced_lease.origin_epoch().unwrap(), (1, true));
-        let fenced_scope =
-            fenced_lease.scope_for(&TenantId::try_new(&fenced.tenant().to_text()).unwrap());
+        let fenced_scope = fenced_lease.scope_for(&tenant(&fenced));
         assert!(fenced_lease.lifecycle_state(&fenced_scope).unwrap().access_revoked());
         assert_eq!(
             fenced_lease.lifecycle_prepare_deletion(&fenced_scope, "delete-replay").unwrap(),
             fenced_lease.lifecycle_state(&fenced_scope).unwrap()
         );
         let prepared = fenced_lease.lifecycle_state(&fenced_scope).unwrap();
-        // Preparation supplies a lower bound. Billing continues until the
-        // authority accepts deletion, which happens after this restart.
         let cutoff = u64::try_from(
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
         )
@@ -562,5 +544,44 @@ mod tests {
         drop((fenced_lease, unrelated_lease));
         reopened.close(Duration::from_secs(1)).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn prepare_fenced_database(
+        root: &std::path::Path,
+        specs: &[DatabaseSpec; 2],
+        fenced: &DatabaseScope,
+        unrelated: &DatabaseScope,
+        fenced_id: DatabaseId,
+        unrelated_id: DatabaseId,
+    ) {
+        fs::create_dir_all(root).unwrap();
+        let mut keys = crate::test_keys::storage_keys(fenced);
+        keys.extend(crate::test_keys::storage_keys(unrelated));
+        let member =
+            Member::open_production(root, specs.clone(), AdmissionLimits::new(4, 2), keys).unwrap();
+        let writer = Writer(1);
+        member.accept_database_role(&fenced_id, &writer).unwrap();
+        member.accept_database_role(&unrelated_id, &writer).unwrap();
+        let fenced_lease = member.acquire(&fenced_id).unwrap();
+        fenced_lease
+            .configure_usage_placement(
+                terrabase::usage::UsagePlacement::try_new(
+                    tenant(fenced),
+                    &fenced.project().to_text(),
+                    &fenced.database().to_text(),
+                    "partition",
+                    RegionCode::GRU,
+                    vec![RegionCode::GRU],
+                    "revision",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        fenced_lease.activate_origin_epoch(1).unwrap();
+        fenced_lease
+            .lifecycle_prepare_deletion(&fenced_lease.scope_for(&tenant(fenced)), "delete-replay")
+            .unwrap();
+        drop(fenced_lease);
+        member.close(Duration::from_secs(1)).unwrap();
     }
 }

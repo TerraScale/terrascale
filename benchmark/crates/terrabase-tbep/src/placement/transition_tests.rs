@@ -135,7 +135,12 @@ fn pending_is_not_membership_and_acceptance_survives_restart_without_control_ser
     let reopened = fixture.open();
     assert!(reopened.load_admitted_placement().is_err());
     reopened.configure_transition_trust(trust(&proposal)).unwrap();
-    assert_eq!(reopened.accepted().unwrap(), accepted);
+    let observed = reopened.accepted().unwrap();
+    assert_eq!(observed.proposal_revision, accepted.proposal_revision);
+    assert_eq!(observed.epoch, accepted.epoch);
+    assert_eq!(observed.generation, accepted.generation);
+    assert_eq!(observed.proof_digest, accepted.proof_digest);
+    assert_eq!(observed.status, accepted.status);
     assert_eq!(reopened.accept("first", &request).unwrap(), accepted);
     let mut pending = fixture.request.clone();
     pending.expected_revision = 1;
@@ -239,7 +244,12 @@ fn successor_needs_one_fence_from_each_old_pair_and_exact_predecessor() {
     let reopened =
         PlacementJournal::open(&fixture.root.join("proposals.sqlite"), advanced).unwrap();
     reopened.configure_transition_trust(pins).unwrap();
-    assert_eq!(reopened.accepted().unwrap(), accepted);
+    let observed = reopened.accepted().unwrap();
+    assert_eq!(observed.proposal_revision, accepted.proposal_revision);
+    assert_eq!(observed.epoch, accepted.epoch);
+    assert_eq!(observed.generation, accepted.generation);
+    assert_eq!(observed.proof_digest, accepted.proof_digest);
+    assert_eq!(observed.status, accepted.status);
     assert!(reopened.load_admitted_placement().is_ok());
 }
 

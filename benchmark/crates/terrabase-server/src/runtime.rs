@@ -797,55 +797,15 @@ async fn serve_public_api(
             crate::api_keys::Scope::every_database(crate::api_keys::Verbs::ALL),
         );
     }
-    let region = match config.region {
-        terrabase::observability::Region::Gru => terrabase::regions::RegionCode::GRU,
-        terrabase::observability::Region::Sfo => terrabase::regions::RegionCode::SFO,
-        terrabase::observability::Region::Fra => terrabase::regions::RegionCode::FRA,
-        terrabase::observability::Region::Unknown => {
-            return Err(Box::new(DaemonError::Engine(
-                "the public API needs the member's own region".into(),
-            )));
-        }
-    };
+    let region = public_api_region(config.region)?;
     let backups = Arc::new(crate::backup::BackupStreams::open_member());
     let backup_root = public.data_root.join("backup");
     let timetravel = Arc::new(crate::backup::TimeTravelCache::new(
         Arc::clone(&backups),
         &backup_root.join("timetravel"),
     ));
-    let origin_proof_keys = match public.origin_proof_key_file.as_deref() {
-        Some(current) => {
-            let current = read_secret_key(current)?;
-            let previous = public
-                .origin_proof_previous_key_file
-                .as_deref()
-                .map(read_secret_key)
-                .transpose()?;
-            crate::reactive_api::OriginProofKeyRing::new(current, previous.as_deref())
-                .ok_or_else(|| DaemonError::Engine("invalid origin-proof key ring".into()))?
-        }
-        None if public.origin_proof_previous_key_file.is_some() => {
-            return Err(Box::new(DaemonError::Engine(
-                "origin-proof previous key requires a current key".into(),
-            )));
-        }
-        None => crate::reactive_api::OriginProofKeyRing::default(),
-    };
-    let capability_keys = match public.capability_key_file.as_deref() {
-        Some(current) => {
-            let current = read_secret_key(current)?;
-            let previous =
-                public.capability_previous_key_file.as_deref().map(read_secret_key).transpose()?;
-            crate::reactive_api::CapabilityKeyRing::new(current, previous.as_deref())
-                .ok_or_else(|| DaemonError::Engine("invalid capability key ring".into()))?
-        }
-        None if public.capability_previous_key_file.is_some() => {
-            return Err(Box::new(DaemonError::Engine(
-                "capability previous key requires a current key".into(),
-            )));
-        }
-        None => crate::reactive_api::CapabilityKeyRing::default(),
-    };
+    let origin_proof_keys = origin_proof_key_ring(&public)?;
+    let capability_keys = capability_key_ring(&public)?;
     let rotation = public
         .credential_rotation
         .as_ref()
@@ -970,6 +930,60 @@ async fn serve_public_api(
         result.and(rotation_result).and(dispatcher_result)
     });
     Ok((Some(task), stop))
+}
+
+fn public_api_region(
+    region: terrabase::observability::Region,
+) -> Result<terrabase::regions::RegionCode, Box<dyn Error + Send + Sync>> {
+    match region {
+        terrabase::observability::Region::Gru => Ok(terrabase::regions::RegionCode::GRU),
+        terrabase::observability::Region::Sfo => Ok(terrabase::regions::RegionCode::SFO),
+        terrabase::observability::Region::Fra => Ok(terrabase::regions::RegionCode::FRA),
+        terrabase::observability::Region::Unknown => Err(Box::new(DaemonError::Engine(
+            "the public API needs the member's own region".into(),
+        ))),
+    }
+}
+
+fn origin_proof_key_ring(
+    public: &crate::config::PublicApiConfig,
+) -> Result<crate::reactive_api::OriginProofKeyRing, Box<dyn Error + Send + Sync>> {
+    match public.origin_proof_key_file.as_deref() {
+        Some(current) => {
+            let current = read_secret_key(current)?;
+            let previous = public
+                .origin_proof_previous_key_file
+                .as_deref()
+                .map(read_secret_key)
+                .transpose()?;
+            crate::reactive_api::OriginProofKeyRing::new(current, previous.as_deref()).ok_or_else(
+                || Box::new(DaemonError::Engine("invalid origin-proof key ring".into())) as _,
+            )
+        }
+        None if public.origin_proof_previous_key_file.is_some() => Err(Box::new(
+            DaemonError::Engine("origin-proof previous key requires a current key".into()),
+        )),
+        None => Ok(crate::reactive_api::OriginProofKeyRing::default()),
+    }
+}
+
+fn capability_key_ring(
+    public: &crate::config::PublicApiConfig,
+) -> Result<crate::reactive_api::CapabilityKeyRing, Box<dyn Error + Send + Sync>> {
+    match public.capability_key_file.as_deref() {
+        Some(current) => {
+            let current = read_secret_key(current)?;
+            let previous =
+                public.capability_previous_key_file.as_deref().map(read_secret_key).transpose()?;
+            crate::reactive_api::CapabilityKeyRing::new(current, previous.as_deref()).ok_or_else(
+                || Box::new(DaemonError::Engine("invalid capability key ring".into())) as _,
+            )
+        }
+        None if public.capability_previous_key_file.is_some() => Err(Box::new(
+            DaemonError::Engine("capability previous key requires a current key".into()),
+        )),
+        None => Ok(crate::reactive_api::CapabilityKeyRing::default()),
+    }
 }
 
 fn read_pem(path: &Path, private: bool) -> Result<String, DaemonError> {

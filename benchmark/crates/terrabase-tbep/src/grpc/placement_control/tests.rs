@@ -111,10 +111,14 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
         .into_inner();
     assert_eq!(response.status, pb::PlacementProposalStatus::Pending as i32);
     assert_eq!(response.revision, 1);
-    assert_eq!(
-        client.get(request(pb::PlacementControlServiceGetRequest {}, None)).await.unwrap().into_inner(),
-        response
-    );
+    let fetched = client
+        .get(request(pb::PlacementControlServiceGetRequest {}, None))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(fetched.revision, response.revision);
+    assert_eq!(fetched.proposal, response.proposal);
+    assert_eq!(fetched.status, response.status);
     assert_eq!(
         client
             .stage(request(fixture.request.clone(), Some("operation-one")))

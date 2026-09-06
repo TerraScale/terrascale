@@ -327,7 +327,7 @@ impl PlacementControlService for Arc<PlacementControlServer> {
     async fn drain(
         &self,
         request: Request<pb::PlacementControlServiceDrainRequest>,
-    ) -> Result<Response<pb::PlacementControlServiceReadinessResponse>, Status> {
+    ) -> Result<Response<pb::PlacementControlServiceDrainResponse>, Status> {
         self.authenticate(&request)?;
         let operation = metadata_value(
             request.metadata(),
@@ -346,13 +346,13 @@ impl PlacementControlService for Arc<PlacementControlServer> {
         }
         self.work(move || data.drain(&operation, &request.prepared_transition))
             .await
-            .map(|signed_receipt| Response::new(pb::PlacementControlServiceReadinessResponse { signed_receipt }))
+            .map(|signed_receipt| Response::new(pb::PlacementControlServiceDrainResponse { signed_receipt }))
     }
 
     async fn readiness(
         &self,
         request: Request<pb::PlacementControlServiceReadinessRequest>,
-    ) -> Result<Response<pb::PlacementControlServiceDrainResponse>, Status> {
+    ) -> Result<Response<pb::PlacementControlServiceReadinessResponse>, Status> {
         self.authenticate(&request)?;
         let data = self.data_control.clone().ok_or_else(|| {
             control_status(Code::FailedPrecondition, "durable readiness proof is unavailable")
@@ -368,7 +368,7 @@ impl PlacementControlService for Arc<PlacementControlServer> {
         }
         self.work(move || data.readiness(&request))
             .await
-            .map(|signed_receipt| Response::new(pb::PlacementControlServiceDrainResponse { signed_receipt }))
+            .map(|signed_receipt| Response::new(pb::PlacementControlServiceReadinessResponse { signed_receipt }))
     }
 
     async fn get_accepted(
@@ -383,10 +383,16 @@ impl PlacementControlService for Arc<PlacementControlServer> {
     async fn get(
         &self,
         request: Request<pb::PlacementControlServiceGetRequest>,
-    ) -> Result<Response<pb::PlacementControlServiceStageResponse>, Status> {
+    ) -> Result<Response<pb::PlacementControlServiceGetResponse>, Status> {
         self.authenticate(&request)?;
         let journal = Arc::clone(&self.journal);
-        self.work(move || journal.latest()).await.map(Response::new)
+        self.work(move || journal.latest()).await.map(|response| {
+            Response::new(pb::PlacementControlServiceGetResponse {
+                revision: response.revision,
+                proposal: response.proposal,
+                status: response.status,
+            })
+        })
     }
 }
 

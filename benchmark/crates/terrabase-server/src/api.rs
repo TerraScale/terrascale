@@ -1375,68 +1375,14 @@ async fn authenticate(
     let Some(token) = token else {
         return ApiError::malformed_credential().into_response();
     };
-    let route_owner = match database_of(request.uri().path()) {
-        Some(database) => match database_owner_scope(&state, database) {
-            Ok(scope) => scope,
-            Err(error) => return error.into_response(),
-        },
-        None => state.scope.clone(),
-    };
-    let project_operation = is_project_administration(request.method(), request.uri().path());
-    let mut verified_project = None;
-    let admitted = match state.keys.as_ref().map(|keys| keys.admit(token)) {
-        Some(Ok(principal)) => {
-            if state.admitted_databases.is_some() && route_owner != state.scope {
-                return ApiError::unauthorized().into_response();
-            }
-            if project_operation && principal.scope().admits_global(Verbs::ADMIN) {
-                verified_project = Some(crate::delegated_identity::VerifiedProjectScope {
-                    tenant_id: state.scope.0.clone(),
-                    project_id: state.scope.1.clone(),
-                });
-            }
-            Ok(principal)
-        }
-        _ => match (&state.delegated_identity, database_of(request.uri().path())) {
-            (Some(identity), Some(database)) => identity
-                .admit(
-                    token,
-                    &route_owner.0,
-                    &route_owner.1,
-                    database,
-                    collection_of(request.uri().path()),
-                    required_verb(request.method(), request.uri().path()),
-                )
-                .await
-                .map_err(|_| ApiError::unauthorized()),
-            (Some(identity), None) if project_operation => {
-                let tenant = request
-                    .headers()
-                    .get("x-terrascale-tenant-id")
-                    .and_then(|value| value.to_str().ok());
-                let project = request
-                    .headers()
-                    .get("x-terrascale-project-id")
-                    .and_then(|value| value.to_str().ok());
-                match (tenant, project) {
-                    (Some(tenant), Some(project)) => {
-                        match identity.admit_project(token, tenant, project).await {
-                            Ok((principal, scope)) => {
-                                verified_project = Some(scope);
-                                Ok(principal)
-                            }
-                            Err(_) => Err(ApiError::unauthorized()),
-                        }
-                    }
-                    _ => Err(ApiError::unauthorized()),
-                }
-            }
-            _ => Err(ApiError::unauthorized()),
-        },
+    let (principal, verified_project) = match admit_bearer(&state, &request, token).await {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
     };
     if let Some(scope) = verified_project {
         request.extensions_mut().insert(scope);
     }
+    let admitted = Ok(principal);
     match admitted {
         Ok(principal) => {
             let verb = required_verb(request.method(), request.uri().path());
@@ -1496,6 +1442,69 @@ async fn authenticate(
         }
         Err(error) => error.into_response(),
     }
+}
+
+async fn admit_bearer(
+    state: &ApiState,
+    request: &Request,
+    token: &str,
+) -> Result<
+    (crate::api_keys::Principal, Option<crate::delegated_identity::VerifiedProjectScope>),
+    ApiError,
+> {
+    let route_owner = match database_of(request.uri().path()) {
+        Some(database) => database_owner_scope(state, database)?,
+        None => state.scope.clone(),
+    };
+    let project_operation = is_project_administration(request.method(), request.uri().path());
+    let mut verified_project = None;
+    let admitted = match state.keys.as_ref().map(|keys| keys.admit(token)) {
+        Some(Ok(principal)) => {
+            if state.admitted_databases.is_some() && route_owner != state.scope {
+                return Err(ApiError::unauthorized());
+            }
+            if project_operation && principal.scope().admits_global(Verbs::ADMIN) {
+                verified_project = Some(crate::delegated_identity::VerifiedProjectScope {
+                    tenant_id: state.scope.0.clone(),
+                    project_id: state.scope.1.clone(),
+                });
+            }
+            Ok(principal)
+        }
+        _ => match (&state.delegated_identity, database_of(request.uri().path())) {
+            (Some(identity), Some(database)) => identity
+                .admit(
+                    token,
+                    &route_owner.0,
+                    &route_owner.1,
+                    database,
+                    collection_of(request.uri().path()),
+                    required_verb(request.method(), request.uri().path()),
+                )
+                .await
+                .map_err(|_| ApiError::unauthorized()),
+            (Some(identity), None) if project_operation => {
+                let tenant =
+                    request.headers().get("x-terrascale-tenant-id").and_then(|v| v.to_str().ok());
+                let project =
+                    request.headers().get("x-terrascale-project-id").and_then(|v| v.to_str().ok());
+                match (tenant, project) {
+                    (Some(tenant), Some(project)) => {
+                        match identity.admit_project(token, tenant, project).await {
+                            Ok((principal, scope)) => {
+                                verified_project = Some(scope);
+                                Ok(principal)
+                            }
+                            Err(_) => Err(ApiError::unauthorized()),
+                        }
+                    }
+                    _ => Err(ApiError::unauthorized()),
+                }
+            }
+            _ => Err(ApiError::unauthorized()),
+        },
+    }?;
+    Ok((admitted, verified_project))
 }
 
 /// The two immutable delivery routes are the only routes on which the sync

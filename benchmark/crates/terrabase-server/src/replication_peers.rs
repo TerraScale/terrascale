@@ -792,46 +792,8 @@ async fn session(
     let mut sent_readiness = BTreeMap::new();
     let mut sent = BTreeMap::<DatabaseRouteScope, tokio::time::Instant>::new();
     let mut receipts = Vec::<(DatabaseRouteScope, u64, Vec<u8>)>::new();
-    for lane in lanes.iter() {
-        match &lane.physical {
-            Some(PhysicalDriver::Writer(writer)) => connection
-                .send_frame(&writer.checkpoint_request().encode().map_err(failure)?)
-                .await
-                .map_err(failure)?,
-            Some(PhysicalDriver::BootstrapWriter { source, .. }) => connection
-                .send_frame(&source.manifest().encode().map_err(failure)?)
-                .await
-                .map_err(failure)?,
-            _ => {}
-        }
-    }
-    let mut repair_lanes = BTreeMap::new();
-    for lane in lanes.iter().filter(|lane| lane.causal.is_some()) {
-        let bound = BoundScope {
-            principal: runtime.transport().config().local_identity().as_str().to_owned(),
-            tenant: lane.scope.tenant().to_text(),
-            project: lane.scope.project().to_text(),
-            database: lane.scope.database().to_text(),
-        };
-        let driver = RepairDriver::new(
-            runtime.transport().config().local_identity().member().clone(),
-            connection.peer().member().clone(),
-            bound.clone(),
-            connection.placement_generation(),
-            connection.replica_set_epoch(),
-        )
-        .map_err(failure)?;
-        repair_lanes.insert(
-            lane.scope,
-            Arc::new(std::sync::Mutex::new(RepairLane {
-                bound,
-                driver,
-                index: PublicationIndex::default(),
-                requested: std::collections::VecDeque::new(),
-                indexed: false,
-            })),
-        );
-    }
+    send_initial_checkpoints(&connection, lanes).await?;
+    let repair_lanes = build_repair_lanes(runtime, &connection, lanes)?;
     let started = tokio::time::Instant::now();
     let mut tick = tokio::time::interval(Duration::from_millis(20));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -841,15 +803,7 @@ async fn session(
         }
         tokio::select! {
             command = new_lanes.recv() => {
-                match command {
-                    Some(PeerCommand::Retire { done }) => {
-                        let result = capture_retirement(lanes, new_lanes).await;
-                        let _ = done.send(result);
-                        return Err("__retire__".into());
-                    }
-                    Some(command) => apply_command(command, lanes, observations, connection.peer().member().as_str()),
-                    None => return Ok(()),
-                }
+                if handle_session_command(command, lanes, observations, new_lanes, connection.peer().member().as_str()).await? { return Err("__retire__".into()); }
                 return Ok(())
             },
             frame = frames.recv() => {
@@ -1059,6 +1013,81 @@ async fn session(
             }
         }
     }
+}
+
+async fn handle_session_command(
+    command: Option<PeerCommand>,
+    lanes: &mut Vec<PeerDatabase>,
+    observations: &PeerObservations,
+    inbox: &mut PeerInbox,
+    peer: &str,
+) -> Result<bool, String> {
+    match command {
+        Some(PeerCommand::Retire { done }) => {
+            let result = capture_retirement(lanes, inbox).await;
+            let _ = done.send(result);
+            Ok(true)
+        }
+        Some(command) => {
+            apply_command(command, lanes, observations, peer);
+            Ok(false)
+        }
+        None => Ok(false),
+    }
+}
+
+async fn send_initial_checkpoints(
+    connection: &Arc<ProductionConnection>,
+    lanes: &[PeerDatabase],
+) -> Result<(), String> {
+    for lane in lanes {
+        let frame = match &lane.physical {
+            Some(PhysicalDriver::Writer(writer)) => {
+                writer.checkpoint_request().encode().map_err(failure)?
+            }
+            Some(PhysicalDriver::BootstrapWriter { source, .. }) => {
+                source.manifest().encode().map_err(failure)?
+            }
+            _ => continue,
+        };
+        connection.send_frame(&frame).await.map_err(failure)?;
+    }
+    Ok(())
+}
+
+fn build_repair_lanes(
+    runtime: &Arc<ProductionMemberRuntime>,
+    connection: &Arc<ProductionConnection>,
+    lanes: &[PeerDatabase],
+) -> Result<BTreeMap<DatabaseRouteScope, Arc<std::sync::Mutex<RepairLane>>>, String> {
+    let mut repair_lanes = BTreeMap::new();
+    for lane in lanes.iter().filter(|lane| lane.causal.is_some()) {
+        let bound = BoundScope {
+            principal: runtime.transport().config().local_identity().as_str().to_owned(),
+            tenant: lane.scope.tenant().to_text(),
+            project: lane.scope.project().to_text(),
+            database: lane.scope.database().to_text(),
+        };
+        let driver = RepairDriver::new(
+            runtime.transport().config().local_identity().member().clone(),
+            connection.peer().member().clone(),
+            bound.clone(),
+            connection.placement_generation(),
+            connection.replica_set_epoch(),
+        )
+        .map_err(failure)?;
+        repair_lanes.insert(
+            lane.scope,
+            Arc::new(std::sync::Mutex::new(RepairLane {
+                bound,
+                driver,
+                index: PublicationIndex::default(),
+                requested: std::collections::VecDeque::new(),
+                indexed: false,
+            })),
+        );
+    }
+    Ok(repair_lanes)
 }
 fn millis(_start: tokio::time::Instant) -> u64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();

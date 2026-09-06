@@ -698,118 +698,16 @@ impl ProductionAdmissionRuntime {
             .collect::<Vec<_>>();
         self.retire_stopped_writers(&records).await?;
         self.publish_pending()?;
+        let local_member = self.config.environment.member.to_text();
         let mut databases = Vec::new();
         let mut newly_active = Vec::new();
         for record in records {
-            if self.active.contains(&record.database_id) {
-                continue;
-            }
-            let scope = record_scope(&record)?;
-            let selected: BTreeSet<_> = record.regions.iter().cloned().collect();
-            let assignments: Vec<_> = proposal
-                .assignments
-                .iter()
-                .filter(|assignment| {
-                    assignment.tenant == record.tenant_id
-                        && assignment.project == record.project_id
-                        && assignment.database == record.database_id
-                })
-                .collect();
-            if assignments.is_empty() {
-                continue;
-            }
-            if assignments
-                .iter()
-                .map(|assignment| assignment.region.clone())
-                .collect::<BTreeSet<_>>()
-                != selected
+            if let Some((database, active)) =
+                self.prepare_active_database(&record, &proposal, &proof_digest, &local_member)?
             {
-                return Err("accepted database residency differs from admission".into());
+                databases.push(database);
+                newly_active.push(active);
             }
-            let id =
-                terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
-            // Replay the durable record first. The callback independently
-            // classifies revoked storage as maintenance-only and publishes its
-            // retained lease without creating a route or writer epoch.
-            self.host.admit(&record)?;
-            if self.usage.resolve(&record, proposal.epoch, &proof_digest)?.is_none() {
-                // Missing current usage keeps nonrevoked storage closed; a
-                // revoked replay was already published by the callback above.
-                continue;
-            }
-            // A deletion preparation or acceptance is a durable local fence.
-            // Keep the admission manifest so the control plane can retry the
-            // operation, but do not construct a normal replication lane for
-            // this database.  The admission callback has already retained it
-            // in the Member catalog without publishing it to customer routes.
-            if let Some(assignment) =
-                assignments.iter().find(|assignment| assignment.region == record.region)
-                && assignment.writer_member == self.config.environment.member.to_text()
-            {
-                let lease = self.member.acquire(&id).map_err(failure)?;
-                let tenant =
-                    terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
-                let lifecycle = lease
-                    .engine()
-                    .lifecycle_state(&lease.engine().scope_for(&tenant))
-                    .map_err(failure)?;
-                if lifecycle.access_revoked() {
-                    continue;
-                }
-            }
-            self.runtime.register_route(scope, id).map_err(failure)?;
-            let keys = self.config.keys.as_ref().ok_or("production key delivery missing")?;
-            let provider = OciVaultKeyDelivery::new(
-                keys.socket.clone(),
-                keys.orchestrator_uid,
-                keys.socket_gid,
-            )
-            .map_err(failure)?;
-            let key_scope = KeyScope::new_with_project(
-                &record.environment,
-                scope.tenant(),
-                scope.project(),
-                scope.database(),
-                KeyPurpose::Data,
-            )
-            .map_err(failure)?;
-            let source = OciVaultDatabaseKeys::new(
-                provider,
-                KeyVersionMetadata::new(
-                    key_scope,
-                    DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?,
-                ),
-                record.region.parse().map_err(|_| "invalid admitted Region")?,
-            )
-            .map_err(failure)?;
-            let snapshots = self.member.root().join("replication-snapshots");
-            std::fs::create_dir_all(&snapshots).map_err(failure)?;
-            let staging = snapshots.join(format!(
-                "{}-{}-{}",
-                record.database_id,
-                proposal.epoch,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(failure)?
-                    .as_nanos()
-            ));
-            databases.push(ProductionDatabaseAssignment {
-                scope,
-                location: self.member.root().join(&record.database_id),
-                snapshot_staging: staging,
-                snapshot_max_bytes: self.snapshot_max_bytes,
-                keys: Arc::new(source),
-                selected_regions: selected,
-                remote_writers: assignments
-                    .iter()
-                    .filter(|assignment| assignment.region != record.region)
-                    .map(|assignment| (assignment.region.clone(), assignment.writer_member.clone()))
-                    .collect(),
-            });
-            let local_writer = assignments.iter().any(|assignment| {
-                assignment.region == record.region && assignment.writer_member == local_member
-            });
-            newly_active.push((scope, record.database_id, local_writer));
         }
         if databases.is_empty() {
             return Ok(());
@@ -824,6 +722,110 @@ impl ProductionAdmissionRuntime {
             self.pending_publication.insert(scope, writer.then_some(database));
         }
         self.publish_pending()
+    }
+
+    fn prepare_active_database(
+        &self,
+        record: &crate::admission::AdmissionRecord,
+        proposal: &terrabase_tbep::proto::terrabase::v1::PlacementProposal,
+        proof_digest: &str,
+        local_member: &str,
+    ) -> Result<Option<(ProductionDatabaseAssignment, (DatabaseRouteScope, String, bool))>, String>
+    {
+        if self.active.contains(&record.database_id) {
+            return Ok(None);
+        }
+        let scope = record_scope(record)?;
+        let selected: BTreeSet<_> = record.regions.iter().cloned().collect();
+        let assignments: Vec<_> = proposal
+            .assignments
+            .iter()
+            .filter(|assignment| {
+                assignment.tenant == record.tenant_id
+                    && assignment.project == record.project_id
+                    && assignment.database == record.database_id
+            })
+            .collect();
+        if assignments.is_empty() {
+            return Ok(None);
+        }
+        if assignments.iter().map(|assignment| assignment.region.clone()).collect::<BTreeSet<_>>()
+            != selected
+        {
+            return Err("accepted database residency differs from admission".into());
+        }
+        let id = terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
+        self.host.admit(record)?;
+        if self.usage.resolve(record, proposal.epoch, proof_digest)?.is_none() {
+            return Ok(None);
+        }
+        if let Some(assignment) =
+            assignments.iter().find(|assignment| assignment.region == record.region)
+            && assignment.writer_member == local_member
+        {
+            let lease = self.member.acquire(&id).map_err(failure)?;
+            let tenant = terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
+            if lease
+                .engine()
+                .lifecycle_state(&lease.engine().scope_for(&tenant))
+                .map_err(failure)?
+                .access_revoked()
+            {
+                return Ok(None);
+            }
+        }
+        self.runtime.register_route(scope, id).map_err(failure)?;
+        let keys = self.config.keys.as_ref().ok_or("production key delivery missing")?;
+        let provider =
+            OciVaultKeyDelivery::new(keys.socket.clone(), keys.orchestrator_uid, keys.socket_gid)
+                .map_err(failure)?;
+        let key_scope = KeyScope::new_with_project(
+            &record.environment,
+            scope.tenant(),
+            scope.project(),
+            scope.database(),
+            KeyPurpose::Data,
+        )
+        .map_err(failure)?;
+        let source = OciVaultDatabaseKeys::new(
+            provider,
+            KeyVersionMetadata::new(
+                key_scope,
+                DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?,
+            ),
+            record.region.parse().map_err(|_| "invalid admitted Region")?,
+        )
+        .map_err(failure)?;
+        let snapshots = self.member.root().join("replication-snapshots");
+        std::fs::create_dir_all(&snapshots).map_err(failure)?;
+        let staging = snapshots.join(format!(
+            "{}-{}-{}",
+            record.database_id,
+            proposal.epoch,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(failure)?
+                .as_nanos()
+        ));
+        let local_writer = assignments.iter().any(|assignment| {
+            assignment.region == record.region && assignment.writer_member == local_member
+        });
+        Ok(Some((
+            ProductionDatabaseAssignment {
+                scope,
+                location: self.member.root().join(&record.database_id),
+                snapshot_staging: staging,
+                snapshot_max_bytes: self.snapshot_max_bytes,
+                keys: Arc::new(source),
+                selected_regions: selected,
+                remote_writers: assignments
+                    .iter()
+                    .filter(|a| a.region != record.region)
+                    .map(|a| (a.region.clone(), a.writer_member.clone()))
+                    .collect(),
+            },
+            (scope, record.database_id.clone(), local_writer),
+        )))
     }
 
     async fn retire_stopped_writers(

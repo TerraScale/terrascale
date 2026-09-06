@@ -61,16 +61,7 @@ async fn http_export_reads_real_documents_and_recovers_after_runtime_restart() {
     let app = router(Arc::clone(&state));
     database(&app, "prod").await;
     database(&app, "other").await;
-    for (id, value) in [("one", 1), ("two", 2)] {
-        let response = request(
-            &app,
-            "PUT",
-            &format!("/api/v1/databases/prod/collections/orders/documents/{id}"),
-            &serde_json::json!({"value":value}).to_string(),
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::OK);
-    }
+    seed_export_documents(&app).await;
     let response = request(
         &app,
         "POST",
@@ -269,6 +260,19 @@ async fn http_export_reads_real_documents_and_recovers_after_runtime_restart() {
     assert_eq!(resumed.status(), StatusCode::OK);
     assert_eq!(decode::<ExportStatus>(resumed).await, finished);
     assert_eq!(std::fs::read(directory.join("manifest.json")).unwrap(), encrypted);
+}
+
+async fn seed_export_documents(app: &Router) {
+    for (id, value) in [("one", 1), ("two", 2)] {
+        let response = request(
+            app,
+            "PUT",
+            &format!("/api/v1/databases/prod/collections/orders/documents/{id}"),
+            &serde_json::json!({"value":value}).to_string(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }
 
 #[tokio::test]
