@@ -157,6 +157,24 @@ public sealed class TerraScaleReactiveHttpClientTests
     }
 
     [Test]
+    public async Task OversizedUnsignedPositionsProduceTypedProtocolFailures()
+    {
+        foreach (var operations in new[]
+        {
+            new byte[] { 0x91, 0x94, 0x01, 0xa1, (byte)'x', 0xce, 0xff, 0xff, 0xff, 0xff, 0x90 },
+            new byte[] { 0x91, 0x93, 0x05, 0xa1, (byte)'x', 0xce, 0xff, 0xff, 0xff, 0xff },
+        })
+        {
+            using var handler = new ReactiveHandler(pollFrame: Envelope(4, body: Delta("sub", 3, 0, 1, "Y3AtMQ==", operations: operations)));
+            using var httpClient = new HttpClient(handler);
+            var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+            await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+            await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+            await Assert.That(subscription.Offset).IsEqualTo(0ul);
+        }
+    }
+
+    [Test]
     public async Task BackpressureAndRegionFramesChangeSessionState()
     {
         using var handler = new ReactiveHandler(pollFrame: Envelope(11, body: [0x91, 0x01]));

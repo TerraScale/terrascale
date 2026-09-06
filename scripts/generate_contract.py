@@ -94,7 +94,13 @@ class OpenApiGenerator:
 
     def type_name(self, schema: dict, owner: str, nullable: bool = False) -> str:
         if "$ref" in schema:
-            result = "JsonElement" if schema["$ref"].endswith("/JsonValue") else pascal(schema["$ref"].rsplit("/", 1)[-1])
+            target = self.resolve(schema)
+            if schema["$ref"].endswith("/JsonValue"):
+                result = "JsonElement"
+            elif target.get("type") == "object":
+                result = pascal(schema["$ref"].rsplit("/", 1)[-1])
+            else:
+                result = self.type_name(target, owner)
         elif schema.get("oneOf") or schema.get("anyOf") or schema.get("allOf"):
             result = "JsonElement"
         elif isinstance(schema.get("type"), list):
@@ -106,7 +112,7 @@ class OpenApiGenerator:
             if kind == "string":
                 result = "string"
             elif kind == "integer":
-                result = "long" if schema.get("format") == "int64" else "int"
+                result = {"int64": "long", "uint64": "ulong", "uint32": "uint"}.get(schema.get("format"), "int")
             elif kind == "number":
                 result = "double"
             elif kind == "boolean":
@@ -119,7 +125,7 @@ class OpenApiGenerator:
                 result = pascal(owner)
             else:
                 result = "JsonElement"
-        if nullable and result in {"string", "JsonElement", "long", "int", "double", "bool"}:
+        if nullable and result in {"string", "JsonElement", "long", "ulong", "int", "uint", "double", "bool"}:
             return result + "?"
         if nullable and (result.startswith("IReadOnly") or result[0].isupper()):
             return result + "?"

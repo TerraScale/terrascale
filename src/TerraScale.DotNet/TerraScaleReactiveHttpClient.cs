@@ -403,15 +403,22 @@ public sealed class TerraScaleReactiveHttpClient
     private static IReadOnlyList<TerraScaleReactiveOperation> ReadOperations(ref ReactiveMsgpackReader reader)
     {
         var count = reader.Array(1024); var operations = new List<TerraScaleReactiveOperation>(count);
-        for (var i = 0; i < count; i++) { var shape = reader.Array(4); var discriminant = reader.U32(); switch (discriminant) { case 1: CheckArrayCount(shape, 4); operations.Add(ReadInsert(ref reader)); break; case 2: CheckArrayCount(shape, 3); operations.Add(new TerraScaleReactiveUpdate(ReadItemWithIdentity(ref reader))); break; case 3: CheckArrayCount(shape, 3); operations.Add(new TerraScaleReactivePatch(reader.Text(1, 256), ReadChanges(ref reader))); break; case 4: CheckArrayCount(shape, 2); operations.Add(new TerraScaleReactiveRemove(reader.Text(1, 256))); break; case 5: CheckArrayCount(shape, 3); operations.Add(new TerraScaleReactiveMove(reader.Text(1, 256), checked((int)reader.U32()))); break; default: throw new TerraScaleReactiveProtocolException("The reactive operation discriminant is unknown."); } }
+        for (var i = 0; i < count; i++) { var shape = reader.Array(4); var discriminant = reader.U32(); switch (discriminant) { case 1: CheckArrayCount(shape, 4); operations.Add(ReadInsert(ref reader)); break; case 2: CheckArrayCount(shape, 3); operations.Add(new TerraScaleReactiveUpdate(ReadItemWithIdentity(ref reader))); break; case 3: CheckArrayCount(shape, 3); operations.Add(new TerraScaleReactivePatch(reader.Text(1, 256), ReadChanges(ref reader))); break; case 4: CheckArrayCount(shape, 2); operations.Add(new TerraScaleReactiveRemove(reader.Text(1, 256))); break; case 5: CheckArrayCount(shape, 3); operations.Add(new TerraScaleReactiveMove(reader.Text(1, 256), ReadPosition(ref reader))); break; default: throw new TerraScaleReactiveProtocolException("The reactive operation discriminant is unknown."); } }
         return operations;
     }
     private static TerraScaleReactiveItem ReadItemWithIdentity(ref ReactiveMsgpackReader reader) => new(reader.Text(1, 256), ReadFields(ref reader));
     private static TerraScaleReactiveInsert ReadInsert(ref ReactiveMsgpackReader reader)
     {
         var identity = reader.Text(1, 256);
-        var position = checked((int)reader.U32());
+        var position = ReadPosition(ref reader);
         return new TerraScaleReactiveInsert(new TerraScaleReactiveItem(identity, ReadFields(ref reader)), position);
+    }
+    private static int ReadPosition(ref ReactiveMsgpackReader reader)
+    {
+        var position = reader.U32();
+        if (position > MaxArrayItems)
+            throw new TerraScaleReactiveProtocolException("The reactive result position exceeds the item bound.");
+        return (int)position;
     }
     private static IReadOnlyList<TerraScaleReactiveFieldChange> ReadChanges(ref ReactiveMsgpackReader reader)
     {
