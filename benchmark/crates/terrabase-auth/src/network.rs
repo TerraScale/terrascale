@@ -90,6 +90,10 @@ impl AuthNetwork {
             || voters.len() < 2
             || voters.keys().any(|id| *id == 0)
             || !placement.contains(&endpoint.config().local_region())
+            // Local configuration must support the full auth RPC envelope.
+            // A peer's negotiated limit is known only after connecting;
+            // transport sends also enforce that limit and fail closed.
+            || endpoint.config().limits().max_frame_bytes() < MAX_RPC_BYTES
         {
             return Err(AuthorityError::InvalidConfiguration);
         }

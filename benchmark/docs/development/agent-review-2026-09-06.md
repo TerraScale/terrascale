@@ -269,3 +269,58 @@ standalone package budget reported 13.6 KiB CSS and a 260.2 KiB Worker entry.
 Vitest still emits missing dependency source-map and post-test close-timeout
 warnings, with successful process exit on the passing run. Live provider,
 region concurrency, complete plugin/SDK parity and launch gates remain open.
+
+## Maintained Better Auth authority suite: partial execution, not qualified
+
+The SDK now pins the published MIT-licensed `@better-auth/test-utils@1.7.2`
+suite and `better-auth@1.7.2` as development dependencies. Upstream source is
+tag `v1.7.2`, commit `ba12fcdfa774ca27d417079dbac0b1b5894ccaf2`; package-lock
+records registry integrity. Its normal, transaction, auth-flow, joins,
+case-insensitive, and client UUID suites run through the built SDK's public
+network client. Database-generated numeric IDs remain unsupported.
+
+The ignored `admitted_http_router_serves_external_node_consumer` Rust test
+serves the production auth router on a disposable loopback listener backed by
+the existing encrypted two-voter QUIC fixture. It passes configuration to an
+external Node consumer, owns its process group, bounds execution and shutdown,
+and cleans up on failure. The SDK runner rejects failed, skipped, empty, and
+unhandled-error runs. Reproduction and limitations are in SDK ADR 0003. This
+does not exercise full daemon startup, real key delivery, OCI, or WAN behavior;
+the second voter uses a test receiver loop.
+
+The first two executions (`89835`, `28218`) exceeded the initial 180-second
+fixture limit. Verbose output showed real forward progress and a join test
+timeout. After sharing automatic schema provisioning across adapters from one
+factory, diagnostic run `43640` recorded 37 passing cases, including the earlier
+join case, before the root deliberately terminated its child process group to
+correct the fixture's frame limits. Rust cleanup completed and the run exited
+101. None of these runs is a qualification pass. Logs are
+`/tmp/terrascale-official-auth-authority.log`,
+`/tmp/terrascale-official-auth-authority-diagnostic.log`, and
+`/tmp/terrascale-official-auth-authority-cached.log`.
+
+Review found that the fixture allowed 4 KiB frames although auth permits 2 MiB
+RPCs and production configures 16 MiB frames. The fixture now uses the production
+frame ceiling with a compatible bounded byte budget. `AuthNetwork::new` rejects
+local endpoints below the supported auth ceiling. Its new regression rejects
+1 MiB and accepts 2 MiB; review caught and fixed the regression's missing Tokio
+runtime. Focused server tests passed in `61252`: six passed, one ignored external
+consumer test. The corrected frame limits have not yet been exercised by a full
+maintained-suite run.
+
+Automatic schema provisioning caches only validated successful or in-flight
+physical model/ordered-field definitions within one client/database factory.
+Failures clear the cache for retry. Explicit named indexes and transactional
+indexes remain actual operations. Independent review found no remaining
+material cache issue. SDK `CONTRACT_SOURCE=../terrabase/contracts make check`
+passed in `68569`: 290 passed, 13 environment-gated tests skipped. The live
+authority test accounts for the additional skip. No ULID changes were reverted.
+
+Two follow-ups remain explicit. Upstream cleanup retains arrays with multiple
+created rows, so later tests repeatedly issue durable deletes for historical
+rows; later diagnostic cases took 15–25 seconds. The suite was not patched and
+missing-row writes still preserve quorum and idempotency semantics. Separately,
+review identified a possible two-connection-per-peer contention cycle between
+forwarded requests and consensus. It needs a controlled reproduction and a
+transport capacity fix before claiming saturation safety. Negotiated peer frame
+limits also remain a runtime concern beyond local startup validation.

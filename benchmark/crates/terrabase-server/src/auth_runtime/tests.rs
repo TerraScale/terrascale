@@ -58,12 +58,12 @@ mod admitted_fixture {
         pub keys: crate::test_keys::KeyDeliveryFixture,
     }
 
-    fn limits() -> ProductionTransportLimits {
+    fn limits(max_frame_bytes: usize) -> ProductionTransportLimits {
         ProductionTransportLimits::try_new(
-            4096,
+            max_frame_bytes,
             8,
             8,
-            32 * 1024,
+            128 * 1024 * 1024,
             Duration::from_secs(5),
             Duration::from_secs(5),
             Duration::from_secs(10),
@@ -98,6 +98,7 @@ mod admitted_fixture {
     fn endpoints(
         first: &terrabase_cluster::production::MemberWorkloadIdentity,
         second: &terrabase_cluster::production::MemberWorkloadIdentity,
+        max_frame_bytes: usize,
     ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
         let a = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let b = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -128,7 +129,7 @@ mod admitted_fixture {
                 )
                 .unwrap(),
             ],
-            limits(),
+            limits(max_frame_bytes),
         )
         .unwrap();
         let bc = ProductionTransportConfig::try_new(
@@ -146,13 +147,47 @@ mod admitted_fixture {
                 )
                 .unwrap(),
             ],
-            limits(),
+            limits(max_frame_bytes),
         )
         .unwrap();
         (
             ProductionQuicEndpoint::bind(ac, atls).unwrap(),
             ProductionQuicEndpoint::bind(bc, btls).unwrap(),
         )
+    }
+
+    #[tokio::test]
+    async fn auth_network_requires_supported_frame_ceiling() {
+        let cluster = ClusterUlid::generate();
+        let first = MemberUlid::generate();
+        let second = MemberUlid::generate();
+        let first_identity = terrabase_cluster::production::MemberWorkloadIdentity::try_new(
+            "production",
+            &cluster.to_text(),
+            &first.to_text(),
+        )
+        .unwrap();
+        let second_identity = terrabase_cluster::production::MemberWorkloadIdentity::try_new(
+            "production",
+            &cluster.to_text(),
+            &second.to_text(),
+        )
+        .unwrap();
+        let voters = BTreeMap::from([
+            (1, first_identity.member().clone()),
+            (2, second_identity.member().clone()),
+        ]);
+        let placement = BTreeSet::from([ProductionRegion::Gru]);
+        let (undersized, supported) = endpoints(&first_identity, &second_identity, 1024 * 1024);
+        assert!(matches!(
+            AuthNetwork::new(Arc::new(undersized), "group", voters.clone(), &placement),
+            Err(terrabase_auth::AuthorityError::InvalidConfiguration)
+        ));
+        drop(supported);
+
+        let (supported, peer) = endpoints(&first_identity, &second_identity, 2 * 1024 * 1024);
+        assert!(AuthNetwork::new(Arc::new(supported), "group", voters, &placement).is_ok());
+        drop(peer);
     }
 
     fn production_config(
@@ -242,7 +277,8 @@ mod admitted_fixture {
             &second.to_text(),
         )
         .unwrap();
-        let (local, remote_endpoint) = endpoints(&first_identity, &second_identity);
+        let (local, remote_endpoint) =
+            endpoints(&first_identity, &second_identity, 16 * 1024 * 1024);
         let local = Arc::new(local);
         let remote_endpoint = Arc::new(remote_endpoint);
         let keys = crate::test_keys::key_delivery();
