@@ -243,7 +243,6 @@ async fn serve_pending_placement_control(
     production: &crate::config::ProductionConfig,
 ) -> Result<(), ProductionStartupError> {
     use terrabase_tbep::grpc::placement_control::PlacementControlServer;
-    use terrabase_tbep::placement::{PlacementBoundary, PlacementJournal};
     let unavailable = |detail| {
         ProductionStartupError::Component(crate::production::ProductionComponentError {
             component: crate::production::ProductionComponent::ControlApi,
@@ -254,48 +253,8 @@ async fn serve_pending_placement_control(
         .control
         .as_ref()
         .ok_or_else(|| unavailable("placement control configuration missing"))?;
-    let boundary = PlacementBoundary::new(
-        production.environment.name.as_str(),
-        &production.environment.cluster.to_text(),
-        &production.environment.member.to_text(),
-        production.placement.generation,
-        production.placement.epoch,
-        production.databases.iter().filter(|database| database.enabled).map(|database| {
-            (
-                terrabase_cluster::production::DatabaseRouteScope::new(
-                    database.tenant,
-                    database.project,
-                    database.database,
-                ),
-                database.region.as_str().to_owned(),
-            )
-        }),
-    )
-    .map_err(|_| unavailable("placement control boundary is invalid"))?;
-    let journal =
-        Arc::new(PlacementJournal::open(&control.proposal_journal, boundary).map_err(|_| {
-            unavailable("durable placement proposal journal cannot be opened or validated")
-        })?);
-    if let Some(trust) = &control.transition {
-        let load = |pins: &[crate::config::TransitionPublicKey]| -> Result<std::collections::BTreeMap<String, Vec<u8>>, ProductionStartupError> {
-            pins.iter().map(|pin| {
-                let mut file = open_readonly(&pin.public_key_file).map_err(|_| unavailable("membership signing pin unavailable"))?;
-                let metadata = file.metadata().map_err(|_| unavailable("membership signing pin unavailable"))?;
-                if !metadata.is_file() || metadata.len() != 32 { return Err(unavailable("membership signing pin invalid")); }
-                #[cfg(unix)] {
-                    use std::os::unix::fs::PermissionsExt as _;
-                    if metadata.permissions().mode() & 0o022 != 0 { return Err(unavailable("membership signing pin is writable by others")); }
-                }
-                let mut key = Vec::with_capacity(32);
-                file.read_to_end(&mut key).map_err(|_| unavailable("membership signing pin unavailable"))?;
-                if key.len() != 32 { return Err(unavailable("membership signing pin changed")); }
-                Ok((pin.key_id.clone(), key))
-            }).collect()
-        };
-        let trust = terrabase_tbep::placement::transition::TransitionTrust::new(load(&trust.authority_keys)?, load(&trust.genesis_keys)?, load(&trust.member_keys)?)
-            .map_err(|_| unavailable("membership signing pins invalid"))?;
-        journal.configure_transition_trust(trust).map_err(|_| unavailable("retained membership proof or signing pins invalid"))?;
-    }
+    let journal = open_production_placement_journal(production)
+        .map_err(|detail| unavailable(detail))?;
     let grpc = TbepGrpcConfig::try_new(
         config.max_message_bytes,
         config.max_inflight,
@@ -433,6 +392,70 @@ async fn serve_pending_placement_control(
     .map_err(|_| unavailable("pending placement shutdown deadline elapsed"))?;
     drained?;
     outcome
+}
+
+/// Opens the one durable placement authority shared by pending control and the
+/// admitted data composition. A proposal journal is never itself an admission.
+fn open_production_placement_journal(
+    production: &crate::config::ProductionConfig,
+) -> Result<Arc<terrabase_tbep::placement::PlacementJournal>, &'static str> {
+    use terrabase_tbep::placement::{PlacementBoundary, PlacementJournal};
+    let control = production.control.as_ref().ok_or("placement control configuration missing")?;
+    let boundary = PlacementBoundary::new(
+        production.environment.name.as_str(),
+        &production.environment.cluster.to_text(),
+        &production.environment.member.to_text(),
+        production.placement.generation,
+        production.placement.epoch,
+        production.databases.iter().filter(|database| database.enabled).map(|database| {
+            (
+                terrabase_cluster::production::DatabaseRouteScope::new(
+                    database.tenant,
+                    database.project,
+                    database.database,
+                ),
+                database.region.as_str().to_owned(),
+            )
+        }),
+    )
+    .map_err(|_| "placement control boundary is invalid")?;
+    let journal = Arc::new(
+        PlacementJournal::open(&control.proposal_journal, boundary)
+            .map_err(|_| "durable placement proposal journal cannot be opened or validated")?,
+    );
+    if let Some(trust) = &control.transition {
+        let load = |pins: &[crate::config::TransitionPublicKey]| {
+            pins.iter().map(|pin| {
+                let mut file = open_readonly(&pin.public_key_file)
+                    .map_err(|_| "membership signing pin unavailable")?;
+                let metadata = file.metadata().map_err(|_| "membership signing pin unavailable")?;
+                if !metadata.is_file() || metadata.len() != 32 {
+                    return Err("membership signing pin invalid");
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    if metadata.permissions().mode() & 0o022 != 0 {
+                        return Err("membership signing pin is writable by others");
+                    }
+                }
+                let mut key = Vec::with_capacity(32);
+                file.read_to_end(&mut key).map_err(|_| "membership signing pin unavailable")?;
+                if key.len() != 32 {
+                    return Err("membership signing pin changed");
+                }
+                Ok((pin.key_id.clone(), key))
+            }).collect::<Result<std::collections::BTreeMap<_, _>, &'static str>>()
+        };
+        let trust = terrabase_tbep::placement::transition::TransitionTrust::new(
+            load(&trust.authority_keys)?,
+            load(&trust.genesis_keys)?,
+            load(&trust.member_keys)?,
+        ).map_err(|_| "membership signing pins invalid")?;
+        journal.configure_transition_trust(trust)
+            .map_err(|_| "retained membership proof or signing pins invalid")?;
+    }
+    Ok(journal)
 }
 
 fn build_production_transport(

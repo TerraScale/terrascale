@@ -100,6 +100,12 @@ pub(super) fn load(
             logical_bytes: bytes.parse().map_err(|_| ())?,
         });
     }
+    if result.windows(2).any(|pair| pair[0].end_millis != pair[1].start_millis) {
+        return Err(());
+    }
+    if result.iter().any(|v| v.start_millis >= v.end_millis) {
+        return Err(());
+    }
     if result.first().map(|v| v.start_millis) != Some(start as u64)
         || result.last().map(|v| v.end_millis) != Some(end as u64)
     {
@@ -208,4 +214,17 @@ mod tests {
         transaction.commit().unwrap();
         assert_eq!(load(&connection, "db", 1000, 3000).unwrap(), levels);
     }
+}
+
+/// Bind exact chronological levels to the already frozen canonical usage stream.
+pub(super) fn digest(intervals: &[StorageUsageInterval], seal_hash: &[u8; 32]) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"terrascale.storage.timeline.closure.v1\0");
+    hash.update(seal_hash);
+    for interval in intervals {
+        hash.update(&interval.start_millis.to_le_bytes());
+        hash.update(&interval.end_millis.to_le_bytes());
+        hash.update(&interval.logical_bytes.to_le_bytes());
+    }
+    *hash.finalize().as_bytes()
 }

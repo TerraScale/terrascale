@@ -43,6 +43,11 @@ pub(super) fn close(
         }
         let storage_intervals =
             super::storage_intervals::load(connection, tenant, start_sql, end_sql)?;
+        let seal = super::usage_seal::seal(connection, &scope, window)?;
+        let checksum: [u8; 32] = checksum.try_into().map_err(|_| ())?;
+        if super::storage_intervals::digest(&storage_intervals, &seal.checksum) != checksum {
+            return Err(());
+        }
         return Ok(StorageUsageClosure {
             scope,
             window,
@@ -51,7 +56,7 @@ pub(super) fn close(
             byte_seconds: bytes.parse().map_err(|_| ())?,
             write_units: writes.parse().map_err(|_| ())?,
             fact_count: u64::try_from(fact_count).map_err(|_| ())?,
-            checksum: checksum.try_into().map_err(|_| ())?,
+            checksum,
             storage_intervals,
         });
     }
