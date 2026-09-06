@@ -593,7 +593,9 @@ function parseSuccessResponse(raw: string, routeName: TerraScaleRouteName): unkn
     const precise = parseDocumentValue(raw);
     for (const fieldPath of integerPaths ?? []) installIntegerField(ordinary, precise, fieldPath.split("."), false);
     for (const fieldPath of signedPaths ?? []) installIntegerField(ordinary, precise, fieldPath.split("."), true);
-    return ordinary;
+    // Document list rows also contain a recursive JsonValue payload. Preserve
+    // its lossless integer handling after installing the int64 version field.
+    if (routeName !== "databases.listDocuments") return ordinary;
   }
   const key = routeName === "databases.executeSql" ? "rows"
     : routeName === "databases.listDocuments" ? "documents" : undefined;
@@ -651,6 +653,7 @@ const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly
 };
 
 const responseInt64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly string[]>>> = {
+  "databases.listDocuments": ["documents.*.version"],
   "databases.listDatabases": ["databases.*.created_at"],
   "databases.listBranches": ["branches.*.created_at"],
   "databases.createDatabase": ["created_at"],

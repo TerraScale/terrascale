@@ -36,12 +36,13 @@ export type AuthPredicateUpdate = AuthPredicateOnly & { readonly update: JsonObj
 export type AuthIncrement = AuthPredicateOnly & { readonly increment: Record<string, number>; readonly set?: JsonObject | undefined };
 export type AuthTransactionIdentity = { readonly transactionId: string };
 export type AuthPersistenceResult = {
-  readonly record: JsonObject | null;
+  /** All fields mirror the producer's optional AuthResult properties. */
+  readonly record?: JsonObject | null;
   readonly matched: boolean;
-  readonly records?: readonly JsonObject[];
-  readonly count?: number | bigint;
-  readonly transactionId?: string;
-  readonly expiresAtMs?: number | bigint;
+  readonly records?: readonly JsonObject[] | null;
+  readonly count?: number | bigint | null;
+  readonly transactionId?: string | null;
+  readonly expiresAtMs?: number | bigint | null;
 };
 export type AuthRequestOptions = { readonly signal?: AbortSignal };
 export type AuthTransactionOptions = AuthRequestOptions & { readonly idempotencyKey: string };

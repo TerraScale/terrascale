@@ -26,15 +26,15 @@ test("SQL row values preserve integer lexemes recursively without changing float
   assert.equal(result.value.matched, 1);
 });
 
-test("document GET and list preserve large integer values while metadata stays numeric", async () => {
+test("document GET and list preserve large integer values and int64 versions", async () => {
   const client = clientFor('{"amount":9223372036854775807}');
   const result = await client.documents.get("demo", "orders", "row-1");
   assert.ok(result.ok);
   assert.deepEqual(result.value, { amount: 9223372036854775807n });
-  const listed = await clientFor('{"documents":[{"id":"a","version":1,"value":{"nested":[-9223372036854775808]}}]}')
+  const listed = await clientFor('{"documents":[{"id":"a","version":9007199254740993,"value":{"nested":[-9223372036854775808]}}]}')
     .documents.list("demo", "orders");
   assert.ok(listed.ok);
-  assert.deepEqual(listed.value.documents, [{ id: "a", version: 1, value: { nested: [-9223372036854775808n] } }]);
+  assert.deepEqual(listed.value.documents, [{ id: "a", version: 9007199254740993n, value: { nested: [-9223372036854775808n] } }]);
   assert.throws(() => client.documents.put("demo", "orders", "a", { amount: 1n } as never), /JSON/);
 });
 

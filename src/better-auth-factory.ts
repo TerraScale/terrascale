@@ -389,18 +389,18 @@ function unwrap(result: TerraScaleResult<AuthPersistenceResult>): AuthPersistenc
   throw new TerraScaleAuthAdapterError(result.error.message, result.error.code, result.error);
 }
 
-function outputRecord(record: Record<string, unknown> | JsonObject | null, select?: readonly string[]): JsonObject | null {
-  if (record === null) return null;
+function outputRecord(record: Record<string, unknown> | JsonObject | null | undefined, select?: readonly string[]): JsonObject | null {
+  if (record === null || record === undefined) return null;
   if (select === undefined || select.length === 0) return jsonObject(record);
   return jsonObject(Object.fromEntries(select.flatMap((field) => field in record ? [[field, record[field]]] : [])));
 }
 
-function safeCount(value: number | bigint | undefined): number {
+function safeCount(value: number | bigint | null | undefined): number {
   if (typeof value === "bigint") {
     if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError("Auth count exceeds safe integer range.");
     return Number(value);
   }
-  if (value === undefined || !Number.isSafeInteger(value) || value < 0) throw new TypeError("Auth operation returned an invalid count.");
+  if (value === undefined || value === null || !Number.isSafeInteger(value) || value < 0) throw new TypeError("Auth operation returned an invalid count.");
   return value;
 }
 

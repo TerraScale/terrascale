@@ -332,8 +332,8 @@ function validateTransactionResult(result: AuthPersistenceResult, operation: str
   return identity(result.transactionId, "transactionId", 128);
 }
 
-function validateU64(value: number | bigint | undefined, name: string): void {
-  if (value === undefined) throw new AuthTransactionError(`Auth transaction ${name} is missing.`, value);
+function validateU64(value: number | bigint | null | undefined, name: string): void {
+  if (value === undefined || value === null) throw new AuthTransactionError(`Auth transaction ${name} is missing.`, value);
   if (typeof value === "bigint") {
     if (value < 0n || value > 18_446_744_073_709_551_615n) throw new AuthTransactionError(`Auth transaction ${name} is invalid.`, value);
     return;

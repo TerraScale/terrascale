@@ -92,7 +92,8 @@ export class TerraScaleClient {
 /** One row returned by the collection document listing route. */
 export type DocumentRow = {
   readonly id: string;
-  readonly version: number;
+  /** The producer publishes this as an int64; unsafe values are bigint. */
+  readonly version: number | bigint;
   readonly value: Models.DocumentValue;
 };
 
