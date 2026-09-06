@@ -11,8 +11,8 @@ use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use terrabase_auth::{
-    Action, AuthAuthority, AuthNetwork, AuthorityError, Command, Connector, Mode, Operator,
-    Outcome, Predicate, QueryJoin, JoinRelation, QuerySort, SortDirection, SqliteStore,
+    Action, AuthAuthority, AuthNetwork, AuthorityError, Command, Connector, JoinRelation, Mode,
+    Operator, Outcome, Predicate, QueryJoin, QuerySort, SortDirection, SqliteStore,
 };
 use terrabase_cluster::production::{ProductionQuicEndpoint, ProductionRegion};
 use terrabase_tbep::auth_bootstrap::AuthBootstrapJournal;
@@ -941,6 +941,16 @@ pub fn routes() -> utoipa_axum::router::OpenApiRouter<Arc<AuthRuntime>> {
         .routes(routes!(begin_transaction))
         .routes(routes!(commit_transaction))
         .routes(routes!(rollback_transaction))
+        .layer(axum::middleware::map_response(auth_no_store))
+}
+
+async fn auth_no_store(mut response: Response) -> Response {
+    // Also covers extractor failures before a handler can attach placement.
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 /// Build the real public auth router with bounded inputs and no cacheable private output.
 pub fn router(runtime: Arc<AuthRuntime>) -> Router {
@@ -1031,17 +1041,21 @@ async fn find_page(
             offset: input.offset,
             limit: input.limit,
             select: input.select,
-            joins: input.joins.into_iter().map(|join| QueryJoin {
-                model: join.model,
-                output_field: join.output_field,
-                from_field: join.from_field,
-                to_field: join.to_field,
-                relation: match join.relation {
-                    PageJoinRelation::OneToOne => JoinRelation::OneToOne,
-                    PageJoinRelation::OneToMany => JoinRelation::OneToMany,
-                },
-                limit: join.limit,
-            }).collect(),
+            joins: input
+                .joins
+                .into_iter()
+                .map(|join| QueryJoin {
+                    model: join.model,
+                    output_field: join.output_field,
+                    from_field: join.from_field,
+                    to_field: join.to_field,
+                    relation: match join.relation {
+                        PageJoinRelation::OneToOne => JoinRelation::OneToOne,
+                        PageJoinRelation::OneToMany => JoinRelation::OneToMany,
+                    },
+                    limit: join.limit,
+                })
+                .collect(),
             sort: input.sort_by.map(|sort| QuerySort {
                 field: sort.field,
                 direction: match sort.direction {

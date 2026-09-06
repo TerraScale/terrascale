@@ -165,6 +165,7 @@ impl AuthAuthority {
                 limit: 1,
                 select: None,
                 sort: None,
+                joins: vec![],
             })
             .await?;
         match outcome {

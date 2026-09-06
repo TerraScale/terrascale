@@ -7,7 +7,9 @@ use std::io::Cursor;
 
 mod authority;
 mod query;
-pub use query::{Connector, JoinRelation, Mode, Operator, Predicate, QueryJoin, QuerySort, SortDirection};
+pub use query::{
+    Connector, JoinRelation, Mode, Operator, Predicate, QueryJoin, QuerySort, SortDirection,
+};
 mod network;
 mod store;
 pub use authority::{AuthAuthority, AuthorityError};
@@ -15,6 +17,8 @@ pub use network::AuthNetwork;
 
 #[cfg(test)]
 mod bulk_tests;
+#[cfg(test)]
+mod join_tests;
 #[cfg(test)]
 mod tests;
 pub use store::SqliteStore;

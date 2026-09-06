@@ -291,6 +291,7 @@ async fn find_sort_preserves_numeric_precision_and_projects_after_ordering() {
                 limit: 2,
                 select: Some(vec!["id".into(), "counter".into()]),
                 sort: Some(QuerySort { field: "counter".into(), direction: SortDirection::Asc }),
+                joins: vec![],
             },
         ),
     )
@@ -523,6 +524,7 @@ async fn real_raft_rejects_partitioned_leader_and_serializes_competing_auth_writ
             limit: 1,
             select: None,
             sort: None,
+            joins: vec![],
         })
         .await
         .unwrap()
@@ -573,7 +575,8 @@ async fn real_raft_rejects_partitioned_leader_and_serializes_competing_auth_writ
                 offset: 0,
                 limit: 1,
                 select: None,
-                sort: None
+                sort: None,
+                joins: vec![],
             })
             .await
             .is_err()
@@ -647,6 +650,7 @@ async fn transaction_reads_own_writes_and_commit_replay_survives_expiry_and_rest
                     limit: 100,
                     select: None,
                     sort: None,
+                    joins: vec![],
                 },
             ),
         ),
@@ -998,6 +1002,7 @@ async fn operation_limit_rejection_poisons_workspace() {
                             limit: 1,
                             select: None,
                             sort: None,
+                            joins: vec![],
                         },
                     )
                 )
@@ -1020,7 +1025,8 @@ async fn operation_limit_rejection_poisons_workspace() {
                         offset: 0,
                         limit: 1,
                         select: None,
-                        sort: None
+                        sort: None,
+                        joins: vec![],
                     },
                 )
             )
@@ -1078,6 +1084,7 @@ async fn competing_owner_departure_snapshots_allow_only_one_commit() {
                         limit: 100,
                         select: None,
                         sort: None,
+                        joins: vec![],
                     },
                 ),
             ),
@@ -1205,6 +1212,7 @@ async fn transaction_touches_one_record_in_database_larger_than_snapshot_bound()
                     limit: 1,
                     select: None,
                     sort: None,
+                    joins: vec![],
                 },
             ),
         ),

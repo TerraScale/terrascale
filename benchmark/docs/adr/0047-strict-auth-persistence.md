@@ -127,6 +127,23 @@ Consensus currently uses a two-second heartbeat/RPC interval and six-to-ten
 second election timeouts to accommodate fresh authenticated connections. These
 initial settings require WAN latency and failover qualification.
 
+Auth pages support field projection, scalar sorting, and explicit one-level
+relations. Relation requests name both models' fields and the output field;
+model-name conventions do not infer relationships. Joins resolve against the
+same applied or staged SQLite snapshot before base-field projection. One-to-one
+joins return an object or null; one-to-many joins return an ID-ordered array.
+Joined fields survive base projection, and output-field collisions are rejected.
+
+Pages allow at most 64 selected fields and eight joins, with page offset, page
+limit and per-join limit each at most 1,000. Sorting uses null, boolean, numeric,
+string, array and object type order, preserves exact integer comparisons, and
+breaks ties by ascending ID even for descending sorts. The retained sort/page
+window is limited to 4 MiB, the result array to 1 MiB, and total examined base
+and related bodies to 64 MiB or one million rows. Bound violations return an
+invalid operation without partial output. Unsorted pages stop once filled.
+These limits bound current implementation work; indexes and intended-hardware
+latency qualification remain required for launch performance claims.
+
 ## Implementation and qualification dependencies
 
 Integrate the consensus storage and transport in the real member startup path,

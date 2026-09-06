@@ -549,6 +549,75 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     assert_eq!(staged.1["record"]["name"], "before");
     assert_eq!(staged.2["cache-control"], "no-store");
     assert_eq!(staged.2["x-terrascale-placement"], "GRU");
+    // Join lookup must see staged records in both models, even when the
+    // selected base fields omit the foreign key used by the relation.
+    for (id, label, rank) in [("a1", "first", 1), ("a2", "second", 2)] {
+        let response = admitted_fixture::request(
+            &fixture.runtime,
+            Request::post(format!("/api/v1/databases/{}/auth/insertUnique", fixture.database))
+                .header("authorization", &auth)
+                .header("idempotency-key", format!("insert-{id}"))
+                .header("x-terrascale-auth-transaction", &transaction)
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "model": "account", "record": {"id": id, "userId": "u1", "label": label, "rank": rank}
+                }).to_string()))
+                .unwrap(),
+        ).await;
+        assert_eq!(response.0, StatusCode::OK, "staged relation insert: {:?}", response.1);
+    }
+    let relation_query = serde_json::json!({
+        "model": "account", "predicates": [], "offset": 0, "limit": 2,
+        "select": ["label"], "sortBy": {"field": "rank", "direction": "desc"},
+        "joins": [{"model": "user", "outputField": "user", "fromField": "userId", "toField": "id", "relation": "one-to-one", "limit": 1}]
+    });
+    let relation_page = admitted_fixture::request(
+        &fixture.runtime,
+        Request::post(format!("/api/v1/databases/{}/auth/findPage", fixture.database))
+            .header("authorization", &auth)
+            .header("idempotency-key", "read-joined-stage")
+            .header("x-terrascale-auth-transaction", &transaction)
+            .header("content-type", "application/json")
+            .body(Body::from(relation_query.to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(relation_page.0, StatusCode::OK, "staged relation query: {:?}", relation_page.1);
+    assert_eq!(
+        relation_page.1["records"],
+        serde_json::json!([
+            {"label": "second", "user": {"id": "u1", "name": "before"}},
+            {"label": "first", "user": {"id": "u1", "name": "before"}}
+        ])
+    );
+    let unstaged_relation_page = admitted_fixture::request(
+        &fixture.runtime,
+        Request::post(format!("/api/v1/databases/{}/auth/findPage", fixture.database))
+            .header("authorization", &auth)
+            .header("content-type", "application/json")
+            .body(Body::from(relation_query.to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(unstaged_relation_page.0, StatusCode::OK);
+    assert_eq!(unstaged_relation_page.1["records"], serde_json::json!([]));
+    let mut malformed_query = relation_query.clone();
+    malformed_query["sortBy"]["direction"] = serde_json::json!("sideways");
+    let malformed_page = {
+        use tower::ServiceExt;
+        router(Arc::clone(&fixture.runtime))
+            .oneshot(
+                Request::post(format!("/api/v1/databases/{}/auth/findPage", fixture.database))
+                    .header("authorization", &auth)
+                    .header("content-type", "application/json")
+                    .body(Body::from(malformed_query.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    };
+    assert_eq!(malformed_page.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(malformed_page.headers()["cache-control"], "no-store");
     fixture.runtime.keys.register(
         "read-only-http-key-0123456789",
         "read-only",
@@ -692,8 +761,13 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let mut completed = 0;
     for task in concurrent {
         let (_, status) = task.await.unwrap();
-        assert!(status.is_success() || status == StatusCode::SERVICE_UNAVAILABLE, "unexpected load response: {status}");
-        if status.is_success() { completed += 1; }
+        assert!(
+            status.is_success() || status == StatusCode::SERVICE_UNAVAILABLE,
+            "unexpected load response: {status}"
+        );
+        if status.is_success() {
+            completed += 1;
+        }
     }
     assert!(completed > 0, "reads must make progress under concurrent load");
     let mut forwarded_successes = 0;
@@ -702,7 +776,10 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
             forwarded_successes += 1;
         }
     }
-    assert!(forwarded_successes > 0, "follower forwarding must admit at least one bounded mutation");
+    assert!(
+        forwarded_successes > 0,
+        "follower forwarding must admit at least one bounded mutation"
+    );
     let rollback_begin = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/transactions/begin", fixture.database))

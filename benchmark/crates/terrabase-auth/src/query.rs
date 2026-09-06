@@ -38,8 +38,7 @@ pub struct QueryJoin {
     pub from_field: String,
     pub to_field: String,
     pub relation: JoinRelation,
-    #[serde(default)]
-    pub limit: Option<u32>,
+    pub limit: u32,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -170,9 +169,9 @@ pub(crate) fn compare_records(left: &Record, right: &Record, sort: &QuerySort) -
         return ordering;
     }
     left.get("id")
-        .unwrap_or(&Value::Null)
-        .to_string()
-        .cmp(&right.get("id").unwrap_or(&Value::Null).to_string())
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .cmp(right.get("id").and_then(Value::as_str).unwrap_or(""))
 }
 
 fn one(record: &Record, predicate: &Predicate) -> bool {

@@ -267,6 +267,102 @@ fn conflicts(connection: &Connection, model: &str, id: &str, record: &Record) ->
 
 const MAX_MUTATION_ROWS: usize = 1000;
 const MAX_MUTATION_BYTES: usize = 1024 * 1024;
+const MAX_QUERY_JOINS: usize = 8;
+const MAX_JOIN_ROWS: usize = 1000;
+const MAX_JOIN_SCAN_ROWS: usize = 1_000_000;
+const MAX_JOIN_SCAN_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Default)]
+struct QueryScanBudget {
+    rows: usize,
+    bytes: usize,
+}
+
+impl QueryScanBudget {
+    fn admit(&mut self, bytes: usize) -> bool {
+        self.rows = self.rows.saturating_add(1);
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.rows <= MAX_JOIN_SCAN_ROWS && self.bytes <= MAX_JOIN_SCAN_BYTES
+    }
+}
+
+fn apply_joins(
+    connection: &Connection,
+    base: &Record,
+    mut projected: Record,
+    joins: &[crate::QueryJoin],
+    scan: &mut QueryScanBudget,
+    available_bytes: usize,
+) -> Result<Option<Record>> {
+    if encode(&projected)?.len() > available_bytes {
+        return Ok(None);
+    }
+    for join in joins {
+        if base.contains_key(&join.output_field) {
+            return Ok(None);
+        }
+        // Every relation reads the original base row, never a prior join result.
+        let key = base.get(&join.from_field).filter(|value| !value.is_null());
+        let cap = match join.relation {
+            crate::JoinRelation::OneToOne => join.limit.min(1),
+            crate::JoinRelation::OneToMany => join.limit,
+        } as usize;
+        let mut related = Vec::new();
+        let mut related_bytes = 0usize;
+        if let Some(key) = key.filter(|_| cap > 0) {
+            if join.to_field == "id" {
+                if let Some(id) = key.as_str() {
+                    if let Some(found) = read_record(connection, &join.model, id)? {
+                        let size = encode(&found)?.len();
+                        if !scan.admit(size) || size > available_bytes {
+                            return Ok(None);
+                        }
+                        related.push(found);
+                    }
+                }
+            } else {
+                let mut statement = connection
+                    .prepare("SELECT body FROM auth_records WHERE model=?1 ORDER BY id")
+                    .map_err(storage)?;
+                let rows = statement
+                    .query_map([&join.model], |row| row.get::<_, Vec<u8>>(0))
+                    .map_err(storage)?;
+                for row in rows {
+                    let body = row.map_err(storage)?;
+                    if !scan.admit(body.len()) {
+                        return Ok(None);
+                    }
+                    let candidate: Record = decode(&body)?;
+                    if candidate.get(&join.to_field) == Some(key) {
+                        related_bytes = related_bytes.saturating_add(body.len());
+                        if related_bytes > available_bytes {
+                            return Ok(None);
+                        }
+                        related.push(candidate);
+                        if related.len() >= cap {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        let object = |record: Record| serde_json::Value::Object(record.into_iter().collect());
+        let value = match join.relation {
+            crate::JoinRelation::OneToOne => {
+                related.into_iter().next().map_or(serde_json::Value::Null, object)
+            }
+            crate::JoinRelation::OneToMany => {
+                serde_json::Value::Array(related.into_iter().map(object).collect())
+            }
+        };
+        projected.insert(join.output_field.clone(), value);
+        // Account for field names, arrays and punctuation as well as row bodies.
+        if encode(&projected)?.len() > available_bytes {
+            return Ok(None);
+        }
+    }
+    Ok(Some(projected))
+}
 
 fn matching_records(
     connection: &Connection,
@@ -411,7 +507,7 @@ fn execute_action(transaction: &Transaction<'_>, action: &Action) -> Result<Outc
         return Ok(invalid("invalid model"));
     }
     match action {
-        Action::Find { predicates, offset, limit, select, sort } => {
+        Action::Find { predicates, offset, limit, select, sort, joins, .. } => {
             if *limit > 1000 || *offset > 1000 {
                 return Ok(invalid("query page exceeds bound"));
             }
@@ -426,62 +522,96 @@ fn execute_action(transaction: &Transaction<'_>, action: &Action) -> Result<Outc
             if sort.as_ref().is_some_and(|sort| !valid_name(&sort.field)) {
                 return Ok(invalid("invalid query sort field"));
             }
-            let retained = (*offset as usize).saturating_add(*limit as usize);
-            if retained == 0 {
+            let outputs = joins
+                .iter()
+                .map(|join| &join.output_field)
+                .collect::<std::collections::BTreeSet<_>>();
+            if joins.len() > MAX_QUERY_JOINS || outputs.len() != joins.len() {
+                return Ok(invalid("query join bound or duplicate output"));
+            }
+            if joins.iter().any(|join| {
+                !valid_name(&join.model)
+                    || !valid_name(&join.output_field)
+                    || !valid_name(&join.from_field)
+                    || !valid_name(&join.to_field)
+                    || join.limit > MAX_JOIN_ROWS as u32
+                    || join.output_field == "id"
+            }) {
+                return Ok(invalid("invalid query join"));
+            }
+            if *limit == 0 {
                 return Ok(Outcome::Records { records: Vec::new() });
             }
+            let retained = (*offset as usize) + (*limit as usize);
+            let mut scan = QueryScanBudget::default();
             let mut statement = transaction
                 .prepare("SELECT body FROM auth_records WHERE model=?1 ORDER BY id")
                 .map_err(storage)?;
             let rows =
                 statement.query_map([model], |row| row.get::<_, Vec<u8>>(0)).map_err(storage)?;
-            let mut retained_rows: Vec<Record> = Vec::new();
+            let mut retained_rows: Vec<(Record, usize)> = Vec::new();
             let mut retained_bytes = 0usize;
             for row in rows {
                 let body = row.map_err(storage)?;
+                if !scan.admit(body.len()) {
+                    return Ok(invalid("query scan exceeds bounded work limit"));
+                }
                 let record: Record = decode(&body)?;
                 if !crate::query::matches(&record, predicates) {
                     continue;
                 }
-                retained_rows.push(record);
-                if let Some(sort) = sort {
+                let position = if let Some(sort) = sort {
                     retained_rows
-                        .sort_by(|left, right| crate::query::compare_records(left, right, sort));
+                        .binary_search_by(|(left, _)| {
+                            crate::query::compare_records(left, &record, sort)
+                        })
+                        .unwrap_or_else(|position| position)
+                } else {
+                    retained_rows.len()
+                };
+                if position >= retained {
+                    continue;
                 }
-                if retained_rows.len() > retained {
-                    retained_rows.pop();
+                if retained_rows.len() == retained {
+                    let (_, size) = retained_rows.pop().expect("retained page is nonempty");
+                    retained_bytes -= size;
                 }
-                retained_bytes = retained_rows.iter().try_fold(0usize, |total, record| {
-                    total
-                        .checked_add(encode(record)?.len())
-                        .ok_or_else(|| storage("query response exceeds 4 MiB"))
-                })?;
+                retained_bytes = retained_bytes.saturating_add(body.len());
                 if retained_bytes > 4 * 1024 * 1024 {
-                    return Ok(invalid("query response exceeds 1 MiB"));
+                    return Ok(invalid("query retained page exceeds 4 MiB"));
+                }
+                retained_rows.insert(position, (record, body.len()));
+                if sort.is_none() && retained_rows.len() == retained {
+                    break;
                 }
             }
-            let result = retained_rows
-                .into_iter()
-                .skip(*offset as usize)
-                .take(*limit as usize)
-                .map(|record| {
-                    select.as_ref().map_or(record.clone(), |fields| {
-                        fields
-                            .iter()
-                            .filter_map(|field| {
-                                record.get(field).map(|value| (field.clone(), value.clone()))
-                            })
-                            .collect()
-                    })
-                })
-                .collect::<Vec<Record>>();
-            let output_bytes = result.iter().try_fold(0usize, |total, record| {
-                total
-                    .checked_add(encode(record)?.len())
-                    .ok_or_else(|| storage("query response exceeds 1 MiB"))
-            })?;
-            if output_bytes > 1024 * 1024 {
-                return Ok(invalid("query response exceeds 1 MiB"));
+            let mut result = Vec::new();
+            // Include the array brackets and separators in the response budget.
+            let mut output_bytes = 2usize;
+            for (base, _) in retained_rows.into_iter().skip(*offset as usize) {
+                let projected = match select {
+                    Some(fields) => fields
+                        .iter()
+                        .filter_map(|field| {
+                            base.get(field).map(|value| (field.clone(), value.clone()))
+                        })
+                        .collect(),
+                    None => base.clone(),
+                };
+                let available = MAX_MUTATION_BYTES.saturating_sub(output_bytes);
+                let Some(record) =
+                    apply_joins(transaction, &base, projected, joins, &mut scan, available)?
+                else {
+                    return Ok(invalid(
+                        "query exceeds join work, collision or response byte limit",
+                    ));
+                };
+                let size = encode(&record)?.len();
+                output_bytes = output_bytes.saturating_add(size + usize::from(!result.is_empty()));
+                if output_bytes > MAX_MUTATION_BYTES {
+                    return Ok(invalid("query response exceeds 1 MiB"));
+                }
+                result.push(record);
             }
             Ok(Outcome::Records { records: result })
         }
