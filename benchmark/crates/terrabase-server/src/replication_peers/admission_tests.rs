@@ -73,10 +73,7 @@ fn synthetic() -> Synthetic {
 }
 
 fn request(a: DatabaseRouteScope, b: DatabaseRouteScope) -> BTreeMap<String, Vec<PeerDatabase>> {
-    BTreeMap::from([
-        ("peer-a".into(), vec![lane(a)]),
-        ("peer-b".into(), vec![lane(b)]),
-    ])
+    BTreeMap::from([("peer-a".into(), vec![lane(a)]), ("peer-b".into(), vec![lane(b)])])
 }
 
 #[tokio::test]
@@ -87,7 +84,10 @@ async fn closed_later_queue_leaves_earlier_queue_and_admission_unchanged() {
     drop(synthetic.receivers.remove("peer-b").unwrap());
 
     assert!(synthetic.peers.add_databases(request(a, b)).await.is_err());
-    assert!(matches!(synthetic.receivers.get_mut("peer-a").unwrap().receiver.as_mut().unwrap().try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+    assert!(matches!(
+        synthetic.receivers.get_mut("peer-a").unwrap().receiver.as_mut().unwrap().try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
     assert!(synthetic.peers.admitted.lock().unwrap().is_empty());
     assert!(synthetic.peers.observations().lock().unwrap().is_empty());
 }
@@ -105,18 +105,30 @@ async fn receiver_closed_after_reservation_cannot_publish_partial_admission() {
         .try_send(PeerCommand::Add(Vec::new()))
         .unwrap();
     synthetic.progress.admit(a, std::collections::BTreeSet::from(["GRU".into()])).unwrap();
-    synthetic.observations.lock().unwrap().insert(("peer-a".into(), a), PeerFacts { connected: true, ..PeerFacts::default() });
+    synthetic
+        .observations
+        .lock()
+        .unwrap()
+        .insert(("peer-a".into(), a), PeerFacts { connected: true, ..PeerFacts::default() });
     let add = synthetic.peers.add_databases(request(a, b));
     tokio::pin!(add);
     for _ in 0..100 {
-        if synthetic.peers.admissions.get("peer-a").unwrap().capacity() == 0 { break; }
+        if synthetic.peers.admissions.get("peer-a").unwrap().capacity() == 0 {
+            break;
+        }
         tokio::select! { result = &mut add => panic!("admission completed before A reservation: {result:?}"), () = tokio::task::yield_now() => {} }
     }
     assert_eq!(synthetic.peers.admissions.get("peer-a").unwrap().capacity(), 0);
     drop(synthetic.receivers.remove("peer-a").unwrap());
-    assert!(matches!(synthetic.receivers.get_mut("peer-b").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.is_empty()));
+    assert!(
+        matches!(synthetic.receivers.get_mut("peer-b").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.is_empty())
+    );
     let result = add.await;
     assert!(result.is_err());
+    assert!(matches!(
+        synthetic.receivers.get_mut("peer-b").unwrap().receiver.as_mut().unwrap().try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
     assert!(synthetic.peers.admitted.lock().unwrap().is_empty());
     assert!(synthetic.peers.observations().lock().unwrap().contains_key(&("peer-a".into(), a)));
     assert!(synthetic.progress.selected_regions(a).is_err());
@@ -142,14 +154,23 @@ async fn cancelled_reservation_releases_prior_queue_capacity_for_retry() {
     )
     .await;
     assert!(result.is_err());
-    assert!(matches!(synthetic.receivers.get_mut("peer-a").unwrap().receiver.as_mut().unwrap().try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+    assert!(matches!(
+        synthetic.receivers.get_mut("peer-a").unwrap().receiver.as_mut().unwrap().try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
     assert!(synthetic.peers.admitted.lock().unwrap().is_empty());
     assert!(synthetic.peers.observations().lock().unwrap().is_empty());
 
-    assert!(matches!(synthetic.receivers.get_mut("peer-b").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.is_empty()));
+    assert!(
+        matches!(synthetic.receivers.get_mut("peer-b").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.is_empty())
+    );
     synthetic.peers.add_databases(request(a, b)).await.unwrap();
-    assert!(matches!(synthetic.receivers.get_mut("peer-a").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.len() == 1));
-    assert!(matches!(synthetic.receivers.get_mut("peer-b").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.len() == 1));
+    assert!(
+        matches!(synthetic.receivers.get_mut("peer-a").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.len() == 1)
+    );
+    assert!(
+        matches!(synthetic.receivers.get_mut("peer-b").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.len() == 1)
+    );
 }
 
 #[tokio::test]
@@ -163,8 +184,12 @@ async fn successful_admission_sends_each_lane_once_and_duplicate_is_atomic() {
         ("peer-b".into(), vec![lane(c)]),
     ]);
     synthetic.peers.add_databases(peers).await.unwrap();
-    assert!(matches!(synthetic.receivers.get_mut("peer-a").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.len() == 2));
-    assert!(matches!(synthetic.receivers.get_mut("peer-b").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.len() == 1));
+    assert!(
+        matches!(synthetic.receivers.get_mut("peer-a").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.len() == 2)
+    );
+    assert!(
+        matches!(synthetic.receivers.get_mut("peer-b").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.len() == 1)
+    );
     assert_eq!(synthetic.peers.admitted.lock().unwrap().len(), 3);
     let observations = synthetic.peers.observations().lock().unwrap().clone();
     assert_eq!(observations.len(), 3);
@@ -174,10 +199,16 @@ async fn successful_admission_sends_each_lane_once_and_duplicate_is_atomic() {
         ("peer-b".into(), vec![lane(c)]),
     ]);
     assert!(synthetic.peers.add_databases(duplicate).await.is_err());
-    assert!(matches!(synthetic.receivers.get_mut("peer-a").unwrap().receiver.as_mut().unwrap().try_recv(), Err(mpsc::error::TryRecvError::Empty)));
-    assert!(matches!(synthetic.receivers.get_mut("peer-b").unwrap().receiver.as_mut().unwrap().try_recv(), Err(mpsc::error::TryRecvError::Empty)));
+    assert!(matches!(
+        synthetic.receivers.get_mut("peer-a").unwrap().receiver.as_mut().unwrap().try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    assert!(matches!(
+        synthetic.receivers.get_mut("peer-b").unwrap().receiver.as_mut().unwrap().try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
     assert_eq!(synthetic.peers.admitted.lock().unwrap().len(), 3);
-    let after = synthetic.peers.observations().lock().unwrap();
+    let after = synthetic.observations.lock().unwrap();
     assert_eq!(after.keys().collect::<Vec<_>>(), observations.keys().collect::<Vec<_>>());
     assert!(after.values().all(|facts| !facts.connected));
 }

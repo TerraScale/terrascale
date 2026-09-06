@@ -1,260 +1,376 @@
-//! Durable registration of lifecycle-approved billing streams.
-
+//! Durable billing-stream registrations on the authenticated local control socket.
 use axum::{
-    Json, Router, extract::DefaultBodyLimit, http::StatusCode, response::IntoResponse,
+    Json, Router,
+    extract::{DefaultBodyLimit, State},
+    http::StatusCode,
+    response::IntoResponse,
     routing::post,
 };
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     path::Path,
     sync::{Arc, Mutex},
 };
-use terrabase::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
+use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
 use terrabase::regions::RegionCode;
-use terrabase_cluster::production::DatabaseRouteScope;
+use terrabase_cluster::{production::DatabaseRouteScope, wal_route::DurableWalAssignmentSource};
 use terrabase_tbep::placement::PlacementJournal;
 
-const MAX_BODY: usize = 16 * 1024;
-
+/// Immutable lifecycle-approved stream bound to signed accepted placement.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct AdmissionRecord {
+pub struct UsageRegistration {
+    /// Wire version, currently one.
     pub schema_version: u32,
+    /// Deployment environment.
     pub environment: String,
+    /// Canonical tenant.
     pub tenant_id: String,
+    /// Canonical project.
     pub project_id: String,
+    /// Canonical database.
     pub database_id: String,
+    /// Receiving member.
     pub member_id: String,
+    /// Local stream origin.
     pub region: String,
+    /// Full database Region selection, sorted without duplicates.
     pub selected_regions: Vec<String>,
+    /// Immutable named residency policy.
     pub residency: String,
+    /// Partition allocated by the durable billing lifecycle authority.
     pub partition: String,
+    /// Accepted writer epoch.
     pub stream_epoch: u64,
+    /// Digest of the signed accepted placement proof.
     pub placement_proof_digest: String,
+    /// Stable control operation identity.
     pub operation_id: String,
 }
-
-#[derive(Clone, Debug, Serialize)]
+/// Durable acknowledgment repeating the exact registration.
+#[derive(Debug, Serialize)]
 pub struct AdmissionReceipt {
-    pub schema_version: u32,
-    pub environment: String,
-    pub tenant_id: String,
-    pub project_id: String,
-    pub database_id: String,
-    pub member_id: String,
-    pub region: String,
-    pub selected_regions: Vec<String>,
-    pub residency: String,
-    pub partition: String,
-    pub stream_epoch: u64,
-    pub placement_proof_digest: String,
-    pub operation_id: String,
+    /// Persisted registration fields.
+    #[serde(flatten)]
+    pub registration: UsageRegistration,
+    /// Successful durable registration state.
     pub state: &'static str,
 }
-
+/// Private SQLite control metadata; never customer records or invented billing authority.
 pub struct UsageAdmissionJournal {
-    root: std::path::PathBuf,
     environment: String,
     member_id: String,
     region: String,
     placement: Arc<PlacementJournal>,
     connection: Mutex<Connection>,
+    operations: Arc<tokio::sync::Semaphore>,
 }
-
+fn private(path: &Path, directory: bool) -> Result<(), String> {
+    let m = std::fs::symlink_metadata(path).map_err(|_| "usage admission path unavailable")?;
+    if m.file_type().is_symlink() || m.is_dir() != directory || (!directory && !m.is_file()) {
+        return Err("unsafe usage admission path".into());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if m.uid() != rustix::process::geteuid().as_raw()
+            || m.permissions().mode() & 0o077 != 0
+            || (!directory && m.nlink() != 1)
+        {
+            return Err("usage admission storage must be private to its owner".into());
+        }
+    }
+    Ok(())
+}
 impl UsageAdmissionJournal {
+    /// Opens a journal bound permanently to this environment and local member.
+    /// # Errors
+    /// Refuses unsafe files, changed identity, and unavailable durable storage.
     pub fn open(
         root: &Path,
         environment: String,
         member_id: String,
         region: String,
         placement: Arc<PlacementJournal>,
-    ) -> Result<Arc<Self>, String> {
-        if environment.is_empty() || member_id.is_empty() || region.parse::<RegionCode>().is_err() {
-            return Err("invalid usage admission identity".into());
-        }
-        std::fs::create_dir_all(root).map_err(|_| "usage admission root unavailable")?;
+    ) -> Result<Self, String> {
+        terrabase::member::EnvironmentName::try_new(&environment)
+            .map_err(|_| "invalid usage environment")?;
+        MemberUlid::from_text(&member_id).map_err(|_| "invalid usage member")?;
+        region.parse::<RegionCode>().map_err(|_| "invalid usage Region")?;
+        private(root, true)?;
         let path = root.join("usage-admissions.sqlite");
-        let connection =
-            Connection::open(&path).map_err(|_| "usage admission storage unavailable")?;
+        for file in [
+            path.clone(),
+            root.join("usage-admissions.sqlite-wal"),
+            root.join("usage-admissions.sqlite-shm"),
+        ] {
+            match std::fs::symlink_metadata(&file) {
+                Ok(_) => private(&file, false)?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => return Err("usage admission storage unavailable".into()),
+            }
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&path) {
+            Ok(file) => {
+                file.sync_all().map_err(|_| "usage admission file sync failed")?;
+                std::fs::File::open(root)
+                    .and_then(|f| f.sync_all())
+                    .map_err(|_| "usage admission directory sync failed")?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err("usage admission storage unavailable".into()),
+        }
+        private(&path, false)?;
+        let mut connection = Connection::open_with_flags(
+            &path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .map_err(|_| "usage admission storage unavailable")?;
         connection
-            .execute_batch(
-                "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| "usage admission timeout unavailable")?;
+        connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+            CREATE TABLE IF NOT EXISTS identity (singleton INTEGER PRIMARY KEY CHECK(singleton=1), environment TEXT NOT NULL, member TEXT NOT NULL, region TEXT NOT NULL) STRICT;
+            CREATE TABLE IF NOT EXISTS registrations (database_id TEXT NOT NULL, epoch TEXT NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(database_id,epoch)) STRICT, WITHOUT ROWID;").map_err(|_| "usage admission schema unavailable")?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| "usage admission transaction unavailable")?;
+        tx.execute(
+            "INSERT OR IGNORE INTO identity VALUES(1,?1,?2,?3)",
+            params![environment, member_id, region],
+        )
+        .map_err(|_| "usage admission identity unavailable")?;
+        let identity: (String, String, String) = tx
+            .query_row(
+                "SELECT environment,member,region FROM identity WHERE singleton=1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
-            .map_err(|_| "usage admission storage unavailable")?;
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS registrations (tenant_id TEXT NOT NULL, project_id TEXT NOT NULL, database_id TEXT NOT NULL, member_id TEXT NOT NULL, region TEXT NOT NULL, selected_regions TEXT NOT NULL, residency TEXT NOT NULL, partition TEXT NOT NULL, stream_epoch INTEGER NOT NULL, proof_digest TEXT NOT NULL, operation_id TEXT NOT NULL, PRIMARY KEY(tenant_id,project_id,database_id,member_id,region));").map_err(|_| "usage admission schema unavailable")?;
-        Ok(Arc::new(Self {
-            root: root.to_owned(),
+            .map_err(|_| "usage admission identity unavailable")?;
+        if identity != (environment.clone(), member_id.clone(), region.clone()) {
+            return Err("usage admission journal identity mismatch".into());
+        }
+        tx.commit().map_err(|_| "usage admission identity sync failed")?;
+        Ok(Self {
             environment,
             member_id,
             region,
             placement,
             connection: Mutex::new(connection),
-        }))
-    }
-
-    pub fn admit(&self, record: AdmissionRecord) -> Result<AdmissionReceipt, String> {
-        self.validate(&record)?;
-        let scope = DatabaseRouteScope::new(
-            TenantUlid::from_text(&record.tenant_id).map_err(|_| "invalid tenant")?,
-            ProjectUlid::from_text(&record.project_id).map_err(|_| "invalid project")?,
-            DatabaseUlid::from_text(&record.database_id).map_err(|_| "invalid database")?,
-        );
-        let accepted = match self.placement.accepted() {
-            Ok(accepted) => accepted,
-            Err(terrabase_tbep::placement::PlacementError::NotFound) => {
-                return Err("placement acceptance pending".into());
-            }
-            Err(error) => return Err(error.to_string()),
-        };
-        if accepted.proof_digest != record.placement_proof_digest {
-            return Err("placement proof mismatch".into());
-        }
-        let accepted_proposal = self
-            .placement
-            .accepted_proposal()
-            .map_err(|error| error.to_string())?
-            ;
-        if accepted.proposal_revision != accepted_proposal.revision {
-            return Err("accepted placement revision changed".into());
-        }
-        let proposal = accepted_proposal
-            .proposal
-            .ok_or("accepted proposal missing")?;
-        let assignment = self.placement.load_assignment(scope).map_err(|error| error.to_string())?;
-        if assignment.epoch != record.stream_epoch
-            || assignment.writer.member().as_str() != self.member_id
-                && assignment.follower.member().as_str() != self.member_id
-        {
-            return Err("accepted assignment mismatch".into());
-        }
-        if proposal.epoch == 0
-            || record
-                .selected_regions
-                .iter()
-                .any(|region| !proposal.regions.iter().any(|seat| seat.region == *region))
-        {
-            return Err("accepted placement regions mismatch".into());
-        }
-        let selected = serde_json::to_string(&record.selected_regions)
-            .map_err(|_| "invalid selected regions")?;
-        let connection = self.connection.lock().map_err(|_| "usage admission lock poisoned")?;
-        let tx = connection
-            .unchecked_transaction()
-            .map_err(|_| "usage admission transaction unavailable")?;
-        let prior: Option<Vec<String>> = tx.query_row("SELECT selected_regions,residency,partition,stream_epoch,proof_digest,operation_id FROM registrations WHERE tenant_id=?1 AND project_id=?2 AND database_id=?3 AND member_id=?4 AND region=?5", params![record.tenant_id,record.project_id,record.database_id,record.member_id,record.region], |row| Ok(vec![row.get(0)?,row.get(1)?,row.get(2)?,row.get::<_,i64>(3)?.to_string(),row.get(4)?,row.get(5)?])).optional().map_err(|_| "usage admission read failed")?;
-        if let Some(prior) = prior {
-            let current = vec![
-                selected.clone(),
-                record.residency.clone(),
-                record.partition.clone(),
-                record.stream_epoch.to_string(),
-                record.placement_proof_digest.clone(),
-                record.operation_id.clone(),
-            ];
-            if prior != current {
-                return Err("conflicting usage admission retry".into());
-            }
-        } else {
-            tx.execute(
-                "INSERT INTO registrations VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-                params![
-                    record.tenant_id,
-                    record.project_id,
-                    record.database_id,
-                    record.member_id,
-                    record.region,
-                    selected,
-                    record.residency,
-                    record.partition,
-                    record.stream_epoch,
-                    record.placement_proof_digest,
-                    record.operation_id
-                ],
-            )
-            .map_err(|_| "usage admission write failed")?;
-            tx.commit().map_err(|_| "usage admission commit failed")?;
-        }
-        Ok(AdmissionReceipt {
-            schema_version: record.schema_version,
-            environment: record.environment,
-            tenant_id: record.tenant_id,
-            project_id: record.project_id,
-            database_id: record.database_id,
-            member_id: record.member_id,
-            region: record.region,
-            selected_regions: record.selected_regions,
-            residency: record.residency,
-            partition: record.partition,
-            stream_epoch: record.stream_epoch,
-            placement_proof_digest: record.placement_proof_digest,
-            operation_id: record.operation_id,
-            state: "registered",
+            operations: Arc::new(tokio::sync::Semaphore::new(16)),
         })
     }
-
-    pub fn resolve(
-        &self,
-        record: &AdmissionRecord,
-        epoch: u64,
-        proof_digest: &str,
-    ) -> Result<Option<String>, String> {
-        let connection = self.connection.lock().map_err(|_| "usage admission lock poisoned")?;
-        let selected = serde_json::to_string(&record.selected_regions)
-            .map_err(|_| "invalid selected regions")?;
-        connection.query_row("SELECT partition FROM registrations WHERE tenant_id=?1 AND project_id=?2 AND database_id=?3 AND member_id=?4 AND region=?5 AND selected_regions=?6 AND residency=?7 AND stream_epoch=?8 AND proof_digest=?9", params![record.tenant_id,record.project_id,record.database_id,record.member_id,record.region,selected,record.residency,epoch,proof_digest], |row| row.get(0)).optional().map_err(|_| "usage admission storage corrupt".into())
-    }
-
-    fn validate(&self, record: &AdmissionRecord) -> Result<(), String> {
-        if record.schema_version != 1
-            || record.environment != self.environment
-            || record.member_id != self.member_id
-            || record.region != self.region
-            || record.stream_epoch == 0
-            || record.operation_id.is_empty()
-            || record.operation_id.len() > 256
-            || record.partition.is_empty()
-            || record.partition.len() > 255
-            || !record
+    fn validate(&self, r: &UsageRegistration) -> Result<(), String> {
+        TenantUlid::from_text(&r.tenant_id).map_err(|_| "invalid usage tenant")?;
+        ProjectUlid::from_text(&r.project_id).map_err(|_| "invalid usage project")?;
+        DatabaseUlid::from_text(&r.database_id).map_err(|_| "invalid usage database")?;
+        let regions = r.selected_regions.iter().cloned().collect::<BTreeSet<_>>();
+        if r.schema_version != 1
+            || r.environment != self.environment
+            || r.member_id != self.member_id
+            || r.region != self.region
+            || r.stream_epoch == 0
+            || r.operation_id.is_empty()
+            || r.operation_id.len() > 256
+            || r.partition.is_empty()
+            || r.partition.len() > 255
+            || r.partition.chars().any(char::is_control)
+            || r.residency.is_empty()
+            || r.residency.len() > 128
+            || r.placement_proof_digest.len() != 64
+            || !r
                 .placement_proof_digest
                 .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
-            return Err("invalid usage admission identity".into());
-        }
-        let mut regions = BTreeSet::new();
-        for region in &record.selected_regions {
-            region.parse::<RegionCode>().map_err(|_| "invalid selected region")?;
-            if !regions.insert(region) {
-                return Err("duplicate selected region".into());
-            }
-        }
-        if regions.is_empty()
-            || record.selected_regions != regions.iter().cloned().collect::<Vec<_>>()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || regions.is_empty()
+            || regions.len() > 20
             || !regions.contains(&self.region)
+            || regions.into_iter().collect::<Vec<_>>() != r.selected_regions
+            || r.selected_regions.iter().any(|v| v.parse::<RegionCode>().is_err())
         {
-            return Err("invalid selected regions".into());
+            return Err("invalid usage admission identity or placement".into());
         }
         Ok(())
     }
-}
-
-impl UsageAdmissionJournal {
+    fn decode(
+        &self,
+        database: &str,
+        epoch: &str,
+        bytes: &[u8],
+    ) -> Result<UsageRegistration, String> {
+        if bytes.len() > 16384 {
+            return Err("usage admission row exceeds bound".into());
+        }
+        let r: UsageRegistration =
+            serde_json::from_slice(bytes).map_err(|_| "usage admission row corrupt")?;
+        self.validate(&r)?;
+        if r.database_id != database || format!("{:020}", r.stream_epoch) != epoch {
+            return Err("usage admission row key mismatch".into());
+        }
+        Ok(r)
+    }
+    /// Persists a lifecycle registration after independent verification of accepted placement.
+    /// # Errors
+    /// Refuses unaccepted placement, changed immutable scope, conflicting retries, or failed persistence.
+    pub fn admit(&self, r: UsageRegistration) -> Result<AdmissionReceipt, String> {
+        self.validate(&r)?;
+        let accepted =
+            self.placement.accepted().map_err(|_| "usage placement acceptance unavailable")?;
+        let proposal = self
+            .placement
+            .accepted_proposal()
+            .map_err(|_| "usage accepted proposal unavailable")?;
+        if accepted.proof_digest != r.placement_proof_digest
+            || accepted.proposal_revision != proposal.revision
+        {
+            return Err("usage accepted proof mismatch".into());
+        }
+        let proposal = proposal.proposal.ok_or("usage accepted proposal missing")?;
+        let assigned = proposal
+            .assignments
+            .iter()
+            .filter(|a| {
+                a.tenant == r.tenant_id && a.project == r.project_id && a.database == r.database_id
+            })
+            .collect::<Vec<_>>();
+        let regions = assigned.iter().map(|a| a.region.clone()).collect::<BTreeSet<_>>();
+        let local = assigned
+            .iter()
+            .find(|a| a.region == r.region)
+            .ok_or("usage local assignment missing")?;
+        if proposal.environment != r.environment
+            || proposal.epoch != r.stream_epoch
+            || regions.into_iter().collect::<Vec<_>>() != r.selected_regions
+            || (local.writer_member != self.member_id && local.follower_member != self.member_id)
+        {
+            return Err("usage accepted assignment mismatch".into());
+        }
+        let scope = DatabaseRouteScope::try_new(&r.tenant_id, &r.project_id, &r.database_id)
+            .map_err(|_| "usage scope invalid")?;
+        let assignment =
+            self.placement.load_assignment(scope).map_err(|_| "usage assignment unavailable")?;
+        if assignment.epoch != r.stream_epoch
+            || assignment.writer.member().as_str() != local.writer_member
+            || assignment.follower.member().as_str() != local.follower_member
+        {
+            return Err("usage accepted assignment changed".into());
+        }
+        self.persist(r)
+    }
+    fn persist(&self, r: UsageRegistration) -> Result<AdmissionReceipt, String> {
+        let epoch = format!("{:020}", r.stream_epoch);
+        let bytes = serde_json::to_vec(&r).map_err(|_| "usage admission encoding failed")?;
+        if bytes.len() > 16384 {
+            return Err("usage admission exceeds bound".into());
+        }
+        let mut connection =
+            self.connection.lock().map_err(|_| "usage admission lock unavailable")?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| "usage admission transaction unavailable")?;
+        let latest:Option<(String,Vec<u8>)>=tx.query_row("SELECT epoch,payload FROM registrations WHERE database_id=?1 ORDER BY epoch DESC LIMIT 1",[&r.database_id],|row| Ok((row.get(0)?,row.get(1)?))).optional().map_err(|_| "usage admission read failed")?;
+        if let Some((prior_epoch, payload)) = latest {
+            let prior = self.decode(&r.database_id, &prior_epoch, &payload)?;
+            if prior.tenant_id != r.tenant_id
+                || prior.project_id != r.project_id
+                || prior.selected_regions != r.selected_regions
+                || prior.residency != r.residency
+                || prior.partition != r.partition
+            {
+                return Err("usage admission immutable scope conflict".into());
+            }
+            if prior.stream_epoch > r.stream_epoch {
+                return Err("usage admission stale epoch".into());
+            }
+            if prior.stream_epoch == r.stream_epoch {
+                if prior != r {
+                    return Err("usage admission conflicting retry".into());
+                }
+                return Ok(AdmissionReceipt { registration: r, state: "registered" });
+            }
+        }
+        tx.execute(
+            "INSERT INTO registrations VALUES(?1,?2,?3)",
+            params![r.database_id, epoch, bytes],
+        )
+        .map_err(|_| "usage admission write failed")?;
+        tx.commit().map_err(|_| "usage admission commit failed")?;
+        Ok(AdmissionReceipt { registration: r, state: "registered" })
+    }
+    /// Resolves an exact persisted stream; absence leaves storage closed pending private delivery.
+    /// # Errors
+    /// Refuses corrupted rows or mismatched host, owner, residency, and proof.
+    pub fn resolve(
+        &self,
+        r: &crate::admission::AdmissionRecord,
+        epoch: u64,
+        digest: &str,
+    ) -> Result<Option<String>, String> {
+        if r.environment != self.environment
+            || r.member_id != self.member_id
+            || r.region != self.region
+            || epoch == 0
+        {
+            return Err("usage admission host mismatch".into());
+        }
+        let connection = self.connection.lock().map_err(|_| "usage admission lock unavailable")?;
+        let epoch_key = format!("{epoch:020}");
+        let bytes: Option<Vec<u8>> = connection
+            .query_row(
+                "SELECT payload FROM registrations WHERE database_id=?1 AND epoch=?2",
+                params![r.database_id, epoch_key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| "usage admission read failed")?;
+        let Some(bytes) = bytes else {
+            return Ok(None);
+        };
+        let stored = self.decode(&r.database_id, &epoch_key, &bytes)?;
+        let mut regions = r.regions.clone();
+        regions.sort();
+        if stored.tenant_id != r.tenant_id
+            || stored.project_id != r.project_id
+            || stored.selected_regions != regions
+            || stored.residency != r.residency
+            || stored.placement_proof_digest != digest
+        {
+            return Err("usage admission tuple mismatch".into());
+        }
+        Ok(Some(stored.partition))
+    }
     pub(crate) fn router(self: Arc<Self>) -> Router {
         Router::new()
             .route("/internal/v1/databases/usage/admit", post(admit))
-            .layer(DefaultBodyLimit::max(MAX_BODY))
+            .layer(DefaultBodyLimit::max(16384))
             .with_state(self)
     }
 }
-
 async fn admit(
-    axum::extract::State(admission): axum::extract::State<Arc<UsageAdmissionJournal>>,
-    Json(record): Json<AdmissionRecord>,
+    State(journal): State<Arc<UsageAdmissionJournal>>,
+    Json(record): Json<UsageRegistration>,
 ) -> impl IntoResponse {
-    match tokio::task::spawn_blocking(move || admission.admit(record)).await {
+    let Ok(permit) = journal.operations.clone().try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        journal.admit(record)
+    })
+    .await
+    {
         Ok(Ok(receipt)) => (StatusCode::OK, Json(receipt)).into_response(),
         _ => StatusCode::CONFLICT.into_response(),
     }
 }
+#[cfg(test)]
+mod tests;

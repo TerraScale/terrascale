@@ -63,12 +63,22 @@ pub struct AdmissionHost {
     records: Mutex<BTreeMap<String, AdmissionRecord>>,
     admit_storage: StorageAdmission,
     identity_delivery: Option<Arc<crate::identity_secret_delivery::IdentitySecretDelivery>>,
+    usage_delivery: Option<Arc<crate::usage_admission::UsageAdmissionJournal>>,
     stop_storage: Option<StorageStop>,
     prepare_stop_storage: Option<StoragePrepareStop>,
     preflight_stop_storage: Option<StorageStopPreflight>,
 }
 
 impl AdmissionHost {
+    /// Installs durable billing stream registration on the same UID-authenticated listener.
+    #[must_use]
+    pub fn with_usage_delivery(
+        mut self,
+        delivery: Arc<crate::usage_admission::UsageAdmissionJournal>,
+    ) -> Self {
+        self.usage_delivery = Some(delivery);
+        self
+    }
     /// Installs fixed-file identity delivery on the UID-authenticated listener.
     #[must_use]
     pub fn with_identity_delivery(
@@ -110,6 +120,7 @@ impl AdmissionHost {
             records: Mutex::new(BTreeMap::new()),
             admit_storage,
             identity_delivery: None,
+            usage_delivery: None,
             stop_storage: None,
             prepare_stop_storage: None,
             preflight_stop_storage: None,
@@ -292,6 +303,7 @@ impl AdmissionHost {
                 _ => StatusCode::CONFLICT.into_response(),
             }
         }
+        let usage_router = self.usage_delivery.clone().map(|usage| usage.router());
         let router = Router::new()
             .route("/internal/v1/databases/admit", post(admit))
             .route("/internal/v1/databases/stop", post(stop))
@@ -301,6 +313,7 @@ impl AdmissionHost {
             .with_state(self);
         let router =
             if let Some(identity) = identity_router { router.merge(identity) } else { router };
+        let router = if let Some(usage) = usage_router { router.merge(usage) } else { router };
         loop {
             let (stream, _) = listener.accept().await?;
             if stream.peer_cred()?.uid() != orchestrator_uid {

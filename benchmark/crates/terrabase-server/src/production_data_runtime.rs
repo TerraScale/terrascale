@@ -213,6 +213,7 @@ pub struct ProductionAdmissionRuntime {
     active: BTreeSet<String>,
     data: Option<ProductionDataRuntime>,
     dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
+    usage: Arc<crate::usage_admission::UsageAdmissionJournal>,
     snapshot_max_bytes: u64,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
 }
@@ -234,7 +235,6 @@ impl ProductionAdmissionRuntime {
         per_database: usize,
         instance: u64,
         snapshot_max_bytes: u64,
-        usage_authority: UsageAdmissionAuthority,
         dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
     ) -> Result<Self, String> {
         use terrabase::encryption::OciVaultKeyDelivery;
@@ -247,6 +247,14 @@ impl ProductionAdmissionRuntime {
         let declarations = journal.clone();
         let authority_journal = journal.clone();
         let local = config.environment.member.to_text();
+        let usage = Arc::new(crate::usage_admission::UsageAdmissionJournal::open(
+            member.root(),
+            config.environment.name.as_str().to_owned(),
+            local.clone(),
+            runtime.transport().config().local_region().as_str().to_owned(),
+            journal.clone(),
+        )?);
+        let usage_authority = usage.clone();
         let role_member = member.clone();
         let role_runtime = runtime.clone();
         let authority: crate::production_admission::AdmissionAuthority = Arc::new(move |record| {
@@ -264,6 +272,13 @@ impl ProductionAdmissionRuntime {
                 Err(error) => return Err(failure(error)),
             };
             role_runtime.admit_membership(&*authority_journal).map_err(failure)?;
+            let Some(partition) =
+                usage_authority.resolve(record, assignment.epoch, &accepted.proof_digest)?
+            else {
+                // The private delivery listener must remain available while this
+                // accepted scope waits for its durable billing registration.
+                return Ok(None);
+            };
             let id =
                 terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
             let role = if assignment.writer.member().as_str() == local {
@@ -286,8 +301,7 @@ impl ProductionAdmissionRuntime {
                 )
                 .map_err(failure)?;
             Ok(Some(crate::production_admission::AcceptedAdmission {
-                partition: usage_authority(record, assignment.epoch, &accepted.proof_digest)?
-                    .partition,
+                partition,
                 revision: accepted.proof_digest,
                 origin: record.region.parse().map_err(|_| "invalid admitted Region")?,
                 epoch: assignment.epoch,
@@ -326,7 +340,8 @@ impl ProductionAdmissionRuntime {
                 .map_err(|_| "invalid local Region")?,
             config.environment.member,
             callback,
-        )?;
+        )?
+        .with_usage_delivery(usage.clone());
         Ok(Self {
             runtime,
             member,
@@ -338,6 +353,7 @@ impl ProductionAdmissionRuntime {
             active: BTreeSet::new(),
             data: None,
             dispatcher,
+            usage,
             snapshot_max_bytes,
             registry,
         })
@@ -452,6 +468,10 @@ impl ProductionAdmissionRuntime {
             Err(error) => return Err(failure(error)),
         };
         let proposal = accepted.proposal.ok_or("accepted proposal missing")?;
+        let proof = self.journal.accepted().map_err(failure)?;
+        if proof.proposal_revision != accepted.revision {
+            return Err("accepted placement changed during reconciliation".into());
+        }
         self.runtime.admit_membership(&*self.journal).map_err(failure)?;
         // Auth groups need the shared accept owner even before a database lane is admitted.
         if self.data.is_none() {
@@ -543,6 +563,9 @@ impl ProductionAdmissionRuntime {
             }
             let id =
                 terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
+            if self.usage.resolve(&record, proposal.epoch, &proof.proof_digest)?.is_none() {
+                continue;
+            }
             self.host.admit(record.clone())?;
             // A deletion preparation or acceptance is a durable local fence.
             // Keep the admission manifest so the control plane can retry the
@@ -723,16 +746,3 @@ impl terrabase::member::DatabaseRoleAuthority for VerifiedRole {
         (database == &self.database).then_some(self.accepted)
     }
 }
-
-/// Trusted billing registration matching the accepted placement before any write can mint usage.
-pub struct UsageAdmission {
-    /// Canonical partition assigned by the durable billing stream authority.
-    pub partition: String,
-}
-/// Resolves the exact immutable stream registration and accepted epoch/revision.
-/// Implementations must verify the full selected-Region set in the admission record.
-pub type UsageAdmissionAuthority = Arc<
-    dyn Fn(&crate::admission::AdmissionRecord, u64, &str) -> Result<UsageAdmission, String>
-        + Send
-        + Sync,
->;

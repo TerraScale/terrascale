@@ -1,0 +1,393 @@
+use super::*;
+use aws_lc_rs::{
+    digest,
+    digest::SHA256,
+    rand::SystemRandom,
+    signature::{Ed25519KeyPair, KeyPair},
+};
+use base64::Engine as _;
+use serde_json::json;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::PathBuf,
+    sync::Arc,
+};
+use terrabase::identity::{ClusterUlid, DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
+use terrabase_cluster::production::DatabaseRouteScope;
+use terrabase_tbep::{
+    placement::{PlacementBoundary, PlacementJournal, transition::TransitionTrust},
+    proto::terrabase::v1 as pb,
+};
+
+const DOMAIN: &[u8] = b"terrabase-placement-transition-v1\0";
+
+struct Fixture {
+    root: PathBuf,
+    usage_root: PathBuf,
+    placement: Arc<PlacementJournal>,
+    environment: String,
+    member: String,
+    region: String,
+    scope: DatabaseRouteScope,
+    proof_digest: String,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let environment = "production".to_owned();
+        let cluster = ClusterUlid::generate().to_text();
+        let member = MemberUlid::generate().to_text();
+        let peer = MemberUlid::generate().to_text();
+        let scope = DatabaseRouteScope::new(
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+        );
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-usage-placement-{}",
+            hex::encode(&digest::digest(&SHA256, member.as_bytes()).as_ref()[..8])
+        ));
+        let usage_root = root.join("usage");
+        fs::create_dir_all(&usage_root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&usage_root, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let boundary = PlacementBoundary::new(
+            &environment,
+            &cluster,
+            &member,
+            1,
+            1,
+            [(scope, Some("GRU".into()), BTreeSet::from(["GRU".into()]))],
+        )
+        .unwrap();
+        let placement_path = root.join("placement.sqlite");
+        let journal = Arc::new(PlacementJournal::open(&placement_path, boundary).unwrap());
+        let request = pb::PlacementStageRequest {
+            expected_revision: 0,
+            proposal: Some(pb::PlacementProposal {
+                environment: environment.clone(),
+                cluster: cluster.clone(),
+                generation: 1,
+                epoch: 1,
+                regions: vec![pb::PlacementRegionSeats {
+                    region: "GRU".into(),
+                    members: vec![member.clone(), peer.clone()],
+                }],
+                assignments: vec![pb::PlacementDatabaseAssignment {
+                    tenant: scope.tenant().to_text(),
+                    project: scope.project().to_text(),
+                    database: scope.database().to_text(),
+                    region: "GRU".into(),
+                    writer_member: member.clone(),
+                    follower_member: peer,
+                }],
+            }),
+            declarations: Vec::new(),
+        };
+        let proposal = journal.stage("fixture", "usage-op", request).unwrap().proposal.unwrap();
+        let authority = keypair();
+        let genesis = keypair();
+        let local = keypair();
+        journal
+            .configure_transition_trust(
+                TransitionTrust::new(
+                    BTreeMap::from([(
+                        "authority".into(),
+                        authority.public_key().as_ref().to_vec(),
+                    )]),
+                    BTreeMap::from([("genesis".into(), genesis.public_key().as_ref().to_vec())]),
+                    BTreeMap::from([
+                        (
+                            format!("spiffe://terrascale.tech/{environment}/terrabase-member/{cluster}/{member}"),
+                            local.public_key().as_ref().to_vec(),
+                        ),
+                        (
+                            format!("spiffe://terrascale.tech/{environment}/terrabase-member/{cluster}/{}", proposal.regions[0].members[1]),
+                            local.public_key().as_ref().to_vec(),
+                        ),
+                    ]),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let encoded: Vec<u8> = Connection::open(&placement_path)
+            .unwrap()
+            .query_row("SELECT proposal FROM proposals WHERE revision=1", [], |row| row.get(0))
+            .unwrap();
+        let proposal_digest = hash(&encoded);
+        #[derive(Serialize)]
+        struct Member {
+            identity: String,
+            region: String,
+            placement_digest: String,
+        }
+        #[derive(Serialize)]
+        struct Request {
+            operation_id: String,
+            scope_id: String,
+            prior_epoch: u64,
+            epoch: u64,
+            generation: u64,
+            members: Vec<Member>,
+        }
+        let mut members = proposal
+            .regions
+            .iter()
+            .flat_map(|r| {
+                r.members.iter().map(|m| Member {
+                    identity: format!(
+                        "spiffe://terrascale.tech/{environment}/terrabase-member/{cluster}/{m}"
+                    ),
+                    region: r.region.clone(),
+                    placement_digest: proposal_digest.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+        members.sort_by(|a, b| a.identity.cmp(&b.identity));
+        let request = Request {
+            operation_id: "usage-op".into(),
+            scope_id: format!("{environment}/{cluster}"),
+            prior_epoch: 0,
+            epoch: 1,
+            generation: 1,
+            members,
+        };
+        let request_digest = hash(&serde_json::to_vec(&request).unwrap());
+        let grant_payload = serde_json::to_vec(
+            &json!({"kind":"genesis_grant","grant_id":"grant-one","request_digest":request_digest}),
+        )
+        .unwrap();
+        let proof = json!({"schema_version":1,"kind":"accepted_epoch","request":request,"request_digest":request_digest,"authority_epoch":1,"journal_revision":1,"genesis_grant_id":"grant-one","receipt_digests":[],"drain_receipts":[],"prior_generation":0,"previous_proof_digest":"","lease_id":"lease-one","genesis_grant":sign("genesis", &grant_payload, &genesis)});
+        let proof_payload = serde_json::to_vec(&proof).unwrap();
+        let envelope = serde_json::to_vec(&sign("authority", &proof_payload, &authority)).unwrap();
+        let accepted = journal
+            .accept(
+                "usage-op",
+                &pb::PlacementAcceptRequest { proposal_revision: 1, proof: envelope },
+            )
+            .unwrap();
+        Self {
+            root,
+            usage_root,
+            placement: journal,
+            environment,
+            member,
+            region: "GRU".into(),
+            scope,
+            proof_digest: accepted.proof_digest,
+        }
+    }
+
+    fn registration(&self) -> UsageRegistration {
+        UsageRegistration {
+            schema_version: 1,
+            environment: self.environment.clone(),
+            tenant_id: self.scope.tenant().to_text(),
+            project_id: self.scope.project().to_text(),
+            database_id: self.scope.database().to_text(),
+            member_id: self.member.clone(),
+            region: self.region.clone(),
+            selected_regions: vec![self.region.clone()],
+            residency: "GRU".into(),
+            partition: "partition-a".into(),
+            stream_epoch: 1,
+            placement_proof_digest: self.proof_digest.clone(),
+            operation_id: "usage-registration".into(),
+        }
+    }
+
+    fn open(&self) -> UsageAdmissionJournal {
+        UsageAdmissionJournal::open(
+            &self.usage_root,
+            self.environment.clone(),
+            self.member.clone(),
+            self.region.clone(),
+            self.placement.clone(),
+        )
+        .unwrap()
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn keypair() -> Ed25519KeyPair {
+    Ed25519KeyPair::from_pkcs8(
+        Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap().as_ref(),
+    )
+    .unwrap()
+}
+fn hash(bytes: &[u8]) -> String {
+    hex::encode(digest::digest(&SHA256, bytes).as_ref())
+}
+fn sign(id: &str, payload: &[u8], key: &Ed25519KeyPair) -> serde_json::Value {
+    let mut input = DOMAIN.to_vec();
+    input.extend_from_slice(payload);
+    json!({"key_id":id,"payload":base64::engine::general_purpose::STANDARD.encode(payload),"signature":base64::engine::general_purpose::STANDARD.encode(key.sign(&input).as_ref())})
+}
+
+#[test]
+fn valid_registration_persists_reopens_and_is_idempotent() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let record = fixture.registration();
+    let first = journal.admit(record.clone()).unwrap();
+    assert_eq!(
+        journal.admit(record).unwrap().registration.operation_id,
+        first.registration.operation_id
+    );
+    drop(journal);
+    assert_eq!(
+        fixture.open().admit(fixture.registration()).unwrap().registration.partition,
+        "partition-a"
+    );
+}
+
+#[test]
+fn changed_retry_tuple_is_rejected() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    journal.admit(fixture.registration()).unwrap();
+    for change in 0..3 {
+        let mut record = fixture.registration();
+        match change {
+            0 => record.partition = "partition-b".into(),
+            1 => record.placement_proof_digest = "0".repeat(64),
+            _ => record.operation_id = "other-operation".into(),
+        }
+        assert!(journal.admit(record).is_err(), "changed retry {change} accepted");
+    }
+}
+
+#[test]
+fn resolve_distinguishes_missing_and_delivered_registration() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let record = fixture.registration();
+    let admission = crate::admission::AdmissionRecord {
+        environment: fixture.environment.clone(),
+        tenant_id: record.tenant_id.clone(),
+        project_id: record.project_id.clone(),
+        database_id: record.database_id.clone(),
+        parent_database_id: None,
+        key_version: "v1".into(),
+        name: "db".into(),
+        regions: record.selected_regions.clone(),
+        residency: record.residency.clone(),
+        operation_id: record.operation_id.clone(),
+        region: record.region.clone(),
+        member_id: record.member_id.clone(),
+    };
+    assert_eq!(journal.resolve(&admission, 1, &fixture.proof_digest).unwrap(), None);
+    journal.admit(record).unwrap();
+    assert_eq!(
+        journal.resolve(&admission, 1, &fixture.proof_digest).unwrap().as_deref(),
+        Some("partition-a")
+    );
+}
+
+#[test]
+fn host_owner_regions_and_digest_mismatches_are_rejected() {
+    let fixture = Fixture::new();
+    for mutate in 0..4 {
+        let journal = fixture.open();
+        let mut record = fixture.registration();
+        match mutate {
+            0 => record.environment = "other".into(),
+            1 => record.member_id = "other".into(),
+            2 => record.selected_regions = vec!["SFO".into()],
+            _ => record.placement_proof_digest = "0".repeat(64),
+        }
+        assert!(journal.admit(record).is_err(), "mismatch {mutate} accepted");
+    }
+}
+
+#[test]
+fn corrupt_stored_registration_is_rejected() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    journal.admit(fixture.registration()).unwrap();
+    drop(journal);
+    let connection =
+        rusqlite::Connection::open(fixture.usage_root.join("usage-admissions.sqlite")).unwrap();
+    connection
+        .execute("UPDATE registrations SET payload=?1", [b"invalid json".as_slice()])
+        .unwrap();
+    drop(connection);
+    assert!(
+        fixture
+            .open()
+            .resolve(
+                &crate::admission::AdmissionRecord {
+                    environment: fixture.environment.clone(),
+                    tenant_id: fixture.scope.tenant().to_text(),
+                    project_id: fixture.scope.project().to_text(),
+                    database_id: fixture.scope.database().to_text(),
+                    parent_database_id: None,
+                    key_version: "v1".into(),
+                    name: "db".into(),
+                    regions: vec!["GRU".into()],
+                    residency: "GRU".into(),
+                    operation_id: "usage-registration".into(),
+                    region: "GRU".into(),
+                    member_id: fixture.member.clone()
+                },
+                1,
+                &fixture.proof_digest
+            )
+            .is_err()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unsafe_usage_paths_are_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let link = fixture.root.join("usage-link");
+    std::os::unix::fs::symlink(&fixture.usage_root, &link).unwrap();
+    assert!(
+        UsageAdmissionJournal::open(
+            &link,
+            fixture.environment.clone(),
+            fixture.member.clone(),
+            fixture.region.clone(),
+            fixture.placement.clone()
+        )
+        .is_err()
+    );
+    let world = fixture.root.join("world");
+    fs::create_dir(&world).unwrap();
+    fs::set_permissions(&world, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        UsageAdmissionJournal::open(
+            &world,
+            fixture.environment.clone(),
+            fixture.member.clone(),
+            fixture.region.clone(),
+            fixture.placement.clone()
+        )
+        .is_err()
+    );
+    let file = world.join("usage-admissions.sqlite");
+    fs::write(&file, b"not sqlite").unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(
+        UsageAdmissionJournal::open(
+            &world,
+            fixture.environment.clone(),
+            fixture.member.clone(),
+            fixture.region.clone(),
+            fixture.placement.clone()
+        )
+        .is_err()
+    );
+}
