@@ -437,6 +437,7 @@ type requestConfig struct {
 	sessionToken       string
 	consistency        Consistency
 	deleteConfirmation string
+	schemaIfMatch      string
 }
 
 // RequestOption customizes one request.
@@ -466,6 +467,12 @@ func WithSessionToken(token string) RequestOption {
 // WithConsistency overrides read consistency for one request.
 func WithConsistency(cs Consistency) RequestOption {
 	return func(r *requestConfig) { r.consistency = cs }
+}
+
+// WithSchemaGeneration applies a schema only if its strong generation matches.
+// Pass the Generation returned by GetCollectionSchema.
+func WithSchemaGeneration(generation uint64) RequestOption {
+	return func(r *requestConfig) { r.schemaIfMatch = "\"" + strconv.FormatUint(generation, 10) + "\"" }
 }
 
 // WithDeleteConfirmation carries the database delete confirmation identity.
@@ -728,6 +735,9 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 	}
 	if rc.deleteConfirmation != "" {
 		h.Set("X-TerraScale-Delete-Confirmation", rc.deleteConfirmation)
+	}
+	if rc.schemaIfMatch != "" {
+		h.Set("If-Match", rc.schemaIfMatch)
 	}
 	if idem != "" {
 		h.Set("Idempotency-Key", idem)

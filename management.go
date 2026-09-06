@@ -290,12 +290,31 @@ type RestoreBackupRequest struct {
 	At   *int64 `json:"at,omitempty"`
 }
 
-// DatabaseUsage is the direct database usage response. The server may add
-// usage dimensions as the metering contract grows; these are the stable
-// billed dimensions in the current draft.
+// DatabaseUsage contains authoritative totals at one durable ledger high-water.
+// Meter units are decimal strings; storage is byte-seconds, not current bytes.
 type DatabaseUsage struct {
-	Writes       uint64 `json:"writes"`
-	StorageBytes uint64 `json:"storageBytes"`
+	TenantID         string          `json:"tenant_id"`
+	DatabaseID       string          `json:"database_id"`
+	SnapshotSequence uint64          `json:"snapshot_sequence"`
+	Meters           []MeterTotal    `json:"meters"`
+	Reads            ReadAttribution `json:"reads"`
+}
+
+type BillableMeter string
+
+const (
+	MeterDocumentWriteUnits BillableMeter = "document_write_units"
+	MeterStorageByteSeconds BillableMeter = "storage_byte_seconds"
+)
+
+type MeterTotal struct {
+	Meter BillableMeter `json:"meter"`
+	Units string        `json:"units"`
+}
+
+// ReadAttribution is unbilled aggregate read attribution.
+type ReadAttribution struct {
+	TotalReads uint64 `json:"total_reads"`
 }
 
 type UsageMetric struct {
@@ -963,36 +982,34 @@ func (d *DatabasesClient) DeleteIndex(ctx context.Context, database, collection,
 	if err := managementMutation(opts); err != nil {
 		return err
 	}
-	if err := deleteConfirmation(opts, field); err != nil {
-		return err
-	}
-	_ = path
-	return contractGap(ctx, "delete_index", "DELETE", "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
-		"the pinned contract publishes no successful response for index deletion",
-		"wait for the producer to publish the index lifecycle operation")
+	return d.c.do(ctx, "DELETE", path+"/indexes/"+url.PathEscape(field), nil, nil, nil, "delete_index", opts...)
 }
 
-// IndexRecommendations reports the contract gap because the pinned producer
-// publishes no successful response for this operation.
-func (d *DatabasesClient) IndexRecommendations(ctx context.Context, database, collection string, page PageRequest, opts ...RequestOption) (*IndexPage, error) {
+// IndexRecommendations returns observed candidates, bounded to at most 64.
+func (d *DatabasesClient) IndexRecommendations(ctx context.Context, database, collection string, limit int, opts ...RequestOption) (*IndexRecommendations, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
-	if err := validatePage(page); err != nil {
-		return nil, err
+	if limit < 0 || limit > 64 {
+		return nil, &ValidationError{Field: "limit", Message: "must be between 1 and 64, or zero for the server default"}
 	}
 	path, err := collectionPath(database, collection)
 	if err != nil {
 		return nil, err
 	}
-	_ = path
-	return nil, contractGap(ctx, "index_recommendations", "GET", "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
-		"the pinned contract publishes no successful response for index recommendations",
-		"wait for the producer to publish recommendation results")
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	var out IndexRecommendations
+	if err := d.c.do(ctx, "GET", path+"/indexes/recommendations", query, nil, &out, "index_recommendations", opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // GetCollectionSchema fetches the declared schema for one collection.
-func (d *DatabasesClient) GetCollectionSchema(ctx context.Context, database, collection string, opts ...RequestOption) (*CollectionSchema, error) {
+func (d *DatabasesClient) GetCollectionSchema(ctx context.Context, database, collection string, opts ...RequestOption) (*SchemaDocument, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
@@ -1000,14 +1017,15 @@ func (d *DatabasesClient) GetCollectionSchema(ctx context.Context, database, col
 	if err != nil {
 		return nil, err
 	}
-	_ = path
-	return nil, contractGap(ctx, "get_schema", "GET", "/api/v1/databases/{name}/collections/{collection}/schema",
-		"the pinned contract publishes no successful schema response",
-		"wait for the producer to publish collection schema reads")
+	var out SchemaDocument
+	if err := d.c.do(ctx, "GET", path+"/schema", nil, nil, &out, "get_schema", opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // PutCollectionSchema replaces a collection schema.
-func (d *DatabasesClient) PutCollectionSchema(ctx context.Context, database, collection string, schema CollectionSchema, opts ...RequestOption) (*CollectionSchema, error) {
+func (d *DatabasesClient) PutCollectionSchema(ctx context.Context, database, collection string, schema CollectionSchema, opts ...RequestOption) (*SchemaDocument, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
@@ -1024,10 +1042,14 @@ func (d *DatabasesClient) PutCollectionSchema(ctx context.Context, database, col
 	if err := managementMutation(opts); err != nil {
 		return nil, err
 	}
-	_ = path
-	return nil, contractGap(ctx, "put_schema", "PUT", "/api/v1/databases/{name}/collections/{collection}/schema",
-		"the pinned contract publishes no successful schema response",
-		"wait for the producer to publish collection schema writes")
+	if err := requiredManagementMutation(opts); err != nil {
+		return nil, err
+	}
+	var out SchemaDocument
+	if err := d.c.do(ctx, "PUT", path+"/schema", nil, schema, &out, "put_schema", opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // DatabaseBranchesClient mirrors databaseBranches.* routes.
@@ -1272,10 +1294,11 @@ func (u *UsageClient) GetDatabaseUsage(ctx context.Context, database string, opt
 	if err != nil {
 		return nil, err
 	}
-	_ = path
-	return nil, contractGap(ctx, "database_usage", "GET", "/api/v1/databases/{name}/usage",
-		"the pinned contract publishes no successful usage response",
-		"wait for the producer to publish usage facts")
+	var out DatabaseUsage
+	if err := u.c.do(ctx, "GET", path+"/usage", nil, nil, &out, "database_usage", opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // AuditClient mirrors audit.* routes.

@@ -32,7 +32,7 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 		case "/api/v1/databases/prod/collections":
 			_ = json.NewEncoder(w).Encode(CollectionPage{Collections: []string{"users"}})
 		case "/api/v1/databases/prod/collections/users/schema":
-			_ = json.NewEncoder(w).Encode(CollectionSchema{Name: "users"})
+			_ = json.NewEncoder(w).Encode(SchemaDocument{Schema: CollectionSchema{Name: "users", Fields: []FieldDef{}, HistoryRetentionDays: 7, MergePolicy: MergeLastWriteWins}})
 		case "/api/v1/databases/prod/branches":
 			parent := "prod"
 			_ = json.NewEncoder(w).Encode(BranchPage{Branches: []BranchRecord{{Name: "preview", Parent: &parent}}})
@@ -41,7 +41,7 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 		case "/api/v1/databases/prod/backups/restore":
 			_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "restore"})
 		case "/api/v1/databases/prod/usage":
-			_ = json.NewEncoder(w).Encode(DatabaseUsage{Writes: 3, StorageBytes: 42})
+			_ = json.NewEncoder(w).Encode(DatabaseUsage{DatabaseID: "prod", Meters: []MeterTotal{{Meter: MeterDocumentWriteUnits, Units: "3"}, {Meter: MeterStorageByteSeconds, Units: "42"}}})
 		case "/api/v1/projects/p1/auth/api-keys":
 			if r.Method == http.MethodGet {
 				_ = json.NewEncoder(w).Encode(APIKeyPage{APIKeys: []APIKey{{KeyID: "key-1", Name: "deploy"}}})
@@ -86,11 +86,11 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(collections.Collections, []string{"users"}) {
 		t.Fatalf("ListCollections: result=%+v err=%v", collections, err)
 	}
-	if _, err = c.Databases.GetCollectionSchema(context.Background(), "prod", "users"); err == nil {
-		t.Fatal("GetCollectionSchema unexpectedly succeeded")
+	if _, err = c.Databases.GetCollectionSchema(context.Background(), "prod", "users"); err != nil {
+		t.Fatalf("GetCollectionSchema: %v", err)
 	}
-	if _, err = c.Databases.PutCollectionSchema(context.Background(), "prod", "users", CollectionSchema{Name: "users"}, opts...); err == nil {
-		t.Fatal("PutCollectionSchema unexpectedly succeeded")
+	if _, err = c.Databases.PutCollectionSchema(context.Background(), "prod", "users", CollectionSchema{Name: "users", Fields: []FieldDef{}, HistoryRetentionDays: 7, MergePolicy: MergeLastWriteWins}, opts...); err != nil {
+		t.Fatalf("PutCollectionSchema: %v", err)
 	}
 	if _, err = c.DatabaseBranches.ListBranches(context.Background(), "prod", PageRequest{}); err != nil {
 		t.Fatalf("ListBranches: %v", err)
@@ -104,8 +104,8 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 	if _, err = c.Backups.RestoreBackup(context.Background(), "prod", RestoreBackupRequest{Name: "restore"}, opts...); err != nil {
 		t.Fatalf("RestoreBackup: %v", err)
 	}
-	if usage, err := c.Usage.GetDatabaseUsage(context.Background(), "prod"); err == nil || usage != nil {
-		t.Fatalf("GetDatabaseUsage unexpectedly succeeded: result=%+v err=%v", usage, err)
+	if usage, err := c.Usage.GetDatabaseUsage(context.Background(), "prod"); err != nil || usage.DatabaseID != "prod" || usage.Meters[0].Units != "3" {
+		t.Fatalf("GetDatabaseUsage: result=%+v err=%v", usage, err)
 	}
 	if _, err := c.Access.ListAPIKeys(context.Background(), "p1", "cursor-1", 25); err == nil {
 		t.Fatal("ListAPIKeys unexpectedly succeeded")

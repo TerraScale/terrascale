@@ -114,12 +114,24 @@ func CRDT(policy FieldType) FieldOption { return MergeField(policy) }
 
 // CollectionSchema is the declared schema of one SQL collection.
 type CollectionSchema struct {
-	Name                 string      `json:"name"`
-	Fields               []FieldDef  `json:"fields"`
-	Indexes              []IndexDef  `json:"indexes,omitempty"`
-	TTL                  *TTLDef     `json:"ttl,omitempty"`
-	HistoryRetentionDays int         `json:"historyRetentionDays"`
-	MergePolicy          MergePolicy `json:"mergePolicy"`
+	Name                 string              `json:"name"`
+	Version              *uint64             `json:"version,omitempty"`
+	Renames              []SchemaFieldRename `json:"renames,omitempty"`
+	FTS                  *SchemaFTS          `json:"fts,omitempty"`
+	Fields               []FieldDef          `json:"fields"`
+	Indexes              []IndexDef          `json:"indexes,omitempty"`
+	TTL                  *TTLDef             `json:"ttl,omitempty"`
+	HistoryRetentionDays int                 `json:"historyRetentionDays"`
+	MergePolicy          MergePolicy         `json:"mergePolicy"`
+}
+
+// SchemaFieldRename carries a migration from a previous stored field name.
+type SchemaFieldRename struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+type SchemaFTS struct {
+	Fields []string `json:"fields"`
 }
 
 // TtlDef is retained as a compatibility spelling for TTLDef.
