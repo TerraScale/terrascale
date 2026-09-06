@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         let error = body(response).await;
         assert!(error.get("meters").is_none());
-        assert!(error["code"].is_string());
+        assert!(error["error"]["code"].is_string());
     }
 
     #[tokio::test]

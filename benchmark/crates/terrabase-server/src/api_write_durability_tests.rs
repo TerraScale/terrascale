@@ -97,11 +97,10 @@ async fn global_preflight_refuses_nonuniform_context_before_next_commit() {
     let scope = document_scope(engine).unwrap();
     let receipt = commit(engine, &scope, "dependency");
     let context = engine.durable_origin_prefixes(&scope).unwrap();
-    let origin = context.keys().next().unwrap().clone();
     let progress = Arc::new(ReplicationProgress::default());
-    progress.admit(route_scope, BTreeSet::from([origin.clone(), "sfo".into()])).unwrap();
+    progress.admit(route_scope, BTreeSet::from(["gru".into(), "sfo".into()])).unwrap();
     progress.advance_regional(route_scope, receipt.sequence().get());
-    progress.advance_region(route_scope, &origin, &context).unwrap();
+    progress.advance_region(route_scope, "gru", &context).unwrap();
     progress.advance_region(route_scope, "sfo", &BTreeMap::new()).unwrap();
     Arc::get_mut(&mut state).unwrap().replication_progress = Some(progress);
     let mut headers = axum::http::HeaderMap::new();
@@ -121,10 +120,10 @@ async fn global_receipt_requires_every_selected_region_for_exact_origin_commit()
     let receipt = commit(engine, &scope, "global-receipt");
     let row = engine.journal_rows(&scope, receipt.sequence().get() - 1, 1).unwrap().remove(0);
     let progress = Arc::new(ReplicationProgress::default());
-    progress.admit(route_scope, BTreeSet::from([row.origin.clone(), "sfo".into()])).unwrap();
+    progress.admit(route_scope, BTreeSet::from(["gru".into(), "sfo".into()])).unwrap();
     progress.advance_regional(route_scope, receipt.sequence().get());
     let frontier = BTreeMap::from([(row.origin.clone(), row.origin_sequence)]);
-    progress.advance_region(route_scope, &row.origin, &frontier).unwrap();
+    progress.advance_region(route_scope, "gru", &frontier).unwrap();
     let durability = WriteDurability {
         class: Durability::Global,
         uniform_context: Some(BTreeMap::new()),

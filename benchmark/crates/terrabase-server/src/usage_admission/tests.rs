@@ -273,6 +273,7 @@ fn resolve_distinguishes_missing_and_delivered_registration() {
     let journal = fixture.open();
     let record = fixture.registration();
     let admission = crate::admission::AdmissionRecord {
+        created_at: 1,
         environment: fixture.environment.clone(),
         tenant_id: record.tenant_id.clone(),
         project_id: record.project_id.clone(),
@@ -357,6 +358,7 @@ fn corrupt_stored_registration_is_rejected() {
             .open()
             .resolve(
                 &crate::admission::AdmissionRecord {
+                    created_at: 1,
                     environment: fixture.environment.clone(),
                     tenant_id: fixture.scope.tenant().to_text(),
                     project_id: fixture.scope.project().to_text(),

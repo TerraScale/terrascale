@@ -4386,7 +4386,7 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(
-            body.contains("\"code\":\"unauthorized\""),
+            body.contains("\"code\":\"malformed_credential\""),
             "the envelope codes the denial: {body}"
         );
         assert!(body.contains("\"fix\":"), "every error carries a fix (D-56): {body}");

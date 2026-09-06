@@ -24,6 +24,8 @@ use terrabase::{
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AdmissionRecord {
+    /// Immutable creation time, Unix milliseconds, from the orchestrator admission journal.
+    pub created_at: i64,
     /// Deployment environment.
     pub environment: String,
     /// Tenant identity.
@@ -153,6 +155,9 @@ impl AdmissionHost {
     }
 
     fn validate(&self, record: &AdmissionRecord) -> Result<(), String> {
+        if record.created_at <= 0 {
+            return Err("invalid admission creation time".into());
+        }
         TenantUlid::from_text(&record.tenant_id).map_err(|_| "invalid tenant")?;
         ProjectUlid::from_text(&record.project_id).map_err(|_| "invalid project")?;
         DatabaseUlid::from_text(&record.database_id).map_err(|_| "invalid database")?;
@@ -358,6 +363,7 @@ mod tests {
             }
         });
         let record = AdmissionRecord {
+            created_at: 1,
             environment: "production".into(),
             tenant_id: TenantUlid::generate().to_string(),
             project_id: ProjectUlid::generate().to_string(),
@@ -371,6 +377,14 @@ mod tests {
             region: "GRU".into(),
             member_id: member.to_string(),
         };
+        let encoded = serde_json::to_value(&record).unwrap();
+        assert_eq!(serde_json::from_value::<AdmissionRecord>(encoded.clone()).unwrap(), record);
+        let mut missing = encoded.clone();
+        missing.as_object_mut().unwrap().remove("created_at");
+        assert!(serde_json::from_value::<AdmissionRecord>(missing).is_err());
+        let mut string_timestamp = encoded;
+        string_timestamp["created_at"] = serde_json::json!("1");
+        assert!(serde_json::from_value::<AdmissionRecord>(string_timestamp).is_err());
         let host = AdmissionHost::open(
             &root,
             "production".into(),
@@ -389,7 +403,10 @@ mod tests {
         conflict.project_id = ProjectUlid::generate().to_string();
         assert!(host.admit(conflict).is_err());
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        host.admit(record).unwrap();
+        host.admit(record.clone()).unwrap();
+        let mut changed_time = record;
+        changed_time.created_at += 1;
+        assert!(host.admit(changed_time).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -1803,11 +1803,7 @@ impl SqliteStorage {
         if allow_create {
             flags |= OpenFlags::SQLITE_OPEN_CREATE;
         }
-        let mut writer = raw_connection(
-            &database_path,
-            flags,
-            encryption.as_deref(),
-        )?;
+        let mut writer = raw_connection(&database_path, flags, encryption.as_deref())?;
         if database_exists || !allow_create {
             let legacy = validate_database_binding(&writer, &expected_binding)?;
             if !legacy {

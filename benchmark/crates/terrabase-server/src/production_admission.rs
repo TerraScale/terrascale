@@ -210,6 +210,7 @@ mod tests {
 
     fn record(scope: &DatabaseScope, member: &str) -> AdmissionRecord {
         AdmissionRecord {
+            created_at: 1,
             environment: "production".into(),
             tenant_id: scope.tenant().to_text(),
             project_id: scope.project().to_text(),

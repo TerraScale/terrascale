@@ -729,6 +729,19 @@ mod tests {
         let (bootstrap, root, spec) = opened_bootstrap("startup-drain-failure");
         let parts = bootstrap.into_parts();
         let database = parts.member.database_ids().next().expect("database");
+        struct Writer;
+        impl terrabase::member::DatabaseRoleAuthority for Writer {
+            fn accepted_role(
+                &self,
+                _: &terrabase::member::DatabaseId,
+            ) -> Option<terrabase::member::AcceptedDatabaseRole> {
+                Some(terrabase::member::AcceptedDatabaseRole {
+                    epoch: 1,
+                    role: terrabase::member::DatabaseRole::Writer,
+                })
+            }
+        }
+        parts.member.accept_database_role(&database, &Writer).expect("writer role");
         let lease = parts.member.acquire(&database).expect("active operation");
         let refusal = super::ProductionStartupError::Component(ProductionComponentError {
             component: ProductionComponent::Membership,

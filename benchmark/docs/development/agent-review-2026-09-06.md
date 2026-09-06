@@ -604,3 +604,28 @@ Normal production lifecycle stream allocation is still absent; no fallback
 partition was introduced. Full daemon composition, real Go-to-Rust delivery,
 signed successor qualification, the previously recorded partial route/progress
 publication issues, deleted public metadata, and launch gates remain unfinished.
+
+### Atomic replication admission and public activation
+
+Replication admission now validates scope metadata and reserves every peer queue
+before committing progress. Invalid Regions, conflicts, capacity failures, closed
+workers, and canceled reservations leave the new batch unadmitted. Matching
+existing progress retains receipts. There is no await after the commit boundary.
+
+Cluster routes remain staged until explicit batch activation, including routes
+supplied to the constructor. API serving publication follows committed peer
+lanes. Reconciliation retains pending publication so a failed publication can
+retry without installing the lanes again. Deleted database metadata comes from
+accepted durable lifecycle state; maintenance identity lookup remains available
+for authenticated deletion retries. The creation timestamp contract is unfinished.
+
+Independent reviews found no remaining material ordering or authorization issue
+in this batch. Replication-focused tests passed 21 cases (`98024`); the cluster
+production selection passed eight (`24650`). The full server library run
+(`44876`) passed 326, failed 13, and ignored three. New activation and metadata
+tests passed, but the full suite is not green. Investigation found stale error
+envelope and binary-protocol fixtures, missing writer authority in a shutdown
+fixture, Region/origin confusion in durability fixtures, and a discarded RF2
+bootstrap checkpoint. Fixes retain the security and physical-receipt assertions
+and received an independent review. Reopen/restore failures remain under
+investigation. Full daemon fault injection and launch qualification remain open.

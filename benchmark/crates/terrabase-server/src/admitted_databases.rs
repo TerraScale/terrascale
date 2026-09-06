@@ -38,8 +38,13 @@ impl AdmittedDatabase {
                 .collect(),
             residency: Some(self.record.residency.clone()),
             deleted: state.deletion.is_some(),
-            created_at: 0,
-            deleted_at: state.deletion.as_ref().map(|deletion| deletion.usage_stopped_at as i64),
+            created_at: self.record.created_at,
+            deleted_at: state
+                .deletion
+                .as_ref()
+                .map(|deletion| i64::try_from(deletion.usage_stopped_at))
+                .transpose()
+                .map_err(|_| "deletion timestamp exceeds public representation")?,
             parent: self.record.parent_database_id.clone(),
         })
     }
@@ -205,6 +210,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let records: Vec<_> = (0..2)
             .map(|_| AdmissionRecord {
+                created_at: 1,
                 environment: "production".into(),
                 tenant_id: TenantUlid::generate().to_string(),
                 project_id: ProjectUlid::generate().to_string(),
@@ -328,6 +334,7 @@ pub(crate) mod tests {
         let before = first.public_record().unwrap();
         assert!(!before.deleted);
         assert_eq!(before.deleted_at, None);
+        assert_eq!(before.created_at, records[0].created_at);
 
         let prepared_state = engine.lifecycle_prepare_deletion(&scope, "delete-1").unwrap();
         let cutoff = prepared_state.deletion_preparation.unwrap().minimum_cutoff_millis;

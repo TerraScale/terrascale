@@ -560,7 +560,9 @@ impl EngineConfig {
     }
 
     /// Describes an existing durable Engine location without creating it.
-    pub(crate) fn existing_durable(location: impl Into<PathBuf>) -> Result<Self, EngineConfigError> {
+    pub(crate) fn existing_durable(
+        location: impl Into<PathBuf>,
+    ) -> Result<Self, EngineConfigError> {
         let location = location.into();
         if location.as_os_str().is_empty() {
             return Err(EngineConfigError::EmptyLocation);
@@ -1277,8 +1279,8 @@ impl Engine {
             )
         };
         let mut storage: Box<dyn storage::StoragePort> = open_storage
-        .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
-        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+            .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
+            .map_err(|_| EngineOpenError::StorageUnavailable)?;
         if config.owner.is_some()
             && storage.origin_epoch().map_err(|()| EngineOpenError::StorageUnavailable)?.0 == 0
         {

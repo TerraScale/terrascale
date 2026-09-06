@@ -99,9 +99,9 @@ pub(in crate::api) fn replicate(
         // Capture the finite boundary before the quiescent snapshot. Never publish a
         // newer writer sequence merely because a prior batch was acknowledged.
         let sequence = engine.read_snapshot(tenant).unwrap().sequence().get();
-        let (mut replica, _) = WalFollower::bootstrap_engine(engine, &copy.0).unwrap();
+        let (mut replica, checkpoint) = WalFollower::bootstrap_engine(engine, &copy.0).unwrap();
         let location = engine.with_quiescent_wal(|location| location.to_path_buf()).unwrap();
-        let mut tail = WalTail::new(&location);
+        let mut tail = WalTail::resume(&location, checkpoint);
         loop {
             match tail.poll_engine(engine).unwrap() {
                 WalTailStep::Frames(frames) => {

@@ -383,9 +383,9 @@ mod tests {
                 assert!(length < 2048);
                 let mut request = vec![0; length];
                 connection.read_exact(&mut request).expect("request");
-                assert_eq!(&request[..5], b"TBKL1");
+                assert_eq!(&request[..5], &[b'T', b'B', b'K', b'L', 1]);
                 let mut response = 68_u32.to_be_bytes().to_vec();
-                response.extend_from_slice(b"TBKL1");
+                response.extend_from_slice(&[b'T', b'B', b'K', b'L', 1]);
                 response.push(0);
                 response.extend_from_slice(&60_u32.to_be_bytes());
                 response.extend_from_slice(version.as_bytes());
