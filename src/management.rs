@@ -1214,6 +1214,12 @@ impl ManagementClient {
         UsageClient::new(self.shared.clone())
     }
     #[must_use]
+    pub fn auth_persistence(&self) -> AuthPersistence {
+        AuthPersistence {
+            shared: self.shared.clone(),
+        }
+    }
+    #[must_use]
     pub fn operations(&self) -> Operations {
         Operations {
             shared: self.shared.clone(),
@@ -1626,6 +1632,229 @@ impl Operations {
                 headers: vec![],
                 body: None,
             })
+            .await
+    }
+}
+
+pub type AuthRecord = std::collections::BTreeMap<String, serde_json::Value>;
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthUniqueInsert {
+    pub model: String,
+    pub record: AuthRecord,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthConditionalUpdate {
+    pub model: String,
+    pub id: String,
+    pub expected: AuthRecord,
+    pub update: AuthRecord,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthConsume {
+    pub model: String,
+    pub id: String,
+    pub expected: AuthRecord,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthUniqueIndex {
+    pub model: String,
+    pub fields: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthTransactionIdentity {
+    pub transaction_id: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthResult {
+    pub record: Option<AuthRecord>,
+    pub matched: bool,
+    pub records: Option<Vec<AuthRecord>>,
+    pub transaction_id: Option<String>,
+    pub expires_at_ms: Option<u64>,
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthOperator {
+    #[default]
+    Eq,
+    Ne,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+    In,
+    NotIn,
+    Contains,
+    StartsWith,
+    EndsWith,
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub enum AuthConnector {
+    #[default]
+    AND,
+    OR,
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMode {
+    #[default]
+    Sensitive,
+    Insensitive,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthPredicate {
+    pub field: String,
+    pub value: serde_json::Value,
+    #[serde(default)]
+    pub operator: AuthOperator,
+    #[serde(default)]
+    pub connector: AuthConnector,
+    #[serde(default)]
+    pub mode: AuthMode,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuthPageQuery {
+    pub model: String,
+    pub predicates: Vec<AuthPredicate>,
+    pub offset: u32,
+    pub limit: u32,
+}
+/// Every auth mutation requires caller-owned durable identity.
+#[derive(Debug, Clone)]
+pub struct AuthOperationOptions {
+    pub idempotency_key: String,
+    pub transaction_id: Option<String>,
+}
+#[derive(Debug, Clone)]
+pub struct AuthPersistence {
+    shared: SharedClient,
+}
+impl AuthPersistence {
+    async fn post(
+        &self,
+        database_id: &str,
+        operation: &str,
+        input: &impl Serialize,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        crate::client::validate_idempotency_key(&options.idempotency_key)?;
+        let mut request = request_with_options(
+            &format!("auth.{operation}"),
+            Method::Post,
+            format!(
+                "{}/auth/{operation}",
+                database_url(&self.shared, database_id)?
+            ),
+            input,
+            &OperationOptions {
+                idempotency_key: Some(options.idempotency_key),
+                cancellation: None,
+            },
+        )?;
+        if let Some(transaction) = options.transaction_id {
+            if transaction.is_empty()
+                || transaction.len() > 128
+                || !transaction
+                    .bytes()
+                    .all(|byte| (0x21..=0x7e).contains(&byte))
+            {
+                return Err(Error::new(
+                    ErrorKind::Validation,
+                    "invalid_transaction_identity",
+                    "transaction_id must contain 1 through 128 ASCII header bytes.",
+                ));
+            }
+            request
+                .headers
+                .push(("x-terrascale-auth-transaction".into(), transaction));
+        }
+        self.shared.send_typed(request).await
+    }
+    pub async fn insert_unique(
+        &self,
+        database_id: &str,
+        input: AuthUniqueInsert,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "insertUnique", &input, options)
+            .await
+    }
+    pub async fn compare_and_swap(
+        &self,
+        database_id: &str,
+        input: AuthConditionalUpdate,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "compareAndSwap", &input, options)
+            .await
+    }
+    pub async fn consume_one(
+        &self,
+        database_id: &str,
+        input: AuthConsume,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "consumeOne", &input, options).await
+    }
+    pub async fn index(
+        &self,
+        database_id: &str,
+        input: AuthUniqueIndex,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "index", &input, options).await
+    }
+    pub async fn find_page(
+        &self,
+        database_id: &str,
+        input: AuthPageQuery,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "findPage", &input, options).await
+    }
+    pub async fn find_one(&self, database_id: &str, model: &str, id: &str) -> Result<AuthResult> {
+        self.shared
+            .send_typed(Request {
+                route_name: "auth.findOne".into(),
+                method: Method::Get,
+                url: format!(
+                    "{}/auth/records/{}/{}",
+                    database_url(&self.shared, database_id)?,
+                    encode_segment(model, "model")?,
+                    encode_segment(id, "id")?
+                ),
+                headers: vec![],
+                body: None,
+            })
+            .await
+    }
+    pub async fn begin_transaction(
+        &self,
+        database_id: &str,
+        input: AuthTransactionIdentity,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "transactions/begin", &input, options)
+            .await
+    }
+    pub async fn commit_transaction(
+        &self,
+        database_id: &str,
+        input: AuthTransactionIdentity,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "transactions/commit", &input, options)
+            .await
+    }
+    pub async fn rollback_transaction(
+        &self,
+        database_id: &str,
+        input: AuthTransactionIdentity,
+        options: AuthOperationOptions,
+    ) -> Result<AuthResult> {
+        self.post(database_id, "transactions/rollback", &input, options)
             .await
     }
 }

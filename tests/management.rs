@@ -798,3 +798,136 @@ async fn exports_discover_and_cancel_with_durable_progress() {
     assert!(api.list("db", None, Some(51)).await.is_err());
     assert_eq!(mock.requests.lock().unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn auth_persistence_uses_public_named_operations_and_stable_identity() {
+    use terrascale::*;
+    let response = json!({"record":null,"matched":true,"records":[{"id":"one"}],"transactionId":"tx","expiresAtMs":123});
+    let mock = Mock::new((0..9).map(|_| Response::json(200, &response)).collect());
+    let api = client(Arc::clone(&mock)).management().auth_persistence();
+    let options = AuthOperationOptions {
+        idempotency_key: "stable".into(),
+        transaction_id: Some("tx".into()),
+    };
+    let empty = AuthRecord::new();
+    assert!(
+        api.insert_unique(
+            "db",
+            AuthUniqueInsert {
+                model: "user".into(),
+                record: empty.clone()
+            },
+            options.clone()
+        )
+        .await
+        .unwrap()
+        .matched
+    );
+    assert!(mock.last().url.ends_with("/auth/insertUnique"));
+    api.compare_and_swap(
+        "db",
+        AuthConditionalUpdate {
+            model: "user".into(),
+            id: "one".into(),
+            expected: empty.clone(),
+            update: empty.clone(),
+        },
+        options.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(mock.last().url.ends_with("/auth/compareAndSwap"));
+    api.consume_one(
+        "db",
+        AuthConsume {
+            model: "user".into(),
+            id: "one".into(),
+            expected: empty,
+        },
+        options.clone(),
+    )
+    .await
+    .unwrap();
+    api.index(
+        "db",
+        AuthUniqueIndex {
+            model: "user".into(),
+            fields: vec!["email".into()],
+        },
+        options.clone(),
+    )
+    .await
+    .unwrap();
+    let page = api
+        .find_page(
+            "db",
+            AuthPageQuery {
+                model: "user".into(),
+                predicates: vec![AuthPredicate {
+                    field: "email".into(),
+                    value: json!("a@example.com"),
+                    operator: AuthOperator::Eq,
+                    connector: AuthConnector::AND,
+                    mode: AuthMode::Insensitive,
+                }],
+                offset: 0,
+                limit: 10,
+            },
+            options.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.records.unwrap()[0]["id"], "one");
+    let request = mock.last();
+    assert!(request
+        .headers
+        .iter()
+        .any(|(name, value)| name == "idempotency-key" && value == "stable"));
+    assert!(request
+        .headers
+        .iter()
+        .any(|(name, value)| name == "x-terrascale-auth-transaction" && value == "tx"));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&request.body.unwrap()).unwrap()["predicates"]
+            [0]["mode"],
+        "insensitive"
+    );
+    api.find_one("db", "user", "one").await.unwrap();
+    assert_eq!(mock.last().method, Method::Get);
+    assert!(mock.last().url.ends_with("/auth/records/user/one"));
+    let identity = AuthTransactionIdentity {
+        transaction_id: "tx".into(),
+    };
+    let result = api
+        .begin_transaction("db", identity.clone(), options.clone())
+        .await
+        .unwrap();
+    assert_eq!(result.transaction_id.as_deref(), Some("tx"));
+    assert_eq!(result.expires_at_ms, Some(123));
+    api.commit_transaction("db", identity.clone(), options.clone())
+        .await
+        .unwrap();
+    assert!(mock.last().url.ends_with("/auth/transactions/commit"));
+    api.rollback_transaction("db", identity, options)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&mock.last().body.unwrap()).unwrap(),
+        json!({"transactionId":"tx"})
+    );
+    assert!(api
+        .index(
+            "db",
+            AuthUniqueIndex {
+                model: "user".into(),
+                fields: vec![]
+            },
+            AuthOperationOptions {
+                idempotency_key: "".into(),
+                transaction_id: None
+            }
+        )
+        .await
+        .is_err());
+    assert_eq!(mock.requests.lock().unwrap().len(), 9);
+}

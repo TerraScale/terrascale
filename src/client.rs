@@ -475,7 +475,7 @@ fn is_mutation(request: &Request) -> bool {
         && !request.route_name.starts_with("reactive.")
 }
 
-fn validate_idempotency_key(key: &str) -> Result<()> {
+pub(crate) fn validate_idempotency_key(key: &str) -> Result<()> {
     if key.trim().is_empty() {
         return Err(Error::new(
             ErrorKind::Validation,

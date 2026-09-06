@@ -34,9 +34,11 @@ pub use documents::{
 };
 pub use error::{Error, ErrorKind, Result};
 pub use management::{
-    ApiKey, ApiKeyPage, ApiKeys, Backup, BackupPlan, BackupPolicy, BackupStatus,
-    BackupStatusResponse, Backups, BillableMeter, BranchListResponse, Branches,
-    CancellationToken as ManagementCancellationToken, Collections, CollectionsResponse,
+    ApiKey, ApiKeyPage, ApiKeys, AuthConditionalUpdate, AuthConnector, AuthConsume, AuthMode,
+    AuthOperationOptions, AuthOperator, AuthPageQuery, AuthPersistence, AuthPredicate, AuthRecord,
+    AuthResult, AuthTransactionIdentity, AuthUniqueIndex, AuthUniqueInsert, Backup, BackupPlan,
+    BackupPolicy, BackupStatus, BackupStatusResponse, Backups, BillableMeter, BranchListResponse,
+    Branches, CancellationToken as ManagementCancellationToken, Collections, CollectionsResponse,
     CreateApiKey, CreateBranch, CreateDatabase, CreateDatabaseRequest, CreateDatabaseResult,
     CreateDatabaseWithPlacement, CreateExport, CreateIndexRequest, CreateWebhook, CreatedApiKey,
     DatabaseBranch, DatabaseListResponse, DatabaseRecord, DatabaseSchema, Databases,
