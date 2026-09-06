@@ -115,6 +115,9 @@ impl ProvisioningClient {
     }
 
     /// Submits a branch allocation bound to its admitted parent's immutable policy.
+    ///
+    /// # Errors
+    /// Rejects a foreign parent, invalid request, unavailable authority, or mismatched response.
     pub async fn branch(
         &self,
         scope: &crate::delegated_identity::VerifiedProjectScope,
@@ -156,6 +159,10 @@ impl ProvisioningClient {
     }
 
     /// Begins or polls authoritative deletion work in the verified database scope.
+    ///
+    /// # Errors
+    /// Rejects invalid identifiers, unavailable control service access, or a response
+    /// that does not match the verified scope and requested deletion operation.
     pub async fn deletion(
         &self,
         scope: &crate::delegated_identity::VerifiedProjectScope,

@@ -1,8 +1,8 @@
 //! Public usage and index administration backed by the serving database Engine.
 
 use super::{
-    ApiError, ApiState, account_direct_read, check_read_guard, document_host,
-    document_scope, invalid_identifier, json_response, response_bytes,
+    ApiError, ApiState, account_direct_read, check_read_guard, document_host, document_scope,
+    invalid_identifier, json_response, response_bytes,
 };
 use crate::api_keys::Principal;
 use crate::index_api::{EngineIndexAdapter, IndexScope, IndexService, IndexServiceError};
@@ -69,18 +69,15 @@ pub(super) async fn index_recommendations(
     axum::Extension(principal): axum::Extension<Principal>,
     query: Result<extract::Query<RecommendationQuery>, extract::rejection::QueryRejection>,
 ) -> Response {
-    let query = match query {
-        Ok(extract::Query(query)) => query,
-        Err(_) => {
-            return ApiError {
-                status: StatusCode::BAD_REQUEST,
-                code: "invalid_query",
-                message: "the recommendation query is invalid".into(),
-                fix: "send limit between 1 and 64".into(),
-                placement: None,
-            }
-            .into_response();
+    let Ok(extract::Query(query)) = query else {
+        return ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_query",
+            message: "the recommendation query is invalid".into(),
+            fix: "send limit between 1 and 64".into(),
+            placement: None,
         }
+        .into_response();
     };
     let host = match document_host(&state, &name) {
         Ok(host) => host,
@@ -91,16 +88,16 @@ pub(super) async fn index_recommendations(
     }
     let scope = match IndexScope::try_new(host.tenant(), &name, Some(collection)) {
         Ok(scope) => scope,
-        Err(error) => return index_error(error).into_response(),
+        Err(error) => return index_error(&error).into_response(),
     };
     let service = IndexService::new(EngineIndexAdapter::new(host.engine()));
     match service.recommend(&scope, &principal, query.limit) {
         Ok(recommendations) => accounted_json(&state, &name, &recommendations),
-        Err(error) => index_error(error).into_response(),
+        Err(error) => index_error(&error).into_response(),
     }
 }
 
-fn index_error(error: IndexServiceError) -> ApiError {
+fn index_error(error: &IndexServiceError) -> ApiError {
     let status = match error {
         IndexServiceError::Forbidden { .. } | IndexServiceError::UnauthorizedTenant => {
             StatusCode::FORBIDDEN
@@ -131,9 +128,8 @@ pub(super) async fn delete_index(
         Ok(host) => host,
         Err(error) => return error.into_response(),
     };
-    let collection = match CollectionName::try_new(&collection) {
-        Ok(collection) => collection,
-        Err(_) => return invalid_identifier("collection name", &collection).into_response(),
+    let Ok(collection) = CollectionName::try_new(&collection) else {
+        return invalid_identifier("collection name", &collection).into_response();
     };
     match host.engine().remove_index_field(&collection, &field) {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
@@ -155,9 +151,8 @@ pub(super) async fn delete_index(
 }
 
 fn accounted_json(state: &ApiState, name: &str, value: &impl serde::Serialize) -> Response {
-    let body = match serde_json::to_string(value) {
-        Ok(body) => body,
-        Err(_) => return ApiError::storage_failure().into_response(),
+    let Ok(body) = serde_json::to_string(value) else {
+        return ApiError::storage_failure().into_response();
     };
     if let Err(error) = account_direct_read(state, name, response_bytes(body.len())) {
         return error.into_response();
@@ -168,11 +163,11 @@ fn accounted_json(state: &ApiState, name: &str, value: &impl serde::Serialize) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{router, PLACEMENT_HEADER};
+    use crate::api::{PLACEMENT_HEADER, router};
     use crate::api_keys::Verbs;
+    use axum::Router;
     use axum::body::Body;
     use axum::http::Request;
-    use axum::Router;
     use tower::util::ServiceExt;
 
     const KEY: &str = "Bearer tskey_test_abcdefghijklmnop";

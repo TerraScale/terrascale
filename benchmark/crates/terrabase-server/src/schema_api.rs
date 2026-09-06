@@ -604,7 +604,7 @@ pub struct SchemaDocument {
     #[schema(format = "uint64", minimum = 0)]
     pub generation: u64,
     /// Durable branch-pinned schema version.
-    #[schema(format = "uint64", minimum = 1, maximum = 9007199254740991_u64)]
+    #[schema(format = "uint64", minimum = 1, maximum = 9_007_199_254_740_991_u64)]
     pub schema_version: u64,
     /// Current resumable migration, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]

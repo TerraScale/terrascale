@@ -1140,30 +1140,13 @@ impl Worker {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     fn run_inner(
         &self,
         state: &mut ExportJobState,
         writer: &mut Box<dyn ArtifactWriter>,
     ) -> Result<Option<ArtifactFact>, ExportError> {
         let metadata = metadata_members(&state.snapshot)?;
-        let mut facts_by_path = BTreeSet::new();
-        let mut facts = Vec::with_capacity(metadata.len() + 4);
-        for fact in writer.existing_facts()? {
-            validate_fact(&fact)?;
-            // Control members are rebuilt after every page commit. They must
-            // not be included in their own checksums or manifest.
-            if matches!(fact.path.as_str(), "checksums.txt" | "manifest.json") {
-                continue;
-            }
-            if !bundle_member_path(&fact.path) {
-                return Err(ExportError::IdempotencyConflict);
-            }
-            if !facts_by_path.insert(fact.path.clone()) {
-                return Err(ExportError::IdempotencyConflict);
-            }
-            facts.push(fact);
-        }
+        let (mut facts_by_path, mut facts) = recover_facts(writer, metadata.len() + 4)?;
         for (path, bytes) in metadata {
             if self.cancellation_requested(&state.job_id)? {
                 return Ok(None);
@@ -1244,23 +1227,51 @@ impl Worker {
             // the crash/idempotency ordering guarantee.
             self.store.save(state)?;
         }
-        facts.sort_by(|left, right| left.path.cmp(&right.path));
-        let mut checksum_bytes = Vec::new();
-        for fact in &facts {
-            checksum_bytes.extend_from_slice(fact.path.as_bytes());
-            checksum_bytes.push(b'\t');
-            checksum_bytes.extend_from_slice(fact.length.to_string().as_bytes());
-            checksum_bytes.push(b'\t');
-            checksum_bytes.extend_from_slice(fact.checksum.as_bytes());
-            checksum_bytes.push(b'\n');
-        }
-        let checksums = put_checked(writer, "checksums.txt", &checksum_bytes)?;
-        if facts_by_path.insert(checksums.path.clone()) {
-            facts.push(checksums);
-        }
-        let manifest_bytes = manifest_bytes(state, &facts)?;
-        put_checked(writer, "manifest.json", &manifest_bytes).map(Some)
+        publish_bundle(writer, state, &mut facts_by_path, &mut facts)
     }
+}
+
+fn recover_facts(
+    writer: &mut Box<dyn ArtifactWriter>,
+    capacity: usize,
+) -> Result<(BTreeSet<String>, Vec<ArtifactFact>), ExportError> {
+    let mut paths = BTreeSet::new();
+    let mut facts = Vec::with_capacity(capacity);
+    for fact in writer.existing_facts()? {
+        validate_fact(&fact)?;
+        if matches!(fact.path.as_str(), "checksums.txt" | "manifest.json") {
+            continue;
+        }
+        if !bundle_member_path(&fact.path) || !paths.insert(fact.path.clone()) {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        facts.push(fact);
+    }
+    Ok((paths, facts))
+}
+
+fn publish_bundle(
+    writer: &mut Box<dyn ArtifactWriter>,
+    state: &ExportJobState,
+    paths: &mut BTreeSet<String>,
+    facts: &mut Vec<ArtifactFact>,
+) -> Result<Option<ArtifactFact>, ExportError> {
+    facts.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut checksum_bytes = Vec::new();
+    for fact in facts.iter() {
+        checksum_bytes.extend_from_slice(fact.path.as_bytes());
+        checksum_bytes.push(b'\t');
+        checksum_bytes.extend_from_slice(fact.length.to_string().as_bytes());
+        checksum_bytes.push(b'\t');
+        checksum_bytes.extend_from_slice(fact.checksum.as_bytes());
+        checksum_bytes.push(b'\n');
+    }
+    let checksums = put_checked(writer, "checksums.txt", &checksum_bytes)?;
+    if paths.insert(checksums.path.clone()) {
+        facts.push(checksums);
+    }
+    let manifest = manifest_bytes(state, facts)?;
+    put_checked(writer, "manifest.json", &manifest).map(Some)
 }
 
 fn validate_fact(fact: &ArtifactFact) -> Result<(), ExportError> {

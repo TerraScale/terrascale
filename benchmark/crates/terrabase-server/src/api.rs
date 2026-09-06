@@ -640,7 +640,7 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
 
 /// Compose the management and admitted auth contracts into the single public
 /// document. Auth routes are mounted by the production data runtime with a
-/// different state type, so their handlers are merged at the OpenAPI level.
+/// different state type, so their handlers are merged at the `OpenAPI` level.
 fn full_openapi_document() -> utoipa::openapi::OpenApi {
     let (_, mut document) = openapi_router().split_for_parts();
     let (_, auth_document) = crate::auth_runtime::routes().split_for_parts();
@@ -2799,7 +2799,7 @@ fn document_not_found(collection: &str, id: &str) -> ApiError {
 }
 
 /// Parses create-only PUT without reading the document. The storage commit's
-/// ExpectedVersion::New check owns the atomic condition and idempotent replay.
+/// `ExpectedVersion::New` check owns the atomic condition and idempotent replay.
 fn create_only_precondition(headers: &axum::http::HeaderMap) -> Result<bool, ApiError> {
     let mut values = headers.get_all(axum::http::header::IF_NONE_MATCH).iter();
     let Some(value) = values.next() else {

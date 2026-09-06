@@ -770,3 +770,22 @@ existing usage journal and planner only consume committed streams. The signed
 transition delivery path accepts placement on every target before calling
 usage registration, leaving a concrete allocation integration boundary there.
 No guessed billing partitions or configuration-derived readiness were added.
+
+
+Continuation verification: the complete TBEP library selection passed all 66
+tests (`90436`), followed by 11 integration passes. The package run then stopped
+at the gRPC selection (11/12): missing trust returned the wrong I/O error kind.
+Missing and whitespace-only trust now return `InvalidInput` before certificate
+parsing; the targeted regression passed (`55261`). A complete TBEP package pass
+has not yet been established after that fix.
+
+Server all-target compilation passed (`64730`), retaining two warnings for the
+native recovery signer whose production integration remains unfinished. The
+complete server library run (`26026`) finished with 338 passed, three ignored,
+and one failure: the 100,000-document branch restore took 11.562381852 seconds
+against the unchanged ten-second limit. No functional failure was reported in
+that run. Current server all-target Clippy (`62204`) still fails with 81
+test-build diagnostics; the earlier 189 count is superseded. Logs are
+`/tmp/terrascale-server-refactor-tests.log` and
+`/tmp/terrascale-server-clippy-current.log`. These results do not qualify the
+workspace or production gates.

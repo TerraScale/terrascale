@@ -14,6 +14,7 @@ encrypted restore.
 | Provenance reset with temporary stage timers | 13.3045 s | 10 s | Failed |
 | One-pass rewrite through a temporary identity map | 11.698746991 s | 10 s | Failed; improved over baseline |
 | One-pass rewrite with standard bounded SQLite connection settings | 11.779108996 s | 10 s | Failed |
+| Same bounded settings, complete server regression suite (`26026`) | 11.562381852 s | 10 s | Failed |
 
 The reset preserves imported data and causal progress while removing source
 billing and lifecycle state. Removing that reset to improve timing would restore

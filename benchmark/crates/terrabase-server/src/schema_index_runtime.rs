@@ -81,12 +81,31 @@ pub(super) fn advance(
                 scope.tenant(),
                 &collection,
                 &format!("field:{}", field.name),
-                &[field.name.clone()],
+                std::slice::from_ref(&field.name),
                 true,
             )
             .map_err(|_| "field uniqueness installation failed")?;
     }
-    if let Some(old) = &record.previous_schema {
+    remove_retired_indexes(
+        engine,
+        scope,
+        &collection,
+        schema,
+        record.previous_schema.as_ref(),
+        &fields,
+    )?;
+    Ok(ready)
+}
+
+fn remove_retired_indexes(
+    engine: &Engine,
+    scope: &TenantScope,
+    collection: &CollectionName,
+    schema: &CollectionSchema,
+    previous_schema: Option<&CollectionSchema>,
+    fields: &BTreeSet<String>,
+) -> Result<(), String> {
+    if let Some(old) = previous_schema {
         let current_text: BTreeSet<_> = schema
             .indexes
             .iter()
@@ -103,7 +122,7 @@ pub(super) fn advance(
             .collect();
         for field in old_text.difference(&current_text) {
             engine
-                .remove_schema_fts(&collection, field)
+                .remove_schema_fts(collection, field)
                 .map_err(|_| "retired full-text index removal failed")?;
         }
 
@@ -114,7 +133,7 @@ pub(super) fn advance(
                 .any(|current| current.name == index.name && current.kind != Some(IndexKind::Fts))
             {
                 engine
-                    .remove_schema_index(scope.tenant(), &collection, &index.name)
+                    .remove_schema_index(scope.tenant(), collection, &index.name)
                     .map_err(|_| "retired index removal failed")?;
             }
         }
@@ -123,17 +142,17 @@ pub(super) fn advance(
                 engine
                     .remove_schema_index(
                         scope.tenant(),
-                        &collection,
+                        collection,
                         &format!("field:{}", field.name),
                     )
                     .map_err(|_| "retired uniqueness removal failed")?;
             }
         }
-        for field in scalar_fields(old).difference(&fields) {
+        for field in scalar_fields(old).difference(fields) {
             engine
-                .remove_index_field(&collection, field)
+                .remove_index_field(collection, field)
                 .map_err(|_| "retired field index removal failed")?;
         }
     }
-    Ok(ready)
+    Ok(())
 }

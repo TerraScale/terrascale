@@ -101,6 +101,9 @@ pub(crate) fn transform_provenance(
             insert.execute(params![tenant, original, replacement]).map_err(|_| ())?;
         }
     }
+    // Keep request and commit replacements independent because a document may
+    // reference different source operations. Preserve unmapped legacy request
+    // identities while avoiding the redundant third EXISTS probe.
     transaction
         .execute(
             "UPDATE documents
@@ -111,11 +114,7 @@ pub(crate) fn transform_provenance(
                  commit_ulid = COALESCE(
                      (SELECT replacement FROM branch_identity_map
                       WHERE tenant=documents.tenant AND original=documents.commit_ulid),
-                     commit_ulid)
-             WHERE EXISTS (SELECT 1 FROM branch_identity_map
-                           WHERE tenant=documents.tenant
-                             AND (original=documents.client_request_ulid
-                               OR original=documents.commit_ulid))",
+                     commit_ulid)",
             [],
         )
         .map_err(|_| ())?;
