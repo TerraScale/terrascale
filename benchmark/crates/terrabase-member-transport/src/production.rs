@@ -47,8 +47,11 @@ const MAX_CONNECTIONS_PER_PEER: usize = 3;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(u8)]
 pub enum ProductionConnectionClass {
+    /// Long-lived physical and causal database replication.
     Replication = 1,
+    /// Auth writes and queries forwarded to the elected authority.
     AuthClient = 2,
+    /// Auth Raft append, vote, and snapshot RPCs.
     AuthConsensus = 3,
 }
 
@@ -993,11 +996,13 @@ impl ProductionQuicEndpoint {
             .map_err(|_| ProductionTransportError::Timeout)??;
         self.validate_hello(&remote_hello, &certificate_identity, &peer)?;
         let local_hello = ConnectionHello::new(&self.config, remote_hello.class)?;
+        let authenticated =
+            self.finish_connection(connection, certificate_identity, &remote_hello)?;
         tokio::time::timeout_at(deadline, write_hello(&mut send, &local_hello))
             .await
             .map_err(|_| ProductionTransportError::Timeout)??;
         send.finish().map_err(|_| ProductionTransportError::ConnectionFailed)?;
-        self.finish_connection(connection, certificate_identity, &remote_hello).map(Some)
+        Ok(Some(authenticated))
     }
 
     fn validate_hello(
@@ -2199,6 +2204,33 @@ mod tests {
         drop(consensus_in);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_same_class_dials_retain_one_usable_both_end_session() {
+        let (first, second) = endpoint_pair();
+        let peer = second.config.local_identity.member();
+        let (out_a, out_b, in_a, in_b) = tokio::join!(
+            first.connect(peer, ProductionConnectionClass::AuthClient),
+            first.connect(peer, ProductionConnectionClass::AuthClient),
+            second.accept(),
+            second.accept(),
+        );
+        let outbound = [out_a, out_b]
+            .into_iter()
+            .find_map(Result::ok)
+            .expect("one same-class dial must survive");
+        let inbound = [in_a, in_b]
+            .into_iter()
+            .filter_map(|result| result.ok().flatten())
+            .next()
+            .expect("one same-class accept must survive");
+        let (sent, received) =
+            tokio::join!(outbound.send_frame(b"survivor"), inbound.receive_frame());
+        sent.expect("surviving dial sends");
+        assert_eq!(received.expect("surviving dial receives"), b"survivor");
+        drop(outbound);
+        drop(inbound);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn idle_accept_does_not_reserve_operation_capacity() {
         let (_first, second) = endpoint_pair();
@@ -2260,7 +2292,9 @@ mod tests {
                 })
                 .collect()
         };
-        let make_config = |peers| {
+        let make_config = |peers, maximum| {
+            let mut transport_limits = limits();
+            transport_limits.max_inflight = maximum;
             ProductionTransportConfig::try_new(
                 configured.bind,
                 configured.local_identity.clone(),
@@ -2268,12 +2302,17 @@ mod tests {
                 configured.placement_generation,
                 configured.replica_set_epoch,
                 peers,
-                limits(),
+                transport_limits,
             )
         };
-        assert!(make_config(make_peers(super::PRODUCTION_MAX_PEERS)).is_ok());
+        let topology_budget = 8 * super::PRODUCTION_MAX_PEERS;
+        assert!(make_config(make_peers(super::PRODUCTION_MAX_PEERS), topology_budget).is_ok());
         assert_eq!(
-            make_config(make_peers(super::PRODUCTION_MAX_PEERS + 1)).err(),
+            make_config(make_peers(super::PRODUCTION_MAX_PEERS), topology_budget - 1).err(),
+            Some(ProductionTransportError::InvalidConfiguration)
+        );
+        assert_eq!(
+            make_config(make_peers(super::PRODUCTION_MAX_PEERS + 1), topology_budget + 8).err(),
             Some(ProductionTransportError::InvalidConfiguration)
         );
     }

@@ -809,14 +809,18 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     }
     assert!(completed > 0, "reads must make progress under concurrent load");
     let mut forwarded_successes = 0;
+    let mut forwarded_failures = Vec::new();
     for task in forwarded {
-        if matches!(task.await.unwrap(), Ok(Ok(Outcome::Applied | Outcome::Record { .. }))) {
+        let result = task.await.unwrap();
+        if matches!(result, Ok(Ok(Outcome::Applied | Outcome::Record { .. }))) {
             forwarded_successes += 1;
+        } else {
+            forwarded_failures.push(format!("{result:?}"));
         }
     }
     assert!(
         forwarded_successes > 0,
-        "follower forwarding must admit at least one bounded mutation"
+        "follower forwarding must admit at least one bounded mutation: {forwarded_failures:?}"
     );
     let rollback_begin = admitted_fixture::request(
         &fixture.runtime,

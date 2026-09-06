@@ -156,6 +156,30 @@ invalid operation without partial output. Unsorted pages stop once filled.
 These limits bound current implementation work; indexes and intended-hardware
 latency qualification remain required for launch performance claims.
 
+### Reserved member transport capacity
+
+Member protocol version 2 carries a connection class in its authenticated hello
+and uses ALPN `terrabase-member/2`. Each admitted peer may hold one replication
+session, one forwarded-auth-client session, and one auth-consensus session.
+Incoming and outgoing sessions share these class limits. Auth RPC dispatch
+checks that the method matches its declared class before invoking the authority.
+Physical/causal replication accepts its initial frame only on the replication
+class. Version 1 peers must upgrade together; no compatibility path is retained.
+
+The configured total operation ceiling remains unchanged. Four independent
+quotas divide it between handshakes and the three connection classes; each gets
+the integer quotient, and handshakes receive the remainder. Configuration
+requires at least two operations per admitted peer in each application class
+so persistent receives leave capacity for sends. Idle listener waits consume
+no operation permit. Cancellation and drain release both class and total
+accounting. Forwarded clients cannot consume the frame-operation permits needed
+to replicate the writes they are awaiting.
+
+Shared serving requires one accept owner that dispatches these classes. The
+standalone auth listener and replication listener must not race for the same
+endpoint. Completing that production composition and qualifying multiple
+groups, peer failures, and WAN load remain required.
+
 ## Implementation and qualification dependencies
 
 Integrate the consensus storage and transport in the real member startup path,
