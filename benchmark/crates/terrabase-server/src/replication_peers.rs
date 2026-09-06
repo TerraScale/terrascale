@@ -24,6 +24,9 @@ use terrabase_tbep::production_repair::{PublicationIndex, RepairDriver, Verified
 use terrabase_tbep::registry::BoundScope;
 use tokio::sync::{mpsc, watch};
 
+#[cfg(test)]
+mod admission_tests;
+
 /// Application control frames multiplexed on the same authenticated endpoint.
 pub trait PeerControlDispatcher: Send + Sync {
     /// Handles one bounded authenticated control frame; false means unknown protocol.
@@ -144,6 +147,7 @@ pub struct ReplicationPeers {
     admissions: BTreeMap<String, mpsc::Sender<PeerCommand>>,
     admitted: std::sync::Mutex<std::collections::BTreeSet<(String, DatabaseRouteScope)>>,
     observations: PeerObservations,
+    live_workers: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
     stop: watch::Sender<bool>,
     join: tokio::task::JoinHandle<Result<(), String>>,
 }
@@ -221,6 +225,8 @@ impl ReplicationPeers {
             validated.push((id, lanes, receiver));
         }
         let cuts = Arc::new(ReplicationCuts::default());
+        let live_workers = Arc::new(std::sync::Mutex::new(admissions.keys().cloned().collect()));
+        let worker_lifecycle = live_workers.clone();
         let worker_cuts = cuts.clone();
         let retained_progress = progress.clone();
         let worker_observations = observations.clone();
@@ -235,12 +241,18 @@ impl ReplicationPeers {
                 workers.spawn(peer_worker(
                     runtime.clone(),
                     progress.clone(),
-                    id,
+                    id.clone(),
                     lanes,
                     receiver,
                     stopped.clone(),
                     worker_observations.clone(),
-                    new_lanes,
+                    PeerInbox {
+                        receiver: Some(new_lanes),
+                        peer: id.as_str().to_owned(),
+                        live_workers: worker_lifecycle.clone(),
+                        progress: progress.clone(),
+                        observations: worker_observations.clone(),
+                    },
                     worker_cuts.clone(),
                 ));
             }
@@ -248,9 +260,18 @@ impl ReplicationPeers {
             let mut classifiers = tokio::task::JoinSet::new();
             let endpoint = runtime.transport();
             let mut stopped = stopped;
+            let mut worker_error = None;
             loop {
                 tokio::select! {
                     _ = stopped.changed() => break,
+                    result = workers.join_next(), if !workers.is_empty() => {
+                        worker_error = Some(match result {
+                            Some(Err(error)) => failure(error),
+                            _ => "replication peer worker stopped unexpectedly".into(),
+                        });
+                        progress.fence();
+                        break;
+                    },
                     _ = classifiers.join_next(), if !classifiers.is_empty() => {},
                     accepted = endpoint.accept() => match accepted {
                         Ok(Some(connection)) => {
@@ -275,7 +296,6 @@ impl ReplicationPeers {
             while classifiers.join_next().await.is_some() {}
             drop(incoming);
             // Workers observe the stop signal between bounded operations.
-            let mut worker_error = None;
             while let Some(result) = workers.join_next().await {
                 if let Err(error) = result {
                     worker_error = Some(failure(error));
@@ -288,6 +308,7 @@ impl ReplicationPeers {
             stop,
             join,
             observations,
+            live_workers,
             admissions,
             admitted: std::sync::Mutex::new(admitted),
             cuts,
@@ -301,6 +322,27 @@ impl ReplicationPeers {
         &self,
         peers: BTreeMap<String, Vec<PeerDatabase>>,
     ) -> Result<(), String> {
+        // Reserve every bounded worker queue before publishing any assignment.
+        // Cancellation or a closed receiver releases reservations without leaving
+        // admission tombstones or a partially delivered multi-peer database.
+        let mut reservations = Vec::with_capacity(peers.len());
+        for peer in peers.keys() {
+            reservations.push(
+                self.admissions
+                    .get(peer)
+                    .ok_or("unadmitted replication peer")?
+                    .clone()
+                    .reserve_owned()
+                    .await
+                    .map_err(failure)?,
+            );
+        }
+        let live_workers = self.live_workers.lock().map_err(failure)?;
+        if live_workers.len() != self.admissions.len()
+            || peers.keys().any(|peer| !live_workers.contains(peer))
+        {
+            return Err("replication peer worker stopped".into());
+        }
         {
             let mut admitted = self.admitted.lock().map_err(failure)?;
             let added = peers.values().map(Vec::len).sum::<usize>();
@@ -321,15 +363,13 @@ impl ReplicationPeers {
             }
             admitted.extend(unique);
         }
-        for (peer, lanes) in peers {
+        // No await occurs after the admission commit, so cancellation cannot
+        // interrupt delivery between peer queues.
+        for ((peer, lanes), reservation) in peers.into_iter().zip(reservations) {
             observe(&self.observations, &peer, &lanes, false);
-            self.admissions
-                .get(&peer)
-                .ok_or("unadmitted replication peer")?
-                .send(PeerCommand::Add(lanes))
-                .await
-                .map_err(failure)?;
+            reservation.send(PeerCommand::Add(lanes));
         }
+        drop(live_workers);
         Ok(())
     }
 
@@ -365,6 +405,19 @@ impl ReplicationPeers {
     #[must_use]
     pub fn observations(&self) -> PeerObservations {
         self.observations.clone()
+    }
+
+    /// Refuses a stopped accept owner or a lost peer worker, including between reconciliations.
+    /// # Errors
+    /// A failed worker requires a fresh runtime; previously verified receipts cannot revive it.
+    pub fn ensure_running(&self) -> Result<(), String> {
+        if self.join.is_finished()
+            || *self.stop.borrow()
+            || self.live_workers.lock().map_err(failure)?.len() != self.admissions.len()
+        {
+            return Err("replication peer owner is no longer running".into());
+        }
+        Ok(())
     }
 
     /// Waits for local outbound queues to empty after the caller stops origin writes.
@@ -407,7 +460,7 @@ async fn peer_worker(
     mut incoming: mpsc::Receiver<ProductionConnection>,
     mut stopped: watch::Receiver<bool>,
     observations: PeerObservations,
-    mut new_lanes: mpsc::Receiver<PeerCommand>,
+    mut new_lanes: PeerInbox,
     cuts: Arc<ReplicationCuts>,
 ) {
     let endpoint = runtime.transport();
@@ -454,7 +507,7 @@ async fn session(
     lanes: &mut Vec<PeerDatabase>,
     stopped: &watch::Receiver<bool>,
     observations: &PeerObservations,
-    new_lanes: &mut mpsc::Receiver<PeerCommand>,
+    new_lanes: &mut PeerInbox,
     cuts: &Arc<ReplicationCuts>,
 ) -> Result<(), String> {
     let peer = WalAuthenticatedPeer::from_connection(&connection);
@@ -997,6 +1050,39 @@ struct RepairLane {
 enum PeerCommand {
     Add(Vec<PeerDatabase>),
     Remove { scope: DatabaseRouteScope, done: tokio::sync::oneshot::Sender<()> },
+}
+
+/// Receiver closure and multi-peer admission share one synchronous commit boundary.
+struct PeerInbox {
+    receiver: Option<mpsc::Receiver<PeerCommand>>,
+    peer: String,
+    live_workers: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+    progress: Arc<ReplicationProgress>,
+    observations: PeerObservations,
+}
+
+impl PeerInbox {
+    async fn recv(&mut self) -> Option<PeerCommand> {
+        self.receiver.as_mut()?.recv().await
+    }
+}
+
+impl Drop for PeerInbox {
+    fn drop(&mut self) {
+        let mut live = self.live_workers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        live.remove(&self.peer);
+        drop(self.receiver.take());
+        // Losing a worker cannot leave a host acknowledging receipt waits or
+        // advertising observations from a session whose owner no longer exists.
+        self.progress.fence();
+        if let Ok(mut observations) = self.observations.lock() {
+            for ((peer, _), facts) in observations.iter_mut() {
+                if peer == &self.peer {
+                    *facts = PeerFacts::default();
+                }
+            }
+        }
+    }
 }
 fn apply_command(
     command: PeerCommand,

@@ -523,3 +523,11 @@ uncomposed-data-plane error. Shared API construction, attached observed readines
 admission and control lifecycle composition, and full daemon qualification remain
 unfinished. Existing partial database activation before lane admission also
 needs review for retry safety. No ULID or other agents' changes were reverted.
+
+Strict server/transport library Clippy (`90601`) remains unpassed: the server
+reported 146 lint errors across existing code and the new dispatcher. The new
+dispatch helper's unnecessary `async` was removed; the broader server lint
+backlog remains. Log: `/tmp/terrascale-shared-dispatch-clippy.log`. Focused tests
+are not a substitute for the remaining repository `make check` gate.
+The final auth runtime rerun after that lint fix passed all nine ordinary tests
+(`7403`, external consumer ignored). All root execution handles are terminal.

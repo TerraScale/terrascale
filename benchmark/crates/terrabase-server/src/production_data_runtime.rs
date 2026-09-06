@@ -443,6 +443,9 @@ impl ProductionAdmissionRuntime {
     /// # Errors
     /// Refuses changed authority, missing admitted records, or failed worker startup.
     pub async fn reconcile(&mut self) -> Result<(), String> {
+        if let Some(data) = &self.data {
+            data.peers.ensure_running()?;
+        }
         let accepted = match self.journal.accepted_proposal() {
             Ok(accepted) => accepted,
             Err(terrabase_tbep::placement::PlacementError::NotFound) => return Ok(()),
