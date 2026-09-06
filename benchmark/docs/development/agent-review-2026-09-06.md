@@ -202,3 +202,43 @@ This was diagnostic mode with a dirty worktree; Node 22, immutable publication
 and release admission remain unqualified. The host's mise npm wrapper required
 a temporary PATH entry pointing to the actual npm-cli.js for CLI provenance
 inspection; no global toolchain files were modified.
+
+The next dashboard integration preserves the upstream ULID migration and moves
+production identity persistence from the obsolete operation binding to the
+public `AuthPersistenceClient` and official Better Auth factory. Dashboard
+provides its complete core/plugin/custom schema, shares the resulting authority
+with billing and notices, and initializes that authority before scheduled mail
+delivery. The same lazy secondary-storage instance is included in the options
+used to construct the adapter. Existing public database credentials and PROXY
+transport apply; missing production configuration still refuses startup.
+
+Review corrected three composition defects: an omitted custom-schema plugin,
+missing cold scheduled-worker initialization, and unawaited multi-step guard or
+recovery operations escaping transaction completion. Wrapper callbacks now
+serialize and drain complete operations and poison failures before final owner
+checks or commit. Deferred regressions verify owner deletion and failed recovery
+notice rollback. Re-review found no remaining material issue in these fixes.
+These tests use consumer fixtures and do not qualify a live production authority.
+
+The SDK's public unique `.index()` extension maps schema names, participates in
+transaction serialization, and rejects malformed success results. A concrete
+`TerraScaleAuthAdapterError` preserves producer error details. Producer predicates
+now use the pinned Kysely/Drizzle SQL grouping and null semantics, including
+protection against OR terms bypassing AND tenant guards. The memory adapter's
+predicate behavior differs and is not the reference for this contract. Review
+caught and fixed a null-inequality regression before final validation. The
+producer ADR and served OpenAPI describe the contract; the exporter and SDK
+metadata were regenerated.
+
+Validation for this series: all 29 auth state-machine tests passed. Server
+`auth_runtime` tests passed in session `82545` (five, including the actual
+encrypted QUIC staged/committed HTTP fixture). Exporter `32456` and the contract
+bundle integrity regression `58698` passed. The SDK's
+`CONTRACT_SOURCE=../terrabase/contracts make check` passed in `84150` with
+289 tests passed and 12 environment-gated tests skipped.
+
+Diagnostic npm artifact qualification passed on Node 24.20.0 in `42808`.
+Artifact: `/tmp/terrascale-auth-dashboard-qualification-20260907/terrascale-sdk-0.3.0.tgz`.
+SHA-256: `6133a1df3db7941f6cda8ff28a3d2238911acfb6065b42e4c1a598de954ac924`.
+The receipt remains beside the tarball. This is diagnostic qualification;
+Node 22 and immutable release publication remain outstanding.
