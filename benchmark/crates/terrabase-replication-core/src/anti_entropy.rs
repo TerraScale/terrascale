@@ -1017,7 +1017,9 @@ pub fn row_contribution(id: &JournalRowId, row_hash: &Hash32) -> u128 {
     bytes.extend_from_slice(&id.sequence.to_be_bytes());
     bytes.extend_from_slice(row_hash);
     let digest = hash("range-reconciliation-row", &bytes);
-    u128::from_be_bytes(digest[..16].try_into().expect("the digest has sixteen leading bytes"))
+    let mut contribution = [0; 16];
+    contribution.copy_from_slice(&digest[..16]);
+    u128::from_be_bytes(contribution)
 }
 
 struct Bytes(Vec<u8>);

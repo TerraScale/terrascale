@@ -644,3 +644,40 @@ orchestrator admission package tests passed, followed by full `make check`
 including race tests (`98145`, exit 0). Rust timestamp tests await the next
 server run while the reopen failure is investigated. The earlier creation-time
 contract gap is implemented but is not yet fully verified in Rust.
+
+### Reopen validation and restored billing ownership
+
+Server failures exposed two storage defects. Startup rejected valid zero-billed
+schema receipts because it assumed every non-imported committed fact billed a
+document write. Commit folding now records a durable operation-kind marker for
+metadata, internal maintenance, and replicated commits in the same transaction
+as the fact. Markers use the fact's exact binding identity. Validation rejects
+unknown kinds, orphan or rejected markers, positive counters, unexplained zero
+facts, and overlap with branch import receipts. Branch conversion removes source
+markers when rewriting receipts. Independent review found no material issue.
+
+Local physical restore also retained source billing placement and lifecycle
+metadata. It now uses the existing provenance transformation inside the owner
+rebinding transaction and restores the child's fresh origin. Scoped production
+restores remain refused by this local API. The physical restore regression
+passes and verifies retained document data, absent source usage, fresh child
+placement, and billing only for the child's new write.
+
+Five completed marker regressions passed (`42213`), including metadata and
+maintenance replay after reopen, replicated replay after reopen, branch/rebranch
+marker transfer, and corruption rejection. The subsequent full server library
+run (`86471`) passed 336, failed three, and ignored three. Schema and restore
+functional cases passed. Two durability fixtures still lacked a Region-pinned
+origin; admission timestamp and public metadata tests also passed. The durability
+fixtures' corrected setup uses the real durable Engine configuration; all four
+durability tests passed (`39530`). Marker tests also passed after final review
+(`48716`). The 100,000-document restore exceeded its unchanged ten-second limit
+both in the suite and in isolation. A temporary-index candidate did not help
+and was removed. Exact timings are recorded in
+[`bench/physical-restore-provenance.md`](../../bench/physical-restore-provenance.md).
+No full-suite green claim is made.
+
+Rust `make check` (`84301`) passed formatting and stopped at a Clippy
+`missing_panics_doc` error in `replication-core::row_contribution`. The fixed-size
+hash conversion now copies the same sixteen bytes without the fallible
+conversion/expect. The complete check still needs rerunning after profiling.
