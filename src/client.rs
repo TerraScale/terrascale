@@ -72,6 +72,10 @@ impl Shared {
         format!("{}{API_ROOT}", self.config.api_base_url())
     }
 
+    pub(crate) fn api_key(&self) -> Option<&str> {
+        self.config.api_key()
+    }
+
     /// Base URL for pinned REST traffic, honoring a per-request hint, the
     /// repaired 421 placement, the preferred region, and affinity.
     ///

@@ -303,7 +303,7 @@ impl CancellationToken {
         self.cancelled.load(Ordering::Acquire)
     }
 
-    async fn cancelled(&self) {
+    pub(crate) async fn cancelled(&self) {
         while !self.is_cancelled() {
             tokio::task::yield_now().await;
         }
@@ -733,7 +733,7 @@ impl ReactiveClient {
             "databaseId": scope.database_id,
             "subscription": subscription,
             "statement": query.sql(),
-            "parameters": BASE64.encode(parameters),
+            "parameters": BASE64.encode(&parameters),
             "checkpoint": options.checkpoint.as_ref().map(Checkpoint::to_base64),
         });
         let mut request = Request::json("reactive.subscribe", Method::Post, url, &body)?;
@@ -743,7 +743,8 @@ impl ReactiveClient {
                 hint.as_header_str().to_owned(),
             ));
         }
-        self.shared.send_typed(request).await
+        let view: AttachedView = self.shared.send_typed(request).await?;
+        Ok(view)
     }
 
     /// Poll an attached view's immutable CDN log from its opening revision.
@@ -864,7 +865,8 @@ impl ReactiveClient {
         query: &Query,
         options: SubscribeOptions,
     ) -> Result<LiveSubscription> {
-        let view = self.subscribe(scope, query, options).await?;
+        let websocket = options.transport == Transport::WebSocket;
+        let view = self.subscribe(scope, query, options.clone()).await?;
         if view.log_url.trim().is_empty() {
             return Err(Error::new(
                 ErrorKind::InvalidResponse,
@@ -884,12 +886,45 @@ impl ReactiveClient {
             let snapshot = self.load_snapshot_chunks(&view).await?;
             state.apply_snapshot(snapshot);
         }
+        let socket = if websocket {
+            let parameters = serde_json::to_vec(query.parameters()).map_err(|error| {
+                Error::new(
+                    ErrorKind::Validation,
+                    "invalid_parameters",
+                    format!("Reactive parameters are not serializable: {error}"),
+                )
+            })?;
+            Some(
+                crate::websocket::open(crate::websocket::OpenRequest {
+                    base_url: &self.shared.pinned_base_url(options.region_hint)?,
+                    view: &view.view_id,
+                    generation: view.generation,
+                    capability: view
+                        .capability
+                        .as_deref()
+                        .expect("attach validates capability"),
+                    subscription: options
+                        .subscription
+                        .as_deref()
+                        .filter(|v| !v.trim().is_empty())
+                        .unwrap_or("rust-subscription"),
+                    query: query.sql(),
+                    parameters: &parameters,
+                    checkpoint: Some(&view.checkpoint),
+                    bearer: self.shared.api_key(),
+                })
+                .await?,
+            )
+        } else {
+            None
+        };
         Ok(LiveSubscription {
             client: self.clone(),
             view,
             state,
             options: PollOptions::default(),
             cancellation: CancellationToken::new(),
+            socket,
         })
     }
 
@@ -1326,6 +1361,7 @@ pub struct LiveSubscription {
     state: Subscription,
     options: PollOptions,
     cancellation: CancellationToken,
+    socket: Option<crate::websocket::Session>,
 }
 
 impl LiveSubscription {
@@ -1367,41 +1403,51 @@ impl LiveSubscription {
             .state
             .revision()
             .unwrap_or(self.view.snapshot.revision.as_str());
-        let response = match self
-            .client
-            .poll_with_cancellation(&self.view, offset, self.options, &self.cancellation)
-            .await
-        {
-            Ok(response) => response,
-            Err(error) if error.kind == ErrorKind::RegionRedirect => {
-                return Ok(PollOutcome::Reset(ResetFrame {
-                    reason: ResetReason::RegionMoved,
-                    snapshot: None,
-                    checkpoint: self.state.checkpoint().cloned(),
-                    region: error
-                        .placement
-                        .as_deref()
-                        .and_then(|placement| placement.parse().ok()),
-                    authorization_generation: None,
-                    removed: Vec::new(),
-                    digest: String::new(),
-                    detail: Some(error.message),
-                }));
+        let response = if let Some(socket) = self.socket.as_mut() {
+            let bytes = socket.next(&self.cancellation).await?;
+            let value = decode_reactive_msgpack_json(&bytes)?;
+            serde_json::from_value(value).map_err(|error| {
+                Error::invalid_response(format!(
+                    "WebSocket frame does not match reactive response: {error}"
+                ))
+            })?
+        } else {
+            match self
+                .client
+                .poll_with_cancellation(&self.view, offset, self.options, &self.cancellation)
+                .await
+            {
+                Ok(response) => response,
+                Err(error) if error.kind == ErrorKind::RegionRedirect => {
+                    return Ok(PollOutcome::Reset(ResetFrame {
+                        reason: ResetReason::RegionMoved,
+                        snapshot: None,
+                        checkpoint: self.state.checkpoint().cloned(),
+                        region: error
+                            .placement
+                            .as_deref()
+                            .and_then(|placement| placement.parse().ok()),
+                        authorization_generation: None,
+                        removed: Vec::new(),
+                        digest: String::new(),
+                        detail: Some(error.message),
+                    }));
+                }
+                Err(error) if http_reset_reason(&error).is_some() => {
+                    let reason = http_reset_reason(&error).expect("checked above");
+                    return Ok(PollOutcome::Reset(ResetFrame {
+                        reason,
+                        snapshot: None,
+                        checkpoint: self.state.checkpoint().cloned(),
+                        region: None,
+                        authorization_generation: None,
+                        removed: Vec::new(),
+                        digest: String::new(),
+                        detail: Some(error.message),
+                    }));
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) if http_reset_reason(&error).is_some() => {
-                let reason = http_reset_reason(&error).expect("checked above");
-                return Ok(PollOutcome::Reset(ResetFrame {
-                    reason,
-                    snapshot: None,
-                    checkpoint: self.state.checkpoint().cloned(),
-                    region: None,
-                    authorization_generation: None,
-                    removed: Vec::new(),
-                    digest: String::new(),
-                    detail: Some(error.message),
-                }));
-            }
-            Err(error) => return Err(error),
         };
         if let Some(mut reset) = response.reset {
             if reset.checkpoint.is_none() {
@@ -1481,7 +1527,7 @@ impl LiveSubscription {
 /// Header carrying the short-lived authorization-equivalent view capability.
 pub const VIEW_CAPABILITY_HEADER: &str = "X-TerraScale-View-Capability";
 
-const MSGPACK_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MSGPACK_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 const MSGPACK_MAX_STRING_BYTES: usize = 262_144;
 const MSGPACK_MAX_BINARY_BYTES: usize = 1_048_576;
 const MSGPACK_MAX_ARRAY_ITEMS: usize = 10_000;
@@ -2251,7 +2297,7 @@ fn http_reset_reason(error: &Error) -> Option<ResetReason> {
     Some(reason)
 }
 
-fn cancelled_error() -> Error {
+pub(crate) fn cancelled_error() -> Error {
     Error::new(
         ErrorKind::Transport,
         "cancelled",

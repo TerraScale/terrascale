@@ -21,6 +21,7 @@ pub mod serde_base64;
 pub mod sql;
 pub mod tenants;
 pub mod transport;
+pub(crate) mod websocket;
 
 pub use client::{
     TerraScaleClient, API_ROOT, MAX_IDEMPOTENCY_KEY_LENGTH, PLACEMENT_HEADER, SESSION_HEADER,
