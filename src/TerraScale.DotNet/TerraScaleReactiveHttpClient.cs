@@ -23,6 +23,7 @@ public sealed class TerraScaleReactiveHttpClient
     internal const int MaxArrayItems = 10_000;
     internal const int MaxFields = 1024;
     internal const string CapabilityHeaderName = "X-TerraScale-View-Capability";
+    internal const string WebSocketSyncProtocol = "terrascale.sync.v1";
     private const int MaxErrorBytes = 64 * 1024;
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
@@ -279,6 +280,18 @@ public sealed class TerraScaleReactiveHttpClient
         var socket = new ClientWebSocket();
         try
         {
+            // The view capability is carried in the subprotocol offer so the
+            // producer can authenticate the upgrade. It is also retained in
+            // the header for regional callers and existing HTTP delivery.
+            try
+            {
+                socket.Options.AddSubProtocol(WebSocketSyncProtocol);
+                socket.Options.AddSubProtocol($"terrascale.cap.{capability}");
+            }
+            catch (ArgumentException)
+            {
+                throw new TerraScaleReactiveProtocolException("The reactive WebSocket capability is malformed.");
+            }
             var bearer = !string.IsNullOrWhiteSpace(options.ApiKey) ? options.ApiKey : options.BearerToken;
             if (string.IsNullOrWhiteSpace(bearer) && options.BearerTokenProvider is { } provider)
                 bearer = await provider(cancellationToken).ConfigureAwait(false);
@@ -287,7 +300,16 @@ public sealed class TerraScaleReactiveHttpClient
             socket.Options.SetRequestHeader(CapabilityHeaderName, capability);
             if (!string.IsNullOrWhiteSpace(options.RegionHint))
                 socket.Options.SetRequestHeader("X-TerraScale-Region-Hint", options.RegionHint);
-            await socket.ConnectAsync(uri, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await socket.ConnectAsync(uri, cancellationToken).ConfigureAwait(false);
+            }
+            catch (WebSocketException)
+            {
+                throw new TerraScaleReactiveProtocolException("The reactive WebSocket handshake was rejected.");
+            }
+            if (!string.Equals(socket.SubProtocol, WebSocketSyncProtocol, StringComparison.Ordinal))
+                throw new TerraScaleReactiveProtocolException("The reactive WebSocket negotiated an unsupported subprotocol.");
             return socket;
         }
         catch

@@ -1,12 +1,67 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Net.WebSockets;
 
 namespace TerraScale.DotNet.Tests;
 
 public sealed class TerraScaleReactiveHttpClientTests
 {
+    [Test]
+    public async Task WebSocketOffersCapabilityAndSyncProtocolsAndReceivesBinaryFrame()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var serverDone = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var capability = "capability-token";
+        var server = ServeWebSocketAsync(listener, capability, "terrascale.sync.v1", serverDone.Token, sendFrame: true);
+        using var httpClient = new HttpClient();
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions
+        {
+            BaseAddress = new Uri("http://127.0.0.1"),
+        });
+
+        using var socket = await client.ConnectWebSocketAsync(new Uri($"ws://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/socket"), capability, serverDone.Token);
+        var buffer = new byte[1];
+        var received = await socket.ReceiveAsync(buffer, serverDone.Token);
+        await server;
+
+        await Assert.That(socket.SubProtocol).IsEqualTo("terrascale.sync.v1");
+        await Assert.That(received.MessageType).IsEqualTo(WebSocketMessageType.Binary);
+        await Assert.That(buffer[0]).IsEqualTo((byte)0x90);
+    }
+
+    [Test]
+    [Arguments(null)]
+    [Arguments("terrascale.sync.v2")]
+    public async Task WebSocketRejectsMissingOrWrongNegotiatedProtocol(string? selectedProtocol)
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var serverDone = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var server = ServeWebSocketAsync(listener, "capability-token", selectedProtocol, serverDone.Token, sendFrame: false);
+        using var httpClient = new HttpClient();
+        var client = new TerraScaleReactiveHttpClient(httpClient);
+
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => client.ConnectWebSocketAsync(new Uri($"ws://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/socket"), "capability-token", serverDone.Token));
+        await server;
+    }
+
+    [Test]
+    public async Task MalformedWebSocketCapabilityDoesNotLeakItsValue()
+    {
+        using var httpClient = new HttpClient();
+        var client = new TerraScaleReactiveHttpClient(httpClient);
+        var secret = "bad\r\nX-Leak: should-not-appear";
+
+        var exception = await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => client.ConnectWebSocketAsync(new Uri("ws://127.0.0.1:1/socket"), secret, CancellationToken.None));
+
+        await Assert.That(exception!.Message.Contains(secret, StringComparison.Ordinal)).IsFalse();
+    }
+
     [Test]
     public async Task CanonicalAttachUsesDatabaseStatementParametersAndSafeUrls()
     {
@@ -295,6 +350,28 @@ public sealed class TerraScaleReactiveHttpClientTests
     }
 
     private sealed record RequestObservation(HttpMethod Method, Uri Uri, IReadOnlyDictionary<string, string> Headers);
+
+    private static async Task ServeWebSocketAsync(TcpListener listener, string capability, string? selectedProtocol, CancellationToken cancellationToken, bool sendFrame)
+    {
+        using var connection = await listener.AcceptTcpClientAsync(cancellationToken);
+        await using var stream = connection.GetStream();
+        using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
+        string? key = null;
+        string? protocols = null;
+        while (await reader.ReadLineAsync(cancellationToken) is { } line && line.Length > 0)
+        {
+            if (line.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase)) key = line[(line.IndexOf(':') + 1)..].Trim();
+            if (line.StartsWith("Sec-WebSocket-Protocol:", StringComparison.OrdinalIgnoreCase)) protocols = line[(line.IndexOf(':') + 1)..].Trim();
+        }
+
+        await Assert.That(protocols).IsEqualTo($"terrascale.sync.v1, terrascale.cap.{capability}");
+        var accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(key! + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+        var response = new StringBuilder("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n");
+        if (selectedProtocol is not null) response.Append("Sec-WebSocket-Protocol: ").Append(selectedProtocol).Append("\r\n");
+        response.Append("Sec-WebSocket-Accept: ").Append(accept).Append("\r\n\r\n");
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(response.ToString()), cancellationToken);
+        if (sendFrame) await stream.WriteAsync(new byte[] { 0x82, 0x01, 0x90 }, cancellationToken);
+    }
 
     private static byte[] Envelope(uint tag, ulong correlation = 0, byte[]? body = null, uint features = 0)
     {
