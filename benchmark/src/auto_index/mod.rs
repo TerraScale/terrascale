@@ -1399,6 +1399,7 @@ impl LifecycleStore {
         tenant: &str,
         collection: &str,
         template_digest: [u8; 32],
+        fields: &[String],
     ) -> Option<String> {
         self.indexes
             .values()
@@ -1407,10 +1408,10 @@ impl LifecycleStore {
                     && view.collection == collection
                     && view.phase == LifecyclePhase::Shadowing
                     && !view.visible
+                    && view.fields == fields
             })
             .find(|view| {
-                self.evidence
-                    .contains_key(&(tenant.to_owned(), view.id.clone(), template_digest))
+                self.evidence.contains_key(&(tenant.to_owned(), view.id.clone(), template_digest))
                     || template_digest != [0; 32]
             })
             .map(|view| view.id.clone())

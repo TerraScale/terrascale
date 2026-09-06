@@ -275,7 +275,7 @@ impl ProductionLifecycleControl {
         operation: &str,
     ) -> Result<(), String> {
         self.authority.verify(assignment, signature)?;
-        self.worker.ensure_snapshot(assignment, operation)
+        self.worker.ensure_snapshot(assignment, operation).map(|_| ())
     }
 
     /// Closes serving after verifying accepted authority.
@@ -286,7 +286,7 @@ impl ProductionLifecycleControl {
         operation: &str,
     ) -> Result<(), String> {
         self.authority.verify(assignment, signature)?;
-        self.worker.close_database(assignment, operation)
+        self.worker.close_database(assignment, operation).map(|_| ())
     }
 
     /// Stops one native backup stream after verifying accepted authority.
@@ -297,7 +297,7 @@ impl ProductionLifecycleControl {
         operation: &str,
     ) -> Result<(), String> {
         self.authority.verify(assignment, signature)?;
-        self.worker.stop_native_backup(assignment, operation)
+        self.worker.stop_native_backup(assignment, operation).map(|_| ())
     }
 
     /// Verifies accepted authority before resuming the same retained database.
@@ -308,7 +308,7 @@ impl ProductionLifecycleControl {
         operation: &str,
     ) -> Result<(), String> {
         self.authority.verify(assignment, signature)?;
-        self.worker.reactivate(assignment, operation)
+        self.worker.reactivate(assignment, operation).map(|_| ())
     }
 
     pub fn verify_snapshot_placement(
@@ -318,7 +318,7 @@ impl ProductionLifecycleControl {
         operation: &str,
     ) -> Result<(), String> {
         self.authority.verify(assignment, signature)?;
-        self.worker.verify_snapshot_placement(assignment, operation)
+        self.worker.verify_snapshot_placement(assignment, operation).map(|_| ())
     }
 
     pub fn delete_owned_data(

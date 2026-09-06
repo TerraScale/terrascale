@@ -380,6 +380,8 @@ pub(super) async fn download_export(
     };
     match service.download(&job, &member).await {
         Ok(bytes) => {
+            let length = bytes.len().to_string();
+            let checksum = blake3::hash(&bytes).to_hex().to_string();
             let mut response = bytes.into_response();
             response
                 .headers_mut()
@@ -388,6 +390,12 @@ pub(super) async fn download_export(
                 axum::http::header::CACHE_CONTROL,
                 HeaderValue::from_static("private, no-store"),
             );
+            if let Ok(value) = HeaderValue::from_str(&length) {
+                response.headers_mut().insert("x-terrascale-artifact-length", value);
+            }
+            if let Ok(value) = HeaderValue::from_str(&checksum) {
+                response.headers_mut().insert("x-terrascale-artifact-checksum", value);
+            }
             response
         }
         Err(error) => export_error(&error).into_response(),

@@ -52,7 +52,7 @@ impl NativeRecoveryLimits {
 /// Owner handle for the single serial recovery worker.
 pub struct NativeRecoveryWorker {
     runtime: Arc<NativeRecoveryRuntime>,
-    stop: tokio::sync::oneshot::Sender<()>,
+    stop: tokio::sync::oneshot::Sender<tokio::time::Instant>,
     join: tokio::task::JoinHandle<bool>,
 }
 
@@ -60,7 +60,8 @@ impl NativeRecoveryWorker {
     /// Signals the worker and waits for its owned task to finish.
     pub async fn shutdown(self) -> Result<(), NativeRecoveryError> {
         *self.runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? = true;
-        let _ = self.stop.send(());
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let _ = self.stop.send(deadline);
         let join = tokio::spawn(async move { self.join.await });
         let deadline = match tokio::time::timeout(std::time::Duration::from_secs(5), join).await {
             Ok(result) => result

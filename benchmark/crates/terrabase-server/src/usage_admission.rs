@@ -275,7 +275,7 @@ impl UsageAdmissionJournal {
         // ECDSA signatures are randomized. Retries with the same canonical
         // payload retain the operation identity even when the wrapper
         // signature differs; the incoming wrapper was fully re-verified above.
-        if stored_wire.key_id != wire.key_id || stored_wire.payload != wire.payload {
+        if !same_allocation_identity(&stored_wire, &wire) {
             return Err("allocation identity conflict".into());
         }
         tx.commit().map_err(|_| "allocation persistence failed")?;
@@ -526,6 +526,13 @@ impl UsageAdmissionJournal {
             .layer(DefaultBodyLimit::max(16384))
             .with_state(self)
     }
+}
+
+fn same_allocation_identity(
+    stored: &terrabase::usage::SignedAllocation,
+    incoming: &terrabase::usage::SignedAllocation,
+) -> bool {
+    stored.key_id == incoming.key_id && stored.payload == incoming.payload
 }
 async fn admit_allocation(
     State(journal): State<Arc<UsageAdmissionJournal>>,

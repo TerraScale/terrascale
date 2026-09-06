@@ -7,36 +7,16 @@ use crate::export_api::{
     ensure_no_symlink_components, fact, publish_artifact, safe_member_path,
     sync_directory_ancestors,
 };
-use crate::export_artifact_crypto::LocalCrypto;
+use crate::export_artifact_crypto::{
+    ArtifactCrypto, LocalCrypto, LocalManifest, LocalWriter, bounded_read, encrypted_member,
+    io_error,
+};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use terrabase::encryption::ProviderMode;
-
-fn io_error(error: &io::Error) -> ExportError {
-    ExportError::Io(error.to_string())
-}
-
-fn bounded_read(path: &Path, limit: usize) -> Result<Vec<u8>, ExportError> {
-    ensure_no_symlink_components(path)?;
-    let file = File::open(path).map_err(|error| io_error(&error))?;
-    let metadata = file.metadata().map_err(|error| io_error(&error))?;
-    if !metadata.is_file() || metadata.len() > limit as u64 {
-        return Err(ExportError::DestinationUnavailable);
-    }
-    let mut bytes = Vec::new();
-    file.take(limit as u64 + 1).read_to_end(&mut bytes).map_err(|error| io_error(&error))?;
-    if bytes.len() > limit {
-        return Err(ExportError::DestinationUnavailable);
-    }
-    Ok(bytes)
-}
-
-fn encrypted_member(path: &Path) -> Result<Vec<u8>, ExportError> {
-    bounded_read(path, MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) + 4096)
-}
 
 fn private_key(root: &Path, name: &str) -> Result<[u8; 32], ExportError> {
     ensure_no_symlink_components(root)?;
@@ -106,19 +86,9 @@ pub fn local_artifacts(
     Ok(Arc::new(LocalPort { root: root.into(), crypto }))
 }
 
-#[derive(serde::Deserialize)]
-pub(crate) struct LocalManifest {
-    members: Vec<ArtifactFact>,
-}
-
 struct LocalPort {
     root: PathBuf,
-    crypto: Arc<LocalCrypto>,
-}
-pub(crate) struct LocalWriter {
-    directory: PathBuf,
-    job_id: String,
-    crypto: Arc<LocalCrypto>,
+    crypto: Arc<dyn ArtifactCrypto>,
 }
 impl ArtifactPort for LocalPort {
     fn attestation(&self) -> Option<EncryptionAttestation> {

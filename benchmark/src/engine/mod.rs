@@ -1180,7 +1180,12 @@ pub struct Engine {
     /// candidates. Values are logical pages/rows only; document bodies never
     /// enter this sketch.
     pub(crate) auto_index_observations: Mutex<crate::auto_index::WorkloadSketch>,
-    pub(crate) auto_index_shadow_samples: Mutex<BTreeMap<(String, String, [u8; 32]), u64>>,
+    pub(crate) auto_index_shadow_samples: Mutex<
+        BTreeMap<
+            (String, String, [u8; 32]),
+            (u64, Vec<crate::auto_index::LogicalCost>, Vec<crate::auto_index::LogicalCost>),
+        >,
+    >,
     /// The Storage Tier Mover's control state (P4): the configured
     /// policy and the pause gate. The handle is [`Engine::tiers`].
     /// The group-commit mailbox: waiting intents and the leader flag.
@@ -4137,21 +4142,22 @@ impl Engine {
         collection: &str,
         field: &str,
         template_digest: [u8; 32],
+        candidate_fields: &[String],
         filter: &crate::storage::ScanFilter,
         generation: u64,
     ) {
         let tenant = scope.tenant().as_str().to_owned();
         let Some(candidate) = self.auto_index_lifecycle.lock().ok().and_then(|state| {
-            state.shadow_candidate(&tenant, collection, template_digest)
-        }) else { return };
+            state.shadow_candidate(&tenant, collection, template_digest, candidate_fields)
+        }) else {
+            return;
+        };
         let key = (tenant.clone(), candidate.clone(), template_digest);
         let now = Self::now_millis();
         let Ok(mut samples) = self.auto_index_shadow_samples.lock() else { return };
-        if samples.get(&key).is_some_and(|last| now.saturating_sub(*last) < 60_000) {
+        if samples.get(&key).is_some_and(|(last, _, _)| now.saturating_sub(*last) < 60_000) {
             return;
         }
-        samples.insert(key, now);
-        drop(samples);
         let Ok(collection) = crate::types::CollectionName::try_new(collection) else { return };
         let request = crate::storage::ShadowReadRequest {
             collection: &collection,
@@ -4163,14 +4169,36 @@ impl Engine {
             max_vm_steps: crate::storage::MAX_SHADOW_VM_STEPS,
         };
         let Ok(comparison) = self.measure_index_shadow(scope, snapshot, &request) else { return };
+        let entry = samples.entry(key.clone()).or_insert_with(|| (0, Vec::new(), Vec::new()));
+        entry.0 = now;
+        entry.1.push(crate::auto_index::LogicalCost::new(
+            u64::from(comparison.ordinary.full_scan_steps),
+            u64::from(comparison.ordinary.rows),
+        ));
+        entry.2.push(crate::auto_index::LogicalCost::new(
+            u64::from(comparison.candidate.full_scan_steps),
+            u64::from(comparison.candidate.rows),
+        ));
+        if samples.len() > 256 {
+            if let Some(oldest) =
+                samples.iter().min_by_key(|(_, (last, _, _))| *last).map(|(key, _)| key.clone())
+            {
+                samples.remove(&oldest);
+            }
+        }
+        if entry.1.len() < 20 {
+            return;
+        }
+        let (_, baseline, candidate_samples) = samples.remove(&key).expect("shadow sample entry");
+        drop(samples);
         let _ = self.auto_index_record_shadow_evidence(
             &scope.tenant().clone(),
             crate::auto_index::ShadowEvidence {
                 index_id: candidate,
                 generation,
                 template_digest,
-                baseline: vec![crate::auto_index::LogicalCost::new(u64::from(comparison.ordinary.full_scan_steps), u64::from(comparison.ordinary.rows))],
-                candidate: vec![crate::auto_index::LogicalCost::new(u64::from(comparison.candidate.full_scan_steps), u64::from(comparison.candidate.rows))],
+                baseline,
+                candidate: candidate_samples,
                 improvement: 0.0,
                 regression: false,
                 digest: [0; 32],
@@ -4614,6 +4642,67 @@ impl Engine {
     /// Engine call, and never touches an explicit index.
     pub fn maintain_indexes(&self) {
         crate::query::optimizer::lifecycle::maintain(self, &self.indexes, self.identity);
+        self.maintain_d31_indexes();
+    }
+
+    fn maintain_d31_indexes(&self) {
+        let tenant = self.database_owner().tenant().clone();
+        let Ok(snapshot) = self.auto_index_lifecycle_snapshot(&tenant, None, 64) else { return };
+        for index in snapshot.indexes {
+            let generation = index.generation;
+            match index.phase {
+                crate::auto_index::LifecyclePhase::Selected => {
+                    let columns = index
+                        .fields
+                        .iter()
+                        .map(|field| crate::storage::InvisibleIndexColumn {
+                            field: field.clone(),
+                            kind: crate::storage::InvisibleColumnKind::Text,
+                        })
+                        .collect::<Vec<_>>();
+                    let _ = self.begin_index_build(
+                        &tenant,
+                        &index.id,
+                        &columns,
+                        generation,
+                        Self::now_millis(),
+                    );
+                }
+                crate::auto_index::LifecyclePhase::Building => {
+                    let _ = self.advance_index_build(
+                        &tenant,
+                        &index.id,
+                        32,
+                        generation,
+                        Self::now_millis(),
+                    );
+                }
+                crate::auto_index::LifecyclePhase::Shadowing => {
+                    if let Some(digest) =
+                        self.auto_index_shadow_evidence_digest(&tenant, &index.id).ok().flatten()
+                        && let Ok(Some(evidence)) =
+                            self.auto_index_shadow_evidence(&tenant, &index.id, digest, 64)
+                    {
+                        if evidence.regression {
+                            let _ = self.auto_index_revert(
+                                &tenant,
+                                &index.id,
+                                generation,
+                                Self::now_millis(),
+                            );
+                        } else if evidence.baseline.len() >= 20 {
+                            let _ = self.auto_index_activate(
+                                &tenant,
+                                &index.id,
+                                generation,
+                                Self::now_millis(),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Arms one storage fault inside the publication order. Test-only.

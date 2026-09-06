@@ -5599,10 +5599,7 @@ impl StoragePort for SqliteStorage {
                         )
                     })
             } else if kind == "internal_maintenance" {
-                (
-                    "ttl-expiry".to_owned(),
-                    format!("TTL expiry removed {commit_ulid} at hlc {hlc}"),
-                )
+                ("ttl-expiry".to_owned(), format!("TTL expiry removed {commit_ulid} at hlc {hlc}"))
             } else {
                 (
                     MergePolicy::Origin.as_str().to_owned(),

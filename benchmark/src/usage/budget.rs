@@ -15,12 +15,16 @@ pub const MAX_ALLOCATION_BYTES: usize = 64 << 10;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AllocationGrant {
+    pub cycle_id: String,
+    pub rate_nano_dollar: i64,
     pub operation_id: String,
     pub organization_id: String,
     pub database_id: String,
     pub branch_id: String,
     pub holder_id: String,
     pub requested_units: i64,
+    pub included_units: i64,
+    pub paid_units: i64,
     pub regions: Vec<String>,
     pub units: i64,
     pub cost_minor: i64,
@@ -153,6 +157,8 @@ impl VerifiedAllocation {
             || envelope.cycle_id.is_empty()
             || envelope.rate_nano_dollar < 0
             || envelope.placement != expected_placement
+            || grant.cycle_id != envelope.cycle_id
+            || grant.rate_nano_dollar != envelope.rate_nano_dollar
             || grant.operation_id.is_empty()
             || grant.organization_id != expected_organization
             || grant.database_id != expected_database
@@ -166,10 +172,13 @@ impl VerifiedAllocation {
                     )
                     .ok_or(AllocationError::Binding)?
             || grant.units <= 0
+            || grant.included_units < 0
+            || grant.paid_units < 0
+            || grant.included_units.checked_add(grant.paid_units) != Some(grant.units)
             || grant.cost_minor < 0
             || grant.cost_nano_dollar
                 != grant
-                    .units
+                    .paid_units
                     .checked_mul(envelope.rate_nano_dollar)
                     .ok_or(AllocationError::Binding)?
             || grant.policy_epoch != expected_policy_epoch
@@ -304,11 +313,11 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine as _;
     use aws_lc_rs::{
         rand::SystemRandom,
         signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair},
     };
+    use base64::Engine as _;
 
     fn signed(holder: &str) -> (Vec<u8>, Vec<u8>, String) {
         let rng = SystemRandom::new();
@@ -318,12 +327,16 @@ mod tests {
         let public = key.public_key().as_ref();
         let key_id = hex::encode(blake3::hash(public).as_bytes());
         let grant = AllocationGrant {
+            cycle_id: "cycle-1".into(),
+            rate_nano_dollar: 1,
             operation_id: "op-1".into(),
             organization_id: "org-1".into(),
             database_id: "db-1".into(),
             branch_id: "main".into(),
             holder_id: holder.into(),
             requested_units: 2,
+            included_units: 0,
+            paid_units: 6,
             regions: vec!["gru".into(), "sfo".into(), "fra".into()],
             units: 6,
             cost_minor: 0,
@@ -425,13 +438,36 @@ mod tests {
 
     #[test]
     fn go_signed_allocation_vector_verifies() {
-        let vector: serde_json::Value = serde_json::from_slice(include_bytes!("../../testdata/allocation-go-vector.json")).unwrap();
-        let payload = base64::engine::general_purpose::STANDARD.decode(vector["payload"].as_str().unwrap()).unwrap();
+        let vector: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../testdata/allocation-go-vector.json"))
+                .unwrap();
+        let payload = base64::engine::general_purpose::STANDARD
+            .decode(vector["payload"].as_str().unwrap())
+            .unwrap();
         let mut wire_sig = hex::decode(vector["signature_hex"].as_str().unwrap()).unwrap();
         let public = hex::decode(vector["public_spki_hex"].as_str().unwrap()).unwrap();
         let key_id = vector["key_id"].as_str().unwrap();
-        let wire = serde_json::to_vec(&SignedAllocation { payload, signature: std::mem::take(&mut wire_sig), key_id: key_id.into() }).unwrap();
-        let verified = VerifiedAllocation::verify(&wire, key_id, &public, "GRU", "db-placement", "org", "db", "writer-vector", 3, 4, 9, 1_700_000_000_000).unwrap();
+        let wire = serde_json::to_vec(&SignedAllocation {
+            payload,
+            signature: std::mem::take(&mut wire_sig),
+            key_id: key_id.into(),
+        })
+        .unwrap();
+        let verified = VerifiedAllocation::verify(
+            &wire,
+            key_id,
+            &public,
+            "GRU",
+            "db-placement",
+            "org",
+            "db",
+            "writer-vector",
+            3,
+            4,
+            9,
+            1_700_000_000_000,
+        )
+        .unwrap();
         assert_eq!(verified.grant().operation_id, "op-vector");
     }
 }

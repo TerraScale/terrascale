@@ -121,6 +121,7 @@ pub(crate) fn observe_auto_index_execution(
     query: &NormalizedQuery,
     tenant: &TenantId,
     result: &QueryResult,
+    snapshot: &ReadSnapshot,
 ) {
     let Some(collection) = query.source().collection() else { return };
     let mut predicates = Vec::new();
@@ -176,6 +177,46 @@ pub(crate) fn observe_auto_index_execution(
         at_millis: Engine::now_millis(),
     };
     engine.record_auto_index_observation(observation);
+    let Some(filter) = execute::pushdown_filter(query.predicate()) else { return };
+    let Some(field) = predicates.first().map(|predicate| predicate.field.as_str()) else { return };
+    let mut identity = format!("{}:{field}", collection.as_str());
+    for predicate in &predicates {
+        identity.push_str(&format!(":{:?}", predicate.kind));
+    }
+    for field in query.ordering().keys() {
+        identity.push_str(":order=");
+        identity.push_str(field.field());
+    }
+    if let Some(fields) = query.projection().selected() {
+        for field in fields {
+            identity.push_str(":select=");
+            identity.push_str(field.as_str());
+        }
+    }
+    let digest = *blake3::hash(identity.as_bytes()).as_bytes();
+    let mut candidate_fields: Vec<String> = predicates.iter().map(|p| p.field.clone()).collect();
+    candidate_fields.extend(query.ordering().keys().iter().map(|key| key.field().to_owned()));
+    if let Some(fields) = query.projection().selected() {
+        candidate_fields.extend(fields.iter().map(ToOwned::to_owned));
+    }
+    let mut unique = Vec::with_capacity(candidate_fields.len());
+    for field in candidate_fields {
+        if !unique.contains(&field) {
+            unique.push(field);
+        }
+    }
+    if let Ok(generation) = engine.auto_index_lifecycle_generation(tenant) {
+        engine.sample_auto_index_shadow(
+            engine.scope_for(tenant),
+            snapshot,
+            collection.as_str(),
+            field,
+            digest,
+            &unique,
+            &filter,
+            generation,
+        );
+    }
 }
 
 /// Query planning or execution failures.
@@ -611,13 +652,25 @@ impl<'engine> QueryStore<'engine> {
             // document model.
             if plan.sql_execute_only_operator().is_none() {
                 let result = execute::execute(self.engine, &self.indexes, plan, snapshot)?;
-                observe_auto_index_execution(self.engine, plan.model(), snapshot.tenant(), &result);
+                observe_auto_index_execution(
+                    self.engine,
+                    plan.model(),
+                    snapshot.tenant(),
+                    &result,
+                    snapshot,
+                );
                 return Ok(result);
             }
             return sql_execute::execute(self.engine, plan, runtime, snapshot);
         }
         let result = execute::execute(self.engine, &self.indexes, plan, snapshot)?;
-        observe_auto_index_execution(self.engine, plan.model(), snapshot.tenant(), &result);
+        observe_auto_index_execution(
+            self.engine,
+            plan.model(),
+            snapshot.tenant(),
+            &result,
+            snapshot,
+        );
         Ok(result)
     }
 

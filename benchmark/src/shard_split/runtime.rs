@@ -5,14 +5,13 @@
 //! validation, route installation, and session-frontier publication.
 
 use super::{
-    CutoverContext, CutoverPermit, ShardRouter, ShardSplit, SplitEngineAdapter,
-    SplitOrchestratorAdapter, SplitPhase,
-    SplitStateStore,
+    AtomicSplitCutover, CutoverContext, CutoverPermit, ShardRouter, ShardSplit, SplitEngineAdapter,
+    SplitOrchestratorAdapter, SplitPhase, SplitStateStore,
 };
 
 /// Failure while driving a serving split.
 #[derive(Debug, Eq, PartialEq)]
-pub enum SplitRuntimeError<SE, DE, OE, PE> {
+pub enum SplitRuntimeError<SE, DE, CE, OE> {
     /// No operation context was attached to the split.
     MissingContext,
     /// Durable split state could not be loaded or saved.
@@ -20,9 +19,9 @@ pub enum SplitRuntimeError<SE, DE, OE, PE> {
     /// Target creation, verification, or cleanup failed.
     Data(DE),
     /// Placement validation failed.
-    Placement(PE),
+    Placement(OE),
     /// The engine rejected an atomic cutover.
-    Cutover(SE),
+    Cutover(CE),
     /// The serving router rejected the committed route mirror.
     Routing(super::RouteError),
     /// Frontier publication failed after the route was committed.
@@ -75,16 +74,26 @@ where
     pub fn admit(
         &mut self,
         mut split: ShardSplit,
-    ) -> Result<(), SplitRuntimeError<<E as SplitStateStore>::Error, E::DataError, O::Error, O::Error>> {
+    ) -> Result<
+        (),
+        SplitRuntimeError<
+            <E as SplitStateStore>::Error,
+            E::DataError,
+            <E as AtomicSplitCutover>::Error,
+            O::Error,
+        >,
+    > {
         let context = split.context().ok_or(SplitRuntimeError::MissingContext)?;
         self.orchestrator
             .validate_split_placement(context.database_incarnation(), context.placement_epoch())
             .map_err(SplitRuntimeError::Placement)?;
         self.engine.create_split_target(&context).map_err(SplitRuntimeError::Data)?;
-        split.begin_backfill().map_err(|error| SplitRuntimeError::WrongPhase(match error {
-            super::SplitCutoverError::WrongPhase(phase) => phase,
-            _ => SplitPhase::Planned,
-        }))?;
+        split.begin_backfill().map_err(|error| {
+            SplitRuntimeError::WrongPhase(match error {
+                super::SplitCutoverError::WrongPhase(phase) => phase,
+                _ => SplitPhase::Planned,
+            })
+        })?;
         self.engine.save(&split.durable_state()).map_err(SplitRuntimeError::State)?;
         self.split = Some(split);
         self.committed_generation = None;
@@ -95,7 +104,15 @@ where
     /// identity before allowing the serving worker to continue.
     pub fn resume(
         &mut self,
-    ) -> Result<bool, SplitRuntimeError<<E as SplitStateStore>::Error, E::DataError, O::Error, O::Error>> {
+    ) -> Result<
+        bool,
+        SplitRuntimeError<
+            <E as SplitStateStore>::Error,
+            E::DataError,
+            <E as AtomicSplitCutover>::Error,
+            O::Error,
+        >,
+    > {
         let Some(state) = self.engine.load().map_err(SplitRuntimeError::State)? else {
             self.split = None;
             return Ok(false);
@@ -115,12 +132,23 @@ where
     pub fn begin_catch_up(
         &mut self,
         through: u64,
-    ) -> Result<(), SplitRuntimeError<<E as SplitStateStore>::Error, E::DataError, O::Error, O::Error>> {
-        let split = self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
-        split.begin_catch_up(through).map_err(|error| SplitRuntimeError::WrongPhase(match error {
-            super::SplitCutoverError::WrongPhase(phase) => phase,
-            _ => SplitPhase::Backfilling,
-        }))?;
+    ) -> Result<
+        (),
+        SplitRuntimeError<
+            <E as SplitStateStore>::Error,
+            E::DataError,
+            <E as AtomicSplitCutover>::Error,
+            O::Error,
+        >,
+    > {
+        let split =
+            self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
+        split.begin_catch_up(through).map_err(|error| {
+            SplitRuntimeError::WrongPhase(match error {
+                super::SplitCutoverError::WrongPhase(phase) => phase,
+                _ => SplitPhase::Backfilling,
+            })
+        })?;
         self.engine.save(&split.durable_state()).map_err(SplitRuntimeError::State)
     }
 
@@ -130,8 +158,17 @@ where
         source_high_water: u64,
         target_applied: u64,
         acknowledged: u64,
-    ) -> Result<(), SplitRuntimeError<<E as SplitStateStore>::Error, E::DataError, O::Error, O::Error>> {
-        let split = self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
+    ) -> Result<
+        (),
+        SplitRuntimeError<
+            <E as SplitStateStore>::Error,
+            E::DataError,
+            <E as AtomicSplitCutover>::Error,
+            O::Error,
+        >,
+    > {
+        let split =
+            self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
         split.note_source_high_water(source_high_water);
         split.note_target_applied(target_applied);
         split.note_acked(acknowledged);
@@ -144,8 +181,17 @@ where
         &mut self,
         permit: CutoverPermit,
         drained_through: u64,
-    ) -> Result<u64, SplitRuntimeError<<E as SplitStateStore>::Error, E::DataError, O::Error, O::Error>> {
-        let split = self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
+    ) -> Result<
+        u64,
+        SplitRuntimeError<
+            <E as SplitStateStore>::Error,
+            E::DataError,
+            <E as AtomicSplitCutover>::Error,
+            O::Error,
+        >,
+    > {
+        let split =
+            self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
         if !split.can_cut_over() {
             return Err(SplitRuntimeError::WrongPhase(split.phase()));
         }
@@ -153,14 +199,22 @@ where
         self.orchestrator
             .validate_split_placement(context.database_incarnation(), context.placement_epoch())
             .map_err(SplitRuntimeError::Placement)?;
-        let generation = self.engine.install_split_route(&CutoverContext {
-            split: context,
-            route_generation: self.router.table().generation(),
-            drained_through,
-            permit,
-        }).map_err(SplitRuntimeError::Cutover)?;
+        let generation = self
+            .engine
+            .install_split_route(&CutoverContext {
+                split: context,
+                route_generation: self.router.table().generation(),
+                drained_through,
+                permit,
+            })
+            .map_err(SplitRuntimeError::Cutover)?;
         self.router
-            .cut_over(context.source_shard(), context.target_shard(), split.split_key().to_vec(), permit)
+            .cut_over(
+                context.source_shard(),
+                context.target_shard(),
+                split.split_key().to_vec(),
+                permit,
+            )
             .map_err(SplitRuntimeError::Routing)?;
         self.committed_generation = Some(generation);
         split.cut_over().map_err(|_| SplitRuntimeError::MissingCommittedGeneration)?;
@@ -174,11 +228,20 @@ where
     /// Verifies and completes a committed split, then removes source rows.
     pub fn complete(
         &mut self,
-    ) -> Result<(), SplitRuntimeError<<E as SplitStateStore>::Error, E::DataError, O::Error, O::Error>> {
+    ) -> Result<
+        (),
+        SplitRuntimeError<
+            <E as SplitStateStore>::Error,
+            E::DataError,
+            <E as AtomicSplitCutover>::Error,
+            O::Error,
+        >,
+    > {
         if self.committed_generation.is_none() {
             return Err(SplitRuntimeError::MissingCommittedGeneration);
         }
-        let split = self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
+        let split =
+            self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
         let context = split.context().ok_or(SplitRuntimeError::MissingContext)?;
         self.engine.verify_split_target(&context).map_err(SplitRuntimeError::Data)?;
         split.note_verified().map_err(|_| SplitRuntimeError::WrongPhase(split.phase()))?;

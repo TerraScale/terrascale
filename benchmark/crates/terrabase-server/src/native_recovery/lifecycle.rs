@@ -5,7 +5,7 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const DRAIN_DEADLINE: Duration = Duration::from_secs(5);
 
 pub(super) async fn supervise<E, F, Fut>(
-    mut stop: oneshot::Receiver<()>,
+    mut stop: oneshot::Receiver<tokio::time::Instant>,
     notify: Arc<Notify>,
     process: F,
 ) -> bool
@@ -21,7 +21,11 @@ where
     loop {
         if !stopping {
             match stop.try_recv() {
-                Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                Ok(until) => {
+                    stopping = true;
+                    deadline = Some(until);
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
                     stopping = true;
                     deadline = Some(tokio::time::Instant::now() + DRAIN_DEADLINE);
                 }
@@ -33,11 +37,11 @@ where
         {
             return true;
         }
-        if !immediate {
+        if !immediate && !stopping {
             tokio::select! {
-                _ = &mut stop => {
+                until = &mut stop => {
                     stopping = true;
-                    deadline = Some(tokio::time::Instant::now() + DRAIN_DEADLINE);
+                    deadline = Some(until);
                 },
                 _ = notify.notified() => {}
             }
@@ -70,9 +74,9 @@ where
                 } else {
                     tokio::select! {
                         _ = tokio::time::sleep(delay) => {}
-                        _ = &mut stop => {
+                        until = &mut stop => {
                             stopping = true;
-                            deadline = Some(tokio::time::Instant::now() + DRAIN_DEADLINE);
+                            deadline = Some(until);
                         }
                     }
                 }
@@ -105,9 +109,55 @@ mod tests {
             }
         }));
         tokio::task::yield_now().await;
-        stop.send(()).unwrap();
+        stop.send(tokio::time::Instant::now() + DRAIN_DEADLINE).unwrap();
         worker.await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn pre_signaled_stop_runs_one_empty_drain_without_repolling_receiver() {
+        let notify = Arc::new(Notify::new());
+        let (stop, stop_rx) = oneshot::channel();
+        stop.send(tokio::time::Instant::now() + DRAIN_DEADLINE).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let worker = tokio::spawn(supervise::<(), _, _>(stop_rx, notify, move || {
+            let observed = Arc::clone(&observed);
+            async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok(false)
+            }
+        }));
+        assert!(!worker.await.unwrap());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn absolute_deadline_after_inflight_capture_starts_no_second_attempt() {
+        let notify = Arc::new(Notify::new());
+        let (stop, stop_rx) = oneshot::channel();
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let worker = tokio::spawn(supervise::<(), _, _>(stop_rx, notify.clone(), move || {
+            let entered = Arc::clone(&entered);
+            let release = Arc::clone(&release);
+            let observed = Arc::clone(&observed);
+            async move {
+                observed.fetch_add(1, Ordering::SeqCst);
+                entered.notify_one();
+                release.notified().await;
+                Ok(true)
+            }
+        }));
+        notify.notify_one();
+        entered.notified().await;
+        stop.send(tokio::time::Instant::now() + DRAIN_DEADLINE).unwrap();
+        tokio::time::advance(DRAIN_DEADLINE + Duration::from_secs(1)).await;
+        release.notify_one();
+        assert!(worker.await.unwrap());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -131,7 +181,7 @@ mod tests {
         while calls.load(Ordering::SeqCst) < 2 {
             tokio::task::yield_now().await;
         }
-        stop.send(()).unwrap();
+        stop.send(tokio::time::Instant::now() + DRAIN_DEADLINE).unwrap();
         worker.await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
@@ -170,7 +220,7 @@ mod tests {
         }));
         notify.notify_one();
         entered_one.notified().await;
-        stop.send(()).unwrap();
+        stop.send(tokio::time::Instant::now() + DRAIN_DEADLINE).unwrap();
         release_one.notify_one();
         entered_two.notified().await;
         tokio::time::advance(Duration::from_secs(6)).await;

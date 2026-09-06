@@ -504,3 +504,17 @@ fn unsafe_usage_paths_are_refused() {
         .is_err()
     );
 }
+
+#[test]
+fn allocation_retry_identity_ignores_randomized_signature() {
+    let first = terrabase::usage::SignedAllocation {
+        payload: br#"{"grant":{"operation_id":"op"}}"#.to_vec(),
+        signature: vec![1, 2, 3],
+        key_id: "key".into(),
+    };
+    let mut retry = first.clone();
+    retry.signature = vec![9, 8, 7, 6];
+    assert!(same_allocation_identity(&first, &retry));
+    retry.payload.push(b' ');
+    assert!(!same_allocation_identity(&first, &retry));
+}

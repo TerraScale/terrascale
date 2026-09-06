@@ -2569,15 +2569,7 @@ async fn batch_documents(
             Err((code, message)) => return batch_refusal(index, code, message),
         }
     }
-    if let Err(error) = attach_write_budget(
-        &state,
-        &mut transaction,
-        &scope,
-        &state.scope.1,
-        &database_id,
-        &operation_id,
-        units,
-    ) {
+    if let Err(error) = attach_write_budget(&state, &mut transaction, &scope, &state.scope.1, &database_id, &operation_id, units) {
         return error.into_response();
     }
     if let Err(error) = durability.guard(&mut transaction) {
@@ -3360,7 +3352,15 @@ async fn put_document(
     let units = terrabase::usage::write_units_for_bytes(
         serde_json::to_vec(&value).map_or(0, |bytes| bytes.len() as u64),
     );
-    if let Err(error) = attach_write_budget(&state, &mut transaction, &scope, &state.scope.1, &database_id, &operation_id, units) {
+    if let Err(error) = attach_write_budget(
+        &state,
+        &mut transaction,
+        &scope,
+        &state.scope.1,
+        &database_id,
+        &operation_id,
+        units,
+    ) {
         return error.into_response();
     }
     let create_only = match create_only_precondition(&headers) {
@@ -4033,7 +4033,7 @@ async fn restore_backup(
     Path(name): Path<String>,
     body: String,
 ) -> Response {
-    restore_or_branch(state, name, body, RestoreFlavor::Restore)
+    restore_or_branch(state, name, body, RestoreFlavor::Restore).await
 }
 
 /// `POST /databases/{name}/branches` — restore plus register with parent
@@ -4090,7 +4090,7 @@ async fn create_branch(
             Err(error) => provisioning_error(error).into_response(),
         };
     }
-    restore_or_branch(state, name, body, RestoreFlavor::Branch)
+    restore_or_branch(state, name, body, RestoreFlavor::Branch).await
 }
 
 /// Whether the new database registers plain or as a branch.
@@ -4107,7 +4107,7 @@ enum RestoreFlavor {
     clippy::needless_pass_by_value,
     reason = "the axum handlers move owned state, name, body, and flavor into this shared path"
 )]
-fn restore_or_branch(
+async fn restore_or_branch(
     state: Arc<ApiState>,
     name: String,
     body: String,
