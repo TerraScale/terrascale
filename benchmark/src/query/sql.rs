@@ -1109,6 +1109,11 @@ fn bound_literal(expression: &Expr, parameters: &SqlParameters) -> Result<Docume
 /// planner expresses — is unsupported or out of bounds.
 pub fn validate_parameters(text: &str, parameters: &SqlParameters) -> Result<(), SqlError> {
     let parsed = parse(text, crate::operations::MAX_SQL_TEXT_BYTES)?;
+    // MATCH is also legal in execute-only SQL (for example a join).  Those
+    // statements do not go through `lower`, so validate the bound search
+    // operand at the SQL boundary as well.  Otherwise an oversized or
+    // control-bearing value could reach SQLite's FTS parser directly.
+    validate_match_values(&parsed, parameters)?;
     validate_paging_bounds(&parsed, parameters)?;
     if matches!(classify_live_subset(&parsed), LiveSubset::Live) {
         match lower(&parsed, parameters) {
@@ -1135,6 +1140,58 @@ pub fn validate_parameters(text: &str, parameters: &SqlParameters) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// Validates every SQL `MATCH` operand before either the typed or SQLite
+/// execution path sees it.  Values remain out-of-band parameters; this only
+/// checks their type and the shared bounded search-query contract.
+fn validate_match_values(parsed: &ParsedSql, parameters: &SqlParameters) -> Result<(), SqlError> {
+    struct MatchValidator<'parameters> {
+        parameters: &'parameters SqlParameters,
+        error: Option<SqlError>,
+        next_ordinal: u64,
+    }
+
+    impl Visitor for MatchValidator<'_> {
+        type Break = ();
+
+        fn pre_visit_expr(&mut self, expression: &Expr) -> ControlFlow<Self::Break> {
+            let Expr::BinaryOp { op: BinaryOperator::Match, right, .. } = expression else {
+                return ControlFlow::Continue(());
+            };
+            let value = match right.as_ref() {
+                Expr::Value(value) => match &value.value {
+                    Value::SingleQuotedString(value) | Value::DoubleQuotedString(value) => {
+                        Some(DocumentValue::String(value.clone()))
+                    }
+                    Value::Placeholder(name) => {
+                        let bare = name == "?";
+                        let mut name = name.trim_start_matches(['$', ':', '@', '?']).to_owned();
+                        if bare {
+                            name = self.next_ordinal.to_string();
+                            self.next_ordinal = self.next_ordinal.saturating_add(1);
+                        }
+                        self.parameters.get(&name).cloned()
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            let Some(DocumentValue::String(query)) = value else {
+                self.error = Some(SqlError::plain(SqlErrorClass::InvalidBound));
+                return ControlFlow::Break(());
+            };
+            if super::spec::validate_search_query(&query).is_err() {
+                self.error = Some(SqlError::plain(SqlErrorClass::InvalidBound));
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(())
+        }
+    }
+
+    let mut validator = MatchValidator { parameters, error: None, next_ordinal: 1 };
+    let _ = parsed.statement().visit(&mut validator);
+    validator.error.map_or(Ok(()), Err)
 }
 
 #[derive(Default)]
@@ -1321,8 +1378,11 @@ fn lower_condition(
                 BinaryOperator::LtEq => crate::query::QueryCondition::LessOrEqual { field, value },
                 BinaryOperator::Match => {
                     let DocumentValue::String(query) = value else {
-                        return Err(unsupported("MATCH value"));
+                        return Err(SqlError::plain(SqlErrorClass::InvalidBound));
                     };
+                    if super::spec::validate_search_query(&query).is_err() {
+                        return Err(SqlError::plain(SqlErrorClass::InvalidBound));
+                    }
                     crate::query::QueryCondition::Search { field, query, match_any: false }
                 }
                 _ => return Err(unsupported("predicate operator")),
@@ -1495,5 +1555,38 @@ mod tests {
                 .class(),
             SqlErrorClass::UnboundParameter
         );
+    }
+
+    #[test]
+    fn match_bindings_require_bounded_text_even_for_execute_only_sql() {
+        let numeric = SqlParameters::try_new(&[("query", DocumentValue::Integer(7))]).unwrap();
+        assert_eq!(
+            validate_parameters("SELECT * FROM users JOIN archive ON users.id = archive.id WHERE users.body MATCH :query", &numeric)
+                .unwrap_err()
+                .class(),
+            SqlErrorClass::InvalidBound
+        );
+
+        let oversized = SqlParameters::try_new(&[(
+            "query",
+            DocumentValue::String("x".repeat(crate::query::MAX_SEARCH_QUERY_BYTES + 1)),
+        )])
+        .unwrap();
+        assert_eq!(
+            validate_parameters("SELECT * FROM users WHERE body MATCH :query", &oversized)
+                .unwrap_err()
+                .class(),
+            SqlErrorClass::InvalidBound
+        );
+    }
+
+    #[test]
+    fn match_values_remain_data_when_they_look_like_fts_syntax() {
+        let parameters = SqlParameters::try_new(&[(
+            "query",
+            DocumentValue::String("' OR 1=1 -- NEAR(secret)".to_owned()),
+        )])
+        .unwrap();
+        validate_parameters("SELECT * FROM users WHERE body MATCH :query", &parameters).unwrap();
     }
 }

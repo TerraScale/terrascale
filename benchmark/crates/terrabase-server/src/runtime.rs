@@ -434,8 +434,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         None,
         None,
-        None,
-        None,
+        admission.budget_runtime().map(Arc::new),
     );
     let prepared = admission.prepare_public(public, state, auth).await.map_err(|_| {
         Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
@@ -462,11 +461,10 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         registry: Arc::clone(&registry),
         backups: Some(lifecycle_fleet),
     });
-    let lifecycle_authority = Arc::new(
-        crate::production_lifecycle_control::PlacementLifecycleAuthority::new(
+    let lifecycle_authority =
+        Arc::new(crate::production_lifecycle_control::PlacementLifecycleAuthority::new(
             journal.clone().ok_or(DaemonError::ProductionConfigurationMissing)?,
-        ),
-    );
+        ));
     let lifecycle = Arc::new(crate::production_lifecycle_control::TbepLifecycleControl::new(
         Arc::new(crate::production_lifecycle_control::ProductionLifecycleControl {
             worker: lifecycle_worker,
@@ -493,12 +491,27 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     let mut grpc_handle = grpc.serve_tls_reloadable(production.transport.tbep_listen, grpc_tls)?;
     serving.store(true, std::sync::atomic::Ordering::Release);
     let status = prepared.status();
-    let public_task = tokio::spawn(prepared.serve(async {
+    let mut public_task = tokio::spawn(prepared.serve(async {
         let _ = wait_for_shutdown().await;
     }));
-    while !status.is_serving() {
-        tokio::task::yield_now().await;
-    }
+    tokio::time::timeout(config.shutdown_grace, async {
+        loop {
+            if status.is_serving() {
+                break Ok::<(), DaemonError>(());
+            }
+            if public_task.is_finished() {
+                break Err(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                    crate::production::ProductionComponentError {
+                        component: crate::production::ProductionComponent::PublicApi,
+                        detail: "production public listener stopped during startup",
+                    },
+                )));
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .map_err(|_| DaemonError::ShutdownTimeout)??;
     let result = public_task.await.map_err(|_| DaemonError::ShutdownTimeout)?;
     grpc_handle.begin_drain();
     tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait())
@@ -1102,6 +1115,7 @@ async fn serve_public_api(
         })
         .transpose()?;
     let state = Arc::new(crate::api::ApiState {
+        budget: None,
         native_backups: None,
         native_recovery: None,
         region,

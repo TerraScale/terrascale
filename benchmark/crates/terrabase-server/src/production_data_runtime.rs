@@ -94,7 +94,11 @@ impl ProductionDataLifecycle {
     }
 
     /// Durably pauses one admitted database while retaining its identity and data.
-    pub fn pause_database(&self, database: &str, operation_id: &str) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
+    pub fn pause_database(
+        &self,
+        database: &str,
+        operation_id: &str,
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         if self.is_draining() {
             return Err("production data lifecycle is draining".into());
         }
@@ -102,7 +106,11 @@ impl ProductionDataLifecycle {
     }
 
     /// Resumes one previously paused admitted database using its retained identity.
-    pub fn reactivate_database(&self, database: &str, operation_id: &str) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
+    pub fn reactivate_database(
+        &self,
+        database: &str,
+        operation_id: &str,
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         if self.is_draining() {
             return Err("production data lifecycle is draining".into());
         }
@@ -543,13 +551,32 @@ impl ProductionAdmissionRuntime {
         let declarations = journal.clone();
         let authority_journal = journal.clone();
         let local = config.environment.member.to_text();
-        let usage = Arc::new(crate::usage_admission::UsageAdmissionJournal::open(
+        let mut usage = crate::usage_admission::UsageAdmissionJournal::open(
             member.root(),
             config.environment.name.as_str().to_owned(),
             local.clone(),
             runtime.transport().config().local_region().as_str().to_owned(),
             journal.clone(),
-        )?);
+        )?;
+        if let Some(budget) = config.budget.as_ref() {
+            let public_key_spki = std::fs::read(&budget.public_key_spki_file)
+                .map_err(|_| "budget signer key unavailable")?;
+            let resolver =
+                Arc::new(crate::production_budget::AcceptedAdmissionBindingResolver::new(
+                    records.clone(),
+                    journal.clone(),
+                ));
+            usage = usage.with_allocation_verifier(
+                crate::usage_admission::AllocationVerifierConfig {
+                    key_id: budget.key_id.clone(),
+                    public_key_spki,
+                    policy_epoch: budget.policy_epoch,
+                    consent_epoch: budget.consent_epoch,
+                    resolver,
+                },
+            )?;
+        }
+        let usage = Arc::new(usage);
         let authority = build_admission_authority(
             journal.clone(),
             usage.clone(),
@@ -708,6 +735,17 @@ impl ProductionAdmissionRuntime {
     #[must_use]
     pub fn journal(&self) -> Arc<terrabase_tbep::placement::PlacementJournal> {
         self.journal.clone()
+    }
+
+    /// Returns the write-budget binder backed by this runtime's persisted
+    /// delivery journal. Production composition must pass this same owner to
+    /// the public API; a missing verifier intentionally yields no binder.
+    #[must_use]
+    pub fn budget_runtime(&self) -> Option<crate::production_budget::ProductionBudgetRuntime> {
+        self.config
+            .budget
+            .as_ref()
+            .map(|_| crate::production_budget::ProductionBudgetRuntime::new(self.usage.clone()))
     }
 
     /// Composes native backup streams from the retained serving hosts.
@@ -916,6 +954,17 @@ impl ProductionAdmissionRuntime {
                 !snapshot.activated && snapshot.database.record.database_id == database
             })
             .ok_or("native restore target is not retained and quiescent")?;
+        let tenant = terrabase::types::TenantId::try_new(&snapshot.database.record.tenant_id)
+            .map_err(|_| "invalid restore target tenant")?;
+        let lifecycle = snapshot
+            .database
+            .host
+            .engine()
+            .lifecycle_state(&snapshot.database.host.engine().scope_for(&tenant))
+            .map_err(|_| "restore target lifecycle unavailable")?;
+        if !lifecycle.paused || lifecycle.access_revoked() {
+            return Err("native restore target must be paused and quiescent".into());
+        }
         let record = self
             .admitted_records()?
             .into_iter()

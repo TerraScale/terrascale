@@ -249,6 +249,101 @@ impl IdentityVerifier {
         ))
     }
 
+    /// Revalidates a locally signature-verified BYO-JWT subject through the
+    /// producer's linked-account membership authority. The caller supplies
+    /// no raw third-party token; issuer and subject came from local JWT
+    /// verification and are sent only alongside server-owned route scope.
+    pub async fn admit_verified_byo(
+        &self,
+        issuer: &str,
+        subject: &str,
+        organization: &str,
+        project: &str,
+        database: &str,
+        collection: Option<&str>,
+        verb: Verbs,
+    ) -> Result<Principal, IdentityError> {
+        if issuer.is_empty() || subject.is_empty() || issuer.len() > 255 || subject.len() > 255 {
+            return Err(IdentityError::Denied);
+        }
+        let action = if verb == Verbs::READ {
+            "read"
+        } else if verb == Verbs::WRITE {
+            "write"
+        } else {
+            "admin"
+        };
+        let mut input = serde_json::json!({
+            "verifiedIssuer": issuer,
+            "verifiedSubject": subject,
+            "audience": self.audience,
+            "organizationId": organization,
+            "projectId": project,
+            "databaseId": database,
+            "action": action,
+        });
+        if let Some(collection) = collection {
+            input["collection"] = collection.into();
+        }
+        let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
+        let admission = tokio::time::timeout(
+            Duration::from_secs(5),
+            self.exchange(serde_json::to_vec(&input).map_err(|_| IdentityError::Denied)?),
+        )
+        .await
+        .map_err(|_| IdentityError::Unavailable)??;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| IdentityError::Unavailable)?
+            .as_secs();
+        let expires = admission.expires_at.ok_or(IdentityError::Denied)?;
+        let mapped_subject = admission
+            .subject
+            .filter(|value| !value.is_empty() && value.len() <= 255)
+            .ok_or(IdentityError::Denied)?;
+        if !admission.active
+            || admission.issuer.as_deref() != Some(issuer)
+            || admission.organization_id.as_deref() != Some(organization)
+            || admission.project_id.as_deref() != Some(project)
+            || admission.database_id.as_deref() != Some(database)
+            || admission.collection.as_deref() != collection
+            || admission.action.as_deref() != Some(action)
+            || expires <= now
+        {
+            return Err(IdentityError::Denied);
+        }
+        let scope = collection.map_or_else(
+            || Scope::database(database, verb),
+            |name| Scope::database_collection(database, name, verb),
+        );
+        Ok(Principal::delegated(
+            mapped_subject,
+            scope,
+            expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
+        ))
+    }
+
+    /// Project-wide variant of [`Self::admit_verified_byo`].
+    pub async fn admit_verified_byo_project(
+        &self,
+        issuer: &str,
+        subject: &str,
+        organization: &str,
+        project: &str,
+    ) -> Result<(Principal, VerifiedProjectScope), IdentityError> {
+        let principal = self
+            .admit_verified_byo(issuer, subject, organization, project, "*", None, Verbs::ADMIN)
+            .await?;
+        let expires = principal.expires_at.ok_or(IdentityError::Denied)?;
+        Ok((
+            Principal::delegated(principal.label, Scope::every_database(Verbs::ADMIN), expires),
+            VerifiedProjectScope {
+                tenant_id: organization.to_owned(),
+                project_id: project.to_owned(),
+            },
+        ))
+    }
+
     /// Verifies project-wide administration against current producer-owned project records.
     ///
     /// # Errors

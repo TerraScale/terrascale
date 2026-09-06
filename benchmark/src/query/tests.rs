@@ -4035,7 +4035,12 @@ fn ttl_expiry_hides_documents_and_the_sweep_tombstones_them() {
     let history = engine
         .document_history_in_collection(&tenant_scope, &sessions, &past_id, 10)
         .expect("history reads");
-    assert!(history.iter().any(|entry| entry.deleted), "the sweep left a tombstone revision");
+    let tombstone = history
+        .iter()
+        .find(|entry| entry.deleted)
+        .expect("the sweep left a tombstone revision");
+    assert_eq!(tombstone.policy, "ttl-expiry");
+    assert!(tombstone.explanation.contains("TTL expiry"));
     drop(engine);
     std::fs::remove_dir_all(&dir).ok();
 }

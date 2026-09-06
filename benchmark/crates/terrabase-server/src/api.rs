@@ -543,6 +543,8 @@ fn regions_list(regions: &[RegionCode]) -> String {
 
 /// The public API's serving state.
 pub struct ApiState {
+    /// Verified production write-budget consumer, absent in local mode.
+    pub budget: Option<Arc<crate::production_budget::ProductionBudgetRuntime>>,
     /// Native production backup owner retained for the serving lifetime.
     pub native_backups: Option<Arc<crate::native_backup_runtime::NativeBackupRuntime>>,
     /// Native recovery worker owner retained until bounded shutdown completes.
@@ -628,6 +630,7 @@ impl ApiState {
         delegated_identity: Option<Arc<crate::delegated_identity::IdentityVerifier>>,
         webhook_keys: Option<Arc<dyn crate::webhook_api::WebhookKeyLeases>>,
         exports: Option<Arc<crate::export_api::ExportRuntime>>,
+        budget: Option<Arc<crate::production_budget::ProductionBudgetRuntime>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             native_backups: Some(native_backups),
@@ -652,6 +655,7 @@ impl ApiState {
             capability_keys,
             webhook_keys,
             exports,
+            budget,
         })
     }
 }
@@ -787,7 +791,13 @@ fn enrich_openapi(raw: String) -> String {
                             response.remove("content");
                         } else if status.starts_with('2') {
                             if let Some(schema) = success_schema
-                                && !response.contains_key("content")
+                                && (!response.contains_key("content")
+                                    || ((status == "202"
+                                        && matches!(
+                                            operation_id.as_str(),
+                                            "create_database" | "create_branch" | "delete_database"
+                                        ))
+                                        || (status == "200" && operation_id == "deletion_status")))
                             {
                                 response.insert("content".into(), json_content(schema));
                             }
@@ -822,10 +832,13 @@ fn enrich_openapi(raw: String) -> String {
                         | "restore_backup"
                         | "create_branch"
                 ) {
-                    for status in ["200", "201"] {
+                    for status in ["200", "201", "202"] {
                         set_response_header(operation, status, "X-TerraScale-Placement", "string");
                         set_response_header(operation, status, "X-TerraScale-Residency", "string");
                     }
+                }
+                if operation_id == "delete_database" {
+                    set_response_header(operation, "202", "Location", "string");
                 }
                 if operation_id == "get_document" {
                     set_response_header(operation, "200", "ETag", "string");
@@ -899,6 +912,9 @@ fn add_parameter(
 
 fn add_route_parameters(operation: &mut serde_json::Map<String, serde_json::Value>, id: &str) {
     match id {
+        "delete_database" => {
+            add_parameter(operation, "idempotency-key", "header", true, "string");
+        }
         "create_webhook" => add_parameter(operation, "idempotency-key", "header", false, "string"),
         "list_documents" | "document_history" => {
             add_parameter(operation, "limit", "query", false, "integer");
@@ -1135,7 +1151,8 @@ fn request_schema(operation_id: &str) -> Option<(&'static str, bool)> {
         "put_document" | "patch_document" => ("JsonValue", true),
         "execute_sql" => ("SqlRequest", true),
         "attach_view" => ("AttachViewRequest", true),
-        "restore_backup" | "create_branch" => ("RestoreRequest", true),
+        "restore_backup" => ("RestoreRequest", true),
+        "create_branch" => ("CreateBranchRequest", true),
         _ => return None,
     })
 }
@@ -1145,8 +1162,10 @@ fn success_schema(operation_id: &str) -> Option<&'static str> {
         "health" | "regions" => Some("HealthResponse"),
         "list_databases" => Some("DatabaseListResponse"),
         "list_branches" => Some("BranchListResponse"),
-        "create_database" | "get_database" | "delete_database" | "restore_database"
-        | "restore_backup" | "create_branch" => Some("DatabaseRecord"),
+        "create_database" | "create_branch" => Some("ProvisioningOperation"),
+        "delete_database" => Some("DeletionOperation"),
+        "deletion_status" => Some("DeletionOperation"),
+        "get_database" | "restore_database" | "restore_backup" => Some("DatabaseRecord"),
         "list_collections" => Some("CollectionsResponse"),
         "list_indexes" => Some("IndexListResponse"),
         "create_index" => Some("IndexCreatedResponse"),
@@ -1191,15 +1210,17 @@ fn openapi_schemas() -> serde_json::Value {
         "IndexCreatedResponse": { "type": "object", "required": ["field", "state"], "properties": { "field": { "type": "string" }, "state": { "type": "string", "enum": ["active", "building"] } } },
         "DocumentsResponse": { "type": "object", "required": ["documents"], "properties": { "documents": { "type": "array", "items": { "type": "object", "required": ["id", "version", "value"], "properties": { "id": { "type": "string" }, "version": { "type": "integer", "format": "int64" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
         "DocumentWriteResponse": { "type": "object", "required": ["revision"], "properties": { "revision": { "type": "string" } } },
-        "HistoryResponse": { "type": "object", "required": ["history"], "properties": { "history": { "type": "array", "items": { "type": "object", "required": ["revision", "deleted"], "properties": { "revision": { "type": "string" }, "deleted": { "type": "boolean" } } } } } },
+        "HistoryResponse": { "type": "object", "required": ["history"], "properties": { "history": { "type": "array", "items": { "type": "object", "required": ["revision", "deleted", "commitUlid", "hlc", "origin", "policy", "explanation"], "properties": { "revision": { "type": "string" }, "deleted": { "type": "boolean" }, "commitUlid": { "type": "string" }, "hlc": { "type": "integer", "format": "int64" }, "origin": { "type": "string" }, "policy": { "type": "string" }, "explanation": { "type": "string" } } } } } },
         "BatchResponse": { "type": "object", "required": ["committed", "count"], "properties": { "committed": { "type": "integer", "format": "int64" }, "count": { "type": "integer" } } },
         "SqlRequest": { "type": "object", "required": ["sql"], "properties": { "sql": { "type": "string" }, "parameters": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/JsonValue" } }, "explain": { "type": "boolean" }, "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 30000 }, "cancelled": { "type": "boolean" } } },
         "SqlResponse": { "type": "object", "required": ["matched", "rows"], "properties": { "matched": { "type": "integer", "format": "int64" }, "rows": { "type": "array", "items": { "type": "object", "required": ["id", "value"], "properties": { "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
         "BackupStatusResponse": { "type": "object", "required": ["ready", "streaming"], "properties": { "ready": { "type": "boolean" }, "streaming": { "type": "boolean" } } },
-        "CreateDatabaseRequest": { "type": "object", "required": ["name", "placement"], "description": "Production provisioning also requires operation_id and residency; operation_id identifies an idempotent placement admission.", "properties": { "operation_id": { "type": "string" }, "name": { "type": "string" }, "placement": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "residency": { "type": ["string", "null"] } } },
+        "CreateDatabaseRequest": { "type": "object", "required": ["name", "placement", "residency", "operation_id"], "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.", "properties": { "operation_id": { "type": "string" }, "name": { "type": "string" }, "placement": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "residency": { "type": "string" } } },
         "CreateIndexRequest": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" } } },
         "BatchRequest": { "type": "object", "required": ["operations"], "properties": { "operations": { "type": "array", "minItems": 1, "maxItems": 1000, "items": { "type": "object", "required": ["op", "id"], "properties": { "op": { "type": "string", "enum": ["put", "patch", "delete"] }, "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
         "RestoreRequest": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "at": { "type": "integer", "format": "int64" } } },
+        "CreateBranchRequest": { "type": "object", "required": ["name", "operation_id"], "description": "Production branch allocation is asynchronous and does not accept a point-in-time selector.", "properties": { "name": { "type": "string" }, "operation_id": { "type": "string" } } },
+        "DeletionOperation": { "type": "object", "required": ["request", "state", "cutoff", "targets"], "description": "Durable asynchronous database deletion progress.", "properties": { "request": { "type": "object", "required": ["environment", "tenant_id", "project_id", "database_id", "operation_id"], "properties": { "environment": { "type": "string" }, "tenant_id": { "type": "string" }, "project_id": { "type": "string" }, "database_id": { "type": "string" }, "operation_id": { "type": "string" } } }, "state": { "type": "string", "enum": ["preparing", "stopping", "cleanup_pending"] }, "cutoff": { "type": "string", "format": "date-time" }, "targets": { "type": "array", "items": { "type": "object", "required": ["stop"], "properties": { "stop": { "type": "object", "additionalProperties": true } } } } } },
         "AttachViewRequest": { "type": "object", "required": ["databaseId", "statement"], "properties": { "databaseId": { "type": "string" }, "statement": { "type": "string" }, "parameters": { "type": "string", "description": "Base64 encoded SQL parameter bytes" }, "checkpoint": { "type": ["string", "null"], "description": "Base64 encoded opaque resume checkpoint" }, "subscription": { "type": ["string", "null"] }, "entitlement_epoch": { "type": "integer", "format": "int64" } } },
         "AttachViewResponse": { "type": "object", "required": ["view", "generation", "snapshot_chunks", "log", "checkpoint", "capability", "capability_header", "offset"], "properties": { "view": { "type": "string" }, "generation": { "type": "integer", "format": "int64" }, "snapshot_chunks": { "type": "array", "items": { "type": "string" } }, "log": { "type": "string" }, "checkpoint": { "type": "string" }, "capability": { "type": "string" }, "capability_header": { "type": "string" }, "offset": { "type": "integer", "format": "int64" } } },
     });
@@ -1565,8 +1586,9 @@ async fn admit_bearer(
             .ok_or_else(ApiError::unauthorized)?;
             match (&state.delegated_identity, database_of(path)) {
                 (Some(identity), Some(database)) => identity
-                    .admit(
-                        token,
+                    .admit_verified_byo(
+                        context.issuer(),
+                        context.subject(),
                         &route_owner.0,
                         &route_owner.1,
                         database,
@@ -1576,7 +1598,12 @@ async fn admit_bearer(
                     .await
                     .map_err(|_| ApiError::unauthorized()),
                 (Some(identity), None) if project_operation => identity
-                    .admit_project(token, &route_owner.0, &route_owner.1)
+                    .admit_verified_byo_project(
+                        context.issuer(),
+                        context.subject(),
+                        &route_owner.0,
+                        &route_owner.1,
+                    )
                     .await
                     .map(|(principal, scope)| {
                         verified_project = Some(scope);
@@ -1865,7 +1892,7 @@ fn provisioning_error(error: crate::provisioning::ProvisioningError) -> ApiError
 
 /// Creates one database from an explicit placement and optional residency
 /// constraint (D-52).
-#[utoipa::path(post, path = "/api/v1/databases", responses((status = 201, description = "Database created"), (status = 202, description = "Durable provisioning accepted; not ready to serve", body = crate::provisioning::ProvisioningOperation)))]
+#[utoipa::path(post, path = "/api/v1/databases", responses((status = 202, description = "Durable provisioning accepted; not ready to serve", body = crate::provisioning::ProvisioningOperation)))]
 async fn create_database(
     State(state): State<Arc<ApiState>>,
     scope: Option<Extension<crate::delegated_identity::VerifiedProjectScope>>,
@@ -1970,7 +1997,7 @@ async fn get_database(State(state): State<Arc<ApiState>>, Path(name): Path<Strin
 
 /// Soft-deletes one database: restorable for seven days. The backup
 /// stream stops with it; retention owns the artifacts (S-06).
-#[utoipa::path(delete, path = "/api/v1/databases/{name}", responses((status = 200, description = "Database soft-deleted")))]
+#[utoipa::path(delete, path = "/api/v1/databases/{name}", responses((status = 202, description = "Durable database deletion accepted", body = serde_json::Value)))]
 async fn delete_database(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
@@ -2441,6 +2468,37 @@ fn write_operation(headers: &axum::http::HeaderMap, kind: &str) -> Result<Operat
     })
 }
 
+fn attach_write_budget(
+    state: &ApiState,
+    transaction: &mut terrabase::Transaction<'_>,
+    scope: &terrabase::types::TenantScope,
+    project_id: &str,
+    database_id: &str,
+    operation: &OperationId,
+    units: u64,
+) -> Result<(), ApiError> {
+    let Some(budget) = &state.budget else {
+        return Ok(());
+    };
+    budget
+        .attach(
+            transaction,
+            scope.tenant().as_str(),
+            project_id,
+            database_id,
+            operation.as_str(),
+            state.region,
+            units,
+        )
+        .map_err(|reason| ApiError {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "write_budget_unavailable",
+            message: reason,
+            fix: "obtain a current write allocation and retry the request".into(),
+            placement: None,
+        })
+}
+
 /// RFC 7386 JSON merge patch over the engine's value model: objects
 /// merge per field, `null` deletes a field, anything else replaces.
 fn merge_patch(base: &mut DocumentValue, patch: &DocumentValue) {
@@ -2502,10 +2560,25 @@ async fn batch_documents(
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
         return ApiError::storage_failure().into_response();
     };
+    let database_id = engine.database_owner().database().to_text();
+    let mut units = 0_u64;
+    let operation_id = transaction.operation_id().clone();
     for (index, item) in operations.iter().enumerate() {
-        if let Err((code, message)) = stage_batch_operation(&mut transaction, &collection, item) {
-            return batch_refusal(index, code, message);
+        match stage_batch_operation(&mut transaction, &collection, item) {
+            Ok(operation_units) => units = units.saturating_add(operation_units),
+            Err((code, message)) => return batch_refusal(index, code, message),
         }
+    }
+    if let Err(error) = attach_write_budget(
+        &state,
+        &mut transaction,
+        &scope,
+        &state.scope.1,
+        &database_id,
+        &operation_id,
+        units,
+    ) {
+        return error.into_response();
     }
     if let Err(error) = durability.guard(&mut transaction) {
         return error.into_response();
@@ -2586,7 +2659,7 @@ fn stage_batch_operation(
     transaction: &mut terrabase::Transaction<'_>,
     collection: &CollectionName,
     item: &serde_json::Value,
-) -> Result<(), (&'static str, &'static str)> {
+) -> Result<u64, (&'static str, &'static str)> {
     let id = item.get("id").and_then(serde_json::Value::as_str);
     let Some(id) = id else {
         return Err(("missing_id", "the op names no document"));
@@ -2603,6 +2676,9 @@ fn stage_batch_operation(
             if transaction.put(document, ExpectedVersion::Any).is_err() {
                 return Err(("staging_refused", "the put could not stage"));
             }
+            Ok(terrabase::usage::write_units_for_bytes(
+                serde_json::to_vec(value).map_or(0, |bytes| bytes.len() as u64),
+            ))
         }
         Some("patch") => {
             let existing = transaction.read_in_collection(collection, &id);
@@ -2618,16 +2694,19 @@ fn stage_batch_operation(
             if transaction.put(patched, ExpectedVersion::Any).is_err() {
                 return Err(("staging_refused", "the patch could not stage"));
             }
+            Ok(terrabase::usage::write_units_for_bytes(
+                serde_json::to_vec(&merged).map_or(0, |bytes| bytes.len() as u64),
+            ))
         }
         Some("delete") => {
             if transaction.read_in_collection(collection, &id).ok().flatten().is_none() {
                 return Err(("document_not_found", "the delete target is absent"));
             }
             transaction.delete_in_collection(collection, id, ExpectedVersion::Any);
+            Ok(1)
         }
         _ => return Err(("unknown_op", "op must be put, patch, or delete")),
     }
-    Ok(())
 }
 
 /// One batch operation's typed refusal: the index names the offender.
@@ -3276,6 +3355,14 @@ async fn put_document(
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
         return ApiError::storage_failure().into_response();
     };
+    let database_id = engine.database_owner().database().to_text();
+    let operation_id = transaction.operation_id().clone();
+    let units = terrabase::usage::write_units_for_bytes(
+        serde_json::to_vec(&value).map_or(0, |bytes| bytes.len() as u64),
+    );
+    if let Err(error) = attach_write_budget(&state, &mut transaction, &scope, &state.scope.1, &database_id, &operation_id, units) {
+        return error.into_response();
+    }
     let create_only = match create_only_precondition(&headers) {
         Ok(create_only) => create_only,
         Err(error) => return error.into_response(),
@@ -3397,6 +3484,8 @@ async fn patch_document(
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
         return ApiError::storage_failure().into_response();
     };
+    let database_id = engine.database_owner().database().to_text();
+    let operation_id = transaction.operation_id().clone();
     if let Err(error) = check_if_match(&headers, &transaction, &collection, &id) {
         return error.into_response();
     }
@@ -3411,6 +3500,9 @@ async fn patch_document(
     merge_patch(&mut merged, &json_value(&value));
     let probe = (collection.clone(), id.clone());
     let patched = Document::new(id.clone(), collection.clone(), merged);
+    if let Err(error) = attach_write_budget(&state, &mut transaction, &scope, &state.scope.1, &database_id, &operation_id, terrabase::usage::write_units_for_bytes(serde_json::to_vec(patched.value()).map_or(0, |bytes| bytes.len() as u64))) {
+        return error.into_response();
+    }
     // The merge base is snapshot state, not the logical request: with an
     // idempotency key the expected clause is Any so an unchanged-state
     // retry replays; without one the base version must hold.
@@ -3527,6 +3619,17 @@ async fn document_history(
                 push_json_escaped(&mut body, &entry.revision);
                 body.push_str("\",\"deleted\":");
                 body.push_str(if entry.deleted { "true" } else { "false" });
+                body.push_str(",\"commitUlid\":\"");
+                push_json_escaped(&mut body, &entry.commit_ulid);
+                body.push_str("\",\"hlc\":");
+                body.push_str(&entry.hlc.to_string());
+                body.push_str(",\"origin\":\"");
+                push_json_escaped(&mut body, &entry.origin);
+                body.push_str("\",\"policy\":\"");
+                push_json_escaped(&mut body, &entry.policy);
+                body.push_str("\",\"explanation\":\"");
+                push_json_escaped(&mut body, &entry.explanation);
+                body.push('"');
                 body.push('}');
             }
             body.push_str("]}");
@@ -3597,6 +3700,11 @@ async fn delete_document(
         if !replay {
             return document_not_found(collection.as_str(), id.as_str()).into_response();
         }
+    }
+    let database_id = engine.database_owner().database().to_text();
+    let operation_id = transaction.operation_id().clone();
+    if let Err(error) = attach_write_budget(&state, &mut transaction, &scope, &state.scope.1, &database_id, &operation_id, 1) {
+        return error.into_response();
     }
     let expected = if has_idempotency_key(&headers) {
         ExpectedVersion::Any
@@ -3930,7 +4038,7 @@ async fn restore_backup(
 
 /// `POST /databases/{name}/branches` — restore plus register with parent
 /// metadata (D-38/D-39).
-#[utoipa::path(post, path = "/api/v1/databases/{name}/branches", responses((status = 201, description = "Branch created")))]
+#[utoipa::path(post, path = "/api/v1/databases/{name}/branches", responses((status = 202, description = "Durable branch provisioning accepted; not ready to serve", body = crate::provisioning::ProvisioningOperation)))]
 async fn create_branch(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
@@ -4396,6 +4504,7 @@ mod tests {
         let timetravel =
             Arc::new(crate::backup::TimeTravelCache::new(Arc::clone(&backups), &backup_root));
         Arc::new(ApiState {
+            budget: None,
             native_backups: None,
             native_recovery: None,
             development: Arc::default(),
@@ -4447,6 +4556,7 @@ mod tests {
             &dir.join("backup-timetravel"),
         ));
         Arc::new(ApiState {
+            budget: None,
             native_backups: None,
             native_recovery: None,
             development: Arc::default(),
@@ -6511,6 +6621,8 @@ mod tests {
         let revisions = body.matches("\"revision\"").count();
         assert_eq!(revisions, 3, "every committed mutation is retained: {body}");
         assert!(body.contains("\"deleted\":true"), "the tombstone is the newest: {body}");
+        assert!(body.contains("\"policy\":\"origin\""), "policy is exposed: {body}");
+        assert!(body.contains("\"explanation\":\"origin write"), "explanation is exposed: {body}");
         // The newest entry is listed first.
         let tombstone = body.find("\"deleted\":true").expect("tombstone");
         assert!(body[..tombstone].matches("\"revision\"").count() == 1, "newest first: {body}");

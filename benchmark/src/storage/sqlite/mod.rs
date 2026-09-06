@@ -4899,7 +4899,10 @@ impl StoragePort for SqliteStorage {
         &mut self,
         tenant: &TenantId,
         command: crate::engine::lifecycle_state::LifecycleCommand,
-    ) -> Result<crate::engine::lifecycle_state::LifecycleOperationOutcome, crate::engine::lifecycle_state::LifecycleError> {
+    ) -> Result<
+        crate::engine::lifecycle_state::LifecycleOperationOutcome,
+        crate::engine::lifecycle_state::LifecycleError,
+    > {
         self.update_lifecycle_operation(tenant, command)
     }
 
@@ -5530,7 +5533,18 @@ impl StoragePort for SqliteStorage {
         // report `clean-apply` otherwise.
         let mut entries: Vec<DocumentRevisionEntry> = Vec::new();
         let Ok(mut statement) = connection.prepare(
-            "SELECT revision, deleted, commit_ulid, hlc, origin, kind FROM documents
+            "SELECT revision, deleted, commit_ulid, hlc, origin,
+                    CASE
+                      WHEN kind = 'replicated' THEN 'replicated'
+                      WHEN EXISTS (
+                        SELECT 1 FROM operation_kind_markers marker
+                        WHERE marker.tenant = documents.tenant
+                          AND marker.operation = documents.operation
+                          AND marker.kind = 'internal_maintenance'
+                      ) THEN 'internal_maintenance'
+                      ELSE 'origin'
+                    END AS kind
+             FROM documents
              WHERE tenant = ?1 AND collection = ?2 AND id = ?3
              ORDER BY commit_seq DESC LIMIT ?4",
         ) else {
@@ -5584,6 +5598,11 @@ impl StoragePort for SqliteStorage {
                             ),
                         )
                     })
+            } else if kind == "internal_maintenance" {
+                (
+                    "ttl-expiry".to_owned(),
+                    format!("TTL expiry removed {commit_ulid} at hlc {hlc}"),
+                )
             } else {
                 (
                     MergePolicy::Origin.as_str().to_owned(),

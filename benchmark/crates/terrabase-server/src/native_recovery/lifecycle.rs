@@ -141,25 +141,41 @@ mod tests {
         let notify = Arc::new(Notify::new());
         let (stop, stop_rx) = oneshot::channel();
         let calls = Arc::new(AtomicUsize::new(0));
+        let entered_one = Arc::new(Notify::new());
+        let entered_two = Arc::new(Notify::new());
+        let release_one = Arc::new(Notify::new());
+        let release_two = Arc::new(Notify::new());
         let observed = Arc::clone(&calls);
+        let entered_one_worker = Arc::clone(&entered_one);
+        let entered_two_worker = Arc::clone(&entered_two);
+        let release_one_worker = Arc::clone(&release_one);
+        let release_two_worker = Arc::clone(&release_two);
         let worker = tokio::spawn(supervise::<(), _, _>(stop_rx, notify.clone(), move || {
             let observed = Arc::clone(&observed);
+            let entered_one = Arc::clone(&entered_one_worker);
+            let entered_two = Arc::clone(&entered_two_worker);
+            let release_one = Arc::clone(&release_one_worker);
+            let release_two = Arc::clone(&release_two_worker);
             async move {
                 let call = observed.fetch_add(1, Ordering::SeqCst);
-                if call == 1 {
-                    tokio::time::sleep(Duration::from_secs(10)).await;
+                if call == 0 {
+                    entered_one.notify_one();
+                    release_one.notified().await;
+                } else if call == 1 {
+                    entered_two.notify_one();
+                    release_two.notified().await;
                 }
                 Ok(call < 2)
             }
         }));
         notify.notify_one();
-        while calls.load(Ordering::SeqCst) < 1 {
-            tokio::task::yield_now().await;
-        }
+        entered_one.notified().await;
         stop.send(()).unwrap();
+        release_one.notify_one();
+        entered_two.notified().await;
         tokio::time::advance(Duration::from_secs(6)).await;
-        tokio::time::advance(Duration::from_secs(5)).await;
-        worker.await.unwrap();
+        release_two.notify_one();
+        assert!(worker.await.unwrap());
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }

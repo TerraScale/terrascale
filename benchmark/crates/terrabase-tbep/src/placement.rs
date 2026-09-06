@@ -496,6 +496,8 @@ impl PlacementJournal {
         region: &str,
         member: &str,
         revision: u64,
+        authority_epoch: u64,
+        authority_lease: &str,
         signature: &[u8],
     ) -> Result<(u64, String), PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
@@ -510,6 +512,8 @@ impl PlacementJournal {
         if supplied.digest != accepted.digest
             || supplied.proof.authority_epoch != accepted.proof.authority_epoch
             || supplied.proof.lease_id != accepted.proof.lease_id
+            || authority_epoch != accepted.proof.authority_epoch
+            || authority_lease != accepted.proof.lease_id
         {
             return Err(PlacementError::Conflict);
         }

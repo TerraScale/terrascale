@@ -2,7 +2,7 @@
 use super::*;
 
 /// Reads the durable deletion operation while local access remains revoked.
-#[utoipa::path(get, path = "/api/v1/databases/{name}/deletions/{operation_id}", responses((status = 200, description = "Authoritative deletion progress including regional stop receipts")))]
+#[utoipa::path(get, path = "/api/v1/databases/{name}/deletions/{operation_id}", responses((status = 200, description = "Authoritative deletion progress including regional stop receipts", body = serde_json::Value)))]
 pub(super) async fn deletion_status(
     State(state): State<Arc<ApiState>>,
     Path((name, operation)): Path<(String, String)>,

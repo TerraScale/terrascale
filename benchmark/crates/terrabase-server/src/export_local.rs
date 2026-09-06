@@ -335,50 +335,56 @@ mod tests {
     use super::*;
     use terrabase::regions::RegionCode;
 
-    #[test]
-    fn restart_recovers_encrypted_members_and_idempotent_commit() {
+    #[tokio::test]
+    async fn restart_recovers_encrypted_members_and_idempotent_commit() {
         let root = std::env::temp_dir()
             .join(format!("export-local-{}", terrabase::identity::DatabaseUlid::generate()));
         let destination = ExportDestination::File { root: root.clone(), region: RegionCode::GRU };
         let placement = PlacementLock::single(RegionCode::GRU);
         let first = local_artifacts(&root, "database-id", "tenant").unwrap();
-        let mut writer = first.open("job", "database", &destination, &placement).unwrap();
-        let page = writer.put("documents/page.json", b"private-document").unwrap();
+        let mut writer = first.open("job", "database", &destination, &placement).await.unwrap();
+        let page = writer.put("documents/page.json", b"private-document").await.unwrap();
         let ciphertext = fs::read(root.join("database/job/documents/page.json")).unwrap();
         assert!(!ciphertext.windows(16).any(|window| window == b"private-document"));
         drop(writer);
         drop(first);
         let restarted = local_artifacts(&root, "database-id", "tenant").unwrap();
-        let mut writer = restarted.open("job", "database", &destination, &placement).unwrap();
-        assert_eq!(writer.existing_facts().unwrap(), vec![page.clone()]);
-        assert_eq!(writer.put("documents/page.json", b"private-document").unwrap(), page);
+        let mut writer = restarted.open("job", "database", &destination, &placement).await.unwrap();
+        assert_eq!(writer.existing_facts().await.unwrap(), vec![page.clone()]);
+        assert_eq!(writer.put("documents/page.json", b"private-document").await.unwrap(), page);
         assert!(matches!(
-            writer.put("documents/page.json", b"different"),
+            writer.put("documents/page.json", b"different").await,
             Err(ExportError::IdempotencyConflict)
         ));
         let manifest_plaintext =
             serde_json::to_vec(&serde_json::json!({"members":[page]})).unwrap();
-        let manifest = writer.put("manifest.json", &manifest_plaintext).unwrap();
-        writer.commit(&manifest).unwrap();
+        let manifest = writer.put("manifest.json", &manifest_plaintext).await.unwrap();
+        writer.commit(&manifest).await.unwrap();
         let restarted = local_artifacts(&root, "database-id", "tenant").unwrap();
-        let writer = restarted.open("job", "database", &destination, &placement).unwrap();
-        writer.commit(&manifest).unwrap();
+        let writer = restarted.open("job", "database", &destination, &placement).await.unwrap();
+        writer.commit(&manifest).await.unwrap();
         assert_eq!(
-            restarted.read_member("job", "database", "documents/page.json", &manifest).unwrap(),
+            restarted
+                .read_member("job", "database", "documents/page.json", &manifest)
+                .await
+                .unwrap(),
             b"private-document"
         );
         assert_eq!(
-            restarted.read_member("job", "database", "manifest.json", &manifest).unwrap(),
+            restarted.read_member("job", "database", "manifest.json", &manifest).await.unwrap(),
             manifest_plaintext
         );
         assert!(
-            restarted.read_member("job", "database", "../.export-artifact-key", &manifest).is_err()
+            restarted
+                .read_member("job", "database", "../.export-artifact-key", &manifest)
+                .await
+                .is_err()
         );
         assert_eq!(fs::read(root.join("database/job/documents/page.json")).unwrap(), ciphertext);
         assert_eq!(local_cursor_key(&root).unwrap(), local_cursor_key(&root).unwrap());
         fs::write(root.join("database/job/COMMITTED"), b"tampered").unwrap();
         assert!(matches!(
-            restarted.read_member("job", "database", "documents/page.json", &manifest),
+            restarted.read_member("job", "database", "documents/page.json", &manifest).await,
             Err(ExportError::IdempotencyConflict)
         ));
         fs::remove_dir_all(root).unwrap();
@@ -416,20 +422,21 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[test]
-    fn oversized_staging_member_fails_before_allocating_its_payload() {
+    #[tokio::test]
+    async fn oversized_staging_member_fails_before_allocating_its_payload() {
         let root = std::env::temp_dir()
             .join(format!("export-local-{}", terrabase::identity::DatabaseUlid::generate()));
         let port = local_artifacts(&root, "db", "tenant").unwrap();
         let destination = ExportDestination::File { root: root.clone(), region: RegionCode::GRU };
         let mut writer = port
             .open("job", "database", &destination, &PlacementLock::single(RegionCode::GRU))
+            .await
             .unwrap();
         let oversized = root.join("database/job/oversized.json");
         File::create(&oversized).unwrap().set_len((MAX_METADATA_BYTES + 4097) as u64).unwrap();
-        assert!(matches!(writer.existing_facts(), Err(ExportError::DestinationUnavailable)));
+        assert!(matches!(writer.existing_facts().await, Err(ExportError::DestinationUnavailable)));
         assert!(matches!(
-            writer.put("oversized.json", b"small"),
+            writer.put("oversized.json", b"small").await,
             Err(ExportError::DestinationUnavailable)
         ));
         fs::remove_dir_all(root).unwrap();

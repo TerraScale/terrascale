@@ -1,7 +1,46 @@
 use super::*;
 
 use crate::api::{Document, DocumentId, DocumentValue, ExpectedVersion, RegionCode};
+use axum::body::Body;
 use terrabase::types::{CollectionName, LocalDurability, OperationId};
+use tower::ServiceExt;
+
+const SCHEMA_ROUTE: &str = "/api/v1/databases/demo/collections/orders/schema";
+const KEY: &str = "Bearer tskey_test_abcdefghijklmnop";
+
+/// Initial schema declarations have no migration status, but still need the
+/// same startup worker to publish their physical indexes. This exercises the
+/// production router and worker caller rather than registering through Engine
+/// directly.
+#[tokio::test]
+async fn production_tick_publishes_initial_declared_index_without_migration() {
+    let state = super::super::tests::state_with_keys_and_control();
+    state.control.as_ref().unwrap().create("demo", &[RegionCode::GRU], None).unwrap();
+    let app = crate::api::router(Arc::clone(&state));
+    let response = app
+        .oneshot(
+            crate::api::Request::put(SCHEMA_ROUTE)
+                .header("authorization", KEY)
+                .header("idempotency-key", "initial-index")
+                .body(Body::from(
+                    r#"{"name":"orders","fields":[{"name":"account","type":"string","indexed":true}]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), crate::api::StatusCode::OK);
+
+    assert_eq!(super::drive_database(&state, "demo", None).as_deref(), Some("orders"));
+    let engine = document_host(&state, "demo").unwrap().engine();
+    let descriptor = engine
+        .index_descriptors()
+        .unwrap()
+        .into_iter()
+        .find(|descriptor| descriptor.collection == "orders" && descriptor.field == "account")
+        .expect("initial declared index descriptor");
+    assert!(descriptor.active, "initial schema index must be published by the worker");
+}
 
 /// Exercises the production schema tick rather than calling the Engine pump
 /// directly.  A collection above the inline threshold must progress even

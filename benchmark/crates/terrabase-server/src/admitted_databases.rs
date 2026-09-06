@@ -75,7 +75,11 @@ pub struct AdmittedDatabaseRegistry {
 
 impl AdmittedDatabaseRegistry {
     /// Durably pauses one admitted database while retaining its host and data.
-    pub fn pause(&self, database: &str, operation_id: &str) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
+    pub fn pause(
+        &self,
+        database: &str,
+        operation_id: &str,
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         let entry = self
             .resolve_metadata(database)?
             .ok_or_else(|| "database is not admitted".to_owned())?;
@@ -90,7 +94,11 @@ impl AdmittedDatabaseRegistry {
     }
 
     /// Resumes one paused admitted database without replacing its identity.
-    pub fn resume(&self, database: &str, operation_id: &str) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
+    pub fn resume(
+        &self,
+        database: &str,
+        operation_id: &str,
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         let entry = self
             .resolve_metadata(database)?
             .ok_or_else(|| "database is not admitted".to_owned())?;

@@ -18,22 +18,23 @@ impl SqliteStorage {
             _ => return Err(LifecycleError::Invalid),
         };
         let writer = self.writer.lock().map_err(|_| LifecycleError::Unavailable)?;
-        let receipt = writer
+        let receipt_row: (String, i64, i64) = writer
             .query_row(
                 "SELECT action, paused, generation FROM lifecycle_operations WHERE tenant=?1 AND operation_id=?2",
                 params![tenant.as_str(), operation_id],
-                |row| {
-                    Ok(crate::engine::lifecycle_state::LifecycleOperationReceipt {
-                        operation_id: operation_id.clone(),
-                        action: row.get(0)?,
-                        paused: row.get::<_, i64>(1)? != 0,
-                        generation: row.get(2)?,
-                    })
-                },
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .map_err(|_| LifecycleError::Unavailable)?
             .ok_or(LifecycleError::Unavailable)?;
+        let (action, paused, generation) = receipt_row;
+        let generation = u64::try_from(generation).map_err(|_| LifecycleError::Invalid)?;
+        let receipt = crate::engine::lifecycle_state::LifecycleOperationReceipt {
+            operation_id: operation_id.clone(),
+            action,
+            paused: paused != 0,
+            generation,
+        };
         Ok(crate::engine::lifecycle_state::LifecycleOperationOutcome { state, receipt })
     }
 
@@ -65,7 +66,7 @@ impl SqliteStorage {
             if id.is_empty() || id.len() > 128 {
                 return Err(LifecycleError::Invalid);
             }
-            let prior: Option<(String, i64, u64)> = tx.query_row(
+            let prior: Option<(String, i64, i64)> = tx.query_row(
                 "SELECT action, paused, generation FROM lifecycle_operations WHERE tenant=?1 AND operation_id=?2",
                 params![tenant.as_str(), id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()
                 .map_err(|_| LifecycleError::Unavailable)?;
@@ -74,6 +75,8 @@ impl SqliteStorage {
                 if action != expected || prior_paused != i64::from(*paused) {
                     return Err(LifecycleError::Conflict);
                 }
+                let generation = u64::try_from(generation).map_err(|_| LifecycleError::Invalid)?;
+                let _ = generation;
                 return Ok(state);
             }
         }
@@ -205,7 +208,9 @@ impl SqliteStorage {
         let body = encode(&state);
         tx.execute("INSERT INTO database_lifecycle VALUES (?1,?2) ON CONFLICT(tenant) DO UPDATE SET body=excluded.body", params![tenant.as_str(), body]).map_err(|_| LifecycleError::Unavailable)?;
         if let Some((id, paused)) = operation {
-            tx.execute("INSERT INTO lifecycle_operations(tenant,operation_id,action,paused,generation) VALUES (?1,?2,?3,?4,?5)", params![tenant.as_str(), id, if paused { "pause" } else { "resume" }, i64::from(paused), state.generation]).map_err(|_| LifecycleError::Unavailable)?;
+            let generation =
+                i64::try_from(state.generation).map_err(|_| LifecycleError::Invalid)?;
+            tx.execute("INSERT INTO lifecycle_operations(tenant,operation_id,action,paused,generation) VALUES (?1,?2,?3,?4,?5)", params![tenant.as_str(), id, if paused { "pause" } else { "resume" }, i64::from(paused), generation]).map_err(|_| LifecycleError::Unavailable)?;
         }
         tx.commit().map_err(|_| LifecycleError::Unavailable)?;
         Ok(state)

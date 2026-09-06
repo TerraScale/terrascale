@@ -647,7 +647,10 @@ pub(crate) trait StoragePort: Send {
         &mut self,
         _tenant: &TenantId,
         _command: crate::engine::lifecycle_state::LifecycleCommand,
-    ) -> Result<crate::engine::lifecycle_state::LifecycleOperationOutcome, crate::engine::lifecycle_state::LifecycleError> {
+    ) -> Result<
+        crate::engine::lifecycle_state::LifecycleOperationOutcome,
+        crate::engine::lifecycle_state::LifecycleError,
+    > {
         Err(crate::engine::lifecycle_state::LifecycleError::Unavailable)
     }
 

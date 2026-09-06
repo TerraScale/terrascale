@@ -9,6 +9,7 @@ mod lifecycle;
 mod range_copy;
 mod recovery;
 mod routing;
+mod runtime;
 mod state;
 mod trigger;
 mod verification;
@@ -27,6 +28,7 @@ pub use range_copy::{
 };
 pub use recovery::{RecoveryAction, RecoveryDecision, RecoveryError, RecoveryPlan};
 pub use routing::{RouteError, RouteTable, ShardRoute, ShardRouter};
+pub use runtime::{SplitRuntime, SplitRuntimeError};
 pub use state::{
     DurableSplitState, SPLIT_STATE_VERSION, SplitContext, SplitStateError, SplitStateStore,
 };

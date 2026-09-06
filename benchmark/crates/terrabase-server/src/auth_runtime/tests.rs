@@ -12,7 +12,7 @@ use terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapGrant;
 // that crate. Keep this server test fixture local so the HTTP test exercises
 // the same public production constructors and mTLS boundary.
 #[cfg(target_os = "linux")]
-mod admitted_fixture {
+pub(crate) mod admitted_fixture {
     use super::*;
     use crate::config::{
         DatabaseQuotas, ProductionConfig, ProductionDatabase, ProductionEnvironment,
@@ -192,7 +192,7 @@ mod admitted_fixture {
         drop(peer);
     }
 
-    fn production_config(
+    pub(crate) fn production_config(
         scope: (TenantUlid, ProjectUlid, DatabaseUlid),
         cluster: ClusterUlid,
         member: MemberUlid,
@@ -255,7 +255,7 @@ mod admitted_fixture {
         }
     }
 
-    fn public_config(root: &std::path::Path, key_path: PathBuf) -> PublicApiConfig {
+    pub(crate) fn public_config(root: &std::path::Path, key_path: PathBuf) -> PublicApiConfig {
         PublicApiConfig {
             byo_jwt: None,
             lifecycle_publication: None,

@@ -13,7 +13,11 @@ use std::{
     path::Path,
     sync::{Arc, Mutex},
 };
-fn unix_millis() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis().try_into().unwrap_or(u64::MAX)) }
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis().try_into().unwrap_or(u64::MAX))
+}
 use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
 use terrabase::regions::RegionCode;
 use terrabase_cluster::{production::DatabaseRouteScope, wal_route::DurableWalAssignmentSource};
@@ -199,27 +203,81 @@ impl UsageAdmissionJournal {
 
     /// Installs the owner-provided pinned budget verifier before the listener
     /// is composed. An absent verifier keeps allocation delivery closed.
-    pub fn with_allocation_verifier(self, config: AllocationVerifierConfig) -> Result<Self, String> {
-        if config.key_id.is_empty() || config.public_key_spki.is_empty() || config.policy_epoch == 0 || config.consent_epoch == 0 {
+    pub fn with_allocation_verifier(
+        self,
+        config: AllocationVerifierConfig,
+    ) -> Result<Self, String> {
+        if config.key_id.is_empty()
+            || config.public_key_spki.is_empty()
+            || config.policy_epoch == 0
+            || config.consent_epoch == 0
+        {
             return Err("budget verifier configuration is invalid".into());
         }
-        *self.allocation_verifier.lock().map_err(|_| "budget verifier lock unavailable")? = Some(config);
+        *self.allocation_verifier.lock().map_err(|_| "budget verifier lock unavailable")? =
+            Some(config);
         Ok(self)
     }
     /// Verifies and durably installs one signed regional allocation.
-    pub fn admit_allocation(&self, signed_bytes: &[u8]) -> Result<terrabase::usage::VerifiedAllocation, String> {
-        let config = self.allocation_verifier.lock().map_err(|_| "budget verifier lock unavailable")?.clone().ok_or("budget verifier unavailable")?;
-        let wire: terrabase::usage::SignedAllocation = serde_json::from_slice(signed_bytes).map_err(|_| "allocation encoding invalid")?;
-        let envelope: terrabase::usage::AllocationEnvelope = serde_json::from_slice(&wire.payload).map_err(|_| "allocation payload invalid")?;
-        let (organization, holder, placement, writer_epoch) = config.resolver.binding(&envelope.grant.database_id)?;
-        let verified = terrabase::usage::VerifiedAllocation::verify(signed_bytes, &config.key_id, &config.public_key_spki, &self.region, &placement, &organization, &envelope.grant.database_id, &holder, config.policy_epoch, config.consent_epoch, writer_epoch, unix_millis())
-            .map_err(|_| "allocation verification failed")?;
-        if verified.grant().writer_epoch != writer_epoch { return Err("allocation writer epoch mismatch".into()); }
-        let mut connection = self.connection.lock().map_err(|_| "usage admission lock unavailable")?;
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| "usage admission transaction unavailable")?;
-        tx.execute("INSERT OR IGNORE INTO allocations(operation,database_id,payload) VALUES(?1,?2,?3)", params![verified.grant().operation_id, verified.grant().database_id, signed_bytes]).map_err(|_| "allocation persistence failed")?;
-        let stored: Vec<u8> = tx.query_row("SELECT payload FROM allocations WHERE operation=?1", [&verified.grant().operation_id], |row| row.get(0)).map_err(|_| "allocation persistence failed")?;
-        if stored != signed_bytes { return Err("allocation identity conflict".into()); }
+    pub fn admit_allocation(
+        &self,
+        signed_bytes: &[u8],
+    ) -> Result<terrabase::usage::VerifiedAllocation, String> {
+        let config = self
+            .allocation_verifier
+            .lock()
+            .map_err(|_| "budget verifier lock unavailable")?
+            .clone()
+            .ok_or("budget verifier unavailable")?;
+        let wire: terrabase::usage::SignedAllocation =
+            serde_json::from_slice(signed_bytes).map_err(|_| "allocation encoding invalid")?;
+        let envelope: terrabase::usage::AllocationEnvelope =
+            serde_json::from_slice(&wire.payload).map_err(|_| "allocation payload invalid")?;
+        let (organization, holder, placement, writer_epoch) =
+            config.resolver.binding(&envelope.grant.database_id)?;
+        let verified = terrabase::usage::VerifiedAllocation::verify(
+            signed_bytes,
+            &config.key_id,
+            &config.public_key_spki,
+            &self.region,
+            &placement,
+            &organization,
+            &envelope.grant.database_id,
+            &holder,
+            config.policy_epoch,
+            config.consent_epoch,
+            writer_epoch,
+            unix_millis(),
+        )
+        .map_err(|_| "allocation verification failed")?;
+        if verified.grant().writer_epoch != writer_epoch {
+            return Err("allocation writer epoch mismatch".into());
+        }
+        let mut connection =
+            self.connection.lock().map_err(|_| "usage admission lock unavailable")?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| "usage admission transaction unavailable")?;
+        tx.execute(
+            "INSERT OR IGNORE INTO allocations(operation,database_id,payload) VALUES(?1,?2,?3)",
+            params![verified.grant().operation_id, verified.grant().database_id, signed_bytes],
+        )
+        .map_err(|_| "allocation persistence failed")?;
+        let stored: Vec<u8> = tx
+            .query_row(
+                "SELECT payload FROM allocations WHERE operation=?1",
+                [&verified.grant().operation_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| "allocation persistence failed")?;
+        let stored_wire: terrabase::usage::SignedAllocation =
+            serde_json::from_slice(&stored).map_err(|_| "allocation persistence failed")?;
+        // ECDSA signatures are randomized. Retries with the same canonical
+        // payload retain the operation identity even when the wrapper
+        // signature differs; the incoming wrapper was fully re-verified above.
+        if stored_wire.key_id != wire.key_id || stored_wire.payload != wire.payload {
+            return Err("allocation identity conflict".into());
+        }
         tx.commit().map_err(|_| "allocation persistence failed")?;
         Ok(verified)
     }
@@ -242,10 +300,7 @@ impl UsageAdmissionJournal {
             .map_err(|_| "budget verifier lock unavailable")?
             .clone()
             .ok_or("budget verifier unavailable")?;
-        let connection = self
-            .connection
-            .lock()
-            .map_err(|_| "usage admission lock unavailable")?;
+        let connection = self.connection.lock().map_err(|_| "usage admission lock unavailable")?;
         let signed: Option<Vec<u8>> = connection
             .query_row(
                 "SELECT payload FROM allocations WHERE operation=?1 AND database_id=?2",
@@ -261,7 +316,8 @@ impl UsageAdmissionJournal {
                 .payload,
         )
         .map_err(|_| "allocation payload invalid")?;
-        if envelope.grant.operation_id != operation_id || envelope.grant.database_id != database_id {
+        if envelope.grant.operation_id != operation_id || envelope.grant.database_id != database_id
+        {
             return Err("allocation identity conflict".into());
         }
         let (organization, holder, placement, writer_epoch) =
@@ -475,8 +531,17 @@ async fn admit_allocation(
     State(journal): State<Arc<UsageAdmissionJournal>>,
     Json(record): Json<terrabase::usage::SignedAllocation>,
 ) -> impl IntoResponse {
-    let Ok(permit) = journal.operations.clone().try_acquire_owned() else { return StatusCode::SERVICE_UNAVAILABLE.into_response(); };
-    match tokio::task::spawn_blocking(move || { let _permit = permit; serde_json::to_vec(&record).map_err(|_| "allocation encoding failed").and_then(|bytes| journal.admit_allocation(&bytes)) }).await {
+    let Ok(permit) = journal.operations.clone().try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        serde_json::to_vec(&record)
+            .map_err(|_| "allocation encoding failed")
+            .and_then(|bytes| journal.admit_allocation(&bytes))
+    })
+    .await
+    {
         Ok(Ok(_)) => StatusCode::OK.into_response(),
         _ => StatusCode::CONFLICT.into_response(),
     }

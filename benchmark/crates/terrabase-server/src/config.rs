@@ -1173,17 +1173,20 @@ impl ServerConfig {
             release,
             control,
             keys,
-            budget: file.budget.map(|budget| {
-                if budget.policy_epoch == 0
-                    || budget.consent_epoch == 0
-                    || hex::decode(&budget.key_id).map_or(true, |key| key.len() != 32)
-                {
-                    return Err(ConfigError::InvalidProductionBoundary);
-                }
-                let public_key_spki_file = production_path(&budget.public_key_spki_file)?;
-                paths.push(public_key_spki_file.clone());
-                Ok(ProductionBudgetConfig { public_key_spki_file, ..budget })
-            }).transpose()?,
+            budget: file
+                .budget
+                .map(|budget| {
+                    if budget.policy_epoch == 0
+                        || budget.consent_epoch == 0
+                        || hex::decode(&budget.key_id).map_or(true, |key| key.len() != 32)
+                    {
+                        return Err(ConfigError::InvalidProductionBoundary);
+                    }
+                    let public_key_spki_file = production_path(&budget.public_key_spki_file)?;
+                    paths.push(public_key_spki_file.clone());
+                    Ok(ProductionBudgetConfig { public_key_spki_file, ..budget })
+                })
+                .transpose()?,
             member_admission,
         };
         let first = production.databases.iter().find(|database| database.enabled);

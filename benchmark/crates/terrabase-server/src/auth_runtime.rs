@@ -1083,7 +1083,11 @@ fn now_ms() -> u64 {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "auth_runtime/four_node_tests.rs"]
+mod four_node_tests;
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]

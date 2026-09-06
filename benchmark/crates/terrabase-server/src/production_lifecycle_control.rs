@@ -38,6 +38,8 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
                 &assignment.region,
                 &assignment.member,
                 assignment.placement_revision,
+                assignment.authority_epoch,
+                &assignment.authority_lease,
                 signature,
             )
             .map(|_| ())
@@ -76,10 +78,11 @@ impl TbepLifecycleControl {
             &AcceptedLifecycleAssignment,
             &[u8],
             &str,
-        ) -> Result<(), String>,
+        )
+            -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String>,
     ) -> Result<(), String> {
         let assignment = Self::assignment(context);
-        f(&self.control, &assignment, &context.authority_signature, operation)
+        f(&self.control, &assignment, &context.authority_signature, operation).map(|_| ())
     }
 }
 
@@ -95,7 +98,7 @@ impl terrabase_tbep::lifecycle::LifecycleControl for TbepLifecycleControl {
         &self,
         c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
         o: &str,
-    ) -> Result<(), String> {
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         self.invoke(c, o, ProductionLifecycleControl::verify_snapshot_placement)
     }
     fn close_database(
@@ -123,7 +126,7 @@ impl terrabase_tbep::lifecycle::LifecycleControl for TbepLifecycleControl {
         &self,
         c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
         o: &str,
-    ) -> Result<(), String> {
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         self.invoke(c, o, ProductionLifecycleControl::delete_owned_data)
     }
 }
@@ -182,7 +185,7 @@ pub trait NativeLifecycleWorker: Send + Sync {
         &self,
         _assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
-    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
+    ) -> Result<(), String> {
         Err("native snapshot placement verifier is unavailable".into())
     }
     /// Deletes data owned by this member after durable authority admission.
@@ -211,7 +214,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         &self,
         _assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
-    ) -> Result<(), String> {
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         Err("native snapshot fleet is not attached".into())
     }
 
@@ -219,7 +222,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         &self,
         assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
-    ) -> Result<(), String> {
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         self.registry.pause(&assignment.database, _operation)
     }
 
@@ -240,7 +243,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         &self,
         assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
-    ) -> Result<(), String> {
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         self.registry.resume(&assignment.database, _operation)
     }
 }

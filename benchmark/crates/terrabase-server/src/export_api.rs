@@ -959,7 +959,7 @@ impl ExportService {
         let service = self.clone();
         let job = job_id.to_owned();
         let member = member.to_owned();
-        tokio::task::spawn_blocking(move || {
+        let (database, manifest) = tokio::task::spawn_blocking(move || {
             if !safe_member_path(&member) {
                 return Err(ExportError::InvalidRequest("invalid member"));
             }
@@ -970,10 +970,11 @@ impl ExportService {
                 return Err(ExportError::InvalidRequest("export incomplete"));
             }
             let manifest = state.manifest.ok_or(ExportError::IdempotencyConflict)?;
-            service.artifacts.read_member(&job, &state.database, &member, &manifest).await
+            Ok::<_, ExportError>((state.database, manifest))
         })
         .await
-        .map_err(|_| ExportError::DependencyUnavailable)?
+        .map_err(|_| ExportError::DependencyUnavailable)??;
+        service.artifacts.read_member(&job, &database, &member, &manifest).await
     }
 
     fn clone_for_worker(&self) -> Worker {
@@ -2186,29 +2187,39 @@ mod tests {
         committed: AtomicUsize,
     }
     impl ArtifactWriter for Writer {
-        fn put(&mut self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError> {
-            let mut members = self.members.lock().expect("members");
-            if let Some((_, existing)) = members.iter().find(|(name, _)| name == path) {
-                if existing != plaintext {
-                    return Err(ExportError::IdempotencyConflict);
+        fn put<'a>(
+            &'a mut self,
+            path: &'a str,
+            plaintext: &'a [u8],
+        ) -> ExportFuture<'a, ArtifactFact> {
+            Box::pin(async move {
+                let mut members = self.members.lock().expect("members");
+                if let Some((_, existing)) = members.iter().find(|(name, _)| name == path) {
+                    if existing != plaintext {
+                        return Err(ExportError::IdempotencyConflict);
+                    }
+                } else {
+                    members.push((path.into(), plaintext.to_vec()));
                 }
-            } else {
-                members.push((path.into(), plaintext.to_vec()));
-            }
-            Ok(fact(path, plaintext))
+                Ok(fact(path, plaintext))
+            })
         }
-        fn existing_facts(&mut self) -> Result<Vec<ArtifactFact>, ExportError> {
-            Ok(self
-                .members
-                .lock()
-                .expect("members")
-                .iter()
-                .map(|(path, bytes)| fact(path, bytes))
-                .collect())
+        fn existing_facts<'a>(&'a mut self) -> ExportFuture<'a, Vec<ArtifactFact>> {
+            Box::pin(async move {
+                Ok(self
+                    .members
+                    .lock()
+                    .expect("members")
+                    .iter()
+                    .map(|(path, bytes)| fact(path, bytes))
+                    .collect())
+            })
         }
-        fn commit(self: Box<Self>, _manifest: &ArtifactFact) -> Result<(), ExportError> {
-            self.committed.fetch_add(1, Ordering::Relaxed);
-            Ok(())
+        fn commit(self: Box<Self>, _manifest: &ArtifactFact) -> ExportFuture<'static, ()> {
+            Box::pin(async move {
+                self.committed.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            })
         }
     }
     struct Port {
@@ -2219,18 +2230,21 @@ mod tests {
         fn attestation(&self) -> Option<EncryptionAttestation> {
             Some(EncryptionAttestation { provider: "test".into(), key_version: "v1".into() })
         }
-        fn open(
-            &self,
-            _job: &str,
-            _database: &str,
-            destination: &ExportDestination,
-            lock: &PlacementLock,
-        ) -> Result<Box<dyn ArtifactWriter>, ExportError> {
-            if !lock.allows(destination.region()) {
-                return Err(ExportError::PlacementMismatch);
-            }
-            self.opens.fetch_add(1, Ordering::Relaxed);
-            Ok(Box::new(self.writer.lock().expect("writer").take().expect("writer")))
+        fn open<'a>(
+            &'a self,
+            _job: &'a str,
+            _database: &'a str,
+            destination: &'a ExportDestination,
+            lock: &'a PlacementLock,
+        ) -> ExportFuture<'a, Box<dyn ArtifactWriter>> {
+            Box::pin(async move {
+                if !lock.allows(destination.region()) {
+                    return Err(ExportError::PlacementMismatch);
+                }
+                self.opens.fetch_add(1, Ordering::Relaxed);
+                Ok(Box::new(self.writer.lock().expect("writer").take().expect("writer"))
+                    as Box<dyn ArtifactWriter>)
+            })
         }
     }
 
@@ -2244,8 +2258,8 @@ mod tests {
         .expect("service")
     }
 
-    #[test]
-    fn failed_export_resumes_without_losing_persisted_pages() {
+    #[tokio::test]
+    async fn failed_export_resumes_without_losing_persisted_pages() {
         let root = std::env::temp_dir().join(format!(
             "terrabase-export-resume-{}",
             terrabase::identity::DatabaseUlid::generate()
@@ -2273,7 +2287,7 @@ mod tests {
             artifacts: port,
             cursor_key: [9; 32],
         };
-        assert!(worker.run(&state.job_id).is_err(), "source fails after its first page");
+        assert!(worker.run(&state.job_id).await.is_err(), "source fails after its first page");
         let failed = store.load(&state.job_id).expect("load").expect("job");
         assert_eq!(failed.status, JobStatus::Failed);
         assert_eq!(failed.error.as_deref(), Some("export source operation failed"));
@@ -2290,14 +2304,18 @@ mod tests {
                 &state.destination,
                 &PlacementLock::single(RegionCode::GRU),
             )
+            .await
             .expect("reopen staging");
         let fabricated =
             ArtifactFact { path: "manifest.json".into(), length: 0, checksum: "0".repeat(64) };
-        assert!(premature.commit(&fabricated).is_err(), "a missing manifest cannot be committed");
+        assert!(
+            premature.commit(&fabricated).await.is_err(),
+            "a missing manifest cannot be committed"
+        );
         assert!(!directory.join("COMMITTED").exists());
 
         source.pages.lock().expect("source").push(page("second", true));
-        worker.run(&state.job_id).expect("resume");
+        worker.run(&state.job_id).await.expect("resume");
         let complete = store.load(&state.job_id).expect("load").expect("job");
         assert_eq!(complete.status, JobStatus::Complete);
         assert_eq!((complete.pages, complete.records), (2, 2));
@@ -2526,8 +2544,8 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
-    #[test]
-    fn worker_does_not_read_or_mutate_a_job_owned_by_another_worker() {
+    #[tokio::test]
+    async fn worker_does_not_read_or_mutate_a_job_owned_by_another_worker() {
         let mut service = service(
             Source { pages: Mutex::new(Vec::new()) },
             Port { writer: Arc::new(Mutex::new(None)), opens: AtomicUsize::new(0) },
@@ -2536,10 +2554,10 @@ mod tests {
         service.store = store.clone();
         let lease = store.acquire_job("job").expect("lock").expect("unowned");
         let worker = service.clone_for_worker();
-        worker.run("job").expect("another worker owns the job");
+        worker.run("job").await.expect("another worker owns the job");
         assert_eq!(store.loads.load(Ordering::SeqCst), 0);
         drop(lease);
-        assert!(worker.run("job").is_err(), "unowned missing job is read and refused");
+        assert!(worker.run("job").await.is_err(), "unowned missing job is read and refused");
         assert_eq!(store.loads.load(Ordering::SeqCst), 1);
     }
 

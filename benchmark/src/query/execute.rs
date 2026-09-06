@@ -928,7 +928,7 @@ fn pushdown_fields(filter: &ScanFilter) -> Vec<&str> {
 /// Everything else — presence tests, patterns, membership, booleans, nulls
 /// — stays with the executor's exact predicate, so the pushed filter only
 /// ever narrows.
-fn pushdown_filter(predicate: &super::spec::QueryPredicate) -> Option<ScanFilter> {
+pub(crate) fn pushdown_filter(predicate: &super::spec::QueryPredicate) -> Option<ScanFilter> {
     fn push(conditions: &mut Vec<ScanCondition>, field: &str, op: ScanOp, value: &DocumentValue) {
         if matches!(
             value,

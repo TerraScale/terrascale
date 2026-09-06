@@ -8,6 +8,14 @@ use terrabase::encryption::{
     ArtifactCipher, Compression, DatabaseKey, EncryptionContext, ProviderMode,
 };
 
+/// Lease-scoped encryption operation used by production artifact writers.
+/// Implementations must perform key use inside the active authorization
+/// lease; this trait never exposes or stores raw key material.
+pub(crate) trait ArtifactCrypto: Send + Sync {
+    fn seal(&self, domain: &str, plaintext: &[u8]) -> Result<Vec<u8>, ExportError>;
+    fn open(&self, domain: &str, ciphertext: &[u8]) -> Result<Vec<u8>, ExportError>;
+}
+
 pub(crate) use crate::export_local::{LocalManifest, LocalWriter};
 
 /// Reads an owner-private 32-byte export cursor key without exposing it in

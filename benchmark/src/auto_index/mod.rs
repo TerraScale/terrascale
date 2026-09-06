@@ -1394,6 +1394,28 @@ impl LifecycleStore {
             .next()
     }
 
+    pub(crate) fn shadow_candidate(
+        &self,
+        tenant: &str,
+        collection: &str,
+        template_digest: [u8; 32],
+    ) -> Option<String> {
+        self.indexes
+            .values()
+            .filter(|view| {
+                view.tenant == tenant
+                    && view.collection == collection
+                    && view.phase == LifecyclePhase::Shadowing
+                    && !view.visible
+            })
+            .find(|view| {
+                self.evidence
+                    .contains_key(&(tenant.to_owned(), view.id.clone(), template_digest))
+                    || template_digest != [0; 32]
+            })
+            .map(|view| view.id.clone())
+    }
+
     fn invalidate_evidence(&mut self, tenant: &str, id: &str) {
         self.evidence.retain(|(owner, candidate, _), _| owner != tenant || candidate != id);
     }

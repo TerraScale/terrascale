@@ -367,6 +367,7 @@ mod tests {
     #[tokio::test]
     async fn native_transport_refuses_private_pins_and_unsafe_request_headers() {
         let transport = NativeHttpsTransport::new(Handle::current()).expect("transport");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
         assert_eq!(
             transport.send_https(
                 "https://hooks.example/events",
@@ -375,6 +376,10 @@ mod tests {
                 b"body"
             ),
             Err(DeliveryError::TargetRejected)
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), listener.accept()).await.is_err(),
+            "private pins must be rejected before opening an HTTP connection"
         );
         let uri: Uri = "https://hooks.example/events".parse().expect("uri");
         for name in ["Host", "Transfer-Encoding", "Content-Length", "Connection", "Expect"] {

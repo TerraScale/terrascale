@@ -254,7 +254,7 @@ fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Opti
         || record.document.target.branch != "main"
         || record.document.target.collection != collection
         || record.document.identity.database_id != engine.database_owner().database().to_text()
-        || !record.document.migration.as_ref().is_some_and(|migration| {
+        || !record.document.migration.as_ref().is_none_or(|migration| {
             matches!(
                 migration.state,
                 MigrationState::Pending | MigrationState::Running | MigrationState::Failed

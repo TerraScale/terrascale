@@ -304,6 +304,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
     use aws_lc_rs::{
         rand::SystemRandom,
         signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair},
@@ -375,6 +376,7 @@ mod tests {
                 "holder-2",
                 4,
                 7,
+                9,
                 1_800_000_000_000
             )
             .is_err()
@@ -391,6 +393,7 @@ mod tests {
                 "holder-1",
                 4,
                 7,
+                9,
                 1_800_000_000_000
             )
             .is_ok()
@@ -412,10 +415,23 @@ mod tests {
                 "holder-1",
                 4,
                 7,
+                9,
                 4_100_000_000_000
             )
             .unwrap_err(),
             AllocationError::Expired
         );
+    }
+
+    #[test]
+    fn go_signed_allocation_vector_verifies() {
+        let vector: serde_json::Value = serde_json::from_slice(include_bytes!("../../testdata/allocation-go-vector.json")).unwrap();
+        let payload = base64::engine::general_purpose::STANDARD.decode(vector["payload"].as_str().unwrap()).unwrap();
+        let mut wire_sig = hex::decode(vector["signature_hex"].as_str().unwrap()).unwrap();
+        let public = hex::decode(vector["public_spki_hex"].as_str().unwrap()).unwrap();
+        let key_id = vector["key_id"].as_str().unwrap();
+        let wire = serde_json::to_vec(&SignedAllocation { payload, signature: std::mem::take(&mut wire_sig), key_id: key_id.into() }).unwrap();
+        let verified = VerifiedAllocation::verify(&wire, key_id, &public, "GRU", "db-placement", "org", "db", "writer-vector", 3, 4, 9, 1_700_000_000_000).unwrap();
+        assert_eq!(verified.grant().operation_id, "op-vector");
     }
 }

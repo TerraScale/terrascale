@@ -1180,6 +1180,7 @@ pub struct Engine {
     /// candidates. Values are logical pages/rows only; document bodies never
     /// enter this sketch.
     pub(crate) auto_index_observations: Mutex<crate::auto_index::WorkloadSketch>,
+    pub(crate) auto_index_shadow_samples: Mutex<BTreeMap<(String, String, [u8; 32]), u64>>,
     /// The Storage Tier Mover's control state (P4): the configured
     /// policy and the pause gate. The handle is [`Engine::tiers`].
     /// The group-commit mailbox: waiting intents and the leader flag.
@@ -1375,6 +1376,7 @@ impl Engine {
             bulk_audit: Arc::new(crate::query::bulk::BulkAuditJournal::new()),
             auto_index_lifecycle: Mutex::new(auto_index_lifecycle),
             auto_index_observations: Mutex::new(crate::auto_index::WorkloadSketch::default()),
+            auto_index_shadow_samples: Mutex::new(BTreeMap::new()),
             origin_commit_barrier: std::sync::RwLock::new(()),
             commit_mailbox: Arc::new(Mutex::new(CommitMailbox::default())),
             commit_arrivals: std::sync::Condvar::new(),
@@ -4072,6 +4074,109 @@ impl Engine {
                 at_millis,
             )
             .map_err(|_| EngineError::Conflict)
+    }
+
+    /// Measures a paired ordinary/hidden execution against one immutable
+    /// snapshot and commits the resulting samples. Every value comes from
+    /// SQLite statement counters; no timing or inferred estimate is admitted.
+    pub fn auto_index_measure_shadow(
+        &self,
+        scope: &TenantScope,
+        request: &crate::storage::ShadowReadRequest<'_>,
+        template_digest: [u8; 32],
+        expected_generation: u64,
+        samples: u16,
+        at_millis: u64,
+    ) -> Result<crate::auto_index::ShadowEvidence, EngineError> {
+        if !(20..=crate::auto_index::MAX_SHADOW_SAMPLES as u16).contains(&samples)
+            || template_digest == [0; 32]
+        {
+            return Err(EngineError::InvalidDocument);
+        }
+        self.validate_scope(scope)?;
+        let tenant = scope.tenant().clone();
+        let snapshot = self.read_snapshot(scope)?;
+        let mut baseline = Vec::with_capacity(samples as usize);
+        let mut candidate = Vec::with_capacity(samples as usize);
+        for _ in 0..samples {
+            let comparison = self
+                .measure_index_shadow(scope, &snapshot, request)
+                .map_err(|_| EngineError::StorageFailure)?;
+            baseline.push(crate::auto_index::LogicalCost::new(
+                u64::from(comparison.ordinary.full_scan_steps),
+                u64::from(comparison.ordinary.rows),
+            ));
+            candidate.push(crate::auto_index::LogicalCost::new(
+                u64::from(comparison.candidate.full_scan_steps),
+                u64::from(comparison.candidate.rows),
+            ));
+        }
+        self.auto_index_record_shadow_evidence(
+            &tenant,
+            crate::auto_index::ShadowEvidence {
+                index_id: request.hidden_candidate.ok_or(EngineError::InvalidDocument)?.to_owned(),
+                generation: expected_generation,
+                template_digest,
+                baseline,
+                candidate,
+                improvement: 0.0,
+                regression: false,
+                digest: [0; 32],
+            },
+            at_millis,
+        )
+    }
+
+    /// Admits at most one live shadow sample per template/candidate each
+    /// interval and records its measured counters against the caller's
+    /// immutable snapshot.
+    pub(crate) fn sample_auto_index_shadow(
+        &self,
+        scope: &TenantScope,
+        snapshot: &ReadSnapshot,
+        collection: &str,
+        field: &str,
+        template_digest: [u8; 32],
+        filter: &crate::storage::ScanFilter,
+        generation: u64,
+    ) {
+        let tenant = scope.tenant().as_str().to_owned();
+        let Some(candidate) = self.auto_index_lifecycle.lock().ok().and_then(|state| {
+            state.shadow_candidate(&tenant, collection, template_digest)
+        }) else { return };
+        let key = (tenant.clone(), candidate.clone(), template_digest);
+        let now = Self::now_millis();
+        let Ok(mut samples) = self.auto_index_shadow_samples.lock() else { return };
+        if samples.get(&key).is_some_and(|last| now.saturating_sub(*last) < 60_000) {
+            return;
+        }
+        samples.insert(key, now);
+        drop(samples);
+        let Ok(collection) = crate::types::CollectionName::try_new(collection) else { return };
+        let request = crate::storage::ShadowReadRequest {
+            collection: &collection,
+            filter,
+            candidate_field: field,
+            hidden_candidate: Some(&candidate),
+            after: None,
+            limit: 100,
+            max_vm_steps: crate::storage::MAX_SHADOW_VM_STEPS,
+        };
+        let Ok(comparison) = self.measure_index_shadow(scope, snapshot, &request) else { return };
+        let _ = self.auto_index_record_shadow_evidence(
+            &scope.tenant().clone(),
+            crate::auto_index::ShadowEvidence {
+                index_id: candidate,
+                generation,
+                template_digest,
+                baseline: vec![crate::auto_index::LogicalCost::new(u64::from(comparison.ordinary.full_scan_steps), u64::from(comparison.ordinary.rows))],
+                candidate: vec![crate::auto_index::LogicalCost::new(u64::from(comparison.candidate.full_scan_steps), u64::from(comparison.candidate.rows))],
+                improvement: 0.0,
+                regression: false,
+                digest: [0; 32],
+            },
+            now,
+        );
     }
 
     /// Records one literal-free execution observation for the D-31 bounded
