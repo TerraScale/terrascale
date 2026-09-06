@@ -18,6 +18,7 @@ decoder boundary. The whole-message limit uses a committed repeated-byte recipe
 instead of adding an 8 MiB binary fixture to the repository. The recipe still
 specifies every byte and its exact count.
 
-INT-3 must consume these same fixtures in Go. Replacing a vector requires a
+The Rust producer and all customer SDKs must agree on these fixtures.
+Replacing a vector requires a
 reviewed protocol-version decision; runtime encode/decode round trips do not
 replace this evidence.

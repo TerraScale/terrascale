@@ -1,195 +1,99 @@
 # TerraScale TypeScript SDK
 
-`@terrascale/sdk` is the public TypeScript client for TerraScale.
-
-The workspace `../GOAL.md` defines the target architecture. This repository's
-current status and production gaps are tracked in [GOAL.md](GOAL.md). An
-accepted target is not a released SDK capability.
+`@terrascale/sdk` provides typed public TerraScale operations for browsers,
+Node.js 22 and 24, and Cloudflare Workers. The [workspace goal](../GOAL.md#ts-typescript) defines
+required capabilities; [release qualification](docs/release.md) distinguishes
+implemented checks from production evidence still required.
 
 ## Service boundary
 
-The SDK uses public versioned TerraScale HTTPS and reactive contracts:
+The Rust TerraBase member serves the public database, SQL, placement, backup,
+usage, and reactive APIs. Dashboard owns identity, organizations, projects,
+users, payments, and MCP. The SDK uses their versioned public contracts.
+Private TBEP, native replication, NATS, and direct storage access are internal.
+Dashboard uses the same SDK and authorization as customer applications.
 
-- Dashboard owns Better Auth, Organizations, Projects, Users, Payments, HTTP
-  MCP, and those public product routes.
-- The Go Database API in `ts-internals` owns database, query, placement,
-  backup, usage, and reactive routes.
-- TerraBase is private. The SDK never speaks TBEP, opens a TerraBase
-  connection, consumes native replication data, or uses NATS.
-
-Dashboard uses this package exactly as an external customer application does.
-It receives no private entrypoint, header, tenant bypass, or direct database
-path.
+Create clients with `createTerraScaleClient(config)`. Authentication uses
+`accessToken`, which accepts a token or token provider. The default API origin
+is `https://api.terrascale.tech`. Keep server credentials out of browser bundles.
 
 ## Entrypoints
 
-| Entrypoint | Contract |
+| Import | Purpose |
 | --- | --- |
-| `@terrascale/sdk` | Ordinary typed customer operations |
-| `@terrascale/sdk/admin` | Role-protected public administration |
-| `@terrascale/sdk/better-auth` | Public server-only Better Auth adapter |
+| `@terrascale/sdk` | Client factory, public operations, schema/SQL types, reactive client |
+| `@terrascale/sdk/admin` | Role-protected administration |
+| `@terrascale/sdk/schema` | Schema builders |
+| `@terrascale/sdk/sql` | Parameterized SQL builders |
+| `@terrascale/sdk/management` | Database and collection management |
+| `@terrascale/sdk/tenants` | Tenant operations |
+| `@terrascale/sdk/react` | React integration |
+| `@terrascale/sdk/tanstack` | TanStack integration |
+| `@terrascale/sdk/better-auth` | Server-only Better Auth adapter |
+| `@terrascale/sdk/local` | Explicit local development runtime |
 
-The Better Auth adapter accepts a typed Database API operation port and maps
-Better Auth's adapter contract to named unique-insert, compare-and-swap,
-one-time-consume, pagination, transaction, and migration operations. It is
-server-only and is excluded from browser bundles. The generated Database API
-implementation, pinned Better Auth compatibility and license evidence, and
-adapter conformance are separate qualification gates.
+The export map in [package.json](package.json) is authoritative. Public clients
+expose named operations, not arbitrary request paths or a generic transport.
+The Better Auth adapter maps named atomic operations; production requires a
+qualified public HTTP implementation of its operation port.
 
-There is no Dashboard-named or generic request entrypoint.
+The temporary local SQLite runtime is separate from TerraBase's production
+SQLite engine. It cannot qualify production behavior and is forbidden in
+production, staging, deployment, and CI qualification. See
+[ADR 0004](docs/adr/0004-sqlite-local-development-only.md).
 
-## Reactive protocol
+## Queries and reactive delivery
 
-The SDK has one reactive implementation: `TerraScaleSyncV1Client`. It decodes
-the generated `terrascale.sync.v1.msgpack` frames and applies authorized
-snapshots and result operations to bounded result views. The checked-in JSON
-manifest owns every tag, field position, direction, and bound. The generated
-TypeScript module consumes that file. INT-3's Go codec must check the same
-manifest instead of copying a second frame definition.
+Queries use read-only SQL; durable writes use document operations.
+`TerraScaleSyncV1Client` implements the reactive state machine with CDN-backed
+HTTP delivery by default and explicit WebSocket opt-in. It applies bounded
+snapshots, ordered result changes, checkpoints, and typed resets. Online
+optimism is reversible presentation; there is no durable offline write queue.
 
-MessagePack owns the envelope and result-operation structure only. Projected
-document values stay as opaque TerraScale-canonical JSON byte strings inside
-the frame. The SDK enforces the 1 MiB document ceiling across the aggregate
-projected bytes in an item, does not transcode them into nested MessagePack,
-and leaves the single native `JSON.parse` per delivered value to SDK-2's
-browser boundary.
+The generated `terrascale.sync.v1.msgpack` codec defines frame layout and
+bounds. Projected values remain canonical JSON bytes until the delivery
+boundary. Unknown wire versions and hostile sizes fail closed. Permission
+changes must remove revoked results before exposing replacement views.
+Transport implementation alone does not prove cross-language conformance or
+live authorization, reconnect, and Region-movement behavior.
 
-Protocol 1.0 is the first public wire contract. The decoder rejects unknown
-versions before reading a message body. Compatible changes append tags;
-existing tags retain their meanings.
+## Routing and retries
 
-The current client:
+REST starts at the global origin and can pin to a permitted Region. Placement
+repair must preserve authorization, session frontiers, and idempotency.
+`preferredRegion` is a failover-capable hint; `regionAffinity: "strict"`
+requires a preferred Region and refuses silent regional fallback.
 
-- builds subscribe, unsubscribe, heartbeat, and checkpoint frames for bounded
-  subscribable SELECT queries;
-- receives authorized result snapshots, insert, update, patch, remove, move, or
-  reset operations;
-- keeps checkpoints opaque and view-scoped;
-- applies reversible optimistic presentation only while the transport is
-  online;
-- installs permission-change replacements before exposing the next view;
-- stops client traffic on backpressure and marks Region movement offline; and
-- passes the hostile-decode, semantic corpus, manifest-drift, unit, and browser
-  gates.
+Use `idempotencyKeyFactory` or an operation's `idempotencyKey` for retryable
+mutations. Keys are nonblank and at most 128 characters; retries retain one
+identity for one logical attempt. Validation, authentication, authorization,
+and deterministic conflicts are not automatic retry candidates.
 
-SDK-2 supplies the production WebSocket transport and HTTP + MessagePack
-fallback. Until those transports pass browser and live gateway tests, this
-state machine alone is not a production transport. See
-[ADR 0025](docs/adr/0025-public-messagepack-manifest.md).
+`RegionalDurable` requires both local members. `GlobalDurable` requires every
+selected Region and is unavailable for a single-Region database. These are
+server guarantees that require live qualification, not client-side promises.
 
-## Better Auth adapter target
+The public API `/api/v1` is versioned. Release qualification must cover the
+exact packed tarball and the current stable major versions of Chrome, Firefox, Safari, and Edge.
 
-The server-only adapter implements the pinned Better Auth database
-adapter contract through named operations for:
+## Development and contracts
 
-- unique insert;
-- compare-and-swap;
-- one-time consume;
-- bounded transaction batches;
-- indexed reads and pagination;
-- idempotent retry; and
-- schema migration.
+```bash
+make check
+```
 
-It cannot use raw `fetch`, arbitrary paths, generic SDK requests, direct
-TerraBase, TBEP, or Dashboard private routes.
+This checks committed contract metadata, installs dependencies, typechecks,
+builds, and runs Vitest. Browser qualification is a separate lane:
 
-Qualification uses Better Auth's maintained adapter tests where available,
-exact-version compatibility, concurrent Region cases, migration, revocation,
-and fault injection.
-
-## Idempotent mutations
-
-Public clients opt in with `idempotencyKeyFactory` on the client or
-`idempotencyKey` on an individual request. Set the request value to `false`
-only when the operation's public contract permits no generated identity.
-
-Keys are nonblank and at most 128 characters. A retry reuses the same key for
-one logical attempt. Reusing a key with different input is a typed conflict.
-Replay retention and response headers follow the owning public contract.
-
-Mutations retry only when the operation is documented as idempotent. Validation,
-authentication, authorization, and deterministic conflict failures are not
-automatic retry candidates.
-
-## Region and session behavior
-
-The default public API origin is `https://api.terrascale.tech`. Cloudflare
-routes that global host to the nearest healthy Region. Region-pinned access
-uses `https://gru.api.terrascale.tech`, `https://sfo.api.terrascale.tech`, or
-`https://fra.api.terrascale.tech`.
-
-A database selects one through twenty active Regions, initially GRU, SFO, and
-FRA. A preferred Region is a failover-capable hint. Strict affinity fails
-rather than silently serving from another Region.
-
-`RegionalDurable` avoids WAN acknowledgement and requires both active local
-Members. `GlobalDurable` pays WAN latency and requires every selected active
-Region. Backup is an independent opt-in.
-
-## Public contract discipline
-
-The SDK implements only named operations published by the owning service.
-Dashboard-owned contracts and Database API contracts may share one edge origin
-and OpenAPI document, but their runtime ownership remains distinct.
-The public API `/api/v1` remains versioned; releases qualify the exact packed tarball
-so consumers receive the same server and browser surface that passed the repository gates.
-
-Each operation is gated against:
-
-- method and versioned path;
-- operation identity;
-- parameters and requiredness;
-- request and response media types;
-- field types and nullability;
-- security scheme and scopes;
-- success, error, and partial outcome shapes;
-- idempotency and retry;
-- pagination, checkpoint, and streaming semantics; and
-- route-manifest parity.
-
-Unbacked operations remain omitted. Do not invent types or use a generic
-request to hide a contract gap.
-
-The repository decision records are under [`docs/adr/`](docs/adr/). Start with
-[GOAL.md](GOAL.md) for the current implementation, cross-repository gaps,
-parallel work waves, and production exit gates.
-
-## Development
-
-~~~bash
-npm install
-npm run typecheck
-npm run build
-npm test
+```bash
 npm run test:browser
-~~~
+```
 
-Node.js 22 and 24 are the supported server runtimes. Browser qualification
-covers the current stable major versions of Chrome, Firefox, Safari, and Edge through the repository
-release gates.
+`make contracts` regenerates route and OpenAPI metadata from the pinned
+TerraBase bundle. Supply explicit development `CONTRACT_SOURCE`, or immutable
+`CONTRACT_URL` and `CONTRACT_ARCHIVE_SHA256`; there is no Dashboard fallback.
+Review generated changes against the producer contract before updating a pin.
 
-Generate route contracts with:
-
-~~~bash
-npm run generate:route-manifest
-npm run generate:openapi-contract-descriptor
-~~~
-
-`npm test` is the single Vitest suite. It carries the drift gates the old
-standalone check scripts performed: the committed OpenAPI descriptor and
-public-contract fixture must match the owner-published Dashboard snapshot,
-the generated route manifest must match the captured client routes, the
-forbidden-surface and retired product-name sweeps must stay clean, and the
-MessagePack corpus, hostile-decode, and manifest-drift suites run in the
-same pass. The snapshot-dependent gates skip when the Dashboard checkout is
-absent; CI clones it before `npm test`.
-
-Integration tests target the fixed DevHost public routes. When the required
-base URLs or credentials are absent, they skip instead of using mocked HTTP.
-Skipped gates are recorded as skipped, never as passing results.
-
-## Releases
-
-The Orchestrator-owned `develop` to `main` promotion path builds and
-publishes the immutable package only after contract, conformance, security, and
-compatibility gates pass. See `docs/release.md`.
+Unavailable live test configuration is reported as skipped. Unit, browser,
+package, and real-service evidence are separate release requirements. See the
+[ADR index](docs/adr/README.md) and [release guide](docs/release.md).

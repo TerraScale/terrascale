@@ -1,147 +1,85 @@
-# SDK Release Process
+# SDK release qualification
 
-`@terrascale/sdk` publishes to the public npm registry only. Do not publish SDK
-artifacts to Forgejo package registries.
+`@terrascale/sdk` is published to the public npm registry. The repository uses
+one `develop` branch. Its [CI workflow](../.forgejo/workflows/ci.yml) checks out
+the event revision and calls `ts-deploy ci --repo ts-typescript` on the
+`terrascale-builder` runner. There is no `main` promotion or pull-request release
+workflow.
 
-## Preflight
+## Implemented checks and publication
 
-Run these checks from the repository root:
+[Makefile](../Makefile) runs route/OpenAPI drift checks, a clean install,
+typecheck, build, and Vitest. Browser tests and artifact qualification exist
+as separate commands; `make check` does not run them.
+
+The current `ts-deploy` path archives build outputs but publishes npm from the
+checkout. It does not yet prove that the tested package and published bytes
+are identical. The [workspace deployment goal](../../GOAL.md#ts-deploy) requires
+packing once, checking that tarball, and publishing the same bytes with scripts
+disabled. This remains implementation work before release.
+
+This is the launch verification minimum. Browser, clean-consumer, and real-API
+qualification still need passing results. Broader compliance attestations are
+post-launch work and must not become an alternative release pipeline.
+
+## Qualification procedure
+
+Run the repository gate and browser suite:
 
 ```bash
-npm ci
-npm run typecheck
-npm run build
-npm test
+make check
 npm run test:browser
+```
+
+For diagnostic package qualification with explicit supported Node executables:
+
+```bash
 npm run qualify:artifact -- --node /path/to/node22 --node /path/to/node24
 ```
 
-`qualify:artifact` without `--release` is diagnostic. The protected build
-uses `--release --output artifacts/candidate` and supplies the exact
-Node v22.23.2 and v24.20.0 executable paths provisioned by the commit-pinned
-setup action. Release mode packs once, installs that exact tarball into a clean consumer,
-checks the public export graph and Node-only boundaries, scans the archive for
-credential material, and writes a digest-, source-tree-, dependency-, license-,
-audit-, contract-, and runtime-bound schema-2 receipt beside the tarball. Both
-supported Node majors must be supplied for release evidence. A one-runtime
-receipt is diagnostic and records the missing runtime as a limitation. The
-command refuses a dirty worktree unless `--allow-dirty` is explicitly supplied;
-dirty receipts are diagnostic and bind the uncommitted path list only by digest.
-Receipt schema version 2 also binds the exact packed route manifest, reviewed
-OpenAPI descriptor, `terrabase` OpenAPI SHA-256, exact Node executables, and the
-absence of release limitations. It binds npm 11.18.0 by reviewed archive
-integrity, CLI entrypoint digest, package manifest digest, and a digest of every
-regular file in the npm package tree. `.tools/` is explicitly ignored and
-recorded as workflow tooling; it is never classified as candidate source.
+Release mode reads exact executable paths from `TERRASCALE_NODE_22` and
+`TERRASCALE_NODE_24`, and verifies `TERRASCALE_NPM_ARCHIVE_INTEGRITY` against
+[scripts/npm-release-policy.ts](../scripts/npm-release-policy.ts). Run it with
+the declared Node 24 executable and reviewed npm installation:
 
-The generated public MessagePack binding is qualified inside the single
-Vitest suite (`test/msgpack-*.test.ts` and the result-view suites). `npm
-test` and both protected Node runtime lanes run the whole suite, so drift,
-hostile decoding, corpus round trips, and result-view semantics cannot be
-omitted from a candidate test run.
+```bash
+npm run qualify:artifact -- --release --output artifacts/candidate
+```
 
-The workflow also runs the unit and contract suite on Node.js 22 and 24 and
-the browser contract suite on the current pinned Playwright Chromium, Firefox,
-and WebKit engines. Update Playwright at qualification time so its engine
-revisions match the release record. Record branded Chrome, Safari, and Edge
-results separately when the protected browser lane runs them. Missing evidence
-does not become a passing result.
+The optional diagnostic qualifier in release mode refuses dirty source, unsupported or mismatched runtimes, an
+existing output directory, and `--allow-dirty`. It packs once, installs that
+tarball into a clean consumer, checks exports and browser/server boundaries,
+scans packed contents for secrets, audits production dependencies, and verifies
+license and pinned contract evidence. The diagnostic record binds source,
+tarball, route/OpenAPI digests, Node executables, npm installation, and results.
+Diagnostic receipts and receipts with limitations cannot admit a release.
 
-The release E2E profile fails before tests run unless real
-`TERRASCALE_API_BASE_URL`, `TERRASCALE_E2E_ACCESS_TOKEN`,
-`TERRASCALE_E2E_PROJECT_ID`,
-`TERRASCALE_E2E_ORGANIZATION_ID`, and
-`TERRASCALE_E2E_SAVED_QUERIES_PROJECT_ID` are all configured. These values are
-scoped only to the protected post-merge `main` release E2E job; no pull-request
-job, including a same-repository `develop` to `main` PR, receives them. The API
-endpoint must be an `http` or `https` URL, and each resource identifier must be
-a valid ULID.
+The optional qualifier is not the publication path and its detailed receipt
+is not an additional launch requirement. Production publication must preserve
+the tested artifact, isolate npm credentials, and refuse changed bytes. npm
+publication is immutable. An interrupted publish has an unknown outcome until
+the registry and artifact records are inspected.
 
-Each release-candidate test and package job performs its own clean install and
-build before testing or packing; do not rely on artifacts from another job.
+## Evidence required before public release
 
-Release admission runs strict OpenAPI drift validation. The normal-CI debt
-baseline does not permit promotion: unresolved entries stop production release
-until the owning service publishes the matching typed schemas. `terrabase`, the
-Rust member process, serves the public REST, read-only SQL, and reactive API
-directly; there is no separate database service or API gateway. TBEP remains a
-private control protocol for the orchestrator and CLI and never carries
-customer requests. SQL is the only query language. Reactive subscriptions use
-CDN-backed HTTP long-polling by default, with WebSocket as an explicit opt-in.
-It also regenerates and compares the committed comprehensive OpenAPI descriptor;
-operation IDs, parameters, request contracts, and every 2xx response shape must
-match the reviewed pin before the trusted candidate can be created. Descriptor
-version 2 records the SHA-256 of the exact `terrabase` OpenAPI bytes and the
-exact SDK route-manifest bytes, so a replacement or reformat requires explicit
-regeneration and review even when the parsed operations are unchanged.
+- Contract generation, hostile decoding, and shared semantic/byte conformance
+  against the pinned Rust producer, including all four customer SDKs.
+- Node 22/24, browser, clean-consumer, public export, and server-only boundary
+  checks on the exact package. Record actual browser engines and versions;
+  a Playwright project name alone does not establish branded browser coverage.
+- Real API success and denial, tenant isolation, retries, permission changes,
+  Region movement, reconnect, and expired-history behavior.
+- Better Auth exact-version, license, concurrency, migration, one-time consume,
+  revocation, and rollback evidence through its real public operation port.
+- Workspace launch qualification, security, operations, billing, and soak gates.
 
-The OpenAPI snapshot is published from the `terrabase` Rust routes. If the
-snapshot and SDK disagree, stop and resolve ownership or refresh the snapshot.
-Do not add a local debt baseline entry for an unreviewed route.
+Live tests require their documented API URL, access token, and project or
+organization identifiers. Missing configuration is a skipped gate and blocks
+required release evidence. Keep credentials out of logs and receipts.
 
-## Publish
+## Versions
 
-Normal releases merge the protected `develop` to `main` promotion PR. Only the
-protected post-merge `main` workflow validates the consolidated public
-OpenAPI contract fixture,
-confirms the committed SDK version is not yet present on the public npm registry,
-packages the candidate, and uploads the tarball, qualification receipt, and
-Deploy build receipt with commit-pinned Forgejo artifact actions. This is an
-availability preflight, not a reservation. A credentialless candidate job
-verifies the complete file set, both receipts, Git commit and tree, descriptor,
-route manifest, package/version, tarball digests, exact Node runtimes, and empty
-limitations before the promotion job can receive npm credentials. Promotion
-downloads the admitted immutable workflow artifact, verifies it again, repeats
-the public availability check, then publishes that exact tarball to npm. Every
-candidate verifier and promotion job provisions Node v24.20.0 through the
-commit-pinned setup action and extracts npm 11.18.0 directly from the reviewed
-SHA-512-bound registry archive. Verification rejects a different Node binary,
-npm entrypoint, npm package manifest, or npm package tree. Registry reads and
-publication execute the verified `bin/npm-cli.js` with the exact Node binary;
-they never fall back to an ambient `npm` command.
-Pull-request jobs targeting either `develop` or
-`main` run the unprivileged static, build, and contract checks. They never
-receive publish or signing credentials and cannot create
-candidate artifacts. The required `promotion/admission` status accepts only a
-canonical-repository `develop` to `main` pull request. npm
-rejects an existing name/version rather than overwriting a published package if
-another publisher wins the race.
-
-This workflow does not create or finalize a Forgejo Release. Its implemented
-promotion sequence is candidate verification followed by publishing the
-verified tarball to npm. If npm publishing is interrupted or its result is
-uncertain, operators must inspect npm and the immutable workflow-artifact records before
-any recovery action; do not assume this workflow will create or repair a
-Forgejo Release.
-
-Deploy CLI 1.0.80 predates `ci build-candidate` and its build-receipt v1
-contract. Do not claim this release path is operational until an authorized
-new CLI version is published, verified in a clean consumer, and pinned exactly.
-The current protected Deploy validator also rejects the SDK's source-command
-release profiles because it has no npm release-profile handoff. That failure is
-intentional; do not weaken it or model the SDK as a TUnit apphost.
-
-Integration tests that lack their required environment skip and must be
-recorded as skipped in the release receipt.
-
-## Version classification
-
-Use the next patch version only for backward-compatible changes. Before `1.0`,
-a source-breaking exported TypeScript type change requires the next minor
-version. This release is `0.3.0`. It removes the dedicated Auth, project
-credential, payment, billing, pricing, and project authentication-settings
-clients, models, and routes. Consumers must stop
-calling those removed namespaces before upgrading from `0.2.x`. This release
-also applies the workspace M0 launch cuts (GOAL.md D-40): the retired product
-surfaces and their repository-scoped data clients are deleted, and the data
-path returns with the Rust public API. Generic bearer authorization for the
-remaining public APIs and Sync authentication remain.
-
-The trusted main-promotion job executes the verified npm CLI with `publish
-<verified-tarball> --access public --ignore-scripts
---registry=https://registry.npmjs.org/` and a job-local `NPM_TOKEN`.
-
-The workflow writes npm credentials only to a temporary npm configuration in
-the trusted promotion job. The file mode is `0600`, and the verifier removes
-`NPM_TOKEN` from its inherited environment before inspecting any candidate
-bytes or invoking npm.
+The package version comes from `package.json`. Before 1.0, a source-breaking
+exported TypeScript change requires a minor version; compatible fixes use a
+patch. At launch, public contract support follows the workspace compatibility
+decision. Regenerate and qualify consumers when the producer contract changes.

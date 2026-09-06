@@ -1,42 +1,24 @@
 # Typed public SDK boundary
 
-Status: Accepted for the current package boundary. Production contract parity
-remains a release gate.
-
-Date: 2026-08-29
-
-## Context
-
-The SDK is consumed by Dashboard and customer applications. A generic request
-helper would let callers bypass operation ownership, schema review,
-authorization, idempotency, retry, and route-manifest checks. The SDK must not
-become a private Database API or TerraBase client.
+Status: Accepted. Production parity requires live qualification.
 
 ## Decision
 
-Expose named typed operations from `@terrascale/sdk` and
-`@terrascale/sdk/admin`. Keep the HTTP transport private to the package. Each
-operation must identify its method, versioned path, parameters, media types,
-typed request and response shapes, errors, security, retry/idempotency rules,
-and pagination or checkpoint behavior from an owner-published contract.
+Expose named typed operations through the package's declared exports. TerraBase
+publishes database and reactive contracts; Dashboard publishes its product
+contracts. Each operation binds method or frame, versioned path, parameters,
+media types, request/response shape, authorization, errors, limits, retry,
+idempotency, pagination, checkpoints, and cancellation.
 
-The package has no generic request entrypoint, consumer-selected arbitrary
-headers, direct TerraBase/TBEP path, or Dashboard-private route. A missing
-public operation stays missing until its owning service publishes the contract.
+Keep HTTP transport private, including at JavaScript runtime through `#http`
+fields. Consumers cannot reach arbitrary paths, custom headers, private TBEP,
+or Dashboard-only shortcuts. A missing operation requires an owner-published
+public contract; a generic request method cannot conceal the gap.
 
-## Consequences
+## Qualification
 
-Typed route capture and OpenAPI descriptor/drift checks are part of release
-admission. A successful TypeScript build alone does not prove parity. The
-current package implements 60 captured routes, and the current Dashboard
-snapshot covers all 60. The saved-query CRUD operations use the owner-published
-v1 paths, page envelope, continuation offset, and revision-protected update
-contract. The retired D-40 product surfaces and their repository-scoped data
-clients are deleted; the data path returns with the Rust public API.
-
-## Evidence and follow-up
-
-`src/public-boundary.test.ts`, `src/public-schema-parity.test.ts`,
-`the retired forbidden-surface gate`, and
-`scripts/generate-client-route-manifest.ts` enforce the package boundary.
-Cross-repository contract evidence remains required before production.
+Generate route and OpenAPI metadata from the exact TerraBase contract pin.
+Route capture, public-schema parity, and built-package boundary tests must
+agree with the exported operations. A route count or successful typed build
+alone is not parity evidence. Qualify success and expected failure against
+real public services before release. See [release qualification](../release.md).
