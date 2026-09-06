@@ -374,56 +374,67 @@ type CreateDatabaseResult struct {
 	Operation *ProvisioningOperation `json:"operation,omitempty"`
 }
 
-// DeleteDatabaseResult distinguishes immediate soft deletion from accepted
-// durable deletion. Exactly one of Database (200) and Operation (202) is set.
-type DeleteDatabaseResult struct {
-	Status    int                    `json:"status"`
-	Database  *DatabaseRecord        `json:"database,omitempty"`
-	Operation *ProvisioningOperation `json:"operation,omitempty"`
+// DeletionRequest identifies the durable deletion admitted by the authority.
+type DeletionRequest struct {
+	Environment string `json:"environment"`
+	TenantID    string `json:"tenant_id"`
+	ProjectID   string `json:"project_id"`
+	DatabaseID  string `json:"database_id"`
+	OperationID string `json:"operation_id"`
 }
 
-// CreateBranchResult distinguishes immediate branch registration from
-// accepted durable provisioning. Exactly one result is set.
-type CreateBranchResult struct {
-	Status    int                    `json:"status"`
-	Database  *DatabaseRecord        `json:"database,omitempty"`
-	Operation *ProvisioningOperation `json:"operation,omitempty"`
+// DeletionTarget records one member's deletion stop result.
+type DeletionTarget struct {
+	Stop map[string]any `json:"stop"`
 }
 
-func decodeProvisioningResult(status int, body []byte, databaseOut **DatabaseRecord, operationOut **ProvisioningOperation) error {
-	switch status {
-	case http.StatusOK, http.StatusCreated:
-		var database DatabaseRecord
-		if err := json.Unmarshal(body, &database); err != nil {
-			return err
-		}
-		if database.Name == "" {
-			return fmt.Errorf("sdk: response has no database name")
-		}
-		*databaseOut = &database
-	case http.StatusAccepted:
-		var operation ProvisioningOperation
-		if err := json.Unmarshal(body, &operation); err != nil {
-			return err
-		}
-		if operation.Environment == "" || operation.TenantID == "" || operation.ProjectID == "" || operation.OperationID == "" || operation.DatabaseID == "" || operation.KeyVersion == "" || operation.Name == "" || len(operation.Regions) == 0 || (operation.State != "accepted" && operation.State != "pending") {
-			return fmt.Errorf("sdk: accepted operation has no valid provisioning identity")
-		}
-		*operationOut = &operation
-	default:
-		return fmt.Errorf("sdk: unexpected success status %d", status)
+// DeletionOperation is the durable database deletion state returned by the
+// producer. State is one of preparing, stopping, or cleanup_pending.
+type DeletionOperation struct {
+	Request DeletionRequest  `json:"request"`
+	State   string           `json:"state"`
+	Cutoff  string           `json:"cutoff"`
+	Targets []DeletionTarget `json:"targets"`
+}
+
+func decodeProvisioningOperation(status int, body []byte) (*ProvisioningOperation, error) {
+	if status != http.StatusAccepted {
+		return nil, fmt.Errorf("sdk: expected accepted provisioning response, got status %d", status)
 	}
+	var operation ProvisioningOperation
+	if err := json.Unmarshal(body, &operation); err != nil {
+		return nil, err
+	}
+	if operation.Environment == "" || operation.TenantID == "" || operation.ProjectID == "" || operation.OperationID == "" || operation.DatabaseID == "" || operation.KeyVersion == "" || operation.Name == "" || len(operation.Regions) == 0 || (operation.State != "accepted" && operation.State != "pending") {
+		return nil, fmt.Errorf("sdk: accepted operation has no valid provisioning identity")
+	}
+	return &operation, nil
+}
+
+type acceptedProvisioningOperation struct {
+	ProvisioningOperation
+}
+
+func (o *acceptedProvisioningOperation) decodeHTTPResponse(status int, body []byte) error {
+	operation, err := decodeProvisioningOperation(status, body)
+	if err != nil {
+		return err
+	}
+	o.ProvisioningOperation = *operation
 	return nil
 }
 
-func (r *DeleteDatabaseResult) decodeHTTPResponse(status int, body []byte) error {
-	*r = DeleteDatabaseResult{Status: status}
-	return decodeProvisioningResult(status, body, &r.Database, &r.Operation)
-}
-
-func (r *CreateBranchResult) decodeHTTPResponse(status int, body []byte) error {
-	*r = CreateBranchResult{Status: status}
-	return decodeProvisioningResult(status, body, &r.Database, &r.Operation)
+func (o *DeletionOperation) decodeHTTPResponse(status int, body []byte) error {
+	if status != http.StatusAccepted {
+		return fmt.Errorf("sdk: expected accepted deletion response, got status %d", status)
+	}
+	if err := json.Unmarshal(body, o); err != nil {
+		return err
+	}
+	if o.Request.Environment == "" || o.Request.TenantID == "" || o.Request.ProjectID == "" || o.Request.DatabaseID == "" || o.Request.OperationID == "" || (o.State != "preparing" && o.State != "stopping" && o.State != "cleanup_pending") || o.Cutoff == "" || len(o.Targets) == 0 {
+		return fmt.Errorf("sdk: accepted deletion has no valid durable identity")
+	}
+	return nil
 }
 
 func (r *CreateDatabaseResult) decodeHTTPResponse(status int, body []byte) error {

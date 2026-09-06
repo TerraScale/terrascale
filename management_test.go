@@ -27,7 +27,12 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 			if r.Method == http.MethodDelete && r.Header.Get("X-TerraScale-Delete-Confirmation") != "prod" {
 				t.Errorf("delete confirmation = %q", r.Header.Get("X-TerraScale-Delete-Confirmation"))
 			}
-			_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "prod", Placement: "GRU"})
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(`{"request":{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","database_id":"prod","operation_id":"management-test"},"state":"preparing","cutoff":"2026-09-06T00:00:00Z","targets":[{"stop":{}}]}`))
+			} else {
+				_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "prod", Placement: "GRU"})
+			}
 		case "/api/v1/databases/prod/restore":
 			_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "prod", Deleted: false})
 		case "/api/v1/databases/prod/collections":
@@ -36,7 +41,8 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(SchemaDocument{Schema: CollectionSchema{Name: "users", Fields: []FieldDef{}, HistoryRetentionDays: 7, MergePolicy: MergeLastWriteWins}})
 		case "/api/v1/databases/prod/branches":
 			if r.Method == http.MethodPost {
-				_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "preview", Placement: "GRU"})
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(`{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"management-test","database_id":"db-preview","parent_database_id":"prod","key_version":"key-1","name":"preview","regions":["GRU"],"residency":"","state":"pending"}`))
 			} else {
 				parent := "prod"
 				_ = json.NewEncoder(w).Encode(BranchPage{Branches: []BranchRecord{{Name: "preview", Parent: &parent}}})

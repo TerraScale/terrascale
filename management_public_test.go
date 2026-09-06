@@ -423,7 +423,7 @@ func TestProvisioningOperationMatchesProducerScopeAndState(t *testing.T) {
 
 func TestProvisionedBranchAndDeletePreserveAcceptedOperation(t *testing.T) {
 	const operation = `{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"branch-key","database_id":"db-1","parent_database_id":null,"key_version":"key-1","name":"demo","regions":["GRU"],"residency":"br-only","state":"pending"}`
-	const deletion = `{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"delete-key","database_id":"db-1","parent_database_id":null,"key_version":"key-1","name":"demo","regions":["GRU"],"residency":"br-only","state":"pending"}`
+	const deletion = `{"request":{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","database_id":"db-1","operation_id":"delete-key"},"state":"preparing","cutoff":"2026-09-06T00:00:00Z","targets":[{"stop":{}}]}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
@@ -453,11 +453,11 @@ func TestProvisionedBranchAndDeletePreserveAcceptedOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	branch, err := client.DatabaseBranches.CreateBranch(t.Context(), "demo", CreateBranchRequest{Name: "child"}, WithIdempotencyKey("branch-key"))
-	if err != nil || branch.Operation == nil || branch.Operation.OperationID != "branch-key" {
+	if err != nil || branch == nil || branch.OperationID != "branch-key" {
 		t.Fatalf("branch result = %+v, err = %v", branch, err)
 	}
 	deleted, err := client.Databases.DeleteDatabase(t.Context(), "demo", WithIdempotencyKey("delete-key"), WithDeleteConfirmation("demo"))
-	if err != nil || deleted.Operation == nil || deleted.Operation.OperationID != "delete-key" {
+	if err != nil || deleted == nil || deleted.Request.OperationID != "delete-key" {
 		t.Fatalf("delete result = %+v, err = %v", deleted, err)
 	}
 }

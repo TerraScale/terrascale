@@ -874,7 +874,7 @@ func (d *DatabasesClient) GetDatabase(ctx context.Context, name string, opts ...
 }
 
 // DeleteDatabase soft-deletes a direct TerraBase database.
-func (d *DatabasesClient) DeleteDatabase(ctx context.Context, name string, opts ...RequestOption) (*DeleteDatabaseResult, error) {
+func (d *DatabasesClient) DeleteDatabase(ctx context.Context, name string, opts ...RequestOption) (*DeletionOperation, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
@@ -888,7 +888,7 @@ func (d *DatabasesClient) DeleteDatabase(ctx context.Context, name string, opts 
 	if err := deleteConfirmation(opts, name); err != nil {
 		return nil, err
 	}
-	var out DeleteDatabaseResult
+	var out DeletionOperation
 	if err := d.c.do(ctx, "DELETE", path, nil, nil, &out, "delete_database", opts...); err != nil {
 		return nil, err
 	}
@@ -1100,7 +1100,7 @@ func (b *DatabaseBranchesClient) ListBranches(ctx context.Context, database stri
 // CreateBranch creates a branch from the source database's retained backup
 // stream. The target is always a new database and inherits the source's
 // placement lock on the server.
-func (b *DatabaseBranchesClient) CreateBranch(ctx context.Context, database string, request CreateBranchRequest, opts ...RequestOption) (*CreateBranchResult, error) {
+func (b *DatabaseBranchesClient) CreateBranch(ctx context.Context, database string, request CreateBranchRequest, opts ...RequestOption) (*ProvisioningOperation, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
@@ -1121,11 +1121,14 @@ func (b *DatabaseBranchesClient) CreateBranch(ctx context.Context, database stri
 	if request.OperationID == "" {
 		return nil, &ValidationError{Field: "operation_id", Message: "must be nonblank or supplied by the idempotency key"}
 	}
-	var out CreateBranchResult
-	if err := b.c.do(ctx, "POST", path+"/branches", nil, request, &out, "create_branch", opts...); err != nil {
+	var response acceptedProvisioningOperation
+	if err := b.c.do(ctx, "POST", path+"/branches", nil, request, &response, "create_branch", opts...); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	if response.OperationID != request.OperationID {
+		return nil, fmt.Errorf("sdk: branch operation response identity does not match the request")
+	}
+	return &response.ProvisioningOperation, nil
 }
 
 // BackupsClient mirrors backups.* routes.
