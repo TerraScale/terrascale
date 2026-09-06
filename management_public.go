@@ -2,6 +2,8 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 )
@@ -154,6 +156,17 @@ type WebhookEndpoint struct {
 	CreatedAt uint64 `json:"created_at"`
 	Deleted   bool   `json:"deleted"`
 }
+
+// WebhookSecretResponse is returned only by create/rotation. Decode Secret
+// as unpadded base64url before verifying signatures; store it securely.
+type WebhookSecretResponse struct {
+	WebhookEndpoint
+	Secret string `json:"secret"`
+}
+type RotateWebhookSecretRequest struct {
+	OverlapSeconds *uint32 `json:"overlap_seconds,omitempty"`
+}
+
 type WebhookList struct {
 	Webhooks []WebhookEndpoint `json:"webhooks"`
 }
@@ -186,7 +199,7 @@ func (d *DatabasesClient) ListWebhooks(ctx context.Context, database string, opt
 	}
 	return &out, nil
 }
-func (d *DatabasesClient) CreateWebhook(ctx context.Context, database, endpoint string, opts ...RequestOption) (*WebhookEndpoint, error) {
+func (d *DatabasesClient) CreateWebhook(ctx context.Context, database, endpoint string, opts ...RequestOption) (*WebhookSecretResponse, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
@@ -204,7 +217,7 @@ func (d *DatabasesClient) CreateWebhook(ctx context.Context, database, endpoint 
 	body := struct {
 		Endpoint string `json:"endpoint"`
 	}{endpoint}
-	var out WebhookEndpoint
+	var out WebhookSecretResponse
 	if err := d.c.do(ctx, "POST", path+"/webhooks", nil, body, &out, "create_webhook", opts...); err != nil {
 		return nil, err
 	}
@@ -265,4 +278,202 @@ func managementResourcePath(ctx context.Context, database, kind, id string) (str
 		return "", err
 	}
 	return path + "/" + kind + "/" + url.PathEscape(id), nil
+}
+
+// DownloadExport retrieves one decrypted artifact member after export completion.
+// The member is escaped as one path segment; JSON is never applied to its bytes.
+func (d *DatabasesClient) DownloadExport(ctx context.Context, database, jobID, member string, opts ...RequestOption) ([]byte, error) {
+	path, err := managementResourcePath(ctx, database, "exports", jobID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireID("member", member); err != nil {
+		return nil, err
+	}
+	opts = append(opts, func(rc *requestConfig) { rc.responseMediaType = "application/octet-stream" })
+	var out binaryResponse
+	if err := d.c.do(ctx, "GET", path+"/artifacts/"+url.PathEscape(member), nil, nil, &out, "download_export", opts...); err != nil {
+		return nil, err
+	}
+	return []byte(out), nil
+}
+
+// ProvisioningOperation acknowledges durable work; it does not imply readiness.
+type ProvisioningOperation struct {
+	OperationID string        `json:"operation_id"`
+	DatabaseID  string        `json:"database_id"`
+	KeyVersion  string        `json:"key_version"`
+	Name        string        `json:"name"`
+	Regions     []RegionCode  `json:"regions"`
+	Residency   PlacementLock `json:"residency"`
+	State       string        `json:"state"`
+}
+
+// CreateDatabaseResult distinguishes immediate creation from accepted work.
+// Exactly one of Database (201) and Operation (202) is populated.
+type CreateDatabaseResult struct {
+	Status    int                    `json:"status"`
+	Database  *DatabaseRecord        `json:"database,omitempty"`
+	Operation *ProvisioningOperation `json:"operation,omitempty"`
+}
+
+func (r *CreateDatabaseResult) decodeHTTPResponse(status int, body []byte) error {
+	*r = CreateDatabaseResult{Status: status}
+	switch status {
+	case 201:
+		var database DatabaseRecord
+		if err := json.Unmarshal(body, &database); err != nil {
+			return err
+		}
+		if database.Name == "" {
+			return fmt.Errorf("sdk: create response has no database name")
+		}
+		r.Database = &database
+	case 202:
+		var operation ProvisioningOperation
+		if err := json.Unmarshal(body, &operation); err != nil {
+			return err
+		}
+		if operation.OperationID == "" || operation.DatabaseID == "" || operation.KeyVersion == "" || operation.Name == "" || len(operation.Regions) == 0 || (operation.State != "accepted" && operation.State != "pending") {
+			return fmt.Errorf("sdk: accepted create response has no valid provisioning operation")
+		}
+		r.Operation = &operation
+	default:
+		return fmt.Errorf("sdk: unexpected database create success status %d", status)
+	}
+	return nil
+}
+
+// RotateWebhookSecret returns a new secret once, retaining the previous
+// signature for the requested overlap (default 300 seconds, maximum 3600).
+func (d *DatabasesClient) RotateWebhookSecret(ctx context.Context, database, id string, request RotateWebhookSecretRequest, opts ...RequestOption) (*WebhookSecretResponse, error) {
+	path, err := managementResourcePath(ctx, database, "webhooks", id)
+	if err != nil {
+		return nil, err
+	}
+	if request.OverlapSeconds != nil && *request.OverlapSeconds > 3600 {
+		return nil, &ValidationError{Field: "overlap_seconds", Message: "must not exceed 3600"}
+	}
+	if err := managementMutation(opts); err != nil {
+		return nil, err
+	}
+	var out WebhookSecretResponse
+	if err := d.c.do(ctx, "POST", path+"/rotate-secret", nil, request, &out, "rotate_webhook_secret", opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DevelopmentFaultKind selects a bounded fault on an authorized cloud branch.
+type DevelopmentFaultKind string
+
+const (
+	DevelopmentUnavailable DevelopmentFaultKind = "unavailable"
+	DevelopmentLatency     DevelopmentFaultKind = "latency"
+)
+
+type DevelopmentFaultRequest struct {
+	ConfirmBranch string               `json:"confirmBranch"`
+	Fault         DevelopmentFaultKind `json:"fault"`
+	DurationMS    uint64               `json:"durationMs"`
+	MaxOperations uint16               `json:"maxOperations"`
+	DelayMS       uint64               `json:"delayMs"`
+}
+type DevelopmentFaultResponse struct {
+	Active          bool   `json:"active"`
+	ExpiresAtMillis uint64 `json:"expiresAtMillis"`
+}
+type DevelopmentLogEntry struct {
+	Sequence uint64 `json:"sequence"`
+	Action   string `json:"action"`
+	AtMillis uint64 `json:"atMillis"`
+}
+type DevelopmentLogResponse struct {
+	Entries   []DevelopmentLogEntry `json:"entries"`
+	Truncated bool                  `json:"truncated"`
+}
+
+// EnableDevelopmentFault requires branch confirmation and server-side database
+// administration authority. Production database eligibility is enforced by API.
+func (d *DatabasesClient) EnableDevelopmentFault(ctx context.Context, database string, request DevelopmentFaultRequest, opts ...RequestOption) (*DevelopmentFaultResponse, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
+	path, err := databasePath(database)
+	if err != nil {
+		return nil, err
+	}
+	validDelay := request.Fault == DevelopmentUnavailable && request.DelayMS == 0 || request.Fault == DevelopmentLatency && request.DelayMS >= 1 && request.DelayMS <= 1000
+	if request.ConfirmBranch != database || request.DurationMS < 1 || request.DurationMS > 30000 || request.MaxOperations < 1 || request.MaxOperations > 100 || !validDelay {
+		return nil, &ValidationError{Field: "development fault", Message: "confirm the branch; durationMs must be 1..30000, maxOperations 1..100, latency delayMs 1..1000 and unavailable delayMs 0"}
+	}
+	if err := managementMutation(opts); err != nil {
+		return nil, err
+	}
+	var out DevelopmentFaultResponse
+	if err := d.c.do(ctx, "POST", path+"/dev/faults", nil, request, &out, "development_fault", opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+func (d *DatabasesClient) ClearDevelopmentFault(ctx context.Context, database string, opts ...RequestOption) (*DevelopmentFaultResponse, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
+	path, err := databasePath(database)
+	if err != nil {
+		return nil, err
+	}
+	if err := managementMutation(opts); err != nil {
+		return nil, err
+	}
+	var out DevelopmentFaultResponse
+	if err := d.c.do(ctx, "DELETE", path+"/dev/faults", nil, nil, &out, "clear_development_fault", opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DevelopmentLogs reads bounded, redacted branch index lifecycle diagnostics.
+func (d *DatabasesClient) DevelopmentLogs(ctx context.Context, database string, limit int, opts ...RequestOption) (*DevelopmentLogResponse, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
+	path, err := databasePath(database)
+	if err != nil {
+		return nil, err
+	}
+	if limit < 0 || limit > 100 {
+		return nil, &ValidationError{Field: "limit", Message: "must be between 1 and 100, or zero for the server default"}
+	}
+	query := url.Values{}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	var out DevelopmentLogResponse
+	if err := d.c.do(ctx, "GET", path+"/dev/logs", query, nil, &out, "development_logs", opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// OperationsClient reads authoritative operation state without repeating work.
+type OperationsClient struct{ c *Client }
+
+// Get discovers provisioning progress by the original operation identity.
+func (o *OperationsClient) Get(ctx context.Context, operationID string, opts ...RequestOption) (*ProvisioningOperation, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
+	if err := requireID("operation_id", operationID); err != nil {
+		return nil, err
+	}
+	var out ProvisioningOperation
+	if err := o.c.do(ctx, "GET", "/api/v1/operations/"+url.PathEscape(operationID), nil, nil, &out, "get_provisioning_operation", opts...); err != nil {
+		return nil, err
+	}
+	if out.OperationID != operationID {
+		return nil, fmt.Errorf("sdk: operation response identity does not match the request")
+	}
+	return &out, nil
 }

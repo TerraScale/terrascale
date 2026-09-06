@@ -62,6 +62,14 @@ func TestProducerHTTPTransportCorpus(t *testing.T) {
 				if operation.Request.Body != nil {
 					requestBody = operation.Request.Body.Value
 				}
+				wireBody := []byte(response.Body)
+				if response.MediaType == "application/octet-stream" {
+					var raw string
+					if err := json.Unmarshal(response.Body, &raw); err != nil {
+						t.Fatal(err)
+					}
+					wireBody = []byte(raw)
+				}
 				calls := 0
 				transport := pinningRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
 					calls++
@@ -83,19 +91,28 @@ func TestProducerHTTPTransportCorpus(t *testing.T) {
 						}
 						assertProducerJSON(t, actual, operation.Request.Body.Value)
 					}
-					return &http.Response{StatusCode: response.Status, Header: http.Header{"Content-Type": {response.MediaType}, "X-Request-Id": {"producer-conformance"}}, Body: io.NopCloser(bytes.NewReader(response.Body))}, nil
+					return &http.Response{StatusCode: response.Status, Header: http.Header{"Content-Type": {response.MediaType}, "X-Request-Id": {"producer-conformance"}}, Body: io.NopCloser(bytes.NewReader(wireBody))}, nil
 				})
 				client, err := NewClient(Config{HTTPClient: &http.Client{Transport: transport}, AccessToken: "conformance-key"})
 				if err != nil {
 					t.Fatal(err)
 				}
 				var output json.RawMessage
-				err = client.do(t.Context(), operation.Request.Method, operation.Request.Path, query, requestBody, &output, operation.ID)
+				var raw binaryResponse
+				var target any = &output
+				if response.MediaType == "application/octet-stream" {
+					target = &raw
+				}
+				err = client.do(t.Context(), operation.Request.Method, operation.Request.Path, query, requestBody, target, operation.ID)
 				if response.Status >= 200 && response.Status < 300 {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if len(response.Body) != 0 && string(response.Body) != "null" {
+					if response.MediaType == "application/octet-stream" {
+						if !bytes.Equal(raw, wireBody) {
+							t.Fatal("binary response changed")
+						}
+					} else if len(response.Body) != 0 && string(response.Body) != "null" {
 						assertProducerJSON(t, output, response.Body)
 					}
 				} else {

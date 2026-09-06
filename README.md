@@ -30,3 +30,33 @@ replacement. These checks do not qualify a published module or a live member.
 SQL projection numbers in `SQLRow.Value` decode as `json.Number`. Use its
 `Int64` method for integer values; this preserves values above 2^53 without
 rounding them through `float64`.
+
+`Databases` exposes collection schema GET/PUT, index recommendations and deletion,
+webhook endpoints and delivery replay, and resumable exports. Schema reads return
+`SchemaDocument`, including migration progress; pass its generation through
+`WithSchemaGeneration` and a stable `WithIdempotencyKey` when applying changes.
+Index recommendations accept a limit up to 64 and retain the coordinator's
+generation and truncation flag.
+
+`Usage.GetDatabaseUsage` returns authoritative decimal-string write units and
+storage byte-seconds, plus unbilled `Reads.TotalReads`. It does not estimate
+current storage bytes. Export create returns the durable job identity; status
+and resume reuse that job, and `DownloadExport` returns exact artifact bytes.
+
+Database creation requires a stable `OperationID`. `CreateDatabaseResult.Database`
+is populated only for HTTP 201; HTTP 202 instead populates `Operation`, which
+acknowledges pending provisioning and does not imply serving readiness.
+Webhook create and secret rotation return `WebhookSecretResponse`; list/delete
+responses contain endpoint metadata without signing secrets. Ordinary HTTP
+redirects are disabled, including for supplied HTTP clients; placement repair
+uses the explicit 421 contract.
+
+Cloud development branches expose `EnableDevelopmentFault`,
+`ClearDevelopmentFault`, and `DevelopmentLogs` through the public API. Faults
+require explicit branch confirmation, bounded duration and operation counts;
+the server enforces branch eligibility and authorization. Schema timestamp
+values use epoch-millisecond integers (`time.Time.UnixMilli()`), and byte values
+use standard padded base64 JSON strings (Go `[]byte` encoding).
+
+Use `Operations.Get` with the original operation ID to discover provisioning
+progress. Reading status never resubmits database creation.

@@ -1,9 +1,11 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -59,7 +61,7 @@ func TestNewProducerManagementRoutes(t *testing.T) {
 		}},
 		{name: "export-resume", method: "POST", path: "/api/v1/databases/demo/exports/job-1/resume", body: `{"resume_cursor":"opaque"}`, response: exportStatus, call: func(c *Client) (any, error) { return c.Databases.ResumeExport(t.Context(), "demo", "job-1", "opaque") }},
 		{name: "webhooks-list", method: "GET", path: "/api/v1/databases/demo/webhooks", response: `{"webhooks":[` + endpoint + `]}`, call: func(c *Client) (any, error) { return c.Databases.ListWebhooks(t.Context(), "demo") }},
-		{name: "webhooks-create", method: "POST", path: "/api/v1/databases/demo/webhooks", body: `{"endpoint":"https://hooks.example.test/events"}`, status: 201, response: endpoint, call: func(c *Client) (any, error) {
+		{name: "webhooks-create", method: "POST", path: "/api/v1/databases/demo/webhooks", body: `{"endpoint":"https://hooks.example.test/events"}`, status: 201, response: `{"id":"hook-1","endpoint":"https://hooks.example.test/events","created_at":1,"deleted":false,"secret":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}`, call: func(c *Client) (any, error) {
 			return c.Databases.CreateWebhook(t.Context(), "demo", "https://hooks.example.test/events")
 		}},
 		{name: "webhooks-delete", method: "DELETE", path: "/api/v1/databases/demo/webhooks/hook-1", response: endpoint, call: func(c *Client) (any, error) { return c.Databases.DeleteWebhook(t.Context(), "demo", "hook-1") }},
@@ -151,5 +153,181 @@ func TestNewManagementRoutesValidateBeforeHTTP(t *testing.T) {
 	var document SchemaDocument
 	if err := json.Unmarshal([]byte(`{"generation":18446744073709551616}`), &document); err == nil {
 		t.Fatal("overflowing schema generation accepted")
+	}
+}
+
+func TestDownloadExportPreservesBinaryArtifact(t *testing.T) {
+	for _, body := range [][]byte{{0, 255, 10, 13, 32}, []byte(" \n\t"), []byte{}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.EscapedPath() != "/api/v1/databases/demo/exports/job-1/artifacts/documents%2Fpart-1.jsonl" || r.Header.Get("Accept") != "application/octet-stream" {
+				t.Errorf("download request: %s %v", r.URL, r.Header)
+			}
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.Header().Set("Cache-Control", "private, no-store")
+			_, _ = w.Write(body)
+		}))
+		client, err := NewClient(Config{APIBaseURL: server.URL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := client.Databases.DownloadExport(t.Context(), "demo", "job-1", "documents/part-1.jsonl")
+		server.Close()
+		if err != nil || !bytes.Equal(got, body) {
+			t.Fatalf("download changed bytes: %x want %x: %v", got, body, err)
+		}
+	}
+}
+
+func TestCreateDatabasePreservesAcceptedProvisioning(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body["operation_id"] != "operation-1" || body["residency"] != "" {
+					t.Errorf("provisioning identity: %+v", body)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(202)
+				if invalid {
+					_, _ = w.Write([]byte(`{"name":"demo"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"operation_id":"operation-1","database_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","key_version":"01ARZ3NDEKTSV4RRFFQ69G5FAW","name":"demo","regions":["GRU"],"residency":"","state":"pending"}`))
+			}))
+			defer server.Close()
+			client, err := NewClient(Config{APIBaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := client.Databases.CreateDatabase(t.Context(), CreateDatabaseRequest{Name: "demo", Placement: []RegionCode{RegionGRU}, OperationID: "operation-1"})
+			if invalid {
+				if err == nil {
+					t.Fatal("202 decoded as a ready database")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Status != 202 || result.Database != nil || result.Operation == nil || result.Operation.State != "pending" {
+				t.Fatalf("accepted work reported as ready: %+v", result)
+			}
+		})
+	}
+}
+
+func TestWebhookSecretRotationIsBoundedAndNeverImplicitlyRetried(t *testing.T) {
+	var attempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if r.URL.Path != "/api/v1/databases/demo/webhooks/hook-1/rotate-secret" || r.Method != "POST" {
+			t.Errorf("rotation route: %s %s", r.Method, r.URL)
+		}
+		body, _ := io.ReadAll(r.Body)
+		assertProducerJSON(t, body, []byte(`{"overlap_seconds":0}`))
+		if r.Header.Get("Idempotency-Key") != "" {
+			t.Error("rotation invented an idempotency identity")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(503)
+		_, _ = w.Write([]byte(`{"error":{"code":"unavailable","message":"retry explicitly","fix":"check endpoint state"}}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL, MaxRetryAttempts: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := uint32(0)
+	if _, err := client.Databases.RotateWebhookSecret(t.Context(), "demo", "hook-1", RotateWebhookSecretRequest{OverlapSeconds: &zero}); err == nil {
+		t.Fatal("rotation failure hidden")
+	}
+	if attempts != 1 {
+		t.Fatalf("rotation repeated %d times", attempts)
+	}
+	tooLong := uint32(3601)
+	if _, err := client.Databases.RotateWebhookSecret(t.Context(), "demo", "hook-1", RotateWebhookSecretRequest{OverlapSeconds: &tooLong}); err == nil {
+		t.Fatal("unbounded overlap accepted")
+	}
+	if attempts != 1 {
+		t.Fatal("invalid rotation reached HTTP")
+	}
+}
+
+func TestCloudDevelopmentOperationsUseBoundedPublicContracts(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.RequestURI() {
+		case "POST /api/v1/databases/dev/dev/faults":
+			body, _ := io.ReadAll(r.Body)
+			assertProducerJSON(t, body, []byte(`{"confirmBranch":"dev","fault":"latency","durationMs":30000,"maxOperations":100,"delayMs":1000}`))
+			_, _ = w.Write([]byte(`{"active":true,"expiresAtMillis":18446744073709551615}`))
+		case "DELETE /api/v1/databases/dev/dev/faults":
+			_, _ = w.Write([]byte(`{"active":false,"expiresAtMillis":0}`))
+		case "GET /api/v1/databases/dev/dev/logs?limit=100":
+			_, _ = w.Write([]byte(`{"entries":[{"sequence":18446744073709551615,"action":"index_created","atMillis":18446744073709551615}],"truncated":true}`))
+		default:
+			t.Errorf("unknown development route %s %s", r.Method, r.URL)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := DevelopmentFaultRequest{ConfirmBranch: "dev", Fault: DevelopmentLatency, DurationMS: 30000, MaxOperations: 100, DelayMS: 1000}
+	fault, err := client.Databases.EnableDevelopmentFault(t.Context(), "dev", request)
+	if err != nil || !fault.Active || fault.ExpiresAtMillis != math.MaxUint64 {
+		t.Fatalf("fault=%+v err=%v", fault, err)
+	}
+	cleared, err := client.Databases.ClearDevelopmentFault(t.Context(), "dev")
+	if err != nil || cleared.Active {
+		t.Fatalf("clear=%+v err=%v", cleared, err)
+	}
+	logs, err := client.Databases.DevelopmentLogs(t.Context(), "dev", 100)
+	if err != nil || !logs.Truncated || logs.Entries[0].Sequence != math.MaxUint64 || logs.Entries[0].AtMillis != math.MaxUint64 {
+		t.Fatalf("logs=%+v err=%v", logs, err)
+	}
+	request.ConfirmBranch = "prod"
+	if _, err := client.Databases.EnableDevelopmentFault(t.Context(), "dev", request); err == nil {
+		t.Fatal("wrong branch confirmed")
+	}
+	request.ConfirmBranch = "dev"
+	request.DurationMS = 30001
+	if _, err := client.Databases.EnableDevelopmentFault(t.Context(), "dev", request); err == nil {
+		t.Fatal("unbounded fault accepted")
+	}
+	if _, err := client.Databases.DevelopmentLogs(t.Context(), "dev", 101); err == nil {
+		t.Fatal("unbounded logs accepted")
+	}
+	if calls != 3 {
+		t.Fatalf("validation sent HTTP: %d calls", calls)
+	}
+}
+
+func TestOperationsGetPollsWithoutRepeatingCreation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.EscapedPath() != "/api/v1/operations/operation%2Fone" || r.Header.Get("Idempotency-Key") != "" {
+			t.Errorf("operation discovery repeated work: %s %s", r.Method, r.URL)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"operation_id":"operation/one","database_id":"db-1","key_version":"key-1","name":"demo","regions":["GRU"],"residency":"","state":"pending"}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := client.Operations.Get(t.Context(), "operation/one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.State != "pending" || operation.OperationID != "operation/one" {
+		t.Fatalf("lost operation progress: %+v", operation)
 	}
 }

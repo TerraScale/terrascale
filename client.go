@@ -108,7 +108,8 @@ type Config struct {
 	Affinity RegionAffinity
 	// SessionToken is the client's causal frontier (GOAL D-37).
 	SessionToken string
-	// HTTPClient defaults to one with a 30s timeout.
+	// HTTPClient defaults to one with a 30s timeout. The SDK copies it and
+	// disables redirects; explicit 421 placement repair remains supported.
 	HTTPClient *http.Client
 	// MaxRetryAttempts is retries for idempotent mutations on transient
 	// statuses (0-8, default 0).
@@ -130,6 +131,7 @@ type Client struct {
 	// sessionToken is the canonical frontier shared by REST and subscriptions.
 	sessionToken string
 
+	Operations       *OperationsClient
 	Documents        *DocumentsClient
 	Tenants          *TenantsClient
 	Onboarding       *OnboardingClient
@@ -229,6 +231,11 @@ func NewClient(cfg Config) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
+	// Placement repair uses explicit 421 responses. Ordinary redirects must
+	// never forward credentials or replay writes outside that contract.
+	ownedHTTPClient := *httpClient
+	ownedHTTPClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	httpClient = &ownedHTTPClient
 
 	c := &Client{cfg: Config{
 		APIBaseURL:       base,
@@ -242,6 +249,7 @@ func NewClient(cfg Config) (*Client, error) {
 		RetryDelay:       retryDelay,
 		RequestTimeout:   requestTimeout,
 	}, http: httpClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
+	c.Operations = &OperationsClient{c: c}
 	c.Documents = &DocumentsClient{c: c}
 	c.Tenants = &TenantsClient{c: c}
 	c.Onboarding = &OnboardingClient{c: c}
@@ -438,6 +446,7 @@ type requestConfig struct {
 	consistency        Consistency
 	deleteConfirmation string
 	schemaIfMatch      string
+	responseMediaType  string
 }
 
 // RequestOption customizes one request.
@@ -613,6 +622,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 				c.observeServingRegion(headers)
 			}
 			c.observeSession(headers)
+			if decoder, ok := out.(interface{ decodeHTTPResponse(int, []byte) error }); ok {
+				return decoder.decodeHTTPResponse(status, respBody)
+			}
 			return decodeSuccess(out, respBody, headers.Get("Content-Type"))
 		}
 		apiErr := errorFromResponse(route, method, path, status, headers, respBody)
@@ -696,6 +708,9 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 	}
 	h := req.Header
 	h.Set("Accept", "application/json")
+	if rc.responseMediaType != "" {
+		h.Set("Accept", rc.responseMediaType)
+	}
 	if payload != nil {
 		h.Set("Content-Type", "application/json")
 	}
@@ -779,7 +794,13 @@ func bearerAuthorization(value string) (string, error) {
 	return "Bearer " + value, nil
 }
 
+type binaryResponse []byte
+
 func decodeSuccess(out any, body []byte, contentType string) error {
+	if raw, ok := out.(*binaryResponse); ok {
+		*raw = bytes.Clone(body)
+		return nil
+	}
 	if out == nil {
 		return nil
 	}

@@ -21,6 +21,7 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(DatabasePage{Databases: []DatabaseRecord{{Name: "prod"}}})
 				return
 			}
+			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "prod", Placement: "GRU"})
 		case "/api/v1/databases/prod":
 			if r.Method == http.MethodDelete && r.Header.Get("X-TerraScale-Delete-Confirmation") != "prod" {
@@ -68,9 +69,9 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 		t.Fatalf("ListDatabases: page=%+v err=%v", page, err)
 	}
 	created, err := c.Databases.CreateDatabase(context.Background(), CreateDatabaseRequest{
-		Name: "prod", Placement: []RegionCode{RegionGRU}, Residency: PlacementLockBROnly,
+		Name: "prod", Placement: []RegionCode{RegionGRU}, Residency: PlacementLockBROnly, OperationID: "create-prod",
 	}, opts...)
-	if err != nil || created.Name != "prod" {
+	if err != nil || created.Database == nil || created.Database.Name != "prod" {
 		t.Fatalf("CreateDatabase: result=%+v err=%v", created, err)
 	}
 	if _, err = c.Databases.GetDatabase(context.Background(), "prod"); err != nil {

@@ -406,3 +406,38 @@ func TestStrictAffinityRejectsPlacementRedirect(t *testing.T) {
 		t.Fatalf("strict request escaped: calls=%d region=%s", calls.Load(), client.EffectiveRegion())
 	}
 }
+
+func TestClientDoesNotFollowCredentialOrMutationRedirects(t *testing.T) {
+	for _, test := range []struct {
+		method string
+		status int
+	}{{http.MethodGet, http.StatusFound}, {http.MethodPut, http.StatusTemporaryRedirect}, {http.MethodPut, http.StatusPermanentRedirect}} {
+		t.Run(test.method+strconv.Itoa(test.status), func(t *testing.T) {
+			destinationCalls := 0
+			destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { destinationCalls++; w.WriteHeader(204) }))
+			defer destination.Close()
+			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer secret" {
+					t.Error("initial credential missing")
+				}
+				http.Redirect(w, r, destination.URL, test.status)
+			}))
+			defer source.Close()
+			originalRedirectCalls := 0
+			custom := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { originalRedirectCalls++; return nil }}
+			client, err := NewClient(Config{APIBaseURL: source.URL, AccessToken: "secret", HTTPClient: custom})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = client.do(t.Context(), test.method, "/api/v1/databases/demo", nil, map[string]string{"value": "private"}, nil, "redirect-regression", WithIdempotencyKey("write-1"))
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) || apiErr.Status != test.status || destinationCalls != 0 || originalRedirectCalls != 0 {
+				t.Fatalf("redirect followed: err=%v destinations=%d callbacks=%d", err, destinationCalls, originalRedirectCalls)
+			}
+			_ = custom.CheckRedirect(nil, nil)
+			if originalRedirectCalls != 1 {
+				t.Fatal("SDK mutated the supplied HTTP client's redirect policy")
+			}
+		})
+	}
+}

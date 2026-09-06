@@ -1,2 +1,5 @@
 __pycache__/
 *.py[cod]
+
+# Private generated CI release candidates and signatures
+/.terrascale-develop-release/

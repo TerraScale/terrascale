@@ -180,8 +180,7 @@ func contractGap(ctx context.Context, operation, method, path, reason, fix strin
 
 // PlacementLock is the residency constraint attached to a database. It is
 // immutable for a database and is checked by TerraBase on the published
-// branch/restore paths. The export route is currently pending and is not
-// exposed as a working SDK operation.
+// branch, restore and export paths.
 type PlacementLock string
 
 const (
@@ -209,11 +208,13 @@ type DatabasePage struct {
 type DatabaseListResponse = DatabasePage
 
 // CreateDatabaseRequest is the direct TerraBase create contract. Placement
-// is required; Residency is the optional immutable placement lock.
+// and a stable OperationID are required. Residency may be the empty string
+// when no additional immutable lock is requested.
 type CreateDatabaseRequest struct {
-	Name      string        `json:"name"`
-	Placement []RegionCode  `json:"placement"`
-	Residency PlacementLock `json:"residency,omitempty"`
+	Name        string        `json:"name"`
+	Placement   []RegionCode  `json:"placement"`
+	Residency   PlacementLock `json:"residency"`
+	OperationID string        `json:"operation_id"`
 }
 
 // CreateBranchRequest creates a branch/restore target from a database backup.
@@ -818,14 +819,17 @@ func (d *DatabasesClient) ListDatabases(ctx context.Context, page PageRequest, o
 	return &out, nil
 }
 
-// CreateDatabase creates a direct TerraBase database with an immutable
-// placement lock.
-func (d *DatabasesClient) CreateDatabase(ctx context.Context, request CreateDatabaseRequest, opts ...RequestOption) (*DatabaseRecord, error) {
+// CreateDatabase submits a database with immutable placement. A 202 result
+// contains a pending operation; only a 201 result contains a created record.
+func (d *DatabasesClient) CreateDatabase(ctx context.Context, request CreateDatabaseRequest, opts ...RequestOption) (*CreateDatabaseResult, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
 	if err := validateDatabaseName(request.Name); err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(request.OperationID) == "" || len(request.OperationID) > 128 {
+		return nil, &ValidationError{Field: "operation_id", Message: "must be nonblank and at most 128 bytes"}
 	}
 	if err := validatePlacement(request.Placement, request.Residency); err != nil {
 		return nil, err
@@ -841,9 +845,12 @@ func (d *DatabasesClient) CreateDatabase(ctx context.Context, request CreateData
 	if request.Residency != "" {
 		request.Residency, _ = normalizePlacementLock(request.Residency)
 	}
-	var out DatabaseRecord
+	var out CreateDatabaseResult
 	if err := d.c.do(ctx, "POST", "/api/v1/databases", nil, request, &out, "create_database", opts...); err != nil {
 		return nil, err
+	}
+	if out.Operation != nil && (out.Operation.OperationID != request.OperationID || out.Operation.Name != request.Name) {
+		return nil, fmt.Errorf("sdk: provisioning response identity does not match the request")
 	}
 	return &out, nil
 }
