@@ -121,7 +121,7 @@ func TestP2BConformancePinnedOpenAPI(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/databases/{name}/collections/{collection}/documents",
 		"/api/v1/databases/{name}/sql",
-		"/api/v1/databases/{name}/reactive/poll",
+		"/api/v1/reactive/views/{view}/{generation}/log",
 		"/api/v1/regions",
 	} {
 		if len(spec.Paths[path]) == 0 {
@@ -186,8 +186,8 @@ func TestP2BConformanceCanonicalHTTPParity(t *testing.T) {
 		"#/components/schemas/BatchRequest", "#/components/schemas/BatchResponse", "application/json", "200",
 	)
 	assertOperation(
-		"/api/v1/databases/{name}/reactive/poll", "post", "poll",
-		"#/components/schemas/ReactivePollRequest", "", "", "",
+		"/api/v1/reactive/views/{view}/{generation}/log", "get", "view_log",
+		"", "#/components/schemas/ReactiveEnvelope", "application/msgpack", "200",
 	)
 }
 

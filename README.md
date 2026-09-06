@@ -21,3 +21,12 @@ fails with the E-1 publication requirement.
 ```sh
 make check
 ```
+
+The checks exercise the pinned producer's HTTP success/error corpus and
+reactive/MessagePack vectors. They also install a freshly built module ZIP
+through an isolated local Go proxy and run a consumer without a checkout
+replacement. These checks do not qualify a published module or a live member.
+
+SQL projection numbers in `SQLRow.Value` decode as `json.Number`. Use its
+`Int64` method for integer values; this preserves values above 2^53 without
+rounding them through `float64`.

@@ -1,9 +1,5 @@
-// P-2b conformance is contract evidence, not a mock-server exercise.
-//
-// This gate consumes the pinned TerraBase OpenAPI document and the producer's
-// hand-audited MessagePack corpus. HTTP behavior belongs in the producer
-// conformance suite and in the integration journey against a real member; a
-// synthetic server here could accept a protocol the member never serves.
+// Conformance consumes the pinned producer contracts and wire vectors.
+// Transport fixtures establish SDK behavior, not live API qualification.
 package sdk_test
 
 import (

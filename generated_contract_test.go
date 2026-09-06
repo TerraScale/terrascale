@@ -4,7 +4,7 @@ package sdk
 
 const (
 	pinnedContractVersion     = "v1"
-	pinnedOpenAPIBLAKE3       = "f51146b13ae8a7217342d0d4c9e7d14c645f56c07c9f3365d9b2a3895d58e7a9"
+	pinnedOpenAPIBLAKE3       = "1e001c10dfa9d9074b14b88ffd45ff91564375afdf4f3078e2ead32ba303d070"
 	pinnedMessagePackBLAKE3   = "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27"
 	pinnedMessageVectorSHA256 = "350b03983df8bd3052db25e010b5dd5cc94ef3b4d77ccb9bc0a3d819674300ba"
 	pinnedHostileVectorSHA256 = "e6d8e6d92a87fe4d37fb00e5b441d0c351eecaf6117e5ac50631ce94d18890f5"

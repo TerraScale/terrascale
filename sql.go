@@ -8,6 +8,7 @@
 package sdk
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -62,7 +63,9 @@ func (r *SQLResult) UnmarshalJSON(data []byte) error {
 	}
 	type rowsResult SQLResult
 	var rows rowsResult
-	if err := json.Unmarshal(data, &rows); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&rows); err != nil {
 		return err
 	}
 	*r = SQLResult(rows)
@@ -70,7 +73,8 @@ func (r *SQLResult) UnmarshalJSON(data []byte) error {
 }
 
 // SQLRow is one SQL result row. Value is the projected JSON object returned
-// by the server and id is its stable result identity.
+// by the server and id is its stable result identity. Numeric values decode
+// as json.Number to preserve 64-bit integers without float64 rounding.
 type SQLRow struct {
 	ID    string `json:"id"`
 	Value any    `json:"value"`
