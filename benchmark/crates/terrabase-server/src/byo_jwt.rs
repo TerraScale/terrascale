@@ -768,6 +768,14 @@ where
         Ok(context)
     }
 
+    /// Rechecks that a verified context still belongs to the active
+    /// configuration generation after an external membership round trip.
+    #[must_use]
+    pub fn generation_current(&self, context: &AuthorizationContext) -> bool {
+        !self.generation_exhausted.load(Ordering::Acquire)
+            && self.generation.load(Ordering::Acquire) == context.generation
+    }
+
     /// Authenticates and then invokes the parent authorization hook.
     ///
     /// # Errors

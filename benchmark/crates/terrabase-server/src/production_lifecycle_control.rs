@@ -103,7 +103,7 @@ impl terrabase_tbep::lifecycle::LifecycleControl for TbepLifecycleControl {
         &self,
         c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
         o: &str,
-    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
+    ) -> Result<(), String> {
         self.invoke(c, o, ProductionLifecycleControl::verify_snapshot_placement)
     }
     fn close_database(
@@ -131,7 +131,7 @@ impl terrabase_tbep::lifecycle::LifecycleControl for TbepLifecycleControl {
         &self,
         c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
         o: &str,
-    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
+    ) -> Result<(), String> {
         self.invoke(c, o, ProductionLifecycleControl::delete_owned_data)
     }
 }

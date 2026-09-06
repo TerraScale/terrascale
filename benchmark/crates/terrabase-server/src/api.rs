@@ -567,7 +567,7 @@ pub struct ApiState {
     /// Live product identity authority; absent configuration denies delegated credentials.
     pub delegated_identity: Option<Arc<crate::delegated_identity::IdentityVerifier>>,
     /// Optional tenant-pinned BYO-JWT admission; absent denies JWT-shaped bearers.
-    pub byo_jwt: Option<Arc<dyn crate::auth_runtime::byo_config::ByoJwtAdmission>>,
+    pub byo_jwt: Option<Arc<dyn crate::auth_runtime::byo_config::ByoJwtSignatureAdmission>>,
     /// The databases registry (D-52). `None` until the member boots with a
     /// data root; the database routes answer the typed unavailable error.
     pub control: Option<Arc<crate::control::ControlPlane>>,
@@ -628,6 +628,7 @@ impl ApiState {
         capability_keys: Arc<crate::reactive_api::CapabilityKeyRing>,
         keys: Option<Arc<crate::api_keys::KeyStore>>,
         delegated_identity: Option<Arc<crate::delegated_identity::IdentityVerifier>>,
+        byo_jwt: Option<Arc<dyn crate::auth_runtime::byo_config::ByoJwtSignatureAdmission>>,
         webhook_keys: Option<Arc<dyn crate::webhook_api::WebhookKeyLeases>>,
         exports: Option<Arc<crate::export_api::ExportRuntime>>,
         budget: Option<Arc<crate::production_budget::ProductionBudgetRuntime>>,
@@ -643,7 +644,7 @@ impl ApiState {
             metrics,
             keys,
             delegated_identity,
-            byo_jwt: None,
+            byo_jwt,
             control: None,
             catalog: None,
             scope,
@@ -1585,31 +1586,49 @@ async fn admit_bearer(
             )
             .ok_or_else(ApiError::unauthorized)?;
             match (&state.delegated_identity, database_of(path)) {
-                (Some(identity), Some(database)) => identity
-                    .admit_verified_byo(
-                        context.issuer(),
-                        context.subject(),
-                        &route_owner.0,
-                        &route_owner.1,
-                        database,
-                        collection_of(path),
-                        required_verb(method, path),
-                    )
-                    .await
-                    .map_err(|_| ApiError::unauthorized()),
-                (Some(identity), None) if project_operation => identity
-                    .admit_verified_byo_project(
-                        context.issuer(),
-                        context.subject(),
-                        &route_owner.0,
-                        &route_owner.1,
-                    )
-                    .await
-                    .map(|(principal, scope)| {
+                (Some(identity), Some(database)) => {
+                    let principal = identity
+                        .admit_verified_byo(
+                            context.issuer(),
+                            context.subject(),
+                            &route_owner.0,
+                            &route_owner.1,
+                            database,
+                            collection_of(path),
+                            required_verb(method, path),
+                        )
+                        .await
+                        .map_err(|_| ApiError::unauthorized())?;
+                    if !admission.generation_current(&context) {
+                        return Err(ApiError::unauthorized());
+                    }
+                    if unix_millis() >= context.expires_at().saturating_mul(1_000) {
+                        return Err(ApiError::unauthorized());
+                    }
+                    Ok(principal.cap_expiry(context.expires_at().saturating_mul(1_000)))
+                }
+                (Some(identity), None) if project_operation => {
+                    let result = identity
+                        .admit_verified_byo_project(
+                            context.issuer(),
+                            context.subject(),
+                            &route_owner.0,
+                            &route_owner.1,
+                        )
+                        .await
+                        .map_err(|_| ApiError::unauthorized())?;
+                    if !admission.generation_current(&context) {
+                        return Err(ApiError::unauthorized());
+                    }
+                    let (principal, scope) = result;
+                    if unix_millis() >= context.expires_at().saturating_mul(1_000) {
+                        return Err(ApiError::unauthorized());
+                    }
+                    Ok({
                         verified_project = Some(scope);
-                        principal
+                        principal.cap_expiry(context.expires_at().saturating_mul(1_000))
                     })
-                    .map_err(|_| ApiError::unauthorized()),
+                }
                 _ => Err(ApiError::unauthorized()),
             }
         }
@@ -1681,6 +1700,14 @@ fn unix_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
+}
+
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|value| u64::try_from(value.as_millis()).ok())
+        .unwrap_or(u64::MAX)
 }
 
 /// The verb one request needs: reads ride `READ`, document writes ride

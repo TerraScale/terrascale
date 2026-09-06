@@ -99,11 +99,36 @@ async fn http_export_reads_real_documents_and_recovers_after_runtime_restart() {
         .iter()
         .find_map(|fact| fact["path"].as_str().filter(|path| path.starts_with("documents/")))
         .expect("document page in manifest");
+    let document_fact = manifest_body["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|fact| fact["path"] == document_member)
+        .expect("document artifact fact");
     let encoded_member = document_member.replace('/', "%2F");
     let download_path = format!("{}/artifacts/{encoded_member}", accepted.status_path);
     let page_response = request(&app, "GET", &download_path, "").await;
     assert_eq!(page_response.status(), StatusCode::OK);
+    let plaintext_length = page_response
+        .headers()
+        .get("x-terrascale-artifact-length")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    let plaintext_checksum = page_response
+        .headers()
+        .get("x-terrascale-artifact-checksum")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
     let page = axum::body::to_bytes(page_response.into_body(), 1024 * 1024).await.unwrap();
+    assert_eq!(plaintext_length, page.len());
+    assert_eq!(plaintext_checksum, blake3::hash(&page).to_hex().to_string());
+    assert_ne!(document_fact["length"].as_u64().unwrap(), plaintext_length as u64);
+    assert_ne!(document_fact["checksum"].as_str().unwrap(), plaintext_checksum);
     let lines: Vec<serde_json::Value> = std::str::from_utf8(&page)
         .unwrap()
         .lines()

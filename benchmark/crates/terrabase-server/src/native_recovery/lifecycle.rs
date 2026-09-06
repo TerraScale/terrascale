@@ -39,14 +39,19 @@ where
         }
         if !immediate && !stopping {
             tokio::select! {
-                until = &mut stop => {
+                received = &mut stop => {
                     stopping = true;
-                    deadline = Some(until);
+                    deadline = Some(received.unwrap_or_else(|_| tokio::time::Instant::now() + DRAIN_DEADLINE));
                 },
                 _ = notify.notified() => {}
             }
         }
         immediate = false;
+        if let Some(until) = deadline
+            && tokio::time::Instant::now() >= until
+        {
+            return true;
+        }
         match process().await {
             Ok(true) => {
                 backoff = Duration::from_millis(25);
@@ -74,9 +79,9 @@ where
                 } else {
                     tokio::select! {
                         _ = tokio::time::sleep(delay) => {}
-                        until = &mut stop => {
+                        received = &mut stop => {
                             stopping = true;
-                            deadline = Some(until);
+                            deadline = Some(received.unwrap_or_else(|_| tokio::time::Instant::now() + DRAIN_DEADLINE));
                         }
                     }
                 }
@@ -140,9 +145,11 @@ mod tests {
         let release = Arc::new(Notify::new());
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&calls);
+        let entered_signal = Arc::clone(&entered);
+        let release_signal = Arc::clone(&release);
         let worker = tokio::spawn(supervise::<(), _, _>(stop_rx, notify.clone(), move || {
-            let entered = Arc::clone(&entered);
-            let release = Arc::clone(&release);
+            let entered = Arc::clone(&entered_signal);
+            let release = Arc::clone(&release_signal);
             let observed = Arc::clone(&observed);
             async move {
                 observed.fetch_add(1, Ordering::SeqCst);

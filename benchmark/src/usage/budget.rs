@@ -2,7 +2,10 @@
 
 #![allow(missing_docs)]
 
-use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey};
+use aws_lc_rs::{
+    digest::{SHA256, digest},
+    signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey},
+};
 use serde::{Deserialize, Serialize};
 
 /// Signature domain shared with the GRU write-budget producer.
@@ -144,6 +147,10 @@ impl VerifiedAllocation {
         message.extend_from_slice(ALLOCATION_SIGNING_DOMAIN);
         message.extend_from_slice(&signed.payload);
         let public_key = spki_point(public_key).ok_or(AllocationError::Signature)?;
+        let configured_spki_digest = digest(&SHA256, &spki_der(public_key));
+        if hex::encode(configured_spki_digest.as_ref()) != expected_key_id {
+            return Err(AllocationError::Signature);
+        }
         UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, public_key)
             .verify(&message, &signed.signature[40..])
             .map_err(|_| AllocationError::Signature)?;
@@ -222,6 +229,15 @@ impl VerifiedAllocation {
     }
 }
 
+fn spki_der(point: &[u8]) -> Vec<u8> {
+    let mut der = vec![
+        0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08,
+        0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+    ];
+    der.extend_from_slice(point);
+    der
+}
+
 fn parse_millis(value: &str) -> Option<u64> {
     // Go's time.Time JSON form is RFC3339Nano. Keep this parser local to the
     // wire contract so the engine does not acquire a second date library.
@@ -290,13 +306,14 @@ fn fraction_millis(value: &str) -> Option<i64> {
 }
 
 fn spki_point(key: &[u8]) -> Option<&[u8]> {
-    if key.len() == 65 && key[0] == 4 {
-        return Some(key);
+    const PREFIX: &[u8] = &[
+        0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08,
+        0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+    ];
+    if key.len() == PREFIX.len() + 65 && key.starts_with(PREFIX) && key[PREFIX.len()] == 4 {
+        return Some(&key[PREFIX.len()..]);
     }
-    let bit = key.iter().position(|byte| *byte == 0x03)?;
-    let length = *key.get(bit + 1)? as usize;
-    let body = key.get(bit + 2..bit + 2 + length)?;
-    (body.first() == Some(&0) && body.get(1) == Some(&4) && body.len() == 66).then_some(&body[1..])
+    None
 }
 
 // Howard Hinnant's proleptic Gregorian conversion, with Unix epoch origin.
@@ -324,8 +341,12 @@ mod tests {
         let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).unwrap();
         let key =
             EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8.as_ref()).unwrap();
-        let public = key.public_key().as_ref();
-        let key_id = hex::encode(blake3::hash(public).as_bytes());
+        let mut public_spki = vec![
+            0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06,
+            0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+        ];
+        public_spki.extend_from_slice(key.public_key().as_ref());
+        let key_id = hex::encode(digest(&SHA256, &public_spki).as_ref());
         let grant = AllocationGrant {
             cycle_id: "cycle-1".into(),
             rate_nano_dollar: 1,
@@ -362,7 +383,7 @@ mod tests {
         let signature = key.sign(&rng, &message).unwrap();
         let mut wrapped = b"TSCS".to_vec();
         wrapped.extend_from_slice(&[1, 1]);
-        wrapped.extend_from_slice(blake3::hash(public).as_bytes());
+        wrapped.extend_from_slice(digest(&SHA256, &public_spki).as_ref());
         wrapped.extend_from_slice(&(signature.as_ref().len() as u16).to_be_bytes());
         wrapped.extend_from_slice(signature.as_ref());
         let wire = serde_json::to_vec(&SignedAllocation {
@@ -371,7 +392,7 @@ mod tests {
             key_id: key_id.clone(),
         })
         .unwrap();
-        (wire, public.to_vec(), key_id)
+        (wire, public_spki, key_id)
     }
 
     #[test]

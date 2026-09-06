@@ -125,6 +125,14 @@ impl Principal {
         Self { label, scope, expires_at: Some(expires_at) }
     }
 
+    /// Caps a producer admission by an earlier verified credential expiry.
+    pub(crate) fn cap_expiry(mut self, expires_at: u64) -> Self {
+        if let Some(current) = self.expires_at {
+            self.expires_at = Some(current.min(expires_at));
+        }
+        self
+    }
+
     /// The wire label responses attribute the request to.
     #[must_use]
     pub fn label(&self) -> &str {

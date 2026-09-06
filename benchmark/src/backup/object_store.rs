@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use object_store::aws::AmazonS3Builder;
 use object_store::path::Path as ObjectPath;
-use object_store::{ClientOptions, ObjectStore, RetryConfig};
+use object_store::{ClientOptions, ObjectStore, PutMode, RetryConfig};
 
 const INDEX: &str = "transfer-v1.index";
 const INDEX_LIMIT: u64 = 1024 * 1024;
@@ -132,7 +132,10 @@ impl ObjectDestination {
             return Err(TransferError::InvalidPoint);
         }
         let key = ObjectPath::parse(key).map_err(|_| TransferError::InvalidPoint)?;
-        self.store.put(&key, bytes.into()).await.map_err(|_| TransferError::Unavailable)?;
+        self.store
+            .put_opts(&key, bytes.into(), PutMode::Create.into())
+            .await
+            .map_err(|_| TransferError::Unavailable)?;
         Ok(())
     }
 

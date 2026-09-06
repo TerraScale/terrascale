@@ -303,6 +303,7 @@ impl IdentityVerifier {
             .ok_or(IdentityError::Denied)?;
         if !admission.active
             || admission.issuer.as_deref() != Some(issuer)
+            || admission.audience.as_deref() != Some(&self.audience)
             || admission.organization_id.as_deref() != Some(organization)
             || admission.project_id.as_deref() != Some(project)
             || admission.database_id.as_deref() != Some(database)

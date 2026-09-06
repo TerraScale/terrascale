@@ -40,6 +40,42 @@ pub trait ByoJwtAdmission: Send + Sync {
     >;
 }
 
+/// Signature and claim validation stage. This deliberately has no membership
+/// semantics; callers must run the live producer check before creating a
+/// request principal.
+pub trait ByoJwtSignatureAdmission: Send + Sync {
+    /// Validates a bearer and returns its bounded verified context.
+    fn authenticate<'a>(
+        &'a self,
+        token: &'a str,
+        now: u64,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<AuthorizationContext, JwtAuthenticationError>> + Send + 'a>,
+    >;
+    /// Rechecks revocation/configuration generation after live membership.
+    fn generation_current(&self, context: &AuthorizationContext) -> bool;
+}
+
+impl<F, V> ByoJwtSignatureAdmission for crate::byo_jwt::ByoJwtService<F, V>
+where
+    F: JwksFetcher + 'static,
+    V: JwtSignatureVerifier + 'static,
+{
+    fn authenticate<'a>(
+        &'a self,
+        token: &'a str,
+        now: u64,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<AuthorizationContext, JwtAuthenticationError>> + Send + 'a>,
+    > {
+        Box::pin(crate::byo_jwt::ByoJwtService::authenticate(self, token, now))
+    }
+
+    fn generation_current(&self, context: &AuthorizationContext) -> bool {
+        crate::byo_jwt::ByoJwtService::generation_current(self, context)
+    }
+}
+
 /// Binds an authenticated subject to the request scope selected by the API.
 /// The database and collection are supplied by the route, never by claims.
 pub(crate) fn principal_for(
@@ -122,6 +158,20 @@ where
     Ok(Arc::new(authenticator))
 }
 
+/// Builds the signature-only stage for callers that perform live membership
+/// admission in the request path with the original verified context.
+pub fn build_signature_admission(
+    file: &FileTenantJwtConfig,
+) -> Result<Arc<dyn ByoJwtSignatureAdmission>, String> {
+    let service = crate::byo_jwt::ByoJwtService::new(
+        file.resolve()?,
+        Arc::new(HttpsJwksFetcher::default()),
+        Arc::new(AwsLcJwtVerifier),
+    )
+    .map_err(|_| "invalid BYO-JWT policy")?;
+    Ok(Arc::new(service))
+}
+
 impl FileTenantJwtConfig {
     /// Converts and validates the file representation before readiness.
     pub fn resolve(&self) -> Result<TenantJwtConfig, String> {
@@ -185,6 +235,7 @@ impl JwksFetcher for HttpsJwksFetcher {
         endpoint: &'a JwksEndpoint,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, JwksFetchError>> + Send + 'a>> {
         Box::pin(async move {
+            tokio::time::timeout(FETCH_TIMEOUT, async move {
             let uri: Uri = endpoint.as_str().parse().map_err(|_| JwksFetchError::Failed)?;
             let host = uri.host().ok_or(JwksFetchError::Failed)?.to_owned();
             let name = ServerName::try_from(host.clone()).map_err(|_| JwksFetchError::Failed)?;
@@ -231,6 +282,9 @@ impl JwksFetcher for HttpsJwksFetcher {
             };
             tokio::pin!(response, connection);
             tokio::select! { result = &mut response => result, _ = &mut connection => response.await }
+            })
+            .await
+            .map_err(|_| JwksFetchError::Failed)?
         })
     }
 }
@@ -287,7 +341,8 @@ impl JwtSignatureVerifier for AwsLcJwtVerifier {
         let Some(material) = material else { return false };
         let verifier = match algorithm {
             Algorithm::Rs256 => &aws_lc_rs::signature::RSA_PKCS1_2048_8192_SHA256,
-            Algorithm::Es256 => &aws_lc_rs::signature::ECDSA_P256_SHA256_ASN1,
+            // JOSE encodes ECDSA as the fixed-width raw R||S form.
+            Algorithm::Es256 => &aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED,
             Algorithm::EdDsa => &aws_lc_rs::signature::ED25519,
         };
         aws_lc_rs::signature::UnparsedPublicKey::new(verifier, material)

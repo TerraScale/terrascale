@@ -418,6 +418,12 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         .iter()
         .find(|database| database.enabled)
         .ok_or(DaemonError::ProductionConfigurationMissing)?;
+    let byo_jwt = public
+        .byo_jwt
+        .as_ref()
+        .map(crate::auth_runtime::byo_config::build_signature_admission)
+        .transpose()
+        .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
     let state = crate::api::ApiState::production(
         native,
         Arc::clone(&recovery),
@@ -432,6 +438,8 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         Arc::new(crate::guards::AbuseGuards::default()),
         Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
         Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
+        None,
+        byo_jwt,
         None,
         None,
         admission.budget_runtime().map(Arc::new),

@@ -30,6 +30,103 @@ pub(crate) struct ProductionArtifactPort {
     pub(crate) crypto: Arc<dyn ArtifactCrypto>,
 }
 
+struct ProductionWriter {
+    inner: crate::export_artifact_crypto::LocalWriter,
+    destination: Arc<ObjectDestination>,
+    prefix: String,
+    database: String,
+    job: String,
+}
+
+async fn put_remote_exact(
+    destination: &ObjectDestination,
+    key: &str,
+    bytes: Vec<u8>,
+) -> Result<(), ExportError> {
+    match destination.put_member(key, bytes.clone()).await {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            let remote = destination
+                .get_member(key)
+                .await
+                .map_err(|_| ExportError::DependencyUnavailable)?;
+            if remote == bytes {
+                Ok(())
+            } else {
+                Err(ExportError::IdempotencyConflict)
+            }
+        }
+    }
+}
+
+async fn reconcile_remote_facts(
+    inner: &crate::export_artifact_crypto::LocalWriter,
+    destination: &ObjectDestination,
+    prefix: &str,
+    database: &str,
+    job: &str,
+    facts: &[ArtifactFact],
+) -> Result<(), ExportError> {
+    for expected in facts {
+        let path = inner.directory.join(&expected.path);
+        let bytes = crate::export_artifact_crypto::encrypted_member(&path)?;
+        if fact(&expected.path, &bytes) != *expected {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        let key = format!("{prefix}/{database}/{job}/{}", expected.path);
+        put_remote_exact(destination, &key, bytes).await?;
+    }
+    Ok(())
+}
+
+impl ArtifactWriter for ProductionWriter {
+    fn put<'a>(&'a mut self, path: &'a str, plaintext: &'a [u8]) -> ExportFuture<'a, ArtifactFact> {
+        Box::pin(async move {
+            let fact = self.inner.put(path, plaintext).await?;
+            let bytes = std::fs::read(self.inner.directory.join(path))
+                .map_err(|_| ExportError::DestinationUnavailable)?;
+            put_remote_exact(
+                &self.destination,
+                &format!("{}/{}/{}/{}", self.prefix, self.database, self.job, path),
+                bytes,
+            )
+            .await?;
+            Ok(fact)
+        })
+    }
+    fn existing_facts<'a>(&'a mut self) -> ExportFuture<'a, Vec<ArtifactFact>> {
+        Box::pin(async move {
+            let facts = self.inner.existing_facts().await?;
+            reconcile_remote_facts(
+                &self.inner,
+                &self.destination,
+                &self.prefix,
+                &self.database,
+                &self.job,
+                &facts,
+            )
+            .await?;
+            Ok(facts)
+        })
+    }
+    fn commit(self: Box<Self>, manifest: &ArtifactFact) -> ExportFuture<'static, ()> {
+        Box::pin(async move {
+            let ProductionWriter { inner, destination, prefix, database, job } = *self;
+            let facts = inner.existing_facts().await?;
+            reconcile_remote_facts(&inner, &destination, &prefix, &database, &job, &facts).await?;
+            Box::new(inner).commit(manifest).await?;
+            let marker = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
+            put_remote_exact(
+                &destination,
+                &format!("{}/{}/{}/COMMITTED", prefix, database, job),
+                marker.into_bytes(),
+            )
+            .await?;
+            Ok(())
+        })
+    }
+}
+
 impl ArtifactPort for ProductionArtifactPort {
     fn attestation(&self) -> Option<EncryptionAttestation> {
         Some(EncryptionAttestation {
@@ -92,10 +189,16 @@ impl ArtifactPort for ProductionArtifactPort {
             }
             let directory = self.root.join(database).join(job);
             std::fs::create_dir_all(&directory).map_err(|_| ExportError::DestinationUnavailable)?;
-            Ok(Box::new(crate::export_artifact_crypto::LocalWriter {
-                directory,
-                job_id: format!("{database}/{job}"),
-                crypto: Arc::clone(&self.crypto),
+            Ok(Box::new(ProductionWriter {
+                inner: crate::export_artifact_crypto::LocalWriter {
+                    directory,
+                    job_id: format!("{database}/{job}"),
+                    crypto: Arc::clone(&self.crypto),
+                },
+                destination: Arc::clone(&self.destination),
+                prefix: self.prefix.clone(),
+                database: database.into(),
+                job: job.into(),
             }) as Box<dyn ArtifactWriter>)
         })
     }
