@@ -160,15 +160,21 @@ latency qualification remain required for launch performance claims.
 
 Member protocol version 2 carries a connection class in its authenticated hello
 and uses ALPN `terrabase-member/2`. Each admitted peer may hold one replication
-session, one forwarded-auth-client session, and one auth-consensus session.
-Incoming and outgoing sessions share these class limits. Auth RPC dispatch
+session plus one inbound and one outbound session for each of forwarded auth
+clients and auth consensus: five sessions total. Direction comes from the local
+connect or accept path. Outbound attempts reserve their slots before dialing;
+the receiver reserves its slot before acknowledging the handshake. Pending
+reservations survive status sampling and are released on failure or cancellation.
+Auth RPC dispatch
 checks that the method matches its declared class before invoking the authority.
 Physical/causal replication accepts its initial frame only on the replication
 class. Version 1 peers must upgrade together; no compatibility path is retained.
 
 The configured total operation ceiling remains unchanged. Four independent
 quotas divide it between handshakes and the three connection classes; each gets
-the integer quotient, and handshakes receive the remainder. Configuration
+the integer quotient, and handshakes receive the remainder. The handshake quota
+is split between inbound and outbound work so outgoing handshakes cannot occupy
+the capacity needed to accept peers. Configuration
 requires at least two operations per admitted peer in each application class
 so persistent receives leave capacity for sends. Idle listener waits consume
 no operation permit. Cancellation and drain release both class and total

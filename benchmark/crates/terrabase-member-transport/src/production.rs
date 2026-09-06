@@ -41,7 +41,7 @@ pub const PRODUCTION_MAX_HELLO_BYTES: usize = 1024;
 
 const HELLO_MAGIC: [u8; 4] = *b"TBM2";
 const NONCE_BYTES: usize = 32;
-const MAX_CONNECTIONS_PER_PEER: usize = 3;
+const MAX_CONNECTIONS_PER_PEER: usize = 5;
 
 /// The bounded application class carried in the authenticated hello.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -411,6 +411,18 @@ impl ProductionTransportLimits {
     #[must_use]
     pub const fn handshake_quota(&self) -> usize {
         self.max_inflight / 4 + self.max_inflight % 4
+    }
+
+    /// Returns the handshake capacity reserved for accepted connections.
+    #[must_use]
+    pub const fn handshake_inbound_quota(&self) -> usize {
+        self.handshake_quota() / 2
+    }
+
+    /// Returns the handshake capacity reserved for outgoing connections.
+    #[must_use]
+    pub const fn handshake_outbound_quota(&self) -> usize {
+        self.handshake_quota() - self.handshake_inbound_quota()
     }
 
     /// Returns the application queue frame ceiling.
@@ -914,13 +926,14 @@ impl ProductionQuicEndpoint {
         class: ProductionConnectionClass,
     ) -> Result<ProductionConnection, ProductionTransportError> {
         let _operation = self.state.begin_operation(
-            OperationClass::Handshake,
-            self.config.limits.handshake_quota(),
+            OperationClass::HandshakeOutbound,
+            self.config.limits.handshake_outbound_quota(),
             self.config.limits.max_inflight,
         )?;
         let deadline = tokio::time::Instant::now() + self.config.limits.handshake_timeout;
         let peer =
             self.config.peer(member).ok_or(ProductionTransportError::PeerNotAdmitted)?.clone();
+        let registration = self.state.reserve_session(member, class, SessionDirection::Outbound)?;
         let connecting = self
             .endpoint
             .connect(peer.endpoint, &peer.server_name)
@@ -951,7 +964,7 @@ impl ProductionQuicEndpoint {
         if remote_hello.class != class {
             return Err(ProductionTransportError::ProtocolMismatch);
         }
-        self.finish_connection(connection, certificate_identity, &remote_hello)
+        self.finish_connection(connection, certificate_identity, &remote_hello, registration)
     }
 
     /// Accepts and authenticates the next inbound connection.
@@ -969,8 +982,8 @@ impl ProductionQuicEndpoint {
             return Ok(None);
         };
         let _operation = self.state.begin_operation(
-            OperationClass::Handshake,
-            self.config.limits.handshake_quota(),
+            OperationClass::HandshakeInbound,
+            self.config.limits.handshake_inbound_quota(),
             self.config.limits.max_inflight,
         )?;
         let connection = tokio::time::timeout_at(deadline, incoming)
@@ -996,8 +1009,13 @@ impl ProductionQuicEndpoint {
             .map_err(|_| ProductionTransportError::Timeout)??;
         self.validate_hello(&remote_hello, &certificate_identity, &peer)?;
         let local_hello = ConnectionHello::new(&self.config, remote_hello.class)?;
+        let registration = self.state.reserve_session(
+            certificate_identity.member(),
+            remote_hello.class,
+            SessionDirection::Inbound,
+        )?;
         let authenticated =
-            self.finish_connection(connection, certificate_identity, &remote_hello)?;
+            self.finish_connection(connection, certificate_identity, &remote_hello, registration)?;
         tokio::time::timeout_at(deadline, write_hello(&mut send, &local_hello))
             .await
             .map_err(|_| ProductionTransportError::Timeout)??;
@@ -1040,9 +1058,9 @@ impl ProductionQuicEndpoint {
         connection: quinn::Connection,
         peer: MemberWorkloadIdentity,
         hello: &ConnectionHello,
+        registration: ConnectionRegistration,
     ) -> Result<ProductionConnection, ProductionTransportError> {
-        let registration =
-            self.state.register_connection(peer.member(), hello.class, &connection)?;
+        self.state.attach_session(&registration, &connection)?;
         Ok(ProductionConnection {
             connection,
             peer,
@@ -1442,12 +1460,13 @@ fn peer_identity(
 struct RuntimeState {
     draining: AtomicBool,
     active_operations: AtomicUsize,
-    handshake_operations: AtomicUsize,
+    next_session_id: AtomicUsize,
+    handshake_inbound_operations: AtomicUsize,
+    handshake_outbound_operations: AtomicUsize,
     replication_operations: AtomicUsize,
     auth_client_operations: AtomicUsize,
     auth_consensus_operations: AtomicUsize,
-    connections_by_peer:
-        Mutex<BTreeMap<MemberId, Vec<(ProductionConnectionClass, quinn::Connection)>>>,
+    connections_by_peer: Mutex<BTreeMap<MemberId, Vec<SessionSlot>>>,
     seen_nonces: Mutex<VecDeque<(MemberId, [u8; NONCE_BYTES])>>,
     changed: Notify,
 }
@@ -1457,7 +1476,9 @@ impl RuntimeState {
         Self {
             draining: AtomicBool::new(false),
             active_operations: AtomicUsize::new(0),
-            handshake_operations: AtomicUsize::new(0),
+            next_session_id: AtomicUsize::new(1),
+            handshake_inbound_operations: AtomicUsize::new(0),
+            handshake_outbound_operations: AtomicUsize::new(0),
             replication_operations: AtomicUsize::new(0),
             auth_client_operations: AtomicUsize::new(0),
             auth_consensus_operations: AtomicUsize::new(0),
@@ -1477,7 +1498,8 @@ impl RuntimeState {
             return Err(ProductionTransportError::Draining);
         }
         let counter = match class {
-            OperationClass::Handshake => &self.handshake_operations,
+            OperationClass::HandshakeInbound => &self.handshake_inbound_operations,
+            OperationClass::HandshakeOutbound => &self.handshake_outbound_operations,
             OperationClass::Replication => &self.replication_operations,
             OperationClass::AuthClient => &self.auth_client_operations,
             OperationClass::AuthConsensus => &self.auth_consensus_operations,
@@ -1505,11 +1527,11 @@ impl RuntimeState {
         Ok(OperationGuard { state: Arc::clone(self), class })
     }
 
-    fn register_connection(
+    fn reserve_session(
         self: &Arc<Self>,
         peer: &MemberId,
         class: ProductionConnectionClass,
-        connection: &quinn::Connection,
+        direction: SessionDirection,
     ) -> Result<ConnectionRegistration, ProductionTransportError> {
         let mut connections = self
             .connections_by_peer
@@ -1519,26 +1541,68 @@ impl RuntimeState {
             return Err(ProductionTransportError::Draining);
         }
         let sessions = connections.entry(peer.clone()).or_default();
-        sessions.retain(|(_, session)| session.close_reason().is_none());
-        if sessions.iter().any(|(existing, _)| *existing == class) {
+        sessions.retain(|session| {
+            session.connection.as_ref().is_none_or(|connection| connection.close_reason().is_none())
+        });
+        if sessions.iter().any(|existing| {
+            existing.class == class
+                && (class == ProductionConnectionClass::Replication
+                    || existing.direction == direction)
+        }) {
             return Err(ProductionTransportError::Saturated);
         }
-        sessions.push((class, connection.clone()));
-        Ok(ConnectionRegistration {
-            state: Arc::clone(self),
-            peer: peer.clone(),
-            id: connection.stable_id(),
-        })
+        let id = self
+            .next_session_id
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| current.checked_add(1))
+            .map_err(|_| ProductionTransportError::StateUnavailable)?;
+        sessions.push(SessionSlot { class, direction, connection: None, id });
+        Ok(ConnectionRegistration { state: Arc::clone(self), peer: peer.clone(), id })
+    }
+
+    fn attach_session(
+        &self,
+        registration: &ConnectionRegistration,
+        connection: &quinn::Connection,
+    ) -> Result<(), ProductionTransportError> {
+        let mut connections = self
+            .connections_by_peer
+            .lock()
+            .map_err(|_| ProductionTransportError::StateUnavailable)?;
+        if self.draining.load(Ordering::Acquire) {
+            return Err(ProductionTransportError::Draining);
+        }
+        let sessions = connections
+            .get_mut(&registration.peer)
+            .ok_or(ProductionTransportError::StateUnavailable)?;
+        let slot = sessions
+            .iter_mut()
+            .find(|slot| slot.id == registration.id)
+            .ok_or(ProductionTransportError::StateUnavailable)?;
+        slot.connection = Some(connection.clone());
+        Ok(())
     }
 
     fn connection_counts(&self) -> (usize, usize) {
         let mut connections =
             self.connections_by_peer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         connections.retain(|_, sessions| {
-            sessions.retain(|(_, session)| session.close_reason().is_none());
+            sessions.retain(|slot| {
+                slot.connection
+                    .as_ref()
+                    .is_none_or(|connection| connection.close_reason().is_none())
+            });
             !sessions.is_empty()
         });
-        (connections.values().map(Vec::len).sum(), connections.len())
+        (
+            connections
+                .values()
+                .map(|sessions| sessions.iter().filter(|slot| slot.connection.is_some()).count())
+                .sum(),
+            connections
+                .values()
+                .filter(|sessions| sessions.iter().any(|slot| slot.connection.is_some()))
+                .count(),
+        )
     }
 
     fn remember_nonce(
@@ -1589,7 +1653,8 @@ struct OperationGuard {
 
 #[derive(Clone, Copy)]
 enum OperationClass {
-    Handshake,
+    HandshakeInbound,
+    HandshakeOutbound,
     Replication,
     AuthClient,
     AuthConsensus,
@@ -1599,7 +1664,8 @@ impl Drop for OperationGuard {
     fn drop(&mut self) {
         self.state.active_operations.fetch_sub(1, Ordering::AcqRel);
         let counter = match self.class {
-            OperationClass::Handshake => &self.state.handshake_operations,
+            OperationClass::HandshakeInbound => &self.state.handshake_inbound_operations,
+            OperationClass::HandshakeOutbound => &self.state.handshake_outbound_operations,
             OperationClass::Replication => &self.state.replication_operations,
             OperationClass::AuthClient => &self.state.auth_client_operations,
             OperationClass::AuthConsensus => &self.state.auth_consensus_operations,
@@ -1607,6 +1673,19 @@ impl Drop for OperationGuard {
         counter.fetch_sub(1, Ordering::AcqRel);
         self.state.changed.notify_waiters();
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SessionDirection {
+    Inbound,
+    Outbound,
+}
+
+struct SessionSlot {
+    class: ProductionConnectionClass,
+    direction: SessionDirection,
+    connection: Option<quinn::Connection>,
+    id: usize,
 }
 
 struct ConnectionRegistration {
@@ -1620,7 +1699,7 @@ impl Drop for ConnectionRegistration {
         if let Ok(mut connections) = self.state.connections_by_peer.lock()
             && let Some(sessions) = connections.get_mut(&self.peer)
         {
-            sessions.retain(|(_, session)| session.stable_id() != self.id);
+            sessions.retain(|slot| slot.id != self.id);
             if sessions.is_empty() {
                 connections.remove(&self.peer);
             }
@@ -1830,6 +1909,41 @@ mod tests {
                 .expect("hello")
         };
         assert_eq!(ConnectionHello::decode(&hello.encode().expect("encode")), Ok(hello));
+    }
+
+    #[test]
+    fn pending_outbound_reservation_survives_facts_and_releases_on_drop() {
+        let state = std::sync::Arc::new(super::RuntimeState::new());
+        let identity = MemberWorkloadIdentity::try_new("prod", "cluster-a", "member-b").unwrap();
+        let peer = identity.member().clone();
+        let pending = state
+            .reserve_session(
+                &peer,
+                ProductionConnectionClass::AuthClient,
+                super::SessionDirection::Outbound,
+            )
+            .expect("first pending reservation");
+        assert_eq!(state.connection_counts(), (0, 0));
+        assert_eq!(
+            state
+                .reserve_session(
+                    &peer,
+                    ProductionConnectionClass::AuthClient,
+                    super::SessionDirection::Outbound
+                )
+                .err(),
+            Some(ProductionTransportError::Saturated)
+        );
+        drop(pending);
+        assert!(
+            state
+                .reserve_session(
+                    &peer,
+                    ProductionConnectionClass::AuthClient,
+                    super::SessionDirection::Outbound
+                )
+                .is_ok()
+        );
     }
 
     #[test]
@@ -2208,27 +2322,145 @@ mod tests {
     async fn concurrent_same_class_dials_retain_one_usable_both_end_session() {
         let (first, second) = endpoint_pair();
         let peer = second.config.local_identity.member();
-        let (out_a, out_b, in_a, in_b) = tokio::join!(
+        let (out_a, out_b, inbound_result) = tokio::join!(
             first.connect(peer, ProductionConnectionClass::AuthClient),
             first.connect(peer, ProductionConnectionClass::AuthClient),
             second.accept(),
-            second.accept(),
+        );
+        assert!(
+            matches!(&out_a, Err(ProductionTransportError::Saturated))
+                ^ matches!(&out_b, Err(ProductionTransportError::Saturated))
         );
         let outbound = [out_a, out_b]
             .into_iter()
             .find_map(Result::ok)
             .expect("one same-class dial must survive");
-        let inbound = [in_a, in_b]
-            .into_iter()
-            .filter_map(|result| result.ok().flatten())
-            .next()
-            .expect("one same-class accept must survive");
+        let inbound =
+            inbound_result.expect("same-class accept").expect("one same-class accept must survive");
         let (sent, received) =
             tokio::join!(outbound.send_frame(b"survivor"), inbound.receive_frame());
         sent.expect("surviving dial sends");
         assert_eq!(received.expect("surviving dial receives"), b"survivor");
         drop(outbound);
         drop(inbound);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn opposite_direction_auth_sessions_progress_with_replication_held() {
+        let (first, second) = endpoint_pair();
+        let second_peer = second.config.local_identity.member();
+        let first_peer = first.config.local_identity.member();
+        let (replication, replication_in) = tokio::join!(
+            first.connect(second_peer, ProductionConnectionClass::Replication),
+            second.accept()
+        );
+        let replication = replication.expect("replication session");
+        let replication_in =
+            replication_in.expect("replication accept").expect("replication session");
+        let ((client_ab, client_ba), (client_ab_in, client_ba_in)) = tokio::join!(
+            async {
+                tokio::join!(
+                    first.connect(second_peer, ProductionConnectionClass::AuthClient),
+                    second.connect(first_peer, ProductionConnectionClass::AuthClient),
+                )
+            },
+            async { tokio::join!(second.accept(), first.accept()) },
+        );
+        let client_ab = client_ab.expect("client A to B");
+        let client_ba = client_ba.expect("client B to A");
+        let client_ab_in = client_ab_in.expect("client B accepts A").expect("client A to B");
+        let client_ba_in = client_ba_in.expect("client A accepts B").expect("client B to A");
+        let ((consensus_ab, consensus_ba), (consensus_ab_in, consensus_ba_in)) = tokio::join!(
+            async {
+                tokio::join!(
+                    first.connect(second_peer, ProductionConnectionClass::AuthConsensus),
+                    second.connect(first_peer, ProductionConnectionClass::AuthConsensus),
+                )
+            },
+            async { tokio::join!(second.accept(), first.accept()) },
+        );
+        let consensus_ab = consensus_ab.expect("consensus A to B");
+        let consensus_ba = consensus_ba.expect("consensus B to A");
+        let consensus_ab_in =
+            consensus_ab_in.expect("consensus B accepts A").expect("consensus A to B");
+        let consensus_ba_in =
+            consensus_ba_in.expect("consensus A accepts B").expect("consensus B to A");
+        assert_eq!(first.facts().authenticated_connections, 5);
+        assert_eq!(second.facts().authenticated_connections, 5);
+        assert_eq!(
+            first.connect(second_peer, ProductionConnectionClass::AuthClient).await.err(),
+            Some(ProductionTransportError::Saturated)
+        );
+        assert_eq!(first.facts().authenticated_connections, 5);
+        assert_eq!(second.facts().authenticated_connections, 5);
+
+        let (sent, received, reply_sent, reply_received) = tokio::join!(
+            replication.send_frame(b"replication"),
+            replication_in.receive_frame(),
+            replication_in.send_frame(b"replication reply"),
+            replication.receive_frame(),
+        );
+        sent.expect("replication remains usable with all auth slots occupied");
+        reply_sent.expect("replication remains full duplex");
+        assert_eq!(received.expect("replication receive"), b"replication");
+        assert_eq!(reply_received.expect("replication reply"), b"replication reply");
+
+        let ((ab_sent, ab_received), (ba_sent, ba_received)) = tokio::join!(
+            async {
+                tokio::join!(client_ab.send_frame(b"client-ab"), client_ab_in.receive_frame())
+            },
+            async {
+                tokio::join!(client_ba.send_frame(b"client-ba"), client_ba_in.receive_frame())
+            },
+        );
+        ab_sent.expect("client A to B send");
+        assert_eq!(ab_received.expect("client A to B receive"), b"client-ab");
+        ba_sent.expect("client B to A send");
+        assert_eq!(ba_received.expect("client B to A receive"), b"client-ba");
+        let ((ab_sent, ab_received), (ba_sent, ba_received)) = tokio::join!(
+            async {
+                tokio::join!(client_ab_in.send_frame(b"client-ba-reply"), client_ab.receive_frame())
+            },
+            async {
+                tokio::join!(client_ba_in.send_frame(b"client-ab-reply"), client_ba.receive_frame())
+            },
+        );
+        ab_sent.expect("client B to A reply");
+        assert_eq!(ab_received.expect("client B to A reply receive"), b"client-ba-reply");
+        ba_sent.expect("client A to B reply");
+        assert_eq!(ba_received.expect("client A to B reply receive"), b"client-ab-reply");
+        let ((ab_sent, ab_received), (ba_sent, ba_received)) = tokio::join!(
+            async {
+                tokio::join!(
+                    consensus_ab.send_frame(b"consensus-ab"),
+                    consensus_ab_in.receive_frame()
+                )
+            },
+            async {
+                tokio::join!(
+                    consensus_ba.send_frame(b"consensus-ba"),
+                    consensus_ba_in.receive_frame()
+                )
+            },
+        );
+        ab_sent.expect("consensus A to B send");
+        assert_eq!(ab_received.expect("consensus A to B receive"), b"consensus-ab");
+        ba_sent.expect("consensus B to A send");
+        assert_eq!(ba_received.expect("consensus B to A receive"), b"consensus-ba");
+        drop(replication);
+        drop(replication_in);
+        drop(client_ab);
+        drop(client_ba);
+        drop(client_ab_in);
+        drop(client_ba_in);
+        drop(consensus_ab);
+        drop(consensus_ba);
+        drop(consensus_ab_in);
+        drop(consensus_ba_in);
+        assert_eq!(first.facts().authenticated_connections, 0);
+        assert_eq!(second.facts().authenticated_connections, 0);
+        assert_eq!(first.facts().inflight_operations, 0);
+        assert_eq!(second.facts().inflight_operations, 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
