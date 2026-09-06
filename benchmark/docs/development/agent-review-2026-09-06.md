@@ -324,3 +324,61 @@ review identified a possible two-connection-per-peer contention cycle between
 forwarded requests and consensus. It needs a controlled reproduction and a
 transport capacity fix before claiming saturation safety. Negotiated peer frame
 limits also remain a runtime concern beyond local startup validation.
+
+## Reserved transport and deeper adapter execution
+
+The subsequent unmodified maintained-suite attempt (`66710`) used production
+frame limits and stopped after 38 passes: `findMany` with joins and a where
+clause exceeded both 30-second test and cleanup limits. It exited 101 with
+one failure and 311 unexecuted cases. The isolated case passed in `88679`,
+while that filtered run correctly failed qualification with 349 skipped cases.
+Logs: `/tmp/terrascale-official-auth-authority-production-limits.log` and
+`/tmp/terrascale-auth-isolated-join.log`.
+
+The SDK now has an opt-in, test-only Vite transform for the upstream utility's
+cleanup defect. It checks the exact module path and upstream SHA-256
+`2993733da66175a5e8a13180a15199ceb398e99439cf92619c24e08a012c9f33`.
+It removes successfully deleted rows from tracking, retains failed/unknown
+rows, and leaves adapter assertions intact. Behavioral tests verify those
+semantics. Installed dependencies and SDK output remain untouched. The runner
+requires proof that the transform ran and labels these results separately.
+The transformed hash is
+`a0bf76aa93c5b2df8ebb29546bee1e093e9ccd50a4544c916213e63600a554e4`.
+
+Cleanup-corrected diagnostic `11746` ran the actual public SDK/HTTP/encrypted
+two-voter path for 559 seconds: 341 passed, one failed, eight unexecuted. It
+failed on `auth_authority_unavailable` during the UUID mixed-join query and
+exited 101. It qualifies neither the patched nor unmodified suite. Log:
+`/tmp/terrascale-auth-upstream-patched-cleanup.log`.
+
+That failure exposed missing retries for ordinary auth POST reads. Only named
+`findPage` and `count` now opt into the existing bounded transient-read retry
+policy. They explicitly suppress global mutation-key generation. Transactional
+queries retain stable operation identities; mutation, denial, cancellation,
+and Retry-After behavior remain under the existing rules. Independent review
+found no material issue. SDK `CONTRACT_SOURCE=../terrabase/contracts make check`
+passed in `97433`: 295 tests passed, 13 environment-gated tests skipped.
+
+Member protocol 2 now reserves replication, auth-client, and auth-consensus
+sessions and frame-operation capacity. Auth classes have one slot per local
+direction; replication has one slot total, giving five sessions per peer.
+Handshake capacity is separately reserved for incoming and outgoing attempts,
+within the unchanged configured total operation ceiling. Topology validation
+requires enough capacity for simultaneous peer sends and receives. ADR 0047
+records the private protocol change and remaining composition requirements.
+
+Review and execution caught and fixed shared-counter accounting, permit leaks
+during drain, status sampling that removed pending reservations, and a
+handshake race that could leave each side retaining a different socket.
+Reservations now precede dialing or successful handshake replies and are
+released on cancellation/failure. Auth and replication dispatch reject
+method/class mismatches. Regressions exercise all five sessions, opposite
+directions, full-duplex replication, occupied client permits, rejected excess
+dials, pending status sampling, and cancellation cleanup. Independent review
+found no remaining material defect in the inspected transport implementation.
+
+The six focused auth runtime tests passed with the directional transport in
+`98474`; the external consumer test remained ignored in that command. Strict
+transport Clippy passed in `39518`. Full shared daemon composition,
+multi-group WAN/failure qualification, and final maintained-suite receipts
+remain outstanding. ULID and concurrent agents' changes were preserved.

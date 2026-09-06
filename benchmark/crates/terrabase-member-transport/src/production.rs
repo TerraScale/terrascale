@@ -401,9 +401,9 @@ impl ProductionTransportLimits {
     pub const fn class_quota(&self, class: ProductionConnectionClass) -> usize {
         let base = self.max_inflight / 4;
         match class {
-            ProductionConnectionClass::AuthConsensus => base,
-            ProductionConnectionClass::Replication => base,
-            ProductionConnectionClass::AuthClient => base,
+            ProductionConnectionClass::AuthConsensus
+            | ProductionConnectionClass::Replication
+            | ProductionConnectionClass::AuthClient => base,
         }
     }
 
@@ -2265,7 +2265,7 @@ mod tests {
             second.accept()
         );
         let client = std::sync::Arc::new(client.expect("client session"));
-        let _client_in = client_in.expect("client accept").expect("client session");
+        let client_in = client_in.expect("client accept").expect("client session");
         let (consensus, consensus_in) = tokio::join!(
             first.connect(peer, ProductionConnectionClass::AuthConsensus),
             second.accept()
@@ -2309,7 +2309,7 @@ mod tests {
         let _ = held_two.await;
         assert_eq!(first.facts().inflight_operations, 0);
         let (sent, received) =
-            tokio::join!(_client_in.send_frame(b"resumed"), client.receive_frame());
+            tokio::join!(client_in.send_frame(b"resumed"), client.receive_frame());
         sent.expect("send after client cancellation");
         assert_eq!(received.expect("client permits reclaimed"), b"resumed");
         drop(replication);
@@ -2345,11 +2345,34 @@ mod tests {
         drop(inbound);
     }
 
+    async fn opposite_auth_sessions(
+        first: &ProductionQuicEndpoint,
+        second: &ProductionQuicEndpoint,
+        class: ProductionConnectionClass,
+    ) -> (
+        super::ProductionConnection,
+        super::ProductionConnection,
+        super::ProductionConnection,
+        super::ProductionConnection,
+    ) {
+        let (out_ab, out_ba, in_ab, in_ba) = tokio::join!(
+            first.connect(second.config.local_identity.member(), class),
+            second.connect(first.config.local_identity.member(), class),
+            second.accept(),
+            first.accept(),
+        );
+        (
+            out_ab.expect("A dials B"),
+            out_ba.expect("B dials A"),
+            in_ab.expect("B accepts A").expect("A to B session"),
+            in_ba.expect("A accepts B").expect("B to A session"),
+        )
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn opposite_direction_auth_sessions_progress_with_replication_held() {
         let (first, second) = endpoint_pair();
         let second_peer = second.config.local_identity.member();
-        let first_peer = first.config.local_identity.member();
         let (replication, replication_in) = tokio::join!(
             first.connect(second_peer, ProductionConnectionClass::Replication),
             second.accept()
@@ -2357,34 +2380,10 @@ mod tests {
         let replication = replication.expect("replication session");
         let replication_in =
             replication_in.expect("replication accept").expect("replication session");
-        let ((client_ab, client_ba), (client_ab_in, client_ba_in)) = tokio::join!(
-            async {
-                tokio::join!(
-                    first.connect(second_peer, ProductionConnectionClass::AuthClient),
-                    second.connect(first_peer, ProductionConnectionClass::AuthClient),
-                )
-            },
-            async { tokio::join!(second.accept(), first.accept()) },
-        );
-        let client_ab = client_ab.expect("client A to B");
-        let client_ba = client_ba.expect("client B to A");
-        let client_ab_in = client_ab_in.expect("client B accepts A").expect("client A to B");
-        let client_ba_in = client_ba_in.expect("client A accepts B").expect("client B to A");
-        let ((consensus_ab, consensus_ba), (consensus_ab_in, consensus_ba_in)) = tokio::join!(
-            async {
-                tokio::join!(
-                    first.connect(second_peer, ProductionConnectionClass::AuthConsensus),
-                    second.connect(first_peer, ProductionConnectionClass::AuthConsensus),
-                )
-            },
-            async { tokio::join!(second.accept(), first.accept()) },
-        );
-        let consensus_ab = consensus_ab.expect("consensus A to B");
-        let consensus_ba = consensus_ba.expect("consensus B to A");
-        let consensus_ab_in =
-            consensus_ab_in.expect("consensus B accepts A").expect("consensus A to B");
-        let consensus_ba_in =
-            consensus_ba_in.expect("consensus A accepts B").expect("consensus B to A");
+        let (client_ab, client_ba, client_ab_in, client_ba_in) =
+            opposite_auth_sessions(&first, &second, ProductionConnectionClass::AuthClient).await;
+        let (consensus_ab, consensus_ba, consensus_ab_in, consensus_ba_in) =
+            opposite_auth_sessions(&first, &second, ProductionConnectionClass::AuthConsensus).await;
         assert_eq!(first.facts().authenticated_connections, 5);
         assert_eq!(second.facts().authenticated_connections, 5);
         assert_eq!(
@@ -2561,12 +2560,8 @@ mod tests {
         let extra_out = extra_out.expect("second session");
         let extra_in = extra_in.expect("accepted").expect("second session");
         assert_eq!(first.facts().authenticated_connections, 2);
-        let (excess_out, excess_in) = tokio::join!(
-            first.connect(peer, ProductionConnectionClass::AuthClient),
-            second.accept()
-        );
-        assert!(excess_out.is_err());
-        assert_eq!(excess_in.err(), Some(ProductionTransportError::Saturated));
+        let excess_out = first.connect(peer, ProductionConnectionClass::AuthClient).await;
+        assert_eq!(excess_out.err(), Some(ProductionTransportError::Saturated));
         assert_eq!(first.facts().authenticated_connections, 2);
         assert_eq!(second.facts().authenticated_connections, 2);
         let (consensus_out, consensus_in) = tokio::join!(
