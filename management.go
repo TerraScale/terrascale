@@ -294,11 +294,13 @@ type RestoreBackupRequest struct {
 // DatabaseUsage contains authoritative totals at one durable ledger high-water.
 // Meter units are decimal strings; storage is byte-seconds, not current bytes.
 type DatabaseUsage struct {
-	TenantID         string          `json:"tenant_id"`
-	DatabaseID       string          `json:"database_id"`
-	SnapshotSequence uint64          `json:"snapshot_sequence"`
-	Meters           []MeterTotal    `json:"meters"`
-	Reads            ReadAttribution `json:"reads"`
+	// StorageCompleteThroughMillis is nil until an authoritative storage interval closes.
+	StorageCompleteThroughMillis *uint64         `json:"storage_complete_through_millis"`
+	TenantID                     string          `json:"tenant_id"`
+	DatabaseID                   string          `json:"database_id"`
+	SnapshotSequence             uint64          `json:"snapshot_sequence"`
+	Meters                       []MeterTotal    `json:"meters"`
+	Reads                        ReadAttribution `json:"reads"`
 }
 
 type BillableMeter string

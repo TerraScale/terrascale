@@ -376,3 +376,22 @@ func TestExportDiscoveryAndCancellationPreserveProgress(t *testing.T) {
 		t.Fatal("unbounded list accepted")
 	}
 }
+
+func TestUsageStorageIntervalCompletenessIsNullable(t *testing.T) {
+	for _, test := range []struct {
+		wire     string
+		complete bool
+	}{{`{"storage_complete_through_millis":null}`, false}, {`{"storage_complete_through_millis":18446744073709551615}`, true}} {
+		var usage DatabaseUsage
+		if err := json.Unmarshal([]byte(test.wire), &usage); err != nil {
+			t.Fatal(err)
+		}
+		if test.complete {
+			if usage.StorageCompleteThroughMillis == nil || *usage.StorageCompleteThroughMillis != math.MaxUint64 {
+				t.Fatal("storage interval lost precision")
+			}
+		} else if usage.StorageCompleteThroughMillis != nil {
+			t.Fatal("unknown storage interval became complete")
+		}
+	}
+}
