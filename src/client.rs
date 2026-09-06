@@ -277,13 +277,6 @@ impl Shared {
                 }
             }
         }
-        if let Some(placement) = response.header(PLACEMENT_HEADER) {
-            if let Some(region) = parse_region_header(placement) {
-                if let Ok(mut guard) = self.placement.write() {
-                    *guard = Some(region);
-                }
-            }
-        }
     }
 
     fn should_advertise_region_hint(&self, request: &Request) -> bool {
@@ -315,8 +308,8 @@ impl Shared {
         }
         if response.status == 421 {
             let placement = response.header(PLACEMENT_HEADER).map(str::to_owned);
-            if let Some(ref placement) = placement {
-                if let Some(region) = parse_region_header(placement) {
+            if self.config.region_affinity() != RegionAffinity::Strict {
+                if let Some(region) = placement.as_deref().and_then(parse_region_header) {
                     if let Ok(mut guard) = self.placement.write() {
                         *guard = Some(region);
                     }
@@ -325,7 +318,7 @@ impl Shared {
             let mut error = Error::for_status(
                 421,
                 "misdirected_region".to_owned(),
-                "The region does not host this database; the SDK repaired its pin from X-TerraScale-Placement. Retry the request.".to_owned(),
+                "The region does not host this database. Check X-TerraScale-Placement and the configured region affinity.".to_owned(),
             );
             error.placement = placement;
             return Err(error);

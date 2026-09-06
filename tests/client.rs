@@ -422,3 +422,42 @@ fn root_reexports_all_published_client_types() {
 
     let _: Option<PublishedClientTypes> = None;
 }
+
+#[tokio::test]
+async fn strict_affinity_preserves_region_after_placement_responses() {
+    for status in [200, 421] {
+        let mut response = document_response();
+        response.status = status;
+        response
+            .headers
+            .push(("x-terrascale-placement".to_owned(), "FRA".to_owned()));
+        let mock = Mock::new([response, document_response()]);
+        let sdk = TerraScaleClient::with_transport(
+            ClientConfig::builder()
+                .preferred_region(terrascale::RegionCode::Gru)
+                .region_affinity(terrascale::RegionAffinity::Strict)
+                .build()
+                .expect("config"),
+            Arc::clone(&mock) as Arc<dyn HttpTransport>,
+        );
+        let scope = terrascale::DatabaseScope::new("database");
+        let result = sdk.documents().get(&scope, "users", "doc_1").await;
+        if status == 421 {
+            let error = result.expect_err("strict region cannot serve database");
+            assert_eq!(error.status, Some(421));
+            assert_eq!(error.placement.as_deref(), Some("FRA"));
+        } else {
+            result.expect("document");
+        }
+        assert_eq!(sdk.pinned_region(), Some(terrascale::RegionCode::Gru));
+        sdk.documents()
+            .get(&scope, "users", "doc_1")
+            .await
+            .expect("followup");
+        let requests = mock.requests.lock().expect("request mutex");
+        assert_eq!(requests.len(), 2);
+        assert!(requests
+            .iter()
+            .all(|request| request.url.starts_with("https://gru.api.terrascale.tech")));
+    }
+}

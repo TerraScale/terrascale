@@ -327,7 +327,7 @@ async fn producer_reactive_fixture_preserves_snapshot_log_and_reset_metadata() {
     assert_eq!(snapshot.authorization_generation, 1);
     assert_eq!(
         snapshot.digest,
-        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        "0000000000000000000000000000000000000000000000000000000000000000"
     );
     let delta = sdk
         .reactive()
@@ -336,12 +336,19 @@ async fn producer_reactive_fixture_preserves_snapshot_log_and_reset_metadata() {
         .expect("log fixture");
     assert_eq!(
         delta.deltas[0].digest,
-        "30fa4379f701fe4bee34f17138d363bf302341c24cf5588c8d6bb353caed855f"
+        "d12faa372354de79608c8212f5fd2f3207bdf89a37b0242b1ec38d57848e19bc"
     );
     assert_eq!(delta.deltas[0].operations.len(), 1);
-    let ViewOperation::Insert { value, .. } = &delta.deltas[0].operations[0] else {
+    let ViewOperation::Insert {
+        identity,
+        position,
+        value,
+    } = &delta.deltas[0].operations[0]
+    else {
         panic!("expected insert operation");
     };
+    assert_eq!(identity, "order-1");
+    assert_eq!(*position, 0);
     assert_eq!(value["status"], br#""paid""#.to_vec());
 
     let reset = sdk
@@ -349,10 +356,12 @@ async fn producer_reactive_fixture_preserves_snapshot_log_and_reset_metadata() {
         .poll_from(&view, "2")
         .await
         .expect("reset fixture");
-    assert!(matches!(
-        reset.reset.map(|reset| reset.reason),
-        Some(ResetReason::CheckpointExpired)
-    ));
+    let reset = reset.reset.expect("replacement reset");
+    assert_eq!(reset.reason, ResetReason::CheckpointExpired);
+    assert_eq!(
+        reset.snapshot.expect("replacement snapshot").digest,
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    );
 }
 
 #[tokio::test]
