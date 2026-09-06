@@ -388,6 +388,33 @@ impl Shared {
         }
     }
 
+    /// Send a request and preserve the raw success body.
+    pub async fn send_bytes(&self, mut request: Request) -> Result<Vec<u8>> {
+        self.decorate(&mut request);
+        let route = request.route_name.clone();
+        let mut retries = 0;
+        loop {
+            match self.transport.send(request.clone()).await {
+                Ok(response) => {
+                    self.observe(&response);
+                    match self.check(&route, &response) {
+                        Ok(()) => return Ok(response.body),
+                        Err(error) if self.can_retry(&request, &error, retries) => {
+                            retries += 1;
+                            self.wait_before_retry(retries).await;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                Err(error) if self.can_retry(&request, &error, retries) => {
+                    retries += 1;
+                    self.wait_before_retry(retries).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     fn can_retry(&self, request: &Request, error: &Error, retries: u8) -> bool {
         // Reactive polling owns its own attempt budget and deadline; applying
         // the general client retry budget here would multiply those bounds.

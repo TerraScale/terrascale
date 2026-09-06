@@ -640,13 +640,32 @@ impl Collections {
         database_id: &str,
         collection: &str,
         _project_id: Option<&str>,
-    ) -> Result<IndexListResponse> {
+    ) -> Result<RecommendationList> {
+        self.index_recommendations_with_limit(database_id, collection, None)
+            .await
+    }
+    pub async fn index_recommendations_with_limit(
+        &self,
+        database_id: &str,
+        collection: &str,
+        limit: Option<u16>,
+    ) -> Result<RecommendationList> {
+        if limit.is_some_and(|value| !(1..=64).contains(&value)) {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_limit",
+                "limit must be between 1 and 64.",
+            ));
+        }
         let request = Request {
             route_name: "collections.indexes.recommendations".to_owned(),
             method: Method::Get,
             url: format!(
-                "{}/indexes/recommendations",
-                collection_url(&self.shared, database_id, collection)?
+                "{}/indexes/recommendations{}",
+                collection_url(&self.shared, database_id, collection)?,
+                limit
+                    .map(|value| format!("?limit={value}"))
+                    .unwrap_or_default()
             ),
             headers: Vec::new(),
             body: None,
@@ -782,13 +801,43 @@ impl Backups {
         send_with_options(&self.shared, request, &options).await
     }
 }
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct CreateExport {}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ExportJob {
-    pub export_id: String,
-    pub database_id: String,
-    pub status: String,
+pub struct CreateExport {
+    pub idempotency_key: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResumeExport {
+    pub resume_cursor: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportAccepted {
+    pub job_id: String,
+    pub status_path: String,
+    pub resume_cursor: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ExportJobStatus {
+    Accepted,
+    Running,
+    Complete,
+    Failed,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportArtifact {
+    pub path: String,
+    pub length: u64,
+    pub checksum: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportStatus {
+    pub job_id: String,
+    pub status: ExportJobStatus,
+    pub records: u64,
+    pub estimated_records: Option<u64>,
+    pub progress_basis_points: u16,
+    pub resume_cursor: String,
+    pub manifest: Option<ExportArtifact>,
+    pub error: Option<String>,
 }
 #[derive(Debug, Clone)]
 pub struct Exports {
@@ -801,18 +850,69 @@ impl Exports {
     pub async fn create(
         &self,
         database_id: &str,
-        _request: CreateExport,
+        input: CreateExport,
         _project_id: Option<&str>,
         options: OperationOptions,
-    ) -> Result<ExportJob> {
-        let request = request_options(
-            Request {
-                route_name: "exports.create".to_owned(),
-                method: Method::Post,
-                url: format!("{}/exports", database_url(&self.shared, database_id)?),
-                headers: Vec::new(),
+    ) -> Result<ExportAccepted> {
+        validate_non_empty(&input.idempotency_key, "idempotency_key")?;
+        let request = request_with_options(
+            "exports.create",
+            Method::Post,
+            format!("{}/exports", database_url(&self.shared, database_id)?),
+            &input,
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
+    pub async fn get(&self, database_id: &str, job_id: &str) -> Result<ExportStatus> {
+        self.shared
+            .send_typed(Request {
+                route_name: "exports.get".into(),
+                method: Method::Get,
+                url: format!(
+                    "{}/exports/{}",
+                    database_url(&self.shared, database_id)?,
+                    encode_segment(job_id, "job_id")?
+                ),
+                headers: vec![],
                 body: None,
-            },
+            })
+            .await
+    }
+    /// Download one export artifact without decoding or transforming its bytes.
+    pub async fn download(&self, database_id: &str, job_id: &str, member: &str) -> Result<Vec<u8>> {
+        self.shared
+            .send_bytes(Request {
+                route_name: "exports.download".into(),
+                method: Method::Get,
+                url: format!(
+                    "{}/exports/{}/artifacts/{}",
+                    database_url(&self.shared, database_id)?,
+                    encode_segment(job_id, "job_id")?,
+                    encode_segment(member, "member")?
+                ),
+                headers: vec![("accept".into(), "application/octet-stream".into())],
+                body: None,
+            })
+            .await
+    }
+    pub async fn resume(
+        &self,
+        database_id: &str,
+        job_id: &str,
+        input: ResumeExport,
+        options: OperationOptions,
+    ) -> Result<ExportStatus> {
+        validate_non_empty(&input.resume_cursor, "resume_cursor")?;
+        let request = request_with_options(
+            "exports.resume",
+            Method::Post,
+            format!(
+                "{}/exports/{}/resume",
+                database_url(&self.shared, database_id)?,
+                encode_segment(job_id, "job_id")?
+            ),
+            &input,
             &options,
         )?;
         send_with_options(&self.shared, request, &options).await
@@ -820,7 +920,42 @@ impl Exports {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Usage {
+    pub tenant_id: String,
     pub database_id: String,
+    pub snapshot_sequence: u64,
+    pub meters: [MeterTotal; 2],
+    pub reads: ReadAttribution,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BillableMeter {
+    DocumentWriteUnits,
+    StorageByteSeconds,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MeterTotal {
+    pub meter: BillableMeter,
+    pub units: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReadAttribution {
+    pub total_reads: u64,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IndexRecommendation {
+    pub candidate_id: String,
+    pub collection: String,
+    pub fields: Vec<String>,
+    pub score: f64,
+    pub maintenance_cost: u64,
+    pub generation: u64,
+    pub needs_descriptor: bool,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecommendationList {
+    pub generation: u64,
+    pub truncated: bool,
+    pub recommendations: Vec<IndexRecommendation>,
 }
 #[derive(Debug, Clone)]
 pub struct UsageClient {
@@ -945,6 +1080,10 @@ impl ManagementClient {
         UsageClient::new(self.shared.clone())
     }
     #[must_use]
+    pub fn webhooks(&self) -> Webhooks {
+        Webhooks::new(self.shared.clone())
+    }
+    #[must_use]
     pub fn regions(&self) -> Regions {
         Regions::new(self.shared.clone())
     }
@@ -1039,4 +1178,131 @@ pub struct UsageWorkload {
     pub project_id: String,
     pub range: UsageRange,
     pub points: Vec<UsagePoint>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreateWebhook {
+    pub endpoint: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebhookEndpoint {
+    pub id: String,
+    pub endpoint: String,
+    pub created_at: u64,
+    pub deleted: bool,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebhookList {
+    pub webhooks: Vec<WebhookEndpoint>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeliveryRecord {
+    pub id: String,
+    pub event_id: String,
+    pub revision: u64,
+    pub retry_started_at: u64,
+    pub attempts: u32,
+    pub next_attempt_at: u64,
+    pub status: Option<u16>,
+    pub delivered: bool,
+    pub terminal: bool,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeliveryLog {
+    pub deliveries: Vec<DeliveryRecord>,
+}
+#[derive(Debug, Clone)]
+pub struct Webhooks {
+    shared: SharedClient,
+}
+impl Webhooks {
+    pub(crate) fn new(shared: SharedClient) -> Self {
+        Self { shared }
+    }
+    fn url(&self, database_id: &str, id: &str) -> Result<String> {
+        Ok(format!(
+            "{}/webhooks/{}",
+            database_url(&self.shared, database_id)?,
+            encode_segment(id, "webhook_id")?
+        ))
+    }
+    pub async fn list(&self, database_id: &str) -> Result<WebhookList> {
+        self.shared
+            .send_typed(Request {
+                route_name: "webhooks.list".into(),
+                method: Method::Get,
+                url: format!("{}/webhooks", database_url(&self.shared, database_id)?),
+                headers: vec![],
+                body: None,
+            })
+            .await
+    }
+    pub async fn create(
+        &self,
+        database_id: &str,
+        input: CreateWebhook,
+        options: OperationOptions,
+    ) -> Result<WebhookEndpoint> {
+        validate_non_empty(&input.endpoint, "endpoint")?;
+        let request = request_with_options(
+            "webhooks.create",
+            Method::Post,
+            format!("{}/webhooks", database_url(&self.shared, database_id)?),
+            &input,
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
+    pub async fn delete(
+        &self,
+        database_id: &str,
+        id: &str,
+        options: OperationOptions,
+    ) -> Result<WebhookEndpoint> {
+        let request = request_options(
+            Request {
+                route_name: "webhooks.delete".into(),
+                method: Method::Delete,
+                url: self.url(database_id, id)?,
+                headers: vec![],
+                body: None,
+            },
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
+    pub async fn list_deliveries(&self, database_id: &str, id: &str) -> Result<DeliveryLog> {
+        self.shared
+            .send_typed(Request {
+                route_name: "webhooks.deliveries.list".into(),
+                method: Method::Get,
+                url: format!("{}/deliveries", self.url(database_id, id)?),
+                headers: vec![],
+                body: None,
+            })
+            .await
+    }
+    pub async fn replay(
+        &self,
+        database_id: &str,
+        id: &str,
+        delivery_id: &str,
+        options: OperationOptions,
+    ) -> Result<DeliveryRecord> {
+        let request = request_options(
+            Request {
+                route_name: "webhooks.replay".into(),
+                method: Method::Post,
+                url: format!(
+                    "{}/deliveries/{}/replay",
+                    self.url(database_id, id)?,
+                    encode_segment(delivery_id, "delivery_id")?
+                ),
+                headers: vec![],
+                body: None,
+            },
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
 }

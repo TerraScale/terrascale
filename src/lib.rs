@@ -34,16 +34,19 @@ pub use documents::{
 pub use error::{Error, ErrorKind, Result};
 pub use management::{
     ApiKey, ApiKeyPage, ApiKeys, Backup, BackupPlan, BackupPolicy, BackupStatus,
-    BackupStatusResponse, Backups, BranchListResponse, Branches,
+    BackupStatusResponse, Backups, BillableMeter, BranchListResponse, Branches,
     CancellationToken as ManagementCancellationToken, Collections, CollectionsResponse,
     CreateApiKey, CreateBranch, CreateDatabase, CreateDatabaseRequest, CreateDatabaseWithPlacement,
-    CreateExport, CreateIndexRequest, CreatedApiKey, DatabaseBranch, DatabaseListResponse,
-    DatabaseRecord, DatabaseSchema, Databases, DeletedDatabase, ExecuteBackupRequest, ExportJob,
-    Exports, HealthResponse, IndexCreatedResponse, IndexDescriptor, IndexListResponse,
-    ManagementClient, OperationOptions, PageOptions, PlacementLock, PlanBackupRequest,
-    ProjectDatabase, RegionSummary, Regions, RestoreAt, RestoreJob, RestorePoint, RestoreRequest,
-    RevokedApiKey, RotatedApiKey, Schemas, StartRestore, TransferFormat, Usage, UsageClient,
-    UsagePoint, UsageRange, UsageSummary, UsageWorkload,
+    CreateExport, CreateIndexRequest, CreateWebhook, CreatedApiKey, DatabaseBranch,
+    DatabaseListResponse, DatabaseRecord, DatabaseSchema, Databases, DeletedDatabase, DeliveryLog,
+    DeliveryRecord, ExecuteBackupRequest, ExportAccepted, ExportArtifact, ExportJobStatus,
+    ExportStatus, Exports, HealthResponse, IndexCreatedResponse, IndexDescriptor,
+    IndexListResponse, IndexRecommendation, ManagementClient, MeterTotal, OperationOptions,
+    PageOptions, PlacementLock, PlanBackupRequest, ProjectDatabase, ReadAttribution,
+    RecommendationList, RegionSummary, Regions, RestoreAt, RestoreJob, RestorePoint,
+    RestoreRequest, ResumeExport, RevokedApiKey, RotatedApiKey, Schemas, StartRestore,
+    TransferFormat, Usage, UsageClient, UsagePoint, UsageRange, UsageSummary, UsageWorkload,
+    WebhookEndpoint, WebhookList, Webhooks,
 };
 pub use reactive::{
     ApplyOutcome, AttachedView, CancellationToken, Checkpoint, LiveSubscription, PollOptions,

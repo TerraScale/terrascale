@@ -155,11 +155,11 @@ async fn schema_is_one_collection_schema_and_direct_path() {
 }
 
 #[tokio::test]
-async fn pending_routes_return_typed_501_and_do_not_invent_results() {
+async fn recommendation_source_unavailability_preserves_typed_error() {
     let mock = Mock::new(vec![Response {
-        status: 501,
+        status: 503,
         headers: Vec::new(),
-        body: b"{\"code\":\"pending\",\"message\":\"not ready\"}".to_vec(),
+        body: b"{\"code\":\"index_not_ready\",\"message\":\"not ready\"}".to_vec(),
     }]);
     let sdk = client(Arc::clone(&mock));
     let error = sdk
@@ -167,8 +167,8 @@ async fn pending_routes_return_typed_501_and_do_not_invent_results() {
         .collections()
         .index_recommendations("db", "orders", None)
         .await
-        .expect_err("pending");
-    assert_eq!(error.status, Some(501));
+        .expect_err("source unavailable");
+    assert_eq!(error.status, Some(503));
     assert_eq!(mock.last().url, "https://api.terrascale.tech/api/v1/databases/db/collections/orders/indexes/recommendations");
 }
 
@@ -236,4 +236,197 @@ fn page_options_are_bounded() {
         "invalid_page_size"
     );
     assert!(PageOptions::new(0, 1001).is_err());
+}
+
+#[tokio::test]
+async fn usage_and_recommendations_preserve_authoritative_fields() {
+    let mock = Mock::new(vec![
+        Response::json(
+            200,
+            &json!({"tenant_id":"tenant","database_id":"db","snapshot_sequence":18446744073709551615u64,
+            "meters":[{"meter":"document_write_units","units":"9007199254740993"},{"meter":"storage_byte_seconds","units":"123"}],
+            "reads":{"total_reads":4}}),
+        ),
+        Response::json(
+            200,
+            &json!({"generation":9,"truncated":true,"recommendations":[{"candidate_id":"candidate","collection":"orders","fields":["status"],"score":0.75,"maintenance_cost":2,"generation":9,"needs_descriptor":true}]}),
+        ),
+    ]);
+    let sdk = client(Arc::clone(&mock));
+    let usage = sdk
+        .management()
+        .usage()
+        .get_database("db", None)
+        .await
+        .unwrap();
+    assert_eq!(usage.snapshot_sequence, u64::MAX);
+    assert_eq!(usage.meters[0].units, "9007199254740993");
+    assert_eq!(usage.reads.total_reads, 4);
+    let recommendations = sdk
+        .management()
+        .collections()
+        .index_recommendations_with_limit("db", "orders", Some(3))
+        .await
+        .unwrap();
+    assert_eq!(recommendations.generation, 9);
+    assert!(recommendations.truncated);
+    assert_eq!(recommendations.recommendations[0].fields, ["status"]);
+    assert!(mock
+        .last()
+        .url
+        .ends_with("/indexes/recommendations?limit=3"));
+    let before = mock.requests.lock().unwrap().len();
+    assert!(sdk
+        .management()
+        .collections()
+        .index_recommendations_with_limit("db", "orders", Some(65))
+        .await
+        .is_err());
+    assert_eq!(mock.requests.lock().unwrap().len(), before);
+}
+
+#[tokio::test]
+async fn webhook_operations_match_endpoint_and_delivery_contracts() {
+    use terrascale::CreateWebhook;
+    let endpoint =
+        json!({"id":"hook","endpoint":"https://example.com/hook","created_at":10,"deleted":false});
+    let delivery = json!({"id":"hook/event","event_id":"event","revision":2,"retry_started_at":10,"attempts":1,"next_attempt_at":0,"status":204,"delivered":true,"terminal":false});
+    let mock = Mock::new(vec![
+        Response::json(201, &endpoint),
+        Response::json(200, &json!({"webhooks":[endpoint.clone()]})),
+        Response::json(200, &json!({"deliveries":[delivery.clone()]})),
+        Response::json(200, &delivery),
+        Response::json(
+            200,
+            &json!({"deleted":true,"id":"hook","endpoint":"https://example.com/hook","created_at":10}),
+        ),
+    ]);
+    let api = client(Arc::clone(&mock)).management().webhooks();
+    assert_eq!(
+        api.create(
+            "db",
+            CreateWebhook {
+                endpoint: "https://example.com/hook".into()
+            },
+            OperationOptions::default()
+        )
+        .await
+        .unwrap()
+        .created_at,
+        10
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&mock.last().body.unwrap()).unwrap(),
+        json!({"endpoint":"https://example.com/hook"})
+    );
+    assert_eq!(api.list("db").await.unwrap().webhooks.len(), 1);
+    assert_eq!(
+        api.list_deliveries("db", "hook").await.unwrap().deliveries[0].status,
+        Some(204)
+    );
+    assert!(
+        api.replay("db", "hook", "hook/event", OperationOptions::default())
+            .await
+            .unwrap()
+            .delivered
+    );
+    assert_eq!(mock.last().method, Method::Post);
+    assert!(mock
+        .last()
+        .url
+        .ends_with("/webhooks/hook/deliveries/hook%2Fevent/replay"));
+    assert!(mock.last().body.is_none());
+    assert!(
+        api.delete("db", "hook", OperationOptions::default())
+            .await
+            .unwrap()
+            .deleted
+    );
+    assert_eq!(mock.last().method, Method::Delete);
+}
+
+#[tokio::test]
+async fn exports_send_identity_and_resume_cursor_and_preserve_progress() {
+    use terrascale::{CreateExport, ExportJobStatus, ResumeExport};
+    let status = json!({"job_id":"job","status":"Complete","records":5,"estimated_records":null,"progress_basis_points":10000,"resume_cursor":"next","manifest":{"path":"manifest","length":20,"checksum":"abc"},"error":null});
+    let mock = Mock::new(vec![
+        Response::json(
+            202,
+            &json!({"job_id":"job","status_path":"/api/v1/databases/db/exports/job","resume_cursor":"cursor"}),
+        ),
+        Response::json(200, &status),
+        Response::json(200, &status),
+    ]);
+    let api = client(Arc::clone(&mock)).management().exports();
+    assert_eq!(
+        api.create(
+            "db",
+            CreateExport {
+                idempotency_key: "stable".into()
+            },
+            None,
+            OperationOptions::default()
+        )
+        .await
+        .unwrap()
+        .job_id,
+        "job"
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&mock.last().body.unwrap()).unwrap(),
+        json!({"idempotency_key":"stable"})
+    );
+    let result = api.get("db", "job").await.unwrap();
+    assert_eq!(result.status, ExportJobStatus::Complete);
+    assert_eq!(result.manifest.unwrap().length, 20);
+    assert_eq!(
+        api.resume(
+            "db",
+            "job",
+            ResumeExport {
+                resume_cursor: "cursor".into()
+            },
+            OperationOptions::default()
+        )
+        .await
+        .unwrap()
+        .progress_basis_points,
+        10000
+    );
+    assert!(mock.last().url.ends_with("/exports/job/resume"));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&mock.last().body.unwrap()).unwrap(),
+        json!({"resume_cursor":"cursor"})
+    );
+}
+
+#[tokio::test]
+async fn export_download_preserves_binary_body_and_authentication() {
+    let bytes = vec![0, 0xff, b'"', b'\n'];
+    let mock = Mock::new(vec![Response {
+        status: 200,
+        headers: vec![("content-type".into(), "application/octet-stream".into())],
+        body: bytes.clone(),
+    }]);
+    assert_eq!(
+        client(Arc::clone(&mock))
+            .management()
+            .exports()
+            .download("db", "job", "part.bin")
+            .await
+            .unwrap(),
+        bytes
+    );
+    let request = mock.last();
+    assert_eq!(request.method, Method::Get);
+    assert!(request.url.ends_with("/exports/job/artifacts/part.bin"));
+    assert!(request
+        .headers
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("authorization") && value == "Bearer test"));
+    assert!(request
+        .headers
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("accept")
+            && value == "application/octet-stream"));
 }
