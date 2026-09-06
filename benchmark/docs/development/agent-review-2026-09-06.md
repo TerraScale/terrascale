@@ -484,3 +484,19 @@ Strict auth-crate Clippy passed (`94964`, `--all-targets --no-deps -D warnings`)
 after mechanical lint fixes and documented allowances preserving concrete
 OpenRaft error types. Two existing engine dependency unused-import warnings
 remain. No root commits or pushes were requested or performed.
+
+
+Final verification after the query-plan assertion and mechanical lint fixes:
+32 auth tests passed (`94955`), transport strict Clippy passed (`42461`), and
+24 transport production tests passed (`92668`; the ACK timing experiment was
+correctly ignored in that ordinary command). The ACK experiment was separately
+executed in `91353`: 64 fresh exchanges per configuration found no improvement
+from requesting 1 ms ACK delay (median 9.863 ms default, 10.091 ms candidate).
+Production ACK policy remains unchanged. Exact measurements and limits are in
+`bench/auth-authority-2026-09-06.md`. All root execution handles are terminal.
+
+Next implementation dependency remains shared production startup: one accepted
+QUIC owner must dispatch auth and replication while retaining their separate
+capacity, then connect the admission runtime, shared API registry/progress,
+data-plane attachment, and ordered shutdown. The two-voter auth fixture and
+its passing adapter cases do not prove that full daemon composition.

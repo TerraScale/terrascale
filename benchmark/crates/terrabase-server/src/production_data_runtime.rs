@@ -49,9 +49,10 @@ impl ProductionDataRuntime {
         progress: Arc<ReplicationProgress>,
         source: &dyn DurableWalAssignmentSource,
         databases: Vec<ProductionDatabaseAssignment>,
+        dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
     ) -> Result<Self, String> {
         let peers = build_peer_databases(&runtime, &progress, source, databases).await?;
-        let peers = ReplicationPeers::start(runtime, progress.clone(), peers)?;
+        let peers = ReplicationPeers::start_with_dispatch(runtime, progress.clone(), peers, dispatcher)?;
         Ok(Self { peers, progress })
     }
 
@@ -210,6 +211,7 @@ pub struct ProductionAdmissionRuntime {
     config: crate::config::ProductionConfig,
     active: BTreeSet<String>,
     data: Option<ProductionDataRuntime>,
+    dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
     snapshot_max_bytes: u64,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
 }
@@ -232,6 +234,7 @@ impl ProductionAdmissionRuntime {
         instance: u64,
         snapshot_max_bytes: u64,
         usage_authority: UsageAdmissionAuthority,
+        dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
     ) -> Result<Self, String> {
         use terrabase::encryption::OciVaultKeyDelivery;
         let keys = config.keys.as_ref().ok_or("production key delivery missing")?;
@@ -333,6 +336,7 @@ impl ProductionAdmissionRuntime {
             config,
             active: BTreeSet::new(),
             data: None,
+            dispatcher,
             snapshot_max_bytes,
             registry,
         })
@@ -445,6 +449,19 @@ impl ProductionAdmissionRuntime {
         };
         let proposal = accepted.proposal.ok_or("accepted proposal missing")?;
         self.runtime.admit_membership(&*self.journal).map_err(failure)?;
+        // Auth groups need the shared accept owner even before a database lane is admitted.
+        if self.data.is_none() {
+            self.data = Some(
+                ProductionDataRuntime::start(
+                    self.runtime.clone(),
+                    self.progress.clone(),
+                    &*self.journal,
+                    Vec::new(),
+                    self.dispatcher.clone(),
+                )
+                .await?,
+            );
+        }
         let records = self
             .records
             .lock()
@@ -602,22 +619,11 @@ impl ProductionAdmissionRuntime {
         if databases.is_empty() {
             return Ok(());
         }
-        if let Some(data) = &self.data {
-            let lanes =
-                build_peer_databases(&self.runtime, &self.progress, &*self.journal, databases)
-                    .await?;
-            data.peers.add_databases(lanes).await?;
-        } else {
-            self.data = Some(
-                ProductionDataRuntime::start(
-                    self.runtime.clone(),
-                    self.progress.clone(),
-                    &*self.journal,
-                    databases,
-                )
-                .await?,
-            );
-        }
+        let data = self.data.as_ref().ok_or("shared member receiver is unavailable")?;
+        let lanes =
+            build_peer_databases(&self.runtime, &self.progress, &*self.journal, databases)
+                .await?;
+        data.peers.add_databases(lanes).await?;
         self.active.extend(newly_active);
         Ok(())
     }

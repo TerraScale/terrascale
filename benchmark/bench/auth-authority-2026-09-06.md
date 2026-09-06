@@ -36,3 +36,25 @@ without fixture resets, read retries, relaxed assertions, or changed timeouts.
 No indexed log read exceeded the 10 ms diagnostic logging threshold. Log:
 `/tmp/terrascale-auth-indexed-log-diagnostic.log`. This is the patched-cleanup
 qualification label; the unmodified upstream utility gate remains unpassed.
+
+
+## QUIC ACK-delay experiment
+
+Run `91353` compared 64 fresh authenticated AuthConsensus request/response
+exchanges per configuration, retaining complete payload checks, acknowledged
+sends, and remote-close completion. Both configurations retained Quinn's
+packet-count threshold of one (ACK every other eliciting packet). Default
+configuration was measured first; this small loopback experiment does not
+qualify sustained replication throughput or production hardware.
+
+| Requested ACK delay | Round-trip median | Round-trip p95 | Send median | Send p95 | Observed exchange datagrams |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Quinn default | 9.863 ms | 11.540 ms | 0.888 ms | 1.845 ms | 1676 |
+| 1 ms | 10.091 ms | 12.237 ms | 0.909 ms | 1.889 ms | 1678 |
+
+Datagram counts include client transmit/receive observations before connection
+close, so they exclude closing traffic. Log:
+`/tmp/terrascale-member-ack-timing.log`. This experiment found no latency
+improvement and does not justify changing production ACK policy. Public
+binding retains its existing default. The ignored diagnostic remains runnable
+for future investigations.

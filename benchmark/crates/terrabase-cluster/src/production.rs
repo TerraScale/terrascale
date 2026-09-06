@@ -511,7 +511,7 @@ pub struct ProductionMemberRuntime {
     placement: ProductionPlacement,
     routes: Mutex<DatabaseRoutingCatalog>,
     member: Member,
-    transport: ProductionQuicEndpoint,
+    transport: Arc<ProductionQuicEndpoint>,
     membership_admission: Mutex<MembershipAdmission>,
     data_plane: Mutex<Option<Arc<dyn ProductionDataPlane>>>,
     draining: AtomicBool,
@@ -633,7 +633,7 @@ impl ProductionMemberRuntime {
             placement,
             routes: Mutex::new(routes),
             member,
-            transport,
+            transport: Arc::new(transport),
             membership_admission: Mutex::new(MembershipAdmission::Pending),
             wal_bindings: Mutex::new(WalBindings::default()),
             data_plane: Mutex::new(None),
@@ -733,8 +733,14 @@ impl ProductionMemberRuntime {
 
     /// Returns the authenticated transport for its accept/dial driver.
     #[must_use]
-    pub const fn transport(&self) -> &ProductionQuicEndpoint {
+    pub fn transport(&self) -> &ProductionQuicEndpoint {
         &self.transport
+    }
+
+    /// Shares the same endpoint with application protocols using the member accept owner.
+    #[must_use]
+    pub fn shared_transport(&self) -> Arc<ProductionQuicEndpoint> {
+        Arc::clone(&self.transport)
     }
 
     /// Computes readiness without consulting NATS liveness.

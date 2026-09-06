@@ -29,8 +29,8 @@ pub trait PeerControlDispatcher: Send + Sync {
     /// Handles one bounded authenticated control frame; false means unknown protocol.
     fn dispatch<'a>(
         &'a self,
-        connection: &'a ProductionConnection,
-        bytes: &'a [u8],
+        connection: ProductionConnection,
+        bytes: Vec<u8>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>;
 }
 const PEER_HELLO: &[u8] = b"TBPEER\0\x01";
@@ -263,7 +263,7 @@ impl ReplicationPeers {
                                 if !accepts_peer_frame(connection.class(), &bytes) { return; }
                                 if bytes == PEER_HELLO {
                                     if connection.peer().member().as_str() < local.as_str() && let Some(sender) = incoming.get(connection.peer().member().as_str()) { let _ = sender.try_send(connection); }
-                                } else if let Some(dispatcher) = dispatcher { let _ = dispatcher.dispatch(&connection, &bytes).await; }
+                                } else if let Some(dispatcher) = dispatcher { let _ = dispatcher.dispatch(connection, bytes).await; }
                             });
                         }
                         Ok(None) => break,

@@ -15,6 +15,7 @@ use terrabase_auth::{
     Operator, Outcome, Predicate, QueryJoin, QuerySort, SortDirection, SqliteStore,
 };
 use terrabase_cluster::production::{ProductionQuicEndpoint, ProductionRegion};
+use terrabase_member_transport::production::{ProductionConnection, ProductionConnectionClass};
 use terrabase_tbep::auth_bootstrap::AuthBootstrapJournal;
 use terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapGrant;
 use utoipa::ToSchema;
@@ -35,6 +36,10 @@ pub struct AuthRuntime {
     production: ProductionConfig,
     domains: RwLock<BTreeMap<String, Arc<Domain>>>,
     keys: KeyStore,
+    client_slots: Arc<tokio::sync::Semaphore>,
+    consensus_slots: Arc<tokio::sync::Semaphore>,
+    client_work: Mutex<tokio::task::JoinSet<()>>,
+    consensus_work: Mutex<tokio::task::JoinSet<()>>,
 }
 
 impl AuthRuntime {
@@ -72,6 +77,10 @@ impl AuthRuntime {
             production,
             domains: RwLock::new(BTreeMap::new()),
             keys,
+            client_slots: Arc::new(tokio::sync::Semaphore::new(8)),
+            consensus_slots: Arc::new(tokio::sync::Semaphore::new(32)),
+            client_work: Mutex::new(tokio::task::JoinSet::new()),
+            consensus_work: Mutex::new(tokio::task::JoinSet::new()),
         }))
     }
 
@@ -247,8 +256,6 @@ impl AuthRuntime {
     /// Returns a transport failure; no alternate local consensus is created.
     pub async fn receive(self: Arc<Self>) -> Result<(), String> {
         let mut work = tokio::task::JoinSet::new();
-        let client_slots = Arc::new(tokio::sync::Semaphore::new(8));
-        let client_work = Arc::new(Mutex::new(tokio::task::JoinSet::<()>::new()));
         loop {
             if work.len() >= 32 {
                 let _ = work.join_next().await;
@@ -274,57 +281,84 @@ impl AuthRuntime {
                 Err(_) => return Err("auth consensus listener unavailable".into()),
             };
             let runtime = Arc::clone(&self);
-            let client_slots = Arc::clone(&client_slots);
-            let client_work = Arc::clone(&client_work);
             work.spawn(async move {
                 let Ok(bytes) = connection.receive_frame().await else {
                     return;
                 };
-                let Ok((group, forwarded_client)) = AuthNetwork::frame_route(&bytes) else {
-                    return;
-                };
-                let domain =
-                    runtime.domains.read().ok().and_then(|domains| domains.get(&group).cloned());
-                if let Some(domain) = domain {
-                    if forwarded_client {
-                        // Never let client requests waiting for replication occupy
-                        // the slots needed by AppendEntries/Vote/read barriers.
-                        let Ok(permit) = client_slots.try_acquire_owned() else {
-                            return;
-                        };
-                        let Ok(mut clients) = client_work.lock() else {
-                            return;
-                        };
-                        while clients.try_join_next().is_some() {}
-                        clients.spawn(async move {
-                            let _permit = permit;
-                            let _ = domain
-                                .network
-                                .receive_frame(&connection, &domain.authority, &bytes)
-                                .await;
-                        });
-                    } else {
-                        let _ = domain
-                            .network
-                            .receive_frame(&connection, &domain.authority, &bytes)
-                            .await;
-                    }
-                }
+                let _ = runtime.dispatch_owned(connection, bytes).await;
             });
             while work.try_join_next().is_some() {}
         }
         while work.join_next().await.is_some() {}
-        let mut clients = {
-            let mut clients =
-                client_work.lock().map_err(|_| "auth client task registry unavailable")?;
-            std::mem::take(&mut *clients)
-        };
-        while clients.join_next().await.is_some() {}
+        self.drain_dispatchers().await;
         Ok(())
+    }
+
+    async fn drain_dispatchers(&self) {
+        let mut client_work = self
+            .client_work
+            .lock()
+            .map(|mut work| std::mem::take(&mut *work))
+            .ok();
+        if let Some(ref mut work) = client_work {
+            while work.join_next().await.is_some() {}
+        }
+        let mut consensus_work = self
+            .consensus_work
+            .lock()
+            .map(|mut work| std::mem::take(&mut *work))
+            .ok();
+        if let Some(ref mut work) = consensus_work {
+            while work.join_next().await.is_some() {}
+        }
+    }
+
+    async fn dispatch_owned(
+        &self,
+        connection: ProductionConnection,
+        bytes: Vec<u8>,
+    ) -> Result<bool, String> {
+        let Ok((group, forwarded_client)) = AuthNetwork::frame_route(&bytes) else {
+            return Ok(false);
+        };
+        let Some(domain) = self
+            .domains
+            .read()
+            .ok()
+            .and_then(|domains| domains.get(&group).cloned())
+        else {
+            return Ok(false);
+        };
+        let expected = if forwarded_client {
+            ProductionConnectionClass::AuthClient
+        } else {
+            ProductionConnectionClass::AuthConsensus
+        };
+        if connection.class() != expected {
+            return Ok(false);
+        }
+        let (slots, work) = if forwarded_client {
+            (&self.client_slots, &self.client_work)
+        } else {
+            (&self.consensus_slots, &self.consensus_work)
+        };
+        let permit = slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| "auth dispatch capacity exhausted".to_owned())?;
+        let mut work = work.lock().map_err(|_| "auth dispatch registry unavailable")?;
+        while work.try_join_next().is_some() {}
+        work.spawn(async move {
+            let _permit = permit;
+            let _ = domain.network.receive_frame(&connection, &domain.authority, &bytes).await;
+            let _ = connection.complete_request().await;
+        });
+        Ok(true)
     }
 
     /// Stop all auth consensus groups before the host closes transport/key resources.
     pub async fn shutdown(&self) {
+        self.drain_dispatchers().await;
         let domains = self
             .domains
             .read()
@@ -334,6 +368,16 @@ impl AuthRuntime {
             let _ = domain.authority.shutdown().await;
         }
     }
+
+impl crate::replication_peers::PeerControlDispatcher for AuthRuntime {
+    fn dispatch<'a>(
+        &'a self,
+        connection: ProductionConnection,
+        bytes: Vec<u8>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>> {
+        Box::pin(self.dispatch_owned(connection, bytes))
+    }
+}
 
     fn domain(
         &self,

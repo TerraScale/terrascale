@@ -2223,7 +2223,7 @@ mod tests {
     pub(super) fn endpoint_pair_with_max_frame(
         maximum_frame_bytes: usize,
     ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
-        Self::endpoint_pair_with_max_frame_and_ack_delay(maximum_frame_bytes, None)
+        endpoint_pair_with_max_frame_and_ack_delay(maximum_frame_bytes, None)
     }
 
     pub(super) fn endpoint_pair_with_max_frame_and_ack_delay(
