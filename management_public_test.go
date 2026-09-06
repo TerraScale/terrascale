@@ -195,7 +195,7 @@ func TestCreateDatabasePreservesAcceptedProvisioning(t *testing.T) {
 					_, _ = w.Write([]byte(`{"name":"demo"}`))
 					return
 				}
-				_, _ = w.Write([]byte(`{"operation_id":"operation-1","database_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","key_version":"01ARZ3NDEKTSV4RRFFQ69G5FAW","name":"demo","regions":["GRU"],"residency":"","state":"pending"}`))
+				_, _ = w.Write([]byte(`{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"operation-1","database_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","parent_database_id":null,"key_version":"01ARZ3NDEKTSV4RRFFQ69G5FAW","name":"demo","regions":["GRU"],"residency":"","state":"pending"}`))
 			}))
 			defer server.Close()
 			client, err := NewClient(Config{APIBaseURL: server.URL})
