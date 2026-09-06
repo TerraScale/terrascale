@@ -215,16 +215,16 @@ pub struct DispatchWorker {
     task: tokio::task::JoinHandle<()>,
 }
 impl DispatchWorker {
-    /// Returns whether the dispatcher task has terminated.
+    /// Returns a handle for observing dispatcher task liveness.
     #[must_use]
-    pub fn is_finished(&self) -> bool {
-        self.task.is_finished()
+    pub(crate) fn abort_handle(&self) -> tokio::task::AbortHandle {
+        self.task.abort_handle()
     }
 
     /// Stops admission immediately and waits for an in-flight bounded transport call.
-    pub async fn shutdown(self) {
+    pub async fn shutdown(mut self) -> Result<(), tokio::task::JoinError> {
         self.stop.store(true, std::sync::atomic::Ordering::Release);
-        let _ = self.task.await;
+        (&mut self.task).await.map(|_| ())
     }
 }
 impl Drop for DispatchWorker {
@@ -253,11 +253,13 @@ pub(super) fn spawn_dispatcher(state: &Arc<ApiState>) -> Option<DispatchWorker> 
             let Some(state) = state.upgrade() else {
                 break;
             };
-            let Some(control) = state.control.clone() else {
-                continue;
-            };
             let region = state.region;
-            let records = match tokio::task::spawn_blocking(move || control.list()).await {
+            let records_state = Arc::clone(&state);
+            let records = match tokio::task::spawn_blocking(move || {
+                crate::api::database_records(&records_state)
+            })
+            .await
+            {
                 Ok(Ok(records)) => records
                     .into_iter()
                     .filter(|record| !record.deleted && record.placement.contains(&region))
@@ -272,7 +274,9 @@ pub(super) fn spawn_dispatcher(state: &Arc<ApiState>) -> Option<DispatchWorker> 
                 if worker_stop.load(std::sync::atomic::Ordering::Acquire) {
                     break;
                 }
-                let name = records[(offset + index) % records.len()].name.clone();
+                let record = &records[(offset + index) % records.len()];
+                // The admitted registry publishes canonical database IDs as record names.
+                let name = record.name.clone();
                 let state = Arc::clone(&state);
                 let resolved = tokio::task::spawn_blocking(move || {
                     let host = document_host(&state, &name).ok()?;
@@ -316,6 +320,93 @@ mod tests {
         ) -> Result<DatabaseKeyLease, SecretError> {
             Err(SecretError::Unavailable)
         }
+    }
+
+    #[tokio::test]
+    async fn dispatcher_shutdown_reports_worker_panic() {
+        let task = tokio::spawn(async { panic!("synthetic dispatcher failure") });
+        tokio::task::yield_now().await;
+        let worker =
+            DispatchWorker { stop: Arc::new(std::sync::atomic::AtomicBool::new(false)), task };
+        assert!(worker.shutdown().await.is_err());
+    }
+
+    #[test]
+    fn production_dispatch_inventory_uses_admitted_registry_without_control() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let mut state = super::super::tests::state_with_keys_and_control();
+        let state_mut = Arc::get_mut(&mut state).expect("sole state");
+        state_mut.control = None;
+        state_mut.catalog = None;
+        state_mut.admitted_databases = Some(Arc::new(registry));
+        let listed = crate::api::database_records(&state).expect("admitted records");
+        assert_eq!(listed.len(), records.len());
+        drop(state);
+        member.close(std::time::Duration::from_secs(1)).expect("member close");
+        std::fs::remove_dir_all(root).expect("test root cleanup");
+    }
+
+    #[tokio::test]
+    async fn production_dispatcher_advances_admitted_host_cursor_without_control() {
+        use terrabase::engine::CommitOutcome;
+        use terrabase::types::{
+            CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
+            OperationId, TenantId,
+        };
+
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let database = registry.resolve_serving(&records[0].database_id).unwrap().unwrap();
+        let engine = database.host.engine();
+        let tenant = TenantId::try_new(&records[0].tenant_id).unwrap();
+        let scope = engine.scope_for(&tenant);
+        let mut transaction = engine
+            .begin(
+                &scope,
+                engine.read_snapshot(&scope).unwrap(),
+                OperationId::try_new("dispatch-test").unwrap(),
+            )
+            .unwrap();
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new("dispatch-event").unwrap(),
+                    CollectionName::try_new("events").unwrap(),
+                    DocumentValue::Object(Default::default()),
+                ),
+                ExpectedVersion::Any,
+            )
+            .unwrap();
+        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+        let tenant_scope = TenantScope::new(
+            database.host.engine().database_owner().tenant().to_text(),
+            database.host.engine().database_owner().project().to_text(),
+            database.host.engine().database_owner().database().to_text(),
+        )
+        .unwrap();
+        let storage =
+            crate::webhook_api::EngineWebhookStorage::from_host(Arc::clone(&database.host));
+        assert_eq!(storage.dispatch_cursor(&tenant_scope), Ok(None));
+
+        let mut state = super::super::tests::state_with_keys_and_control();
+        let state_mut = Arc::get_mut(&mut state).expect("sole state");
+        state_mut.control = None;
+        state_mut.catalog = None;
+        state_mut.admitted_databases = Some(Arc::new(registry));
+        state_mut.webhook_keys = Some(Arc::new(RefusingKeys));
+        let worker = spawn_dispatcher(&state).expect("configured dispatcher");
+        for _ in 0..50 {
+            if storage.dispatch_cursor(&tenant_scope).unwrap().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(storage.dispatch_cursor(&tenant_scope).unwrap().is_some());
+        worker.shutdown().await.expect("dispatcher shutdown");
+        drop(storage);
+        drop(database);
+        drop(state);
+        member.close(std::time::Duration::from_secs(1)).expect("member close");
+        std::fs::remove_dir_all(root).expect("test root cleanup");
     }
 
     #[tokio::test]

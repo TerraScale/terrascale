@@ -106,7 +106,13 @@ mod tests {
         }));
         let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
         client
-            .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .write_all(
+                format!(
+                    "GET {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                    terrabase::observability::PROMETHEUS_PATH
+                )
+                .as_bytes(),
+            )
             .await
             .unwrap();
         let mut response = Vec::new();
@@ -114,7 +120,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(response.starts_with(b"HTTP/1.1 200"));
+        assert!(response.starts_with(b"HTTP/1.1 200"), "{}", String::from_utf8_lossy(&response));
         assert!(observation.is_serving());
         stop.send(()).unwrap();
         task.await.unwrap().unwrap();

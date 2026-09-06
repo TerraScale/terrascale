@@ -22,11 +22,14 @@ pub(super) fn evaluate_writer_hosts(
     expected: &BTreeMap<DatabaseRouteScope, ExpectedScope>,
     snapshots: &[AdmittedDatabaseSnapshot],
 ) -> WriterHostReadiness {
+    if expected.iter().any(|(key, value)| *key != value.scope) {
+        return WriterHostReadiness::default();
+    }
     let mut result =
         WriterHostReadiness { admitted: true, encrypted: true, journal_available: true };
     let writers = expected.values().filter(|scope| scope.local_is_writer).collect::<Vec<_>>();
     for snapshot in snapshots.iter().filter(|snapshot| snapshot.activated) {
-        let Some(snapshot_scope) = snapshot.database_scope() else {
+        let Some(snapshot_scope) = snapshot_scope(snapshot) else {
             result.admitted = false;
             continue;
         };
@@ -85,19 +88,13 @@ pub(super) fn evaluate_writer_hosts(
     result
 }
 
-trait SnapshotScope {
-    fn database_scope(&self) -> Option<DatabaseRouteScope>;
-}
-
-impl SnapshotScope for AdmittedDatabaseSnapshot {
-    fn database_scope(&self) -> Option<DatabaseRouteScope> {
-        DatabaseRouteScope::try_new(
-            &self.database.record.tenant_id,
-            &self.database.record.project_id,
-            &self.database.record.database_id,
-        )
-        .ok()
-    }
+fn snapshot_scope(snapshot: &AdmittedDatabaseSnapshot) -> Option<DatabaseRouteScope> {
+    DatabaseRouteScope::try_new(
+        &snapshot.database.record.tenant_id,
+        &snapshot.database.record.project_id,
+        &snapshot.database.record.database_id,
+    )
+    .ok()
 }
 
 #[cfg(test)]
@@ -209,6 +206,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn expected_scope_map_key_mismatch_fails_closed() {
+        let key = scope();
+        let value_scope = scope();
+        let facts =
+            evaluate_writer_hosts(&BTreeMap::from([(key, expected(value_scope, true))]), &[]);
+        assert_eq!(facts, WriterHostReadiness::default());
+    }
+
     fn expected(scope: DatabaseRouteScope, writer: bool) -> ExpectedScope {
         ExpectedScope {
             scope,
@@ -224,8 +230,10 @@ mod tests {
     #[test]
     fn activated_writer_has_encrypted_journal_backed_readiness() {
         let (snapshot, scope, member, root) = writer_fixture();
-        let facts =
-            evaluate_writer_hosts(&BTreeMap::from([(scope, expected(scope, true))]), &[snapshot]);
+        let facts = evaluate_writer_hosts(
+            &BTreeMap::from([(scope, expected(scope, true))]),
+            std::slice::from_ref(&snapshot),
+        );
         assert_eq!(
             facts,
             WriterHostReadiness { admitted: true, encrypted: true, journal_available: true }
@@ -239,16 +247,20 @@ mod tests {
     fn inactive_writer_is_missing_but_active_follower_is_rejected() {
         let (mut snapshot, scope, member, root) = writer_fixture();
         snapshot.activated = false;
-        let facts =
-            evaluate_writer_hosts(&BTreeMap::from([(scope, expected(scope, true))]), &[snapshot]);
+        let facts = evaluate_writer_hosts(
+            &BTreeMap::from([(scope, expected(scope, true))]),
+            std::slice::from_ref(&snapshot),
+        );
         assert!(!facts.admitted);
         drop(snapshot);
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();
 
         let (snapshot, scope, member, root) = writer_fixture();
-        let facts =
-            evaluate_writer_hosts(&BTreeMap::from([(scope, expected(scope, false))]), &[snapshot]);
+        let facts = evaluate_writer_hosts(
+            &BTreeMap::from([(scope, expected(scope, false))]),
+            std::slice::from_ref(&snapshot),
+        );
         assert!(!facts.admitted);
         drop(snapshot);
         member.close(std::time::Duration::from_secs(1)).unwrap();
@@ -259,8 +271,10 @@ mod tests {
     fn environment_mismatch_fails_owner_validation() {
         let (mut snapshot, scope, member, root) = writer_fixture();
         Arc::get_mut(&mut snapshot.database).unwrap().record.environment = "staging".into();
-        let facts =
-            evaluate_writer_hosts(&BTreeMap::from([(scope, expected(scope, true))]), &[snapshot]);
+        let facts = evaluate_writer_hosts(
+            &BTreeMap::from([(scope, expected(scope, true))]),
+            std::slice::from_ref(&snapshot),
+        );
         assert!(!facts.admitted && !facts.encrypted && !facts.journal_available);
         drop(snapshot);
         member.close(std::time::Duration::from_secs(1)).unwrap();

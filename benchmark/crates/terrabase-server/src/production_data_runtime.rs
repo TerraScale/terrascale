@@ -1068,15 +1068,21 @@ mod lifecycle_tests {
             .await
             .unwrap();
         assert!(!lifecycle.replication_readiness().accepted);
+        assert_eq!(lifecycle.writer_host_readiness(), WriterHostReadiness::default());
         lifecycle.record_inventory(Ok(BTreeMap::new())).unwrap();
         let ready = lifecycle.replication_readiness();
+        let hosts = lifecycle.writer_host_readiness();
+        assert!(hosts.admitted && hosts.encrypted && hosts.journal_available);
         assert!(ready.accepted && ready.physical_ready && ready.causal_ready && ready.repair_ready);
         assert!(lifecycle.record_inventory(Err(InventoryError::Unavailable)).is_err());
         assert_eq!(lifecycle.replication_readiness(), ready);
+        assert_eq!(lifecycle.writer_host_readiness(), hosts);
         assert!(lifecycle.record_inventory(Err(InventoryError::Invalid)).is_err());
         assert!(!lifecycle.replication_readiness().accepted);
+        assert_eq!(lifecycle.writer_host_readiness(), WriterHostReadiness::default());
         lifecycle.drain().await.unwrap();
         assert!(!lifecycle.replication_readiness().accepted);
+        assert_eq!(lifecycle.writer_host_readiness(), WriterHostReadiness::default());
         runtime.drain().await.storage.unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }

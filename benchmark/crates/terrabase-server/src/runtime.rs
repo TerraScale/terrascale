@@ -959,10 +959,11 @@ async fn serve_public_api(
             worker.abort();
             let _ = worker.await;
         }
-        if let Some(dispatcher) = dispatcher {
-            dispatcher.shutdown().await;
-        }
-        result.and(rotation_result)
+        let dispatcher_result = match dispatcher {
+            Some(dispatcher) => dispatcher.shutdown().await.map_err(std::io::Error::other),
+            None => Ok(()),
+        };
+        result.and(rotation_result).and(dispatcher_result)
     });
     Ok((Some(task), stop))
 }

@@ -139,6 +139,13 @@ impl ExportRuntime {
         self.stop_requested.store(true, Ordering::Release);
     }
 
+    /// Whether this owner has fenced continued export work for process shutdown.
+    /// This does not prove that an in-flight page has finished persisting.
+    #[must_use]
+    pub fn is_stopping(&self) -> bool {
+        self.stop_requested.load(Ordering::Acquire)
+    }
+
     pub(crate) fn destination(&self) -> ExportDestination {
         self.destination.clone()
     }

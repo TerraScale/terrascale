@@ -306,19 +306,21 @@ pub struct LifecyclePublicationTask {
     join: tokio::task::JoinHandle<()>,
 }
 impl LifecyclePublicationTask {
-    /// Returns whether the publication task has terminated.
+    /// Returns an observation handle for the retained publication task.
     #[must_use]
-    pub fn is_finished(&self) -> bool {
-        self.join.is_finished()
+    pub(crate) fn abort_handle(&self) -> tokio::task::AbortHandle {
+        self.join.abort_handle()
     }
 
     /// Stops and joins the sole publication task.
-    pub async fn shutdown(self) {
-        let Self { mut stop, join } = self;
-        if let Some(stop) = stop.take() {
+    ///
+    /// # Errors
+    /// Reports an unexpected task failure.
+    pub async fn shutdown(mut self) -> Result<(), tokio::task::JoinError> {
+        if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
-        let _ = join.await;
+        (&mut self.join).await
     }
 }
 impl Drop for LifecyclePublicationTask {
