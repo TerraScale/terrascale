@@ -919,7 +919,7 @@ pub(crate) mod tests {
         (runtime, root, spec)
     }
 
-    struct NoDatabaseAssignments;
+    pub(crate) struct NoDatabaseAssignments;
 
     impl terrabase_cluster::wal_route::DurableWalAssignmentSource for NoDatabaseAssignments {
         fn load_assignment(
@@ -933,7 +933,7 @@ pub(crate) mod tests {
         }
     }
 
-    struct NoControlFrames;
+    pub(crate) struct NoControlFrames;
 
     impl crate::replication_peers::PeerControlDispatcher for NoControlFrames {
         fn dispatch<'a>(

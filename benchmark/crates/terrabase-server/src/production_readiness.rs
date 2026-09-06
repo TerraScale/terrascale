@@ -96,7 +96,12 @@ pub(crate) fn evaluate(
             continue;
         };
         if !physical.connected
-            || !physical_matches(physical, assignment, boundary.regional_sequence)
+            || physical.region != assignment.local_region
+            || !physical_matches(
+                physical.readiness.as_ref(),
+                assignment,
+                boundary.regional_sequence,
+            )
         {
             physical_ready = false;
         }
@@ -150,20 +155,15 @@ pub(crate) fn evaluate(
     }
 }
 
-fn physical_matches(facts: &PeerFacts, expected: &ExpectedScope, regional_sequence: u64) -> bool {
-    let Some(readiness) = &facts.readiness else { return false };
-    let physical_matches = match facts.physical.as_ref() {
-        Some(physical) => {
-            physical.scope() == expected.scope
-                && physical.generation() == expected.generation
-                && physical.epoch() == expected.epoch
-                && readiness.cut_sequence() <= physical.sequence()
-        }
-        None => !expected.local_is_writer,
-    };
-    physical_matches
-        && facts.region == expected.local_region
-        && readiness.scope() == expected.scope
+fn physical_matches(
+    readiness: Option<&VerifiedReadinessCut>,
+    expected: &ExpectedScope,
+    regional_sequence: u64,
+) -> bool {
+    let Some(readiness) = readiness else { return false };
+    // This sealed cut was already authenticated against the physical WAL
+    // checkpoint by the writer/follower driver, as in signed readiness receipts.
+    readiness.scope() == expected.scope
         && readiness.generation() == expected.generation
         && readiness.epoch() == expected.epoch
         && readiness.is_local_source() == expected.local_is_writer
@@ -274,7 +274,7 @@ mod tests {
         assert!(!facts.repair_ready);
     }
 
-    fn boundary(scope: DatabaseRouteScope) -> ReplicationBoundary {
+    fn boundary() -> ReplicationBoundary {
         ReplicationBoundary {
             regional_sequence: 10,
             regional_observed: true,
@@ -319,7 +319,14 @@ mod tests {
         let facts = evaluate(
             Some(&BTreeMap::from([(scope, expected)])),
             &observations,
-            &BTreeMap::from([(scope, boundary(scope))]),
+            &BTreeMap::from([(
+                scope,
+                ReplicationBoundary {
+                    regional_sequence: 10,
+                    regional_observed: true,
+                    regions: BTreeMap::from([("GRU".into(), BTreeMap::new())]),
+                },
+            )]),
         );
         assert!(
             facts.accepted
@@ -343,13 +350,95 @@ mod tests {
             remote_writers: BTreeMap::from([(String::from("SFO"), String::from("writer-sfo"))]),
         };
         let observations = PeerObservations::default();
-        observations.lock().unwrap().insert(("follower".into(), scope), observed(scope, true));
+        let mut local = observed(scope, true);
+        local.physical_caught_up = false;
+        observations.lock().unwrap().insert(("follower".into(), scope), local);
         let facts = evaluate(
             Some(&BTreeMap::from([(scope, expected)])),
             &observations,
-            &BTreeMap::from([(scope, boundary(scope))]),
+            &BTreeMap::from([(scope, boundary())]),
         );
         assert!(!facts.physical_ready && !facts.causal_ready && !facts.repair_ready);
+    }
+
+    #[test]
+    fn writer_accepts_real_empty_multiregion_repair_cut() {
+        let scope = scope();
+        let expected = ExpectedScope {
+            scope,
+            generation: 1,
+            epoch: 1,
+            local_region: "GRU".into(),
+            local_is_writer: true,
+            physical_peer: "follower".into(),
+            remote_writers: BTreeMap::from([(String::from("SFO"), String::from("writer-sfo"))]),
+        };
+        let repair =
+            crate::replication_proof::test_verified_empty_repair_cut(scope, 1, 1, "writer-sfo");
+        let mut local = observed(scope, true);
+        local.readiness =
+            Some(crate::replication_proof::test_verified_readiness_for_repair(&repair, true));
+        let observations = PeerObservations::default();
+        observations.lock().unwrap().insert(("follower".into(), scope), local);
+        observations.lock().unwrap().insert(
+            ("writer-sfo".into(), scope),
+            PeerFacts {
+                connected: true,
+                region: "SFO".into(),
+                repair: Some(repair),
+                repair_observed_at: Some(std::time::Instant::now()),
+                causal_receipt_observed: false,
+                ..Default::default()
+            },
+        );
+        let facts = evaluate(
+            Some(&BTreeMap::from([(scope, expected)])),
+            &observations,
+            &BTreeMap::from([(
+                scope,
+                ReplicationBoundary {
+                    regional_sequence: 10,
+                    regional_observed: true,
+                    regions: BTreeMap::from([("GRU".into(), BTreeMap::new())]),
+                },
+            )]),
+        );
+        assert!(facts.accepted && facts.physical_ready && facts.causal_ready);
+        assert!(facts.repair_ready && facts.durable_progress_available);
+        observations
+            .lock()
+            .unwrap()
+            .get_mut(&("writer-sfo".into(), scope))
+            .unwrap()
+            .repair_observed_at =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(61));
+        let stale = evaluate(
+            Some(&BTreeMap::from([(
+                scope,
+                ExpectedScope {
+                    scope,
+                    generation: 1,
+                    epoch: 1,
+                    local_region: "GRU".into(),
+                    local_is_writer: true,
+                    physical_peer: "follower".into(),
+                    remote_writers: BTreeMap::from([(
+                        String::from("SFO"),
+                        String::from("writer-sfo"),
+                    )]),
+                },
+            )])),
+            &observations,
+            &BTreeMap::from([(
+                scope,
+                ReplicationBoundary {
+                    regional_sequence: 10,
+                    regional_observed: true,
+                    regions: BTreeMap::from([("GRU".into(), BTreeMap::new())]),
+                },
+            )]),
+        );
+        assert!(!stale.repair_ready);
     }
 
     #[test]
@@ -377,18 +466,30 @@ mod tests {
         let expected_map = BTreeMap::from([(scope, expected)]);
         let no_boundary = evaluate(Some(&expected_map), &observations, &BTreeMap::new());
         assert!(!no_boundary.physical_ready && !no_boundary.durable_progress_available);
-        let stale = evaluate(
-            Some(&expected_map),
-            &observations,
-            &BTreeMap::from([(scope, boundary(scope))]),
-        );
+        let stale =
+            evaluate(Some(&expected_map), &observations, &BTreeMap::from([(scope, boundary())]));
         assert!(!stale.physical_ready);
+        let stale_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .saturating_sub(61_000) as u64;
+        let mut expired = observed(scope, false);
+        expired.readiness = Some(crate::replication_proof::test_verified_readiness_cut_at(
+            scope,
+            1,
+            1,
+            false,
+            BTreeMap::new(),
+            stale_timestamp,
+        ));
+        observations.lock().unwrap().insert(("writer".into(), scope), expired);
+        let expired =
+            evaluate(Some(&expected_map), &observations, &BTreeMap::from([(scope, boundary())]));
+        assert!(!expired.physical_ready);
         observations.lock().unwrap().remove(&("writer".into(), scope));
-        let missing_peer = evaluate(
-            Some(&expected_map),
-            &observations,
-            &BTreeMap::from([(scope, boundary(scope))]),
-        );
+        let missing_peer =
+            evaluate(Some(&expected_map), &observations, &BTreeMap::from([(scope, boundary())]));
         assert!(!missing_peer.physical_ready);
     }
 
@@ -418,7 +519,7 @@ mod tests {
         let facts = evaluate(
             Some(&BTreeMap::from([(scope, expected)])),
             &observations,
-            &BTreeMap::from([(scope, boundary(scope))]),
+            &BTreeMap::from([(scope, boundary())]),
         );
         assert!(!facts.repair_ready);
     }

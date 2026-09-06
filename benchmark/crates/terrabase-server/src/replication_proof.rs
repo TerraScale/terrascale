@@ -500,6 +500,25 @@ pub(crate) fn test_verified_readiness_cut(
     local_source: bool,
     frontier: BTreeMap<String, u64>,
 ) -> VerifiedReadinessCut {
+    test_verified_readiness_cut_at(
+        scope,
+        generation,
+        epoch,
+        local_source,
+        frontier,
+        unix_millis().unwrap(),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn test_verified_readiness_cut_at(
+    scope: DatabaseRouteScope,
+    generation: u64,
+    epoch: u64,
+    local_source: bool,
+    frontier: BTreeMap<String, u64>,
+    observed_at_unix_ms: u64,
+) -> VerifiedReadinessCut {
     VerifiedReadinessCut {
         scope,
         generation,
@@ -510,6 +529,99 @@ pub(crate) fn test_verified_readiness_cut(
         },
         causal: CausalBoundary { cut_digest: hex(&[4; 32]), frontier, root_digest: hex(&[5; 32]) },
         sequence: 1,
+        observed_at_unix_ms,
+        local_source,
+    }
+}
+
+/// Mints a real sealed equal-cut repair proof over two empty durable engines.
+/// This is test-only evidence; production code has no constructor for either
+/// the local or verified repair cut.
+#[cfg(test)]
+pub(crate) fn test_verified_empty_repair_cut(
+    scope: DatabaseRouteScope,
+    generation: u64,
+    epoch: u64,
+    peer: &str,
+) -> terrabase_tbep::production_repair::VerifiedRepairCut {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use terrabase::engine::{Engine, EngineConfig};
+    use terrabase_member_transport::identity::MemberId;
+    use terrabase_tbep::production_repair::{PublicationIndex, RepairDriver};
+    use terrabase_tbep::registry::BoundScope;
+
+    let path = std::env::temp_dir().join(format!(
+        "readiness-empty-repair-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    let source = Engine::open(EngineConfig::durable(path.join("source")).unwrap()).unwrap();
+    let target = Engine::open(EngineConfig::durable(path.join("target")).unwrap()).unwrap();
+    let bound = BoundScope {
+        principal: "member-local".into(),
+        tenant: scope.tenant().to_text(),
+        project: scope.project().to_text(),
+        database: scope.database().to_text(),
+    };
+    let mut source_index = PublicationIndex::default();
+    let mut target_index = PublicationIndex::default();
+    source_index.refresh(&source, &bound).unwrap();
+    target_index.refresh(&target, &bound).unwrap();
+    let source_driver = RepairDriver::new(
+        MemberId::try_new(peer).unwrap(),
+        MemberId::try_new("member-local").unwrap(),
+        bound.clone(),
+        generation,
+        epoch,
+    )
+    .unwrap();
+    let canonical = source_driver.local_cut(&source, &source_index).unwrap();
+    let mut receiver = RepairDriver::new(
+        MemberId::try_new("member-local").unwrap(),
+        MemberId::try_new(peer).unwrap(),
+        bound.clone(),
+        generation,
+        epoch,
+    )
+    .unwrap();
+    receiver.request_cut(&canonical).unwrap();
+    let request = receiver.outbound_frame(&target, &target_index, 0).unwrap().unwrap();
+    let mut sender = RepairDriver::new(
+        MemberId::try_new(peer).unwrap(),
+        MemberId::try_new("member-local").unwrap(),
+        bound,
+        generation,
+        epoch,
+    )
+    .unwrap();
+    let response = sender.receive_frame(&source, &source_index, &request).unwrap().frames.remove(0);
+    receiver.receive_frame(&target, &target_index, &response).unwrap();
+    let proof = receiver.verified_cut().unwrap().clone();
+    drop(source);
+    drop(target);
+    let _ = std::fs::remove_dir_all(path);
+    proof
+}
+
+#[cfg(test)]
+pub(crate) fn test_verified_readiness_for_repair(
+    repair: &terrabase_tbep::production_repair::VerifiedRepairCut,
+    local_source: bool,
+) -> VerifiedReadinessCut {
+    VerifiedReadinessCut {
+        scope: repair.scope(),
+        generation: repair.placement_generation(),
+        epoch: repair.replica_epoch(),
+        physical: PhysicalBoundary {
+            snapshot_digest: hex(&[2; 32]),
+            wal_checkpoint_digest: hex(&[3; 32]),
+        },
+        causal: CausalBoundary {
+            cut_digest: hex(&repair.cut_digest()),
+            frontier: repair.frontier().clone(),
+            root_digest: hex(&repair.root_digest()),
+        },
+        sequence: repair.local_sequence(),
         observed_at_unix_ms: unix_millis().unwrap(),
         local_source,
     }

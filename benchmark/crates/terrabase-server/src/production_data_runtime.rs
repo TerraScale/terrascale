@@ -700,7 +700,7 @@ impl ProductionAdmissionRuntime {
         if let Some(data) = self.lifecycle.get() {
             data.ensure_running()?;
         }
-        let Some(proposal) = self.refresh_inventory()? else {
+        let Some((proposal, proof_digest)) = self.refresh_inventory()? else {
             return Ok(());
         };
         // Auth groups need the shared accept owner even before a database lane is admitted.
@@ -730,6 +730,9 @@ impl ProductionAdmissionRuntime {
             let assignment = match self.journal.load_assignment(scope) {
                 Ok(assignment) => assignment,
                 Err(error @ terrabase_cluster::wal_route::WalAssignmentError::InvalidProof) => {
+                    let _ = self
+                        .lifecycle
+                        .record_inventory(Err(readiness_inventory::InventoryError::Invalid));
                     return Err(failure(error));
                 }
                 Err(error) => return Err(failure(error)),
@@ -792,7 +795,7 @@ impl ProductionAdmissionRuntime {
             // classifies revoked storage as maintenance-only and publishes its
             // retained lease without creating a route or writer epoch.
             self.host.admit(record.clone())?;
-            if self.usage.resolve(&record, proposal.epoch, &proof.proof_digest)?.is_none() {
+            if self.usage.resolve(&record, proposal.epoch, &proof_digest)?.is_none() {
                 // Missing current usage keeps nonrevoked storage closed; a
                 // revoked replay was already published by the callback above.
                 continue;
@@ -888,7 +891,8 @@ impl ProductionAdmissionRuntime {
 
     fn refresh_inventory(
         &self,
-    ) -> Result<Option<terrabase_tbep::proto::terrabase::v1::PlacementProposal>, String> {
+    ) -> Result<Option<(terrabase_tbep::proto::terrabase::v1::PlacementProposal, String)>, String>
+    {
         use readiness_inventory::InventoryError;
         use terrabase_tbep::placement::PlacementError;
         let classify = |error| match error {
@@ -914,12 +918,12 @@ impl ProductionAdmissionRuntime {
             })?;
             let inventory =
                 readiness_inventory::accepted_inventory(&self.runtime, &*self.journal, &proposal)?;
-            Ok(Some((proposal, inventory)))
+            Ok(Some((proposal, proof.proof_digest, inventory)))
         })();
         match loaded {
-            Ok(Some((proposal, inventory))) => {
+            Ok(Some((proposal, proof_digest, inventory))) => {
                 self.lifecycle.record_inventory(Ok(inventory))?;
-                Ok(Some(proposal))
+                Ok(Some((proposal, proof_digest)))
             }
             Ok(None) => {
                 let _ = self.lifecycle.record_inventory(Err(InventoryError::Invalid));
@@ -1035,6 +1039,36 @@ impl terrabase::member::DatabaseRoleAuthority for VerifiedRole {
 #[cfg(test)]
 mod lifecycle_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn readiness_inventory_preserves_outages_but_revokes_invalid_authority() {
+        use crate::production::tests::{
+            NoControlFrames, NoDatabaseAssignments, runtime_for_readiness,
+        };
+        use readiness_inventory::InventoryError;
+        let (runtime, root, _) = runtime_for_readiness("readiness-cache");
+        let runtime = Arc::new(runtime);
+        let registry =
+            Arc::new(crate::admitted_databases::AdmittedDatabaseRegistry::new(Arc::new(|| false)));
+        let lifecycle =
+            ProductionDataLifecycle::new(Arc::new(ReplicationProgress::default()), registry);
+        lifecycle
+            .start(runtime.clone(), &NoDatabaseAssignments, Vec::new(), Arc::new(NoControlFrames))
+            .await
+            .unwrap();
+        assert!(!lifecycle.replication_readiness().accepted);
+        lifecycle.record_inventory(Ok(BTreeMap::new())).unwrap();
+        let ready = lifecycle.replication_readiness();
+        assert!(ready.accepted && ready.physical_ready && ready.causal_ready && ready.repair_ready);
+        assert!(lifecycle.record_inventory(Err(InventoryError::Unavailable)).is_err());
+        assert_eq!(lifecycle.replication_readiness(), ready);
+        assert!(lifecycle.record_inventory(Err(InventoryError::Invalid)).is_err());
+        assert!(!lifecycle.replication_readiness().accepted);
+        lifecycle.drain().await.unwrap();
+        assert!(!lifecycle.replication_readiness().accepted);
+        runtime.drain().await.storage.unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn terminal_worker_failure_releases_registry_leases_and_stays_failed() {
