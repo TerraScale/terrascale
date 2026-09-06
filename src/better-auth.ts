@@ -2,11 +2,14 @@ import type { TerraScaleResult } from "./result.js";
 
 export {
   AuthTransactionOutcomeUnknownError,
+  AuthTransactionOperationLimitError,
   AuthTransactionPoisonedError,
+  AuthTransactionRollbackError,
   runAuthTransaction,
 } from "./auth-transaction.js";
 export type {
   AuthTransactionMutationOptions,
+  AuthTransactionCallbackOptions,
   AuthTransactionOperations,
   AuthTransactionQueryOptions,
 } from "./auth-transaction.js";
@@ -32,7 +35,11 @@ export type {
   AuthMutationOptions,
   AuthUniqueIndex,
   AuthUniqueInsert,
+  AuthQueryJoin,
 } from "./auth-persistence.js";
+
+export { createTerraScaleAuthAdapter } from "./better-auth-factory.js";
+export type { TerraScaleAuthAdapterFactory } from "./better-auth-factory.js";
 
 /** The comparison operators understood by Better Auth's database adapter. */
 export type BetterAuthWhere = {

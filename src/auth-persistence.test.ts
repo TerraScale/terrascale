@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { createAuthPersistenceClient } from "./auth-persistence.js";
-import { AuthTransactionOutcomeUnknownError, AuthTransactionPoisonedError, runAuthTransaction } from "./auth-transaction.js";
+import { AuthTransactionOperationLimitError, AuthTransactionOutcomeUnknownError, AuthTransactionPoisonedError, runAuthTransaction } from "./auth-transaction.js";
 
 it("stages named auth operations with stable keys and commits without the staging header", async () => {
   const requests: Request[] = [];
@@ -110,7 +110,7 @@ it("serializes transaction operations, preserves keys, and commits once", async 
     paths.push(path);
     const key = request.headers.get("idempotency-key");
     if (key !== null) keys.push(key);
-    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "canonical-tx" });
+    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "canonical-tx#1", expiresAtMs: 30_000 });
     return Response.json({ record: null, matched: true });
   } });
   const value = await runAuthTransaction(client, "db", async operations => {
@@ -140,7 +140,7 @@ it("rolls back a poisoned transaction even when callback catches the failed resu
   const client = createAuthPersistenceClient({ fetch: async input => {
     const path = new URL(new Request(input).url).pathname;
     paths.push(path);
-    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "tx" });
+    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "tx#1", expiresAtMs: 30_000 });
     if (path.endsWith("/count")) return Response.json({ error: { code: "transaction_conflict", message: "poisoned" } }, { status: 409 });
     return Response.json({ record: null, matched: true });
   } });
@@ -156,7 +156,7 @@ it("exposes uncertain commit identity without replaying the callback", async () 
   let callbackCalls = 0;
   const client = createAuthPersistenceClient({ fetch: async input => {
     const path = new URL(new Request(input).url).pathname;
-    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "canonical-tx" });
+    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "canonical-tx#1", expiresAtMs: 30_000 });
     if (path.endsWith("/commit")) return Response.json({ error: { code: "auth_outcome_unknown", message: "resolve" } }, { status: 503 });
     return Response.json({ record: null, matched: true });
   } });
@@ -164,8 +164,111 @@ it("exposes uncertain commit identity without replaying the callback", async () 
     callbackCalls++;
     await operations.count({ model: "user", predicates: [] }, { idempotencyKey: "count" });
   }, { transactionIdFactory: () => "label", beginIdempotencyKeyFactory: () => "begin", commitIdempotencyKeyFactory: () => "commit" })).rejects.toMatchObject({
-    transactionId: "canonical-tx",
+    transactionId: "canonical-tx#1",
     commitIdempotencyKey: "commit",
   } satisfies Partial<AuthTransactionOutcomeUnknownError>);
   expect(callbackCalls).toBe(1);
+});
+
+it("classifies transport and malformed commit responses as uncertain without replay", async () => {
+  for (const mode of ["transport", "malformed", "empty"] as const) {
+    let callbackCalls = 0;
+    const client = createAuthPersistenceClient({ fetch: async input => {
+      const path = new URL(new Request(input).url).pathname;
+      if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "canonical-tx#1", expiresAtMs: 30_000 });
+      if (path.endsWith("/commit")) {
+        if (mode === "transport") throw new TypeError("connection closed after write");
+        return mode === "empty"
+          ? Response.json({})
+          : new Response("not-json", { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return Response.json({ record: null, matched: true });
+    } });
+    await expect(runAuthTransaction(client, "db", async operations => {
+      callbackCalls++;
+      await operations.count({ model: "user", predicates: [] }, { idempotencyKey: `count-${mode}` });
+    }, { transactionIdFactory: () => `label-${mode}`, beginIdempotencyKeyFactory: () => `begin-${mode}`, commitIdempotencyKeyFactory: () => `commit-${mode}` })).rejects.toMatchObject({
+      transactionId: "canonical-tx#1",
+      commitIdempotencyKey: `commit-${mode}`,
+    });
+    expect(callbackCalls).toBe(1);
+  }
+});
+
+it("preserves callback and rollback identities when a frozen callback error meets failed cleanup", async () => {
+  const client = createAuthPersistenceClient({ fetch: async input => {
+    const path = new URL(new Request(input).url).pathname;
+    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "canonical#4", expiresAtMs: 30_000 });
+    if (path.endsWith("/rollback")) return Response.json({ error: { code: "auth_outcome_unknown", message: "cleanup uncertain" } }, { status: 503 });
+    return Response.json({ record: null, matched: true });
+  } });
+  const original = Object.freeze(new Error("callback failed"));
+  let thrown: unknown;
+  try {
+    await runAuthTransaction(client, "db", async () => {
+      throw original;
+    }, {
+      transactionIdFactory: () => "label",
+      beginIdempotencyKeyFactory: () => "begin",
+      rollbackIdempotencyKeyFactory: () => "rollback-key",
+    });
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(AggregateError);
+  if (thrown instanceof AggregateError) {
+    const rollback = thrown.errors.find(value => value instanceof Error && value.name === "AuthTransactionRollbackError") as { transactionId?: string; rollbackIdempotencyKey?: string } | undefined;
+    expect(thrown.errors).toContain(original);
+    expect(rollback?.transactionId).toBe("canonical#4");
+    expect(rollback?.rollbackIdempotencyKey).toBe("rollback-key");
+  }
+});
+
+it("propagates the outer abort signal to queued operations and still attempts cleanup", async () => {
+  const controller = new AbortController();
+  const paths: string[] = [];
+  const client = createAuthPersistenceClient({ fetch: async input => {
+    const request = new Request(input);
+    const path = new URL(request.url).pathname;
+    paths.push(path);
+    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "tx#1", expiresAtMs: 30_000 });
+    if (path.endsWith("/count")) {
+      controller.abort();
+      throw new DOMException("aborted", "AbortError");
+    }
+    return Response.json({ record: null, matched: true });
+  } });
+  await expect(runAuthTransaction(client, "db", async operations => {
+    try {
+      await operations.count({ model: "user", predicates: [] }, { idempotencyKey: "count" });
+    } catch {
+      // The callback deliberately catches the transport abort; the helper must retain poison state.
+    }
+  }, { signal: controller.signal, transactionIdFactory: () => "label", beginIdempotencyKeyFactory: () => "begin", rollbackIdempotencyKeyFactory: () => "rollback" })).rejects.toBeInstanceOf(AuthTransactionPoisonedError);
+  expect(paths.at(-1)).toBe("/api/v1/databases/db/auth/transactions/rollback");
+});
+
+it("poisons at the local transaction operation bound while draining accepted work", async () => {
+  let countCalls = 0;
+  const paths: string[] = [];
+  const client = createAuthPersistenceClient({ fetch: async input => {
+    const path = new URL(new Request(input).url).pathname;
+    paths.push(path);
+    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "canonical#5", expiresAtMs: 30_000 });
+    if (path.endsWith("/count")) countCalls++;
+    return Response.json({ record: null, matched: true });
+  } });
+  let limitError: unknown;
+  await expect(runAuthTransaction(client, "db", async operations => {
+    for (let index = 0; index < 101; index += 1) {
+      try {
+        await operations.count({ model: "user", predicates: [] }, { idempotencyKey: `count-${index}` });
+      } catch (error) {
+        limitError = error;
+      }
+    }
+  }, { transactionIdFactory: () => "label", beginIdempotencyKeyFactory: () => "begin", rollbackIdempotencyKeyFactory: () => "rollback" })).rejects.toBeInstanceOf(AuthTransactionPoisonedError);
+  expect(limitError).toBeInstanceOf(AuthTransactionOperationLimitError);
+  expect(countCalls).toBe(100);
+  expect(paths.at(-1)).toBe("/api/v1/databases/db/auth/transactions/rollback");
 });

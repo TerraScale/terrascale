@@ -9,9 +9,6 @@ import {
 import type { BetterAuthOptions } from "@better-auth/core";
 import {
   AuthPersistenceClient,
-  type AuthConditionalUpdate,
-  type AuthConsume,
-  type AuthFindOneOptions,
   type AuthIncrement,
   type AuthMutationOptions,
   type AuthPageQuery,
@@ -22,25 +19,13 @@ import {
   type AuthUniqueIndex,
   type AuthUniqueInsert,
   type AuthPersistencePredicate,
+  type AuthQueryJoin,
 } from "./auth-persistence.js";
 import { runAuthTransaction, type AuthTransactionOperations } from "./auth-transaction.js";
 import type { JsonObject, JsonValue } from "./models.js";
 import type { TerraScaleResult } from "./result.js";
 
-type WirePageQuery = AuthPageQuery & {
-  readonly select?: readonly string[];
-  readonly sortBy?: { readonly field: string; readonly direction: "asc" | "desc" };
-  readonly joins?: readonly AuthQueryJoin[];
-};
-
-type AuthQueryJoin = {
-  readonly model: string;
-  readonly outputField: string;
-  readonly fromField: string;
-  readonly toField: string;
-  readonly relation: "one-to-one" | "one-to-many" | "many-to-many";
-  readonly limit?: number;
-};
+type WirePageQuery = AuthPageQuery;
 
 type Port = {
   readonly insertUnique: (request: AuthUniqueInsert, options: AuthMutationOptions) => Promise<TerraScaleResult<AuthPersistenceResult>>;
@@ -54,6 +39,16 @@ type Port = {
   readonly findPage: (request: WirePageQuery, options: AuthQueryOptions) => Promise<TerraScaleResult<AuthPersistenceResult>>;
   readonly count: (request: AuthPredicateOnly, options: AuthQueryOptions) => Promise<TerraScaleResult<AuthPersistenceResult>>;
 };
+type CreateInput = Parameters<CustomAdapter["create"]>[0];
+type UpdateInput = Parameters<CustomAdapter["update"]>[0];
+type UpdateManyInput = Parameters<CustomAdapter["updateMany"]>[0];
+type FindOneInput = Parameters<CustomAdapter["findOne"]>[0];
+type FindManyInput = Parameters<CustomAdapter["findMany"]>[0];
+type DeleteInput = Parameters<CustomAdapter["delete"]>[0];
+type DeleteManyInput = Parameters<CustomAdapter["deleteMany"]>[0];
+type ConsumeInput = Parameters<CustomAdapter["consumeOne"]>[0];
+type IncrementInput = Parameters<CustomAdapter["incrementOne"]>[0];
+type CountInput = Parameters<CustomAdapter["count"]>[0];
 
 export type TerraScaleAuthAdapterFactory = AdapterFactory<BetterAuthOptions>;
 
@@ -63,6 +58,14 @@ export function createTerraScaleAuthAdapter(
   database: string,
 ): TerraScaleAuthAdapterFactory {
   return (options: BetterAuthOptions): DBAdapter<BetterAuthOptions> => {
+    const factoryOptions: BetterAuthOptions = {
+      ...options,
+      advanced: {
+        ...options.advanced,
+        database: { ...options.advanced?.database, joins: true },
+      },
+    };
+    let ensureSchema: () => Promise<void> = async () => undefined;
     const factory = createAdapterFactory<BetterAuthOptions>({
       config: {
         adapterId: "terrascale-control-plane-auth",
@@ -72,17 +75,20 @@ export function createTerraScaleAuthAdapter(
         supportsBooleans: true,
         supportsNumericIds: false,
         supportsUUIDs: false,
-        transaction: async (callback) => runAuthTransaction(
-          client,
-          database,
-          async (transactionOperations) => callback(
-            transactionAdapter(options, transactionOperations),
-          ),
-        ),
+        transaction: async (callback) => {
+          await ensureSchema();
+          return runAuthTransaction(client, database, async (transactionOperations) => callback(
+            transactionAdapter(factoryOptions, transactionOperations),
+          ));
+        },
       },
-      adapter: (factoryConfig) => customAdapter(factoryConfig, directPort(client, database)),
+      adapter: (factoryConfig) => {
+        const result = customAdapter(factoryConfig, directPort(client, database), true);
+        ensureSchema = result.ensure;
+        return result.adapter;
+      },
     });
-    return factory(options);
+    return factory(factoryOptions);
   };
 }
 
@@ -101,7 +107,7 @@ function transactionAdapter(
       supportsUUIDs: false,
       transaction: false,
     },
-    adapter: (factoryConfig) => customAdapter(factoryConfig, transactionPort(operations)),
+    adapter: (factoryConfig) => customAdapter(factoryConfig, transactionPort(operations), false).adapter,
   });
   const adapter = factory(options);
   const { transaction: _transaction, ...scoped } = adapter;
@@ -111,81 +117,89 @@ function transactionAdapter(
 function customAdapter(
   config: Parameters<NonNullable<Parameters<typeof createAdapterFactory>[0]["adapter"]>>[0],
   port: Port,
-): CustomAdapter {
+  provisionIndexes: boolean,
+): { readonly adapter: CustomAdapter; readonly ensure: () => Promise<void> } {
   const operationKey = () => `better-auth-${globalThis.crypto.randomUUID()}`;
   const mutationOptions = (): AuthMutationOptions => ({ idempotencyKey: operationKey() });
   const queryOptions = (): AuthQueryOptions => ({});
-  const where = (model: string, input: CleanedWhere[], action: Parameters<typeof config.transformWhereClause>[0]["action"]): readonly AuthPersistencePredicate[] => input.map((predicate) => ({
+  const where = (model: string, input: CleanedWhere[], _action: Parameters<typeof config.transformWhereClause>[0]["action"]): readonly AuthPersistencePredicate[] => input.map((predicate) => ({
     field: config.getFieldName({ model, field: predicate.field }),
     value: jsonValue(predicate.value),
-    ...(predicate.operator === "eq" ? {} : { operator: predicate.operator }),
-    ...(predicate.connector === "AND" ? {} : { connector: predicate.connector }),
-    ...(predicate.mode === "sensitive" ? {} : { mode: predicate.mode }),
+    ...(predicate.operator === "eq" || predicate.operator === undefined ? {} : { operator: predicate.operator }),
+    ...(predicate.connector === "AND" || predicate.connector === undefined ? {} : { connector: predicate.connector }),
+    ...(predicate.mode === "sensitive" || predicate.mode === undefined ? {} : { mode: predicate.mode }),
   }));
 
-  const page = async <T extends Record<string, unknown>>(
-    model: string,
+  const page = async (
+    _model: string,
     input: WirePageQuery,
     options: AuthQueryOptions,
-  ): Promise<T[]> => {
-    const result = await port.findPage(input, options);
-    const value = unwrap(result).records ?? [];
-    return value.map((record) => record as T);
+  ): Promise<readonly Record<string, any>[]> => {
+    const value = unwrap(await port.findPage(input, options)).records;
+    if (!Array.isArray(value)) throw new TypeError("Auth page operation returned no records array.");
+    return value.map((record) => {
+      if (record === null || typeof record !== "object" || Array.isArray(record)) throw new TypeError("Auth page operation returned an invalid record.");
+      return jsonObject(record);
+    });
   };
 
-  return {
-    create: async ({ model, data, select }) => {
-      const result = unwrap(await port.insertUnique({ model, record: jsonObject(data) }, mutationOptions()));
-      return projectRecord(result.record, select);
-    },
-    update: async ({ model, where: predicates, update }) => {
-      const result = unwrap(await port.updateOne({ model, predicates: where(model, predicates, "update"), update: jsonObject(update) }, mutationOptions()));
-      return result.record;
-    },
-    updateMany: async ({ model, where: predicates, update }) => {
-      const result = unwrap(await port.updateMany({ model, predicates: where(model, predicates, "updateMany"), update: jsonObject(update) }, mutationOptions()));
-      return safeCount(result.count);
-    },
-    findOne: async ({ model, where: predicates, select, join }) => {
-      const records = await page(model, {
-        model,
-        predicates: where(model, predicates, "findOne"),
-        offset: 0,
-        limit: 1,
-        ...(select === undefined ? {} : { select }),
-        ...(join === undefined ? {} : { joins: joins(join) }),
-      }, queryOptions());
-      return projectRecord(records[0] ?? null, select);
-    },
-    findMany: async ({ model, where: predicates, limit, offset, select, sortBy, join }) => page(model, {
-      model,
-      predicates: where(model, predicates ?? [], "findMany"),
-      offset: offset ?? 0,
-      limit,
-      ...(select === undefined ? {} : { select }),
-      ...(sortBy === undefined ? {} : { sortBy }),
-      ...(join === undefined ? {} : { joins: joins(join) }),
-    }, queryOptions()),
-    delete: async ({ model, where: predicates }) => {
-      unwrap(await port.deleteOne({ model, predicates: where(model, predicates, "delete") }, mutationOptions()));
-    },
-    deleteMany: async ({ model, where: predicates }) => {
-      const result = unwrap(await port.deleteMany({ model, predicates: where(model, predicates, "deleteMany") }, mutationOptions()));
-      return safeCount(result.count);
-    },
-    consumeOne: async ({ model, where: predicates }) => {
-      const result = unwrap(await port.consumeMatching({ model, predicates: where(model, predicates, "consumeOne") }, mutationOptions()));
-      return result.record;
-    },
-    incrementOne: async ({ model, where: predicates, increment, set }) => {
-      const result = unwrap(await port.incrementOne({ model, predicates: where(model, predicates, "incrementOne"), increment, ...(set === undefined ? {} : { set: jsonObject(set) }) }, mutationOptions()));
-      return result.record;
-    },
-    count: async ({ model, where: predicates }) => {
-      const result = unwrap(await port.count({ model, predicates: where(model, predicates ?? [], "count") }, queryOptions()));
-      return safeCount(result.count);
-    },
+  let ready: Promise<void> | undefined;
+  const ensure = async (): Promise<void> => {
+    if (!provisionIndexes) return;
+    if (ready === undefined) {
+      const attempt = Promise.all(Object.entries(config.schema).flatMap(([model, table]) => Object.entries(table.fields)
+        .filter(([, field]) => field.unique === true)
+        .map(([field]) => {
+          const physicalModel = config.getModelName(model);
+          const physicalField = config.getFieldName({ model, field });
+          return port.index({ model: physicalModel, fields: [physicalField] }, { idempotencyKey: `better-auth-index-${physicalModel}-${physicalField}` });
+        })))
+        .then((results) => {
+          for (const result of results) {
+            const value = unwrap(result);
+            if (value.matched !== true || value.record !== null) throw new TypeError("Auth index operation returned an invalid success result.");
+          }
+        });
+      ready = attempt.catch((error: unknown) => {
+        ready = undefined;
+        throw error;
+      });
+    }
+    await ready;
   };
+  const adapter: CustomAdapter = {
+    create: async <T extends Record<string, any>>(input: CreateInput & { data: T }) => {
+      await ensure();
+      const result = unwrap(await port.insertUnique({ model: input.model, record: jsonObject(input.data) }, mutationOptions()));
+      return outputRecord(result.record) as T;
+    },
+    update: async <T>(input: UpdateInput & { update: T }) => {
+      await ensure();
+      const result = unwrap(await port.updateOne({ model: input.model, predicates: where(input.model, input.where, "update"), update: jsonObject(input.update as Record<string, unknown>) }, mutationOptions()));
+      return outputRecord(result.record) as T | null;
+    },
+    updateMany: async (input: UpdateManyInput) => {
+      await ensure();
+      const result = unwrap(await port.updateMany({ model: input.model, predicates: where(input.model, input.where, "updateMany"), update: jsonObject(input.update) }, mutationOptions()));
+      return safeCount(result.count);
+    },
+    findOne: async <T>(input: FindOneInput) => {
+      await ensure();
+      const records = await page(input.model, { model: input.model, predicates: where(input.model, input.where, "findOne"), offset: 0, limit: 1, ...(input.select === undefined ? {} : { select: input.select.map((field) => config.getFieldName({ model: input.model, field })) }), ...(input.join === undefined ? {} : { joins: joins(input.join) }) }, queryOptions());
+      return outputRecord(records[0] ?? null) as T | null;
+    },
+    findMany: async <T>(input: FindManyInput) => {
+      await ensure();
+      const records = await page(input.model, { model: input.model, predicates: where(input.model, input.where ?? [], "findMany"), offset: input.offset ?? 0, limit: input.limit, ...(input.select === undefined ? {} : { select: input.select.map((field) => config.getFieldName({ model: input.model, field })) }), ...(input.sortBy === undefined ? {} : { sortBy: { ...input.sortBy, field: config.getFieldName({ model: input.model, field: input.sortBy.field }) } }), ...(input.join === undefined ? {} : { joins: joins(input.join) }) }, queryOptions());
+      return [...records] as T[];
+    },
+    delete: async (input: DeleteInput) => { await ensure(); unwrap(await port.deleteOne({ model: input.model, predicates: where(input.model, input.where, "delete") }, mutationOptions())); },
+    deleteMany: async (input: DeleteManyInput) => { await ensure(); return safeCount(unwrap(await port.deleteMany({ model: input.model, predicates: where(input.model, input.where, "deleteMany") }, mutationOptions())).count); },
+    consumeOne: async <T>(input: ConsumeInput) => { await ensure(); return outputRecord(unwrap(await port.consumeMatching({ model: input.model, predicates: where(input.model, input.where, "consumeOne") }, mutationOptions())).record) as T | null; },
+    incrementOne: async <T>(input: IncrementInput) => { await ensure(); return outputRecord(unwrap(await port.incrementOne({ model: input.model, predicates: where(input.model, input.where, "incrementOne"), increment: input.increment, ...(input.set === undefined ? {} : { set: jsonObject(input.set) }) }, mutationOptions())).record) as T | null; },
+    count: async (input: CountInput) => { await ensure(); return safeCount(unwrap(await port.count({ model: input.model, predicates: where(input.model, input.where ?? [], "count") }, queryOptions())).count); },
+  };
+  return { adapter, ensure };
 }
 
 function directPort(client: AuthPersistenceClient, database: string): Port {
@@ -213,8 +227,14 @@ function transactionPort(operations: AuthTransactionOperations): Port {
     consumeMatching: operations.consumeMatching,
     incrementOne: operations.incrementOne,
     index: operations.index,
-    findPage: operations.findPage,
-    count: operations.count,
+    findPage: (request, options) => operations.findPage(request, {
+      ...options,
+      idempotencyKey: options.idempotencyKey ?? `better-auth-query-${globalThis.crypto.randomUUID()}`,
+    }),
+    count: (request, options) => operations.count(request, {
+      ...options,
+      idempotencyKey: options.idempotencyKey ?? `better-auth-count-${globalThis.crypto.randomUUID()}`,
+    }),
   };
 }
 
@@ -224,8 +244,8 @@ function joins(input: JoinConfig): readonly AuthQueryJoin[] {
     outputField,
     fromField: value.on.from,
     toField: value.on.to,
-    relation: value.relation ?? "one-to-many",
-    ...(value.limit === undefined ? {} : { limit: value.limit }),
+    relation: value.relation === "one-to-one" ? "one-to-one" : "one-to-many",
+    limit: value.limit ?? 100,
   }));
 }
 
@@ -237,9 +257,10 @@ function unwrap(result: TerraScaleResult<AuthPersistenceResult>): AuthPersistenc
   throw error;
 }
 
-function projectRecord(record: JsonObject | null, select?: readonly string[]): JsonObject | null {
-  if (record === null || select === undefined || select.length === 0) return record;
-  return Object.fromEntries(select.flatMap((field) => field in record ? [[field, record[field]]] : []));
+function outputRecord(record: Record<string, unknown> | JsonObject | null, select?: readonly string[]): JsonObject | null {
+  if (record === null) return null;
+  if (select === undefined || select.length === 0) return jsonObject(record);
+  return jsonObject(Object.fromEntries(select.flatMap((field) => field in record ? [[field, record[field]]] : [])));
 }
 
 function safeCount(value: number | bigint | undefined): number {
@@ -252,7 +273,7 @@ function safeCount(value: number | bigint | undefined): number {
 }
 
 function jsonObject(value: Record<string, unknown>): JsonObject {
-  const result: Record<string, JsonValue> = {};
+  const result: { [key: string]: JsonValue } = {};
   for (const [key, item] of Object.entries(value)) result[key] = jsonValue(item);
   return result;
 }

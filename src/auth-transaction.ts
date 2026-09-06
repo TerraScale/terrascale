@@ -15,7 +15,7 @@ import {
 } from "./auth-persistence.js";
 import type { TerraScaleResult } from "./result.js";
 
-export type AuthTransactionOptions = {
+export type AuthTransactionCallbackOptions = {
   readonly signal?: AbortSignal | undefined;
   readonly transactionIdFactory?: (() => string) | undefined;
   readonly beginIdempotencyKeyFactory?: (() => string) | undefined;
@@ -86,10 +86,36 @@ export type AuthTransactionOperations = {
 
 export class AuthTransactionPoisonedError extends Error {
   override readonly cause: unknown;
+  readonly rollbackFailure?: AuthTransactionRollbackError | undefined;
 
-  constructor(cause: unknown) {
+  constructor(cause: unknown, rollbackFailure?: AuthTransactionRollbackError) {
     super("The auth transaction was poisoned by a failed operation.");
     this.name = "AuthTransactionPoisonedError";
+    this.cause = cause;
+    this.rollbackFailure = rollbackFailure;
+  }
+}
+
+export class AuthTransactionOperationLimitError extends Error {
+  readonly limit: number;
+
+  constructor(limit: number) {
+    super(`The auth transaction exceeds its ${limit}-operation bound.`);
+    this.name = "AuthTransactionOperationLimitError";
+    this.limit = limit;
+  }
+}
+
+export class AuthTransactionRollbackError extends Error {
+  readonly transactionId: string;
+  readonly rollbackIdempotencyKey: string;
+  override readonly cause: unknown;
+
+  constructor(transactionId: string, rollbackIdempotencyKey: string, cause: unknown) {
+    super("The auth transaction rollback outcome could not be confirmed.");
+    this.name = "AuthTransactionRollbackError";
+    this.transactionId = transactionId;
+    this.rollbackIdempotencyKey = rollbackIdempotencyKey;
     this.cause = cause;
   }
 }
@@ -113,13 +139,16 @@ export async function runAuthTransaction<T>(
   client: AuthPersistenceClient,
   database: string,
   callback: (operations: AuthTransactionOperations) => Promise<T>,
-  options: AuthTransactionOptions = {},
+  options: AuthTransactionCallbackOptions = {},
 ): Promise<T> {
   if (typeof callback !== "function") throw new TypeError("Auth transaction callback must be a function.");
   const transactionLabel = identity(options.transactionIdFactory?.() ?? globalThis.crypto.randomUUID(), "transactionId", 100);
   const beginKey = key(options.beginIdempotencyKeyFactory, "auth-begin");
   const commitKey = key(options.commitIdempotencyKeyFactory, "auth-commit");
   const rollbackKey = key(options.rollbackIdempotencyKeyFactory, "auth-rollback");
+  if (new Set([beginKey, commitKey, rollbackKey]).size !== 3) {
+    throw new TypeError("Auth transaction lifecycle idempotency keys must be distinct.");
+  }
   const begun = await client.beginTransaction(database, { transactionId: transactionLabel }, lifecycleOptions(beginKey, options.signal));
   if (!begun.ok) throw new AuthTransactionError("Auth transaction begin failed.", begun);
   const transactionId = validateTransactionResult(begun.value, "begin");
@@ -127,9 +156,17 @@ export async function runAuthTransaction<T>(
   let poisoned = false;
   let poisonCause: unknown;
   let closed = false;
+  let acceptedOperations = 0;
   let queue = Promise.resolve();
   const enqueue = <R>(work: () => Promise<R>): Promise<R> => {
     if (closed) return Promise.reject(new Error("The auth transaction callback has settled."));
+    if (acceptedOperations >= 100) {
+      const error = new AuthTransactionOperationLimitError(100);
+      poisoned = true;
+      poisonCause ??= error;
+      return Promise.reject(error);
+    }
+    acceptedOperations += 1;
     const result = queue.then(work, work);
     queue = result.then(() => undefined, () => undefined);
     return result;
@@ -149,16 +186,16 @@ export async function runAuthTransaction<T>(
     }
   });
   const mutation = <R>(work: (options: AuthMutationOptions) => Promise<TerraScaleResult<R>>, supplied: AuthTransactionMutationOptions) =>
-    invoke(() => work({ ...supplied, transactionId }));
+    invoke(() => work({ ...supplied, transactionId, ...combinedSignal(options.signal, supplied.signal) }));
   const query = <R>(work: (options: AuthQueryOptions) => Promise<TerraScaleResult<R>>, supplied: AuthTransactionQueryOptions) =>
-    invoke(() => work({ ...supplied, transactionId }));
+    invoke(() => work({ ...supplied, transactionId, ...combinedSignal(options.signal, supplied.signal) }));
   const operations: AuthTransactionOperations = {
     insertUnique: (request, supplied) => mutation(options => client.insertUnique(database, request, options), supplied),
     compareAndSwap: (request, supplied) => mutation(options => client.compareAndSwap(database, request, options), supplied),
     consumeOne: (request, supplied) => mutation(options => client.consumeOne(database, request, options), supplied),
     consumeMatching: (request, supplied) => mutation(options => client.consumeMatching(database, request, options), supplied),
     index: (request, supplied) => mutation(options => client.index(database, request, options), supplied),
-    findOne: (model, id, supplied) => invoke(() => client.findOne(database, model, id, { ...supplied, transactionId })),
+    findOne: (model, id, supplied) => invoke(() => client.findOne(database, model, id, { ...supplied, transactionId, ...combinedSignal(options.signal, supplied.signal) })),
     findPage: (request, supplied) => query(options => client.findPage(database, request, options), supplied),
     count: (request, supplied) => query(options => client.count(database, request, options), supplied),
     updateOne: (request, supplied) => mutation(options => client.updateOne(database, request, options), supplied),
@@ -181,12 +218,12 @@ export async function runAuthTransaction<T>(
     await queue;
   }
   if (callbackFailed) {
-    await rollback(client, database, transactionId, rollbackKey, options.signal);
-    throw callbackError;
+    const rollbackFailure = await rollback(client, database, transactionId, rollbackKey);
+    throw withRollbackFailure(callbackError, rollbackFailure);
   }
   if (poisoned) {
-    await rollback(client, database, transactionId, rollbackKey, options.signal);
-    throw new AuthTransactionPoisonedError(poisonCause);
+    const rollbackFailure = await rollback(client, database, transactionId, rollbackKey);
+    throw new AuthTransactionPoisonedError(poisonCause, rollbackFailure);
   }
   let committed: TerraScaleResult<AuthPersistenceResult>;
   try {
@@ -195,10 +232,15 @@ export async function runAuthTransaction<T>(
     throw new AuthTransactionOutcomeUnknownError(transactionId, commitKey, error);
   }
   if (!committed.ok) {
-    if (committed.error.code === "auth_outcome_unknown" || committed.status === 503) {
+    if (isUncertainCommit(committed)) {
       throw new AuthTransactionOutcomeUnknownError(transactionId, commitKey, committed);
     }
     throw new AuthTransactionError("Auth transaction commit failed.", committed);
+  }
+  try {
+    validateControlResult(committed.value, "commit");
+  } catch (error) {
+    throw new AuthTransactionOutcomeUnknownError(transactionId, commitKey, error);
   }
   return callbackValue as T;
 }
@@ -213,11 +255,21 @@ class AuthTransactionError extends Error {
   }
 }
 
-async function rollback(client: AuthPersistenceClient, database: string, transactionId: string, keyValue: string, signal: AbortSignal | undefined): Promise<void> {
+async function rollback(client: AuthPersistenceClient, database: string, transactionId: string, keyValue: string): Promise<AuthTransactionRollbackError | undefined> {
+  const cleanup = cleanupSignal();
   try {
-    await client.rollbackTransaction(database, { transactionId }, lifecycleOptions(keyValue, signal));
-  } catch {
-    // Preserve the callback/operation failure. Rollback is idempotent and can be reconciled separately.
+    const result = await client.rollbackTransaction(database, { transactionId }, lifecycleOptions(keyValue, cleanup.signal));
+    if (!result.ok) return new AuthTransactionRollbackError(transactionId, keyValue, result);
+    try {
+      validateControlResult(result.value, "rollback");
+      return undefined;
+    } catch (error) {
+      return new AuthTransactionRollbackError(transactionId, keyValue, error);
+    }
+  } catch (error) {
+    return new AuthTransactionRollbackError(transactionId, keyValue, error);
+  } finally {
+    cleanup.dispose();
   }
 }
 
@@ -229,6 +281,41 @@ function lifecycleOptions(idempotencyKey: string, signal: AbortSignal | undefine
   return signal === undefined ? { idempotencyKey } : { idempotencyKey, signal };
 }
 
+function combinedSignal(outer: AbortSignal | undefined, supplied: AbortSignal | undefined): { readonly signal?: AbortSignal } {
+  if (outer === undefined) return supplied === undefined ? {} : { signal: supplied };
+  if (supplied === undefined) return { signal: outer };
+  return { signal: AbortSignal.any([outer, supplied]) };
+}
+
+function cleanupSignal(): { readonly signal: AbortSignal; readonly dispose: () => void } {
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), 5_000);
+  return { signal: controller.signal, dispose: () => globalThis.clearTimeout(timer) };
+}
+
+function isUncertainCommit(result: Exclude<TerraScaleResult<unknown>, { readonly ok: true }>): boolean {
+  return result.error.kind === "transport" || result.error.kind === "invalid-response" || (result.status !== undefined && result.status >= 500);
+}
+
+function withRollbackFailure(error: unknown, failure: AuthTransactionRollbackError | undefined): unknown {
+  if (failure === undefined) return error;
+  if ((typeof error === "object" || typeof error === "function") && error !== null) {
+    try {
+      Object.defineProperty(error, "authTransactionRollbackFailure", { configurable: true, enumerable: false, value: failure });
+      return error;
+    } catch {
+      // Frozen errors still need to preserve both causes below.
+    }
+  }
+  return new AggregateError([error, failure], "The auth callback failed and rollback could not be confirmed.", { cause: error });
+}
+
+function validateControlResult(result: AuthPersistenceResult, operation: string): void {
+  if (result.matched !== true || result.record !== null) {
+    throw new AuthTransactionError(`Auth transaction ${operation} returned an invalid success result.`, result);
+  }
+}
+
 function identity(value: unknown, name: string, maximum: number): string {
   if (typeof value !== "string" || value.length === 0 || /\p{Cc}/u.test(value) || new TextEncoder().encode(value).length > maximum) {
     throw new TypeError(`${name} must be nonempty printable text of at most ${maximum} UTF-8 bytes.`);
@@ -237,6 +324,19 @@ function identity(value: unknown, name: string, maximum: number): string {
 }
 
 function validateTransactionResult(result: AuthPersistenceResult, operation: string): string {
-  if (typeof result.transactionId !== "string") throw new AuthTransactionError(`Auth transaction ${operation} returned no canonical identity.`, result);
+  validateControlResult(result, operation);
+  if (typeof result.transactionId !== "string" || !result.transactionId.includes("#")) {
+    throw new AuthTransactionError(`Auth transaction ${operation} returned no canonical identity.`, result);
+  }
+  validateU64(result.expiresAtMs, `${operation}.expiresAtMs`);
   return identity(result.transactionId, "transactionId", 128);
+}
+
+function validateU64(value: number | bigint | undefined, name: string): void {
+  if (value === undefined) throw new AuthTransactionError(`Auth transaction ${name} is missing.`, value);
+  if (typeof value === "bigint") {
+    if (value < 0n) throw new AuthTransactionError(`Auth transaction ${name} is invalid.`, value);
+    return;
+  }
+  if (!Number.isSafeInteger(value) || value < 0) throw new AuthTransactionError(`Auth transaction ${name} is invalid.`, value);
 }
