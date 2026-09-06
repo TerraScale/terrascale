@@ -257,22 +257,14 @@ impl AuthNetwork {
             body: request,
         })?;
         let response = tokio::time::timeout(deadline, async {
-            let _permit = self
+            let (_permit, connection) = self
                 .endpoint
-                .acquire_request(
+                .connect_request(
                     member,
                     ProductionConnectionClass::AuthClient,
                     bytes.len(),
                     deadline,
                 )
-                .await
-                .map_err(|error| {
-                    diagnose_transport("auth-client admission", target, error);
-                    AuthorityError::Unavailable
-                })?;
-            let connection = self
-                .endpoint
-                .connect(member, ProductionConnectionClass::AuthClient)
                 .await
                 .map_err(|error| {
                     diagnose_transport("auth-client connect", target, error);
@@ -350,23 +342,15 @@ impl AuthPeer {
         })
         .map_err(|_| transport_error())?;
         let response = tokio::time::timeout(option.hard_ttl(), async {
-            let _permit = self
+            let (_permit, connection) = self
                 .network
                 .endpoint
-                .acquire_request(
+                .connect_request(
                     member,
                     ProductionConnectionClass::AuthConsensus,
                     bytes.len(),
                     option.hard_ttl(),
                 )
-                .await
-                .map_err(|error| {
-                    diagnose_transport("auth-consensus admission", self.target, error);
-                })?;
-            let connection = self
-                .network
-                .endpoint
-                .connect(member, ProductionConnectionClass::AuthConsensus)
                 .await
                 .map_err(|error| {
                     diagnose_transport("auth-consensus connect", self.target, error);

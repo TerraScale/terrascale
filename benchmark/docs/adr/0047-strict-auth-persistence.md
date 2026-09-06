@@ -186,6 +186,22 @@ standalone auth listener and replication listener must not race for the same
 endpoint. Completing that production composition and qualifying multiple
 groups, peer failures, and WAN load remain required.
 
+Auth RPCs serialize their complete round trips through an endpoint-wide FIFO
+gate for each peer and auth class, shared across authority groups. Client and
+consensus requests each receive half the configured queue count and byte
+budget across all peers. Admission counts active and waiting encoded requests;
+overflow fails immediately, and cancellation releases the reservation. Queue
+waiting, connection setup, frame exchange, and completion all count against
+the original RPC deadline. Direct transport connects retain fail-fast admission.
+
+A successful request waits for the peer's normal completion close after receiving
+its full response. The peer releases its session registration before signalling
+that close. A cancelled predecessor may still be closing remotely; only transient
+connection failures before any application frame is sent can retry, with bounded
+backoff inside the original deadline. No request is resent after frame transmission
+begins. This admission is required because read barriers can overlap normal Raft
+replication even within one authority group.
+
 ## Implementation and qualification dependencies
 
 Integrate the consensus storage and transport in the real member startup path,

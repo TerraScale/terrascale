@@ -926,7 +926,12 @@ impl ProductionQuicEndpoint {
     }
 
     /// Reserves one bounded request slot for an authenticated application class.
-    /// Direct session connects intentionally bypass this gate.
+    /// Direct session connects intentionally bypass this gate. Each auth class
+    /// receives half the configured endpoint-wide queue count and byte budget.
+    /// The permit must cover connecting, exchanging frames, and peer completion.
+    ///
+    /// # Errors
+    /// Rejects unknown peers, replication, queue overflow, drain, or deadline expiry.
     pub async fn acquire_request(
         &self,
         member: &MemberId,
@@ -965,6 +970,9 @@ impl ProductionQuicEndpoint {
                 .request_gates
                 .lock()
                 .map_err(|_| ProductionTransportError::StateUnavailable)?;
+            if self.state.draining.load(Ordering::Acquire) {
+                return Err(ProductionTransportError::Draining);
+            }
             Arc::clone(
                 gates
                     .entry((member.clone(), class))
@@ -979,6 +987,45 @@ impl ProductionQuicEndpoint {
             return Err(ProductionTransportError::Draining);
         }
         Ok(ProductionRequestPermit { _slot: slot, _reservation: reservation })
+    }
+
+    /// Acquires bounded FIFO admission and connects before sending any request bytes.
+    /// Transient pre-request dial failures can occur while a cancelled predecessor's
+    /// peer handler releases its session. Only those dials are retried, within the
+    /// supplied deadline; the returned permit must cover the entire round trip.
+    ///
+    /// # Errors
+    /// Returns admission, authentication, drain, or timeout errors. No application
+    /// frame is sent by this method, including on retry.
+    pub async fn connect_request(
+        &self,
+        member: &MemberId,
+        class: ProductionConnectionClass,
+        bytes: usize,
+        deadline: Duration,
+    ) -> Result<(ProductionRequestPermit, ProductionConnection), ProductionTransportError> {
+        tokio::time::timeout(deadline, async {
+            let permit = self.acquire_request(member, class, bytes, deadline).await?;
+            let mut delay = Duration::from_millis(5);
+            loop {
+                match self.connect(member, class).await {
+                    Ok(connection) => return Ok((permit, connection)),
+                    Err(
+                        ProductionTransportError::Saturated
+                        | ProductionTransportError::ConnectionFailed,
+                    ) => {
+                        if self.state.draining.load(Ordering::Acquire) {
+                            return Err(ProductionTransportError::Draining);
+                        }
+                        tokio::time::sleep(delay).await;
+                        delay = (delay * 2).min(Duration::from_millis(100));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        })
+        .await
+        .map_err(|_| ProductionTransportError::Timeout)?
     }
 
     /// Returns current transport facts without claiming replication health.
@@ -1163,7 +1210,7 @@ impl ProductionQuicEndpoint {
             class_quota: self.config.limits.class_quota(hello.class),
             total_quota: self.config.limits.max_inflight,
             state: Arc::clone(&self.state),
-            _registration: registration,
+            registration: registration,
         })
     }
 
@@ -1177,7 +1224,9 @@ impl ProductionQuicEndpoint {
                 let notified = self.state.changed.notified();
                 tokio::pin!(notified);
                 notified.as_mut().enable();
-                if self.state.active_operations.load(Ordering::Acquire) == 0 {
+                if self.state.active_operations.load(Ordering::Acquire) == 0
+                    && self.state.request_count() == 0
+                {
                     break;
                 }
                 notified.await;
@@ -1185,7 +1234,11 @@ impl ProductionQuicEndpoint {
         })
         .await
         .is_ok();
-        let remaining = self.state.active_operations.load(Ordering::Acquire);
+        let remaining = self
+            .state
+            .active_operations
+            .load(Ordering::Acquire)
+            .saturating_add(self.state.request_count());
         let connections = self.state.connection_counts().0;
         self.endpoint.close(CLOSE_DRAINING.into(), b"member draining");
         let _ = tokio::time::timeout_at(deadline, self.endpoint.wait_idle()).await;
@@ -1218,7 +1271,7 @@ pub struct ProductionConnection {
     class_quota: usize,
     total_quota: usize,
     state: Arc<RuntimeState>,
-    _registration: ConnectionRegistration,
+    registration: ConnectionRegistration,
 }
 
 impl ProductionConnection {
@@ -1266,7 +1319,11 @@ impl ProductionConnection {
         self.maximum_frame_bytes
     }
 
-    /// Completes a request session and waits for its peer-side close signal.
+    /// Waits for the peer to release a completed one-request session.
+    /// Call only after receiving the complete response and within the RPC deadline.
+    ///
+    /// # Errors
+    /// Returns a connection error unless the peer sends the normal completion close.
     pub async fn complete_request(mut self) -> Result<(), ProductionTransportError> {
         self.connection.closed().await;
         let result = match self.connection.close_reason() {
@@ -1277,7 +1334,7 @@ impl ProductionConnection {
             }
             _ => Err(ProductionTransportError::ConnectionFailed),
         };
-        self._registration.release();
+        self.registration.release();
         result
     }
 
@@ -1376,7 +1433,7 @@ impl ProductionConnection {
 
 impl Drop for ProductionConnection {
     fn drop(&mut self) {
-        self._registration.release();
+        self.registration.release();
         self.connection.close(CLOSE_REQUEST_COMPLETE.into(), b"request complete");
     }
 }
@@ -1580,6 +1637,12 @@ struct RuntimeState {
 }
 
 impl RuntimeState {
+    fn request_count(&self) -> usize {
+        self.request_usage
+            .lock()
+            .map_or(usize::MAX, |usage| usage.values().map(|(count, _)| *count).sum())
+    }
+
     fn stop_requests(&self) {
         self.draining.store(true, Ordering::Release);
         if let Ok(gates) = self.request_gates.lock() {
