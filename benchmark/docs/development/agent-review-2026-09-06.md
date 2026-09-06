@@ -420,3 +420,41 @@ confirmed OpenRaft read barriers can overlap ordinary replication RPCs. Each
 opened a fresh session against the single outbound class slot. The transport
 reservation is working as designed; auth RPC admission must coordinate callers
 across all groups sharing the endpoint. A bounded admission fix is in progress.
+
+
+The auth RPC fix adds endpoint-wide FIFO admission per peer/class, with separate
+client and consensus count/byte reservations across all groups. Root and
+independent review caught and corrected missing serialization, cancellation
+quota leaks, an incorrect peer-close wait, and release ordering. Completion now
+waits for the peer after a full response; the peer releases its registration
+before closing. Only transient pre-payload connection attempts may retry within
+the original deadline. Application sends are never automatically replayed.
+
+The FIFO diagnostic (`37693`) passed 271 cases before the large UUID join case
+exceeded its unchanged 30-second timeout; 78 cases remained unexecuted, exit 101,
+464.76 seconds. No authority-saturation diagnostics occurred. The corresponding
+normal and joins cases took about 13.8 and 24 seconds respectively, suggesting
+growing work across the run. Log: `/tmp/terrascale-auth-fifo-diagnostic.log`.
+This build preceded the final pre-payload reconnect refinement. The maintained
+suite remains unqualified; neither its assertions nor timeouts were relaxed.
+
+Final transport execution (`26956`) passed 24 production tests, including eight
+request-admission regressions: FIFO order, class isolation, invalid peers,
+count/byte overflow, queued cancellation/deadlines, drain wakeup, twenty real
+consecutive round trips, active cancellation followed by a successor, and a
+controlled occupied-slot pre-send retry. Strict transport Clippy passed in
+`62410`. Independent review found no remaining material defect in the final
+request transport implementation. Further performance diagnosis and shared
+production daemon composition remain open.
+
+
+Final focused auth-runtime verification (`71476`) passed six tests with the
+external consumer correctly ignored. Source review of the slower suite has
+not established a root cause. An initial model-remapping leak hypothesis was
+withdrawn: upstream cleanup runs before the next option migration. Durable
+Raft/deduplication growth and encrypted-storage costs require measurement;
+resetting the fixture or changing retention without that evidence would hide
+rather than resolve the production concern.
+
+Authenticated physical WAL/receipt transport also passed on the final request
+transport source (`19121`, one test). No root Cargo processes remain running.

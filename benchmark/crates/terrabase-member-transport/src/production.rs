@@ -1210,7 +1210,7 @@ impl ProductionQuicEndpoint {
             class_quota: self.config.limits.class_quota(hello.class),
             total_quota: self.config.limits.max_inflight,
             state: Arc::clone(&self.state),
-            registration: registration,
+            registration,
         })
     }
 

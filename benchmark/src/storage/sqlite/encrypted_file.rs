@@ -83,6 +83,40 @@ pub(crate) struct EncryptedFile {
     root: [u8; 32],
 }
 
+struct FileTiming {
+    stage: &'static str,
+    role: &'static str,
+    records: u64,
+    blocks: usize,
+    started: Option<std::time::Instant>,
+}
+
+impl FileTiming {
+    fn start(stage: &'static str, role: &'static str, records: u64, blocks: usize) -> Self {
+        Self {
+            stage,
+            role,
+            records,
+            blocks,
+            started: std::env::var_os("TERRASCALE_AUTH_TIMING").map(|_| std::time::Instant::now()),
+        }
+    }
+}
+
+impl Drop for FileTiming {
+    fn drop(&mut self) {
+        if let Some(started) = self.started {
+            let micros = started.elapsed().as_micros();
+            if micros >= 10_000 {
+                eprintln!(
+                    "[encrypted timing] stage={} role={} micros={micros} records={} blocks={}",
+                    self.stage, self.role, self.records, self.blocks
+                );
+            }
+        }
+    }
+}
+
 impl EncryptedFile {
     pub(crate) fn open(
         path: &Path,
@@ -101,6 +135,7 @@ impl EncryptedFile {
         } else {
             "main"
         };
+        let _timing = FileTiming::start("open", role, 0, 0);
         let mut manifest = [0; MANIFEST_HEADER + RECORD];
         let fresh = match secure_options().open(&backing) {
             Ok(mut file) => {
@@ -420,6 +455,7 @@ impl EncryptedFile {
     }
 
     pub(crate) fn read_exact_at(&mut self, output: &mut [u8], offset: u64) -> io::Result<()> {
+        let _timing = FileTiming::start("read", self.role, self.records, self.blocks.len());
         self.check()?;
         output.fill(0);
         let end = offset.checked_add(output.len() as u64).ok_or_else(invalid)?;
@@ -441,6 +477,7 @@ impl EncryptedFile {
     }
 
     pub(crate) fn write_all_at(&mut self, bytes: &[u8], offset: u64) -> io::Result<()> {
+        let _timing = FileTiming::start("write", self.role, self.records, self.blocks.len());
         self.check()?;
         let end = offset
             .checked_add(bytes.len() as u64)
@@ -480,6 +517,7 @@ impl EncryptedFile {
     }
 
     pub(crate) fn sync(&mut self) -> io::Result<()> {
+        let _timing = FileTiming::start("sync", self.role, self.records, self.blocks.len());
         self.check()?;
         let result =
             self.publish(&self.identity, self.records, self.length, &self.root, &self.file);
@@ -539,6 +577,7 @@ impl EncryptedFile {
     }
 
     fn compact(&mut self) -> io::Result<()> {
+        let _timing = FileTiming::start("compact", self.role, self.records, self.blocks.len());
         let mut identity = [0; 32];
         aws_lc_rs::rand::fill(&mut identity).map_err(|_| invalid())?;
         let mut target = new_generation(&self.path, &identity)?;

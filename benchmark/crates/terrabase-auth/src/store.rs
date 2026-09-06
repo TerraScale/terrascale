@@ -13,6 +13,7 @@ use openraft::{
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+use crate::diagnostics::Timer;
 use crate::{Action, Command, Outcome, Predicate, Record, TypeConfig};
 
 type Result<T> = std::result::Result<T, StorageError<u64>>;
@@ -153,6 +154,7 @@ impl SqliteStore {
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, Connection>> {
+        let _timing = Timer::new("store.lock");
         if let Some(keys) = &self.keys {
             let lease = keys.current_lease().map_err(storage)?;
             if lease.is_expired() {
@@ -170,6 +172,7 @@ impl SqliteStore {
     }
 
     pub(crate) fn query(&self, action: &Action) -> Result<Outcome> {
+        let _timing = Timer::new("store.query");
         if !matches!(action, Action::Find { .. } | Action::Count { .. }) {
             return Ok(invalid("auth query action required"));
         }
@@ -947,12 +950,14 @@ impl RaftLogStorage<TypeConfig> for SqliteStore {
         Ok(LogState { last_purged_log_id: purged, last_log_id: last })
     }
     async fn save_vote(&mut self, vote: &Vote<u64>) -> Result<()> {
+        let _timing = Timer::new("store.save_vote");
         set_meta(&*self.lock()?, "vote", vote)
     }
     async fn read_vote(&mut self) -> Result<Option<Vote<u64>>> {
         meta(&*self.lock()?, "vote")
     }
     async fn save_committed(&mut self, committed: Option<LogId<u64>>) -> Result<()> {
+        let _timing = Timer::new("store.save_committed");
         set_meta(&*self.lock()?, "committed", &committed)
     }
     async fn read_committed(&mut self) -> Result<Option<LogId<u64>>> {
@@ -1009,6 +1014,7 @@ struct SnapshotRows {
 
 impl RaftSnapshotBuilder<TypeConfig> for SqliteStore {
     async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>> {
+        let _timing = Timer::new("store.build_snapshot");
         let mut connection = self.lock()?;
         let transaction = connection.transaction().map_err(storage)?;
         let rows = SnapshotRows {
@@ -1073,6 +1079,7 @@ impl RaftStateMachine<TypeConfig> for SqliteStore {
         I: IntoIterator<Item = Entry<TypeConfig>> + Send,
         I::IntoIter: Send,
     {
+        let _timing = Timer::new("store.apply");
         let mut connection = self.lock()?;
         let transaction = connection.transaction().map_err(storage)?;
         let mut outcomes = Vec::new();

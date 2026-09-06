@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 
 mod authority;
+mod diagnostics;
 mod query;
 pub use query::{
     Connector, JoinRelation, Mode, Operator, Predicate, QueryJoin, QuerySort, SortDirection,
