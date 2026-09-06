@@ -90,7 +90,7 @@ try {
 
   // Exercise the installed package's condition selection, including browser
   // rejection even when Node's own condition is also present.
-  await run(process.execPath, ["--conditions=workerd", journey], consumer, qualificationEnvironment());
+  await run(process.execPath, ["--conditions=workerd", "--conditions=browser", journey], consumer, qualificationEnvironment());
   await run(process.execPath, ["--conditions=browser", "--input-type=module", "-e", `
     import assert from "node:assert/strict";
     await assert.rejects(import("@terrascale/sdk/better-auth"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
@@ -252,6 +252,7 @@ function qualifyManifest(manifest) {
     const entry = manifest.exports?.[name];
     if (typeof entry?.node !== "string" || typeof entry?.workerd !== "string" || typeof entry?.types !== "string") throw new Error(`${name} must expose explicit Node and Workerd server conditions.`);
     if (entry.browser !== null || "import" in entry || "default" in entry) throw new Error(`${name} must block browser and generic imports.`);
+    if (Object.keys(entry).indexOf("workerd") > Object.keys(entry).indexOf("browser")) throw new Error(`${name} must resolve Workerd before its shared browser condition.`);
   }
 }
 
@@ -283,6 +284,9 @@ async function browserGraph(directory, entry) {
   const pending = [entry];
   while (pending.length > 0) {
     const relative = pending.pop();
+    if (entry !== "dist/better-auth.js" && relative === "dist/better-auth.js") {
+      throw new Error(`${entry} exposes the server-only Better Auth adapter.`);
+    }
     if (visited.has(relative)) continue;
     visited.add(relative);
     const source = await readFile(path.join(directory, relative), "utf8");

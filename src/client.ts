@@ -475,6 +475,22 @@ export class RegionsClient {
     this.#http = http;
   }
 
+  /** Query a direct member API origin for its serving region and health. */
+  async memberStatus(regionCode: TerraScaleRegionCode): Promise<TerraScaleResult<Models.MemberRegionStatus>> {
+    const result = await this.#http.request<unknown>({
+      method: "GET",
+      path: `${apiRoot}/regions`,
+      routeName: "regions.regions",
+      regionHint: parseRegionCode(regionCode, "regionCode"),
+    });
+    return decodeRegionResult(result, (value) => {
+      const response = requireRecord(value, "response");
+      const region = requireString(response.region, "response.region");
+      if (typeof response.healthy !== "boolean") throw new TypeError("response.healthy must be a boolean.");
+      return { region, healthy: response.healthy };
+    });
+  }
+
   async list(): Promise<TerraScaleResult<Models.RegionsResponse>> {
     const result = await this.#http.request<unknown>({
       method: "GET",

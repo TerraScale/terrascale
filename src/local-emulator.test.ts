@@ -69,11 +69,18 @@ test("the runtime requires explicit SQLite enablement and offers typed clients",
   });
 });
 
-test("all captured public client routes execute through the real loopback server", async () => {
+test("SQLite-supported captured document and SQL routes execute through the real loopback server", async () => {
   await withTempRuntime(async (runtime) => {
     const address = await started(runtime);
     try {
-      const routes = await exercisePublicClientRoutes(localHttpFetch(address.origin));
+      // Direct member management and health have separate producer contracts;
+      // this explicitly enabled development backend supports the data slice.
+      const supportedRoutes = [
+        "databases.listDocuments", "databases.getDocument", "databases.patchDocument",
+        "databases.putDocument", "databases.deleteDocument", "databases.executeSql",
+      ] as const;
+      const routes = await exercisePublicClientRoutes(localHttpFetch(address.origin), undefined, supportedRoutes);
+      assert.deepEqual(routes.map(route => route.routeName).sort(), [...supportedRoutes].sort());
       assert.equal(new Set(routes.map((route) => route.routeName)).size, routes.length);
     } finally {
       await runtime.stop();

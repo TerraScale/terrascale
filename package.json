@@ -47,8 +47,8 @@
     },
     "./better-auth": {
       "types": "./dist/better-auth.d.ts",
-      "browser": null,
       "workerd": "./dist/better-auth.js",
+      "browser": null,
       "node": "./dist/better-auth.js"
     },
     "./local": {

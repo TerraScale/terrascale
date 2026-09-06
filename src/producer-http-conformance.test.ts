@@ -1,0 +1,134 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { test } from "vitest";
+import { capturePublicClientRoutes, exercisePublicClientRoutes } from "./client-route-capture.js";
+import type { TerraScaleResult } from "./result.js";
+
+// These are producer response bytes supplied to the transport codec. They do
+// not stand in for a running product service or prove a live deployment.
+test("public HTTP clients consume the pinned producer response and error corpus", async () => {
+  const { resolveContractBundle } = await import(new URL("../scripts/openapi-contract-paths.ts", import.meta.url).href);
+  const bundle = await resolveContractBundle();
+  try {
+    assert.ok(bundle.artifactDigests.has("conformance/http.json"));
+    const specBytes = await readFile(path.join(bundle.root, "openapi.json"));
+    const spec = JSON.parse(specBytes.toString());
+    const corpus = JSON.parse(await readFile(path.join(bundle.root, "conformance/http.json"), "utf8"));
+    assert.equal(corpus.openapiSha256, createHash("sha256").update(specBytes).digest("hex"));
+    const captured = await capturePublicClientRoutes();
+    const vectors = captured.map(route => {
+      const operation = spec.paths[route.pathTemplate][route.method.toLowerCase()];
+      const vector = corpus.operations.find((value: Vector) => value.operationId === operation.operationId) as Vector | undefined;
+      assert.ok(vector, `Missing producer vector: ${route.routeName}`);
+      assert.equal(vector.request.method, route.method);
+      const schema = operation.requestBody?.content?.["application/json"]?.schema;
+      assert.equal(route.sourceContract.body.kind === "json", schema !== undefined, route.routeName);
+      if (route.sourceContract.body.kind === "json") assertSchema(route.sourceContract.body.shape, schema, spec, route.routeName);
+      const parameters = [...(spec.paths[route.pathTemplate].parameters ?? []), ...(operation.parameters ?? [])];
+      for (const query of route.sourceContract.query) {
+        assert.ok(parameters.some((parameter: any) => parameter.in === "query" && parameter.name === query.name), `${route.routeName}: undocumented query ${query.name}`);
+      }
+      for (const parameter of parameters.filter((parameter: any) => parameter.required && parameter.in === "query")) {
+        assert.ok(route.sourceContract.query.some(query => query.name === parameter.name));
+      }
+      return { route, vector };
+    });
+    const statuses = [undefined, ...new Set(vectors.flatMap(({ vector }) => vector.errors.map(error => error.status)))];
+    for (const status of statuses) {
+      let cursor = 0;
+      let expected: WireResponse | undefined;
+      await exercisePublicClientRoutes(async input => {
+        const request = new Request(input);
+        const entry = vectors.find(({ route }) => route.method === request.method && matchesPath(route.pathTemplate, new URL(request.url).pathname));
+        assert.ok(entry, `${request.method} ${request.url}`);
+        expected = status === undefined ? entry.vector.response : entry.vector.errors.find(error => error.status === status);
+        assert.ok(expected, `Missing producer status ${status}: ${entry.route.routeName}`);
+        return new Response(expected.body === undefined || expected.status === 204 ? null : JSON.stringify(expected.body), {
+          status: expected.status,
+          headers: expected.mediaType ? { "content-type": expected.mediaType } : {},
+        });
+      }, (routeName, raw) => {
+        cursor++;
+        const result = raw as TerraScaleResult<unknown>;
+        assert.ok(expected);
+        assert.equal(result.status, expected.status, routeName);
+        assert.equal(result.ok, status === undefined, routeName);
+        if (result.ok) assert.deepEqual(result.value, expected.status === 204 ? undefined : expected.body, routeName);
+        else {
+          const body = expected.body as { error: { code: string; message: string; fix: string } };
+          assert.equal(result.error.code, body.error.code, routeName);
+          assert.equal(result.error.message, body.error.message, routeName);
+          assert.equal(result.error.fix, body.error.fix, routeName);
+        }
+      });
+      assert.equal(cursor, captured.length);
+    }
+  } finally { await bundle.cleanup(); }
+});
+
+type WireResponse = { status: number; body?: unknown; mediaType?: string };
+type Vector = { operationId: string; request: { method: string }; response: WireResponse; errors: WireResponse[] };
+
+function matchesPath(template: string, pathname: string): boolean {
+  const expected = template.split("/");
+  const actual = pathname.split("/");
+  return expected.length === actual.length && expected.every((segment, index) => segment.startsWith("{") || segment === actual[index]);
+}
+
+// Validate the JSON type, required fields, alternatives, and enum constraints
+// exercised by the producer HTTP request schemas.
+function assertSchema(value: unknown, schema: any, spec: any, label: string): void {
+  if (schema.$ref) return assertSchema(value, schema.$ref.split("/").slice(1).reduce((node: any, key: string) => node[key], spec), spec, label);
+  if (Array.isArray(schema.type)) return assertSchema(value, { anyOf: schema.type.map((type: string) => ({ ...schema, type })) }, spec, label);
+  if (schema.oneOf || schema.anyOf) {
+    assert.ok((schema.oneOf ?? schema.anyOf).some((branch: any) => {
+      try { assertSchema(value, branch, spec, label); return true; } catch { return false; }
+    }), `${label}: no matching schema alternative`);
+    return;
+  }
+  if (value === null && schema.nullable) return;
+  if (schema.enum) assert.ok(schema.enum.includes(value), label);
+  if (typeof value === "number") {
+    assert.ok(Number.isFinite(value), label);
+    if (schema.minimum !== undefined) assert.ok(value >= schema.minimum, `${label}: below minimum`);
+    if (schema.maximum !== undefined) assert.ok(value <= schema.maximum, `${label}: above maximum`);
+  }
+  if (schema.type === undefined) return;
+  if (schema.type === "object") {
+    assert.ok(typeof value === "object" && value !== null && !Array.isArray(value), label);
+    const object = value as Record<string, unknown>;
+    for (const key of schema.required ?? []) assert.ok(key in object, `${label}.${key} is required`);
+    for (const [key, member] of Object.entries(object)) {
+      if (schema.properties?.[key]) assertSchema(member, schema.properties[key], spec, `${label}.${key}`);
+      else if (schema.additionalProperties === false) assert.fail(`${label}.${key} is undocumented`);
+      else if (typeof schema.additionalProperties === "object") assertSchema(member, schema.additionalProperties, spec, `${label}.${key}`);
+    }
+  } else if (schema.type === "array") {
+    assert.ok(Array.isArray(value), label);
+    for (const member of value) assertSchema(member, schema.items, spec, label);
+  } else if (schema.type === "integer") assert.ok(typeof value === "number" && Number.isSafeInteger(value), label);
+  else if (schema.type === "null") assert.equal(value, null, label);
+  else assert.equal(typeof value, schema.type, label);
+}
+
+test("member status selects the explicit regional origin and validates the member response", async () => {
+  const { createTerraScaleClient } = await import("./factory.js");
+  const requests: Request[] = [];
+  const client = createTerraScaleClient({
+    apiBaseUrl: "https://api.terrascale.tech",
+    fetch: async input => {
+      requests.push(new Request(input));
+      return Response.json({ region: "GRU", healthy: true });
+    },
+  });
+  const result = await client.regions.memberStatus("GRU");
+  assert.equal(requests[0]?.url, "https://gru.api.terrascale.tech/api/v1/regions");
+  assert.ok(result.ok);
+  assert.deepEqual(result.value, { region: "GRU", healthy: true });
+  const malformed = createTerraScaleClient({ fetch: async () => Response.json({ regions: [] }) });
+  const rejected = await malformed.regions.memberStatus("GRU");
+  assert.equal(rejected.ok, false);
+  if (!rejected.ok) assert.equal(rejected.error.kind, "invalid-response");
+});

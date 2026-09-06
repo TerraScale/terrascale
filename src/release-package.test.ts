@@ -142,7 +142,7 @@ test("a clean SDK-only checkout runs fixture tests and installs a usable npm pac
     const journey = path.join(consumer, "packed-journey.ts");
     await writeFile(journey, packedConsumerJourney);
     await run("node", [journey], { cwd: consumer });
-    await run("node", ["--conditions=workerd", "--input-type=module", "--eval",
+    await run("node", ["--conditions=workerd", "--conditions=browser", "--input-type=module", "--eval",
       "import { createTerraScaleBetterAuthAdapter } from '@terrascale/sdk/better-auth'; if (typeof createTerraScaleBetterAuthAdapter !== 'function') throw new Error('Workerd server adapter is missing');",
     ], { cwd: consumer });
     await run("node", ["--conditions=browser", "--input-type=module", "--eval",

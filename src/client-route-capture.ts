@@ -60,13 +60,16 @@ export async function capturePublicClientRoutes(): Promise<readonly CapturedSdkR
   return routes.sort((left, right) => `${left.pathTemplate} ${left.method}`.localeCompare(`${right.pathTemplate} ${right.method}`));
 }
 
-export async function exercisePublicClientRoutes(fetch: FetchLike): Promise<readonly CapturedSdkRoute[]> {
+export async function exercisePublicClientRoutes(fetch: FetchLike, onResult?: (routeName: TerraScaleRouteName, result: unknown) => void, routeNames?: readonly TerraScaleRouteName[]): Promise<readonly CapturedSdkRoute[]> {
   const routes: CapturedSdkRoute[] = [];
-  for (const operation of captureOperations) routes.push(await captureRoute(operation, fetch, true));
+  for (const operation of captureOperations) {
+    if (routeNames !== undefined && !routeNames.includes(operation.routeName)) continue;
+    routes.push(await captureRoute(operation, fetch, true, onResult));
+  }
   return routes;
 }
 
-async function captureRoute(operation: CaptureOperation, routeFetch?: FetchLike, assertRouted = false): Promise<CapturedSdkRoute> {
+async function captureRoute(operation: CaptureOperation, routeFetch?: FetchLike, assertRouted = false, onResult?: (routeName: TerraScaleRouteName, result: unknown) => void): Promise<CapturedSdkRoute> {
   let capturedRequest: Request | undefined;
   let capturedMetric: TerraScaleRequestMetric | undefined;
   const captureFetch: FetchLike = async (input) => {
@@ -79,12 +82,14 @@ async function captureRoute(operation: CaptureOperation, routeFetch?: FetchLike,
   const config = {
     apiBaseUrl: "https://api.terrascale.test",
     fetch: captureFetch,
+    maxRetryAttempts: 0,
     requestMetricRecorder: (metric: TerraScaleRequestMetric): void => { capturedMetric = metric; },
   };
   const client = createTerraScaleClient(config);
   const management = createTerraScaleManagementClient(config);
   const result = await operation.invoke(client, management);
-  if (assertRouted && isRoutingFailure(result)) {
+  onResult?.(operation.routeName, result);
+  if (assertRouted && onResult === undefined && isRoutingFailure(result)) {
     throw new Error(`Local route exercise failed for ${operation.client}.${operation.operation}: ${result.error.code} (${result.error.kind}).`);
   }
   if (capturedRequest === undefined) throw new Error(`Route capture for ${operation.client}.${operation.operation} made no request.`);
@@ -222,6 +227,6 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "regions", operation: "regions", routeName: "regions.regions",
-    invoke: (client) => client.regions.list(),
+    invoke: (client) => client.regions.memberStatus("GRU"),
   },
 ];

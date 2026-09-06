@@ -55,8 +55,8 @@ test("package metadata declares the supported Node and browser matrix", async ()
   });
   assert.deepEqual(packageJson.exports?.["./better-auth"], {
     types: "./dist/better-auth.d.ts",
-    browser: null,
     workerd: "./dist/better-auth.js",
+    browser: null,
     node: "./dist/better-auth.js",
   });
   assert.deepEqual(packageJson.exports?.["./local"], {
