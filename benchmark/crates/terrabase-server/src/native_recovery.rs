@@ -1,7 +1,7 @@
 //! Durable native recovery-point operations bound to the running member fleet.
 
 use crate::admitted_databases::AdmittedDatabaseRegistry;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -10,6 +10,8 @@ use terrabase_tbep::member_host::MemberHost;
 use tokio::sync::Notify;
 
 mod admission;
+mod checkpoint;
+use checkpoint::Checkpoint;
 
 /// Finite bounds for the durable recovery ledger.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -158,13 +160,14 @@ impl NativeRecoveryRuntime {
                 operation_id TEXT PRIMARY KEY NOT NULL,
                 source_database_id TEXT NOT NULL,
                 phase TEXT NOT NULL DEFAULT 'accepted',
-                record BLOB NOT NULL CHECK(length(record)<=262144)
+                record BLOB NOT NULL CHECK(length(record)<=262144),
+                checkpoint BLOB CHECK(checkpoint IS NULL OR length(checkpoint)<=262144)
             ) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS native_recovery_source ON native_recovery_operations(source_database_id,operation_id);")
             .map_err(|_| NativeRecoveryError::Unavailable)?;
         // Reject unsupported ledgers without inventing execution phases for old rows.
         connection
-            .prepare("SELECT operation_id, source_database_id, phase, record FROM native_recovery_operations LIMIT 0")
+            .prepare("SELECT operation_id, source_database_id, phase, record, checkpoint FROM native_recovery_operations LIMIT 0")
             .map_err(|_| NativeRecoveryError::Unavailable)?;
         for parent in root.ancestors().filter(|path| !path.as_os_str().is_empty()) {
             std::fs::File::open(parent)
@@ -297,14 +300,14 @@ impl NativeRecoveryRuntime {
                     row.map_err(|_| NativeRecoveryError::Unavailable)?;
                 let state: NativeRecoveryOperation =
                     serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::Unavailable)?;
-                if matches!(phase.as_str(), "accepted" | "measuring") {
+                if matches!(phase.as_str(), "accepted" | "capturing" | "measuring") {
                     found = Some((source, operation, state));
                     break;
                 }
             }
             found
         };
-        let Some((source, operation, state)) = pending else {
+        let Some((source, operation, _state)) = pending else {
             return Ok(());
         };
         let admitted = self
@@ -317,41 +320,57 @@ impl NativeRecoveryRuntime {
         }
         let placement = admitted.record.regions.clone();
         let runtime = Arc::clone(self);
-        let result = tokio::task::spawn_blocking(move || {
-            runtime.run_capture(&admitted.host, placement, &source, &operation)
+        tokio::task::spawn_blocking(move || {
+            let result = runtime.run_capture(&admitted.host, placement, &source, &operation);
+            if result.is_err() {
+                match runtime.status(&source, &operation)? {
+                    Some(mut latest)
+                        if !matches!(latest.phase, NativeRecoveryPhase::Complete | NativeRecoveryPhase::Failed) =>
+                    {
+                        latest.phase = NativeRecoveryPhase::Failed;
+                        latest.error = Some("native recovery capture state is uncertain; retry the existing operation".into());
+                        runtime.save_record_only(&latest)?;
+                    }
+                    Some(_) => {}
+                    None => return Err(NativeRecoveryError::Unavailable),
+                }
+            }
+            Ok::<(), NativeRecoveryError>(())
         })
         .await
-        .map_err(|_| NativeRecoveryError::Unavailable)?;
-        if result.is_err() {
-            let mut failed = state;
-            failed.phase = NativeRecoveryPhase::Failed;
-            failed.error =
-                Some("native recovery verification failed; retry the existing operation".into());
-            self.save(&failed)?;
-        }
+        .map_err(|_| NativeRecoveryError::Unavailable)??;
         self.notify.notify_one();
         Ok(())
     }
 
-    fn save(&self, operation: &NativeRecoveryOperation) -> Result<(), NativeRecoveryError> {
+    fn save(
+        &self,
+        operation: &NativeRecoveryOperation,
+        checkpoint: Option<&Checkpoint>,
+    ) -> Result<(), NativeRecoveryError> {
         let bytes = serde_json::to_vec(operation).map_err(|_| NativeRecoveryError::Unavailable)?;
         if bytes.len() > 262144 {
             return Err(NativeRecoveryError::Unavailable);
         }
-        self.operations
+        let changed = self.operations
             .lock()
             .map_err(|_| NativeRecoveryError::Unavailable)?
             .execute(
-                "UPDATE native_recovery_operations SET phase=?2, record=?3 WHERE operation_id=?1",
+                "UPDATE native_recovery_operations SET phase=?3, record=?4, checkpoint=?5 WHERE operation_id=?1 AND source_database_id=?2",
                 params![
                     operation.operation_id,
+                    operation.source_database_id,
                     serde_json::to_string(&operation.phase)
                         .map_err(|_| NativeRecoveryError::Unavailable)?
                         .trim_matches('"'),
-                    bytes
+                    bytes,
+                    checkpoint.map(Checkpoint::encode).transpose().map_err(|_| NativeRecoveryError::Unavailable)?
                 ],
             )
             .map_err(|_| NativeRecoveryError::Unavailable)?;
+        if changed != 1 {
+            return Err(NativeRecoveryError::Unavailable);
+        }
         Ok(())
     }
 
@@ -363,40 +382,86 @@ impl NativeRecoveryRuntime {
         operation: &str,
     ) -> Result<(), NativeRecoveryError> {
         let mut state = self.status(source, operation)?.ok_or(NativeRecoveryError::Unavailable)?;
-        state.phase = NativeRecoveryPhase::Capturing;
-        state.error = None;
-        self.save(&state)?;
-        let manifest = {
-            let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-            tokio::runtime::Handle::current()
-                .block_on(fleet.capture_snapshot(source))
-                .map_err(|_| NativeRecoveryError::VerificationFailed)?
+        if matches!(state.phase, NativeRecoveryPhase::Complete) {
+            return Ok(());
+        }
+        let mut checkpoint = match self.load_checkpoint(source, operation) {
+            Ok(value) => value,
+            Err(error) => {
+                state.phase = NativeRecoveryPhase::Failed;
+                state.error = Some(
+                    "native recovery verification failed; retry the existing operation".into(),
+                );
+                self.save_record_only(&state)?;
+                return Err(error);
+            }
         };
-        state.phase = NativeRecoveryPhase::Measuring;
-        self.save(&state)?;
-        let tenant = terrabase::types::TenantId::try_new(host.tenant())
-            .map_err(|_| NativeRecoveryError::InvalidRequest)?;
-        let scope = host.engine().scope_for(&tenant);
-        let stats = host
-            .engine()
-            .recovery_statistics(
-                &scope,
-                manifest.boundary_sequence().get(),
-                manifest.captured_unix_millis(),
-                None,
+        let source_owned = source.to_owned();
+        let capture_fleet = Arc::clone(&self.fleet);
+        let capture = move || {
+            let manifest = {
+                let mut fleet = capture_fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+                tokio::runtime::Handle::current().block_on(fleet.capture_snapshot(&source_owned))
+                    .map_err(|_| NativeRecoveryError::VerificationFailed)?
+            };
+            Ok(Checkpoint::from_manifest(&manifest, &source_owned, &placement))
+        };
+        let persist = |operation: &NativeRecoveryOperation, cp: Option<&Checkpoint>| self.save(operation, cp);
+        let measure_fleet = Arc::clone(&self.fleet);
+        let measure_source = source.to_owned();
+        let measure_placement = placement.clone();
+        let measure = move |point: &Checkpoint| {
+            let fleet = measure_fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            fleet.retained_points(&measure_source).map_err(|_| NativeRecoveryError::VerificationFailed)?
+                .into_iter().find(|manifest| point.matches_manifest(manifest))
+                .ok_or(NativeRecoveryError::VerificationFailed)?;
+            let tenant = terrabase::types::TenantId::try_new(host.tenant()).map_err(|_| NativeRecoveryError::InvalidRequest)?;
+            let stats = host.engine().recovery_statistics(&host.engine().scope_for(&tenant), point.journal_cut, point.captured_at_millis, None)
+                .map_err(|_| NativeRecoveryError::VerificationFailed)?;
+            if stats.journal_cut != point.journal_cut || stats.captured_at_millis != point.captured_at_millis {
+                return Err(NativeRecoveryError::VerificationFailed);
+            }
+            Ok(RecoveryPointFacts { recovery_point_id: point.recovery_point_id.clone(), source_database_id: source_owned.clone(), journal_cut: point.journal_cut, captured_at_millis: point.captured_at_millis, checksum: blake3::Hash::from(stats.checksum).to_hex().to_string(), row_count: stats.row_count, placement: measure_placement.clone(), retained_until_millis: point.retained_until_millis })
+        };
+        checkpoint::advance(&mut state, checkpoint, &placement, capture, persist, measure)
+    }
+
+    fn load_checkpoint(
+        &self,
+        source: &str,
+        operation: &str,
+    ) -> Result<Option<Checkpoint>, NativeRecoveryError> {
+        let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+        connection.query_row("SELECT checkpoint FROM native_recovery_operations WHERE source_database_id=?1 AND operation_id=?2", params![source, operation], |row| row.get::<_, Option<Vec<u8>>>(0))
+            .map_err(|_| NativeRecoveryError::Unavailable)?.map(|bytes| Checkpoint::decode(&bytes).map_err(|_| NativeRecoveryError::VerificationFailed)).transpose()
+    }
+
+    fn save_record_only(
+        &self,
+        operation: &NativeRecoveryOperation,
+    ) -> Result<(), NativeRecoveryError> {
+        let bytes = serde_json::to_vec(operation).map_err(|_| NativeRecoveryError::Unavailable)?;
+        if bytes.len() > 262144 {
+            return Err(NativeRecoveryError::Unavailable);
+        }
+        let changed = self.operations
+            .lock()
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .execute(
+                "UPDATE native_recovery_operations SET phase=?3, record=?4 WHERE operation_id=?1 AND source_database_id=?2",
+                params![
+                    operation.operation_id,
+                    operation.source_database_id,
+                    serde_json::to_string(&operation.phase)
+                        .map_err(|_| NativeRecoveryError::Unavailable)?
+                        .trim_matches('"'),
+                    bytes
+                ],
             )
-            .map_err(|_| NativeRecoveryError::VerificationFailed)?;
-        state.facts = Some(RecoveryPointFacts {
-            recovery_point_id: manifest.identity().into(),
-            source_database_id: source.into(),
-            journal_cut: stats.journal_cut,
-            captured_at_millis: stats.captured_at_millis,
-            checksum: blake3::Hash::from(stats.checksum).to_hex().to_string(),
-            row_count: stats.row_count,
-            placement,
-            retained_until_millis: manifest.retain_until_unix_millis(),
-        });
-        state.phase = NativeRecoveryPhase::Complete;
-        self.save(&state)
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
+        if changed != 1 {
+            return Err(NativeRecoveryError::Unavailable);
+        }
+        Ok(())
     }
 }

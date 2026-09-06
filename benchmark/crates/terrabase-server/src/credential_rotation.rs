@@ -404,43 +404,121 @@ fn constant_time_equal(a: &[u8], b: &[u8]) -> bool {
 }
 fn stage_rotation(service: &Service, request: &Request, next: &mut Durable) -> io::Result<()> {
     let invalid = || io::Error::other("invalid rotation transition");
-    if request.generation <= next.generation || next.staged.is_some() || request.expires_at <= now() || request.current_key_id.is_empty() || request.current_key_id.len() > 128 { return Err(invalid()); }
-    let current = zeroize::Zeroizing::new(STANDARD.decode(&request.current_key).map_err(|_| invalid())?);
-    let previous = zeroize::Zeroizing::new(STANDARD.decode(&request.previous_key).map_err(|_| invalid())?);
+    if request.generation <= next.generation
+        || next.staged.is_some()
+        || request.expires_at <= now()
+        || request.current_key_id.is_empty()
+        || request.current_key_id.len() > 128
+    {
+        return Err(invalid());
+    }
+    let current =
+        zeroize::Zeroizing::new(STANDARD.decode(&request.current_key).map_err(|_| invalid())?);
+    let previous =
+        zeroize::Zeroizing::new(STANDARD.decode(&request.previous_key).map_err(|_| invalid())?);
     let overlap = !previous.is_empty();
-    if overlap && (request.previous_key_id.is_empty() || request.previous_key_id == request.current_key_id || request.previous_expires_at <= now() || request.previous_expires_at > request.expires_at) { return Err(invalid()); }
-    let mut keys = KeyMaterial::new(&current, overlap.then_some(previous.as_slice())).ok_or_else(invalid)?;
+    if overlap
+        && (request.previous_key_id.is_empty()
+            || request.previous_key_id == request.current_key_id
+            || request.previous_expires_at <= now()
+            || request.previous_expires_at > request.expires_at)
+    {
+        return Err(invalid());
+    }
+    let mut keys =
+        KeyMaterial::new(&current, overlap.then_some(previous.as_slice())).ok_or_else(invalid)?;
     keys.expires_at = request.expires_at;
     keys.previous_expires_at = request.previous_expires_at;
     let mut snapshot = LiveKeys::single(keys);
-    if overlap && (request.previous_generation == 0 || request.previous_generation >= request.generation) { return Err(invalid()); }
+    if overlap
+        && (request.previous_generation == 0 || request.previous_generation >= request.generation)
+    {
+        return Err(invalid());
+    }
     snapshot.previous_generation = request.previous_generation;
     if service.tls.is_some() {
-        let mut material = TlsMaterial { workload: STANDARD.decode(&request.workload_tls).map_err(|_| invalid())?, trust: STANDARD.decode(&request.trust_bundle).map_err(|_| invalid())?, expires_at: request.expires_at };
-        if material.workload.len() > 128 * 1024 || material.trust.len() > 32 * 1024 { return Err(invalid()); }
+        let mut material = TlsMaterial {
+            workload: STANDARD.decode(&request.workload_tls).map_err(|_| invalid())?,
+            trust: STANDARD.decode(&request.trust_bundle).map_err(|_| invalid())?,
+            expires_at: request.expires_at,
+        };
+        if material.workload.len() > 128 * 1024 || material.trust.len() > 32 * 1024 {
+            return Err(invalid());
+        }
         let prepared = material.prepare()?;
         service.tls.as_ref().ok_or_else(invalid)?.validate(&prepared)?;
         material.expires_at = prepared.valid_until();
         snapshot.origin.expires_at = snapshot.origin.expires_at.min(material.expires_at);
         snapshot.capability.expires_at = snapshot.capability.expires_at.min(material.expires_at);
         snapshot.tls = Some(material);
-    } else if !request.workload_tls.is_empty() || !request.trust_bundle.is_empty() { return Err(invalid()); }
-    next.staged = Some(snapshot); next.generation = request.generation; next.state = "staged".into(); next.verified = false;
+    } else if !request.workload_tls.is_empty() || !request.trust_bundle.is_empty() {
+        return Err(invalid());
+    }
+    next.staged = Some(snapshot);
+    next.generation = request.generation;
+    next.state = "staged".into();
+    next.verified = false;
     Ok(())
 }
 
-fn publish_rotation(service: &Service, inner: &mut Inner, request: &Request, mut next: Durable, digest: String) -> io::Result<Receipt> {
+fn publish_rotation(
+    service: &Service,
+    inner: &mut Inner,
+    request: &Request,
+    mut next: Durable,
+    digest: String,
+) -> io::Result<Receipt> {
     let invalid = || io::Error::other("invalid rotation transition");
     let valid_until = next.staged.as_ref().unwrap_or(&next.active).origin.expires_at;
-    let receipt = Receipt { generation: if request.action == "retire" { request.generation } else { next.generation }, valid_until, state: next.state.clone(), operation_id: request.operation_id.clone() };
-    if next.receipts.len() >= 100_000 { return Err(invalid()); }
-    next.receipts.insert(request.operation_id.clone(), SavedReceipt { digest, receipt: receipt.clone() });
-    let prepared_tls = if service.tls.is_some() && next.state != "fenced" && !matches!(request.action.as_str(), "stage" | "verify") { Some(next.active.tls.as_ref().ok_or_else(invalid)?.prepare()?) } else { None };
-    if let (Some(controller), Some(prepared)) = (&service.tls, &prepared_tls) { controller.validate(prepared)?; }
+    let receipt = Receipt {
+        generation: if request.action == "retire" { request.generation } else { next.generation },
+        valid_until,
+        state: next.state.clone(),
+        operation_id: request.operation_id.clone(),
+    };
+    // A bounded receipt journal fails closed instead of evicting replay protection.
+    if next.receipts.len() >= 100_000 {
+        return Err(invalid());
+    }
+    next.receipts
+        .insert(request.operation_id.clone(), SavedReceipt { digest, receipt: receipt.clone() });
+    let prepared_tls = if service.tls.is_some()
+        && next.state != "fenced"
+        && !matches!(request.action.as_str(), "stage" | "verify")
+    {
+        Some(next.active.tls.as_ref().ok_or_else(invalid)?.prepare()?)
+    } else {
+        None
+    };
+    if let (Some(controller), Some(prepared)) = (&service.tls, &prepared_tls) {
+        controller.validate(prepared)?;
+    }
     let mut live = service.live.write().map_err(|_| invalid())?;
-    if let Err(error) = persist(&inner.file, &next) { *live = LiveKeys::default(); if let Some(tls) = &service.tls { tls.fence(); } return Err(error); }
-    if let Some(tls) = &service.tls && !matches!(request.action.as_str(), "stage" | "verify") { if let Some(prepared) = prepared_tls { if let Err(error) = tls.install(prepared) { tls.fence(); *live = LiveKeys::default(); return Err(error); } } else { tls.fence(); } }
-    *live = next.active.clone(); inner.durable = next; Ok(receipt)
+    if let Err(error) = persist(&inner.file, &next) {
+        // A failed directory fsync can leave an uncertain on-disk commit.
+        // Fence credentials until authenticated retry or restart reconciles it.
+        *live = LiveKeys::default();
+        if let Some(tls) = &service.tls {
+            tls.fence();
+        }
+        return Err(error);
+    }
+    if let Some(tls) = &service.tls
+        && !matches!(request.action.as_str(), "stage" | "verify")
+    {
+        if let Some(prepared) = prepared_tls {
+            if let Err(error) = tls.install(prepared) {
+                tls.fence();
+                *live = LiveKeys::default();
+                return Err(error);
+            }
+        } else {
+            tls.fence();
+        }
+    }
+    *live = next.active.clone();
+    inner.durable = next;
+    Ok(receipt)
 }
 
 fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
@@ -460,67 +538,7 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
     let mut next = inner.durable.clone();
     match request.action.as_str() {
         "stage" => {
-            return stage_rotation(service, request, &mut next).and_then(|()| publish_rotation(service, &mut inner, request, next, digest));
-            /*
-            if request.generation <= next.generation
-                || next.staged.is_some()
-                || request.expires_at <= now()
-                || request.current_key_id.is_empty()
-                || request.current_key_id.len() > 128
-            {
-                return Err(invalid());
-            }
-            let current = zeroize::Zeroizing::new(
-                STANDARD.decode(&request.current_key).map_err(|_| invalid())?,
-            );
-            let previous = zeroize::Zeroizing::new(
-                STANDARD.decode(&request.previous_key).map_err(|_| invalid())?,
-            );
-            let overlap = !previous.is_empty();
-            if overlap
-                && (request.previous_key_id.is_empty()
-                    || request.previous_key_id == request.current_key_id
-                    || request.previous_expires_at <= now()
-                    || request.previous_expires_at > request.expires_at)
-            {
-                return Err(invalid());
-            }
-            let mut keys = KeyMaterial::new(&current, overlap.then_some(previous.as_slice()))
-                .ok_or_else(invalid)?;
-            keys.expires_at = request.expires_at;
-            keys.previous_expires_at = request.previous_expires_at;
-            let mut snapshot = LiveKeys::single(keys);
-            if overlap
-                && (request.previous_generation == 0
-                    || request.previous_generation >= request.generation)
-            {
-                return Err(invalid());
-            }
-            snapshot.previous_generation = request.previous_generation;
-            if service.tls.is_some() {
-                let mut material = TlsMaterial {
-                    workload: STANDARD.decode(&request.workload_tls).map_err(|_| invalid())?,
-                    trust: STANDARD.decode(&request.trust_bundle).map_err(|_| invalid())?,
-                    expires_at: request.expires_at,
-                };
-                if material.workload.len() > 128 * 1024 || material.trust.len() > 32 * 1024 {
-                    return Err(invalid());
-                }
-                let prepared = material.prepare()?;
-                service.tls.as_ref().ok_or_else(invalid)?.validate(&prepared)?;
-                material.expires_at = prepared.valid_until();
-                snapshot.origin.expires_at = snapshot.origin.expires_at.min(material.expires_at);
-                snapshot.capability.expires_at =
-                    snapshot.capability.expires_at.min(material.expires_at);
-                snapshot.tls = Some(material);
-            } else if !request.workload_tls.is_empty() || !request.trust_bundle.is_empty() {
-                return Err(invalid());
-            }
-            next.staged = Some(snapshot);
-            next.generation = request.generation;
-            next.state = "staged".into();
-            next.verified = false;
-            */
+            stage_rotation(service, request, &mut next)?;
         }
         "verify" => {
             if request.generation != next.generation
@@ -582,57 +600,7 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
         }
         _ => return Err(invalid()),
     }
-    return publish_rotation(service, &mut inner, request, next, digest);
-    /* let valid_until = next.staged.as_ref().unwrap_or(&next.active).origin.expires_at;
-    let receipt = Receipt {
-        generation: if request.action == "retire" { request.generation } else { next.generation },
-        valid_until,
-        state: next.state.clone(),
-        operation_id: request.operation_id.clone(),
-    };
-    // A bounded receipt journal fails closed instead of evicting replay protection.
-    if next.receipts.len() >= 100_000 {
-        return Err(invalid());
-    }
-    next.receipts
-        .insert(request.operation_id.clone(), SavedReceipt { digest, receipt: receipt.clone() });
-    let prepared_tls = if service.tls.is_some()
-        && next.state != "fenced"
-        && !matches!(request.action.as_str(), "stage" | "verify")
-    {
-        Some(next.active.tls.as_ref().ok_or_else(invalid)?.prepare()?)
-    } else {
-        None
-    };
-    if let (Some(controller), Some(prepared)) = (&service.tls, &prepared_tls) {
-        controller.validate(prepared)?;
-    }
-    let mut live = service.live.write().map_err(|_| invalid())?;
-    if let Err(error) = persist(&inner.file, &next) {
-        // A failed directory fsync can leave an uncertain on-disk commit.
-        // Stop accepting credentials until an authenticated retry or restart reconciles it.
-        *live = LiveKeys::default();
-        if let Some(tls) = &service.tls {
-            tls.fence();
-        }
-        return Err(error);
-    }
-    if let Some(tls) = &service.tls
-        && !matches!(request.action.as_str(), "stage" | "verify")
-    {
-        if let Some(prepared) = prepared_tls {
-            if let Err(error) = tls.install(prepared) {
-                tls.fence();
-                *live = LiveKeys::default();
-                return Err(error);
-            }
-        } else {
-            tls.fence();
-        }
-    }
-    *live = next.active.clone();
-    inner.durable = next;
-    Ok(receipt) */
+    publish_rotation(service, &mut inner, request, next, digest)
 }
 
 #[cfg(test)]
@@ -640,9 +608,7 @@ mod tests {
     use super::*;
     use crate::reactive_api::{ORIGIN_PROOF_HEADER, origin_proof_for, verify_origin_proof};
     use axum::http::{HeaderValue, Method, Uri};
-    use rcgen::{
-        BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair,
-    };
+    use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair};
     fn request(action: &str, operation: &str) -> Request {
         Request {
             operation_id: operation.into(),
