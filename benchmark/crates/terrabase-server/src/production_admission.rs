@@ -17,17 +17,31 @@ use terrabase::{
 };
 
 /// Placement facts loaded from the authenticated, accepted journal, never from create intent.
-pub struct AcceptedAdmission {
-    /// Canonical partition identity from accepted placement.
-    pub partition: String,
-    /// Immutable placement revision used by billing.
-    pub revision: String,
-    /// Accepted regional origin.
-    pub origin: RegionCode,
-    /// Strictly positive accepted writer epoch.
-    pub epoch: u64,
-    /// Whether this exact local member is the accepted writer.
-    pub local_is_writer: bool,
+pub enum AcceptedAdmission {
+    /// Active writer admission with an independently registered billing stream.
+    Active {
+        /// Canonical partition identity from accepted placement.
+        partition: String,
+        /// Immutable placement revision used by billing.
+        revision: String,
+        /// Accepted regional origin.
+        origin: RegionCode,
+        /// Strictly positive accepted writer epoch.
+        epoch: u64,
+        /// Whether this exact local member is the accepted writer.
+        local_is_writer: bool,
+    },
+    /// Revoked database reopened only for deletion and maintenance.
+    Maintenance {
+        /// Immutable placement revision retained for lifecycle correlation.
+        revision: String,
+        /// Accepted regional origin.
+        origin: RegionCode,
+        /// Accepted epoch, which is never activated for origin writes.
+        epoch: u64,
+        /// Whether this exact local member is the accepted writer.
+        local_is_writer: bool,
+    },
 }
 
 /// Loads exact accepted authority; `None` means authenticated registration is pending.
@@ -80,53 +94,64 @@ pub fn storage_admission(
         let Some(accepted) = authority(record)? else {
             return Ok(());
         };
-        if accepted.epoch == 0 || accepted.origin != region {
-            return Err("invalid accepted database authority".into());
-        }
-        if !accepted.local_is_writer {
-            return Ok(());
-        }
-        let id = DatabaseId::try_new(&record.database_id).map_err(|_| "invalid database")?;
-        let lease = member.acquire(&id).map_err(|_| "encrypted database unavailable")?;
-        // Preparation and acceptance are durable origin fences.  Replay must
-        // retain the encrypted entry for an authorized deletion retry, while
-        // leaving origin writes fenced so it cannot make the whole Member fail
-        // to start.
         let tenant_id = TenantId::try_new(&record.tenant_id).map_err(|_| "invalid tenant")?;
-        if !lifecycle_allows_origin_activation(&lease, &tenant_id)? {
-            registry.publish(
-                record.clone(),
-                lease,
-                member.root().join(&record.database_id),
-                instance,
-            )?;
-            return Ok(());
+        match accepted {
+            AcceptedAdmission::Maintenance { epoch, origin, local_is_writer, .. } => {
+                if epoch == 0 || origin != region {
+                    return Err("invalid accepted database authority".into());
+                }
+                if !local_is_writer {
+                    return Ok(());
+                }
+                let id = DatabaseId::try_new(&record.database_id).map_err(|_| "invalid database")?;
+                let lease = member.acquire(&id).map_err(|_| "encrypted database unavailable")?;
+                if lifecycle_allows_origin_activation(&lease, &tenant_id)? {
+                    return Err("maintenance admission is not access-revoked".into());
+                }
+                registry.publish(record.clone(), lease, member.root().join(&record.database_id), instance)
+            }
+            AcceptedAdmission::Active { partition, revision, origin, epoch, local_is_writer } => {
+                if epoch == 0 || origin != region {
+                    return Err("invalid accepted database authority".into());
+                }
+                if !local_is_writer {
+                    return Ok(());
+                }
+                let id = DatabaseId::try_new(&record.database_id).map_err(|_| "invalid database")?;
+                let lease = member.acquire(&id).map_err(|_| "encrypted database unavailable")?;
+                // Preparation and acceptance are durable origin fences. Replay
+                // retains revoked encrypted entries for authorized maintenance.
+                if !lifecycle_allows_origin_activation(&lease, &tenant_id)? {
+                    registry.publish(record.clone(), lease, member.root().join(&record.database_id), instance)?;
+                    return Ok(());
+                }
+                let placement = UsagePlacement::try_new(
+                    tenant_id,
+                    &record.project_id,
+                    &record.database_id,
+                    &partition,
+                    region,
+                    record
+                        .regions
+                        .iter()
+                        .map(|region| region.parse::<RegionCode>())
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|_| "invalid selected regions")?,
+                    &revision,
+                )
+                .map_err(|_| "invalid usage placement")?;
+                lease.configure_usage_placement(placement).map_err(|_| "usage placement refused")?;
+                lease.activate_origin_epoch(epoch).map_err(|_| "writer epoch refused")?;
+                registry.publish(record.clone(), lease, member.root().join(&record.database_id), instance)
+            }
         }
-        let placement = UsagePlacement::try_new(
-            tenant_id,
-            &record.project_id,
-            &record.database_id,
-            &accepted.partition,
-            region,
-            record
-                .regions
-                .iter()
-                .map(|region| region.parse::<RegionCode>())
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| "invalid selected regions")?,
-            &accepted.revision,
-        )
-        .map_err(|_| "invalid usage placement")?;
-        lease.configure_usage_placement(placement).map_err(|_| "usage placement refused")?;
-        lease.activate_origin_epoch(accepted.epoch).map_err(|_| "writer epoch refused")?;
-        registry.publish(record.clone(), lease, member.root().join(&record.database_id), instance)
     })
 }
 
 /// Reads the durable deletion fence before replay can activate a writer epoch.
 /// A false result retains the lease for authorized maintenance without
 /// reopening origin writes.
-fn lifecycle_allows_origin_activation(
+pub(crate) fn lifecycle_allows_origin_activation(
     lease: &terrabase::member::DatabaseLease,
     tenant: &TenantId,
 ) -> Result<bool, String> {
@@ -219,7 +244,7 @@ mod tests {
         let authority: Arc<
             dyn Fn(&AdmissionRecord) -> Result<Option<AcceptedAdmission>, String> + Send + Sync,
         > = Arc::new(|record| {
-            Ok(Some(AcceptedAdmission {
+            Ok(Some(AcceptedAdmission::Active {
                 partition: format!("partition-{}", record.database_id),
                 revision: "revision".into(),
                 origin: RegionCode::GRU,

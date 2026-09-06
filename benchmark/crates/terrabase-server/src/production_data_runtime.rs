@@ -272,13 +272,6 @@ impl ProductionAdmissionRuntime {
                 Err(error) => return Err(failure(error)),
             };
             role_runtime.admit_membership(&*authority_journal).map_err(failure)?;
-            let Some(partition) =
-                usage_authority.resolve(record, assignment.epoch, &accepted.proof_digest)?
-            else {
-                // The private delivery listener must remain available while this
-                // accepted scope waits for its durable billing registration.
-                return Ok(None);
-            };
             let id =
                 terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
             let role = if assignment.writer.member().as_str() == local {
@@ -300,10 +293,29 @@ impl ProductionAdmissionRuntime {
                     },
                 )
                 .map_err(failure)?;
-            Ok(Some(crate::production_admission::AcceptedAdmission {
+            let origin = record.region.parse().map_err(|_| "invalid admitted Region")?;
+            if assignment.writer.member().as_str() == local {
+                let lease = role_member.acquire(&id).map_err(failure)?;
+                let tenant = terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
+                if !crate::production_admission::lifecycle_allows_origin_activation(&lease, &tenant)? {
+                    return Ok(Some(crate::production_admission::AcceptedAdmission::Maintenance {
+                        revision: accepted.proof_digest,
+                        origin,
+                        epoch: assignment.epoch,
+                        local_is_writer: true,
+                    }));
+                }
+            }
+            let Some(partition) = usage_authority.resolve(record, assignment.epoch, &accepted.proof_digest)?
+            else {
+                // The private delivery listener must remain available while this
+                // accepted scope waits for its durable billing registration.
+                return Ok(None);
+            };
+            Ok(Some(crate::production_admission::AcceptedAdmission::Active {
                 partition,
                 revision: accepted.proof_digest,
-                origin: record.region.parse().map_err(|_| "invalid admitted Region")?,
+                origin,
                 epoch: assignment.epoch,
                 local_is_writer: assignment.writer.member().as_str() == local,
             }))
@@ -563,10 +575,15 @@ impl ProductionAdmissionRuntime {
             }
             let id =
                 terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
+            // Replay the durable record first. The callback independently
+            // classifies revoked storage as maintenance-only and publishes its
+            // retained lease without creating a route or writer epoch.
+            self.host.admit(record.clone())?;
             if self.usage.resolve(&record, proposal.epoch, &proof.proof_digest)?.is_none() {
+                // Missing current usage keeps nonrevoked storage closed; a
+                // revoked replay was already published by the callback above.
                 continue;
             }
-            self.host.admit(record.clone())?;
             // A deletion preparation or acceptance is a durable local fence.
             // Keep the admission manifest so the control plane can retry the
             // operation, but do not construct a normal replication lane for
