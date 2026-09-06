@@ -18,6 +18,9 @@ use std::{
 };
 
 mod authorized;
+mod branch_restore;
+#[cfg(test)]
+mod branch_restore_tests;
 mod export;
 mod ingest;
 pub mod lifecycle_state;
@@ -1202,11 +1205,7 @@ impl Drop for LeaderGuard {
 }
 
 impl EngineConfig {
-    fn open_owner(&self) -> Result<crate::storage::DatabaseOwner, EngineOpenError> {
-        let location = self.location();
-        if location.as_os_str().is_empty() {
-            return Err(EngineOpenError::InvalidConfig);
-        }
+    fn validate_storage_keys(&self) -> Result<(), EngineOpenError> {
         match (&self.owner, &self.storage_keys) {
             (Some(owner), Some(keys)) => {
                 let lease =
@@ -1225,6 +1224,15 @@ impl EngineConfig {
             (Some(_), None) | (None, Some(_)) => return Err(EngineOpenError::InvalidConfig),
             (None, None) => {}
         }
+        Ok(())
+    }
+
+    fn open_owner(&self) -> Result<crate::storage::DatabaseOwner, EngineOpenError> {
+        let location = self.location();
+        if location.as_os_str().is_empty() {
+            return Err(EngineOpenError::InvalidConfig);
+        }
+        self.validate_storage_keys()?;
         if self.allow_create {
             crate::storage::load_or_create(
                 location,

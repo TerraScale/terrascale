@@ -19,9 +19,10 @@ impl Engine {
     pub fn restore_encrypted_sqlite_branch(
         source: &Path,
         source_owner: &DatabaseOwner,
-        config: EngineConfig,
+        config: &EngineConfig,
         operation: &OperationId,
     ) -> Result<StorageSequence, EngineOpenError> {
+        config.validate_storage_keys()?;
         let child = config.owner.as_ref().ok_or(EngineOpenError::InvalidConfig)?;
         let keys = config.storage_keys.as_ref().ok_or(EngineOpenError::InvalidConfig)?;
         if child.database() == source_owner.database()
@@ -33,6 +34,10 @@ impl Engine {
             return Err(EngineOpenError::InvalidConfig);
         }
         let target = &config.location;
+        let metadata = fs::symlink_metadata(target).map_err(|_| EngineOpenError::InvalidConfig)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(EngineOpenError::InvalidConfig);
+        }
         let marker =
             format!("{}:{}:{}", operation.as_str(), source_owner.database(), child.database());
         if fs::read_dir(target).map_err(|_| EngineOpenError::InvalidConfig)?.next().is_some() {
@@ -61,7 +66,13 @@ impl Engine {
         }
         let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
         let staging = parent.join(format!(".branch-restore-{}", crate::identity::generate()));
-        fs::create_dir(&staging).map_err(|_| EngineOpenError::StorageUnavailable)?;
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&staging).map_err(|_| EngineOpenError::StorageUnavailable)?;
         let result = (|| {
             crate::storage::load_or_create(
                 &staging,
@@ -76,42 +87,7 @@ impl Engine {
                 keys.clone(),
             )
             .map_err(|()| EngineOpenError::StorageUnavailable)?;
-            let mut connection = crate::storage::open_physical_sqlite(
-                &crate::storage::database_file(&staging),
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
-            )
-            .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            connection
-                .execute_batch("PRAGMA synchronous=FULL; PRAGMA temp_store=MEMORY;")
-                .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            let transaction =
-                connection.transaction().map_err(|_| EngineOpenError::StorageUnavailable)?;
-            let cut = crate::storage::transform_provenance(&transaction, child)
-                .map_err(|()| EngineOpenError::FormatMismatch)?;
-            crate::storage::transform_branch_schema(&transaction, source_owner, child)
-                .map_err(|()| EngineOpenError::FormatMismatch)?;
-            crate::storage::rebind_owner(&transaction, source, &staging)
-                .map_err(|()| EngineOpenError::FormatMismatch)?;
-            let origin = config.replication_origin.as_ref().map_or_else(
-                || child.region().as_str().to_owned(),
-                |origin| origin.as_str().to_owned(),
-            );
-            transaction.execute("INSERT INTO meta(key,value) VALUES('local_origin',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [origin]).map_err(|_| EngineOpenError::StorageUnavailable)?;
-            let cut = i64::try_from(cut).map_err(|_| EngineOpenError::FormatMismatch)?;
-            transaction
-                .execute(
-                    "INSERT INTO meta(key,value) VALUES('branch_restore_operation',?1)",
-                    [&marker],
-                )
-                .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            transaction
-                .execute("INSERT INTO meta(key,value) VALUES('branch_restore_cut',?1)", [cut])
-                .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            transaction.commit().map_err(|_| EngineOpenError::StorageUnavailable)?;
-            connection
-                .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-                .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            drop(connection);
+            let cut = transform_snapshot(source, &staging, source_owner, child, config, &marker)?;
             drop(registration);
             let mut staged = config.clone();
             staged.location.clone_from(&staging);
@@ -132,4 +108,49 @@ impl Engine {
         }
         result
     }
+}
+
+fn transform_snapshot(
+    source: &Path,
+    staging: &Path,
+    source_owner: &DatabaseOwner,
+    child: &DatabaseOwner,
+    config: &EngineConfig,
+    marker: &str,
+) -> Result<i64, EngineOpenError> {
+    let mut connection = crate::storage::open_physical_sqlite(
+        &crate::storage::database_file(staging),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+    )
+    .map_err(|_| EngineOpenError::StorageUnavailable)?;
+    connection
+        .execute_batch("PRAGMA synchronous=FULL; PRAGMA temp_store=MEMORY;")
+        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+    let transaction = connection.transaction().map_err(|_| EngineOpenError::StorageUnavailable)?;
+    let cut = crate::storage::transform_provenance(&transaction, child)
+        .map_err(|()| EngineOpenError::FormatMismatch)?;
+    crate::storage::transform_branch_schema(&transaction, source_owner, child)
+        .map_err(|()| EngineOpenError::FormatMismatch)?;
+    crate::storage::rebind_owner(&transaction, source, staging)
+        .map_err(|()| EngineOpenError::FormatMismatch)?;
+    let origin = config
+        .replication_origin
+        .as_ref()
+        .map_or_else(|| child.region().as_str().to_owned(), |origin| origin.as_str().to_owned());
+    transaction.execute("INSERT INTO meta(key,value) VALUES('local_origin',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [origin]).map_err(|_| EngineOpenError::StorageUnavailable)?;
+    let cut = i64::try_from(cut).map_err(|_| EngineOpenError::FormatMismatch)?;
+    transaction
+        .execute(
+            "INSERT INTO meta(key,value) VALUES('branch_restore_operation',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [&marker],
+        )
+        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+    transaction
+        .execute("INSERT INTO meta(key,value) VALUES('branch_restore_cut',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [cut])
+        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+    transaction.commit().map_err(|_| EngineOpenError::StorageUnavailable)?;
+    connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+    Ok(cut)
 }

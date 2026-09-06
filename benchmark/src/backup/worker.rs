@@ -1120,6 +1120,55 @@ mod tests {
         });
     }
 
+    async fn verify_fleet_policy_and_purge(
+        fleet: &mut NativeBackupFleet,
+        engine: &Engine,
+        first: &Arc<ObjectDestination>,
+        second: &Arc<ObjectDestination>,
+    ) {
+        let identity = engine.database_id().to_string();
+        fleet
+            .change_policy(&identity, "policy-2", vec![(Provider::Tigris, second.clone())])
+            .await
+            .unwrap();
+        assert_eq!(fleet.policy(&identity).unwrap().0, "policy-2");
+        assert_eq!(fleet.health(&identity).unwrap().providers, vec![(Provider::Tigris, true)]);
+        // Explicit removal retains old provider history for retention/deletion.
+        assert!(!first.list_points(&identity, 8).await.unwrap().is_empty());
+        fleet
+            .change_policy(
+                &identity,
+                "policy-3",
+                vec![(Provider::Oci, first.clone()), (Provider::Tigris, second.clone())],
+            )
+            .await
+            .unwrap();
+        assert!(fleet.health(&identity).unwrap().protected);
+        // A new durable write must be visible before another scheduler tick.
+        committed(put(
+            engine,
+            engine.database_owner().tenant().to_text().as_str(),
+            "op-observe",
+            "doc-1",
+            "users",
+            text("observe"),
+            LocalDurability::Synced,
+        ));
+        let observed = fleet.observe_protection(&identity).unwrap();
+        assert!(!observed.protected);
+        assert!(observed.source_sequence > observed.protected_sequence);
+        assert!(
+            fleet.health(&identity).unwrap().protected,
+            "observation leaves historical receipt unchanged"
+        );
+        assert!(
+            fleet.purge_retained(&identity, &[first.clone(), second.clone()]).await.unwrap() > 0
+        );
+        assert!(first.list_points(&identity, 8).await.unwrap().is_empty());
+        assert!(second.list_points(&identity, 8).await.unwrap().is_empty());
+        assert!(fleet.sync_once().await.is_empty());
+    }
+
     async fn verify_fleet_retention(
         fleet: &mut NativeBackupFleet,
         engine: &Engine,
@@ -1132,7 +1181,7 @@ mod tests {
         // each remaining provider still restores without those predecessors.
         std::thread::sleep(Duration::from_millis(2));
         committed(put(
-            &engine,
+            engine,
             engine.database_owner().tenant().to_text().as_str(),
             "op-3",
             "doc-3",
@@ -1142,7 +1191,7 @@ mod tests {
         ));
         let lease = key_provider.lease().unwrap();
         let root = run_backup(
-            &engine,
+            engine,
             BackupPlan::full(
                 BackupEncryption::from_database_key_lease(
                     &lease,
@@ -1151,9 +1200,13 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            &staging,
+            staging,
         )
         .unwrap();
+        // The full root was captured outside `sync_once`; mark the stream as
+        // unprotected so the scheduler adopts and uploads this newly staged
+        // root instead of treating the previous protected state as current.
+        fleet.streams.get_mut(&identity).unwrap().health.protected = false;
         fleet.streams.get_mut(&identity).unwrap().due = Instant::now();
         assert!(fleet.sync_once().await.is_empty());
         enforce_retention_at(
@@ -1164,7 +1217,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(point_paths(&staging, 8).unwrap().len(), 1);
+        assert_eq!(point_paths(staging, 8).unwrap().len(), 1);
         for provider in [Provider::Oci, Provider::Tigris] {
             let receipt = fleet
                 .restore_from_provider(
@@ -1263,47 +1316,7 @@ mod tests {
                 vec![(Provider::Oci, true), (Provider::Tigris, true)]
             );
             verify_fleet_retention(&mut fleet, &engine, &staging, limits).await;
-            fleet
-                .change_policy(&identity, "policy-2", vec![(Provider::Tigris, second.clone())])
-                .await
-                .unwrap();
-            assert_eq!(fleet.policy(&identity).unwrap().0, "policy-2");
-            assert_eq!(fleet.health(&identity).unwrap().providers, vec![(Provider::Tigris, true)]);
-            // Explicit removal retains old provider history for retention/deletion.
-            assert!(!first.list_points(&identity, 8).await.unwrap().is_empty());
-            fleet
-                .change_policy(
-                    &identity,
-                    "policy-3",
-                    vec![(Provider::Oci, first.clone()), (Provider::Tigris, second.clone())],
-                )
-                .await
-                .unwrap();
-            assert!(fleet.health(&identity).unwrap().protected);
-            // A new durable write must be visible before another scheduler tick.
-            committed(put(
-                &engine,
-                engine.database_owner().tenant().to_text().as_str(),
-                "op-observe",
-                "doc-1",
-                "users",
-                text("observe"),
-                LocalDurability::Synced,
-            ));
-            let observed = fleet.observe_protection(&identity).unwrap();
-            assert!(!observed.protected);
-            assert!(observed.source_sequence > observed.protected_sequence);
-            assert!(
-                fleet.health(&identity).unwrap().protected,
-                "observation leaves historical receipt unchanged"
-            );
-            assert!(
-                fleet.purge_retained(&identity, &[first.clone(), second.clone()]).await.unwrap()
-                    > 0
-            );
-            assert!(first.list_points(&identity, 8).await.unwrap().is_empty());
-            assert!(second.list_points(&identity, 8).await.unwrap().is_empty());
-            assert!(fleet.sync_once().await.is_empty());
+            verify_fleet_policy_and_purge(&mut fleet, &engine, &first, &second).await;
             assert!(!staging.exists());
         });
     }

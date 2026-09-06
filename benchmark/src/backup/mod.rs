@@ -1121,8 +1121,7 @@ fn execute(
             .as_millis(),
     )
     .map_err(|_| BackupError::SourceUnavailable)?;
-    let captured_unix_millis = plan.capture_unix_millis.unwrap_or(now_unix_millis);
-    if captured_unix_millis > now_unix_millis {
+    if plan.capture_unix_millis.is_some_and(|captured| captured > now_unix_millis) {
         return Err(BackupError::SourceUnavailable);
     }
     // Sample the clock before taking the source high-water snapshot. The
@@ -1131,6 +1130,10 @@ fn execute(
     let boundary = resolve_boundary(engine, &mut state, plan, destination)?;
     let boundary_unix_millis =
         engine.backup_boundary_unix_millis(boundary).map_err(|_| BackupError::SourceUnavailable)?;
+    // The default capture time is the sampled wall clock. Callers retrying an
+    // uncertain result must carry the original explicit capture time so the
+    // manifest identity remains stable.
+    let captured_unix_millis = plan.capture_unix_millis.unwrap_or(now_unix_millis);
     if captured_unix_millis < boundary_unix_millis {
         return Err(BackupError::SourceUnavailable);
     }

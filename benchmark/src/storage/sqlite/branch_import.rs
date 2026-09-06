@@ -141,10 +141,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn copy_rejects_plaintext_source_with_production_owner() {
-        let root = tempfile::tempdir().unwrap();
-        let source = root.path().join("source");
-        let target = root.path().join("target");
+    fn copy_rejects_valid_plaintext_source_without_registration() {
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-branch-import-plaintext-{}", crate::identity::generate()));
+        std::fs::create_dir(&root).unwrap();
+        let source = root.join("source");
+        let target = root.join("target");
         std::fs::create_dir(&source).unwrap();
         let owner = DatabaseOwner::local_development();
         crate::storage::load_or_create(
@@ -153,10 +155,108 @@ mod tests {
             crate::storage::OwnershipMode::Production,
         )
         .unwrap();
-        std::fs::write(source.join(DATABASE_FILE), b"plaintext sqlite").unwrap();
+        let binding = super::super::database_binding(&source).unwrap().unwrap();
+        let connection = rusqlite::Connection::open(source.join(DATABASE_FILE)).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE documents(
+                     tenant TEXT, collection TEXT, id TEXT, commit_seq INTEGER,
+                     commit_ulid TEXT, revision INTEGER, requested INTEGER,
+                     digest BLOB, version INTEGER, deleted INTEGER,
+                     committed_at INTEGER, body BLOB
+                 );",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO meta(key,value) VALUES(?1,?2)",
+                rusqlite::params![SCHEMA_BINDING_KEY, &binding],
+            )
+            .unwrap();
+        assert_eq!(
+            connection
+                .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+        drop(connection);
 
         let keys = crate::engine::test_storage_keys(&owner, 201);
         assert!(copy_encrypted_snapshot(&source, &target, &owner, keys).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copy_accepts_encrypted_source_and_reencrypts_with_distinct_keys() {
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-branch-import-encrypted-{}", crate::identity::generate()));
+        std::fs::create_dir(&root).unwrap();
+        let source = root.join("source");
+        let target = root.join("target");
+        std::fs::create_dir(&source).unwrap();
+        let source_owner = DatabaseOwner::local_development();
+        let target_owner = DatabaseOwner::local_development();
+        crate::storage::load_or_create(
+            &source,
+            Some(&source_owner),
+            crate::storage::OwnershipMode::Production,
+        )
+        .unwrap();
+        let source_keys = crate::engine::test_storage_keys(&source_owner, 202);
+        let source_registration = EncryptedStorage::register(&source, source_keys).unwrap();
+        let source_binding = super::super::database_binding(&source).unwrap().unwrap();
+        let source_connection = open_physical_sqlite(
+            &source.join(DATABASE_FILE),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
+        )
+        .unwrap();
+        source_connection
+            .execute_batch(
+                "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE documents(
+                     tenant TEXT, collection TEXT, id TEXT, commit_seq INTEGER,
+                     commit_ulid TEXT, revision INTEGER, requested INTEGER,
+                     digest BLOB, version INTEGER, deleted INTEGER,
+                     committed_at INTEGER, body BLOB
+                 );",
+            )
+            .unwrap();
+        source_connection
+            .execute(
+                "INSERT INTO meta(key,value) VALUES(?1,?2)",
+                rusqlite::params![SCHEMA_BINDING_KEY, &source_binding],
+            )
+            .unwrap();
+        source_connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        drop(source_connection);
+
+        let target_keys = crate::engine::test_storage_keys(&target_owner, 203);
+        let target_registration =
+            copy_encrypted_snapshot(&source, &target, &source_owner, target_keys).unwrap();
+        let target_connection = open_physical_sqlite(
+            &target.join(DATABASE_FILE),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        assert_eq!(
+            target_connection
+                .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+        assert_eq!(
+            target_connection
+                .query_row("SELECT value FROM meta WHERE key=?1", [SCHEMA_BINDING_KEY], |row| {
+                    row.get::<_, String>(0)
+                },)
+                .unwrap(),
+            source_binding
+        );
+        drop(target_connection);
+        drop(target_registration);
+        drop(source_registration);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -169,7 +269,7 @@ mod tests {
             crate::identity::DatabaseUlid::generate(),
             source.region(),
         );
-        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
         connection
             .execute_batch("CREATE TABLE schema_metadata (database_id TEXT NOT NULL, branch TEXT NOT NULL, collection TEXT NOT NULL, envelope BLOB NOT NULL, PRIMARY KEY(database_id, branch, collection)) WITHOUT ROWID")
             .unwrap();

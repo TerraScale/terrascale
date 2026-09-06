@@ -44,6 +44,16 @@ pub(super) fn location(tag: &str) -> PathBuf {
     path
 }
 
+fn capture_now() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("wall clock")
+            .as_millis(),
+    )
+    .expect("timestamp fits")
+}
+
 pub(super) fn open_engine(tag: &str) -> (PathBuf, Engine) {
     let dir = location(tag);
     let engine =
@@ -684,11 +694,13 @@ fn backup_throttling_limits_reads_without_reordering_or_dropping_records() {
     // the bound must never reorder or drop. The run also exercises the delay
     // path itself, but no wall-clock assertion is made here: timing facts
     // belong to the benchmark and recovery lanes, not focused tests.
+    let capture_unix_millis = capture_now();
     let bounded = run_backup(
         &engine,
         BackupPlan::local_test_full_plaintext()
             .with_read_ops_per_second(500)
-            .with_member_bound_bytes(4096),
+            .with_member_bound_bytes(4096)
+            .with_capture_unix_millis(capture_unix_millis),
         &destination,
     )
     .expect("throttled backup runs");
@@ -703,7 +715,9 @@ fn backup_throttling_limits_reads_without_reordering_or_dropping_records() {
 
     let unbounded = run_backup(
         &engine,
-        BackupPlan::local_test_full_plaintext().with_member_bound_bytes(4096),
+        BackupPlan::local_test_full_plaintext()
+            .with_member_bound_bytes(4096)
+            .with_capture_unix_millis(capture_unix_millis),
         &destination,
     )
     .expect("unbounded comparison run");
@@ -1191,13 +1205,14 @@ fn repeated_backup_at_the_same_boundary_is_idempotent() {
         LocalDurability::Synced,
     ));
 
-    let first = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &first_destination)
-        .expect("first run");
-    let second = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &first_destination)
-        .expect("same destination");
+    let capture_unix_millis = capture_now();
+    let plan = || {
+        BackupPlan::local_test_full_plaintext().with_capture_unix_millis(capture_unix_millis)
+    };
+    let first = run_backup(&engine, plan(), &first_destination).expect("first run");
+    let second = run_backup(&engine, plan(), &first_destination).expect("same destination");
     let elsewhere =
-        run_backup(&engine, BackupPlan::local_test_full_plaintext(), &second_destination)
-            .expect("other destination");
+        run_backup(&engine, plan(), &second_destination).expect("other destination");
 
     assert_eq!(
         first.manifest().identity(),
@@ -1739,6 +1754,26 @@ fn assert_timestamp_restore_cases(destination: &Path, cipher: &ArtifactCipher) {
     }
 }
 
+fn commit_timestamp_pair(source: &Engine, tenant_name: &str) -> StorageSequence {
+    let tenant_scope = scope(source, tenant_name);
+    let mut transaction = source
+        .begin(&tenant_scope, source.read_snapshot(&tenant_scope).unwrap(), operation("time-pair"))
+        .unwrap();
+    for id in ["pair-a", "pair-b"] {
+        transaction
+            .put(
+                Document::new(
+                    document_id(id),
+                    CollectionName::try_new("users").unwrap(),
+                    text("pair"),
+                ),
+                ExpectedVersion::Any,
+            )
+            .unwrap();
+    }
+    committed(transaction.commit(LocalDurability::Synced))
+}
+
 #[test]
 fn timestamp_pitr_replays_whole_commits_at_exact_cutoffs_and_rejects_retention_gaps() {
     let owner = DatabaseOwner::local_development();
@@ -1782,23 +1817,7 @@ fn timestamp_pitr_replays_whole_commits_at_exact_cutoffs_and_rejects_retention_g
         &destination,
     )
     .unwrap();
-    let tenant_scope = scope(&source, &tenant_name);
-    let mut transaction = source
-        .begin(&tenant_scope, source.read_snapshot(&tenant_scope).unwrap(), operation("time-pair"))
-        .unwrap();
-    for id in ["pair-a", "pair-b"] {
-        transaction
-            .put(
-                Document::new(
-                    document_id(id),
-                    CollectionName::try_new("users").unwrap(),
-                    text("pair"),
-                ),
-                ExpectedVersion::Any,
-            )
-            .unwrap();
-    }
-    let pair = committed(transaction.commit(LocalDurability::Synced));
+    let pair = commit_timestamp_pair(&source, &tenant_name);
     set_time(pair, 2_000);
     let last = committed(put(
         &source,

@@ -701,8 +701,20 @@ reporting 37 library and 54 test-build diagnostics. The added physical-restore
 test's size warning was addressed by extracting its placement and usage-request
 helpers. No normal push or complete-check success is claimed.
 
-The existing `src/engine/branch_restore.rs` is not declared by `engine/mod.rs`
-and references an absent `transform_branch_schema` integration. It remains
-unfinished work, not a qualified native import path. Its future connection setup
-also records the memory-only temporary-store requirement. The tests above cover
-the compiled shared provenance helper and local physical restore only.
+The native encrypted branch module is now compiled. Its schema transform
+validates the source/child owner relationship and remaps database-scoped schema
+rows while preserving branch names and envelope bytes. The copy helper requires
+both a live encrypted source registration and a regular encrypted companion;
+logical reads and writes decrypt with source keys and encrypt with child keys.
+Child-key provider, purpose and owner scope are validated before source access.
+Private staging is verified before rename, and branch markers support repeated
+branching as well as same-operation retries.
+
+Independent review caught and resolved late child-key authorization and a
+backup-test helper accidentally generating a new key provider. Final source
+review found no material regression. The native branch selection passed all ten
+tests (`98861`), including distinct keys, valid plaintext rejection, child and
+grandchild schema/document preservation, retries, and wrong-owner key rejection.
+All seven ULID tests passed (`64276`), preserving strict parser and generation
+behavior. The latest test-helper extractions still require the broader runtime
+checks below; these local checks do not qualify production branch delivery.
