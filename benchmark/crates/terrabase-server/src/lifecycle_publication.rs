@@ -302,14 +302,31 @@ impl NativeLifecyclePublisher {
 
 /// Owned maintenance task; shutdown cancels any bounded in-flight transport.
 pub struct LifecyclePublicationTask {
-    stop: tokio::sync::oneshot::Sender<()>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
     join: tokio::task::JoinHandle<()>,
 }
 impl LifecyclePublicationTask {
+    /// Returns whether the publication task has terminated.
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        self.join.is_finished()
+    }
+
     /// Stops and joins the sole publication task.
     pub async fn shutdown(self) {
-        let _ = self.stop.send(());
-        let _ = self.join.await;
+        let Self { mut stop, join } = self;
+        if let Some(stop) = stop.take() {
+            let _ = stop.send(());
+        }
+        let _ = join.await;
+    }
+}
+impl Drop for LifecyclePublicationTask {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            stop.send(()).ok();
+        }
+        self.join.abort();
     }
 }
 
@@ -369,7 +386,7 @@ pub fn spawn(
             }
         }
     });
-    Ok(LifecyclePublicationTask { stop, join })
+    Ok(LifecyclePublicationTask { stop: Some(stop), join })
 }
 
 #[cfg(test)]

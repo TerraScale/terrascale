@@ -1,4 +1,5 @@
 //! Accepted database assignments assembled into the live, lease-owning data plane.
+use crate::production_readiness::ReplicationReadinessFacts;
 use crate::replication_peers::{
     PeerDatabase, PeerDatabaseBatch, PhysicalDriver, ReplicationPeers, SnapshotReceiver,
 };
@@ -20,7 +21,12 @@ use terrabase_cluster::wal_snapshot::WalSnapshotSource;
 use terrabase_tbep::production_causal::CausalDriver;
 use terrabase_tbep::registry::BoundScope;
 
+mod host_readiness;
+mod public_server;
 mod readiness_inventory;
+
+pub use public_server::{PreparedProductionPublic, PublicServingStatus};
+pub use host_readiness::WriterHostReadiness;
 
 /// Filesystem and residency bounds of an authenticated admission record.
 /// Writer identity is deliberately obtained from the durable assignment source.
@@ -90,21 +96,21 @@ impl ProductionDataLifecycle {
     /// Evaluates every accepted database lane using current durable receipts.
     /// Missing inventory, failed workers, or draining never report readiness.
     #[must_use]
-    pub fn replication_readiness(&self) -> crate::production_readiness::ReplicationReadinessFacts {
+    pub fn replication_readiness(&self) -> ReplicationReadinessFacts {
         if self.is_draining() {
-            return Default::default();
+            return ReplicationReadinessFacts::default();
         }
         let Some(data) = self.get() else {
-            return Default::default();
+            return ReplicationReadinessFacts::default();
         };
         if data.ensure_running().is_err() {
-            return Default::default();
+            return ReplicationReadinessFacts::default();
         }
         let Ok(expected) = self.expected.lock().map(|expected| expected.clone()) else {
-            return Default::default();
+            return ReplicationReadinessFacts::default();
         };
         let Ok(boundaries) = self.progress.active_boundaries() else {
-            return Default::default();
+            return ReplicationReadinessFacts::default();
         };
         let facts = crate::production_readiness::evaluate(
             expected.as_ref(),
@@ -112,7 +118,32 @@ impl ProductionDataLifecycle {
             &boundaries,
         );
         if self.is_draining() || data.ensure_running().is_err() {
-            Default::default()
+            ReplicationReadinessFacts::default()
+        } else {
+            facts
+        }
+    }
+
+    /// Checks activated writer hosts against the accepted assignment inventory.
+    /// Uses retained leases without reentering the public readiness callback.
+    /// Physical follower storage is qualified separately from writer journals.
+    #[must_use]
+    pub fn writer_host_readiness(&self) -> WriterHostReadiness {
+        let Some(data) = self.get() else {
+            return WriterHostReadiness::default();
+        };
+        if self.is_draining() || data.ensure_running().is_err() {
+            return WriterHostReadiness::default();
+        }
+        let Ok(Some(expected)) = self.expected.lock().map(|expected| expected.clone()) else {
+            return WriterHostReadiness::default();
+        };
+        let Ok(snapshot) = self.registry.retained_snapshot() else {
+            return WriterHostReadiness::default();
+        };
+        let facts = host_readiness::evaluate_writer_hosts(&expected, &snapshot);
+        if self.is_draining() || data.ensure_running().is_err() {
+            WriterHostReadiness::default()
         } else {
             facts
         }
@@ -946,18 +977,16 @@ impl ProductionAdmissionRuntime {
         Ok(())
     }
 
-    /// Serves the customer API and auth routes using the exact registry and receipt ledger.
-    /// The parent supplies the configured API capabilities; this rejects a second catalog.
+    /// Validates and binds the customer API without starting background workers.
     ///
     /// # Errors
     /// Refuses mismatched data authorities, missing identity receiver, or listener failures.
-    pub async fn serve_public(
+    pub async fn prepare_public(
         &self,
         public: &crate::config::PublicApiConfig,
         state: Arc<crate::api::ApiState>,
         auth: Option<Arc<crate::auth_runtime::AuthRuntime>>,
-        shutdown: impl std::future::Future<Output = ()> + Send + 'static,
-    ) -> Result<(), String> {
+    ) -> Result<PreparedProductionPublic, String> {
         if state.catalog.is_some()
             || state.control.is_some()
             || state
@@ -981,32 +1010,14 @@ impl ProductionAdmissionRuntime {
                 crate::usage_closure_http::router(state.clone(), key).map_err(str::to_owned)?,
             );
         }
-        let publication = public
-            .lifecycle_publication
-            .as_ref()
-            .map(|config| {
-                crate::lifecycle_publication::spawn(config, self.registry.clone()).map_err(failure)
-            })
-            .transpose()?;
         let listener = tokio::net::TcpListener::bind(public.listen).await.map_err(failure)?;
-        let dispatcher = crate::api::spawn_webhook_dispatcher(&state);
-        let migrations = crate::api::spawn_schema_migrations(&state);
-        let result =
-            axum::serve(listener, router).with_graceful_shutdown(shutdown).await.map_err(failure);
-        if let Some(publication) = publication {
-            publication.shutdown().await;
-        }
-        if let Some(exports) = &state.exports {
-            exports.stop();
-        }
-        if let Some(dispatcher) = dispatcher {
-            dispatcher.shutdown().await;
-        }
-        if let Some(migrations) = migrations {
-            migrations.abort();
-            let _ = migrations.await;
-        }
-        result
+        Ok(PreparedProductionPublic::new(
+            listener,
+            router,
+            state,
+            public.lifecycle_publication.clone(),
+            self.registry.clone(),
+        ))
     }
 
     /// Stops every data worker before the parent closes the root Member.

@@ -215,10 +215,22 @@ pub struct DispatchWorker {
     task: tokio::task::JoinHandle<()>,
 }
 impl DispatchWorker {
+    /// Returns whether the dispatcher task has terminated.
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
+
     /// Stops admission immediately and waits for an in-flight bounded transport call.
     pub async fn shutdown(self) {
         self.stop.store(true, std::sync::atomic::Ordering::Release);
         let _ = self.task.await;
+    }
+}
+impl Drop for DispatchWorker {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        self.task.abort();
     }
 }
 

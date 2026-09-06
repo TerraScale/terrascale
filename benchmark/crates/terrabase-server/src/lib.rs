@@ -27,6 +27,7 @@ pub mod lifecycle_publication;
 pub mod production;
 pub mod production_admission;
 pub mod production_data_runtime;
+pub mod production_metrics;
 pub mod production_readiness;
 pub mod provisioning;
 pub mod reactive_api;

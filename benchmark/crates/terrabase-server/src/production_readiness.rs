@@ -27,6 +27,10 @@ pub(crate) struct ExpectedScope {
 /// Replication-specific readiness evidence. Other production facts remain
 /// deliberately outside this evaluator.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "Independent measured readiness gates can fail in any combination"
+)]
 pub struct ReplicationReadinessFacts {
     /// Whether a durable accepted assignment inventory was supplied.
     pub accepted: bool,
@@ -63,9 +67,8 @@ pub(crate) fn evaluate(
             durable_progress_available: true,
         };
     }
-    let observed = match observations.lock() {
-        Ok(observed) => observed,
-        Err(_) => return ReplicationReadinessFacts { accepted, ..Default::default() },
+    let Ok(observed) = observations.lock() else {
+        return ReplicationReadinessFacts { accepted, ..Default::default() };
     };
     let mut physical_ready = true;
     let mut causal_ready = true;
@@ -130,11 +133,7 @@ pub(crate) fn evaluate(
                 boundary,
                 physical.readiness.as_ref(),
             );
-            let verified_empty = correlated
-                && physical
-                    .readiness
-                    .as_ref()
-                    .is_some_and(|proof| proof.frontier().values().all(|sequence| *sequence == 0));
+            let verified_empty = correlated && empty_frontier(physical.readiness.as_ref());
             if facts.region != *region || (!facts.causal_receipt_observed && !verified_empty) {
                 causal_ready = false;
             }
@@ -153,6 +152,10 @@ pub(crate) fn evaluate(
         repair_ready,
         durable_progress_available,
     }
+}
+
+fn empty_frontier(readiness: Option<&VerifiedReadinessCut>) -> bool {
+    readiness.is_some_and(|proof| proof.frontier().values().all(|sequence| *sequence == 0))
 }
 
 fn physical_matches(
@@ -192,7 +195,7 @@ fn correlated_repair(
         && facts.region == region
         && facts
             .repair_observed_at
-            .is_some_and(|observed| observed.elapsed() <= std::time::Duration::from_secs(60))
+            .is_some_and(|observed| observed.elapsed() <= std::time::Duration::from_mins(1))
         && readiness.scope() == expected.scope
         && readiness.generation() == expected.generation
         && readiness.epoch() == expected.epoch
@@ -410,8 +413,11 @@ mod tests {
             .unwrap()
             .get_mut(&("writer-sfo".into(), scope))
             .unwrap()
-            .repair_observed_at =
-            Some(std::time::Instant::now() - std::time::Duration::from_secs(61));
+            .repair_observed_at = Some(
+            std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(61))
+                .expect("stale repair observation must be representable"),
+        );
         let stale = evaluate(
             Some(&BTreeMap::from([(
                 scope,
@@ -469,11 +475,14 @@ mod tests {
         let stale =
             evaluate(Some(&expected_map), &observations, &BTreeMap::from([(scope, boundary())]));
         assert!(!stale.physical_ready);
-        let stale_timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-            .saturating_sub(61_000) as u64;
+        let stale_timestamp = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                .saturating_sub(61_000),
+        )
+        .unwrap();
         let mut expired = observed(scope, false);
         expired.readiness = Some(crate::replication_proof::test_verified_readiness_cut_at(
             scope,

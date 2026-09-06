@@ -299,8 +299,7 @@ async fn serve_pending_placement_control(
 ) -> Result<(), ProductionStartupError> {
     let unavailable = pending_control_error;
     let setup = prepare_pending_control(config, production).await?;
-    let PendingControlSetup { server, listener, observations, metrics, auth_runtime, rotation } =
-        setup;
+    let PendingControlSetup { server, listener, observations, auth_runtime, rotation } = setup;
     let (auth_stop, auth_signal) = oneshot::channel();
     let auth_listen = config.public_api.as_ref().map(|public| public.listen);
     let mut auth_task = tokio::spawn(async move {
@@ -333,14 +332,9 @@ async fn serve_pending_placement_control(
         let _ = control_signal.await;
     }));
     let (metrics_stop, metrics_signal) = oneshot::channel();
-    let app = crate::http::router(metrics);
-    let mut metrics_task = tokio::spawn(async move {
-        axum::serve(observations, app)
-            .with_graceful_shutdown(async {
-                let _ = metrics_signal.await;
-            })
-            .await
-    });
+    let mut metrics_task = tokio::spawn(observations.serve(async {
+        let _ = metrics_signal.await;
+    }));
     let mut control_finished = false;
     let mut metrics_finished = false;
     let mut auth_finished = false;
@@ -412,8 +406,7 @@ fn pending_control_error(detail: &'static str) -> ProductionStartupError {
 struct PendingControlSetup {
     server: Arc<terrabase_tbep::grpc::placement_control::PlacementControlServer>,
     listener: terrabase_tbep::grpc::placement_control::PlacementControlListener,
-    observations: tokio::net::TcpListener,
-    metrics: Arc<terrabase::observability::MetricsRegistry>,
+    observations: crate::production_metrics::PreparedMetrics,
     auth_runtime: Option<Arc<crate::auth_runtime::AuthRuntime>>,
     rotation: Option<crate::credential_rotation::BoundRotation>,
 }
@@ -453,10 +446,12 @@ async fn prepare_pending_control(
         .await
         .map_err(|_| pending_control_error("placement control mTLS listener cannot bind"))?;
     let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
-    metrics.set_component_health(Component::Metrics, HealthStatus::Healthy);
-    let observations = tokio::net::TcpListener::bind(production.transport.metrics_listen)
-        .await
-        .map_err(|_| pending_control_error("pending placement metrics listener cannot bind"))?;
+    let observations = crate::production_metrics::PreparedMetrics::bind(
+        production.transport.metrics_listen,
+        metrics,
+    )
+    .await
+    .map_err(|_| pending_control_error("pending placement metrics listener cannot bind"))?;
     let auth_runtime = if let Some(public) = &config.public_api {
         let endpoint = Arc::new(
             build_production_transport(production)
@@ -478,7 +473,7 @@ async fn prepare_pending_control(
     } else {
         None
     };
-    Ok(PendingControlSetup { server, listener, observations, metrics, auth_runtime, rotation })
+    Ok(PendingControlSetup { server, listener, observations, auth_runtime, rotation })
 }
 
 fn open_pending_auth_journal(

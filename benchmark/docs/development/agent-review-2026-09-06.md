@@ -990,3 +990,41 @@ Server all-target Clippy remains at 75 diagnostics after removing the new
 redundant ownership clone (`57746`); log:
 `/tmp/terrascale-owned-lifecycle-clippy-final.log`. No full workspace check or
 production-readiness claim is made.
+
+
+Replication readiness now derives its expected local lanes from verified accepted
+placement and WAL assignments. Missing inventory fails closed; an accepted empty
+inventory has no replication lanes to qualify. Temporary authority outages retain
+the last accepted inventory, while conclusive invalid authority revokes it. Drain
+and failed worker ownership suppress replication readiness.
+
+The evaluator checks exact physical peers, role, generation, epoch, bounded
+durable progress and fresh sealed cuts. Writers additionally require causal and
+correlated remote repair evidence. Followers do not require writer-only causal
+lanes. A fresh verified empty repair cut permits empty multi-Region startup
+without inventing a causal receipt or advancing a ledger. Repair proofs correlate
+with the physical source readiness cut, not an absent remote readiness cut.
+Independent review found the cached-authority and empty-database issues; they
+were corrected before the final policy review.
+
+All 11 readiness tests passed after lint corrections (`26716`), including an
+actual RepairDriver exchange over durable Engines, accepted inventory validation,
+and lifecycle outage/revocation behavior. Its correlated physical cut is a
+test-only synthetic fixture, not a full WAL/QUIC integration qualification. Log:
+`/tmp/terrascale-readiness-lint-fixed-tests.log`. Server all-target Clippy returned
+to the prior 75 diagnostics (`89991`), removing the 12 new readiness diagnostics;
+it remains a failing check. Log: `/tmp/terrascale-readiness-clippy-fixed.log`.
+
+The real ProductionDataPlane adapter and accepted-path listener composition are
+still absent. Its future ownership must use a Weak lifecycle reference to avoid
+a runtime/adapter/worker cycle, with orchestration retaining the strong owner.
+Writer evidence must inspect exact retained owner-bound hosts and bounded journal
+replay. Followers must retain exclusive physical-file ownership without opening
+a second Engine. Live metrics, complete serving-host evidence, and coordinated
+auth/public listener ownership remain required. Startup continues to refuse
+incomplete composition. ULID migration and other concurrent changes are retained.
+
+The final stale-repair fixture requires a representable expired Instant, so it
+cannot silently exercise missing evidence instead. Its focused real-repair test
+passed (`83613`); log: `/tmp/terrascale-readiness-stale-fixture-test.log`. Independent
+source review found no material defects in the final lint and fixture corrections.
