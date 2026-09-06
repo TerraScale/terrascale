@@ -1,10 +1,11 @@
 //! Host-scoped mTLS control listener for durable pending placement intent.
 //! It exposes no data operations and makes no membership or readiness claim.
 
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use tokio_rustls::TlsAcceptor;
@@ -26,6 +27,8 @@ pub struct PlacementControlServer {
     config: TbepGrpcConfig,
     inflight: Arc<AtomicUsize>,
     draining: AtomicBool,
+    observer_principals: BTreeSet<String>,
+    observation_frames: AtomicU64,
 }
 
 impl PlacementControlServer {
@@ -36,9 +39,14 @@ impl PlacementControlServer {
     pub fn new(
         journal: Arc<PlacementJournal>,
         config: TbepGrpcConfig,
+        observer_principals: BTreeSet<String>,
     ) -> Result<Self, PlacementError> {
-        if config.gateway_principals.is_empty()
-            || config.gateway_principals.iter().any(|principal| !principal.starts_with("spiffe://"))
+        if (config.gateway_principals.is_empty() && observer_principals.is_empty())
+            || !config.gateway_principals.is_disjoint(&observer_principals)
+            || config.gateway_principals.iter().chain(observer_principals.iter()).any(|principal| {
+                !principal.starts_with("spiffe://") || principal.len() > super::MAX_PRINCIPAL_BYTES
+                    || principal.chars().any(char::is_whitespace) || principal.chars().any(char::is_control)
+            })
         {
             return Err(PlacementError::Invalid);
         }
@@ -47,6 +55,8 @@ impl PlacementControlServer {
             config,
             inflight: Arc::new(AtomicUsize::new(0)),
             draining: AtomicBool::new(false),
+            observer_principals,
+            observation_frames: AtomicU64::new(0),
         })
     }
 
@@ -95,7 +105,10 @@ impl PlacementControlServer {
         for forbidden in [super::TENANT_METADATA, super::PROJECT_METADATA, super::DATABASE_METADATA]
         {
             if request.metadata().contains_key(forbidden) {
-                return Err(control_status(Code::InvalidArgument, "placement control is host scoped"));
+                return Err(control_status(
+                    Code::InvalidArgument,
+                    "placement control is host scoped",
+                ));
             }
         }
         let principal = metadata_value(
@@ -104,14 +117,17 @@ impl PlacementControlServer {
             super::MAX_PRINCIPAL_BYTES,
         )?;
         if !self.config.gateway_principals.contains(&principal) {
-            return Err(control_status(Code::PermissionDenied, "principal is not an admitted orchestrator"));
+            return Err(control_status(
+                Code::PermissionDenied,
+                "principal is not an admitted orchestrator",
+            ));
         }
-        let certificates = request
-            .peer_certs()
-            .ok_or_else(|| control_status(Code::Unauthenticated, "placement control requires mTLS"))?;
-        let leaf = certificates
-            .first()
-            .ok_or_else(|| control_status(Code::Unauthenticated, "placement control requires mTLS"))?;
+        let certificates = request.peer_certs().ok_or_else(|| {
+            control_status(Code::Unauthenticated, "placement control requires mTLS")
+        })?;
+        let leaf = certificates.first().ok_or_else(|| {
+            control_status(Code::Unauthenticated, "placement control requires mTLS")
+        })?;
         authenticate_gateway_certificate(&principal, leaf.as_ref())?;
         Ok(principal)
     }
@@ -125,7 +141,10 @@ impl PlacementControlServer {
         }
         if self.inflight.fetch_add(1, Ordering::AcqRel) >= self.config.max_inflight() {
             self.inflight.fetch_sub(1, Ordering::AcqRel);
-            return Err(control_status(Code::ResourceExhausted, "placement control is at capacity"));
+            return Err(control_status(
+                Code::ResourceExhausted,
+                "placement control is at capacity",
+            ));
         }
         let permit = Permit(Arc::clone(&self.inflight));
         // Recheck after reserving capacity so drain cannot pass between checks.
@@ -139,7 +158,8 @@ impl PlacementControlServer {
         tokio::time::timeout(self.config.request_timeout(), worker)
             .await
             .map_err(|_| {
-                control_status(Code::DeadlineExceeded, 
+                control_status(
+                    Code::DeadlineExceeded,
                     "placement journal outcome unknown; retry the same operation",
                 )
             })?
@@ -203,6 +223,9 @@ impl PlacementControlListener {
                     .max_decoding_message_size(self.server.config.max_message_bytes())
                     .max_encoding_message_size(self.server.config.max_message_bytes()),
             )
+            .add_service(pb::maintenance_service_server::MaintenanceServiceServer::new(Arc::clone(&self.server))
+                .max_decoding_message_size(self.server.config.max_message_bytes())
+                .max_encoding_message_size(self.server.config.max_message_bytes()))
             .serve_with_incoming_shutdown(incoming, shutdown)
             .await
     }
@@ -261,3 +284,5 @@ fn control_status(code: Code, detail: &str) -> Status {
 
 #[cfg(test)]
 mod tests;
+
+mod observation;

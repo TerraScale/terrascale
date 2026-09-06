@@ -1,0 +1,670 @@
+//! Bounded S3 transfers of encrypted sealed recovery points.
+//!
+//! Each destination is independent. The transfer index is published last and
+//! contains the digest of every ciphertext file; it never contains credentials.
+//! Restore requires a known point prefix and never consults another provider.
+use std::fmt;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use futures_util::StreamExt;
+use object_store::aws::AmazonS3Builder;
+use object_store::path::Path as ObjectPath;
+use object_store::{ClientOptions, ObjectStore, RetryConfig};
+
+const INDEX: &str = "transfer-v1.index";
+const INDEX_LIMIT: u64 = 1024 * 1024;
+const MAX_FILES: usize = 4096;
+
+/// A destination's independently managed cloud provider.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Provider {
+    /// OCI S3 compatibility endpoint in the database's OCI Region.
+    Oci,
+    /// A Tigris bucket with operator-verified geography restrictions.
+    Tigris,
+}
+
+/// S3 credentials whose formatting never reveals key material.
+pub struct Credentials {
+    access_key: String,
+    secret_key: String,
+}
+impl Credentials {
+    /// Takes ownership of the provider's access and secret keys.
+    #[must_use]
+    pub fn new(access_key: String, secret_key: String) -> Self {
+        Self { access_key, secret_key }
+    }
+}
+impl fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Credentials([REDACTED])")
+    }
+}
+impl Drop for Credentials {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.access_key.zeroize();
+        self.secret_key.zeroize();
+    }
+}
+
+/// Operator-owned, admission-validated bucket and resource configuration.
+#[derive(Debug)]
+pub struct DestinationConfig {
+    /// Cloud provider; separate instances have separate credentials and health.
+    pub provider: Provider,
+    /// Explicit HTTPS endpoint, without a path or embedded credentials.
+    pub endpoint: String,
+    /// S3 signing region (OCI Region for OCI; configured Tigris signing region).
+    pub signing_region: String,
+    /// Database's OCI Region, which must match an OCI destination.
+    pub database_region: String,
+    /// Bucket whose placement was verified by the operator control plane.
+    pub bucket: String,
+    /// Bucket's independently verified geography; never inferred from signing region.
+    pub verified_geography: String,
+    /// Database policy's permitted geographies.
+    pub permitted_geographies: Vec<String>,
+    /// Nonempty control-plane placement verification revision.
+    pub placement_revision: String,
+    /// Provider-specific credentials.
+    pub credentials: Credentials,
+    /// Maximum bytes in any ciphertext artifact, bounding upload memory.
+    pub max_artifact_bytes: u64,
+    /// Maximum total bytes in a recovery point, bounding restore staging disk.
+    pub max_point_bytes: u64,
+}
+
+/// Redacted transfer failure. Backend errors and signed URLs are never exposed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransferError {
+    /// Endpoint, residency, credential, or resource configuration is invalid.
+    Configuration,
+    /// Local point is absent, unsealed, malformed, or exceeds resource bounds.
+    InvalidPoint,
+    /// A file does not match the published length or digest.
+    Integrity,
+    /// Provider request failed; pending work must be retained and retried.
+    Unavailable,
+    /// Local filesystem operation failed.
+    LocalIo,
+}
+impl fmt::Display for TransferError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "backup object transfer: {self:?}")
+    }
+}
+impl std::error::Error for TransferError {}
+
+/// Independent S3 destination. Call async methods from the shared backup workers.
+///
+/// Each transfer holds at most one configured artifact in upload memory and
+/// streams downloads. The caller's bounded worker pool limits aggregate usage.
+pub struct ObjectDestination {
+    provider: Provider,
+    store: Arc<dyn ObjectStore>,
+    max_artifact_bytes: u64,
+    max_point_bytes: u64,
+}
+
+#[derive(Debug)]
+struct Entry {
+    name: String,
+    length: u64,
+    digest: blake3::Hash,
+}
+
+impl ObjectDestination {
+    /// Builds a SigV4-authenticated HTTPS client with bounded retries and timeouts.
+    ///
+    /// # Errors
+    /// Rejects unverified residency, wrong OCI Region, and non-provider endpoints.
+    pub fn new(config: DestinationConfig) -> Result<Self, TransferError> {
+        validate_config(&config)?;
+        let store = AmazonS3Builder::new()
+            .with_bucket_name(&config.bucket)
+            .with_region(&config.signing_region)
+            .with_endpoint(&config.endpoint)
+            .with_access_key_id(&config.credentials.access_key)
+            .with_secret_access_key(&config.credentials.secret_key)
+            .with_virtual_hosted_style_request(false)
+            .with_client_options(
+                ClientOptions::new().with_allow_http(false).with_timeout(Duration::from_secs(60)),
+            )
+            .with_retry(RetryConfig {
+                max_retries: 2,
+                retry_timeout: Duration::from_secs(120),
+                ..RetryConfig::default()
+            })
+            .build()
+            .map_err(|_| TransferError::Configuration)?;
+        Ok(Self {
+            provider: config.provider,
+            store: Arc::new(store),
+            max_artifact_bytes: config.max_artifact_bytes,
+            max_point_bytes: config.max_point_bytes,
+        })
+    }
+
+    /// Returns the independently configured provider.
+    #[must_use]
+    pub fn provider(&self) -> Provider {
+        self.provider
+    }
+
+    /// Discovers sealed recovery point prefixes from this provider alone.
+    ///
+    /// # Errors
+    /// Rejects invalid prefixes, listing failures, and a result exceeding `max`.
+    pub async fn list_points(
+        &self,
+        prefix: &str,
+        max: usize,
+    ) -> Result<Vec<String>, TransferError> {
+        validate_prefix(prefix)?;
+        if max == 0 || max > 100_000 {
+            return Err(TransferError::Configuration);
+        }
+        let path =
+            ObjectPath::parse(format!("{prefix}/")).map_err(|_| TransferError::InvalidPoint)?;
+        let mut stream = self.store.list(Some(&path));
+        let mut points = Vec::new();
+        let mut scanned = 0_usize;
+        while let Some(result) = stream.next().await {
+            let object = result.map_err(|_| TransferError::Unavailable)?;
+            scanned += 1;
+            if scanned > max.saturating_mul(MAX_FILES + 1) {
+                return Err(TransferError::InvalidPoint);
+            }
+            let name = object.location.as_ref();
+            if let Some(point) = name.strip_suffix(&format!("/{INDEX}")) {
+                if point.strip_prefix(prefix).is_some_and(|tail| tail.starts_with('/')) {
+                    validate_prefix(point)?;
+                    if points.len() == max {
+                        return Err(TransferError::InvalidPoint);
+                    }
+                    points.push(point.to_owned());
+                }
+            }
+        }
+        points.sort();
+        Ok(points)
+    }
+
+    /// Uploads every encrypted point artifact and publishes its index last.
+    ///
+    /// Prefixes must be immutable, unique per recovery-point identity. Retries
+    /// of the same sealed point are safe. Success includes read-back verification
+    /// of every object, so a successful PUT alone never advances readiness.
+    ///
+    /// # Errors
+    /// Rejects unsealed points, symlinks, oversized artifacts, and partial uploads.
+    pub async fn upload_point(&self, point: &Path, prefix: &str) -> Result<(), TransferError> {
+        validate_prefix(prefix)?;
+        let entries = self.scan_point(point)?;
+        let index = render_index(&entries);
+        for entry in entries
+            .iter()
+            .filter(|entry| entry.name != super::manifest::ENCRYPTED_MANIFEST_FILE)
+            .chain(
+                entries
+                    .iter()
+                    .filter(|entry| entry.name == super::manifest::ENCRYPTED_MANIFEST_FILE),
+            )
+        {
+            let mut bytes = Vec::new();
+            open_regular(&point.join(&entry.name))
+                .map_err(|_| TransferError::LocalIo)?
+                .take(self.max_artifact_bytes + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|_| TransferError::LocalIo)?;
+            if bytes.len() as u64 != entry.length || blake3::hash(&bytes) != entry.digest {
+                return Err(TransferError::Integrity);
+            }
+            let key = object_key(prefix, &entry.name)?;
+            self.store.put(&key, bytes.into()).await.map_err(|_| TransferError::Unavailable)?;
+            self.verify_remote(&key, entry).await?;
+        }
+        let key = object_key(prefix, INDEX)?;
+        let entry = Entry {
+            name: INDEX.into(),
+            length: index.len() as u64,
+            digest: blake3::hash(index.as_bytes()),
+        };
+        self.store
+            .put(&key, index.into_bytes().into())
+            .await
+            .map_err(|_| TransferError::Unavailable)?;
+        self.verify_remote(&key, &entry).await
+    }
+
+    /// Downloads a point into a new directory, verifying every artifact first.
+    ///
+    /// An incomplete download is removed. The final directory appears only after
+    /// complete verification and fsync; existing targets are rejected.
+    ///
+    /// # Errors
+    /// Returns unavailable for missing indexes/artifacts, integrity for corruption,
+    /// and invalid point for malformed indexes or exhausted configured limits.
+    pub async fn download_point(&self, prefix: &str, target: &Path) -> Result<(), TransferError> {
+        validate_prefix(prefix)?;
+        if target.try_exists().map_err(|_| TransferError::LocalIo)? {
+            return Err(TransferError::InvalidPoint);
+        }
+        let bytes = self.read_bounded(&object_key(prefix, INDEX)?, INDEX_LIMIT).await?;
+        let entries = parse_index(&bytes, self.max_artifact_bytes, self.max_point_bytes)?;
+        let parent = target.parent().ok_or(TransferError::InvalidPoint)?;
+        let stage = super::StagingDir::create(parent).map_err(|_| TransferError::LocalIo)?;
+        let result = async {
+            for entry in &entries {
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(stage.path().join(&entry.name))
+                    .map_err(|_| TransferError::LocalIo)?;
+                let response = self
+                    .store
+                    .get(&object_key(prefix, &entry.name)?)
+                    .await
+                    .map_err(|_| TransferError::Unavailable)?;
+                let mut stream = response.into_stream();
+                let mut digest = blake3::Hasher::new();
+                let mut length = 0_u64;
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|_| TransferError::Unavailable)?;
+                    length =
+                        length.checked_add(chunk.len() as u64).ok_or(TransferError::Integrity)?;
+                    if length > entry.length {
+                        return Err(TransferError::Integrity);
+                    }
+                    digest.update(&chunk);
+                    file.write_all(&chunk).map_err(|_| TransferError::LocalIo)?;
+                }
+                if length != entry.length || digest.finalize() != entry.digest {
+                    return Err(TransferError::Integrity);
+                }
+                file.sync_all().map_err(|_| TransferError::LocalIo)?;
+            }
+            File::open(stage.path())
+                .and_then(|file| file.sync_all())
+                .map_err(|_| TransferError::LocalIo)?;
+            // renameat2 NOREPLACE prevents a concurrent caller's target being overwritten.
+            rustix::fs::renameat_with(
+                rustix::fs::CWD,
+                stage.path(),
+                rustix::fs::CWD,
+                target,
+                rustix::fs::RenameFlags::NOREPLACE,
+            )
+            .map_err(|_| TransferError::LocalIo)?;
+            File::open(parent)
+                .and_then(|file| file.sync_all())
+                .map_err(|_| TransferError::LocalIo)?;
+            Ok(())
+        }
+        .await;
+        stage.discard();
+        result
+    }
+
+    fn scan_point(&self, point: &Path) -> Result<Vec<Entry>, TransferError> {
+        if !fs::symlink_metadata(point)
+            .map_err(|_| TransferError::InvalidPoint)?
+            .file_type()
+            .is_dir()
+        {
+            return Err(TransferError::InvalidPoint);
+        }
+        let mut entries = Vec::new();
+        let mut total = 0_u64;
+        for file in fs::read_dir(point).map_err(|_| TransferError::LocalIo)? {
+            let file = file.map_err(|_| TransferError::LocalIo)?;
+            let name = file.file_name().into_string().map_err(|_| TransferError::InvalidPoint)?;
+            validate_name(&name)?;
+            let metadata = fs::symlink_metadata(file.path()).map_err(|_| TransferError::LocalIo)?;
+            if !metadata.file_type().is_file()
+                || metadata.len() > self.max_artifact_bytes
+                || entries.len() == MAX_FILES
+            {
+                return Err(TransferError::InvalidPoint);
+            }
+            total = total.checked_add(metadata.len()).ok_or(TransferError::InvalidPoint)?;
+            if total > self.max_point_bytes {
+                return Err(TransferError::InvalidPoint);
+            }
+            let mut digest = blake3::Hasher::new();
+            let mut source = open_regular(&file.path()).map_err(|_| TransferError::LocalIo)?;
+            let mut buffer = [0_u8; 65536];
+            let mut read_length = 0_u64;
+            loop {
+                let size = source.read(&mut buffer).map_err(|_| TransferError::LocalIo)?;
+                if size == 0 {
+                    break;
+                }
+                read_length =
+                    read_length.checked_add(size as u64).ok_or(TransferError::InvalidPoint)?;
+                if read_length > metadata.len() {
+                    return Err(TransferError::Integrity);
+                }
+                digest.update(&buffer[..size]);
+            }
+            if read_length != metadata.len() {
+                return Err(TransferError::Integrity);
+            }
+            entries.push(Entry { name, length: metadata.len(), digest: digest.finalize() });
+        }
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        validate_entries(&entries)?;
+        Ok(entries)
+    }
+
+    async fn read_bounded(&self, key: &ObjectPath, bound: u64) -> Result<Vec<u8>, TransferError> {
+        let mut stream =
+            self.store.get(key).await.map_err(|_| TransferError::Unavailable)?.into_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| TransferError::Unavailable)?;
+            if (bytes.len() as u64).saturating_add(chunk.len() as u64) > bound {
+                return Err(TransferError::Integrity);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+
+    async fn verify_remote(&self, key: &ObjectPath, expected: &Entry) -> Result<(), TransferError> {
+        let mut stream =
+            self.store.get(key).await.map_err(|_| TransferError::Unavailable)?.into_stream();
+        let mut digest = blake3::Hasher::new();
+        let mut length = 0_u64;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| TransferError::Unavailable)?;
+            length = length.checked_add(chunk.len() as u64).ok_or(TransferError::Integrity)?;
+            if length > expected.length {
+                return Err(TransferError::Integrity);
+            }
+            digest.update(&chunk);
+        }
+        if length != expected.length || digest.finalize() != expected.digest {
+            return Err(TransferError::Integrity);
+        }
+        Ok(())
+    }
+}
+
+fn open_regular(path: &Path) -> std::io::Result<File> {
+    let descriptor = rustix::fs::open(
+        path,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )?;
+    let file = File::from(descriptor);
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("not a regular artifact"));
+    }
+    Ok(file)
+}
+
+fn validate_config(config: &DestinationConfig) -> Result<(), TransferError> {
+    let host = config.endpoint.strip_prefix("https://").ok_or(TransferError::Configuration)?;
+    let endpoint_valid = match config.provider {
+        Provider::Oci => {
+            config.signing_region == config.database_region
+                && host.ends_with(&format!(
+                    ".compat.objectstorage.{}.oraclecloud.com",
+                    config.database_region
+                ))
+        }
+        Provider::Tigris => host == "fly.storage.tigris.dev",
+    };
+    if !endpoint_valid
+        || host.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+        || config.signing_region.is_empty()
+        || config.database_region.is_empty()
+        || config.bucket.is_empty()
+        || config.bucket.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
+        || config.credentials.access_key.is_empty()
+        || config.credentials.secret_key.is_empty()
+        || config.verified_geography.is_empty()
+        || config.placement_revision.is_empty()
+        || !config.permitted_geographies.contains(&config.verified_geography)
+        || config.max_artifact_bytes == 0
+        || config.max_artifact_bytes > 256 * 1024 * 1024
+        || config.max_point_bytes < config.max_artifact_bytes
+    {
+        return Err(TransferError::Configuration);
+    }
+    Ok(())
+}
+fn validate_name(name: &str) -> Result<(), TransferError> {
+    if name.is_empty()
+        || name.len() > 128
+        || name == "."
+        || name == ".."
+        || name == INDEX
+        || !name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return Err(TransferError::InvalidPoint);
+    }
+    Ok(())
+}
+fn validate_prefix(prefix: &str) -> Result<(), TransferError> {
+    if prefix.len() > 1024 || prefix.split('/').any(|part| validate_name(part).is_err()) {
+        return Err(TransferError::InvalidPoint);
+    }
+    Ok(())
+}
+fn object_key(prefix: &str, name: &str) -> Result<ObjectPath, TransferError> {
+    ObjectPath::parse(format!("{prefix}/{name}")).map_err(|_| TransferError::InvalidPoint)
+}
+fn validate_entries(entries: &[Entry]) -> Result<(), TransferError> {
+    if entries.is_empty()
+        || !entries.iter().any(|e| e.name == super::manifest::ENCRYPTED_MANIFEST_FILE)
+        || entries.iter().any(|e| e.name == super::manifest::MANIFEST_FILE)
+        || entries.windows(2).any(|pair| pair[0].name >= pair[1].name)
+    {
+        return Err(TransferError::InvalidPoint);
+    }
+    Ok(())
+}
+fn render_index(entries: &[Entry]) -> String {
+    let mut text = String::from("terrabase-transfer-v1\n");
+    for entry in entries {
+        use std::fmt::Write as _;
+        let _ = writeln!(text, "{} {} {}", entry.name, entry.length, entry.digest);
+    }
+    text
+}
+fn parse_index(
+    bytes: &[u8],
+    artifact_bound: u64,
+    total_bound: u64,
+) -> Result<Vec<Entry>, TransferError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| TransferError::InvalidPoint)?;
+    let mut lines = text.lines();
+    if lines.next() != Some("terrabase-transfer-v1") {
+        return Err(TransferError::InvalidPoint);
+    }
+    let mut entries = Vec::new();
+    let mut total = 0_u64;
+    for line in lines {
+        let fields: Vec<_> = line.split(' ').collect();
+        if fields.len() != 3 || entries.len() == MAX_FILES {
+            return Err(TransferError::InvalidPoint);
+        }
+        validate_name(fields[0])?;
+        let length: u64 = fields[1].parse().map_err(|_| TransferError::InvalidPoint)?;
+        total = total.checked_add(length).ok_or(TransferError::InvalidPoint)?;
+        if length > artifact_bound || total > total_bound {
+            return Err(TransferError::InvalidPoint);
+        }
+        entries.push(Entry {
+            name: fields[0].into(),
+            length,
+            digest: fields[2].parse().map_err(|_| TransferError::InvalidPoint)?,
+        });
+    }
+    validate_entries(&entries)?;
+    Ok(entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use object_store::memory::InMemory;
+
+    fn destination(store: Arc<InMemory>) -> ObjectDestination {
+        ObjectDestination {
+            provider: Provider::Oci,
+            store,
+            max_artifact_bytes: 1024,
+            max_point_bytes: 4096,
+        }
+    }
+
+    #[test]
+    fn independent_restore_and_corruption_fail_closed() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let root = std::env::temp_dir().join(format!("tb-object-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir(&root).unwrap();
+            let point = root.join("source");
+            fs::create_dir(&point).unwrap();
+            fs::write(point.join("manifest.tbv3e"), b"encrypted manifest fixture").unwrap();
+            fs::write(point.join("member.tbv3e"), b"encrypted member fixture").unwrap();
+            let first_store = Arc::new(InMemory::new());
+            let second_store = Arc::new(InMemory::new());
+            let first = destination(first_store.clone());
+            let second = destination(second_store.clone());
+            first.upload_point(&point, "db/rp-1").await.unwrap();
+            second.upload_point(&point, "db/rp-1").await.unwrap();
+            assert_eq!(second.list_points("db", 10).await.unwrap(), vec!["db/rp-1"]);
+            first_store.delete(&object_key("db/rp-1", INDEX).unwrap()).await.unwrap();
+            assert_eq!(
+                first.download_point("db/rp-1", &root.join("absent")).await,
+                Err(TransferError::Unavailable)
+            );
+            second.download_point("db/rp-1", &root.join("restored")).await.unwrap();
+            assert_eq!(
+                fs::read(root.join("restored/member.tbv3e")).unwrap(),
+                b"encrypted member fixture"
+            );
+            second_store
+                .put(&object_key("db/rp-1", "member.tbv3e").unwrap(), b"corrupt".to_vec().into())
+                .await
+                .unwrap();
+            assert_eq!(
+                second.download_point("db/rp-1", &root.join("corrupt")).await,
+                Err(TransferError::Integrity)
+            );
+            assert!(!root.join("corrupt").exists());
+            second.upload_point(&point, "db/rp-1").await.unwrap();
+            second.download_point("db/rp-1", &root.join("retry")).await.unwrap();
+            second_store.delete(&object_key("db/rp-1", "member.tbv3e").unwrap()).await.unwrap();
+            assert_eq!(
+                second.download_point("db/rp-1", &root.join("partial")).await,
+                Err(TransferError::Unavailable)
+            );
+            assert!(!root.join("partial").exists());
+            fs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    #[test]
+    fn s3_requests_are_sigv4_signed() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0_u8];
+            while !request.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+                assert!(request.len() < 16384);
+            }
+            let headers = String::from_utf8(request).unwrap().to_ascii_lowercase();
+            assert!(headers.starts_with("get /backup/db/rp-1/member.tbv3e "));
+            assert!(headers.contains("authorization: aws4-hmac-sha256 credential=fixture-access/"));
+            assert!(headers.contains("/sa-saopaulo-1/s3/aws4_request"));
+            assert!(headers.contains("x-amz-date:"));
+            assert!(!headers.contains("fixture-secret"));
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nLast-Modified: Sat, 05 Sep 2026 00:00:00 GMT\r\nETag: \"fixture\"\r\nConnection: close\r\n\r\ncipher!").unwrap();
+        });
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let store = AmazonS3Builder::new()
+                .with_endpoint(endpoint)
+                .with_bucket_name("backup")
+                .with_region("sa-saopaulo-1")
+                .with_access_key_id("fixture-access")
+                .with_secret_access_key("fixture-secret")
+                .with_allow_http(true)
+                .build()
+                .unwrap();
+            let destination = ObjectDestination {
+                provider: Provider::Oci,
+                store: Arc::new(store),
+                max_artifact_bytes: 1024,
+                max_point_bytes: 4096,
+            };
+            let expected =
+                Entry { name: "member.tbv3e".into(), length: 7, digest: blake3::hash(b"cipher!") };
+            destination
+                .verify_remote(&object_key("db/rp-1", &expected.name).unwrap(), &expected)
+                .await
+                .unwrap();
+        });
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn index_rejects_traversal_plaintext_and_overflow() {
+        let hash = blake3::hash(b"x");
+        for text in [
+            format!("terrabase-transfer-v1\n../x 1 {hash}\n"),
+            format!("terrabase-transfer-v1\nmanifest.tbv1m 1 {hash}\n"),
+            format!("terrabase-transfer-v1\nmanifest.tbv3e 100000 {hash}\n"),
+            format!("terrabase-transfer-v1\nmanifest.tbv3e 1 {hash}\nmanifest.tbv3e 1 {hash}\n"),
+        ] {
+            assert!(parse_index(text.as_bytes(), 1024, 4096).is_err());
+        }
+    }
+
+    #[test]
+    fn admission_requires_verified_residency_and_redacts_keys() {
+        let mut config = DestinationConfig {
+            provider: Provider::Oci,
+            endpoint: "https://namespace.compat.objectstorage.sa-saopaulo-1.oraclecloud.com".into(),
+            signing_region: "sa-saopaulo-1".into(),
+            database_region: "sa-saopaulo-1".into(),
+            bucket: "backups".into(),
+            verified_geography: "BR".into(),
+            permitted_geographies: vec!["BR".into()],
+            placement_revision: "verified-bucket-revision-1".into(),
+            credentials: Credentials::new("secret-access".into(), "secret-key".into()),
+            max_artifact_bytes: 1024,
+            max_point_bytes: 4096,
+        };
+        assert!(validate_config(&config).is_ok());
+        assert!(!format!("{config:?}").contains("secret-access"));
+        assert!(!format!("{config:?}").contains("secret-key"));
+        config.signing_region = "us-ashburn-1".into();
+        assert_eq!(validate_config(&config), Err(TransferError::Configuration));
+        config.provider = Provider::Tigris;
+        config.endpoint = "https://fly.storage.tigris.dev".into();
+        assert!(validate_config(&config).is_ok());
+        config.verified_geography = "US".into();
+        assert_eq!(validate_config(&config), Err(TransferError::Configuration));
+        config.verified_geography = "BR".into();
+        config.endpoint = "http://fly.storage.tigris.dev".into();
+        assert_eq!(validate_config(&config), Err(TransferError::Configuration));
+    }
+}

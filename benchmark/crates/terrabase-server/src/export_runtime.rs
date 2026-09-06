@@ -74,10 +74,44 @@ impl ExportRuntime {
             Some(source),
             Some(Arc::new(FileExportStore::open(self.root.join(identity))?)),
             Some(self.factory.artifacts(database_id)?),
-            self.cursor_key,
+            *blake3::keyed_hash(&self.cursor_key, database_id.as_bytes()).as_bytes(),
         )?;
         service.active_jobs = self.active_jobs.clone();
         Ok(Arc::new(service))
+    }
+
+    pub(crate) fn recover_pending(
+        &self,
+        database_id: &str,
+        service: &ExportService,
+    ) -> Result<(), ExportError> {
+        let identity = blake3::hash(database_id.as_bytes()).to_hex().to_string();
+        let store = FileExportStore::open(self.root.join(identity))?;
+        for entry in
+            fs::read_dir(&store.root).map_err(|error| ExportError::Io(error.to_string()))?
+        {
+            let entry = entry.map_err(|error| ExportError::Io(error.to_string()))?;
+            let path = entry.path();
+            if path.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            let Some(job) = path.file_stem().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let Some(state) = store.load(job)? else {
+                continue;
+            };
+            if !matches!(state.status, JobStatus::Accepted | JobStatus::Running) {
+                continue;
+            }
+            if let Some(active) = ActiveJob::acquire(self.active_jobs.clone(), job)? {
+                // Recovery runs on one blocking worker, keeping origin work
+                // bounded regardless of the number of interrupted jobs.
+                let _active = active;
+                let _ = service.clone_for_worker().run(job);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn destination(&self) -> ExportDestination {

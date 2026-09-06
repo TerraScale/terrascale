@@ -60,3 +60,19 @@ Validation:
 
 The native transport tests validate real TLS and HTTP behavior on local
 sockets, not intended-provider egress or full production composition.
+
+## Explicit extracted-index removal
+
+`Engine::remove_index_field` now deletes the requested durable descriptor
+atomically. Other collections retain shared fields and indexes. Removing the
+last reference drops both extracted columns and their physical indexes, updates
+the write-statement cache, and releases the extracted-column budget. A hidden
+index still depending on the field produces a typed conflict before mutation.
+Document rows, their publication watermark, and customer usage remain unchanged.
+A later query can register the field again through normal auto-indexing.
+
+Three regression tests passed in the freshly compiled engine test artifact
+`target/debug/deps/terrabase-05cd94d5adf30ccf`: shared-reference removal and
+restart with preserved documents, atomic hidden-dependency refusal, and recovery
+of an exhausted 32-field budget. Whole-workspace verification remains pending
+concurrent runtime and dependency changes.

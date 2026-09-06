@@ -8,6 +8,10 @@ use crate::types::{CollectionName, DocumentId, LocalDurability, StorageSequence,
 pub struct ExportMetadataSnapshot {
     /// Fixed document and journal boundary.
     pub boundary: u64,
+    /// Wall-clock instant used for all TTL decisions.
+    pub captured_at_millis: u64,
+    /// Earliest retained publication at capture, if any.
+    pub history_start: Option<u64>,
     /// Durable extracted-field index descriptors.
     pub indexes: Vec<crate::storage::DescriptorListing>,
     /// Collection names and internal schema envelopes. The server must decode
@@ -74,13 +78,14 @@ mod tests {
             ));
         }
         let boundary = 1;
-        let records = engine.export_snapshot_records(&scope, boundary, None, 1).expect("page");
+        let records = engine.export_snapshot_records(&scope, boundary, 0, None, 1).expect("page");
         assert_eq!(records[0].document().id().as_str(), "a");
         assert!(
             engine
                 .export_snapshot_records(
                     &scope,
                     boundary,
+                    0,
                     Some((collection, records[0].document().id().clone())),
                     1
                 )
@@ -92,20 +97,86 @@ mod tests {
         assert_eq!(history[0].sequence, boundary);
         let foreign = TenantScope::from_parts(tenant, engine.identity() + 1);
         assert!(matches!(
-            engine.export_snapshot_records(&foreign, boundary, None, 1),
+            engine.export_snapshot_records(&foreign, boundary, 0, None, 1),
             Err(EngineError::ScopeMismatch)
         ));
         assert!(matches!(
             engine.export_history_rows(&scope, boundary, None, 257),
             Err(EngineError::SnapshotPageLimitExceeded)
         ));
+        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+        let mut transaction = engine
+            .begin(&scope, snapshot, OperationId::try_new("multi").expect("operation"))
+            .expect("transaction");
+        for id in ["c", "d"] {
+            transaction
+                .put(
+                    Document::new(
+                        DocumentId::try_new(id).expect("id"),
+                        CollectionName::try_new("items").expect("collection"),
+                        DocumentValue::String(id.to_owned()),
+                    ),
+                    ExpectedVersion::New,
+                )
+                .expect("put");
+        }
+        assert!(matches!(
+            transaction.commit(LocalDurability::Synced),
+            super::super::CommitOutcome::Committed(_)
+        ));
+        let first = engine
+            .export_history_rows(&scope, 3, Some((2, "items".to_owned(), "b".to_owned())), 1)
+            .expect("first revision");
+        assert_eq!(first[0].id, "c");
+        let second = engine
+            .export_history_rows(
+                &scope,
+                3,
+                Some((first[0].sequence, first[0].collection.clone(), first[0].id.clone())),
+                1,
+            )
+            .expect("second revision");
+        assert_eq!(second[0].id, "d");
+        assert_eq!(second[0].sequence, first[0].sequence);
+        let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+        let mut transaction = engine
+            .begin(&scope, snapshot, OperationId::try_new("ttl").expect("operation"))
+            .expect("transaction");
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new("expiring").expect("id"),
+                    CollectionName::try_new("ttl").expect("collection"),
+                    DocumentValue::Object(std::collections::BTreeMap::from([(
+                        "expires_at".to_owned(),
+                        DocumentValue::Integer(1),
+                    )])),
+                ),
+                ExpectedVersion::New,
+            )
+            .expect("put");
+        assert!(matches!(
+            transaction.commit(LocalDurability::Synced),
+            super::super::CommitOutcome::Committed(_)
+        ));
+        assert_eq!(
+            engine.export_snapshot_records(&scope, 4, 0, None, 256).expect("before expiry").len(),
+            5
+        );
+        assert_eq!(
+            engine.export_snapshot_records(&scope, 4, 2, None, 256).expect("after expiry").len(),
+            4
+        );
+        engine.shutdown().expect("shutdown");
+        std::fs::remove_dir_all(directory).expect("cleanup");
     }
 }
 
 impl Engine {
     /// Captures durable schema envelopes and index descriptors with a fixed
     /// document boundary. The authenticated adapter supplies database and branch.
-    /// Metadata is limited to 256 schemas and four MiB of envelope bytes.
+    /// Metadata is limited to 256 schemas, 256 descriptors, and four MiB of
+    /// envelope and descriptor-key bytes.
     ///
     /// # Errors
     /// Rejects foreign scopes, unavailable metadata, and metadata above the cap.
@@ -128,7 +199,7 @@ impl Engine {
         let mut schemas = Vec::new();
         let mut bytes = 0_usize;
         while let Some(row) = rows.next().map_err(|_| EngineError::StorageFailure)? {
-            let length: u64 = row.get(1).map_err(|_| EngineError::StorageFailure)?;
+            let length: i64 = row.get(1).map_err(|_| EngineError::StorageFailure)?;
             let length =
                 usize::try_from(length).map_err(|_| EngineError::SnapshotPageLimitExceeded)?;
             bytes = bytes.checked_add(length).ok_or(EngineError::SnapshotPageLimitExceeded)?;
@@ -140,29 +211,43 @@ impl Engine {
                 row.get(2).map_err(|_| EngineError::StorageFailure)?,
             ));
         }
+        let mut statement = connection.prepare(
+            "SELECT collection, field, state, backfill_below, backfill_cursor, length(CAST(collection AS BLOB)) + length(CAST(field AS BLOB)) FROM index_descriptors ORDER BY collection, field LIMIT 257"
+        ).map_err(|_| EngineError::StorageFailure)?;
+        let mut rows = statement.query([]).map_err(|_| EngineError::StorageFailure)?;
+        let mut indexes = Vec::new();
+        while let Some(row) = rows.next().map_err(|_| EngineError::StorageFailure)? {
+            let length = usize::try_from(read_u64(row, 5)?)
+                .map_err(|_| EngineError::SnapshotPageLimitExceeded)?;
+            bytes = bytes.checked_add(length).ok_or(EngineError::SnapshotPageLimitExceeded)?;
+            if indexes.len() == 256 || bytes > 4 * 1024 * 1024 {
+                return Err(EngineError::SnapshotPageLimitExceeded);
+            }
+            let state: i64 = row.get(2).map_err(|_| EngineError::StorageFailure)?;
+            indexes.push(crate::storage::DescriptorListing {
+                collection: row.get(0).map_err(|_| EngineError::StorageFailure)?,
+                field: row.get(1).map_err(|_| EngineError::StorageFailure)?,
+                active: state == 1,
+                backfill_remaining: read_u64(row, 3)?.saturating_sub(read_u64(row, 4)?),
+            });
+        }
         Ok(ExportMetadataSnapshot {
             boundary: storage.port.published_state().0.get(),
-            indexes: storage.port.index_descriptors().map_err(|()| EngineError::StorageFailure)?,
+            captured_at_millis: u64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| EngineError::StorageFailure)?
+                    .as_millis(),
+            )
+            .map_err(|_| EngineError::StorageFailure)?,
+            history_start: storage
+                .port
+                .servable_history_start()
+                .map_err(|()| EngineError::StorageFailure)?
+                .map(StorageSequence::get),
+            indexes,
             schemas,
         })
-    }
-
-    /// Captures a publication boundary and durable index descriptors under
-    /// the same storage lock. Persist both before beginning a resumable export.
-    /// Schema and branch catalogs require their own durable catalog readers.
-    ///
-    /// # Errors
-    /// Rejects foreign scopes and failures to read durable metadata.
-    pub fn capture_export_boundary(
-        &self,
-        scope: &TenantScope,
-    ) -> Result<(u64, Vec<crate::storage::DescriptorListing>), EngineError> {
-        self.validate_scope(scope)?;
-        let storage = self.lock_storage()?;
-        let boundary = storage.port.published_state().0;
-        let descriptors =
-            storage.port.index_descriptors().map_err(|()| EngineError::StorageFailure)?;
-        Ok((boundary.get(), descriptors))
     }
 
     /// Reads at most 256 final-state documents at a persisted export boundary.
@@ -176,25 +261,59 @@ impl Engine {
         &self,
         scope: &TenantScope,
         boundary: u64,
+        captured_at_millis: u64,
         after: Option<(CollectionName, DocumentId)>,
         limit: u32,
     ) -> Result<Vec<SnapshotRecord>, EngineError> {
         self.validate_scope(scope)?;
-        self.snapshot_records_from(
-            scope.tenant().clone(),
-            StorageSequence::new(boundary),
-            after,
-            limit,
-        )
-    }
-
-    /// Returns the first retained global publication position.
-    ///
-    /// # Errors
-    /// Rejects foreign scopes and storage failures.
-    pub fn export_history_start(&self, scope: &TenantScope) -> Result<Option<u64>, EngineError> {
-        self.validate_scope(scope)?;
-        self.servable_history_start().map(|start| start.map(StorageSequence::get))
+        if limit > MAX_SNAPSHOT_RECORD_PAGE {
+            return Err(EngineError::SnapshotPageLimitExceeded);
+        }
+        let storage = self.lock_storage()?;
+        validate_export_boundary(&storage, boundary)?;
+        let connection =
+            storage.port.open_sqlite_read_connection().map_err(|()| EngineError::StorageFailure)?;
+        let mut statement = connection.prepare(
+            "SELECT collection, id, requested, length(body), body FROM (SELECT collection, id, requested, body, deleted, expires_at, MAX(commit_seq) FROM documents WHERE tenant = ?1 AND commit_seq <= ?2 AND (collection, id) > (?3, ?4) GROUP BY collection, id) WHERE deleted = 0 AND (collection = 'terrabase.families' OR expires_at IS NULL OR expires_at > ?5) ORDER BY collection, id LIMIT ?6"
+        ).map_err(|_| EngineError::StorageFailure)?;
+        let mut rows = statement
+            .query(rusqlite::params![
+                scope.tenant().as_str(),
+                i64::try_from(boundary).map_err(|_| EngineError::StorageFailure)?,
+                after.as_ref().map_or("", |key| key.0.as_str()),
+                after.as_ref().map_or("", |key| key.1.as_str()),
+                i64::try_from(captured_at_millis).map_err(|_| EngineError::StorageFailure)?,
+                limit
+            ])
+            .map_err(|_| EngineError::StorageFailure)?;
+        let mut result = Vec::new();
+        let mut bytes = 0_u64;
+        while let Some(row) = rows.next().map_err(|_| EngineError::StorageFailure)? {
+            let length = read_u64(row, 3)?;
+            if length > 4 * 1024 * 1024 {
+                return Err(EngineError::SnapshotPageLimitExceeded);
+            }
+            if bytes + length > 4 * 1024 * 1024 {
+                break;
+            }
+            bytes += length;
+            let body: Vec<u8> = row.get(4).map_err(|_| EngineError::StorageFailure)?;
+            let document =
+                crate::storage::decode_document_body(&body).ok_or(EngineError::StorageFailure)?;
+            let collection: String = row.get(0).map_err(|_| EngineError::StorageFailure)?;
+            let id: String = row.get(1).map_err(|_| EngineError::StorageFailure)?;
+            if document.collection().as_str() != collection || document.id().as_str() != id {
+                return Err(EngineError::StorageFailure);
+            }
+            let durability = match row.get::<_, u8>(2).map_err(|_| EngineError::StorageFailure)? {
+                0 => LocalDurability::Buffered,
+                1 => LocalDurability::Written,
+                2 => LocalDurability::Synced,
+                _ => return Err(EngineError::StorageFailure),
+            };
+            result.push(SnapshotRecord { document, durability });
+        }
+        Ok(result)
     }
 
     /// Reads retained revisions in exclusive `(sequence, collection, id)` order.
@@ -217,19 +336,14 @@ impl Engine {
         if limit > MAX_SNAPSHOT_RECORD_PAGE {
             return Err(EngineError::SnapshotPageLimitExceeded);
         }
-        self.snapshot_records_from(
-            scope.tenant().clone(),
-            StorageSequence::new(boundary),
-            None,
-            0,
-        )?;
         let storage = self.lock_storage()?;
+        validate_export_boundary(&storage, boundary)?;
         let connection =
             storage.port.open_sqlite_read_connection().map_err(|()| EngineError::StorageFailure)?;
         let transaction =
             connection.unchecked_transaction().map_err(|_| EngineError::StorageFailure)?;
         let cursor = after.unwrap_or_default();
-        let pruned: Option<u64> = transaction
+        let pruned: Option<i64> = transaction
             .query_row(
                 "SELECT pruned_through FROM journal_pruning WHERE tenant = ?1",
                 [scope.tenant().as_str()],
@@ -238,9 +352,10 @@ impl Engine {
             .optional()
             .map_err(|_| EngineError::StorageFailure)?;
         // An in-commit cursor still needs its own sequence's retained rows.
-        if pruned
-            .is_some_and(|pruned| cursor.0 < pruned || (cursor.0 == pruned && !cursor.1.is_empty()))
-        {
+        if pruned.is_some_and(|pruned| {
+            cursor.0 < u64::try_from(pruned).unwrap_or(u64::MAX)
+                || (cursor.0 == u64::try_from(pruned).unwrap_or(u64::MAX) && !cursor.1.is_empty())
+        }) {
             return Err(EngineError::HistoryExpired);
         }
         let mut statement = transaction.prepare(
@@ -249,17 +364,17 @@ impl Engine {
         let mut rows = statement
             .query(rusqlite::params![
                 scope.tenant().as_str(),
-                cursor.0,
+                i64::try_from(cursor.0).map_err(|_| EngineError::StorageFailure)?,
                 cursor.1,
                 cursor.2,
-                boundary,
+                i64::try_from(boundary).map_err(|_| EngineError::StorageFailure)?,
                 limit
             ])
             .map_err(|_| EngineError::StorageFailure)?;
         let mut result = Vec::new();
-        let mut bytes = 0_u64;
+        let mut bytes = 0_i64;
         while let Some(row) = rows.next().map_err(|_| EngineError::StorageFailure)? {
-            let length: u64 = row.get(7).map_err(|_| EngineError::StorageFailure)?;
+            let length: i64 = row.get(7).map_err(|_| EngineError::StorageFailure)?;
             if length > 4 * 1024 * 1024 {
                 return Err(EngineError::SnapshotPageLimitExceeded);
             }
@@ -279,11 +394,11 @@ impl Engine {
                 return Err(EngineError::StorageFailure);
             }
             result.push(ExportHistoryRow {
-                sequence: row.get(0).map_err(|_| EngineError::StorageFailure)?,
+                sequence: read_u64(row, 0)?,
                 operation_id: row.get(1).map_err(|_| EngineError::StorageFailure)?,
                 collection: row.get(2).map_err(|_| EngineError::StorageFailure)?,
                 id: row.get(3).map_err(|_| EngineError::StorageFailure)?,
-                version: row.get(4).map_err(|_| EngineError::StorageFailure)?,
+                version: read_u64(row, 4)?,
                 deleted: deleted == 1,
                 durability,
                 body: row.get(8).map_err(|_| EngineError::StorageFailure)?,
@@ -291,4 +406,26 @@ impl Engine {
         }
         Ok(result)
     }
+}
+
+fn read_u64(row: &rusqlite::Row<'_>, index: usize) -> Result<u64, EngineError> {
+    let value: i64 = row.get(index).map_err(|_| EngineError::StorageFailure)?;
+    u64::try_from(value).map_err(|_| EngineError::StorageFailure)
+}
+
+fn validate_export_boundary(
+    storage: &super::StorageState,
+    boundary: u64,
+) -> Result<(), EngineError> {
+    if boundary > storage.port.published_state().0.get()
+        || !storage.port.snapshot_boundary_available(StorageSequence::new(boundary))
+        || storage
+            .port
+            .servable_history_start()
+            .map_err(|()| EngineError::StorageFailure)?
+            .is_some_and(|start| boundary < start.get())
+    {
+        return Err(EngineError::SnapshotBoundaryUnavailable);
+    }
+    Ok(())
 }

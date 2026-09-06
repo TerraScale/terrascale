@@ -25,6 +25,7 @@ mod metadata;
 mod patch;
 mod physical_restore;
 mod schema_metadata;
+mod webhook_metadata;
 
 #[cfg(test)]
 mod ingest_tests;
@@ -2607,6 +2608,18 @@ impl Engine {
         self.validate_scope(scope)?;
         let storage = self.lock_storage()?;
         Ok(storage.port.document_provenance_at(scope.tenant(), collection, id))
+    }
+
+    /// Advances only the independently verified native backup journal floor.
+    pub(crate) fn advance_backup_frontier(
+        &self,
+        sequence: StorageSequence,
+    ) -> Result<(), EngineError> {
+        let mut storage = self.storage.lock().map_err(|_| EngineError::StorageFailure)?;
+        storage
+            .port
+            .advance_backup_frontier(sequence.get())
+            .map_err(|()| EngineError::StorageFailure)
     }
 
     /// Runs one storage retention sweep: prune publication history every

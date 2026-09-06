@@ -1,6 +1,7 @@
-//! Fail-closed OCI Vault provider seam.
+//! Explicitly unavailable OCI Vault wrapping provider.
 //!
-//! The real adapter is Orchestrator-owned. This placeholder intentionally has
+//! The real adapter is Orchestrator-owned. Host leases use `OciVaultKeyDelivery`.
+//! This unavailable wrapping sentinel intentionally has
 //! no OCID, endpoint, credential, or plaintext-key configuration path.
 
 use std::time::Duration;
@@ -18,7 +19,7 @@ use super::{DatabaseKey, EncryptionError};
 pub struct UnconfiguredOciVaultProvider;
 
 impl UnconfiguredOciVaultProvider {
-    /// Creates the only currently available OCI provider state.
+    /// Creates an explicitly unconfigured OCI wrapping provider.
     #[must_use]
     pub const fn new() -> Self {
         Self

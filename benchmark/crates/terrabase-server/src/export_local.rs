@@ -7,7 +7,7 @@ use crate::export_api::{
     sync_directory_ancestors,
 };
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,6 +17,25 @@ use terrabase::encryption::{
 
 fn io_error(error: io::Error) -> ExportError {
     ExportError::Io(error.to_string())
+}
+
+fn bounded_read(path: &Path, limit: usize) -> Result<Vec<u8>, ExportError> {
+    ensure_no_symlink_components(path)?;
+    let file = File::open(path).map_err(io_error)?;
+    let metadata = file.metadata().map_err(io_error)?;
+    if !metadata.is_file() || metadata.len() > limit as u64 {
+        return Err(ExportError::DestinationUnavailable);
+    }
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1).read_to_end(&mut bytes).map_err(io_error)?;
+    if bytes.len() > limit {
+        return Err(ExportError::DestinationUnavailable);
+    }
+    Ok(bytes)
+}
+
+fn encrypted_member(path: &Path) -> Result<Vec<u8>, ExportError> {
+    bounded_read(path, MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) + 4096)
 }
 
 fn private_key(root: &Path, name: &str) -> Result<[u8; 32], ExportError> {
@@ -142,6 +161,11 @@ impl LocalCrypto {
         Ok(plaintext)
     }
 }
+#[derive(serde::Deserialize)]
+struct LocalManifest {
+    members: Vec<ArtifactFact>,
+}
+
 struct LocalPort {
     root: PathBuf,
     crypto: Arc<LocalCrypto>,
@@ -157,6 +181,50 @@ impl ArtifactPort for LocalPort {
             provider: ProviderMode::LocalFile.identity().into(),
             key_version: "local-export-v1".into(),
         })
+    }
+    fn read_member(
+        &self,
+        job_id: &str,
+        database: &str,
+        member: &str,
+        manifest: &ArtifactFact,
+    ) -> Result<Vec<u8>, ExportError> {
+        if !safe_member_path(job_id)
+            || Path::new(job_id).components().count() != 1
+            || !safe_member_path(database)
+            || Path::new(database).components().count() != 1
+            || !safe_member_path(member)
+            || member == "COMMITTED"
+            || manifest.path != "manifest.json"
+        {
+            return Err(ExportError::DestinationUnavailable);
+        }
+        let directory = self.root.join(database).join(job_id);
+        let expected = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
+        if bounded_read(&directory.join("COMMITTED"), 1024)? != expected.as_bytes() {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        let manifest_bytes = encrypted_member(&directory.join("manifest.json"))?;
+        if fact("manifest.json", &manifest_bytes) != *manifest {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        let binding = format!("{database}/{job_id}");
+        let manifest_plaintext = self.crypto.open(&binding, "manifest.json", &manifest_bytes)?;
+        if member == "manifest.json" {
+            return Ok(manifest_plaintext);
+        }
+        let manifest: LocalManifest = serde_json::from_slice(&manifest_plaintext)
+            .map_err(|_| ExportError::IdempotencyConflict)?;
+        let expected = manifest
+            .members
+            .iter()
+            .find(|fact| fact.path == member)
+            .ok_or(ExportError::DestinationUnavailable)?;
+        let encrypted = encrypted_member(&directory.join(member))?;
+        if fact(member, &encrypted) != *expected {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        self.crypto.open(&binding, member, &encrypted)
     }
     fn open(
         &self,
@@ -196,7 +264,7 @@ impl LocalWriter {
     fn verify_member(&self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError> {
         let target = self.directory.join(path);
         ensure_no_symlink_components(&target)?;
-        let encrypted = fs::read(&target).map_err(|error| ExportError::Io(error.to_string()))?;
+        let encrypted = encrypted_member(&target)?;
 
         if self
             .crypto
@@ -264,8 +332,7 @@ impl ArtifactWriter for LocalWriter {
                 if member.ends_with(".part") || !safe_member_path(member) {
                     continue;
                 }
-                let encrypted =
-                    fs::read(&path).map_err(|error| ExportError::Io(error.to_string()))?;
+                let encrypted = encrypted_member(&path)?;
                 if encrypted.len() > MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) + 4096 {
                     return Err(ExportError::DestinationUnavailable);
                 }
@@ -288,8 +355,7 @@ impl ArtifactWriter for LocalWriter {
         }
         let manifest_path = self.directory.join(&manifest.path);
         ensure_no_symlink_components(&manifest_path)?;
-        let encrypted =
-            fs::read(&manifest_path).map_err(|error| ExportError::Io(error.to_string()))?;
+        let encrypted = encrypted_member(&manifest_path)?;
         if fact(&manifest.path, &encrypted) != *manifest {
             return Err(ExportError::IdempotencyConflict);
         }
@@ -298,8 +364,7 @@ impl ArtifactWriter for LocalWriter {
         ensure_no_symlink_components(&marker)?;
         let bytes = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
         if !publish_artifact(&marker, bytes.as_bytes())?
-            && fs::read(&marker).map_err(|error| ExportError::Io(error.to_string()))?
-                != bytes.as_bytes()
+            && bounded_read(&marker, 1024)? != bytes.as_bytes()
         {
             return Err(ExportError::IdempotencyConflict);
         }
@@ -333,11 +398,24 @@ mod tests {
             writer.put("documents/page.json", b"different"),
             Err(ExportError::IdempotencyConflict)
         ));
-        let manifest = writer.put("manifest.json", b"{}").unwrap();
+        let manifest_plaintext =
+            serde_json::to_vec(&serde_json::json!({"members":[page]})).unwrap();
+        let manifest = writer.put("manifest.json", &manifest_plaintext).unwrap();
         writer.commit(&manifest).unwrap();
         let restarted = local_artifacts(&root, "database-id", "tenant").unwrap();
         let writer = restarted.open("job", "database", &destination, &placement).unwrap();
         writer.commit(&manifest).unwrap();
+        assert_eq!(
+            restarted.read_member("job", "database", "documents/page.json", &manifest).unwrap(),
+            b"private-document"
+        );
+        assert_eq!(
+            restarted.read_member("job", "database", "manifest.json", &manifest).unwrap(),
+            manifest_plaintext
+        );
+        assert!(
+            restarted.read_member("job", "database", "../.export-artifact-key", &manifest).is_err()
+        );
         assert_eq!(fs::read(root.join("database/job/documents/page.json")).unwrap(), ciphertext);
         assert_eq!(local_cursor_key(&root).unwrap(), local_cursor_key(&root).unwrap());
         fs::remove_dir_all(root).unwrap();
@@ -355,6 +433,43 @@ mod tests {
         let mut tampered = first;
         tampered[..32].copy_from_slice(&second[..32]);
         assert!(crypto.open("job", "page", &tampered).is_err());
+    }
+
+    #[test]
+    fn concurrent_initialization_uses_one_durable_key() {
+        let root = std::env::temp_dir()
+            .join(format!("export-local-{}", terrabase::identity::DatabaseUlid::generate()));
+        let keys = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..8)
+                .map(|_| {
+                    let root = &root;
+                    scope.spawn(move || private_key(root, ".export-artifact-key").unwrap())
+                })
+                .collect();
+            threads.into_iter().map(|thread| thread.join().unwrap()).collect::<Vec<_>>()
+        });
+        assert!(keys.iter().all(|key| key == &keys[0]));
+        assert_eq!(private_key(&root, ".export-artifact-key").unwrap(), keys[0]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn oversized_staging_member_fails_before_allocating_its_payload() {
+        let root = std::env::temp_dir()
+            .join(format!("export-local-{}", terrabase::identity::DatabaseUlid::generate()));
+        let port = local_artifacts(&root, "db", "tenant").unwrap();
+        let destination = ExportDestination::File { root: root.clone(), region: RegionCode::GRU };
+        let mut writer = port
+            .open("job", "database", &destination, &PlacementLock::single(RegionCode::GRU))
+            .unwrap();
+        let oversized = root.join("database/job/oversized.json");
+        File::create(&oversized).unwrap().set_len((MAX_METADATA_BYTES + 4097) as u64).unwrap();
+        assert!(matches!(writer.existing_facts(), Err(ExportError::DestinationUnavailable)));
+        assert!(matches!(
+            writer.put("oversized.json", b"small"),
+            Err(ExportError::DestinationUnavailable)
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

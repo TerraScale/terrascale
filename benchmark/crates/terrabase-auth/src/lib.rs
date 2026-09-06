@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-mod store;
 mod authority;
+mod network;
+mod store;
 pub use authority::{AuthAuthority, AuthorityError};
+pub use network::AuthNetwork;
 
 #[cfg(test)]
 mod tests;
@@ -24,7 +26,7 @@ openraft::declare_raft_types!(
 pub type Record = BTreeMap<String, serde_json::Value>;
 
 /// One retriable operation; identity is persisted with its result.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Command {
     /// Opaque stable key scoped by this consensus group's database identity.
@@ -64,4 +66,11 @@ pub enum Outcome {
     IdempotencyConflict,
     /// The command was rejected before mutation.
     Invalid { reason: String },
+}
+
+impl std::fmt::Debug for Command {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Raft tracing must never print credentials or recovery tokens in commands.
+        formatter.write_str("AuthCommand([redacted])")
+    }
 }

@@ -80,6 +80,12 @@ impl Scope {
         self.verbs.admits(verb) && self.database.as_ref().is_none_or(|name| name == database)
     }
 
+    /// Whether this scope admits an operation over every collection in a database.
+    #[must_use]
+    pub fn admits_database(&self, verb: Verbs, database: &str) -> bool {
+        self.collections.is_none() && self.admits(verb, database)
+    }
+
     /// Whether this scope admits `verb` on one named collection. A database
     /// scope with no collection list admits every collection; a narrowed
     /// scope never widens to a sibling collection.
@@ -115,6 +121,10 @@ pub struct Principal {
 }
 
 impl Principal {
+    pub(crate) fn delegated(label: String, scope: Scope, expires_at: u64) -> Self {
+        Self { label, scope, expires_at: Some(expires_at) }
+    }
+
     /// The wire label responses attribute the request to.
     #[must_use]
     pub fn label(&self) -> &str {

@@ -313,3 +313,75 @@ fn deletion_reports_secret_destruction_failure_and_remains_retryable() {
     engine.shutdown().expect("shutdown");
     std::fs::remove_dir_all(root).expect("cleanup");
 }
+
+#[test]
+fn journal_page_keeps_an_entire_large_commit_before_checkpointing() {
+    use terrabase::types::{CollectionName, Document, DocumentId, DocumentValue};
+    let root = std::env::temp_dir().join(format!(
+        "terrascale-webhook-batch-{}",
+        terrabase::identity::process_generator().generate().to_text()
+    ));
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("engine"),
+    );
+    let owner = engine.database_owner();
+    let scope = TenantScope::new(
+        owner.tenant().to_text(),
+        owner.project().to_text(),
+        owner.database().to_text(),
+    )
+    .expect("scope");
+    let engine_scope = webhook_engine_scope(&engine, &scope).expect("scope");
+    let snapshot = engine.read_snapshot(&engine_scope).expect("snapshot");
+    let mut transaction = engine
+        .begin(
+            &engine_scope,
+            snapshot,
+            terrabase::OperationId::try_new("large-webhook-batch").expect("operation"),
+        )
+        .expect("transaction");
+    for index in 0..MAX_JOURNAL_PAGE + 1 {
+        transaction
+            .put(
+                Document::new(
+                    DocumentId::try_new(format!("item-{index}")).expect("id"),
+                    CollectionName::try_new("orders").expect("collection"),
+                    DocumentValue::Integer(index as i64),
+                ),
+                ExpectedVersion::New,
+            )
+            .expect("put");
+    }
+    assert!(matches!(
+        transaction.commit(terrabase::LocalDurability::Synced),
+        terrabase::CommitOutcome::Committed(_)
+    ));
+    let journal = EngineWebhookJournal::new(Arc::clone(&engine));
+    let page = journal.page(&scope, 0, MAX_JOURNAL_PAGE).expect("page");
+    assert_eq!(page.len(), MAX_JOURNAL_PAGE + 1);
+    assert!(page.iter().all(|row| row.revision == page[0].revision));
+    let storage = EngineWebhookStorage::new(Arc::clone(&engine));
+    storage.checkpoint_dispatch(&scope, 0, page[0].revision).expect("checkpoint");
+    let cursor = page[0].revision;
+    drop(storage);
+    drop(journal);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
+    engine.shutdown().expect("shutdown");
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("reopen"),
+    );
+    let storage = EngineWebhookStorage::new(Arc::clone(&engine));
+    assert_eq!(storage.dispatch_cursor(&scope), Ok(cursor));
+    assert!(
+        EngineWebhookJournal::new(Arc::clone(&engine))
+            .page(&scope, cursor, MAX_JOURNAL_PAGE)
+            .expect("next page")
+            .is_empty()
+    );
+    drop(storage);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole reopened engine") };
+    engine.shutdown().expect("close");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}

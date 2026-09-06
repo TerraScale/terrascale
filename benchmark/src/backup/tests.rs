@@ -318,7 +318,7 @@ fn full_backup_writes_a_manifest_with_ordered_digests_and_counts() {
     }
     assert_eq!(
         manifest.total_bytes(),
-        members.iter().map(crate::backup::BackupMember::length).sum(),
+        members.iter().map(crate::backup::BackupMember::length).sum::<u64>(),
         "total bytes bind the ordered member lengths"
     );
 
@@ -388,7 +388,7 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
         .expect("encrypted backup runs");
     let target = location("encrypted-restore-target");
     let cipher = encryption.cipher.lock().expect("cipher lock");
-    let receipt = RestorePlan::restore_latest_encrypted(&destination, &target, &cipher)
+    let receipt = RestorePlan::restore_latest_encrypted(&destination, &target, &*cipher)
         .expect("encrypted restore runs");
     assert_eq!(receipt.selected_identity(), backup.manifest().identity());
     assert_eq!(receipt.restored_documents(), 1);
@@ -1517,4 +1517,70 @@ fn progress_disclosures_are_bounded_while_the_total_stays_exact() {
     assert_eq!(result.skipped_items().len(), total);
     assert!(result.skipped_items().iter().any(|s| s.document().as_str() == "doc-1"));
     assert_eq!(result.manifest().disclosures(), total as u64);
+}
+
+#[test]
+fn identical_retry_does_not_accept_missing_or_corrupt_published_members() {
+    let (_dir, engine) = open_engine("retry-member-integrity");
+    committed(put(
+        &engine,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    for corrupt in [false, true] {
+        let destination = location("retry-member-integrity-dest");
+        let backup = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+            .expect("initial backup");
+        let point = destination.join(format!("rp-{}", backup.manifest().identity()));
+        let member = point.join(backup.manifest().members()[0].name());
+        if corrupt {
+            let mut bytes = std::fs::read(&member).expect("member bytes");
+            bytes[0] ^= 1;
+            std::fs::write(&member, bytes).expect("corrupt member without changing length");
+        } else {
+            std::fs::remove_file(&member).expect("remove member");
+        }
+        let error = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+            .expect_err("matching manifest alone cannot establish successful publication");
+        assert_eq!(
+            error,
+            if corrupt { BackupError::ChecksumMismatch } else { BackupError::ChainIncomplete }
+        );
+    }
+}
+
+#[test]
+fn encrypted_incremental_chain_survives_fresh_artifact_contexts() {
+    use crate::backup::{BackupEncryption, BackupReader};
+    use crate::encryption::KeyVersionMetadata;
+    let (_dir, engine) = open_engine("encrypted-chain-restart");
+    let owner = engine.database_owner();
+    let scope = KeyScope::new_with_project(owner.environment().as_str(), owner.tenant(), owner.project(), owner.database(), KeyPurpose::Backup).unwrap();
+    let lease = Arc::new(DatabaseKeyLease::test_oci_vault(KeyVersionMetadata::new(scope, DatabaseKeyVersion::generate()), DatabaseKey::from_bytes([51; 32]), std::time::Duration::from_secs(60)).unwrap());
+    let reader: Arc<dyn BackupReader + Send + Sync> = lease.clone();
+    let destination = location("encrypted-chain-restart-archive");
+    committed(put(&engine, "alpha", "op-1", "doc-1", "users", text("one"), LocalDurability::Synced));
+    let full = run_backup(&engine, BackupPlan::full(BackupEncryption::from_database_key_lease(&lease, owner.region(), 0).unwrap()), &destination).unwrap();
+    committed(put(&engine, "alpha", "op-2", "doc-2", "users", text("two"), LocalDurability::Synced));
+    let incremental = BackupPlan::incremental_since(full.manifest().boundary_sequence(), BackupEncryption::from_database_key_lease(&lease, owner.region(), 0).unwrap()).with_reader(reader);
+    run_backup(&engine, incremental, &destination).expect("new artifact can extend retained encrypted chain");
+    let receipt = RestorePlan::restore_latest_encrypted(&destination, &location("encrypted-chain-restart-target"), lease.as_ref()).unwrap();
+    assert_eq!(receipt.chain_depth(), 2);
+    assert_eq!(receipt.restored_documents(), 2);
+}
+
+#[test]
+fn staging_byte_limit_preserves_preexisting_recovery_point() {
+    let (_dir, engine) = open_engine("staging-byte-limit");
+    committed(put(&engine, "alpha", "op-1", "doc-1", "users", text("one"), LocalDurability::Synced));
+    let destination = location("staging-byte-limit-archive");
+    let full = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination).unwrap();
+    committed(put(&engine, "alpha", "op-2", "doc-2", "users", text("two"), LocalDurability::Synced));
+    assert!(run_backup(&engine, BackupPlan::local_test_incremental_since(full.manifest().boundary_sequence()).with_archive_byte_limit(1), &destination).is_err());
+    assert_eq!(verify_latest_chain(&destination).unwrap().len(), 1);
+    full.archive().verify(&destination).unwrap();
 }

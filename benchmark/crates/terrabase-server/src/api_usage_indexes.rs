@@ -178,7 +178,7 @@ mod tests {
     }
 
     async fn body(response: Response) -> serde_json::Value {
-        serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 65536).await.unwrap())
+        serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 65_536).await.unwrap())
             .unwrap()
     }
 
@@ -200,6 +200,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one full HTTP usage aggregation and authorization scenario"
+    )]
     async fn usage_summary_reads_authoritative_facts_across_partitions_and_refuses_unknown_database()
      {
         use terrabase::usage::{UsageFactId, UsageRecordMeter, UsageRecordRequest};
@@ -227,13 +231,43 @@ mod tests {
                 )
                 .unwrap();
         }
+        // Cross the Engine's 256-fact page boundary; later pages must contribute
+        // to the same summary without changing its snapshot.
+        for index in 0..255 {
+            engine
+                .record_usage(
+                    &scope,
+                    UsageRecordRequest::try_new(
+                        UsageRecordMeter::DocumentWriteUnits,
+                        &owner.project().to_text(),
+                        &owner.database().to_text(),
+                        "one",
+                        owner.region(),
+                        UsageFactId::try_new(&format!("page-{index}")).unwrap(),
+                        10,
+                        1,
+                        1,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            request(&app, "GET", "/api/v1/databases/prod/collections/orders/documents/missing", "")
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        let observed_reads = engine.metering_read_count(&scope);
+        assert!(observed_reads > 0, "the served document lookup contributes aggregate evidence");
         let response = request(&app, "GET", "/api/v1/databases/prod/usage", "").await;
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().contains_key(PLACEMENT_HEADER));
         let summary = body(response).await;
         assert_eq!(summary["database_id"], "prod");
+        assert_eq!(summary["reads"], serde_json::json!({"total_reads": observed_reads}));
         assert_eq!(summary["meters"][0]["meter"], "document_write_units");
-        assert_eq!(summary["meters"][0]["units"], "18");
+        assert_eq!(summary["meters"][0]["units"], "273");
         assert_eq!(summary["meters"][1]["meter"], "storage_byte_seconds");
         assert_eq!(summary["meters"][1]["units"], "0");
         assert_eq!(
@@ -261,6 +295,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one HTTP descriptor lifecycle and recommendation scenario"
+    )]
     async fn index_deletion_removes_descriptor_is_idempotent_and_recommendations_validate_bounds() {
         let (state, app) = setup().await;
         let indexes = "/api/v1/databases/prod/collections/orders/indexes";

@@ -62,6 +62,8 @@ pub struct PlacementBoundary {
     environment: String,
     cluster: String,
     member: String,
+    generation: u64,
+    epoch: u64,
     databases: BTreeMap<DatabaseRouteScope, String>,
 }
 
@@ -74,6 +76,8 @@ impl PlacementBoundary {
         environment: &str,
         cluster: &str,
         member: &str,
+        generation: u64,
+        epoch: u64,
         databases: impl IntoIterator<Item = (DatabaseRouteScope, String)>,
     ) -> Result<Self, PlacementError> {
         MemberWorkloadIdentity::try_new(environment, cluster, member)
@@ -85,13 +89,15 @@ impl PlacementBoundary {
                 return Err(PlacementError::Invalid);
             }
         }
-        if scopes.is_empty() {
+        if scopes.is_empty() || generation == 0 || epoch == 0 {
             return Err(PlacementError::Invalid);
         }
         Ok(Self {
             environment: environment.into(),
             cluster: cluster.into(),
             member: member.into(),
+            generation,
+            epoch,
             databases: scopes,
         })
     }
@@ -99,8 +105,8 @@ impl PlacementBoundary {
     fn canonicalize(&self, proposal: &mut pb::PlacementProposal) -> Result<(), PlacementError> {
         if proposal.environment != self.environment
             || proposal.cluster != self.cluster
-            || proposal.generation == 0
-            || proposal.epoch == 0
+            || proposal.generation < self.generation
+            || proposal.epoch < self.epoch
             || proposal.regions.is_empty()
             || proposal.regions.len() > 3
             || proposal.assignments.len() != self.databases.len()

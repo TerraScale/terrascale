@@ -213,6 +213,8 @@ pub(crate) struct MemberWriter {
     open: Option<OpenMember>,
     sealed: Vec<SealedMember>,
     encryption: Option<Arc<Mutex<ArtifactCipher>>>,
+    byte_limit: Option<u64>,
+    reserved_bytes: u64,
 }
 
 /// One sealed member: its ordered name, exact length, and SHA-256 digest.
@@ -251,6 +253,8 @@ impl MemberWriter {
             open: None,
             sealed: Vec::new(),
             encryption: None,
+            byte_limit: None,
+            reserved_bytes: 0,
         }
     }
 
@@ -268,7 +272,13 @@ impl MemberWriter {
             open: None,
             sealed: Vec::new(),
             encryption: Some(encryption),
+            byte_limit: None,
+            reserved_bytes: 0,
         }
+    }
+
+    pub(crate) fn set_byte_limit(&mut self, limit: Option<u64>) {
+        self.byte_limit = limit;
     }
 
     /// Writes one record, rotating members at record boundaries.
@@ -296,6 +306,14 @@ impl MemberWriter {
         }
         let mut encoded = Vec::new();
         encode_into(&mut encoded, record);
+        // Reserve envelope overhead conservatively per record. No artifact
+        // bytes are written when the complete bounded reservation will not fit.
+        let reservation = (encoded.len() as u64).saturating_add(4096);
+        if self.byte_limit.is_some_and(|limit| self.reserved_bytes.saturating_add(reservation) > limit) {
+            encoded.zeroize();
+            return Err(std::io::Error::other("backup staging budget exhausted"));
+        }
+        self.reserved_bytes = self.reserved_bytes.saturating_add(reservation);
         let member = self.open.as_mut().expect("a member is open");
         if let Some(file) = member.file.as_mut() {
             file.write_all(&encoded)?;

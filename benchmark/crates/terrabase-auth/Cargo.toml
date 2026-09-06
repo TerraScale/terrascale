@@ -7,6 +7,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+terrabase-member-transport = { path = "../terrabase-member-transport" }
 openraft = { version = "=0.9.21", features = ["serde", "storage-v2"] }
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

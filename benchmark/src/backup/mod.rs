@@ -94,6 +94,8 @@
 //! attempt is a typed error.
 
 mod manifest;
+/// Bounded native backup scheduling shared by hosted databases.
+pub mod worker;
 mod records;
 mod restore;
 mod sha256;
@@ -111,6 +113,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use manifest::{ENCRYPTED_MANIFEST_FILE, MANIFEST_FILE, ManifestFacts, point_directory};
+pub mod object_store;
 use records::{MemberWriter, Record};
 use sha256::digest_file;
 
@@ -123,6 +126,34 @@ use crate::identity::DatabaseUlid;
 use crate::regions::{RegionCatalog, RegionCode};
 use crate::storage::{PublishedCommit, PublishedWrite};
 use crate::types::{Cancellation, LocalDurability, StorageSequence, TenantId};
+
+/// Authenticates backup envelopes against an authorized database key scope.
+/// A lease reader reconstructs each artifact context, allowing recovery after
+/// restart without retaining an in-memory encryption session.
+pub trait BackupReader {
+    /// Returns authenticated plaintext, refusing expired or mismatched keys.
+    ///
+    /// # Errors
+    /// Returns the encryption provider or envelope validation refusal.
+    fn open_backup_envelope(&self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError>;
+}
+
+impl BackupReader for ArtifactCipher {
+    fn open_backup_envelope(&self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        self.open(envelope)
+    }
+}
+
+impl BackupReader for DatabaseKeyLease {
+    fn open_backup_envelope(&self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        ArtifactCipher::open_envelope_from_database_key_lease(
+            self,
+            ArtifactKind::Backup,
+            3,
+            envelope,
+        )
+    }
+}
 
 /// An immutable database residency lock.
 ///
@@ -362,6 +393,8 @@ pub struct BackupPlan {
     cancellation: Option<Arc<Cancellation>>,
     encryption: BackupEncryptionMode,
     placement: Option<PlacementLock>,
+    reader: Option<Arc<dyn BackupReader + Send + Sync>>,
+    archive_byte_limit: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -388,6 +421,8 @@ impl BackupPlan {
             cancellation: None,
             encryption: BackupEncryptionMode::Encrypted(encryption),
             placement: None,
+            reader: None,
+            archive_byte_limit: None,
         }
     }
 
@@ -413,6 +448,8 @@ impl BackupPlan {
             cancellation: None,
             encryption: BackupEncryptionMode::Plaintext,
             placement: None,
+            reader: None,
+            archive_byte_limit: None,
         }
     }
 
@@ -429,6 +466,8 @@ impl BackupPlan {
             cancellation: None,
             encryption: BackupEncryptionMode::Plaintext,
             placement: None,
+            reader: None,
+            archive_byte_limit: None,
         }
     }
 
@@ -458,6 +497,22 @@ impl BackupPlan {
     #[cfg(test)]
     pub(crate) fn local_test_incremental_since(base: StorageSequence) -> Self {
         Self { kind: BackupKind::Incremental { base }, ..Self::local_test_full_plaintext() }
+    }
+
+    /// Caps staged archive bytes, conservatively accounting for encryption
+    /// overhead before writing. Exhaustion preserves the existing chain.
+    #[must_use]
+    pub fn with_archive_byte_limit(mut self, bytes: u64) -> Self {
+        self.archive_byte_limit = Some(bytes);
+        self
+    }
+
+    /// Uses an authorized reader to validate older artifact contexts when
+    /// extending a chain across process restarts or key rotations.
+    #[must_use]
+    pub fn with_reader(mut self, reader: Arc<dyn BackupReader + Send + Sync>) -> Self {
+        self.reader = Some(reader);
+        self
     }
 
     /// Plans a snapshot backup pinned at `boundary`.
@@ -1032,6 +1087,7 @@ fn execute(
     };
 
     let tenants = selected_tenants(engine, &mut state, plan)?;
+    writer.set_byte_limit(plan.archive_byte_limit);
     let boundary = resolve_boundary(engine, &mut state, plan, destination)?;
     // Bind the complete selected scope even when a tenant contributes no
     // records to this particular range. Object-store chain planners use the
@@ -1112,8 +1168,19 @@ fn resolve_boundary(
         BackupKind::Incremental { base } => {
             // The base must be a sealed recovery-point boundary in this
             // destination, and the range must be provable.
-            let anchored =
-                discover_points(destination)?.iter().any(|point| point.boundary_sequence() == base);
+            let points = match &plan.encryption {
+                BackupEncryptionMode::Plaintext => discover_points(destination)?,
+                BackupEncryptionMode::Encrypted(encryption) => {
+                    if let Some(reader) = &plan.reader {
+                        restore::discover_encrypted_points(destination, reader.as_ref())?
+                    } else {
+                        let cipher =
+                            encryption.cipher.lock().map_err(|_| BackupError::SourceUnavailable)?;
+                        restore::discover_encrypted_points(destination, &*cipher)?
+                    }
+                }
+            };
+            let anchored = points.iter().any(|point| point.boundary_sequence() == base);
             if !anchored {
                 return Err(BackupError::ChainIncomplete);
             }
@@ -1410,7 +1477,8 @@ fn seal_point(
         let expected =
             encrypted_manifest.map_or_else(|| manifest.render().into_bytes(), <[u8]>::to_vec);
         if existing == expected {
-            return Ok(());
+            verify_members(destination, manifest.identity(), manifest.members())?;
+            return sync_directory(destination);
         }
         return Err(BackupError::ChecksumMismatch);
     }
@@ -1436,7 +1504,7 @@ fn seal_point(
             file.sync_all()
         })
         .map_err(|_| BackupError::DestinationUnavailable)?;
-    let _ = std::fs::File::open(&candidate).and_then(|directory| directory.sync_all());
+    sync_directory(&candidate)?;
     match std::fs::rename(&candidate, &point) {
         Ok(()) => {}
         Err(_) if point.join(manifest_file).is_file() => {
@@ -1447,14 +1515,23 @@ fn seal_point(
             let expected =
                 encrypted_manifest.map_or_else(|| manifest.render().into_bytes(), <[u8]>::to_vec);
             if existing == expected {
-                return Ok(());
+                verify_members(destination, manifest.identity(), manifest.members())?;
+                return sync_directory(destination);
             }
             return Err(BackupError::ChecksumMismatch);
         }
         Err(_) => return Err(BackupError::DestinationUnavailable),
     }
-    let _ = std::fs::File::open(destination).and_then(|directory| directory.sync_all());
-    Ok(())
+    sync_directory(destination)
+}
+
+/// A published name is not durable until its containing directory is synced.
+/// Propagate failures even after rename: the caller must treat that outcome as
+/// uncertain and verify the recovery point on retry, never report it healthy.
+fn sync_directory(path: &Path) -> Result<(), BackupError> {
+    std::fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| BackupError::DestinationUnavailable)
 }
 
 /// Loads and validates the sealed manifest of one point directory.

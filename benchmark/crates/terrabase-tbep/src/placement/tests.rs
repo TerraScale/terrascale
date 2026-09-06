@@ -26,7 +26,7 @@ impl Fixture {
                 .expect("private root");
         }
         let boundary =
-            PlacementBoundary::new("production", &cluster, &member, [(scope, "GRU".into())])
+            PlacementBoundary::new("production", &cluster, &member, 1, 1, [(scope, "GRU".into())])
                 .expect("boundary");
         let request = pb::PlacementStageRequest {
             expected_revision: 0,

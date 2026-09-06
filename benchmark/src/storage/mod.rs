@@ -32,9 +32,9 @@ pub(crate) use intent::{
 pub(crate) use ownership::validate_local_restore_source;
 pub use ownership::{DatabaseOwner, EnvironmentName, OwnershipError};
 pub(crate) use ownership::{OwnershipMode, load_or_create};
-pub(crate) use sqlite::SqliteStorage;
 pub use sqlite::database_file;
 pub(crate) use sqlite::import_backup_file;
+pub(crate) use sqlite::{SqliteStorage, decode_document_body};
 
 /// A retained journal page could not be served.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -623,6 +623,31 @@ pub(crate) struct AppliedFrontierEntry {
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
+    /// Loads one private webhook metadata record.
+    fn webhook_metadata_load(
+        &self,
+        tenant: &TenantId,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Option<Vec<u8>>, ()>;
+
+    /// Lists a complete bounded private webhook namespace, or fails.
+    fn webhook_metadata_list(
+        &self,
+        tenant: &TenantId,
+        namespace: &str,
+    ) -> Result<Vec<(String, Vec<u8>)>, ()>;
+
+    /// Atomically replaces private webhook metadata on exact previous bytes.
+    fn webhook_metadata_compare_exchange(
+        &mut self,
+        tenant: &TenantId,
+        namespace: &str,
+        key: &str,
+        expected: Option<&[u8]>,
+        replacement: &[u8],
+    ) -> Result<bool, ()>;
+
     /// Loads an opaque public schema envelope from internal metadata.
     fn schema_metadata_load(
         &self,
@@ -1234,6 +1259,9 @@ pub(crate) trait StoragePort: Send {
     ) -> Vec<MergeKernelEntry> {
         Vec::new()
     }
+
+    /// Durably advances the independent native backup retention floor.
+    fn advance_backup_frontier(&mut self, sequence: u64) -> Result<(), ()>;
 
     /// Runs one retention sweep: prune publication history below every
     /// consumer frontier, then checkpoint the WAL.

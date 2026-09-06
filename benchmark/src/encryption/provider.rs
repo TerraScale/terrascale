@@ -114,6 +114,8 @@ pub enum ArtifactKind {
     LargeValueChunk,
     /// A checkpoint token or checkpoint-state artifact.
     Checkpoint,
+    /// An endpoint-bound encrypted webhook signing secret.
+    WebhookSecret,
 }
 
 impl ArtifactKind {
@@ -132,6 +134,7 @@ impl ArtifactKind {
             Self::Branch => "branch",
             Self::LargeValueChunk => "large-value-chunk",
             Self::Checkpoint => "checkpoint",
+            Self::WebhookSecret => "webhook-secret",
         }
     }
 
@@ -149,7 +152,8 @@ impl ArtifactKind {
             | Self::Index
             | Self::Manifest
             | Self::Snapshot
-            | Self::LargeValueChunk => KeyPurpose::Data,
+            | Self::LargeValueChunk
+            | Self::WebhookSecret => KeyPurpose::Data,
         }
     }
 }
@@ -481,10 +485,9 @@ impl DatabaseKeyHierarchy {
 
     /// Creates and wraps a fresh per-database DEK in every selected Region.
     ///
-    /// The provider is expected to use its regional OCI Vault KEK.  The
-    /// currently shipped provider is intentionally unconfigured, so this
-    /// method returns [`EncryptionError::KeyProviderUnconfigured`] until the
-    /// Orchestrator supplies an authorized adapter.
+    /// The provider uses its regional OCI Vault KEK. An unavailable adapter
+    /// returns [`EncryptionError::KeyProviderUnconfigured`]; production host
+    /// provisioning and durable wrappers are owned by the Orchestrator.
     ///
     /// # Errors
     ///
@@ -624,10 +627,6 @@ impl DatabaseKeyLease {
     ///
     /// Returns an error when the provider is not OCI Vault or the duration is
     /// outside the bounded lease interval.
-    #[allow(
-        dead_code,
-        reason = "reserved for the in-crate OCI adapter; the current provider is fail-closed"
-    )]
     pub(in crate::encryption) fn from_adapter(
         metadata: KeyVersionMetadata,
         key: DatabaseKey,
@@ -643,6 +642,15 @@ impl DatabaseKeyLease {
         let expires_at =
             Instant::now().checked_add(duration).ok_or(EncryptionError::InvalidKeyLease)?;
         Ok(Self { metadata, key, provider, expires_at })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_oci_vault(
+        metadata: KeyVersionMetadata,
+        key: DatabaseKey,
+        duration: Duration,
+    ) -> Result<Self, EncryptionError> {
+        Self::from_adapter(metadata, key, duration, KeyProviderIdentity::OciVault)
     }
 
     /// Returns the authorized key-version metadata.

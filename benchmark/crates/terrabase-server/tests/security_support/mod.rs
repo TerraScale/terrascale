@@ -45,6 +45,7 @@ impl Fixture {
         let state = Arc::new(ApiState {
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
+            delegated_identity: None,
             keys: Some(Arc::new(KeyStore::with_keys(registrations))),
             control: Some(Arc::new(control)),
             catalog: Some(Arc::new(catalog)),
@@ -61,6 +62,7 @@ impl Fixture {
                 .expect("origin keys"),
             ),
             webhook_keys: None,
+            exports: None,
             capability_keys: Arc::new(
                 CapabilityKeyRing::new(b"e17-capability-current", Some(b"e17-capability-previous"))
                     .expect("capability keys"),

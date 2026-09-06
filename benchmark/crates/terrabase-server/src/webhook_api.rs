@@ -22,8 +22,8 @@ use axum::routing::{delete, get, post};
 use serde::{Deserialize, Serialize};
 
 use terrabase::engine::Engine;
-use terrabase::types::{CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion};
-use terrabase::{CommitError, CommitOutcome, EngineError, LocalDurability, OperationId, TenantId};
+use terrabase::types::{DocumentId, ExpectedVersion};
+use terrabase::{EngineError, TenantId};
 
 use crate::guards::AbuseGuards;
 
@@ -326,6 +326,50 @@ pub trait WebhookJournal: Send + Sync + 'static {
     ) -> Result<Vec<Publication>, StorageError>;
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+enum MetadataValue {
+    Null,
+    Boolean(bool),
+    Integer(i64),
+    String(String),
+    Object(BTreeMap<String, Self>),
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MetadataEnvelope {
+    version: u64,
+    value: MetadataValue,
+}
+
+struct MetadataDocument {
+    id: DocumentId,
+    version: u64,
+    value: MetadataValue,
+}
+impl MetadataDocument {
+    fn decode(id: &str, bytes: &[u8]) -> Result<Self, StorageError> {
+        let envelope: MetadataEnvelope =
+            serde_json::from_slice(bytes).map_err(|_| StorageError::Unavailable)?;
+        Ok(Self {
+            id: DocumentId::try_new(id).map_err(|_| StorageError::Unavailable)?,
+            version: envelope.version,
+            value: envelope.value,
+        })
+    }
+    fn id(&self) -> &DocumentId {
+        &self.id
+    }
+    fn value(&self) -> &MetadataValue {
+        &self.value
+    }
+    fn metadata(&self) -> &Self {
+        self
+    }
+    fn version(&self) -> u64 {
+        self.version
+    }
+}
+
 enum WebhookEngine {
     Engine(Arc<Engine>),
     Host(Arc<terrabase_tbep::member_host::MemberHost>),
@@ -388,9 +432,6 @@ impl WebhookJournal for EngineWebhookJournal {
             if row.commit_sequence == 0 || row.canonical.is_empty() {
                 return Err(StorageError::Unavailable);
             }
-            if is_webhook_metadata_row(&row.canonical) {
-                continue;
-            }
             let event_id = blake3::hash(&row.canonical).to_hex().to_string();
             publications.push(Publication {
                 revision: row.commit_sequence,
@@ -404,7 +445,7 @@ impl WebhookJournal for EngineWebhookJournal {
 
 /// Engine-backed durable endpoint and delivery records.
 ///
-/// The adapter uses the Engine's ordinary `SQLite` document transaction, so
+/// The adapter uses the Engine's private `SQLite` metadata transaction, so
 /// endpoint creation, delivery idempotency, retry state, and replay survive a
 /// process restart. A process-local mutex only serializes this adapter's
 /// compare-and-write operations; it is not a source of state or a fallback.
@@ -430,36 +471,82 @@ impl EngineWebhookStorage {
         webhook_engine_scope(&self.engine, scope)
     }
 
+    /// Reads the last completely dispatched batch, surviving process restart.
+    ///
+    /// # Errors
+    /// Returns an unavailable or malformed durable checkpoint.
+    pub fn dispatch_cursor(&self, scope: &TenantScope) -> Result<u64, StorageError> {
+        match self.read_document(scope, "dispatch", "cursor")? {
+            None => Ok(0),
+            Some(document) => {
+                unsigned_from_value(document.value()).ok_or(StorageError::Unavailable)
+            }
+        }
+    }
+
+    /// Commits one fully processed batch without billing a customer write.
+    ///
+    /// # Errors
+    /// Returns a concurrent checkpoint or unavailable durable storage.
+    pub fn checkpoint_dispatch(
+        &self,
+        scope: &TenantScope,
+        expected: u64,
+        next: u64,
+    ) -> Result<(), StorageError> {
+        if next < expected {
+            return Err(StorageError::Conflict);
+        }
+        let _lock = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
+        let document = self.read_document(scope, "dispatch", "cursor")?;
+        let current = document
+            .as_ref()
+            .map(|doc| unsigned_from_value(doc.value()).ok_or(StorageError::Unavailable))
+            .transpose()?
+            .unwrap_or(0);
+        if current != expected {
+            return Err(StorageError::Conflict);
+        }
+        if current == next {
+            return Ok(());
+        }
+        self.write_document(
+            scope,
+            "dispatch",
+            "cursor",
+            unsigned_value(next),
+            document
+                .as_ref()
+                .map_or(ExpectedVersion::New, |doc| ExpectedVersion::Exact(doc.version)),
+        )
+    }
+
     fn read_document(
         &self,
         scope: &TenantScope,
         collection: &str,
         id: &str,
-    ) -> Result<Option<Document>, StorageError> {
+    ) -> Result<Option<MetadataDocument>, StorageError> {
         let engine_scope = self.engine_scope(scope)?;
-        let snapshot =
-            self.engine.read_snapshot(&engine_scope).map_err(|error| map_engine_storage(&error))?;
-        let transaction = self
-            .engine
-            .begin(&engine_scope, snapshot, operation_id("webhook-read"))
-            .map_err(|error| map_engine_storage(&error))?;
-        let collection = CollectionName::try_new(collection).map_err(|_| StorageError::Conflict)?;
-        let id = DocumentId::try_new(id).map_err(|_| StorageError::Conflict)?;
-        transaction.read_in_collection(&collection, &id).map_err(|error| map_engine_storage(&error))
+        self.engine
+            .webhook_metadata_load(&engine_scope, collection, id)
+            .map_err(|error| map_engine_storage(&error))?
+            .map(|bytes| MetadataDocument::decode(id, &bytes))
+            .transpose()
     }
 
     fn documents(
         &self,
         scope: &TenantScope,
         collection: &str,
-    ) -> Result<Vec<Document>, StorageError> {
+    ) -> Result<Vec<MetadataDocument>, StorageError> {
         let engine_scope = self.engine_scope(scope)?;
-        let snapshot =
-            self.engine.read_snapshot(&engine_scope).map_err(|error| map_engine_storage(&error))?;
-        let collection = CollectionName::try_new(collection).map_err(|_| StorageError::Conflict)?;
         self.engine
-            .snapshot_documents_in_collection(&engine_scope, &snapshot, &collection)
-            .map_err(|error| map_engine_storage(&error))
+            .webhook_metadata_list(&engine_scope, collection)
+            .map_err(|error| map_engine_storage(&error))?
+            .into_iter()
+            .map(|(id, bytes)| MetadataDocument::decode(&id, &bytes))
+            .collect()
     }
 
     fn write_document(
@@ -467,29 +554,43 @@ impl EngineWebhookStorage {
         scope: &TenantScope,
         collection: &str,
         id: &str,
-        value: DocumentValue,
+        value: MetadataValue,
         expected: ExpectedVersion,
     ) -> Result<(), StorageError> {
         let engine_scope = self.engine_scope(scope)?;
-        let snapshot =
-            self.engine.read_snapshot(&engine_scope).map_err(|error| map_engine_storage(&error))?;
-        let mut transaction = self
+        let current = self
             .engine
-            .begin(&engine_scope, snapshot, operation_id("webhook-write"))
+            .webhook_metadata_load(&engine_scope, collection, id)
             .map_err(|error| map_engine_storage(&error))?;
-        let collection = CollectionName::try_new(collection).map_err(|_| StorageError::Conflict)?;
-        let id = DocumentId::try_new(id).map_err(|_| StorageError::Conflict)?;
-        transaction
-            .put(Document::new(id, collection, value), expected)
-            .map_err(|error| map_engine_storage(&error))?;
-        match transaction.commit(LocalDurability::Synced) {
-            CommitOutcome::Committed(_) => Ok(()),
-            CommitOutcome::Rejected(CommitError::Conflict | CommitError::OperationIdReuse) => {
-                Err(StorageError::Conflict)
+        let version = current
+            .as_ref()
+            .map(|bytes| MetadataDocument::decode(id, bytes))
+            .transpose()?
+            .map_or(0, |record| record.version);
+        match expected {
+            ExpectedVersion::New if current.is_some() => return Err(StorageError::Conflict),
+            ExpectedVersion::Exact(expected) if current.is_none() || version != expected => {
+                return Err(StorageError::Conflict);
             }
-            CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => {
-                Err(StorageError::Unavailable)
-            }
+            _ => {}
+        }
+        let version = version.checked_add(1).ok_or(StorageError::Unavailable)?;
+        let bytes = serde_json::to_vec(&MetadataEnvelope { version, value })
+            .map_err(|_| StorageError::Unavailable)?;
+        if self
+            .engine
+            .webhook_metadata_compare_exchange(
+                &engine_scope,
+                collection,
+                id,
+                current.as_deref(),
+                &bytes,
+            )
+            .map_err(|error| map_engine_storage(&error))?
+        {
+            Ok(())
+        } else {
+            Err(StorageError::Conflict)
         }
     }
 }
@@ -518,26 +619,21 @@ fn map_engine_storage(error: &EngineError) -> StorageError {
     }
 }
 
-fn operation_id(prefix: &str) -> OperationId {
-    let id = format!("{prefix}-{}", terrabase::identity::process_generator().generate().to_text());
-    OperationId::try_new(&id).expect("generated webhook operation identity is valid")
-}
-
 fn delivery_id(endpoint_id: &str, event_id: &str) -> String {
     format!("{endpoint_id}:{event_id}")
 }
 
 // SQLite document integers are signed. Keep compact legacy integers where
 // possible and use exact decimal text for the upper half of the u64 range.
-fn unsigned_value(value: u64) -> DocumentValue {
+fn unsigned_value(value: u64) -> MetadataValue {
     i64::try_from(value)
-        .map_or_else(|_| DocumentValue::String(value.to_string()), DocumentValue::Integer)
+        .map_or_else(|_| MetadataValue::String(value.to_string()), MetadataValue::Integer)
 }
 
-fn unsigned_from_value(value: &DocumentValue) -> Option<u64> {
+fn unsigned_from_value(value: &MetadataValue) -> Option<u64> {
     match value {
-        DocumentValue::Integer(value) => u64::try_from(*value).ok(),
-        DocumentValue::String(text) => {
+        MetadataValue::Integer(value) => u64::try_from(*value).ok(),
+        MetadataValue::String(text) => {
             let value = text.parse::<u64>().ok()?;
             (text == &value.to_string()).then_some(value)
         }
@@ -545,60 +641,60 @@ fn unsigned_from_value(value: &DocumentValue) -> Option<u64> {
     }
 }
 
-fn endpoint_value(record: &WebhookEndpoint) -> DocumentValue {
-    DocumentValue::Object(BTreeMap::from([
-        ("endpoint".into(), DocumentValue::String(record.endpoint.clone())),
+fn endpoint_value(record: &WebhookEndpoint) -> MetadataValue {
+    MetadataValue::Object(BTreeMap::from([
+        ("endpoint".into(), MetadataValue::String(record.endpoint.clone())),
         ("created_at".into(), unsigned_value(record.created_at)),
-        ("deleted".into(), DocumentValue::Boolean(record.deleted)),
+        ("deleted".into(), MetadataValue::Boolean(record.deleted)),
     ]))
 }
 
-fn endpoint_from_document(document: &Document) -> Option<WebhookEndpoint> {
-    let DocumentValue::Object(fields) = document.value() else { return None };
+fn endpoint_from_document(document: &MetadataDocument) -> Option<WebhookEndpoint> {
+    let MetadataValue::Object(fields) = document.value() else { return None };
     let endpoint = match fields.get("endpoint")? {
-        DocumentValue::String(value) => value.clone(),
+        MetadataValue::String(value) => value.clone(),
         _ => return None,
     };
     let created_at = unsigned_from_value(fields.get("created_at")?)?;
     let deleted = match fields.get("deleted")? {
-        DocumentValue::Boolean(value) => *value,
+        MetadataValue::Boolean(value) => *value,
         _ => return None,
     };
     Some(WebhookEndpoint { id: document.id().as_str().to_owned(), endpoint, created_at, deleted })
 }
 
-fn delivery_value(record: &DeliveryRecord) -> DocumentValue {
-    DocumentValue::Object(BTreeMap::from([
-        ("event_id".into(), DocumentValue::String(record.event_id.clone())),
+fn delivery_value(record: &DeliveryRecord) -> MetadataValue {
+    MetadataValue::Object(BTreeMap::from([
+        ("event_id".into(), MetadataValue::String(record.event_id.clone())),
         ("revision".into(), unsigned_value(record.revision)),
-        ("attempts".into(), DocumentValue::Integer(i64::from(record.attempts))),
+        ("attempts".into(), MetadataValue::Integer(i64::from(record.attempts))),
         ("next_attempt_at".into(), unsigned_value(record.next_attempt_at)),
         ("retry_started_at".into(), unsigned_value(record.retry_started_at)),
         (
             "status".into(),
             record
                 .status
-                .map_or(DocumentValue::Null, |value| DocumentValue::Integer(i64::from(value))),
+                .map_or(MetadataValue::Null, |value| MetadataValue::Integer(i64::from(value))),
         ),
-        ("delivered".into(), DocumentValue::Boolean(record.delivered)),
-        ("terminal".into(), DocumentValue::Boolean(record.terminal)),
+        ("delivered".into(), MetadataValue::Boolean(record.delivered)),
+        ("terminal".into(), MetadataValue::Boolean(record.terminal)),
     ]))
 }
 
-fn delivery_from_document(document: &Document) -> Option<DeliveryRecord> {
-    let DocumentValue::Object(fields) = document.value() else { return None };
+fn delivery_from_document(document: &MetadataDocument) -> Option<DeliveryRecord> {
+    let MetadataValue::Object(fields) = document.value() else { return None };
     let string = |name: &str| match fields.get(name)? {
-        DocumentValue::String(value) => Some(value.clone()),
+        MetadataValue::String(value) => Some(value.clone()),
         _ => None,
     };
     let integer = |name: &str| unsigned_from_value(fields.get(name)?);
     let boolean = |name: &str| match fields.get(name)? {
-        DocumentValue::Boolean(value) => Some(*value),
+        MetadataValue::Boolean(value) => Some(*value),
         _ => None,
     };
     let status = match fields.get("status")? {
-        DocumentValue::Null => None,
-        DocumentValue::Integer(value) => Some(u16::try_from(*value).ok()?),
+        MetadataValue::Null => None,
+        MetadataValue::Integer(value) => Some(u16::try_from(*value).ok()?),
         _ => return None,
     };
     Some(DeliveryRecord {
@@ -612,19 +708,6 @@ fn delivery_from_document(document: &Document) -> Option<DeliveryRecord> {
         delivered: boolean("delivered")?,
         terminal: boolean("terminal")?,
     })
-}
-
-/// Returns whether a canonical Engine journal row belongs to webhook metadata.
-/// Canonical rows start with a u32-length-prefixed collection name.
-fn is_webhook_metadata_row(canonical: &[u8]) -> bool {
-    let Some(length) = canonical.get(..4).and_then(|bytes| bytes.try_into().ok()) else {
-        return false;
-    };
-    let length = u32::from_le_bytes(length) as usize;
-    let Some(collection) = canonical.get(4..4_usize.saturating_add(length)) else { return false };
-    collection == WEBHOOK_ENDPOINTS_COLLECTION.as_bytes()
-        || collection == WEBHOOK_DELIVERIES_COLLECTION.as_bytes()
-        || collection == secrets::COLLECTION.as_bytes()
 }
 
 impl WebhookStorage for EngineWebhookStorage {
@@ -953,13 +1036,20 @@ pub trait WebhookGuard: Send + Sync + 'static {
 /// Adapter for the member's D-64 abuse guard.
 pub struct AbuseGuardWebhookGuard {
     guards: Arc<AbuseGuards>,
+    database: Option<String>,
 }
 
 impl AbuseGuardWebhookGuard {
     /// Binds webhook reservations to the shared member guard state.
     #[must_use]
     pub fn new(guards: Arc<AbuseGuards>) -> Self {
-        Self { guards }
+        Self { guards, database: None }
+    }
+
+    /// Binds a canonical engine scope to its public database guard identity.
+    #[must_use]
+    pub fn for_database(guards: Arc<AbuseGuards>, database: &str) -> Self {
+        Self { guards, database: Some(database.to_owned()) }
     }
 }
 
@@ -969,11 +1059,12 @@ impl WebhookGuard for AbuseGuardWebhookGuard {
         scope: &TenantScope,
         endpoint: &str,
     ) -> Result<(), crate::guards::GuardRejection> {
-        self.guards.register_webhook(&scope.database, endpoint)
+        self.guards.register_webhook(self.database.as_deref().unwrap_or(&scope.database), endpoint)
     }
 
     fn release(&self, scope: &TenantScope, endpoint: &str) {
-        self.guards.unregister_webhook(&scope.database, endpoint);
+        self.guards
+            .unregister_webhook(self.database.as_deref().unwrap_or(&scope.database), endpoint);
     }
 }
 
@@ -1306,6 +1397,9 @@ impl WebhookService {
         scope: &TenantScope,
         input: &CreateWebhook,
     ) -> Result<WebhookEndpoint, WebhookError> {
+        for existing in self.list(scope)? {
+            self.guard.reserve(scope, &existing.id).map_err(|_| WebhookError::guard())?;
+        }
         let endpoint = validate_endpoint(&input.endpoint)?;
         self.delivery.validate_target(&endpoint).map_err(WebhookError::delivery)?;
         let record = self
@@ -1316,7 +1410,7 @@ impl WebhookService {
             let _ = self.storage.delete_endpoint(scope, &record.id);
             return Err(WebhookError::secret(error));
         }
-        if self.guard.reserve(scope, &record.endpoint).is_err() {
+        if self.guard.reserve(scope, &record.id).is_err() {
             let _ = self.secrets.destroy(scope, &record.id, &self.region);
             let _ = self.storage.delete_endpoint(scope, &record.id);
             return Err(WebhookError::guard());
@@ -1345,7 +1439,7 @@ impl WebhookService {
             .map_err(WebhookError::storage)?
             .ok_or_else(WebhookError::not_found)?;
         let deleted = self.storage.delete_endpoint(scope, id).map_err(WebhookError::storage)?;
-        self.guard.release(scope, &endpoint.endpoint);
+        self.guard.release(scope, &endpoint.id);
         match self.secrets.destroy(scope, id, &self.region) {
             Ok(()) | Err(SecretError::NotFound) => Ok(deleted),
             Err(error) => Err(WebhookError::secret(error)),
@@ -1423,7 +1517,7 @@ impl WebhookService {
         let endpoints = self.list(scope)?;
         let publications =
             self.journal.page(scope, cursor, MAX_JOURNAL_PAGE).map_err(WebhookError::storage)?;
-        let mut report = DispatchReport::default();
+        let mut report = DispatchReport { cursor, ..DispatchReport::default() };
         for endpoint in endpoints {
             if endpoint.deleted {
                 continue;
@@ -1448,6 +1542,7 @@ impl WebhookService {
                 }
             }
         }
+        report.cursor = publications.last().map_or(cursor, |publication| publication.revision);
         report.publications = publications.len();
         Ok(report)
     }
@@ -1540,6 +1635,8 @@ impl WebhookService {
 /// One dispatch result; delivery itself remains unbilled.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct DispatchReport {
+    /// Last fully processed journal revision, or the incoming cursor for an empty page.
+    pub cursor: u64,
     /// Publications read from the shared journal.
     pub publications: usize,
     /// Attempts issued to the delivery port.
@@ -2285,6 +2382,9 @@ mod tests {
         )
         .expect("owner scope");
         let storage = EngineWebhookStorage::new(Arc::clone(&engine));
+        assert_eq!(storage.dispatch_cursor(&scope), Ok(0));
+        storage.checkpoint_dispatch(&scope, 0, 7).expect("checkpoint");
+        assert_eq!(storage.checkpoint_dispatch(&scope, 0, 8), Err(StorageError::Conflict));
         let endpoint =
             storage.create_endpoint(&scope, "https://hooks.example/events", 42).expect("endpoint");
         assert_eq!(storage.endpoint(&scope, &endpoint.id), Ok(Some(endpoint.clone())));
@@ -2346,6 +2446,12 @@ mod tests {
                 .expect("reopen"),
         );
         let storage = EngineWebhookStorage::new(Arc::clone(&reopened));
+        assert_eq!(storage.dispatch_cursor(&scope), Ok(7));
+        let engine_scope = webhook_engine_scope(&reopened, &scope).expect("scope");
+        assert!(
+            reopened.journal_rows(&engine_scope, 0, 256).expect("journal").is_empty(),
+            "internal webhook state must not enter customer journal"
+        );
         for (endpoint, delivery) in boundary_records {
             assert_eq!(storage.endpoint(&scope, &endpoint.id), Ok(Some(endpoint.clone())));
             let log = storage.delivery_log(&scope, &endpoint.id, 10).expect("durable delivery");

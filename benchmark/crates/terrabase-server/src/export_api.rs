@@ -27,14 +27,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::Router;
 use axum::body::Body;
-use axum::extract::{Path as AxumPath, State};
 use axum::http::{Response as HttpResponse, StatusCode, header};
-use axum::response::IntoResponse;
-use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
-use terrabase::Engine;
 use terrabase::encryption::ArtifactCipher;
 use terrabase::regions::RegionCode;
 
@@ -48,8 +43,6 @@ pub const MAX_PAGE_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_METADATA_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum opaque source cursor retained in durable job state.
 pub const MAX_SOURCE_CURSOR_BYTES: usize = 64 * 1024;
-/// Route exposed by [`http_router`].
-pub const EXPORT_ROUTE: &str = "/api/v1/databases/{name}/exports";
 
 static NEXT_JOB: AtomicU64 = AtomicU64::new(1);
 
@@ -202,6 +195,10 @@ pub struct MetadataMember {
 /// history are paged at `boundary` by [`ExportSource::page`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExportSnapshot {
+    /// Wall clock captured at admission for stable TTL visibility.
+    pub captured_at_millis: u64,
+    /// Retained history floor captured at admission.
+    pub history_start: u64,
     /// Durable publication boundary of this export.
     pub boundary: u64,
     /// Stable database incarnation identity.
@@ -313,114 +310,6 @@ pub trait ExportSource: Send + Sync + 'static {
     ) -> Result<ExportPage, ExportSourceError>;
 }
 
-/// The production Engine read seam used by [`EngineExportSource`].
-///
-/// The server crate cannot reach the Engine's crate-private bounded snapshot
-/// methods directly.  A member adapter must therefore implement this seam at
-/// the Engine composition boundary and delegate it to the real Engine,
-/// schema catalog, index catalog, retained-history, and branch registry.  A
-/// production adapter must never implement these calls by materialising the
-/// whole database or by maintaining a second in-memory database.
-pub trait EngineExportReadPort: Send + Sync + 'static {
-    /// Captures the fixed boundary and all logical metadata for one database.
-    ///
-    /// # Errors
-    ///
-    /// Returns a storage or metadata-validation failure from the engine adapter.
-    fn snapshot(&self, database: &str) -> Result<ExportSnapshot, ExportSourceError>;
-
-    /// Reads one bounded page at the pinned boundary.  `after` is an opaque
-    /// adapter cursor; returned canonical bytes remain opaque to this crate.
-    ///
-    /// # Errors
-    ///
-    /// Returns a storage failure or an invalid-page refusal at the pinned boundary.
-    fn page(
-        &self,
-        database: &str,
-        snapshot: &ExportSnapshot,
-        phase: ExportPhase,
-        after: Option<&[u8]>,
-        limit: usize,
-    ) -> Result<ExportPage, ExportSourceError>;
-}
-
-/// Production source adapter backed by the member's Engine composition.
-///
-/// This type intentionally contains no fallback source.  The member must
-/// pass an adapter that reads the durable Engine boundary and metadata; a
-/// missing adapter is rejected by [`Self::try_new`].
-pub struct EngineExportSource {
-    read: Arc<dyn EngineExportReadPort>,
-    engine_database_id: Option<String>,
-    _engine: Option<Arc<Engine>>,
-}
-
-impl EngineExportSource {
-    /// Constructs a source from the member's real Engine read adapter.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DependencyUnavailable` when the read adapter is absent.
-    pub fn try_new(read: Option<Arc<dyn EngineExportReadPort>>) -> Result<Self, ExportError> {
-        Ok(Self {
-            read: read.ok_or(ExportError::DependencyUnavailable)?,
-            engine_database_id: None,
-            _engine: None,
-        })
-    }
-
-    /// Constructs a source bound to a real durable Engine. The read port is
-    /// still mandatory because bounded page, schema/index, history, and
-    /// branch methods are currently exposed only at the Engine composition
-    /// boundary.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DependencyUnavailable` when the read adapter is absent.
-    pub fn from_engine(
-        engine: Arc<Engine>,
-        read: Option<Arc<dyn EngineExportReadPort>>,
-    ) -> Result<Self, ExportError> {
-        Ok(Self {
-            read: read.ok_or(ExportError::DependencyUnavailable)?,
-            engine_database_id: Some(engine.database_id().to_text()),
-            _engine: Some(engine),
-        })
-    }
-}
-
-impl ExportSource for EngineExportSource {
-    fn snapshot(&self, database: &str) -> Result<ExportSnapshot, ExportSourceError> {
-        if database.trim().is_empty() {
-            return Err(ExportSourceError::InvalidPage("database is empty"));
-        }
-        let snapshot = self.read.snapshot(database)?;
-        if self
-            .engine_database_id
-            .as_deref()
-            .is_some_and(|database_id| database_id != snapshot.database_id)
-        {
-            return Err(ExportSourceError::Storage("engine database identity mismatch".into()));
-        }
-        Ok(snapshot)
-    }
-
-    fn page(
-        &self,
-        database: &str,
-        snapshot: &ExportSnapshot,
-        phase: ExportPhase,
-        after: Option<&[u8]>,
-        limit: usize,
-    ) -> Result<ExportPage, ExportSourceError> {
-        if limit == 0 || limit > MAX_PAGE_RECORDS {
-            return Err(ExportSourceError::InvalidPage("page limit is outside bound"));
-        }
-        self.read.page(database, snapshot, phase, after, limit)
-    }
-}
-
 /// Encryption/provider metadata attested by an artifact port.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncryptionAttestation {
@@ -484,6 +373,20 @@ pub trait ArtifactWriter: Send {
 
 /// Destination/provider seam.  `open` must reject an absent key/provider.
 pub trait ArtifactPort: Send + Sync + 'static {
+    /// Reads and decrypts one immutable member after verifying its commit marker.
+    ///
+    /// # Errors
+    /// Refuses unavailable providers, uncommitted exports, or invalid artifacts.
+    fn read_member(
+        &self,
+        _job_id: &str,
+        _database: &str,
+        _member: &str,
+        _manifest: &ArtifactFact,
+    ) -> Result<Vec<u8>, ExportError> {
+        Err(ExportError::DependencyUnavailable)
+    }
+
     /// Returns provider/key metadata without exposing key material.
     fn attestation(&self) -> Option<EncryptionAttestation>;
     /// Opens a job-scoped resumable writer after placement validation.
@@ -726,24 +629,6 @@ impl ExportService {
         })
     }
 
-    /// Builds the handler state from explicit production seams.
-    ///
-    /// Returning an [`Arc`] makes the result directly usable with
-    /// [`http_router`]. Every seam remains mandatory; this constructor has no
-    /// local, echo, or in-memory production fallback.
-    ///
-    /// # Errors
-    ///
-    /// Returns the dependency or encryption refusal from [`Self::new`].
-    pub fn handler_ready(
-        source: Option<Arc<dyn ExportSource>>,
-        store: Option<Arc<dyn ExportStore>>,
-        artifacts: Option<Arc<dyn ArtifactPort>>,
-        cursor_key: [u8; 32],
-    ) -> Result<Arc<Self>, ExportError> {
-        Ok(Arc::new(Self::new(source, store, artifacts, cursor_key)?))
-    }
-
     /// Admits a job and schedules bounded work.  The initial state is durable
     /// before the worker is spawned, so a process crash cannot lose an accept.
     ///
@@ -761,7 +646,7 @@ impl ExportService {
 
     fn submit_blocking(&self, request: &ExportRequest) -> Result<ExportAccepted, ExportError> {
         validate_request(request)?;
-        let job_id = job_id(request);
+        let job_id = job_id(request, &self.cursor_key);
         if let Some(existing) = self.store.load(&job_id)? {
             // Another admission may have linked this record just before its
             // directory sync. The atomic create path also confirms durability
@@ -901,6 +786,31 @@ impl ExportService {
         self.status(job_id)?.ok_or(ExportError::InvalidRequest("unknown job"))
     }
 
+    /// Reads one completed export member on the blocking pool.
+    ///
+    /// # Errors
+    /// Refuses unknown or incomplete jobs and unverified artifact bytes.
+    pub async fn download(&self, job_id: &str, member: &str) -> Result<Vec<u8>, ExportError> {
+        let service = self.clone();
+        let job = job_id.to_owned();
+        let member = member.to_owned();
+        tokio::task::spawn_blocking(move || {
+            if !safe_member_path(&member) {
+                return Err(ExportError::InvalidRequest("invalid member"));
+            }
+            let state =
+                service.store.load(&job)?.ok_or(ExportError::InvalidRequest("unknown job"))?;
+            validate_state(&state)?;
+            if state.status != JobStatus::Complete {
+                return Err(ExportError::InvalidRequest("export incomplete"));
+            }
+            let manifest = state.manifest.ok_or(ExportError::IdempotencyConflict)?;
+            service.artifacts.read_member(&job, &state.database, &member, &manifest)
+        })
+        .await
+        .map_err(|_| ExportError::DependencyUnavailable)?
+    }
+
     fn clone_for_worker(&self) -> Worker {
         Worker {
             source: Arc::clone(&self.source),
@@ -945,6 +855,9 @@ impl ActiveJob {
         let inserted = {
             let mut active =
                 jobs.lock().map_err(|_| ExportError::Io("job lock poisoned".into()))?;
+            if !active.contains(id) && active.len() >= 16 {
+                return Err(ExportError::DependencyUnavailable);
+            }
             active.insert(id.to_owned())
         };
         if !inserted {
@@ -1380,8 +1293,8 @@ fn accepted(state: &ExportJobState) -> ExportAccepted {
     }
 }
 
-fn job_id(request: &ExportRequest) -> String {
-    let mut hasher = blake3::Hasher::new();
+fn job_id(request: &ExportRequest, key: &[u8; 32]) -> String {
+    let mut hasher = blake3::Hasher::new_keyed(key);
     hasher.update(request.database.as_bytes());
     hasher.update(&[0]);
     if let Some(key) = &request.idempotency_key {
@@ -1897,67 +1810,6 @@ pub(crate) fn fact(path: &str, bytes: &[u8]) -> ArtifactFact {
     }
 }
 
-/// Builds an Axum router for parent composition. Authentication, placement
-/// headers, and authorization remain parent-owned middleware.
-pub fn http_router(service: Arc<ExportService>) -> Router {
-    Router::new()
-        .route(EXPORT_ROUTE, post(create_export_http))
-        .route("/api/v1/exports/{job_id}", get(export_status_http))
-        .with_state(service)
-}
-
-/// Parent-callable handler for `POST /api/v1/databases/{name}/exports`.
-pub async fn create_export_http(
-    State(service): State<Arc<ExportService>>,
-    AxumPath(name): AxumPath<String>,
-    body: String,
-) -> impl IntoResponse {
-    let request = match serde_json::from_str::<HttpExportRequest>(&body) {
-        Ok(request) => request.into_request(name),
-        Err(_) => return http_error(StatusCode::BAD_REQUEST, "invalid export request body"),
-    };
-    match request {
-        Ok(request) => match service.submit(request).await {
-            Ok(accepted) => json_response(StatusCode::ACCEPTED, &accepted),
-            Err(error) => http_error(error_status(&error), error.public_message()),
-        },
-        Err(error) => http_error(StatusCode::UNPROCESSABLE_ENTITY, error.public_message()),
-    }
-}
-
-/// Parent-callable status handler for an accepted export.
-pub async fn export_status_http(
-    State(service): State<Arc<ExportService>>,
-    AxumPath(job_id): AxumPath<String>,
-) -> impl IntoResponse {
-    match service.status_async(&job_id).await {
-        Ok(Some(status)) => json_response(StatusCode::OK, &status),
-        Ok(None) => http_error(StatusCode::NOT_FOUND, "export job not found"),
-        Err(error) => http_error(error_status(&error), error.public_message()),
-    }
-}
-
-#[derive(Deserialize)]
-struct HttpExportRequest {
-    destination: Option<ExportDestination>,
-    #[serde(with = "region_vec_serde")]
-    placement: Vec<RegionCode>,
-    idempotency_key: Option<String>,
-}
-
-impl HttpExportRequest {
-    fn into_request(self, database: String) -> Result<ExportRequest, ExportError> {
-        Ok(ExportRequest {
-            database,
-            destination: self
-                .destination
-                .ok_or(ExportError::InvalidRequest("destination is required"))?,
-            placement: PlacementLock::new(self.placement)?,
-            idempotency_key: self.idempotency_key,
-        })
-    }
-}
-
 pub(crate) fn error_status(error: &ExportError) -> StatusCode {
     match error {
         ExportError::PlacementMismatch => StatusCode::MISDIRECTED_REQUEST,
@@ -2090,25 +1942,6 @@ mod tests {
         fs::remove_dir_all(root).expect("cleanup");
     }
 
-    struct ReadPort;
-
-    impl EngineExportReadPort for ReadPort {
-        fn snapshot(&self, _database: &str) -> Result<ExportSnapshot, ExportSourceError> {
-            Err(ExportSourceError::Storage("engine seam unavailable".into()))
-        }
-
-        fn page(
-            &self,
-            _database: &str,
-            _snapshot: &ExportSnapshot,
-            _phase: ExportPhase,
-            _after: Option<&[u8]>,
-            _limit: usize,
-        ) -> Result<ExportPage, ExportSourceError> {
-            Err(ExportSourceError::Storage("engine seam unavailable".into()))
-        }
-    }
-
     struct Source {
         pages: Mutex<Vec<ExportPage>>,
     }
@@ -2116,6 +1949,8 @@ mod tests {
     impl ExportSource for Source {
         fn snapshot(&self, _database: &str) -> Result<ExportSnapshot, ExportSourceError> {
             Ok(ExportSnapshot {
+                captured_at_millis: 0,
+                history_start: 0,
                 boundary: 7,
                 database_id: "db-1".into(),
                 schemas: vec![MetadataMember {
@@ -2354,22 +2189,18 @@ mod tests {
         state.status = JobStatus::Failed;
         state.error = Some(SENSITIVE_PROVIDER_DETAIL.into());
         service.store.save(&state).expect("legacy status");
-        let service = Arc::new(service);
-        let request = serde_json::json!({"destination": state.destination, "placement": ["GRU"]});
-        let response =
-            create_export_http(State(service.clone()), AxumPath("db".into()), request.to_string())
-                .await
-                .into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("response");
-        let text = std::str::from_utf8(&body).expect("JSON");
-        assert!(text.contains("export source operation failed"));
-        assert!(!text.contains("private-token") && !text.contains("/private/customer"));
-        let response =
-            export_status_http(State(service), AxumPath(state.job_id)).await.into_response();
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("status");
-        let text = std::str::from_utf8(&body).expect("JSON");
+        let error = service
+            .submit(ExportRequest {
+                database: state.database.clone(),
+                destination: state.destination.clone(),
+                placement: PlacementLock::single(RegionCode::GRU),
+                idempotency_key: None,
+            })
+            .await
+            .expect_err("source fails");
+        assert_eq!(error.public_message(), "export source operation failed");
+        let status = service.status_async(&state.job_id).await.expect("status").expect("job");
+        let text = serde_json::to_string(&status).expect("JSON");
         assert!(text.contains("export failed; retry with the latest resume cursor"));
         assert!(!text.contains("private-token") && !text.contains("/private/customer"));
     }
@@ -2454,10 +2285,7 @@ mod tests {
             service.resume(&state.job_id, "cursor").await,
             Err(ExportError::InvalidRequest("unknown job"))
         ));
-        let response = export_status_http(State(Arc::new(service)), AxumPath(state.job_id))
-            .await
-            .into_response();
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(service.status_async(&state.job_id).await.expect("status").is_none());
         assert_eq!(store.loads.load(Ordering::SeqCst), 3);
     }
 
@@ -2596,36 +2424,6 @@ mod tests {
     }
 
     #[test]
-    fn production_source_requires_the_real_engine_seam() {
-        assert!(matches!(
-            EngineExportSource::try_new(None),
-            Err(ExportError::DependencyUnavailable)
-        ));
-        let source = EngineExportSource::try_new(Some(Arc::new(ReadPort))).expect("source");
-        assert!(matches!(
-            source.snapshot("db"),
-            Err(ExportSourceError::Storage(detail)) if detail == "engine seam unavailable"
-        ));
-        assert!(matches!(
-            source.page(
-                "db",
-                &ExportSnapshot {
-                    boundary: 1,
-                    database_id: "db".into(),
-                    schemas: Vec::new(),
-                    indexes: Vec::new(),
-                    branches: Vec::new(),
-                    estimated_records: None,
-                },
-                ExportPhase::Documents,
-                None,
-                MAX_PAGE_RECORDS + 1
-            ),
-            Err(ExportSourceError::InvalidPage("page limit is outside bound"))
-        ));
-    }
-
-    #[test]
     fn jsonl_splices_document_bytes_without_value_parser() {
         let (documents, history) = encode_page(&[ExportRecord::Document {
             collection: "a\"b".into(),
@@ -2644,6 +2442,8 @@ mod tests {
     #[test]
     fn metadata_member_collisions_fail_closed() {
         let snapshot = ExportSnapshot {
+            captured_at_millis: 0,
+            history_start: 0,
             boundary: 1,
             database_id: "db".into(),
             schemas: vec![MetadataMember { name: "same.json".into(), bytes: br"{}".to_vec() }],

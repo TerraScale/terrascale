@@ -201,12 +201,9 @@ pub struct UsageEntry {
 /// Read counters are attribution-only and never appear as billable meters.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct ReadAttribution {
-    /// Point/document reads served.
-    pub point_reads: u64,
-    /// SQL/query reads served.
-    pub query_reads: u64,
-    /// Reactive read deliveries served.
-    pub reactive_reads: u64,
+    /// Aggregate reads observed since this Engine opened; reads are never billed.
+    #[schema(format = "uint64", minimum = 0)]
+    pub total_reads: u64,
 }
 
 /// Authoritative totals returned by a source snapshot.
@@ -620,13 +617,9 @@ impl UsageSource for EngineUsageSource {
         Ok(UsageSnapshot {
             snapshot_sequence: snapshot,
             totals,
-            // The current Engine exposes one durable aggregate read counter;
+            // The current Engine exposes one process-lifetime aggregate read counter;
             // it is attribution-only and therefore never enters `totals`.
-            reads: ReadAttribution {
-                point_reads: self.engine.metering_read_count(&scope),
-                query_reads: 0,
-                reactive_reads: 0,
-            },
+            reads: ReadAttribution { total_reads: self.engine.metering_read_count(&scope) },
         })
     }
 
@@ -775,10 +768,11 @@ pub struct UsageSummary {
     /// Hosted database identity.
     pub database_id: String,
     /// Durable ledger high-water shared by all totals.
+    #[schema(format = "uint64", minimum = 0)]
     pub snapshot_sequence: u64,
     /// The only two billable meters.
     pub meters: [MeterTotal; 2],
-    /// Attribution-only read counters.
+    /// Live read attribution since this Engine opened, outside the billable snapshot.
     pub reads: ReadAttribution,
 }
 
@@ -872,11 +866,7 @@ pub fn engine_summary(engine: &Engine) -> Result<UsageSummary, UsageApiError> {
                 units: totals.storage_byte_seconds.to_string(),
             },
         ],
-        reads: ReadAttribution {
-            point_reads: engine.metering_read_count(&scope),
-            query_reads: 0,
-            reactive_reads: 0,
-        },
+        reads: ReadAttribution { total_reads: engine.metering_read_count(&scope) },
     })
 }
 
@@ -1560,7 +1550,7 @@ mod tests {
                         .map(|entry| entry.integer_delta)
                         .sum(),
                 },
-                reads: ReadAttribution { point_reads: 7, query_reads: 3, reactive_reads: 1 },
+                reads: ReadAttribution { total_reads: 11 },
             })
         }
 
@@ -1781,7 +1771,7 @@ mod tests {
             service.page(&access(), &UsagePageRequest::try_new(None, 1, None).unwrap()).unwrap();
         assert_eq!(response.meters[0].meter, BillableMeter::DocumentWriteUnits);
         assert_eq!(response.meters[1].meter, BillableMeter::StorageByteSeconds);
-        assert_eq!(response.reads.point_reads, 7);
+        assert_eq!(response.reads.total_reads, 11);
     }
 
     #[test]
@@ -1816,7 +1806,7 @@ mod tests {
             service.page(&access, &UsagePageRequest::try_new(None, 16, None).unwrap()).unwrap();
         assert_eq!(page.meters[0].units, "3");
         assert_eq!(page.entries.len(), 1);
-        assert_eq!(page.reads.query_reads, 0);
+        assert_eq!(page.reads.total_reads, 0);
         assert!(matches!(
             service.record(
                 &access,

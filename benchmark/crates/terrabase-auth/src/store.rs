@@ -53,6 +53,45 @@ fn index_key(index: u64) -> String {
 }
 
 impl SqliteStore {
+    pub(crate) fn bind_admission(
+        &self,
+        group: &str,
+        voters: &std::collections::BTreeMap<u64, BasicNode>,
+    ) -> Result<()> {
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(storage)?;
+        if meta::<String>(&transaction, "group_identity")?.as_deref() != Some(group) {
+            return Err(storage("auth admission group mismatch"));
+        }
+        let encoded = encode(voters)?;
+        if let Some(prior) = meta::<Vec<u8>>(&transaction, "voter_admission")? {
+            if prior != encoded {
+                return Err(storage("auth voter identity mapping changed"));
+            }
+        } else {
+            if meta::<LogId<u64>>(&transaction, "applied")?.is_some() {
+                return Err(storage("existing auth state lacks voter admission"));
+            }
+            set_meta(&transaction, "voter_admission", &encoded)?;
+        }
+        transaction.commit().map_err(storage)?;
+        Ok(())
+    }
+
+    pub(crate) fn verify_bootstrap(
+        &self,
+        voters: &std::collections::BTreeMap<u64, BasicNode>,
+    ) -> Result<()> {
+        let connection = self.lock()?;
+        let encoded: Vec<u8> = meta(&connection, "voter_admission")?
+            .ok_or_else(|| storage("auth voter admission missing"))?;
+        let (_, admitted): (u64, std::collections::BTreeMap<u64, BasicNode>) = decode(&encoded)?;
+        if &admitted != voters {
+            return Err(storage("auth bootstrap voters differ from admitted mapping"));
+        }
+        Ok(())
+    }
+
     /// Open persistent state belonging to exactly one database consensus group.
     /// A different identity at an existing path is refused before any serving.
     pub fn open(path: &Path, group_identity: &str) -> Result<Self> {
@@ -61,7 +100,7 @@ impl SqliteStore {
         }
         let connection = Connection::open(path).map_err(storage)?;
         connection.busy_timeout(std::time::Duration::from_secs(5)).map_err(storage)?;
-        connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;
+        connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA locking_mode=EXCLUSIVE;
             CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS raft_log(log_index TEXT PRIMARY KEY,entry BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS auth_records(model TEXT NOT NULL,id TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(model,id));
@@ -377,6 +416,7 @@ impl RaftLogStorage<TypeConfig> for SqliteStore {
 
 #[derive(Serialize, Deserialize)]
 struct SnapshotRows {
+    group_identity: String,
     records: Vec<(String, String, Vec<u8>)>,
     indexes: Vec<(String, Vec<u8>)>,
     dedupe: Vec<(String, Vec<u8>, Vec<u8>)>,
@@ -387,6 +427,8 @@ impl RaftSnapshotBuilder<TypeConfig> for SqliteStore {
         let mut connection = self.lock()?;
         let transaction = connection.transaction().map_err(storage)?;
         let rows = SnapshotRows {
+            group_identity: meta(&transaction, "group_identity")?
+                .ok_or_else(|| storage("auth group identity missing"))?,
             records: transaction
                 .prepare("SELECT model,id,body FROM auth_records ORDER BY model,id")
                 .map_err(storage)?
@@ -468,6 +510,11 @@ impl RaftStateMachine<TypeConfig> for SqliteStore {
     ) -> Result<()> {
         let data = snapshot.into_inner();
         let rows: SnapshotRows = decode(&data)?;
+        if meta::<String>(&*self.lock()?, "group_identity")?.as_deref()
+            != Some(&rows.group_identity)
+        {
+            return Err(storage("snapshot auth group identity mismatch"));
+        }
         let mut connection = self.lock()?;
         let transaction = connection.transaction().map_err(storage)?;
         transaction

@@ -181,6 +181,14 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     let production =
         config.production.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
 
+    // The control bootstrap owns only the intent journal. It must not open
+    // customer engines before encryption and membership have been admitted.
+    if production.control.is_some() {
+        return serve_pending_placement_control(&config, production).await.map_err(|error| {
+            Box::new(DaemonError::ProductionStartup(error)) as Box<dyn Error + Send + Sync>
+        });
+    }
+
     // This is the production storage boundary. It opens every enabled
     // database below one root and verifies the route and placement catalogs;
     // it must happen before a listener is allowed to claim readiness.
@@ -209,21 +217,6 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             return Err(Box::new(DaemonError::ProductionStartup(error)));
         }
     };
-
-    if production.control.is_some() {
-        let outcome = serve_pending_placement_control(&config, production).await;
-        let report = member.drain().await;
-        return match outcome {
-            Ok(()) => report.storage.map_err(|error| {
-                Box::new(DaemonError::ProductionStartup(ProductionStartupError::Catalog(
-                    crate::production::ProductionCatalogError::Cleanup(error),
-                ))) as Box<dyn Error + Send + Sync>
-            }),
-            Err(error) => Err(Box::new(DaemonError::ProductionStartup(
-                error.with_storage_cleanup(report.storage),
-            ))),
-        };
-    }
 
     // Membership is deliberately not inferred from the static file. The
     // orchestrator's durable admission record is the authority; until its
@@ -261,6 +254,8 @@ async fn serve_pending_placement_control(
         production.environment.name.as_str(),
         &production.environment.cluster.to_text(),
         &production.environment.member.to_text(),
+        production.placement.generation,
+        production.placement.epoch,
         production.databases.iter().filter(|database| database.enabled).map(|database| {
             (
                 terrabase_cluster::production::DatabaseRouteScope::new(
@@ -287,7 +282,7 @@ async fn serve_pending_placement_control(
     )
     .map_err(|_| unavailable("placement control transport limits are invalid"))?;
     let server = Arc::new(
-        PlacementControlServer::new(journal, grpc)
+        PlacementControlServer::new(journal, grpc, control.observer_principals.clone())
             .map_err(|_| unavailable("placement control principal policy is invalid"))?,
     );
     let certificate = read_pem(&production.transport.server_certificate, false)
@@ -566,21 +561,35 @@ async fn serve_public_api(
         catalog: Some(Arc::new(catalog)),
         scope: (tenant, project),
         backups,
-        backup_root,
+        backup_root: backup_root.clone(),
         timetravel,
         guards: Arc::new(crate::guards::AbuseGuards::default()),
         origin_proof_keys: Arc::new(origin_proof_keys),
         webhook_keys: None,
+        exports: Some(Arc::new(crate::export_api::ExportRuntime::local(backup_root.with_file_name("exports"), region)
+            .map_err(|_| DaemonError::Engine("local export dependencies unavailable".into()))?)),
+        delegated_identity: None,
+        provisioning: None,
         capability_keys: Arc::new(capability_keys),
     });
     let listener = tokio::net::TcpListener::bind(public.listen).await?;
+    let recover_state = Arc::clone(&state);
+    tokio::task::spawn_blocking(move || crate::api::recover_exports(&recover_state))
+        .await.map_err(|_| DaemonError::Engine("export recovery worker failed".into()))?
+        .map_err(|_| DaemonError::Engine("export recovery failed".into()))?;
+    let dispatcher = crate::api::spawn_webhook_dispatcher(&state);
     let router = crate::api::router(state);
     let task = tokio::spawn(async move {
-        axum::serve(listener, router)
+        let result = axum::serve(listener, router)
             .with_graceful_shutdown(async {
                 let _ = signal.await;
             })
-            .await
+            .await;
+        if let Some(dispatcher) = dispatcher {
+            dispatcher.abort();
+            let _ = dispatcher.await;
+        }
+        result
     });
     Ok((Some(task), stop))
 }

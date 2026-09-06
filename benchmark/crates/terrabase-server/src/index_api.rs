@@ -220,8 +220,10 @@ pub struct CoordinatorRecommendation {
     /// Bandit score used for selection.
     pub score: f64,
     /// Estimated maintenance cost per write.
+    #[schema(format = "uint64", minimum = 0)]
     pub maintenance_cost: u64,
     /// Current generation at which this recommendation was read.
+    #[schema(format = "uint64", minimum = 0)]
     pub generation: u64,
     /// Whether a descriptor must be created by the D-31 transaction.
     pub needs_descriptor: bool,
@@ -287,6 +289,7 @@ pub struct IndexList {
 #[derive(Clone, Debug, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct RecommendationList {
     /// Current lifecycle generation. Pass this to [`ApplyRequest`].
+    #[schema(format = "uint64", minimum = 0)]
     pub generation: u64,
     /// Whether more recommendations exist beyond this bounded response.
     pub truncated: bool,

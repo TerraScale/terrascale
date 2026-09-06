@@ -12,15 +12,15 @@ use std::time::Instant;
 use aws_lc_rs::{aead, digest, hkdf, rand};
 use zeroize::Zeroize;
 
-mod local_file;
 #[cfg(target_os = "linux")]
 mod key_delivery;
+mod local_file;
 mod oci_vault;
 mod provider;
 
-pub use local_file::LocalFileKeyProvider;
 #[cfg(target_os = "linux")]
 pub use key_delivery::OciVaultKeyDelivery;
+pub use local_file::LocalFileKeyProvider;
 pub use oci_vault::UnconfiguredOciVaultProvider;
 pub use provider::{
     ArtifactKind, DatabaseKeyHierarchy, DatabaseKeyLease, DatabaseKeyVersion, KeyProviderIdentity,
@@ -202,7 +202,8 @@ impl DatabaseKey {
         let memory = memmap2::MmapMut::map_anon(32)
             .map_err(|_| EncryptionError::ProductionProviderUnavailable)?;
         memory.lock().map_err(|_| EncryptionError::ProductionProviderUnavailable)?;
-        memory.advise(memmap2::Advice::DontDump)
+        memory
+            .advise(memmap2::Advice::DontDump)
             .map_err(|_| EncryptionError::ProductionProviderUnavailable)?;
         Ok(Self { bytes: KeyMemory::Locked(memory) })
     }
@@ -556,7 +557,23 @@ impl ArtifactCipher {
         }
         let metadata = lease.metadata();
         let scope = metadata.scope();
-        if context.environment() != scope.environment()
+        let purpose_matches = match scope.purpose() {
+            KeyPurpose::Data => matches!(
+                context.artifact_kind(),
+                "database"
+                    | "wal"
+                    | "segment"
+                    | "index"
+                    | "manifest"
+                    | "snapshot"
+                    | "large-value-chunk"
+                    | "webhook-secret"
+            ),
+            KeyPurpose::Backup => matches!(context.artifact_kind(), "backup" | "export" | "branch"),
+            KeyPurpose::Checkpoint => context.artifact_kind() == "checkpoint",
+        };
+        if !purpose_matches
+            || context.environment() != scope.environment()
             || context.tenant() != scope.tenant().to_text()
             || context.project()
                 != scope.project().map(crate::identity::ProjectUlid::to_text).as_deref()
@@ -719,6 +736,59 @@ impl ArtifactCipher {
         envelope.extend_from_slice(&aad);
         envelope.extend_from_slice(&ciphertext);
         Ok(envelope)
+    }
+
+    /// Authenticates a persisted artifact using a newly authorized lease.
+    ///
+    /// The artifact identifier comes from bounded envelope metadata; the full
+    /// owner, key version, hierarchy, kind and format must match the caller's
+    /// authorization. No plaintext is returned before tag verification. The
+    /// temporary cipher is read-only, so restart cannot reuse a sealing nonce.
+    ///
+    /// # Errors
+    /// Returns an error for invalid metadata, expired authorization, malformed
+    /// envelopes, wrong scope/kind/format, or failed authentication.
+    pub fn open_envelope_from_database_key_lease(
+        lease: &DatabaseKeyLease,
+        artifact_kind: ArtifactKind,
+        expected_format_major: u16,
+        envelope: &[u8],
+    ) -> Result<Vec<u8>, EncryptionError> {
+        let (ordinal, aad, mut ciphertext) = parse_envelope(envelope)?;
+        let parsed = parse_aad(aad)?;
+        let metadata = lease.metadata();
+        let scope = metadata.scope();
+        if scope.purpose() != artifact_kind.key_purpose()
+            || parsed.environment != scope.environment().as_bytes()
+            || parsed.tenant != scope.tenant().to_text().as_bytes()
+            || parsed.project
+                != scope
+                    .project()
+                    .map(crate::identity::ProjectUlid::to_text)
+                    .as_deref()
+                    .map(str::as_bytes)
+            || parsed.database != scope.database().to_text().as_bytes()
+            || parsed.key_version != metadata.version().to_text().as_bytes()
+            || parsed.artifact_kind != artifact_kind.as_str().as_bytes()
+            || parsed.format_major != expected_format_major
+            || parsed.compression != Compression::None as u8
+        {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        let artifact_id = std::str::from_utf8(parsed.artifact_id)
+            .ok()
+            .and_then(|text| crate::identity::Ulid::from_text(text).ok())
+            .ok_or(EncryptionError::MalformedEnvelope)?;
+        let context = EncryptionContext::for_artifact(
+            scope,
+            artifact_kind,
+            artifact_id,
+            metadata.version(),
+            expected_format_major,
+            Compression::None,
+        )?;
+        let cipher = Self::from_database_key_lease(lease, context, MAX_ORDINAL + 1)?;
+        cipher.open_parsed(ordinal, aad, &mut ciphertext)
     }
 
     /// Authenticates and decrypts one envelope.

@@ -96,6 +96,7 @@ mod schema_metadata;
 mod shadow;
 #[cfg(test)]
 mod tests;
+mod webhook_metadata;
 
 use std::{
     path::{Path, PathBuf},
@@ -861,6 +862,14 @@ fn extract_column_value(document: &Document, field: &str) -> Option<ColumnValue>
 
 /// The schema statements every location carries.
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS webhook_metadata (
+    tenant TEXT NOT NULL,
+    namespace TEXT NOT NULL,
+    record_key TEXT NOT NULL,
+    record BLOB NOT NULL,
+    PRIMARY KEY (tenant, namespace, record_key)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS schema_metadata (
     database_id TEXT NOT NULL,
     branch TEXT NOT NULL,
@@ -3829,7 +3838,7 @@ impl<'a> JsonParser<'a> {
 
 /// Decodes one canonical JSON body, rejecting trailing bytes and malformed
 /// envelope metadata.
-fn decode_document_body(bytes: &[u8]) -> Option<Document> {
+pub(crate) fn decode_document_body(bytes: &[u8]) -> Option<Document> {
     let mut parser = JsonParser::new(bytes);
     let DocumentValue::Object(mut fields) = parser.value(0)? else { return None };
     parser.whitespace();
@@ -4111,6 +4120,34 @@ impl SqliteStorage {
 }
 
 impl StoragePort for SqliteStorage {
+    fn webhook_metadata_load(
+        &self,
+        tenant: &TenantId,
+        namespace: &str,
+        key: &str,
+    ) -> Result<Option<Vec<u8>>, ()> {
+        self.load_webhook_metadata(tenant, namespace, key)
+    }
+
+    fn webhook_metadata_list(
+        &self,
+        tenant: &TenantId,
+        namespace: &str,
+    ) -> Result<Vec<(String, Vec<u8>)>, ()> {
+        self.list_webhook_metadata(tenant, namespace)
+    }
+
+    fn webhook_metadata_compare_exchange(
+        &mut self,
+        tenant: &TenantId,
+        namespace: &str,
+        key: &str,
+        expected: Option<&[u8]>,
+        replacement: &[u8],
+    ) -> Result<bool, ()> {
+        self.compare_exchange_webhook_metadata(tenant, namespace, key, expected, replacement)
+    }
+
     fn schema_metadata_load(
         &self,
         database: &str,
@@ -5662,6 +5699,19 @@ impl StoragePort for SqliteStorage {
                 // root or sequence zero from a failed/corrupt query.
                 (StorageSequence::new(0), StorageRootId::from_recorded(String::new()))
             })
+    }
+
+    fn advance_backup_frontier(&mut self, sequence: u64) -> Result<(), ()> {
+        let sequence = i64::try_from(sequence).map_err(|_| ())?;
+        let writer = self.writer.lock().map_err(|_| ())?;
+        writer
+            .execute(
+                "INSERT INTO consumer_frontiers (name, seq) VALUES ('native-backup', ?1)
+             ON CONFLICT(name) DO UPDATE SET seq = MAX(seq, excluded.seq)",
+                [sequence],
+            )
+            .map(|_| ())
+            .map_err(|_| ())
     }
 
     fn run_retention_sweep(&mut self) -> Result<(), ()> {

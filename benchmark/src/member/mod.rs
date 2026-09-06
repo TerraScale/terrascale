@@ -977,6 +977,53 @@ impl Member {
         Self::open(root, specifications, limits)
     }
 
+    /// Adds a scoped storage entry without granting placement or write authority.
+    /// Identical retries succeed; identity or location conflicts are refused.
+    ///
+    /// # Errors
+    /// Returns a validation refusal for unsafe, conflicting, or unscoped input.
+    pub fn add_production_database(
+        &self,
+        specification: DatabaseSpec,
+        per_database: usize,
+    ) -> Result<(), CatalogValidationError> {
+        if specification.scope.is_none() {
+            return Err(CatalogValidationError::UnscopedDatabase);
+        }
+        if per_database == 0 || per_database > MAX_ADMISSION_PERMITS {
+            return Err(CatalogValidationError::InvalidAdmissionLimits);
+        }
+        let mut validated = collect_and_validate_specs(&self.inner.root, [specification])?;
+        let (id, location, scope) = validated.pop().expect("one validated specification");
+        let mut catalog = lock_unpoisoned(&self.inner.catalog);
+        if *lock_unpoisoned(&self.inner.lifecycle) != LifecycleState::Serving {
+            return Err(CatalogValidationError::InvalidRoot);
+        }
+        if let Some(existing) = catalog.databases.get(&id) {
+            return if existing.location == location && existing.scope == scope {
+                Ok(())
+            } else {
+                Err(CatalogValidationError::DuplicateDatabaseIdentity)
+            };
+        }
+        if catalog.databases.len() >= MAX_DATABASES {
+            return Err(CatalogValidationError::CatalogTooLarge);
+        }
+        if catalog.databases.values().any(|entry| entry.location == location) {
+            return Err(CatalogValidationError::DuplicateDatabaseLocation);
+        }
+        catalog.databases.insert(id, DatabaseEntry {
+            location,
+            scope,
+            engine: ResidentEngine::Closed,
+            last_used: Instant::now(),
+            access_stamp: 0,
+            admissions: Arc::new(AdmissionCounter::new(per_database)),
+            backup_paused: false,
+        });
+        Ok(())
+    }
+
     /// Returns the configured root as validated at startup.
     #[must_use]
     pub fn root(&self) -> &Path {

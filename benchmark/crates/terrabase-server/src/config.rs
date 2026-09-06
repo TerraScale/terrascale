@@ -160,6 +160,8 @@ pub struct ProductionControl {
     pub proposal_journal: PathBuf,
     /// Exact SPIFFE principals allowed to stage host-scoped intent over mTLS.
     pub orchestrator_principals: BTreeSet<String>,
+    /// Separate read-only principals for authenticated lifecycle observations.
+    pub observer_principals: BTreeSet<String>,
 }
 
 /// Authenticated local orchestrator key-delivery endpoint.
@@ -402,7 +404,10 @@ struct FileProductionKeys {
 #[serde(deny_unknown_fields)]
 struct FileProductionControl {
     proposal_journal: PathBuf,
+    #[serde(default)]
     orchestrator_principals: Vec<String>,
+    #[serde(default)]
+    observer_principals: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -777,33 +782,32 @@ impl ServerConfig {
             .control
             .map(|control| {
                 let proposal_journal = production_path(&control.proposal_journal)?;
-                if control.orchestrator_principals.is_empty()
-                    || control.orchestrator_principals.len() > MAX_MEMBER_PRINCIPALS
-                {
+                let principals = control_principals(control.orchestrator_principals)?;
+                let observers = control_principals(control.observer_principals)?;
+                if (principals.is_empty() && observers.is_empty()) || !principals.is_disjoint(&observers) {
                     return Err(ConfigError::InvalidMemberPrincipal);
                 }
-                let mut principals = BTreeSet::new();
-                for principal in control.orchestrator_principals {
-                    if !principal.starts_with("spiffe://")
-                        || principal.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
-                        || principal.chars().any(char::is_whitespace)
-                        || principal.chars().any(char::is_control)
-                        || !principals.insert(principal)
-                    {
-                        return Err(ConfigError::InvalidMemberPrincipal);
-                    }
-                }
                 paths.push(proposal_journal.clone());
-                Ok(ProductionControl { proposal_journal, orchestrator_principals: principals })
+                Ok(ProductionControl { proposal_journal, orchestrator_principals: principals, observer_principals: observers })
             })
             .transpose()?;
-        let keys = file.keys.map(|keys| {
-            let socket = production_path(&keys.socket)?;
-            paths.push(socket.clone());
-            Ok(ProductionKeys { socket, orchestrator_uid: keys.orchestrator_uid })
-        }).transpose()?;
-        let production =
-            ProductionConfig { environment, databases, placement, transport, release, control, keys };
+        let keys = file
+            .keys
+            .map(|keys| {
+                let socket = production_path(&keys.socket)?;
+                paths.push(socket.clone());
+                Ok(ProductionKeys { socket, orchestrator_uid: keys.orchestrator_uid })
+            })
+            .transpose()?;
+        let production = ProductionConfig {
+            environment,
+            databases,
+            placement,
+            transport,
+            release,
+            control,
+            keys,
+        };
         let first = production
             .databases
             .iter()
@@ -865,6 +869,21 @@ fn absolute(path: &Path) -> Result<(), ConfigError> {
         return Err(ConfigError::RelativeProductionPath);
     }
     Ok(())
+}
+
+fn control_principals(values: Vec<String>) -> Result<BTreeSet<String>, ConfigError> {
+    if values.len() > MAX_MEMBER_PRINCIPALS { return Err(ConfigError::InvalidMemberPrincipal); }
+    let mut principals = BTreeSet::new();
+    for principal in values {
+        if !principal.starts_with("spiffe://")
+            || principal.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
+            || principal.chars().any(char::is_whitespace)
+            || principal.chars().any(char::is_control)
+            || !principals.insert(principal) {
+            return Err(ConfigError::InvalidMemberPrincipal);
+        }
+    }
+    Ok(principals)
 }
 
 fn parse_ulid<T>(value: &str, error: ConfigError) -> Result<T, ConfigError>
@@ -1447,6 +1466,43 @@ capabilities = ["production", "tbep", "quic", "metrics", "oci-vault"]
         assert_eq!(production.transport.peers.len(), 3);
         assert_eq!(production.release.capabilities.len(), 5);
         assert_eq!(production.databases[0].encryption_provider, KeyProviderIdentity::OciVault);
+    }
+
+    #[test]
+    fn pending_control_requires_private_path_and_explicit_principals() {
+        let suffix = r#"
+[control]
+proposal_journal = "/var/lib/terrabase/control/proposals.sqlite"
+orchestrator_principals = ["spiffe://terrascale.tech/prod/orchestrator/gru-1"]
+
+[keys]
+socket = "/run/terrabase-keys/provider.sock"
+orchestrator_uid = 1234
+"#;
+        let config = ServerConfig::parse(&(production_valid() + suffix)).expect("control policy");
+        let production = config.production.unwrap();
+        assert_eq!(production.control.unwrap().orchestrator_principals.len(), 1);
+        assert_eq!(production.keys.unwrap().orchestrator_uid, 1234);
+        let observe_only = suffix.replace("orchestrator_principals", "observer_principals");
+        let observed = ServerConfig::parse(&(production_valid() + &observe_only)).expect("observer-only bootstrap");
+        let policy = observed.production.unwrap().control.unwrap();
+        assert!(policy.orchestrator_principals.is_empty());
+        assert_eq!(policy.observer_principals.len(), 1);
+
+        for changed in [
+            suffix.replace(
+                "spiffe://terrascale.tech/prod/orchestrator/gru-1",
+                "not-a-spiffe-principal",
+            ),
+            suffix.replace("/var/lib/terrabase/control/proposals.sqlite", "relative.sqlite"),
+            suffix.replace(
+                "/var/lib/terrabase/control/proposals.sqlite",
+                "/var/lib/terrabase/db-a/proposals.sqlite",
+            ),
+            suffix.replace("[\"spiffe://terrascale.tech/prod/orchestrator/gru-1\"]", "[]"),
+        ] {
+            assert!(ServerConfig::parse(&(production_valid() + &changed)).is_err());
+        }
     }
 
     #[test]

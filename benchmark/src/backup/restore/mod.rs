@@ -102,6 +102,7 @@ use std::path::{Path, PathBuf};
 
 use decode::{decode_member, decode_member_bytes};
 
+use crate::backup::BackupReader;
 use crate::backup::manifest::ENCRYPTED_MANIFEST_FILE;
 use crate::backup::manifest::point_directory;
 use crate::backup::records::Record;
@@ -109,7 +110,6 @@ use crate::backup::{
     BackupError, BackupKind, BackupManifest, PlacementLock, RestorePlan, discover_points,
     select_latest_chain, validate_chain_frontier,
 };
-use crate::encryption::ArtifactCipher;
 use crate::engine::{Engine, EngineConfig};
 use crate::regions::RegionCode;
 use crate::storage::{
@@ -196,7 +196,7 @@ fn resolve_chain(
 /// the legacy plaintext reader, so a mixed destination cannot be accepted.
 fn resolve_encrypted_chain(
     destination: &Path,
-    cipher: &ArtifactCipher,
+    cipher: &dyn BackupReader,
     selection: &Selection,
 ) -> Result<Vec<BackupManifest>, BackupError> {
     let points = discover_encrypted_points(destination, cipher)?;
@@ -234,9 +234,9 @@ fn resolve_encrypted_chain(
     Ok(chain)
 }
 
-fn discover_encrypted_points(
+pub(super) fn discover_encrypted_points(
     destination: &Path,
-    cipher: &ArtifactCipher,
+    cipher: &dyn BackupReader,
 ) -> Result<Vec<BackupManifest>, BackupError> {
     let entries = std::fs::read_dir(destination).map_err(|_| BackupError::ChainIncomplete)?;
     let mut points = Vec::new();
@@ -267,7 +267,8 @@ fn discover_encrypted_points(
             .take((crate::encryption::MAX_PLAINTEXT_BYTES + 4096) as u64)
             .read_to_end(&mut envelope)
             .map_err(|_| BackupError::ChainIncomplete)?;
-        let bytes = cipher.open(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
+        let bytes =
+            cipher.open_backup_envelope(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
         let manifest = BackupManifest::decode(&bytes)?;
         if manifest.identity() != identity {
             return Err(BackupError::ManifestInvalid);
@@ -287,7 +288,7 @@ fn discover_encrypted_points(
 /// [`BackupError::ChecksumMismatch`] for a digest or authentication failure.
 pub fn verify_latest_chain_encrypted(
     destination: &Path,
-    cipher: &ArtifactCipher,
+    cipher: &dyn BackupReader,
 ) -> Result<Vec<BackupManifest>, BackupError> {
     let chain = resolve_encrypted_chain(destination, cipher, &Selection::Latest)?;
     for link in &chain {
@@ -304,7 +305,7 @@ pub fn verify_latest_chain_encrypted(
             if !member.matches_bytes(&envelope) {
                 return Err(BackupError::ChecksumMismatch);
             }
-            cipher.open(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
+            cipher.open_backup_envelope(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
         }
     }
     Ok(chain)
@@ -872,7 +873,7 @@ impl RestorePlan {
     pub fn restore_latest_encrypted(
         destination: &Path,
         target: &Path,
-        cipher: &ArtifactCipher,
+        cipher: &dyn BackupReader,
     ) -> Result<RecoveryReceipt, BackupError> {
         execute_restore_encrypted(destination, target, &Selection::Latest, cipher)
     }
@@ -887,7 +888,7 @@ impl RestorePlan {
     pub fn restore_latest_encrypted_in_region(
         destination: &Path,
         target: &Path,
-        cipher: &ArtifactCipher,
+        cipher: &dyn BackupReader,
         placement: &PlacementLock,
         target_region: RegionCode,
     ) -> Result<RecoveryReceipt, BackupError> {
@@ -953,7 +954,7 @@ impl RestorePlan {
         identity: &str,
         destination: &Path,
         target: &Path,
-        cipher: &ArtifactCipher,
+        cipher: &dyn BackupReader,
     ) -> Result<RecoveryReceipt, BackupError> {
         crate::backup::manifest::validate_identity(identity)?;
         execute_restore_encrypted(
@@ -977,7 +978,7 @@ impl RestorePlan {
         identity: &str,
         destination: &Path,
         target: &Path,
-        cipher: &ArtifactCipher,
+        cipher: &dyn BackupReader,
         placement: &PlacementLock,
         target_region: RegionCode,
     ) -> Result<RecoveryReceipt, BackupError> {
@@ -1026,7 +1027,7 @@ fn execute_restore_encrypted(
     destination: &Path,
     target: &Path,
     selection: &Selection,
-    cipher: &ArtifactCipher,
+    cipher: &dyn BackupReader,
 ) -> Result<RecoveryReceipt, BackupError> {
     let chain = resolve_encrypted_chain(destination, cipher, selection)?;
     admit_target(target)?;
@@ -1105,7 +1106,7 @@ fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
         return Err(BackupError::DestinationUnavailable);
     }
     if let Some(parent) = target.parent() {
-        let _ = std::fs::File::open(parent).and_then(|directory| directory.sync_all());
+        super::sync_directory(parent)?;
     }
     Ok(())
 }
@@ -1157,7 +1158,7 @@ fn build_and_verify_encrypted(
     staging: &StagingDir,
     destination: &Path,
     chain: &[BackupManifest],
-    cipher: &ArtifactCipher,
+    cipher: &dyn BackupReader,
 ) -> Result<RunFacts, BackupError> {
     let engine = Engine::open(
         EngineConfig::durable(staging.path()).map_err(|_| BackupError::DestinationUnavailable)?,
@@ -1248,7 +1249,7 @@ impl Replay {
         engine: &Engine,
         destination: &Path,
         chain: &[BackupManifest],
-        cipher: Option<&ArtifactCipher>,
+        cipher: Option<&dyn BackupReader>,
     ) -> Result<(), BackupError> {
         for link in chain {
             let expected_tenants: BTreeMap<_, _> = link
@@ -1286,8 +1287,9 @@ impl Replay {
                     if !member.matches_bytes(&envelope) {
                         return Err(BackupError::ChecksumMismatch);
                     }
-                    let plaintext =
-                        cipher.open(&envelope).map_err(|_| BackupError::ChecksumMismatch)?;
+                    let plaintext = cipher
+                        .open_backup_envelope(&envelope)
+                        .map_err(|_| BackupError::ChecksumMismatch)?;
                     decode_member_bytes(plaintext, &mut |record, frame_bytes| {
                         let tenant = match record {
                             Record::Document { tenant, .. } | Record::Delete { tenant, .. } => {

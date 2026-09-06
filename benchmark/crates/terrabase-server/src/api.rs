@@ -53,6 +53,17 @@ use utoipa_scalar::Servable;
 
 use crate::api_keys::Verbs;
 
+#[path = "api_exports.rs"]
+mod exports;
+
+pub(crate) use exports::recover_exports;
+
+/// Starts the configured webhook worker once for a serving API instance.
+/// The owner aborts and joins the task when that instance shuts down.
+#[must_use]
+pub fn spawn_webhook_dispatcher(state: &Arc<ApiState>) -> Option<tokio::task::JoinHandle<()>> {
+    webhooks::spawn_dispatcher(state)
+}
 #[path = "api_schema.rs"]
 mod schema;
 #[path = "api_usage_indexes.rs"]
@@ -508,6 +519,8 @@ fn regions_list(regions: &[RegionCode]) -> String {
 
 /// The public API's serving state.
 pub struct ApiState {
+    /// Durable production create authority; absent configuration denies production create.
+    pub provisioning: Option<Arc<crate::provisioning::ProvisioningClient>>,
     /// The serving member's own region (D-58: named on every response).
     pub region: RegionCode,
     /// The member's health registry backing `/health`.
@@ -516,6 +529,8 @@ pub struct ApiState {
     /// without exception, which is the production default until key
     /// material is configured.
     pub keys: Option<Arc<crate::api_keys::KeyStore>>,
+    /// Live product identity authority; absent configuration denies delegated credentials.
+    pub delegated_identity: Option<Arc<crate::delegated_identity::IdentityVerifier>>,
     /// The databases registry (D-52). `None` until the member boots with a
     /// data root; the database routes answer the typed unavailable error.
     pub control: Option<Arc<crate::control::ControlPlane>>,
@@ -549,6 +564,8 @@ pub struct ApiState {
     pub capability_keys: Arc<crate::reactive_api::CapabilityKeyRing>,
     /// Authorized regional encryption-key leases for durable webhook secrets.
     pub webhook_keys: Option<Arc<dyn crate::webhook_api::WebhookKeyLeases>>,
+    /// Configured durable export jobs and authorized encrypted artifact destination.
+    pub exports: Option<Arc<crate::export_api::ExportRuntime>>,
 }
 
 /// The served route table as an `OpenAPI` router: the single source of both
@@ -570,6 +587,10 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(webhooks::delete_webhook))
         .routes(routes!(webhooks::list_deliveries))
         .routes(routes!(webhooks::replay_webhook))
+        .routes(routes!(exports::create_export))
+        .routes(routes!(exports::get_export))
+        .routes(routes!(exports::resume_export))
+        .routes(routes!(exports::download_export))
         .routes(routes!(list_indexes, create_index))
         .routes(routes!(list_documents))
         .routes(routes!(batch_documents))
@@ -676,6 +697,9 @@ fn enrich_openapi(raw: String) -> String {
                 }
                 if operation_id == "health" {
                     set_json_response(operation, "503", "Member is unhealthy", "HealthResponse");
+                }
+                if matches!(operation_id.as_str(), "get_schema" | "put_schema") {
+                    set_response_header(operation, "200", "ETag", "string");
                 }
                 if matches!(operation_id.as_str(), "health" | "regions") {
                     set_response_header(operation, "200", "X-TerraScale-Region", "string");
@@ -788,6 +812,9 @@ fn add_route_parameters(operation: &mut serde_json::Map<String, serde_json::Valu
         }
         "put_document" | "patch_document" | "delete_document" => {
             add_parameter(operation, "if-match", "header", false, "string");
+            if id == "put_document" {
+                add_parameter(operation, "if-none-match", "header", false, "string");
+            }
             add_parameter(operation, "idempotency-key", "header", false, "string");
             add_parameter(operation, "x-terrascale-durability", "header", false, "string");
             add_parameter(operation, "x-terrascale-session", "header", false, "string");
@@ -1243,8 +1270,9 @@ async fn placement_headers(
 /// Past admission, the principal's scope is enforced per request (D-44):
 /// routes naming a database need the matching verb on that database, and
 /// deployment-level mutations need an every-database admin scope. A
-/// JWT-shaped bearer is denied unless a parent-composed BYO-JWT verifier
-/// admits it; this member never parses JWT claims in its API-key gate.
+/// Product credentials require a fresh TLS-authenticated identity authority
+/// result bound to the member-owned tenant/project and requested database.
+/// Credential claims never select an authority endpoint or widen permissions.
 async fn authenticate(
     State(state): State<Arc<ApiState>>,
     mut request: Request,
@@ -1282,9 +1310,6 @@ async fn authenticate(
             Err(error) => error.into_response(),
         };
     }
-    let Some(keys) = state.keys.clone() else {
-        return ApiError::unauthorized().into_response();
-    };
     let token = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -1293,7 +1318,17 @@ async fn authenticate(
     let Some(token) = token else {
         return ApiError::malformed_credential().into_response();
     };
-    let admitted = keys.admit(token);
+    let admitted = match state.keys.as_ref().map(|keys| keys.admit(token)) {
+        Some(Ok(principal)) => Ok(principal),
+        _ => match (&state.delegated_identity, database_of(request.uri().path())) {
+            (Some(identity), Some(database)) => identity.admit(
+                token, &state.scope.0, &state.scope.1, database,
+                collection_of(request.uri().path()),
+                required_verb(request.method(), request.uri().path()),
+            ).await.map_err(|_| ApiError::unauthorized()),
+            _ => Err(ApiError::unauthorized()),
+        },
+    };
     match admitted {
         Ok(principal) => {
             let verb = required_verb(request.method(), request.uri().path());
@@ -1313,6 +1348,14 @@ async fn authenticate(
                         verb_name(verb)
                     ))
                     .into_response();
+                }
+                // Exports and webhooks expose data from every collection. A
+                // collection-scoped credential cannot widen through either API.
+                let database_resource = request.uri().path().split('/').nth(5);
+                if matches!(database_resource, Some("exports" | "webhooks" | "usage"))
+                    && !principal.scope().admits_database(verb, database)
+                {
+                    return ApiError::forbidden("access to the whole database").into_response();
                 }
             } else if (verb == Verbs::ADMIN
                 || (request.method() == Method::GET && request.uri().path() == "/api/v1/databases"))
@@ -1474,10 +1517,37 @@ async fn list_databases(State(state): State<Arc<ApiState>>) -> Response {
     }
 }
 
+async fn create_provisioned_database(authority: &crate::provisioning::ProvisioningClient, body: &str) -> Response {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Create {
+        name: String,
+        placement: Vec<String>,
+        residency: String,
+        operation_id: String,
+    }
+    let request: Create = match serde_json::from_str(body) {
+        Ok(request) => request,
+        Err(_) => return ApiError { status: StatusCode::BAD_REQUEST, code: "invalid_create_request",
+            message: "create requires name, placement, residency and a stable operation_id".into(),
+            fix: "supply the immutable placement and reuse operation_id when retrying".into(), placement: None }.into_response(),
+    };
+    match authority.create(&request.name, &request.placement, &request.residency, &request.operation_id).await {
+        Ok(operation) => match serde_json::to_string(&operation) {
+            Ok(body) => json_response(StatusCode::ACCEPTED, body),
+            Err(_) => ApiError::control_unavailable().into_response(),
+        },
+        Err(_) => ApiError::control_unavailable().into_response(),
+    }
+}
+
 /// Creates one database from an explicit placement and optional residency
 /// constraint (D-52).
 #[utoipa::path(post, path = "/api/v1/databases", responses((status = 201, description = "Database created")))]
 async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Response {
+    if let Some(authority) = &state.provisioning {
+        return create_provisioned_database(authority, &body).await;
+    }
     let Some(control) = state.control.clone() else {
         return ApiError::control_unavailable().into_response();
     };
@@ -2351,6 +2421,29 @@ fn document_not_found(collection: &str, id: &str) -> ApiError {
     }
 }
 
+/// Parses create-only PUT without reading the document. The storage commit's
+/// ExpectedVersion::New check owns the atomic condition and idempotent replay.
+fn create_only_precondition(headers: &axum::http::HeaderMap) -> Result<bool, ApiError> {
+    let mut values = headers.get_all(axum::http::header::IF_NONE_MATCH).iter();
+    let Some(value) = values.next() else {
+        return Ok(false);
+    };
+    if values.next().is_some()
+        || value.as_bytes() != b"*"
+        || headers.contains_key(axum::http::header::IF_MATCH)
+    {
+        return Err(ApiError {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_header",
+            message: "document PUT accepts only If-None-Match: * without If-Match".into(),
+            fix: "send If-None-Match: * to create only, or use If-Match to update a known revision"
+                .into(),
+            placement: None,
+        });
+    }
+    Ok(true)
+}
+
 /// Enforces `If-Match` on a single-document write against the live revision
 /// (D-20 optimistic concurrency): absent means go ahead, `*` means the
 /// document must exist, and a quoted revision must equal the live one. The
@@ -2675,15 +2768,20 @@ async fn put_document(
     let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
         return ApiError::storage_failure().into_response();
     };
+    let create_only = match create_only_precondition(&headers) {
+        Ok(create_only) => create_only,
+        Err(error) => return error.into_response(),
+    };
     if let Err(error) = check_if_match(&headers, &transaction, document.collection(), document.id())
     {
         return error.into_response();
     }
-    // With an idempotency key the logical request is the body: the expected
-    // clause is Any so a retry replays the original receipt (the engine's
-    // digest binds the op id to the write set). Without a key, optimistic
-    // concurrency: the current version must still hold.
-    let expected = if has_idempotency_key(&headers) {
+    // Keep the create-only condition in the durable write-set digest so a
+    // repeated idempotency key replays its original result. Existence is
+    // tested atomically at commit, including concurrent creates.
+    let expected = if create_only {
+        ExpectedVersion::New
+    } else if has_idempotency_key(&headers) {
         ExpectedVersion::Any
     } else {
         match transaction.read_in_collection(document.collection(), document.id()) {
@@ -2720,6 +2818,10 @@ async fn put_document(
             };
             with_session(&mut response, &token);
             response
+        }
+        CommitOutcome::Rejected(terrabase::CommitError::Conflict) if create_only => {
+            ApiError::precondition_failed("If-None-Match: * needs the document to be absent")
+                .into_response()
         }
         CommitOutcome::Rejected(reason) => ApiError {
             status: StatusCode::CONFLICT,
@@ -3555,6 +3657,8 @@ pub(crate) fn json_response(status: StatusCode, body: String) -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[path = "conditional_create.rs"]
+    mod conditional_create;
     mod cors;
     mod shared_journal;
     mod websocket;
@@ -3580,14 +3684,33 @@ mod tests {
     use terrabase::types::RegionId;
     use tower::util::ServiceExt;
 
+    #[tokio::test]
+    async fn delegated_identity_is_live_on_actual_member_router() {
+        let (verifier, reply, task) = crate::delegated_identity::tests::authority().await;
+        let mut state = state();
+        Arc::get_mut(&mut state).unwrap().delegated_identity = Some(Arc::new(verifier));
+        let app = router(state);
+        let request = || Request::builder().uri("/api/v1/databases/db-a")
+            .header("authorization", "Bearer delegated-token").body(Body::empty()).unwrap();
+        let admitted = app.clone().oneshot(request()).await.unwrap();
+        assert_ne!(admitted.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(admitted.headers()["x-terrascale-principal"], "user-1");
+        reply.lock().unwrap()["active"] = serde_json::json!(false);
+        let revoked = app.oneshot(request()).await.unwrap();
+        assert_eq!(revoked.status(), StatusCode::UNAUTHORIZED);
+        task.abort();
+    }
+
     fn state() -> Arc<ApiState> {
         let backups = Arc::new(crate::backup::BackupStreams::open_member());
         let backup_root = std::env::temp_dir().join("terrabase-api-test-backup-root");
         let timetravel =
             Arc::new(crate::backup::TimeTravelCache::new(Arc::clone(&backups), &backup_root));
         Arc::new(ApiState {
+            provisioning: None,
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
+            delegated_identity: None,
             keys: None,
             control: None,
             catalog: None,
@@ -3598,6 +3721,7 @@ mod tests {
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             webhook_keys: None,
+            exports: None,
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         })
     }
@@ -3628,8 +3752,10 @@ mod tests {
             &dir.join("backup-timetravel"),
         ));
         Arc::new(ApiState {
+            provisioning: None,
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
+            delegated_identity: None,
             keys: Some(Arc::new(KeyStore::with_keys(&[(
                 "tskey_test_abcdefghijklmnop",
                 "bootstrap",
@@ -3644,6 +3770,7 @@ mod tests {
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             webhook_keys: None,
+            exports: None,
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         })
     }
@@ -3726,9 +3853,6 @@ mod tests {
                 paths.get(path).is_some_and(|entry| entry.get(route).is_some()),
                 "the contract lists {route} {path}"
             );
-        }
-        for path in ["/api/v1/databases/{name}/exports"] {
-            assert!(!paths.contains_key(path), "unavailable route {path} is not published");
         }
         let response = router(state())
             .oneshot(Request::get("/scalar").body(Body::empty()).expect("request"))
@@ -3869,7 +3993,28 @@ mod tests {
                 }
             }
         }
-        assert_eq!(operation_count, 37, "registered route count changed");
+        assert_eq!(operation_count, 41, "registered route count changed");
+    }
+
+    #[test]
+    fn openapi_preserves_referenced_typed_component_schemas() {
+        let document: serde_json::Value = serde_json::from_str(&openapi_json()).expect("JSON");
+        let mut pending = vec![&document];
+        while let Some(value) = pending.pop() {
+            match value {
+                serde_json::Value::Object(object) => {
+                    if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str) {
+                        let pointer = reference.strip_prefix('#').expect("local schema reference");
+                        assert!(document.pointer(pointer).is_some(), "unresolved {reference}");
+                    }
+                    pending.extend(object.values());
+                }
+                serde_json::Value::Array(array) => pending.extend(array),
+                _ => {}
+            }
+        }
+        assert_eq!(document["components"]["schemas"]["SchemaIndexDescriptor"]["properties"]["fields"]["type"], "array");
+        assert_eq!(document["components"]["schemas"]["IndexDescriptor"]["properties"]["field"]["type"], "string");
     }
 
     #[tokio::test]
@@ -5428,8 +5573,7 @@ mod tests {
         let auth = "authorization";
         let key = "Bearer tskey_test_abcdefghijklmnop";
         let router = router(state_with_keys_and_control());
-        // An unlocked source used to prove the unavailable export route is
-        // absent rather than a published 501 placeholder.
+        // An admitted database still refuses exports without configured dependencies.
         let response = router
             .clone()
             .oneshot(
@@ -5441,26 +5585,25 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::CREATED);
-        // E-8 has no durable export adapter in this member, so no route is
-        // mounted and no launch operation is published.
+        // This fixture deliberately has no export runtime.
         let response = router
             .clone()
             .oneshot(
                 Request::post("/api/v1/databases/prod/exports")
                     .header(auth, key)
-                    .body(Body::empty())
+                    .body(Body::from(r#"{"idempotency_key":"export-test"}"#))
                     .expect("request"),
             )
             .await
             .expect("answers");
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         // Unknown databases 404 before the stub answers.
         let response = router
             .clone()
             .oneshot(
                 Request::post("/api/v1/databases/unknown/exports")
                     .header(auth, key)
-                    .body(Body::empty())
+                    .body(Body::from(r#"{"idempotency_key":"export-test"}"#))
                     .expect("request"),
             )
             .await

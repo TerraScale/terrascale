@@ -50,7 +50,7 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
         [PRINCIPAL.to_owned()].into(),
     )
     .unwrap();
-    let server = Arc::new(PlacementControlServer::new(journal, config).unwrap());
+    let server = Arc::new(PlacementControlServer::new(journal, config, BTreeSet::new()).unwrap());
     let (ca, certificate, key, client_certificate, client_key) = tls_material();
     let listener =
         server.bind_tls("127.0.0.1:0".parse().unwrap(), &certificate, &key, &ca).await.unwrap();
@@ -135,7 +135,7 @@ async fn metadata_without_peer_certificate_cannot_reach_journal() {
         [PRINCIPAL.to_owned()].into(),
     )
     .unwrap();
-    let server = Arc::new(PlacementControlServer::new(Arc::clone(&journal), config).unwrap());
+    let server = Arc::new(PlacementControlServer::new(Arc::clone(&journal), config, BTreeSet::new()).unwrap());
     let error = PlacementControlService::stage(
         &server,
         request(fixture.request.clone(), Some("operation")),
