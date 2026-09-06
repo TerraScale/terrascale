@@ -30,7 +30,7 @@ flowchart TB
       localB -.-> follower
     end
     sqlite ==>|physical WAL frames| follower
-    bucket[("Regional OCI Object Storage<br/>Litestream backup / restore<br/>Encrypted under database DEK")]:::storage
+    bucket[("Regional OCI Object Storage<br/>Native TerraBase backup / restore<br/>Encrypted under database DEK")]:::storage
     sqlite -->|backup stream| bucket
   end
   proxy -->|healthy capacity within database placement| api

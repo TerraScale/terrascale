@@ -5,10 +5,11 @@
 
 # Getting started
 
-From `npx create-terrascale-app` to two browser tabs attached to the same live
-result view in under five minutes (D-74), on a cloud development branch. The
-CLI and SDK need an API key; TerraScale does not ship a customer-run emulator
-or local database process.
+The target is to go from `npx create-terrascale-app` to two browser tabs
+attached to the same live result view in under five minutes (D-74), on a cloud
+development branch. This target remains unqualified until the real sign-in,
+branch, and live-update journey passes. The CLI and SDK need an API key;
+TerraScale does not ship a customer-run emulator or local database process.
 
 ```bash
 npx create-terrascale-app@latest my-app

@@ -71,7 +71,7 @@
 <text x="1013" y="550" class="body" >Encode immutable bytes once</text>
 <rect x="1316" y="446" width="228" height="116" rx="12" fill="#fff3df" stroke="#b47d2b"/>
 <text x="1333" y="475" class="h" >OCI Object Storage</text>
-<text x="1333" y="504" class="body" >Litestream · PITR</text>
+<text x="1333" y="504" class="body" >Native TerraBase backup · PITR</text>
 <text x="1333" y="527" class="body" >Restore to a new DB</text>
 <text x="1333" y="550" class="body" >Regional · DEK encrypted</text>
 <polyline points="276,507 326,507" fill="none" stroke="#536c83" stroke-width="2"  marker-end="url(#a)" />

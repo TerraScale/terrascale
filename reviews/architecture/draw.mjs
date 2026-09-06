@@ -54,7 +54,7 @@ for (const count of [3, 10, 20]) {
   card(326,446,260,116,'Snippet capability gate',['sync.api.terrascale.tech','Verify scope + generation','Remove token before cache'],'sync');
   card(646,446,290,116,'CDN + Tiered Cache',['HIT returns bytes to the SDK','MISS collapses origin fills','No Worker on this path'],'sync');
   card(996,446,260,116,'Shared result views',['Journal → incremental delta','100 ms shared publication','Encode immutable bytes once'],'sync');
-  card(1316,446,228,116,'OCI Object Storage',['Litestream · PITR','Restore to a new DB','Regional · DEK encrypted'],'engine');
+  card(1316,446,228,116,'OCI Object Storage',['Native TerraBase backup · PITR','Restore to a new DB','Regional · DEK encrypted'],'engine');
   arrow('276,507 326,507','HTTP',279,490);
   arrow('586,507 646,507','gate',594,490);
   arrow('936,507 996,507','',934,490,false,true);
