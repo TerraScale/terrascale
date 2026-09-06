@@ -678,6 +678,8 @@ pub enum MemberError {
     },
     /// A resident database cannot be closed while an operation pins it.
     DatabaseBusy(DatabaseId),
+    /// Production placement is pending or assigned to physical replication.
+    DatabaseNotWriter(DatabaseId),
     /// A lazy-open path failed catalog validation.
     Validation(CatalogValidationError),
     /// A lazy-open path could not construct engine configuration.
@@ -777,7 +779,34 @@ pub struct MemberStatus {
     pub writes_allowed: bool,
 }
 
+/// A role accepted by the authenticated membership/control-plane authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DatabaseRole {
+    /// Owns SQLite and may originate writes.
+    Writer,
+    /// Physical replication owns the database files; SQLite must remain closed.
+    Follower,
+}
+
+/// Accepted placement evidence supplied by the production authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AcceptedDatabaseRole {
+    /// Monotonically increasing control-plane assignment epoch.
+    pub epoch: u64,
+    /// The accepted local storage role.
+    pub role: DatabaseRole,
+}
+
+/// Adapter over verified control-plane acceptance, never raw configuration.
+/// Implementations must return writer promotion only after physical workers drain.
+pub trait DatabaseRoleAuthority: Send + Sync {
+    /// Returns verified, currently accepted assignment evidence for this database.
+    fn accepted_role(&self, database: &DatabaseId) -> Option<AcceptedDatabaseRole>;
+}
+
 struct DatabaseEntry {
+    production: bool,
+    accepted_role: Option<AcceptedDatabaseRole>,
     storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
     location: PathBuf,
     scope: Option<DatabaseScope>,
@@ -893,7 +922,7 @@ impl Member {
         specifications: impl IntoIterator<Item = DatabaseSpec>,
         limits: AdmissionLimits,
     ) -> Result<Self, MemberOpenError> {
-        Self::open_with_keys(root, specifications, limits, BTreeMap::new(), true)
+        Self::open_with_keys(root, specifications, limits, BTreeMap::new(), false)
     }
 
     fn open_with_keys(
@@ -901,17 +930,14 @@ impl Member {
         specifications: impl IntoIterator<Item = DatabaseSpec>,
         limits: AdmissionLimits,
         keys: BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>>,
-        probe: bool,
+        production: bool,
     ) -> Result<Self, MemberOpenError> {
         let root = validate_root(root.as_ref()).map_err(MemberOpenError::Validation)?;
         validate_limits(limits).map_err(MemberOpenError::Validation)?;
         let specs = collect_and_validate_specs(&root, specifications)
             .map_err(MemberOpenError::Validation)?;
 
-        for (id, location, scope) in &specs {
-            if !probe {
-                continue;
-            }
+        for (id, location, scope) in specs.iter().filter(|_| !production) {
             let config = EngineConfig::durable(location.clone())
                 .map(|config| {
                     scope.as_ref().map_or(config.clone(), |scope| {
@@ -943,6 +969,8 @@ impl Member {
             .into_iter()
             .map(|(id, location, scope)| {
                 let entry = DatabaseEntry {
+                    production,
+                    accepted_role: None,
                     storage_keys: keys.get(&id).cloned(),
                     location,
                     scope,
@@ -998,7 +1026,29 @@ impl Member {
         if specifications.iter().any(|spec| spec.scope.is_none()) {
             return Err(MemberOpenError::Validation(CatalogValidationError::UnscopedDatabase));
         }
-        Self::open_with_keys(root, specifications, limits, keys, false)
+        for specification in &specifications {
+            let scope = specification.scope.as_ref().expect("scope checked");
+            let source = keys.get(&DatabaseId::from(scope.database())).ok_or(
+                MemberOpenError::Validation(CatalogValidationError::EncryptionUnavailable),
+            )?;
+            let lease = source.current_lease().map_err(|_| {
+                MemberOpenError::Validation(CatalogValidationError::EncryptionUnavailable)
+            })?;
+            let metadata = lease.metadata().scope();
+            if metadata.environment() != scope.environment().as_str()
+                || metadata.tenant() != scope.tenant()
+                || metadata.project() != Some(scope.project())
+                || metadata.database() != scope.database()
+                || metadata.purpose() != crate::encryption::KeyPurpose::Data
+                || lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
+                || lease.is_expired()
+            {
+                return Err(MemberOpenError::Validation(
+                    CatalogValidationError::EncryptionUnavailable,
+                ));
+            }
+        }
+        Self::open_with_keys(root, specifications, limits, keys, true)
     }
 
     /// Adds a scoped storage entry without granting placement or write authority.
@@ -1054,6 +1104,8 @@ impl Member {
         catalog.databases.insert(
             id,
             DatabaseEntry {
+                production: true,
+                accepted_role: None,
                 storage_keys: Some(keys),
                 location,
                 scope,
@@ -1064,6 +1116,71 @@ impl Member {
                 backup_paused: false,
             },
         );
+        Ok(())
+    }
+
+    /// Installs verified role evidence while all SQLite leases and physical
+    /// replication workers are drained. Epochs survive process restarts; a
+    /// restarted catalog remains pending until acceptance is verified again.
+    ///
+    /// # Errors
+    /// Refuses stale/conflicting evidence, busy engines, and persistence failures.
+    pub fn accept_database_role(
+        &self,
+        database: &DatabaseId,
+        authority: &dyn DatabaseRoleAuthority,
+    ) -> Result<(), MemberError> {
+        let accepted = authority
+            .accepted_role(database)
+            .filter(|accepted| accepted.epoch > 0)
+            .ok_or_else(|| MemberError::DatabaseBusy(database.clone()))?;
+        let mut catalog = lock_unpoisoned(&self.inner.catalog);
+        let entry = catalog
+            .databases
+            .get_mut(database)
+            .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?;
+        if entry.accepted_role == Some(accepted) {
+            return Ok(());
+        }
+        if entry.admissions.active() != 0 || !matches!(entry.engine, ResidentEngine::Closed) {
+            return Err(MemberError::DatabaseBusy(database.clone()));
+        }
+        let path = self.inner.root.join(format!(".role-{}", database.as_str()));
+        let role = match accepted.role {
+            DatabaseRole::Writer => "writer",
+            DatabaseRole::Follower => "follower",
+        };
+        let contents = format!("{} {}\n", accepted.epoch, role);
+        match fs::read_to_string(&path) {
+            Ok(previous) => {
+                let mut fields = previous.split_whitespace();
+                let epoch = fields
+                    .next()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .ok_or_else(|| MemberError::DatabaseBusy(database.clone()))?;
+                let previous_role = fields.next();
+                if fields.next().is_some()
+                    || !matches!(previous_role, Some("writer" | "follower"))
+                    || accepted.epoch < epoch
+                    || (accepted.epoch == epoch && previous != contents)
+                {
+                    return Err(MemberError::DatabaseBusy(database.clone()));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(MemberError::DatabaseBusy(database.clone())),
+        }
+        let persist = || -> std::io::Result<()> {
+            use std::io::Write;
+            let temporary = path.with_extension("pending");
+            let mut file = fs::File::create(&temporary)?;
+            file.write_all(contents.as_bytes())?;
+            file.sync_all()?;
+            fs::rename(&temporary, &path)?;
+            fs::File::open(&self.inner.root)?.sync_all()
+        };
+        persist().map_err(|_| MemberError::DatabaseBusy(database.clone()))?;
+        entry.accepted_role = Some(accepted);
         Ok(())
     }
 
@@ -1156,6 +1273,13 @@ impl Member {
                 .databases
                 .get(database)
                 .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?;
+            if entry.production
+                && !entry
+                    .accepted_role
+                    .is_some_and(|accepted| accepted.role == DatabaseRole::Writer)
+            {
+                return Err(MemberError::DatabaseNotWriter(database.clone()));
+            }
             let local = match entry.admissions.try_acquire(AdmissionScope::Database) {
                 Ok(permit) => permit,
                 Err(error) => {
@@ -2015,6 +2139,95 @@ mod tests {
         )])
     }
 
+    struct TestRole(AcceptedDatabaseRole);
+    impl DatabaseRoleAuthority for TestRole {
+        fn accepted_role(&self, _: &DatabaseId) -> Option<AcceptedDatabaseRole> {
+            Some(self.0)
+        }
+    }
+    fn accept_writer(member: &Member, id: &DatabaseId) {
+        member
+            .accept_database_role(
+                id,
+                &TestRole(AcceptedDatabaseRole { epoch: 1, role: DatabaseRole::Writer }),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn follower_and_pending_never_open_sqlite_and_promotion_requires_new_epoch() {
+        let root = root("roles");
+        let scope = DatabaseScope::new(
+            "production",
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+        .unwrap();
+        let spec = DatabaseSpec::scoped(scope.clone(), "db");
+        let id = DatabaseId::from(scope.database());
+        let open = || {
+            Member::open_production(
+                &root,
+                [spec.clone()],
+                AdmissionLimits::new(2, 1),
+                storage_keys(&scope),
+            )
+            .unwrap()
+        };
+        let member = open();
+        assert!(matches!(member.acquire(&id), Err(MemberError::DatabaseNotWriter(_))));
+        assert!(!root.join("db").exists());
+        let follower = TestRole(AcceptedDatabaseRole { epoch: 2, role: DatabaseRole::Follower });
+        member.accept_database_role(&id, &follower).unwrap();
+        assert!(matches!(member.acquire(&id), Err(MemberError::DatabaseNotWriter(_))));
+        member.close(Duration::from_secs(1)).unwrap();
+        let member = open();
+        assert!(matches!(member.acquire(&id), Err(MemberError::DatabaseNotWriter(_))));
+        assert!(
+            member
+                .accept_database_role(
+                    &id,
+                    &TestRole(AcceptedDatabaseRole { epoch: 1, role: DatabaseRole::Writer })
+                )
+                .is_err()
+        );
+        assert!(
+            member
+                .accept_database_role(
+                    &id,
+                    &TestRole(AcceptedDatabaseRole { epoch: 2, role: DatabaseRole::Writer })
+                )
+                .is_err()
+        );
+        member.accept_database_role(&id, &follower).unwrap();
+        member
+            .accept_database_role(
+                &id,
+                &TestRole(AcceptedDatabaseRole { epoch: 3, role: DatabaseRole::Writer }),
+            )
+            .unwrap();
+        let lease = member.acquire(&id).unwrap();
+        member
+            .accept_database_role(
+                &id,
+                &TestRole(AcceptedDatabaseRole { epoch: 3, role: DatabaseRole::Writer }),
+            )
+            .expect("identical accepted assignment may replay with an active lease");
+        assert!(
+            member
+                .accept_database_role(
+                    &id,
+                    &TestRole(AcceptedDatabaseRole { epoch: 4, role: DatabaseRole::Follower })
+                )
+                .is_err()
+        );
+        drop(lease);
+        member.close(Duration::from_secs(1)).unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn production_scope_is_bound_and_survives_member_restart() {
         let root = root("restart");
@@ -2035,6 +2248,7 @@ mod tests {
             storage_keys(&scope),
         )
         .expect("production member");
+        accept_writer(&member, &id);
         let lease = member.acquire(&id).expect("lease");
         assert_eq!(lease.database_owner().database(), scope.database());
         drop(lease);
@@ -2046,6 +2260,7 @@ mod tests {
             storage_keys(&scope),
         )
         .expect("restart");
+        accept_writer(&reopened, &id);
         let lease = reopened.acquire(&id).expect("lease");
         assert_eq!(lease.database_owner(), scope.owner());
         drop(lease);
@@ -2073,6 +2288,7 @@ mod tests {
             storage_keys(&scope),
         )
         .expect("production member");
+        accept_writer(&member, &id);
         // A just-used database is never idle.
         drop(member.acquire(&id).expect("initial open"));
         assert_eq!(member.close_idle(Duration::from_mins(1)), 0);
@@ -2109,6 +2325,7 @@ mod tests {
             storage_keys(&scope),
         )
         .expect("production member");
+        accept_writer(&member, &id);
         let lease = member.acquire(&id).expect("lease");
         std::thread::sleep(Duration::from_millis(5));
         // The outstanding lease pins the engine: nothing is evicted and the

@@ -181,16 +181,41 @@ struct Consume { model:String,id:String,expected:BTreeMap<String,serde_json::Val
 struct UniqueIndex { model:String,fields:Vec<String> }
 #[derive(Serialize,ToSchema)]
 #[serde(rename_all="camelCase")]
-struct AuthResult { record:Option<BTreeMap<String,serde_json::Value>>,matched:bool }
+struct AuthResult {
+    record:Option<BTreeMap<String,serde_json::Value>>,matched:bool,
+    #[serde(skip_serializing_if="Option::is_none")]
+    records:Option<Vec<BTreeMap<String,serde_json::Value>>>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    transaction_id:Option<String>,
+    #[serde(skip_serializing_if="Option::is_none")]
+    expires_at_ms:Option<u64>,
+}
+impl AuthResult {
+    fn record(record:Option<BTreeMap<String,serde_json::Value>>,matched:bool)->Self {
+        Self { record,matched,records:None,transaction_id:None,expires_at_ms:None }
+    }
+}
 
 async fn mutation(runtime:&AuthRuntime,database:&str,headers:&HeaderMap,action:Action)->Response {
     let domain=match runtime.domain(database,headers,Verbs::WRITE) { Ok(domain)=>domain,Err(response)=>return response };
     let Some(key)=headers.get("idempotency-key").and_then(|value|value.to_str().ok()).filter(|key|!key.is_empty() && key.len()<=256) else { return error(StatusCode::BAD_REQUEST,"idempotency_key_required"); };
+    let action=if let Some(transaction)=headers.get("x-terrascale-auth-transaction") {
+        let Ok(transaction)=transaction.to_str() else { return error(StatusCode::BAD_REQUEST,"invalid_transaction_identity"); };
+        if transaction.is_empty() || transaction.len()>128 { return error(StatusCode::BAD_REQUEST,"invalid_transaction_identity"); }
+        Action::TransactionOperation { transaction_id:transaction.into(),action:Box::new(action) }
+    } else { action };
     let result=domain.authority.mutate(Command { idempotency_key:key.into(),observed_at_ms:now_ms(),action }).await;
     let response=match result {
-        Ok(Outcome::Applied)=>(StatusCode::OK,Json(AuthResult { record:None,matched:true })).into_response(),
-        Ok(Outcome::Record { record })=>(StatusCode::OK,Json(AuthResult { record:Some(record),matched:true })).into_response(),
-        Ok(Outcome::NotMatched)=>(StatusCode::OK,Json(AuthResult { record:None,matched:false })).into_response(),
+        Ok(Outcome::Applied)=>(StatusCode::OK,Json(AuthResult::record(None,true))).into_response(),
+        Ok(Outcome::Record { record })=>(StatusCode::OK,Json(AuthResult::record(Some(record),true))).into_response(),
+        Ok(Outcome::NotMatched)=>(StatusCode::OK,Json(AuthResult::record(None,false))).into_response(),
+        Ok(Outcome::Records { records })=> {
+            let mut result=AuthResult::record(None,true); result.records=Some(records); Json(result).into_response()
+        }
+        Ok(Outcome::Transaction { transaction_id,expires_at_ms })=> {
+            let mut result=AuthResult::record(None,true); result.transaction_id=Some(transaction_id);result.expires_at_ms=Some(expires_at_ms);Json(result).into_response()
+        }
+        Ok(Outcome::TransactionConflict)=>error(StatusCode::CONFLICT,"transaction_conflict"),
         Ok(Outcome::UniqueConflict)=>error(StatusCode::CONFLICT,"unique_conflict"),
         Ok(Outcome::IdempotencyConflict)=>error(StatusCode::CONFLICT,"idempotency_conflict"),
         Ok(Outcome::Invalid { .. })=>error(StatusCode::BAD_REQUEST,"invalid_auth_operation"),
@@ -225,7 +250,7 @@ async fn index(State(runtime):State<Arc<AuthRuntime>>,Path(database):Path<String
 async fn find_one(State(runtime):State<Arc<AuthRuntime>>,Path((database,model,id)):Path<(String,String,String)>,headers:HeaderMap)->Response {
     let domain=match runtime.domain(&database,&headers,Verbs::READ) { Ok(domain)=>domain,Err(response)=>return response };
     let response=match domain.authority.find_one(model,id).await {
-        Ok(record)=>Json(AuthResult { matched:record.is_some(),record }).into_response(),
+        Ok(record)=>Json(AuthResult::record(record.clone(),record.is_some())).into_response(),
         Err(_)=>error(StatusCode::SERVICE_UNAVAILABLE,"auth_authority_unavailable"),
     };
     placement_response(response,&domain.grant)
@@ -234,7 +259,7 @@ async fn find_one(State(runtime):State<Arc<AuthRuntime>>,Path((database,model,id
 /// Actual public routes and their producer-owned OpenAPI document.
 pub fn routes()->utoipa_axum::router::OpenApiRouter<Arc<AuthRuntime>> {
     use utoipa_axum::{router::OpenApiRouter,routes};
-    OpenApiRouter::new().routes(routes!(insert_unique)).routes(routes!(compare_and_swap)).routes(routes!(consume_one)).routes(routes!(index)).routes(routes!(find_one))
+    OpenApiRouter::new().routes(routes!(insert_unique)).routes(routes!(compare_and_swap)).routes(routes!(consume_one)).routes(routes!(index)).routes(routes!(find_one)).routes(routes!(find_page)).routes(routes!(begin_transaction)).routes(routes!(commit_transaction)).routes(routes!(rollback_transaction))
 }
 /// Build the real public auth router with bounded inputs and no cacheable private output.
 pub fn router(runtime:Arc<AuthRuntime>)->Router {
@@ -243,3 +268,32 @@ pub fn router(runtime:Arc<AuthRuntime>)->Router {
 }
 
 fn now_ms()->u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value|u64::try_from(value.as_millis()).unwrap_or(u64::MAX)).unwrap_or(0) }
+
+
+#[derive(Deserialize,ToSchema)]
+#[serde(deny_unknown_fields,rename_all="camelCase")]
+struct TransactionIdentity { transaction_id:String }
+#[derive(Deserialize,ToSchema)]
+#[serde(deny_unknown_fields,rename_all="camelCase")]
+struct PageQuery {
+    model:String,
+    #[schema(value_type=Vec<serde_json::Value>)]
+    predicates:Vec<terrabase_auth::Predicate>,
+    offset:u32,limit:u32,
+}
+#[utoipa::path(post,path="/api/v1/databases/{database}/auth/findPage",request_body=PageQuery,params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)),responses((status=200,body=AuthResult),(status=503,description="Authority unavailable")))]
+async fn find_page(State(runtime):State<Arc<AuthRuntime>>,Path(database):Path<String>,headers:HeaderMap,Json(input):Json<PageQuery>)->Response {
+    mutation(&runtime,&database,&headers,Action::Find { model:input.model,predicates:input.predicates,offset:input.offset,limit:input.limit }).await
+}
+#[utoipa::path(post,path="/api/v1/databases/{database}/auth/transactions/begin",request_body=TransactionIdentity,params(("database"=String,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=AuthResult),(status=409,description="Transaction identity conflict"),(status=503,description="Authority unavailable")))]
+async fn begin_transaction(State(runtime):State<Arc<AuthRuntime>>,Path(database):Path<String>,headers:HeaderMap,Json(input):Json<TransactionIdentity>)->Response {
+    mutation(&runtime,&database,&headers,Action::BeginTransaction { transaction_id:input.transaction_id }).await
+}
+#[utoipa::path(post,path="/api/v1/databases/{database}/auth/transactions/commit",request_body=TransactionIdentity,params(("database"=String,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=AuthResult),(status=409,description="Transaction failed, expired, or conflicted"),(status=503,description="Commit outcome unknown; resolve same identity")))]
+async fn commit_transaction(State(runtime):State<Arc<AuthRuntime>>,Path(database):Path<String>,headers:HeaderMap,Json(input):Json<TransactionIdentity>)->Response {
+    mutation(&runtime,&database,&headers,Action::CommitTransaction { transaction_id:input.transaction_id }).await
+}
+#[utoipa::path(post,path="/api/v1/databases/{database}/auth/transactions/rollback",request_body=TransactionIdentity,params(("database"=String,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=AuthResult),(status=503,description="Authority unavailable")))]
+async fn rollback_transaction(State(runtime):State<Arc<AuthRuntime>>,Path(database):Path<String>,headers:HeaderMap,Json(input):Json<TransactionIdentity>)->Response {
+    mutation(&runtime,&database,&headers,Action::RollbackTransaction { transaction_id:input.transaction_id }).await
+}

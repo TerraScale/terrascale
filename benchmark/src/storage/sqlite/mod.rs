@@ -91,6 +91,8 @@
 #![allow(clippy::pedantic, reason = "SQLite backend lint debt is tracked behind the storage seam")]
 
 mod accounting;
+pub(crate) mod branch_import;
+pub(crate) mod branch_provenance;
 mod descriptor_removal;
 pub(super) mod encrypted_file;
 pub(super) mod encrypted_vfs;
@@ -105,6 +107,7 @@ mod schema_metadata;
 mod schema_ttl;
 mod shadow;
 mod storage_closure;
+mod storage_intervals;
 #[cfg(test)]
 mod tests;
 pub(crate) mod usage_seal;
@@ -742,7 +745,10 @@ fn replication_fingerprint_on(
 fn validate_operation_facts(connection: &Connection) -> Result<(), ()> {
     let mut statement = connection
         .prepare(
-            "SELECT digest, committed, rejection, sequence, requested, root, writes, bytes
+            "SELECT digest, committed, rejection, sequence, requested, root, writes, bytes,
+                    EXISTS(SELECT 1 FROM branch_snapshot_receipts AS imported
+                           WHERE imported.tenant = operation_facts.tenant
+                             AND imported.operation = operation_facts.client_request_ulid)
              FROM operation_facts",
         )
         .map_err(|_| ())?;
@@ -757,11 +763,12 @@ fn validate_operation_facts(connection: &Connection) -> Result<(), ()> {
                 row.get::<_, String>(5)?,
                 row.get::<_, i64>(6)?,
                 row.get::<_, i64>(7)?,
+                row.get::<_, bool>(8)?,
             ))
         })
         .map_err(|_| ())?;
     for row in rows {
-        let (_digest, committed, rejection, sequence, requested, root, writes, bytes) =
+        let (_digest, committed, rejection, sequence, requested, root, writes, bytes, imported) =
             row.map_err(|_| ())?;
         if writes < 0 || bytes < 0 || !matches!(committed, 0 | 1) {
             return Err(());
@@ -771,7 +778,11 @@ fn validate_operation_facts(connection: &Connection) -> Result<(), ()> {
             return Err(());
         }
         if committed == 1 {
-            if sequence <= 0 || root.is_empty() || writes == 0 {
+            if sequence <= 0
+                || root.is_empty()
+                || (writes == 0 && !imported)
+                || (imported && (writes != 0 || bytes != 0))
+            {
                 return Err(());
             }
         } else if sequence != 0
@@ -1059,6 +1070,12 @@ CREATE TABLE IF NOT EXISTS replication_bindings (
     tenant TEXT NOT NULL,
     operation TEXT NOT NULL,
     fingerprint BLOB NOT NULL CHECK(length(fingerprint) = 32),
+    PRIMARY KEY (tenant, operation)
+) WITHOUT ROWID;
+-- Only branch import inserts these markers; client operation names confer no exemption.
+CREATE TABLE IF NOT EXISTS branch_snapshot_receipts (
+    tenant TEXT NOT NULL,
+    operation TEXT NOT NULL,
     PRIMARY KEY (tenant, operation)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS operation_facts (
@@ -1396,6 +1413,7 @@ fn validate_database_binding(
 
 /// The `SQLite` storage engine behind [`StoragePort`].
 pub(crate) struct SqliteStorage {
+    local_origin: String,
     encryption: Option<Arc<encrypted_vfs::EncryptedVfs>>,
     /// The location's database path, kept for pool overflow opens.
     database_path: PathBuf,
@@ -1786,9 +1804,7 @@ impl SqliteStorage {
                 [], |row| row.get(0),
             ).map_err(|_| StorageOpenError::Unavailable)?;
             transaction.execute_batch(SCHEMA).map_err(|_| StorageOpenError::Unavailable)?;
-            transaction
-                .execute_batch(repair_summary::SCHEMA)
-                .map_err(|_| StorageOpenError::Unavailable)?;
+            repair_summary::initialize(&transaction).map_err(|_| StorageOpenError::Unavailable)?;
             if !has_pruning_watermarks {
                 // Legacy files have no exact deletion evidence. Refuse the
                 // potentially pruned prefix rather than infer completeness
@@ -1837,6 +1853,7 @@ impl SqliteStorage {
         migrate_documents_row_aliases(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         storage_closure::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         accounting::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        storage_intervals::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_operation_facts(&mut writer).map_err(|()| StorageOpenError::Unavailable)?;
         validate_operation_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         // The SQLite schema is authoritative; the metadata table carries only
@@ -1891,6 +1908,7 @@ impl SqliteStorage {
         )?;
         let committer = spawn_committer(Arc::clone(&writer), context, checkpointer.wake.clone())?;
         Ok(Self {
+            local_origin,
             encryption,
             database_path,
             expected_binding,
@@ -2007,6 +2025,7 @@ impl SqliteStorage {
         let accounting_now = accounting::begin_change(&transaction, unix_millis().max(0) as u64)?;
         let Some(frontier) = history_floor_on(&transaction)? else {
             accounting::settle_due(&transaction, accounting_now)?;
+            storage_intervals::prune_retired(&transaction)?;
             transaction.commit().map_err(|_| ())?;
             return Ok(0);
         };
@@ -2081,7 +2100,9 @@ impl SqliteStorage {
             )
             .map_err(|_| ())?;
         transaction.execute_batch("DROP TRIGGER temp.pruning_watermark").map_err(|_| ())?;
+        repair_summary::prune(&transaction, floor, now)?;
         accounting::settle_due(&transaction, accounting_now)?;
+            storage_intervals::prune_retired(&transaction)?;
         transaction.commit().map_err(|_| ())?;
         u64::try_from(pruned).map_err(|_| ())
     }
@@ -2399,6 +2420,11 @@ fn stage_intent(
     // earlier intent of this batch.
     let snapshot_sequence = intent.snapshot_sequence.get();
     if let Some(group) = &intent.replication_publication {
+        // Deletion preparation freezes the accounting cut for both origin
+        // and incoming publications. Replay above remains a read-only receipt.
+        if !lifecycle_state::permits_origin_activation(transaction)? {
+            return Ok(CommitResult::Rejected(CommitRejection::Validation));
+        }
         let available =
             crate::engine::merge::decode_context(&context_frontier(transaction, &intent.tenant)?)
                 .ok_or(())?;
@@ -2409,6 +2435,15 @@ fn stage_intent(
             < group.origin_sequence - 1
         {
             return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+        }
+        for (collection, expected) in &group.schema_observations {
+            let current: Option<String> = transaction.query_row(
+                "SELECT schema FROM merge_schemas WHERE collection = ?1",
+                [collection.as_str()], |row| row.get(0),
+            ).optional().map_err(|_| ())?;
+            if current != *expected {
+                return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+            }
         }
         for (collection, id) in &group.observations {
             // Version numbers restart after deletion; compare publication
@@ -2813,6 +2848,10 @@ fn stage_intent(
     }
     if let Some((collection, id, conflict)) = &intent.merge_conflict {
         persist_merge_conflict(transaction, &intent.tenant, collection, id, conflict)?;
+    }
+    if intent.internal_maintenance || provenance.kind() == JournalKind::Replicated {
+        billed_writes = 0;
+        billed_bytes = 0;
     }
     write_usage::mint(transaction, intent, sequence, billed_writes, &provenance)?;
     let published = PublishedCommit::new(
@@ -4495,14 +4534,27 @@ impl SqliteStorage {
 }
 
 impl StoragePort for SqliteStorage {
+    fn local_replication_origin(&self) -> &str { &self.local_origin }
     fn replication_repair_frontier(&self, tenant: &TenantId, cut: u64) -> Result<std::collections::BTreeMap<String,u64>, ()> {
-        repair_summary::frontier(self.reader().connection(), tenant, cut)
+        let reader = self.reader();
+        let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
+        let result = repair_summary::frontier(&transaction, tenant, cut)?;
+        transaction.commit().map_err(|_| ())?;
+        Ok(result)
     }
     fn replication_range_summary(&self, tenant: &TenantId, origin: &str, cut: u64, first: u64, last: u64) -> Result<terrabase_replication_core::anti_entropy::RangeFingerprint, ()> {
-        repair_summary::summary(self.reader().connection(), tenant, origin, cut, first, last)
+        let reader = self.reader();
+        let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
+        let result = repair_summary::summary(&transaction, tenant, origin, cut, first, last)?;
+        transaction.commit().map_err(|_| ())?;
+        Ok(result)
     }
     fn replication_range_publications(&self, tenant: &TenantId, origin: &str, cut: u64, first: u64, last: u64) -> Result<Vec<crate::engine::ReplicatedPublication>, ()> {
-        repair_summary::publications(self.reader().connection(), tenant, origin, cut, first, last)
+        let reader = self.reader();
+        let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
+        let result = repair_summary::publications(&transaction, tenant, origin, cut, first, last)?;
+        transaction.commit().map_err(|_| ())?;
+        Ok(result)
     }
     fn replication_publications(
         &self,
@@ -4638,6 +4690,7 @@ impl StoragePort for SqliteStorage {
         let tx =
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
         let (current, was_closed) = origin_epoch_on(&tx)?;
+        if !closed && !lifecycle_state::permits_origin_activation(&tx)? { return Err(()); }
         if epoch < current || (epoch == current && was_closed && !closed) {
             return Err(());
         }

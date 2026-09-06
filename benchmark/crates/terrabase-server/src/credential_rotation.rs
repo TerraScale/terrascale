@@ -450,7 +450,7 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
             }
             snapshot.previous_generation = request.previous_generation;
             if service.tls.is_some() {
-                let material = TlsMaterial {
+                let mut material = TlsMaterial {
                     workload: STANDARD.decode(&request.workload_tls).map_err(|_| invalid())?,
                     trust: STANDARD.decode(&request.trust_bundle).map_err(|_| invalid())?,
                     expires_at: request.expires_at,
@@ -458,7 +458,12 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
                 if material.workload.len() > 128 * 1024 || material.trust.len() > 32 * 1024 {
                     return Err(invalid());
                 }
-                service.tls.as_ref().ok_or_else(invalid)?.validate(&material.prepare()?)?;
+                let prepared = material.prepare()?;
+                service.tls.as_ref().ok_or_else(invalid)?.validate(&prepared)?;
+                material.expires_at = prepared.valid_until();
+                snapshot.origin.expires_at = snapshot.origin.expires_at.min(material.expires_at);
+                snapshot.capability.expires_at =
+                    snapshot.capability.expires_at.min(material.expires_at);
                 snapshot.tls = Some(material);
             } else if !request.workload_tls.is_empty() || !request.trust_bundle.is_empty() {
                 return Err(invalid());
@@ -541,7 +546,10 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
     }
     next.receipts
         .insert(request.operation_id.clone(), SavedReceipt { digest, receipt: receipt.clone() });
-    let prepared_tls = if service.tls.is_some() && next.state != "fenced" {
+    let prepared_tls = if service.tls.is_some()
+        && next.state != "fenced"
+        && !matches!(request.action.as_str(), "stage" | "verify")
+    {
         Some(next.active.tls.as_ref().ok_or_else(invalid)?.prepare()?)
     } else {
         None
@@ -563,7 +571,11 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
         && !matches!(request.action.as_str(), "stage" | "verify")
     {
         if let Some(prepared) = prepared_tls {
-            tls.install(prepared)?;
+            if let Err(error) = tls.install(prepared) {
+                tls.fence();
+                *live = LiveKeys::default();
+                return Err(error);
+            }
         } else {
             tls.fence();
         }

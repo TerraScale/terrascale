@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 
 mod authority;
+mod query;
+pub use query::{Connector, Mode, Operator, Predicate};
 mod network;
 mod store;
 pub use authority::{AuthAuthority, AuthorityError};
@@ -51,7 +53,7 @@ pub enum Action {
     /// Delete and return one identified record if all predicates still match.
     ConsumeOne { model: String, id: String, expected: Record },
     /// Read a bounded model page using exact field predicates.
-    Find { model: String, expected: Record, offset: u32, limit: u32 },
+    Find { model: String, predicates: Vec<Predicate>, offset: u32, limit: u32 },
     /// Create a private bounded snapshot for an optimistic transaction callback.
     BeginTransaction { transaction_id: String },
     /// Apply one named command against the private transaction workspace.

@@ -170,13 +170,7 @@ fn service(
         .exports
         .as_ref()
         .ok_or_else(|| export_error(&export::ExportError::DependencyUnavailable))?;
-    let record = state
-        .control
-        .as_ref()
-        .ok_or_else(ApiError::control_unavailable)?
-        .get(database)
-        .map_err(ApiError::control)?
-        .ok_or_else(|| ApiError::database_not_found(database))?;
+    let record = database_record(state, database)?;
     let branches = vec![export::MetadataMember {
         name: "database.json".into(),
         bytes: serde_json::to_vec(
@@ -353,8 +347,7 @@ pub(crate) fn recover_exports(state: &ApiState) -> Result<(), ApiError> {
     let Some(runtime) = state.exports.as_ref() else {
         return Ok(());
     };
-    let control = state.control.as_ref().ok_or_else(ApiError::control_unavailable)?;
-    for record in control.list().map_err(ApiError::control)? {
+    for record in database_records(state)? {
         if record.deleted || !record.placement.contains(&state.region) {
             continue;
         }

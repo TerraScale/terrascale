@@ -1,64 +1,20 @@
 use super::*;
 
-const MAX_RECORDS: u64 = 1000;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TRANSACTIONS: u64 = 32;
 const MAX_OPERATIONS: u32 = 100;
 const MAX_LIFETIME_MS: u64 = 30_000;
 
+// An optimistic read set is represented conservatively by the global revision.
+// No committed user records are copied. Replay touches only staged writes.
 #[derive(Serialize, Deserialize)]
 struct Workspace {
-    records: Vec<(String, String, Vec<u8>)>,
-    indexes: Vec<(String, Vec<u8>)>,
+    commands: Vec<(Action, Outcome)>,
     revision: u64,
     expires: u64,
     operations: u32,
     failed: bool,
 }
-
-fn capture(
-    transaction: &Transaction<'_>,
-    revision: u64,
-    expires: u64,
-) -> Result<Option<Workspace>> {
-    let count: u64 = transaction
-        .query_row("SELECT COUNT(*) FROM auth_records", [], |row| row.get(0))
-        .map_err(storage)?;
-    let bytes: u64 = transaction
-        .query_row("SELECT COALESCE(SUM(length(body)),0) FROM auth_records", [], |row| row.get(0))
-        .map_err(storage)?;
-    let indexes: u64 = transaction
-        .query_row("SELECT COUNT(*) FROM auth_indexes", [], |row| row.get(0))
-        .map_err(storage)?;
-    if count > MAX_RECORDS || bytes > MAX_BYTES as u64 || indexes > 128 {
-        return Ok(None);
-    }
-    let workspace = Workspace {
-        records: transaction
-            .prepare("SELECT model,id,body FROM auth_records ORDER BY model,id")
-            .map_err(storage)?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .map_err(storage)?
-            .collect::<std::result::Result<_, _>>()
-            .map_err(storage)?,
-        indexes: transaction
-            .prepare("SELECT model,fields FROM auth_indexes ORDER BY model,fields")
-            .map_err(storage)?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(storage)?
-            .collect::<std::result::Result<_, _>>()
-            .map_err(storage)?,
-        revision,
-        expires,
-        operations: 0,
-        failed: false,
-    };
-    if encode(&workspace)?.len() > MAX_BYTES {
-        return Ok(None);
-    }
-    Ok(Some(workspace))
-}
-
 fn load(transaction: &Transaction<'_>, id: &str) -> Result<Option<Workspace>> {
     let bytes: Option<Vec<u8>> = transaction
         .query_row("SELECT workspace FROM auth_transactions WHERE id=?1", [id], |row| row.get(0))
@@ -68,22 +24,6 @@ fn load(transaction: &Transaction<'_>, id: &str) -> Result<Option<Workspace>> {
 }
 fn save(transaction: &Transaction<'_>, id: &str, workspace: &Workspace) -> Result<()> {
     transaction.execute("INSERT INTO auth_transactions(id,workspace) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET workspace=excluded.workspace",params![id,encode(workspace)?]).map_err(storage)?;
-    Ok(())
-}
-fn install(transaction: &Transaction<'_>, workspace: &Workspace) -> Result<()> {
-    transaction
-        .execute_batch("DELETE FROM auth_records; DELETE FROM auth_indexes;")
-        .map_err(storage)?;
-    for (model, id, body) in &workspace.records {
-        transaction
-            .execute("INSERT INTO auth_records VALUES(?1,?2,?3)", params![model, id, body])
-            .map_err(storage)?;
-    }
-    for (model, fields) in &workspace.indexes {
-        transaction
-            .execute("INSERT INTO auth_indexes VALUES(?1,?2)", params![model, fields])
-            .map_err(storage)?;
-    }
     Ok(())
 }
 fn revision(transaction: &Transaction<'_>) -> Result<u64> {
@@ -100,6 +40,14 @@ fn mutates(action: &Action, outcome: &Outcome) -> bool {
     !matches!(action, Action::Find { .. })
         && matches!(outcome, Outcome::Applied | Outcome::Record { .. })
 }
+fn replay(transaction: &Transaction<'_>, workspace: &Workspace) -> Result<()> {
+    for (command, expected) in &workspace.commands {
+        if &execute_action(transaction, command)? != expected {
+            return Err(storage("auth transaction replay diverged at unchanged revision"));
+        }
+    }
+    Ok(())
+}
 
 pub(super) fn execute_dispatched(
     transaction: &Transaction<'_>,
@@ -111,7 +59,7 @@ pub(super) fn execute_dispatched(
             if transaction_id.is_empty() || transaction_id.len() > 128 {
                 return Ok(invalid("invalid transaction identity"));
             }
-            // Garbage collection runs only as a deterministic committed command.
+            // GC runs only as a committed, deterministic operation.
             let expired = {
                 let mut statement = transaction
                     .prepare("SELECT id,workspace FROM auth_transactions")
@@ -136,17 +84,21 @@ pub(super) fn execute_dispatched(
             if load(transaction, transaction_id)?.is_some() {
                 return Ok(Outcome::TransactionConflict);
             }
-            let count: u64 = transaction
+            let count: i64 = transaction
                 .query_row("SELECT COUNT(*) FROM auth_transactions", [], |row| row.get(0))
                 .map_err(storage)?;
-            if count >= MAX_TRANSACTIONS {
+            if u64::try_from(count).map_err(storage)? >= MAX_TRANSACTIONS {
                 return Ok(invalid("concurrent transaction bound reached"));
             }
             let expires = now
                 .checked_add(MAX_LIFETIME_MS)
                 .ok_or_else(|| storage("auth transaction time exhausted"))?;
-            let Some(workspace) = capture(transaction, revision(transaction)?, expires)? else {
-                return Ok(invalid("transaction snapshot exceeds record or byte bound"));
+            let workspace = Workspace {
+                commands: Vec::new(),
+                revision: revision(transaction)?,
+                expires,
+                operations: 0,
+                failed: false,
             };
             save(transaction, transaction_id, &workspace)?;
             Ok(Outcome::Transaction {
@@ -161,24 +113,22 @@ pub(super) fn execute_dispatched(
             if workspace.failed
                 || workspace.expires <= now
                 || workspace.operations >= MAX_OPERATIONS
+                || workspace.revision != revision(transaction)?
             {
                 return Ok(Outcome::TransactionConflict);
             }
             transaction.execute_batch("SAVEPOINT auth_workspace;").map_err(storage)?;
-            install(transaction, &workspace)?;
+            replay(transaction, &workspace)?;
             let outcome = execute_action(transaction, action)?;
-            let next = capture(transaction, workspace.revision, workspace.expires)?;
             transaction
                 .execute_batch("ROLLBACK TO auth_workspace; RELEASE auth_workspace;")
                 .map_err(storage)?;
-            let operations = workspace.operations + 1;
-            if let Some(next) = next {
-                workspace = next;
-            } else {
-                workspace.failed = true;
+            workspace.operations += 1;
+            if mutates(action, &outcome) {
+                workspace.commands.push((*action.clone(), outcome.clone()));
             }
-            workspace.operations = operations;
-            // Catching a failed inner mutation in JavaScript cannot make a partial commit.
+            // A caught inner error still poisons commit. Null conditional outcomes remain
+            // available to the callback to handle deliberately without partial writes.
             if matches!(
                 outcome,
                 Outcome::Invalid { .. }
@@ -188,12 +138,13 @@ pub(super) fn execute_dispatched(
             ) {
                 workspace.failed = true;
             }
-            save(transaction, transaction_id, &workspace)?;
-            if workspace.failed
-                && !matches!(outcome, Outcome::Invalid { .. } | Outcome::UniqueConflict)
-            {
-                return Ok(Outcome::TransactionConflict);
+            if encode(&workspace)?.len() > MAX_BYTES {
+                workspace.commands.clear();
+                workspace.failed = true;
+                save(transaction, transaction_id, &workspace)?;
+                return Ok(invalid("transaction staged byte bound exceeded"));
             }
+            save(transaction, transaction_id, &workspace)?;
             Ok(outcome)
         }
         Action::CommitTransaction { transaction_id } => {
@@ -209,8 +160,10 @@ pub(super) fn execute_dispatched(
             {
                 return Ok(Outcome::TransactionConflict);
             }
-            install(transaction, &workspace)?;
-            advance(transaction)?;
+            replay(transaction, &workspace)?;
+            if !workspace.commands.is_empty() {
+                advance(transaction)?;
+            }
             Ok(Outcome::Applied)
         }
         Action::RollbackTransaction { transaction_id } => {

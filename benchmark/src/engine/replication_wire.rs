@@ -1,7 +1,7 @@
 //! Bounded full-publication wire codec, independent of the small lane envelope.
 use super::{EngineError, ReplicatedPublication, ReplicatedRecord};
+use super::{MAX_REPLICATION_PUBLICATION_BYTES as MAX_BYTES, MAX_REPLICATION_PUBLICATION_RECORDS};
 use crate::types::{CollectionName, DocumentId, DocumentValue};
-const MAX_BYTES: usize = 64 * 1024 * 1024;
 fn invalid() -> EngineError {
     EngineError::InvalidDocument
 }
@@ -73,7 +73,18 @@ impl ReplicatedPublication {
         let hlc = u64::from_be_bytes(take(&mut bytes, 8)?.try_into().map_err(|_| invalid())?);
         let count =
             u32::from_be_bytes(take(&mut bytes, 4)?.try_into().map_err(|_| invalid())?) as usize;
-        if count > 100_000 || count > bytes.len() / 13 {
+        if count > MAX_REPLICATION_PUBLICATION_RECORDS || count > bytes.len() / 13 {
+            return Err(invalid());
+        }
+        // Causal metadata is repeated in the engine's owned record representation.
+        // Refuse wire-level fanout that would amplify a tiny header into GiBs.
+        let shared_bytes =
+            origin.len().saturating_add(commit_ulid.len()).saturating_add(context.len());
+        if count
+            .checked_mul(shared_bytes)
+            .and_then(|metadata| metadata.checked_add(bytes.len()))
+            .is_none_or(|expanded| expanded > MAX_BYTES)
+        {
             return Err(invalid());
         }
         let mut records = Vec::with_capacity(count);

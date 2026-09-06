@@ -41,8 +41,54 @@ impl SqliteStorage {
         }
         match command {
             LifecycleCommand::Read => return Ok(state),
-            LifecycleCommand::Protection(enabled) => {
+            LifecycleCommand::Prepare(operation_id) => {
+                if operation_id.is_empty() || operation_id.len() > 255 {
+                    return Err(LifecycleError::Invalid);
+                }
+                if let Some(prior) = &state.deletion_preparation {
+                    return if prior.operation_id == operation_id {
+                        Ok(state)
+                    } else {
+                        Err(LifecycleError::Conflict)
+                    };
+                }
                 if state.deletion.is_some() {
+                    return Err(LifecycleError::Conflict);
+                }
+                if state.deletion_protection {
+                    return Err(LifecycleError::Protected);
+                }
+                let clock: i64 = tx
+                    .query_row(
+                        "SELECT millis FROM storage_accounting_clock WHERE singleton=1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .map_err(|_| LifecycleError::Unavailable)?;
+                let now = u64::try_from(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_err(|_| LifecycleError::Invalid)?
+                        .as_millis(),
+                )
+                .map_err(|_| LifecycleError::Invalid)?;
+                let minimum_cutoff_millis =
+                    now.max(u64::try_from(clock).map_err(|_| LifecycleError::Invalid)?);
+                if minimum_cutoff_millis > i64::MAX as u64 {
+                    return Err(LifecycleError::Invalid);
+                }
+                let (epoch, _) =
+                    super::origin_epoch_on(&tx).map_err(|_| LifecycleError::Unavailable)?;
+                tx.execute("INSERT INTO meta(key,value) VALUES('origin_authority_epoch',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [format!("{epoch}:1")]).map_err(|_| LifecycleError::Unavailable)?;
+                state.deletion_preparation =
+                    Some(crate::engine::lifecycle_state::DeletionPreparation {
+                        operation_id,
+                        minimum_cutoff_millis,
+                    });
+            }
+
+            LifecycleCommand::Protection(enabled) => {
+                if state.access_revoked() {
                     return Err(LifecycleError::Revoked);
                 }
                 state.deletion_protection = enabled;
@@ -51,7 +97,7 @@ impl SqliteStorage {
                 if at == 0 || at > i64::MAX as u64 {
                     return Err(LifecycleError::Invalid);
                 }
-                if state.deletion.is_some() {
+                if state.access_revoked() {
                     return Err(LifecycleError::Revoked);
                 }
                 state.last_authorized_request_at =
@@ -61,8 +107,8 @@ impl SqliteStorage {
                 if intent.operation_id.is_empty()
                     || intent.operation_id.len() > 255
                     || intent.usage_stopped_at == 0
-                    || intent.retain_until < intent.usage_stopped_at
-                    || intent.retain_until > i64::MAX as u64
+                    || intent.retain_until.is_some_and(|until| until < intent.usage_stopped_at)
+                    || intent.retain_until.is_some_and(|until| until > i64::MAX as u64)
                 {
                     return Err(LifecycleError::Invalid);
                 }
@@ -75,6 +121,13 @@ impl SqliteStorage {
                 }
                 if state.deletion_protection {
                     return Err(LifecycleError::Protected);
+                }
+                if let Some(prepared) = &state.deletion_preparation {
+                    if prepared.operation_id != intent.operation_id
+                        || intent.usage_stopped_at < prepared.minimum_cutoff_millis
+                    {
+                        return Err(LifecycleError::Conflict);
+                    }
                 }
                 accounting::stop(&tx, tenant.as_str(), intent.usage_stopped_at)
                     .map_err(|()| LifecycleError::Conflict)?;
@@ -93,14 +146,21 @@ impl SqliteStorage {
 }
 
 fn encode(state: &LifecycleState) -> Vec<u8> {
-    let mut body = Vec::with_capacity(300);
+    let mut body = Vec::with_capacity(560);
     body.extend_from_slice(&state.generation.to_be_bytes());
     body.extend_from_slice(&state.last_authorized_request_at.unwrap_or(0).to_be_bytes());
     body.push(u8::from(state.deletion_protection));
-    if let Some(intent) = &state.deletion {
-        body.extend_from_slice(&intent.usage_stopped_at.to_be_bytes());
-        body.extend_from_slice(&intent.retain_until.to_be_bytes());
-        body.extend_from_slice(intent.operation_id.as_bytes());
+    let prepared = state.deletion_preparation.as_ref();
+    body.extend_from_slice(&prepared.map_or(0, |p| p.minimum_cutoff_millis).to_be_bytes());
+    let deletion = state.deletion.as_ref();
+    body.extend_from_slice(&deletion.map_or(0, |d| d.usage_stopped_at).to_be_bytes());
+    body.extend_from_slice(&deletion.and_then(|d| d.retain_until).unwrap_or(0).to_be_bytes());
+    for operation in
+        [prepared.map(|p| p.operation_id.as_str()), deletion.map(|d| d.operation_id.as_str())]
+    {
+        let bytes = operation.unwrap_or("").as_bytes();
+        body.push(u8::try_from(bytes.len()).expect("validated operation identity"));
+        body.extend_from_slice(bytes);
     }
     body
 }
@@ -112,37 +172,64 @@ fn decode(body: &[u8]) -> Result<LifecycleState, LifecycleError> {
             body.get(at..at + 8).ok_or_else(invalid)?.try_into().map_err(|_| invalid())?,
         ))
     };
-    if body.len() < 17 || body.len() > 288 || body[16] > 1 {
+    if body.len() < 43 || body.len() > 553 || body[16] > 1 {
         return Err(invalid());
     }
     let at = number(8)?;
-    let deletion = if body.len() == 17 {
-        None
-    } else {
-        let operation_id =
-            std::str::from_utf8(body.get(33..).ok_or_else(invalid)?).map_err(|_| invalid())?;
-        let usage_stopped_at = number(17)?;
-        let retain_until = number(25)?;
-        if operation_id.is_empty()
-            || usage_stopped_at == 0
-            || retain_until < usage_stopped_at
-            || retain_until > i64::MAX as u64
-        {
-            return Err(invalid());
-        }
-        Some(crate::engine::lifecycle_state::DeletionIntent {
-            operation_id: operation_id.into(),
-            usage_stopped_at,
-            retain_until,
-        })
+    let minimum_cutoff_millis = number(17)?;
+    let usage_stopped_at = number(25)?;
+    let retain_until = number(33)?;
+    let mut cursor = 41;
+    let mut operation = || -> Result<String, LifecycleError> {
+        let size = usize::from(*body.get(cursor).ok_or_else(invalid)?);
+        cursor += 1;
+        let value = std::str::from_utf8(body.get(cursor..cursor + size).ok_or_else(invalid)?)
+            .map_err(|_| invalid())?
+            .to_owned();
+        cursor += size;
+        Ok(value)
     };
-    if at > i64::MAX as u64 {
+    let preparation_id = operation()?;
+    let deletion_id = operation()?;
+    if cursor != body.len()
+        || at > i64::MAX as u64
+        || minimum_cutoff_millis > i64::MAX as u64
+        || retain_until > i64::MAX as u64
+        || (retain_until != 0 && usage_stopped_at > retain_until)
+        || preparation_id.is_empty() != (minimum_cutoff_millis == 0)
+        || deletion_id.is_empty() != (usage_stopped_at == 0)
+    {
         return Err(invalid());
     }
+    let deletion_preparation = (!preparation_id.is_empty()).then_some(
+        crate::engine::lifecycle_state::DeletionPreparation {
+            operation_id: preparation_id,
+            minimum_cutoff_millis,
+        },
+    );
+    let deletion =
+        (!deletion_id.is_empty()).then_some(crate::engine::lifecycle_state::DeletionIntent {
+            operation_id: deletion_id,
+            usage_stopped_at,
+            retain_until: (retain_until != 0).then_some(retain_until),
+        });
     Ok(LifecycleState {
         generation: number(0)?,
         last_authorized_request_at: (at != 0).then_some(at),
         deletion_protection: body[16] != 0,
+        deletion_preparation,
         deletion,
     })
+}
+
+pub(super) fn permits_origin_activation(connection: &rusqlite::Connection) -> Result<bool, ()> {
+    let mut query = connection.prepare("SELECT body FROM database_lifecycle").map_err(|_| ())?;
+    let mut rows = query.query([]).map_err(|_| ())?;
+    while let Some(row) = rows.next().map_err(|_| ())? {
+        let body: Vec<u8> = row.get(0).map_err(|_| ())?;
+        if decode(&body).map_err(|_| ())?.access_revoked() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }

@@ -327,8 +327,17 @@ async fn serve_pending_placement_control(
         .map_err(|_| unavailable("placement control TLS private key is unavailable"))?;
     let ca = read_pem(&production.transport.client_ca, false)
         .map_err(|_| unavailable("placement control TLS CA is unavailable"))?;
+    let live_tls = terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(&certificate, &key, &ca)
+        .map_err(|_| unavailable("placement TLS identity is invalid"))?;
+    let rotation = production.transport.credential_rotation.as_ref().map(|rotation| {
+        let token = read_secret_key(&rotation.token_file).map_err(|_| unavailable("rotation token unavailable"))?;
+        crate::credential_rotation::bind_with_tls(&rotation.socket, &rotation.state_file, token,
+            crate::reactive_api::OriginProofKeyRing::disabled(), crate::reactive_api::CapabilityKeyRing::disabled(),
+            live_tls.clone(), format!("{certificate}\n{key}").into_bytes(), ca.as_bytes().to_vec())
+            .map_err(|_| unavailable("durable credential rotation controller unavailable"))
+    }).transpose()?;
     let listener = server
-        .bind_tls(production.transport.tbep_listen, &certificate, &key, &ca)
+        .bind_tls_reloadable(production.transport.tbep_listen, live_tls)
         .await
         .map_err(|_| unavailable("placement control mTLS listener cannot bind"))?;
     let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
@@ -352,6 +361,11 @@ async fn serve_pending_placement_control(
             Ok(())
         }
     });
+    let (rotation_stop, rotation_signal) = oneshot::channel();
+    let mut rotation_task = tokio::spawn(async move {
+        if let Some(bound) = rotation { bound.serve_until(async { let _ = rotation_signal.await; }).await }
+        else { let _ = rotation_signal.await; Ok(()) }
+    });
     let (control_stop, control_signal) = oneshot::channel();
     let mut control_task = tokio::spawn(listener.serve(async {
         let _ = control_signal.await;
@@ -368,6 +382,7 @@ async fn serve_pending_placement_control(
     let mut control_finished = false;
     let mut metrics_finished = false;
     let mut auth_finished=false;
+    let mut rotation_finished=false;
     let outcome = tokio::select! {
         result = wait_for_shutdown() => result.map_err(|_| unavailable("shutdown signal listener failed")),
         _ = &mut control_task => {
@@ -378,6 +393,10 @@ async fn serve_pending_placement_control(
             metrics_finished = true;
             Err(unavailable("pending placement metrics listener stopped unexpectedly"))
         },
+        _=&mut rotation_task=> {
+            rotation_finished=true;
+            Err(unavailable("credential rotation controller stopped unexpectedly"))
+        },
         _=&mut auth_task=> {
             auth_finished=true;
             Err(unavailable("auth consensus/public runtime stopped unexpectedly"))
@@ -387,6 +406,7 @@ async fn serve_pending_placement_control(
     let _ = control_stop.send(());
     let _ = metrics_stop.send(());
     let _=auth_stop.send(());
+    let _=rotation_stop.send(());
     let drained = tokio::time::timeout(config.shutdown_grace, async {
         if !control_finished {
             control_task
@@ -399,6 +419,10 @@ async fn serve_pending_placement_control(
                 .await
                 .map_err(|_| unavailable("pending placement metrics task failed"))?
                 .map_err(|_| unavailable("pending placement metrics drain failed"))?;
+        }
+        if !rotation_finished {
+            rotation_task.await.map_err(|_| unavailable("credential rotation task failed"))?
+                .map_err(|_| unavailable("credential rotation drain failed"))?;
         }
         if !auth_finished {
             auth_task.await.map_err(|_|unavailable("auth runtime task failed"))?.map_err(|_|unavailable("auth runtime drain failed"))?;

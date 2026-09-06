@@ -56,6 +56,22 @@ impl Default for ReplicationProgress {
 }
 
 impl ReplicationProgress {
+    /// Returns the immutable accepted residency set while its assignment is live.
+    ///
+    /// # Errors
+    /// Refuses unknown or fenced assignments.
+    pub fn selected_regions(
+        &self,
+        scope: DatabaseRouteScope,
+    ) -> Result<BTreeSet<String>, ReplicationWaitError> {
+        let databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
+        let progress = databases.get(&scope).ok_or(ReplicationWaitError::NotAdmitted)?;
+        if progress.fenced {
+            return Err(ReplicationWaitError::Fenced);
+        }
+        Ok(progress.selected.clone())
+    }
+
     /// Executes a bounded signing operation while the evidence fence is held.
     /// The caller must not reenter this progress ledger from the closure.
     ///
@@ -133,6 +149,7 @@ impl ReplicationProgress {
     ///
     /// # Errors
     /// Rejects an empty/oversized selection and replacement of an assignment.
+    /// Identical active registration is idempotent and preserves all receipts.
     pub fn admit(
         &self,
         scope: DatabaseRouteScope,
@@ -149,7 +166,14 @@ impl ReplicationProgress {
             return Err(ReplicationWaitError::NotAdmitted);
         }
         let mut databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
-        if databases.contains_key(&scope) || databases.len() >= terrabase::member::MAX_DATABASES {
+        if let Some(existing) = databases.get(&scope) {
+            return if !existing.fenced && existing.selected == selected {
+                Ok(())
+            } else {
+                Err(ReplicationWaitError::NotAdmitted)
+            };
+        }
+        if databases.len() >= terrabase::member::MAX_DATABASES {
             return Err(ReplicationWaitError::NotAdmitted);
         }
         databases.insert(

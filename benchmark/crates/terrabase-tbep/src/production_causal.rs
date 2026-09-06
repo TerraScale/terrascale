@@ -206,7 +206,7 @@ impl CausalDriver {
     /// # Errors
     /// Returns durable storage or scope failures.
     pub fn is_caught_up(&self, engine: &Engine) -> Result<bool, HostingError> {
-        if self.has_pending() {
+        if self.has_pending() || self.assembly.is_some() {
             return Ok(false);
         }
         let scope = engine.scope_for(&TenantId::try_new(&self.scope.tenant).map_err(failure)?);
@@ -273,7 +273,7 @@ impl CausalDriver {
     /// Ships one complete publication requested by range reconciliation.
     /// Repair receipts never move the sequential journal tail checkpoint.
     /// # Errors
-    /// Refuses exhausted credit, invalid metadata, and oversized envelopes.
+    /// Refuses exhausted credit, invalid metadata, and oversized publications.
     pub fn publication_frame(
         &mut self,
         publication: &ReplicatedPublication,
@@ -296,7 +296,9 @@ impl CausalDriver {
         let mut bytes = self.prefix.clone();
         bytes.push(1);
         bytes.extend_from_slice(&self.next_id.to_be_bytes());
-        bytes.extend_from_slice(&publication.encode_wire().map_err(failure)?);
+        bytes.extend_from_slice(&compress_publication(
+            &publication.encode_wire().map_err(failure)?,
+        )?);
         if self.pending.values().map(|p| p.bytes.len()).sum::<usize>().saturating_add(bytes.len())
             > 65 * 1024 * 1024
         {
@@ -413,7 +415,8 @@ impl CausalDriver {
         }
         if kind == 1 {
             let message_id = take_u64(&mut body)?;
-            let publication = ReplicatedPublication::decode_wire(body).map_err(failure)?;
+            let decoded = decompress_publication(body)?;
+            let publication = ReplicatedPublication::decode_wire(&decoded).map_err(failure)?;
             if publication.origin != self.origin
                 && self
                     .repair_authorizations
@@ -515,6 +518,37 @@ impl CausalDriver {
     }
 }
 
+const DICTIONARY: &[u8] = include_bytes!("../assets/causal-json-v1.dict");
+fn compress_publication(raw: &[u8]) -> Result<Vec<u8>, HostingError> {
+    if raw.len() > terrabase::engine::MAX_REPLICATION_PUBLICATION_BYTES {
+        return Err(refused("publication decoded bound exceeded"));
+    }
+    let mut compressor = zstd::bulk::Compressor::with_dictionary(3, DICTIONARY).map_err(failure)?;
+    let compressed = compressor.compress(raw).map_err(failure)?;
+    let mut bytes = Vec::with_capacity(40 + compressed.len());
+    bytes.extend_from_slice(blake3::hash(DICTIONARY).as_bytes());
+    bytes.extend_from_slice(&(raw.len() as u64).to_be_bytes());
+    bytes.extend_from_slice(&compressed);
+    Ok(bytes)
+}
+fn decompress_publication(mut bytes: &[u8]) -> Result<Vec<u8>, HostingError> {
+    if bytes.get(..32) != Some(blake3::hash(DICTIONARY).as_bytes().as_slice()) {
+        return Err(refused("publication dictionary version mismatch"));
+    }
+    bytes = &bytes[32..];
+    let expected = usize::try_from(take_u64(&mut bytes)?).map_err(failure)?;
+    if expected > terrabase::engine::MAX_REPLICATION_PUBLICATION_BYTES {
+        return Err(refused("publication decompression bound exceeded"));
+    }
+    let mut decompressor =
+        zstd::bulk::Decompressor::with_dictionary(DICTIONARY).map_err(failure)?;
+    let decoded = decompressor.decompress(bytes, expected).map_err(failure)?;
+    if decoded.len() != expected {
+        return Err(refused("publication decompressed length mismatch"));
+    }
+    Ok(decoded)
+}
+
 const CHUNK: usize = 32 * 1024;
 fn fragment(prefix: &[u8], pending: &mut Pending) -> Vec<u8> {
     if pending.bytes.len() <= CHUNK {
@@ -557,6 +591,21 @@ mod tests {
     };
 
     #[test]
+    fn dictionary_compression_is_deterministic_and_bounded() {
+        let raw = br#"{"collection":"orders","status":"pending","origin":"gru"}"#.repeat(1000);
+        let compressed = compress_publication(&raw).unwrap();
+        assert_eq!(compressed, compress_publication(&raw).unwrap());
+        assert!(compressed.len() < raw.len());
+        assert_eq!(decompress_publication(&compressed).unwrap(), raw);
+        let mut foreign = compressed.clone();
+        foreign[0] ^= 1;
+        assert!(decompress_publication(&foreign).is_err());
+        let mut bomb = compressed;
+        bomb[32..40].copy_from_slice(&(65_u64 * 1024 * 1024).to_be_bytes());
+        assert!(decompress_publication(&bomb).is_err());
+    }
+
+    #[test]
     fn retry_receipt_and_database_fencing() {
         let path = std::env::temp_dir().join(format!(
             "causal-driver-{}-{}",
@@ -580,7 +629,11 @@ mod tests {
                 CollectionName::try_new("items").unwrap(),
                 DocumentValue::Object(BTreeMap::from([(
                     "large".into(),
-                    DocumentValue::String("x".repeat(100_000)),
+                    DocumentValue::String(
+                        (0_u64..3000)
+                            .map(|i| blake3::hash(&i.to_be_bytes()).to_hex().to_string())
+                            .collect(),
+                    ),
                 )])),
             ),
             ExpectedVersion::Any,

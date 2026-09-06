@@ -97,9 +97,10 @@ mod tests {
             let held_commit = engine.origin_commit_barrier.read().unwrap();
             let (started_tx, started_rx) = std::sync::mpsc::channel();
             let (finished_tx, finished_rx) = std::sync::mpsc::channel();
-            scope.spawn(|| {
+            let fencing_engine = &engine;
+            scope.spawn(move || {
                 started_tx.send(()).unwrap();
-                finished_tx.send(engine.fence_origin(1)).unwrap();
+                finished_tx.send(fencing_engine.fence_origin(1)).unwrap();
             });
             started_rx.recv().unwrap();
             assert!(finished_rx.recv_timeout(std::time::Duration::from_millis(30)).is_err());

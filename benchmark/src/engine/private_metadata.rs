@@ -90,6 +90,38 @@ impl Transaction<'_> {
     }
 }
 
+impl Transaction<'_> {
+    /// Binds schema controls to an immutable collection generation and manifest.
+    ///
+    /// Progress retains this identity; only a new schema changes it. The
+    /// durable writer records the initial winner stamp independently of later
+    /// progress stamps, so progress cannot elect another schema generation.
+    ///
+    /// # Errors
+    /// Rejects a zero generation or invalid collection identifier.
+    pub fn stage_schema_bundle(
+        &mut self,
+        collection: &str,
+        generation: u64,
+        manifest: [u8; 32],
+    ) -> Result<(), EngineError> {
+        crate::types::CollectionName::try_new(collection)
+            .map_err(|_| EngineError::InvalidDocument)?;
+        let generation = i64::try_from(generation)
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or(EngineError::InvalidDocument)?;
+        let value = DocumentValue::Object(std::collections::BTreeMap::from([
+            ("generation".into(), DocumentValue::Integer(generation)),
+            (
+                "manifest".into(),
+                DocumentValue::String(blake3::Hash::from_bytes(manifest).to_hex().to_string()),
+            ),
+        ]));
+        self.put_private_metadata(&format!("schema:bundle/{collection}"), value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,38 +284,6 @@ mod tests {
         );
         engine.shutdown().unwrap();
         std::fs::remove_dir_all(path).unwrap();
-    }
-}
-
-impl Transaction<'_> {
-    /// Binds schema controls to an immutable collection generation and manifest.
-    ///
-    /// Progress retains this identity; only a new schema changes it. The
-    /// durable writer records the initial winner stamp independently of later
-    /// progress stamps, so progress cannot elect another schema generation.
-    ///
-    /// # Errors
-    /// Rejects a zero generation or invalid collection identifier.
-    pub fn stage_schema_bundle(
-        &mut self,
-        collection: &str,
-        generation: u64,
-        manifest: [u8; 32],
-    ) -> Result<(), EngineError> {
-        crate::types::CollectionName::try_new(collection)
-            .map_err(|_| EngineError::InvalidDocument)?;
-        let generation = i64::try_from(generation)
-            .ok()
-            .filter(|value| *value > 0)
-            .ok_or(EngineError::InvalidDocument)?;
-        let value = DocumentValue::Object(std::collections::BTreeMap::from([
-            ("generation".into(), DocumentValue::Integer(generation)),
-            (
-                "manifest".into(),
-                DocumentValue::String(blake3::Hash::from_bytes(manifest).to_hex().to_string()),
-            ),
-        ]));
-        self.put_private_metadata(&format!("schema:bundle/{collection}"), value)
     }
 }
 

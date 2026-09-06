@@ -137,6 +137,7 @@ pub struct WalWriterDriver {
     binding: WalReplicaBinding,
     engine: Arc<dyn WalEngineHandle>,
     tail: Arc<Mutex<WalTail>>,
+    needs_install: bool,
     installed: Option<crate::wal_snapshot::WalInstalledSnapshotProof>,
 }
 
@@ -148,7 +149,13 @@ impl WalWriterDriver {
         engine: Arc<dyn WalEngineHandle>,
         tail: WalTail,
     ) -> Self {
-        Self { binding, engine, tail: Arc::new(Mutex::new(tail)), installed: None }
+        Self {
+            binding,
+            engine,
+            tail: Arc::new(Mutex::new(tail)),
+            needs_install: false,
+            installed: None,
+        }
     }
 
     /// Attaches installation evidence verified against the assigned follower.
@@ -160,10 +167,14 @@ impl WalWriterDriver {
         proof: crate::wal_snapshot::WalInstalledSnapshotProof,
     ) -> Result<(), WalQuicError> {
         self.binding.authorize_local(true).map_err(WalQuicError::Route)?;
-        if proof.scope() != self.binding.scope() || proof.epoch() != self.binding.epoch() {
+        if proof.scope() != self.binding.scope()
+            || proof.epoch() != self.binding.epoch()
+            || proof.generation() != self.binding.generation()
+        {
             return Err(WalQuicError::Route(WalRouteError::Unauthorized));
         }
         self.installed = Some(proof);
+        self.needs_install = false;
         Ok(())
     }
 
@@ -203,6 +214,48 @@ impl WalWriterDriver {
         })
         .await
         .map_err(|_| WalQuicError::WorkerUnavailable)?
+    }
+
+    /// Captures a replacement physical base after SQLite rotates past retained
+    /// WAL history. The old proof is cleared immediately. The new tail starts
+    /// at the captured checkpoint but must not send writes or claim durability
+    /// until the assigned follower installs and acknowledges this new snapshot.
+    ///
+    /// # Errors
+    /// Returns fencing, snapshot capture, or generation-validation failure.
+    pub async fn refresh_snapshot(
+        &mut self,
+        staging_parent: &std::path::Path,
+    ) -> Result<crate::wal_snapshot::WalSnapshotSource, crate::wal_snapshot::WalSnapshotError> {
+        self.installed = None;
+        self.needs_install = true;
+        let staging = staging_parent
+            .join(format!(".wal-source-{}", terrabase::identity::DatabaseUlid::generate()));
+        let source = crate::wal_snapshot::WalSnapshotSource::capture(
+            self.binding.clone(),
+            self.engine.clone(),
+            staging,
+        )
+        .await?;
+        let checkpoint = source.manifest().checkpoint();
+        let engine = self.engine.clone();
+        let tail = self.tail.clone();
+        let binding = self.binding.clone();
+        let permit = binding.reserve_worker().map_err(WalQuicError::Route)?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            binding
+                .with_admission(|| {
+                    let replacement = WalTail::resume_engine(engine.engine(), checkpoint)
+                        .map_err(WalRouteError::Storage)?;
+                    *tail.lock().map_err(|_| WalRouteError::Fenced)? = replacement;
+                    Ok(())
+                })
+                .map_err(WalQuicError::Route)
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)??;
+        Ok(source)
     }
 
     /// Creates the restart request for this admitted database assignment.
@@ -272,6 +325,9 @@ impl WalWriterDriver {
         &mut self,
         scope: terrabase::types::TenantScope,
     ) -> Result<Option<terrabase::types::StorageSequence>, WalQuicError> {
+        if self.needs_install {
+            return Ok(None);
+        }
         let engine = self.engine.clone();
         let sequence = tokio::task::spawn_blocking(move || {
             engine
@@ -345,6 +401,11 @@ pub struct WalPhysicalBoundary {
     sequence: u64,
 }
 impl WalPhysicalBoundary {
+    /// Accepted placement generation.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.installed.generation()
+    }
     /// Exact database scope.
     #[must_use]
     pub fn scope(&self) -> DatabaseRouteScope {
@@ -381,6 +442,11 @@ pub struct WalVerifiedCut {
     cut: [u8; 32],
 }
 impl WalVerifiedCut {
+    /// Accepted placement generation.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.boundary.generation()
+    }
     /// Database scope verified against this follower assignment.
     #[must_use]
     pub fn scope(&self) -> DatabaseRouteScope {
@@ -421,6 +487,73 @@ pub struct WalFollowerDriver {
 }
 
 impl WalFollowerDriver {
+    pub(crate) fn retire_for_replacement(
+        self,
+        binding: &WalReplicaBinding,
+        path: &std::path::Path,
+    ) -> Result<(), WalRouteError> {
+        if self.binding.scope() != binding.scope()
+            || self.binding.epoch() != binding.epoch()
+            || self.binding.generation() != binding.generation()
+        {
+            return Err(WalRouteError::Unauthorized);
+        }
+        let follower = Arc::try_unwrap(self.follower)
+            .map_err(|_| WalRouteError::Busy)?
+            .into_inner()
+            .map_err(|_| WalRouteError::Fenced)?;
+        if follower.location() != path {
+            return Err(WalRouteError::Unauthorized);
+        }
+        drop(follower);
+        Ok(())
+    }
+    /// Reopens an existing encrypted physical replica after process restart,
+    /// without opening a serving SQLite engine. Recovery does not manufacture
+    /// install evidence: a newly authenticated snapshot/checkpoint handshake
+    /// must establish the shared base before this driver can prove readiness.
+    ///
+    /// # Errors
+    /// Rejects wrong roles, fences, unavailable keys, corrupt files, or failed sync.
+    pub async fn recover(
+        binding: WalReplicaBinding,
+        location: std::path::PathBuf,
+        keys: Option<Arc<dyn terrabase::encryption::DatabaseKeySource>>,
+    ) -> Result<Self, WalQuicError> {
+        binding.authorize_local(false).map_err(WalQuicError::Route)?;
+        let permit = binding.reserve_worker().map_err(WalQuicError::Route)?;
+        let worker_binding = binding.clone();
+        let follower = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            worker_binding
+                .with_admission(|| {
+                    if let Some(keys) = &keys {
+                        let lease =
+                            keys.current_lease().map_err(|_| WalRouteError::Unauthorized)?;
+                        let scope = lease.metadata().scope();
+                        if scope.tenant() != worker_binding.scope().tenant()
+                            || scope.project() != Some(worker_binding.scope().project())
+                            || scope.database() != worker_binding.scope().database()
+                            || scope.purpose() != terrabase::encryption::KeyPurpose::Data
+                        {
+                            return Err(WalRouteError::Unauthorized);
+                        }
+                    }
+                    let _registration = keys
+                        .map(|keys| terrabase::storage::EncryptedStorage::register(&location, keys))
+                        .transpose()
+                        .map_err(|error| WalRouteError::Storage(error.into()))?;
+                    let (follower, _) =
+                        WalFollower::open_existing(&location).map_err(WalRouteError::Storage)?;
+                    Ok(follower)
+                })
+                .map_err(WalQuicError::Route)
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)??;
+        Ok(Self::new(binding, follower))
+    }
+
     /// Attaches a physically installed or recovered follower file.
     #[must_use]
     pub fn new(binding: WalReplicaBinding, follower: WalFollower) -> Self {

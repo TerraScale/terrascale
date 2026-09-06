@@ -599,7 +599,7 @@ impl DatabaseKeyLease {
     /// Creates a local lease for non-production tests and development only.
     ///
     /// Production cipher construction rejects leases created by this method;
-    /// an adapter must use `Self::from_adapter` after external authorization.
+    /// production leases are issued only after authenticated provider delivery.
     ///
     /// # Errors
     ///

@@ -398,10 +398,58 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
         .expect("encrypted backup runs");
     let target = location("encrypted-restore-target");
     let cipher = encryption.cipher.lock().expect("cipher lock");
-    let receipt = RestorePlan::restore_latest_encrypted(&destination, &target, &*cipher)
-        .expect("encrypted restore runs");
+    let config = EngineConfig::durable(&target)
+        .unwrap()
+        .with_owner(owner.clone())
+        .with_storage_keys(crate::engine::test_storage_keys(&owner, 72));
+    let receipt =
+        RestorePlan::restore_latest_encrypted_with_config(&destination, &config, &*cipher)
+            .expect("encrypted restore runs");
     assert_eq!(receipt.selected_identity(), backup.manifest().identity());
     assert_eq!(receipt.restored_documents(), 1);
+    let bytes = std::fs::read(target.join("terrabase.sqlite3")).unwrap();
+    assert!(!bytes.starts_with(b"SQLite format 3"));
+    assert!(!bytes.windows(b"encrypted".len()).any(|window| window == b"encrypted"));
+    assert!(
+        Engine::open(
+            config.clone().with_storage_keys(crate::engine::test_storage_keys(&owner, 73))
+        )
+        .is_err()
+    );
+    let reopened = Engine::open(config).unwrap();
+    assert_eq!(reopened.database_owner(), &owner);
+    drop(reopened);
+    #[derive(Debug)]
+    struct UnavailableKeys;
+    impl crate::encryption::DatabaseKeySource for UnavailableKeys {
+        fn current_lease(
+            &self,
+        ) -> Result<
+            std::sync::Arc<crate::encryption::DatabaseKeyLease>,
+            crate::encryption::EncryptionError,
+        > {
+            Err(crate::encryption::EncryptionError::InvalidKeyMetadata)
+        }
+        fn lease(
+            &self,
+            _: crate::encryption::DatabaseKeyVersion,
+        ) -> Result<
+            std::sync::Arc<crate::encryption::DatabaseKeyLease>,
+            crate::encryption::EncryptionError,
+        > {
+            self.current_lease()
+        }
+    }
+    let rejected = location("encrypted-restore-unavailable-key");
+    let unavailable = EngineConfig::durable(&rejected)
+        .unwrap()
+        .with_owner(owner.clone())
+        .with_storage_keys(std::sync::Arc::new(UnavailableKeys));
+    assert!(
+        RestorePlan::restore_latest_encrypted_with_config(&destination, &unavailable, &*cipher)
+            .is_err()
+    );
+    assert!(!rejected.exists());
 }
 
 #[test]

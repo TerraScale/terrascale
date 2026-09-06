@@ -348,3 +348,303 @@ async fn real_raft_rejects_partitioned_leader_and_serializes_competing_auth_writ
         node.shutdown().await.unwrap();
     }
 }
+
+fn tx(id: &str, action: Action) -> Action {
+    Action::TransactionOperation { transaction_id: id.into(), action: Box::new(action) }
+}
+
+#[tokio::test]
+async fn transaction_reads_own_writes_and_commit_replay_survives_expiry_and_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("auth.sqlite");
+    let mut store = SqliteStore::open(&path, "group").unwrap();
+    assert!(matches!(
+        apply(
+            &mut store,
+            1,
+            command("begin", Action::BeginTransaction { transaction_id: "tx".into() })
+        )
+        .await,
+        Outcome::Transaction { .. }
+    ));
+    apply(
+        &mut store,
+        2,
+        command(
+            "tx-insert",
+            tx(
+                "tx",
+                Action::InsertUnique { model: "user".into(), record: user("a", "secret@test") },
+            ),
+        ),
+    )
+    .await;
+    assert!(store.read_record("user", "a").unwrap().is_none());
+    let selected = apply(
+        &mut store,
+        3,
+        command(
+            "tx-read",
+            tx(
+                "tx",
+                Action::Find { model: "user".into(), predicates: vec![], offset: 0, limit: 100 },
+            ),
+        ),
+    )
+    .await;
+    assert!(matches!(selected,Outcome::Records { records } if records.len()==1));
+    let commit = command("commit", Action::CommitTransaction { transaction_id: "tx".into() });
+    assert_eq!(apply(&mut store, 4, commit.clone()).await, Outcome::Applied);
+    drop(store);
+    let mut store = SqliteStore::open(&path, "group").unwrap();
+    assert!(store.read_record("user", "a").unwrap().is_some());
+    let mut retry = commit;
+    retry.observed_at_ms = 100_000;
+    assert_eq!(apply(&mut store, 5, retry).await, Outcome::Applied);
+}
+
+#[tokio::test]
+async fn caught_inner_conflict_cannot_commit_partial_effects() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
+    apply(
+        &mut store,
+        1,
+        command("begin", Action::BeginTransaction { transaction_id: "tx".into() }),
+    )
+    .await;
+    apply(
+        &mut store,
+        2,
+        command(
+            "first",
+            tx("tx", Action::InsertUnique { model: "user".into(), record: user("a", "one@test") }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        apply(
+            &mut store,
+            3,
+            command(
+                "conflict",
+                tx(
+                    "tx",
+                    Action::InsertUnique { model: "user".into(), record: user("a", "two@test") }
+                )
+            )
+        )
+        .await,
+        Outcome::UniqueConflict
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            4,
+            command("commit", Action::CommitTransaction { transaction_id: "tx".into() })
+        )
+        .await,
+        Outcome::TransactionConflict
+    );
+    assert!(store.read_record("user", "a").unwrap().is_none());
+}
+
+#[tokio::test]
+async fn competing_owner_departure_snapshots_allow_only_one_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
+    apply(
+        &mut store,
+        1,
+        command("a", Action::InsertUnique { model: "member".into(), record: user("a", "a@test") }),
+    )
+    .await;
+    apply(
+        &mut store,
+        2,
+        command("b", Action::InsertUnique { model: "member".into(), record: user("b", "b@test") }),
+    )
+    .await;
+    for (index, id) in [(3, "a"), (4, "b")] {
+        apply(
+            &mut store,
+            index,
+            command(&format!("begin-{id}"), Action::BeginTransaction { transaction_id: id.into() }),
+        )
+        .await;
+    }
+    for (index, id) in [(5, "a"), (6, "b")] {
+        let seen = apply(
+            &mut store,
+            index,
+            command(
+                &format!("read-{id}"),
+                tx(
+                    id,
+                    Action::Find {
+                        model: "member".into(),
+                        predicates: vec![],
+                        offset: 0,
+                        limit: 100,
+                    },
+                ),
+            ),
+        )
+        .await;
+        assert!(matches!(seen,Outcome::Records { records } if records.len()==2));
+    }
+    for (index, id) in [(7, "a"), (8, "b")] {
+        apply(
+            &mut store,
+            index,
+            command(
+                &format!("remove-{id}"),
+                tx(
+                    id,
+                    Action::ConsumeOne {
+                        model: "member".into(),
+                        id: id.into(),
+                        expected: expected(1),
+                    },
+                ),
+            ),
+        )
+        .await;
+    }
+    assert_eq!(
+        apply(
+            &mut store,
+            9,
+            command("commit-a", Action::CommitTransaction { transaction_id: "a".into() })
+        )
+        .await,
+        Outcome::Applied
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            10,
+            command("commit-b", Action::CommitTransaction { transaction_id: "b".into() })
+        )
+        .await,
+        Outcome::TransactionConflict
+    );
+    assert!(store.read_record("member", "a").unwrap().is_none());
+    assert!(store.read_record("member", "b").unwrap().is_some());
+}
+
+#[tokio::test]
+async fn transaction_concurrency_bound_and_expiry_gc_are_replicated() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
+    for index in 1..=32 {
+        assert!(matches!(
+            apply(
+                &mut store,
+                index,
+                command(
+                    &format!("begin-{index}"),
+                    Action::BeginTransaction { transaction_id: index.to_string() }
+                )
+            )
+            .await,
+            Outcome::Transaction { .. }
+        ));
+    }
+    assert!(matches!(
+        apply(
+            &mut store,
+            33,
+            command("excess", Action::BeginTransaction { transaction_id: "excess".into() })
+        )
+        .await,
+        Outcome::Invalid { .. }
+    ));
+    let mut gc = command("gc", Action::BeginTransaction { transaction_id: "fresh".into() });
+    gc.observed_at_ms = 40_000;
+    assert!(matches!(apply(&mut store, 34, gc).await, Outcome::Transaction { .. }));
+    assert_eq!(
+        apply(
+            &mut store,
+            35,
+            command("expired", Action::CommitTransaction { transaction_id: "1".into() })
+        )
+        .await,
+        Outcome::TransactionConflict
+    );
+}
+
+#[tokio::test]
+async fn transaction_touches_one_record_in_database_larger_than_snapshot_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
+    let entries = (1..=1100)
+        .map(|index| Entry {
+            log_id: LogId::new(openraft::CommittedLeaderId::new(1, 1), index),
+            payload: EntryPayload::Normal(command(
+                &format!("create-{index}"),
+                Action::InsertUnique {
+                    model: "user".into(),
+                    record: user(&format!("{index:04}"), &format!("{index}@test")),
+                },
+            )),
+        })
+        .collect::<Vec<_>>();
+    store.apply(entries).await.unwrap();
+    apply(
+        &mut store,
+        1101,
+        command("begin", Action::BeginTransaction { transaction_id: "large".into() }),
+    )
+    .await;
+    let predicate: Predicate =
+        serde_json::from_value(json!({"field":"email","value":"1100@test"})).unwrap();
+    let found = apply(
+        &mut store,
+        1102,
+        command(
+            "find",
+            tx(
+                "large",
+                Action::Find {
+                    model: "user".into(),
+                    predicates: vec![predicate],
+                    offset: 0,
+                    limit: 1,
+                },
+            ),
+        ),
+    )
+    .await;
+    assert!(
+        matches!(found,Outcome::Records { records } if records.len()==1 && records[0]["id"]=="1100")
+    );
+    apply(
+        &mut store,
+        1103,
+        command(
+            "change",
+            tx(
+                "large",
+                Action::CompareAndSwap {
+                    model: "user".into(),
+                    id: "1100".into(),
+                    expected: expected(1),
+                    update: expected(2),
+                },
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(
+        apply(
+            &mut store,
+            1104,
+            command("commit", Action::CommitTransaction { transaction_id: "large".into() })
+        )
+        .await,
+        Outcome::Applied
+    );
+    assert_eq!(store.read_record("user", "1100").unwrap().unwrap()["version"], 2);
+    assert_eq!(store.read_record("user", "0001").unwrap().unwrap()["version"], 1);
+}

@@ -78,7 +78,8 @@ pub(super) fn mint(
     billed_writes: u64,
     provenance: &JournalProvenance,
 ) -> Result<(), ()> {
-    if billed_writes == 0 || provenance.kind() != JournalKind::Origin {
+    if intent.internal_maintenance || billed_writes == 0 || provenance.kind() != JournalKind::Origin
+    {
         return Ok(());
     }
     let Some(binding) = binding_for(transaction, &intent.tenant)? else {

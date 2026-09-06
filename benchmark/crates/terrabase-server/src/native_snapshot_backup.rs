@@ -40,7 +40,10 @@ pub async fn upload_snapshot(
     destinations: &[Arc<ObjectDestination>],
     max_bytes: u64,
 ) -> Result<(), SnapshotBackupError> {
-    if destinations.is_empty() || destinations.len() > 2 {
+    if destinations.is_empty()
+        || destinations.len() > 2
+        || destinations.len() == 2 && destinations[0].provider() == destinations[1].provider()
+    {
         return Err(SnapshotBackupError::Provider);
     }
     let metadata = lease.metadata();

@@ -1,4 +1,6 @@
 //! Bounded authenticated peer sessions shared by all assigned databases.
+use crate::replication_cut::ReplicationCuts;
+use crate::replication_proof::{ReadinessCutFrame, VerifiedReadinessCut};
 use crate::replication_runtime::ReplicationProgress;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -22,6 +24,16 @@ use terrabase_tbep::production_repair::{PublicationIndex, RepairDriver, Verified
 use terrabase_tbep::registry::BoundScope;
 use tokio::sync::{mpsc, watch};
 
+/// Application control frames multiplexed on the same authenticated endpoint.
+pub trait PeerControlDispatcher: Send + Sync {
+    /// Handles one bounded authenticated control frame; false means unknown protocol.
+    fn dispatch<'a>(
+        &'a self,
+        connection: &'a ProductionConnection,
+        bytes: &'a [u8],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>;
+}
+const PEER_HELLO: &[u8] = b"TBPEER\0\x01";
 /// A physical assignment with an independently established shared snapshot.
 pub enum PhysicalDriver {
     /// Captured immutable base retained until the follower confirms installation.
@@ -33,6 +45,13 @@ pub enum PhysicalDriver {
     },
     /// An empty physical seat awaiting an authenticated snapshot.
     BootstrapFollower(SnapshotReceiver),
+    /// Installed follower retaining replacement authorization for WAL rotation.
+    InstalledFollower {
+        /// Exclusive physical follower.
+        driver: WalFollowerDriver,
+        /// Fixed catalog destination and key access.
+        receiver: SnapshotReceiver,
+    },
     /// The engine lease is acquired from the production Member.
     Writer(WalWriterDriver),
     /// Raw physical files; no SQLite engine may open these files concurrently.
@@ -48,6 +67,8 @@ pub struct SnapshotReceiver {
     pub max_bytes: u64,
     /// Database key access for validating encrypted physical files.
     pub keys: Option<Arc<dyn terrabase::encryption::DatabaseKeySource>>,
+    /// Recovered exclusive physical files to atomically replace after validation.
+    pub previous: Option<WalFollowerDriver>,
     sink: Option<WalSnapshotSink>,
     manifest: Option<WalSnapshotManifest>,
     offsets: [u64; 3],
@@ -65,6 +86,7 @@ impl SnapshotReceiver {
             destination,
             max_bytes,
             keys: None,
+            previous: None,
             sink: None,
             manifest: None,
             offsets: [0; 3],
@@ -85,12 +107,16 @@ pub struct PeerDatabase {
 pub struct PeerFacts {
     /// An authenticated session is currently active.
     pub connected: bool,
+    /// Start of this authenticated session, stable across periodic comparisons.
+    pub session_started: Option<std::time::Instant>,
     /// Region authenticated by the live peer connection.
     pub region: String,
     /// Sealed installed-base and durable WAL evidence.
     pub physical: Option<WalPhysicalBoundary>,
     /// Correlated equality proof for the exact source cut.
     pub repair: Option<VerifiedRepairCut>,
+    /// Logical source cut authenticated against the actual local RF2 files.
+    pub readiness: Option<VerifiedReadinessCut>,
     /// Monotonic observation time of the last newly verified cut.
     pub repair_observed_at: Option<std::time::Instant>,
     /// The writer observed its physical tail durably caught up in this session.
@@ -105,6 +131,10 @@ pub type PeerObservations =
     Arc<std::sync::Mutex<BTreeMap<(String, DatabaseRouteScope), PeerFacts>>>;
 /// Owns the shared endpoint, bounded workers, and shutdown signal.
 pub struct ReplicationPeers {
+    cuts: Arc<ReplicationCuts>,
+    progress: Arc<ReplicationProgress>,
+    admissions: BTreeMap<String, mpsc::Sender<PeerCommand>>,
+    admitted: std::sync::Mutex<std::collections::BTreeSet<(String, DatabaseRouteScope)>>,
     observations: PeerObservations,
     stop: watch::Sender<bool>,
     join: tokio::task::JoinHandle<Result<(), String>>,
@@ -121,7 +151,31 @@ impl ReplicationPeers {
         progress: Arc<ReplicationProgress>,
         peers: BTreeMap<String, Vec<PeerDatabase>>,
     ) -> Result<Self, String> {
+        Self::start_inner(runtime, progress, peers, None)
+    }
+    /// Starts replication and application control with exactly one endpoint accept loop.
+    /// # Errors
+    /// Rejects unadmitted or duplicate database peer assignments.
+    pub fn start_with_dispatch(
+        runtime: Arc<ProductionMemberRuntime>,
+        progress: Arc<ReplicationProgress>,
+        peers: BTreeMap<String, Vec<PeerDatabase>>,
+        dispatcher: Arc<dyn PeerControlDispatcher>,
+    ) -> Result<Self, String> {
+        Self::start_inner(runtime, progress, peers, Some(dispatcher))
+    }
+    fn start_inner(
+        runtime: Arc<ProductionMemberRuntime>,
+        progress: Arc<ReplicationProgress>,
+        peers: BTreeMap<String, Vec<PeerDatabase>>,
+        dispatcher: Option<Arc<dyn PeerControlDispatcher>>,
+    ) -> Result<Self, String> {
         let endpoint = runtime.transport();
+        if endpoint.config().limits().max_frame_bytes()
+            < terrabase_cluster::wal_wire::MAX_WAL_WIRE_BYTES + 1024
+        {
+            return Err("member frame limit cannot carry physical replication".into());
+        }
         if peers.values().map(Vec::len).sum::<usize>() > terrabase::member::MAX_DATABASES * 20 {
             return Err("replication database lane limit exceeded".into());
         }
@@ -141,13 +195,33 @@ impl ReplicationPeers {
         for (id, lanes) in &validated {
             observe(&observations, id.as_str(), lanes, false);
         }
+        let mut admitted = std::collections::BTreeSet::new();
+        let mut by_peer: BTreeMap<_, _> = validated
+            .into_iter()
+            .map(|(id, lanes)| (id.as_str().to_owned(), (id, lanes)))
+            .collect();
+        let mut admissions = BTreeMap::new();
+        let mut validated = Vec::new();
+        for configured in endpoint.config().peers() {
+            let id = configured.identity().member().clone();
+            let lanes = by_peer.remove(id.as_str()).map_or_else(Vec::new, |(_, lanes)| lanes);
+            for lane in &lanes {
+                admitted.insert((id.as_str().to_owned(), lane.scope));
+            }
+            let (sender, receiver) = mpsc::channel(1);
+            admissions.insert(id.as_str().to_owned(), sender);
+            validated.push((id, lanes, receiver));
+        }
+        let cuts = Arc::new(ReplicationCuts::default());
+        let worker_cuts = cuts.clone();
+        let retained_progress = progress.clone();
         let worker_observations = observations.clone();
         let (stop, stopped) = watch::channel(false);
         let worker_stop = stop.clone();
         let join = tokio::spawn(async move {
             let mut workers = tokio::task::JoinSet::new();
             let mut incoming = BTreeMap::new();
-            for (id, lanes) in validated {
+            for (id, lanes, new_lanes) in validated {
                 let (sender, receiver) = mpsc::channel(1);
                 incoming.insert(id.as_str().to_owned(), sender);
                 workers.spawn(peer_worker(
@@ -158,20 +232,30 @@ impl ReplicationPeers {
                     receiver,
                     stopped.clone(),
                     worker_observations.clone(),
+                    new_lanes,
+                    worker_cuts.clone(),
                 ));
             }
+            let incoming = Arc::new(incoming);
+            let mut classifiers = tokio::task::JoinSet::new();
             let endpoint = runtime.transport();
             let mut stopped = stopped;
             loop {
                 tokio::select! {
                     _ = stopped.changed() => break,
+                    _ = classifiers.join_next(), if !classifiers.is_empty() => {},
                     accepted = endpoint.accept() => match accepted {
                         Ok(Some(connection)) => {
-                            // Only the lexically smaller member dials; duplicates are bounded and dropped.
-                            if connection.peer().member().as_str() < endpoint.config().local_identity().member().as_str()
-                                && let Some(sender) = incoming.get(connection.peer().member().as_str()) {
-                                let _ = sender.try_send(connection);
-                            }
+                            if classifiers.len() >= 64 { continue; }
+                            let incoming = incoming.clone();
+                            let dispatcher = dispatcher.clone();
+                            let local = endpoint.config().local_identity().member().as_str().to_owned();
+                            classifiers.spawn(async move {
+                                let Ok(bytes) = connection.receive_frame().await else { return; };
+                                if bytes == PEER_HELLO {
+                                    if connection.peer().member().as_str() < local.as_str() && let Some(sender) = incoming.get(connection.peer().member().as_str()) { let _ = sender.try_send(connection); }
+                                } else if let Some(dispatcher) = dispatcher { let _ = dispatcher.dispatch(&connection, &bytes).await; }
+                            });
                         }
                         Ok(None) => break,
                         Err(_) => { tokio::time::sleep(Duration::from_millis(100)).await; }
@@ -179,6 +263,7 @@ impl ReplicationPeers {
                 }
             }
             let _ = worker_stop.send(true);
+            while classifiers.join_next().await.is_some() {}
             drop(incoming);
             // Workers observe the stop signal between bounded operations.
             let mut worker_error = None;
@@ -190,8 +275,83 @@ impl ReplicationPeers {
             drop(runtime);
             worker_error.map_or(Ok(()), Err)
         });
-        Ok(Self { stop, join, observations })
+        Ok(Self {
+            stop,
+            join,
+            observations,
+            admissions,
+            admitted: std::sync::Mutex::new(admitted),
+            cuts,
+            progress: retained_progress,
+        })
     }
+    /// Adds newly accepted scopes to the bounded persistent peer workers.
+    /// # Errors
+    /// Rejects duplicate scopes, unadmitted peers, exceeded bounds, or stopped workers.
+    pub async fn add_databases(
+        &self,
+        peers: BTreeMap<String, Vec<PeerDatabase>>,
+    ) -> Result<(), String> {
+        {
+            let mut admitted = self.admitted.lock().map_err(failure)?;
+            let added = peers.values().map(Vec::len).sum::<usize>();
+            if admitted.len().saturating_add(added) > terrabase::member::MAX_DATABASES * 20 {
+                return Err("replication lane bound exceeded".into());
+            }
+            let mut unique = std::collections::BTreeSet::new();
+            for (peer, lanes) in &peers {
+                if !self.admissions.contains_key(peer) {
+                    return Err("unadmitted replication peer".into());
+                }
+                for lane in lanes {
+                    let key = (peer.clone(), lane.scope);
+                    if admitted.contains(&key) || !unique.insert(key) {
+                        return Err("duplicate replication assignment".into());
+                    }
+                }
+            }
+            admitted.extend(unique);
+        }
+        for (peer, lanes) in peers {
+            observe(&self.observations, &peer, &lanes, false);
+            self.admissions
+                .get(&peer)
+                .ok_or("unadmitted replication peer")?
+                .send(PeerCommand::Add(lanes))
+                .await
+                .map_err(failure)?;
+        }
+        Ok(())
+    }
+
+    /// Stops all peer callbacks for one scope and drops its engine leases.
+    /// # Errors
+    /// Rejects stopped workers; acknowledgments follow all in-flight disk work.
+    pub async fn remove_database(&self, scope: DatabaseRouteScope) -> Result<(), String> {
+        self.progress.fence_database(scope);
+        self.cuts.forget(scope)?;
+        let peers = self
+            .admitted
+            .lock()
+            .map_err(failure)?
+            .iter()
+            .filter(|(_, database)| *database == scope)
+            .map(|(peer, _)| peer.clone())
+            .collect::<Vec<_>>();
+        for peer in &peers {
+            let (done, completed) = tokio::sync::oneshot::channel();
+            self.admissions
+                .get(peer)
+                .ok_or("unadmitted replication peer")?
+                .send(PeerCommand::Remove { scope, done })
+                .await
+                .map_err(failure)?;
+            completed.await.map_err(failure)?;
+        }
+        // Retain admission tombstones: a removed epoch cannot be reintroduced.
+        Ok(())
+    }
+
     /// Returns live observations without asserting completed anti-entropy repair.
     #[must_use]
     pub fn observations(&self) -> PeerObservations {
@@ -238,20 +398,35 @@ async fn peer_worker(
     mut incoming: mpsc::Receiver<ProductionConnection>,
     mut stopped: watch::Receiver<bool>,
     observations: PeerObservations,
+    mut new_lanes: mpsc::Receiver<PeerCommand>,
+    cuts: Arc<ReplicationCuts>,
 ) {
     let endpoint = runtime.transport();
     let dial = endpoint.config().local_identity().member().as_str() < id.as_str();
     loop {
         let connection = tokio::select! {
             _ = stopped.changed() => return,
+            command = new_lanes.recv() => { if let Some(command) = command { apply_command(command, &mut lanes, &observations, id.as_str()); } else { return; } continue; },
             connection = async {
                 if dial { endpoint.connect(&id).await.ok() } else { incoming.recv().await }
             } => connection,
         };
         if let Some(connection) = connection {
+            if dial && connection.send_frame(PEER_HELLO).await.is_err() {
+                continue;
+            }
             observe(&observations, id.as_str(), &lanes, true);
-            let _ =
-                session(connection, &runtime, &progress, &mut lanes, &stopped, &observations).await;
+            let _ = session(
+                connection,
+                &runtime,
+                &progress,
+                &mut lanes,
+                &stopped,
+                &observations,
+                &mut new_lanes,
+                &cuts,
+            )
+            .await;
             observe(&observations, id.as_str(), &lanes, false);
         } else if !dial {
             return;
@@ -267,9 +442,11 @@ async fn session(
     connection: ProductionConnection,
     runtime: &Arc<ProductionMemberRuntime>,
     progress: &Arc<ReplicationProgress>,
-    lanes: &mut [PeerDatabase],
+    lanes: &mut Vec<PeerDatabase>,
     stopped: &watch::Receiver<bool>,
     observations: &PeerObservations,
+    new_lanes: &mut mpsc::Receiver<PeerCommand>,
+    cuts: &Arc<ReplicationCuts>,
 ) -> Result<(), String> {
     let peer = WalAuthenticatedPeer::from_connection(&connection);
     let region = connection.peer_region().as_str();
@@ -296,6 +473,7 @@ async fn session(
         }
     });
     let mut resumed = std::collections::BTreeSet::new();
+    let mut sent_readiness = BTreeMap::new();
     let mut sent = BTreeMap::<DatabaseRouteScope, tokio::time::Instant>::new();
     let mut receipts = Vec::<(DatabaseRouteScope, u64, Vec<u8>)>::new();
     for lane in lanes.iter() {
@@ -346,11 +524,23 @@ async fn session(
             return Ok(());
         }
         tokio::select! {
+            command = new_lanes.recv() => { if let Some(command) = command { apply_command(command, lanes, observations, connection.peer().member().as_str()); } return Ok(()); },
             frame = frames.recv() => {
                 let bytes = frame.ok_or_else(|| "replication reader closed".to_owned())?.map_err(failure)?;
                 let scope = frame_scope(&bytes)?;
+                progress.regional_covers(scope, 0).map_err(failure)?;
                 let lane = lanes.iter_mut().find(|lane| lane.scope == scope).ok_or_else(|| "unassigned replication scope".to_owned())?;
-                if bytes.starts_with(b"TBRP") {
+                if bytes.starts_with(b"TBRCUT") {
+                    let frame = ReadinessCutFrame::decode(&bytes).map_err(failure)?;
+                    if frame.generation() != connection.placement_generation() || frame.epoch() != connection.replica_set_epoch() { return Err("stale readiness cut".into()); }
+                    let Some(PhysicalDriver::Follower(follower) | PhysicalDriver::InstalledFollower { driver: follower, .. }) = lane.physical.as_mut() else { return Err("readiness cut requires physical follower".into()); };
+                    let boundary = follower.verify_boundary(&peer, frame.snapshot_digest(), frame.checkpoint_digest(), frame.sequence(), frame.digest().map_err(failure)?).await.map_err(failure)?;
+                    let verified = frame.authenticate(&boundary).map_err(failure)?;
+                    progress.advance_regional(scope, frame.sequence());
+                    progress.advance_region(scope, runtime.transport().config().local_region().as_str(), frame.frontier()).map_err(failure)?;
+                    if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.readiness = Some(verified); }
+                } else if bytes.starts_with(b"TBRP") {
+                    let selected_cut = select_cut(cuts, runtime, progress, observations, scope, &connection).await?;
                     let repair = repair_lanes.get(&scope).cloned().ok_or("unassigned repair lane")?;
                     let worker = runtime.clone();
                     let causal = lane.causal.clone().ok_or("repair requires causal lane")?;
@@ -360,7 +550,8 @@ async fn session(
                         let RepairLane { bound, driver, index, requested, indexed } = &mut *repair;
                         *indexed = index.refresh(&engine, bound).map_err(failure)?;
                         if !*indexed { return Ok::<_, String>(Vec::new()); }
-                        let result = driver.receive_frame(index, &bytes).map_err(failure)?;
+                        if let Some(cut) = selected_cut { driver.request_cut(&cut).map_err(failure)?; }
+                        let result = driver.receive_frame(&engine, index, &bytes).map_err(failure)?;
                         if result.needs_snapshot { return Err("repair requires retained-history snapshot".into()); }
                         { let mut causal = causal.lock().map_err(failure)?;
                           for (origin, sequence, hash) in result.expected { causal.authorize_repair(origin, sequence, hash).map_err(failure)?; }
@@ -376,7 +567,7 @@ async fn session(
                     for response in responses { connection.send_frame(&response).await.map_err(failure)?; }
                 } else if bytes.starts_with(b"TBWS") {
                     snapshot_frame(lane, &peer, &connection, &bytes).await?;
-                    if let Some(PhysicalDriver::Follower(follower)) = lane.physical.as_mut() {
+                    if let Some(PhysicalDriver::Follower(follower) | PhysicalDriver::InstalledFollower { driver: follower, .. }) = lane.physical.as_mut() {
                         let proof = follower.physical_boundary().await.map_err(failure)?;
                         if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical = proof; }
                     }
@@ -384,14 +575,14 @@ async fn session(
                     let message = WalCheckpointMessage::decode(&bytes).map_err(failure)?;
                     match lane.physical.as_mut() {
                         Some(PhysicalDriver::Writer(writer) | PhysicalDriver::BootstrapWriter { writer, .. }) => { writer.resume(&peer, message).await.map_err(failure)?; resumed.insert(scope); }
-                        Some(PhysicalDriver::Follower(follower)) => {
+                        Some(PhysicalDriver::Follower(follower) | PhysicalDriver::InstalledFollower { driver: follower, .. }) => {
                             let receipt = follower.checkpoint(&peer, message).await.map_err(failure)?;
                             connection.send_frame(&receipt.encode().map_err(failure)?).await.map_err(failure)?;
                         }
                         _ => return Err("unassigned physical lane".into()),
                     }
                 } else if bytes.starts_with(b"TBWAL") {
-                    let Some(PhysicalDriver::Follower(follower)) = lane.physical.as_mut() else { return Err("physical batch sent to non-follower".into()); };
+                    let Some(PhysicalDriver::Follower(follower) | PhysicalDriver::InstalledFollower { driver: follower, .. }) = lane.physical.as_mut() else { return Err("physical batch sent to non-follower".into()); };
                     let receipt = follower.apply(&peer, ScopedWalBatch::decode(&bytes).map_err(failure)?).await.map_err(failure)?;
                     connection.send_frame(&receipt.encode().map_err(failure)?).await.map_err(failure)?;
                     let proof = follower.physical_boundary().await.map_err(failure)?;
@@ -439,6 +630,7 @@ async fn session(
                     } else { index += 1; }
                 }
                 for lane in lanes.iter_mut() {
+                    progress.regional_covers(lane.scope, 0).map_err(failure)?;
                     if let Some(PhysicalDriver::Writer(writer) | PhysicalDriver::BootstrapWriter { writer, .. }) = lane.physical.as_mut() && resumed.contains(&lane.scope) {
                         if sent.get(&lane.scope).is_some_and(|at| at.elapsed() < Duration::from_secs(2)) { continue; }
                         match writer.capture().await.map_err(failure)? {
@@ -447,7 +639,16 @@ async fn session(
                                 sent.insert(lane.scope, tokio::time::Instant::now());
                                 if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), lane.scope)) { facts.physical_caught_up = false; }
                             },
-                            WalCaptureStep::GenerationChanged => return Err("physical generation requires a new shared snapshot".into()),
+                            WalCaptureStep::GenerationChanged => {
+                                resumed.remove(&lane.scope);
+                                sent.remove(&lane.scope);
+                                sent_readiness.remove(&lane.scope);
+                                if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), lane.scope)) { facts.physical = None; facts.readiness = None; facts.physical_caught_up = false; }
+                                let Some(PhysicalDriver::BootstrapWriter { writer, source }) = lane.physical.as_mut() else { return Err("snapshot replacement lacks source authorization".into()); };
+                                let parent = source.staging_parent().to_owned();
+                                *source = writer.refresh_snapshot(&parent).await.map_err(failure)?;
+                                connection.send_frame(&source.manifest().encode().map_err(failure)?).await.map_err(failure)?;
+                            },
                             WalCaptureStep::UpToDate => {
                                 let scope = lane.scope;
                                 let worker = runtime.clone();
@@ -460,14 +661,27 @@ async fn session(
                                 if let Some(sequence) = writer.durable_sequence(tenant.clone()).await.map_err(failure)? {
                                     let proof = writer.physical_boundary(tenant).await.map_err(failure)?;
                                     if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical = proof; }
-                                    if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical_caught_up = true; }
+                                    if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical_caught_up = facts.physical.is_some(); }
                                     progress.advance_regional(scope, sequence.get());
                                     progress.advance_region(scope, runtime.transport().config().local_region().as_str(), &frontier).map_err(failure)?;
+                                    let selected_cut = select_cut(cuts, runtime, progress, observations, scope, &connection).await?;
+                                    let physical = observations.lock().map_err(failure)?.get(&(connection.peer().member().as_str().to_owned(), scope)).and_then(|facts| facts.physical.clone());
+                                    if let Some((physical, cut)) = physical.zip(selected_cut) {
+                                        let frame = ReadinessCutFrame::from_local(&cut, &physical).map_err(failure)?;
+                                        let digest = frame.digest().map_err(failure)?;
+                                        if sent_readiness.get(&scope).is_none_or(|(previous, at): &([u8; 32], tokio::time::Instant)| *previous != digest || at.elapsed() >= Duration::from_secs(10)) {
+                                            let verified = frame.authorize_writer(&physical).map_err(failure)?;
+                                            connection.send_frame(&frame.encode().map_err(failure)?).await.map_err(failure)?;
+                                            if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.readiness = Some(verified); }
+                                            sent_readiness.insert(scope, (digest, tokio::time::Instant::now()));
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                     if let Some(repair) = repair_lanes.get(&lane.scope).cloned() {
+                        let selected_cut = select_cut(cuts, runtime, progress, observations, lane.scope, &connection).await?;
                         let worker = runtime.clone();
                         let scope = lane.scope;
                         let causal = lane.causal.clone().ok_or("repair requires causal lane")?;
@@ -485,7 +699,8 @@ async fn session(
                                 frames.push(causal.publication_frame(&publication, now).map_err(failure)?);
                                 requested.pop_front();
                             }
-                            if let Some(frame) = driver.outbound_frame(index, now).map_err(failure)? { frames.push(frame); }
+                            if let Some(cut) = selected_cut { driver.request_cut(&cut).map_err(failure)?; }
+                            if let Some(frame) = driver.outbound_frame(&engine, index, now).map_err(failure)? { frames.push(frame); }
                             Ok((frames, driver.verified_cut().cloned()))
                         }).await.map_err(failure)??;
                         if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) {
@@ -539,7 +754,8 @@ fn frame_scope(bytes: &[u8]) -> Result<DatabaseRouteScope, String> {
             remaining = &remaining[4 + length..];
         }
         DatabaseRouteScope::try_new(ids[0], ids[1], ids[2]).map_err(failure)
-    } else if bytes.starts_with(b"TBWSA\0\0\x01")
+    } else if bytes.starts_with(b"TBRCUT\0\x01")
+        || bytes.starts_with(b"TBWSA\0\0\x01")
         || bytes.starts_with(b"TBWSM\0\0\x01")
         || bytes.starts_with(b"TBWSR\0\0\x01")
         || bytes.starts_with(b"TBWSC\0\0\x01")
@@ -562,7 +778,11 @@ fn observe(observations: &PeerObservations, peer: &str, lanes: &[PeerDatabase], 
         for lane in lanes {
             facts.insert(
                 (peer.to_owned(), lane.scope),
-                PeerFacts { connected, ..PeerFacts::default() },
+                PeerFacts {
+                    connected,
+                    session_started: connected.then(std::time::Instant::now),
+                    ..PeerFacts::default()
+                },
             );
         }
     }
@@ -627,7 +847,30 @@ async fn snapshot_frame(
     }
     if bytes.starts_with(b"TBWSM") {
         let manifest = WalSnapshotManifest::decode(bytes).map_err(failure)?;
-        if let Some(PhysicalDriver::Follower(follower)) = lane.physical.as_mut() {
+        let replacing = matches!(lane.physical.as_ref(), Some(PhysicalDriver::InstalledFollower { driver, .. }) if driver.installed_snapshot().is_none_or(|proof| proof.snapshot_digest() != manifest.identity()));
+        if replacing {
+            let Some(PhysicalDriver::InstalledFollower { driver, mut receiver }) =
+                lane.physical.take()
+            else {
+                return Err("snapshot receiver lost".into());
+            };
+            receiver.previous = Some(driver);
+            receiver.manifest = None;
+            receiver.sink = None;
+            receiver.offsets = [0; 3];
+            lane.physical = Some(PhysicalDriver::BootstrapFollower(receiver));
+        }
+        if let Some(
+            PhysicalDriver::Follower(follower)
+            | PhysicalDriver::InstalledFollower { driver: follower, .. },
+        ) = lane.physical.as_mut()
+        {
+            if follower
+                .installed_snapshot()
+                .is_none_or(|proof| proof.snapshot_digest() != manifest.identity())
+            {
+                return Err("snapshot replacement lacks receiver authorization".into());
+            }
             let response = follower
                 .checkpoint(
                     peer,
@@ -704,20 +947,22 @@ async fn snapshot_frame(
                 .map_err(failure);
         }
     }
-    let (follower, receipt) = receiver
-        .sink
-        .take()
-        .ok_or("snapshot sink required")?
-        .finish(peer)
-        .await
-        .map_err(failure)?;
+    let sink = receiver.sink.take().ok_or("snapshot sink required")?;
+    let (follower, receipt) = if let Some(previous) = receiver.previous.take() {
+        sink.finish_replacing(peer, previous).await.map_err(failure)?
+    } else {
+        sink.finish(peer).await.map_err(failure)?
+    };
     let ack = follower
         .installed_snapshot()
         .ok_or("installed snapshot proof required")?
         .acknowledgment()
         .encode()
         .map_err(failure)?;
-    lane.physical = Some(PhysicalDriver::Follower(follower));
+    let Some(PhysicalDriver::BootstrapFollower(receiver)) = lane.physical.take() else {
+        return Err("snapshot receiver lost".into());
+    };
+    lane.physical = Some(PhysicalDriver::InstalledFollower { driver: follower, receiver });
     connection.send_frame(&ack).await.map_err(failure)?;
     connection.send_frame(&receipt.encode().map_err(failure)?).await.map_err(failure)
 }
@@ -728,4 +973,46 @@ struct RepairLane {
     index: PublicationIndex,
     requested: std::collections::VecDeque<(String, u64)>,
     indexed: bool,
+}
+
+enum PeerCommand {
+    Add(Vec<PeerDatabase>),
+    Remove { scope: DatabaseRouteScope, done: tokio::sync::oneshot::Sender<()> },
+}
+fn apply_command(
+    command: PeerCommand,
+    lanes: &mut Vec<PeerDatabase>,
+    observations: &PeerObservations,
+    peer: &str,
+) {
+    match command {
+        PeerCommand::Add(added) => lanes.extend(added),
+        PeerCommand::Remove { scope, done } => {
+            lanes.retain(|lane| lane.scope != scope);
+            if let Ok(mut observations) = observations.lock() {
+                observations.remove(&(peer.to_owned(), scope));
+            }
+            let _ = done.send(());
+        }
+    }
+}
+
+async fn select_cut(
+    cuts: &Arc<ReplicationCuts>,
+    runtime: &Arc<ProductionMemberRuntime>,
+    progress: &Arc<ReplicationProgress>,
+    observations: &PeerObservations,
+    scope: DatabaseRouteScope,
+    connection: &ProductionConnection,
+) -> Result<Option<terrabase_tbep::production_repair::LocalRepairCut>, String> {
+    let (cuts, runtime, progress, observations) =
+        (cuts.clone(), runtime.clone(), progress.clone(), observations.clone());
+    let peer = connection.peer().member().clone();
+    let generation = connection.placement_generation();
+    let epoch = connection.replica_set_epoch();
+    tokio::task::spawn_blocking(move || {
+        cuts.select(&runtime, &progress, &observations, scope, &peer, generation, epoch)
+    })
+    .await
+    .map_err(failure)?
 }

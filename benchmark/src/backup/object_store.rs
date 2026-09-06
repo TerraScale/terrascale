@@ -217,7 +217,7 @@ impl ObjectDestination {
         max: usize,
     ) -> Result<Vec<String>, TransferError> {
         validate_prefix(prefix)?;
-        if max == 0 || max > 100_000 {
+        if max == 0 || max > 1_000_000 {
             return Err(TransferError::Configuration);
         }
         let path =

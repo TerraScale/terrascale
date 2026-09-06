@@ -19,7 +19,6 @@ use std::{
 
 mod authorized;
 mod export;
-mod recovery_statistics;
 mod ingest;
 pub mod lifecycle_state;
 pub(crate) mod merge;
@@ -28,9 +27,10 @@ mod origin_fencing;
 mod patch;
 mod physical_restore;
 mod private_metadata;
+mod recovery_statistics;
+mod repair_summary;
 mod replicated_publication;
 mod replication_outbox;
-mod repair_summary;
 pub use repair_summary::ReplicationRepairCut;
 mod storage_usage;
 mod usage_placement;
@@ -67,8 +67,6 @@ pub use crate::storage::{
 };
 pub use authorized::{AuthorizedEngine, AuthorizedEngineError, AuthorizedSession};
 pub use export::{ExportHistoryRow, ExportMetadataSnapshot};
-pub use recovery_statistics::RecoveryStatistics;
-pub(crate) use recovery_statistics::{logical_document_digest, logical_state_hasher};
 pub use ingest::{
     BulkIngestRequest, IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal,
     IngestRefusalReason, IngestStream, IngestTermination, MAX_INGEST_BATCH_DOCUMENTS,
@@ -83,6 +81,8 @@ pub use patch::{
     MAX_PATCH_PATH_SEGMENTS, PatchError, PatchOperation, PatchOutcome, PatchPath, PatchPathSegment,
     apply_add_or_patch, apply_document_patch,
 };
+pub use recovery_statistics::RecoveryStatistics;
+pub(crate) use recovery_statistics::{logical_document_digest, logical_state_hasher};
 
 use crate::{
     families::FamilyStore,
@@ -607,6 +607,19 @@ impl EngineConfig {
     ) -> Self {
         self.lifecycle_thresholds = thresholds;
         self
+    }
+
+    pub(crate) fn at_location(mut self, location: impl Into<PathBuf>) -> Self {
+        self.location = location.into();
+        self
+    }
+
+    pub(crate) fn owner(&self) -> Option<&crate::storage::DatabaseOwner> {
+        self.owner.as_ref()
+    }
+
+    pub(crate) fn has_encrypted_owner(&self) -> bool {
+        self.owner.is_some() && self.storage_keys.is_some()
     }
 
     /// Returns the configured durable location. Crate-only by design: the
@@ -1981,6 +1994,7 @@ impl Engine {
             snapshot_sequence,
             operation,
             usage_admission: None,
+            internal_maintenance: false,
             expected_origin_epoch: origin_epoch,
             expected_uniform_context: None,
             merge_conflict: None,
@@ -3298,6 +3312,7 @@ impl Engine {
                 OperationId::try_new(&crate::identity::process_generator().generate().to_text())
                     .map_err(|_| EngineError::StorageFailure)?;
             let mut transaction = self.begin(&scope, snapshot, operation)?;
+            transaction.internal_maintenance = true;
             for key in &group {
                 transaction.delete_in_collection(
                     &key.collection,
@@ -4141,6 +4156,46 @@ impl Engine {
         storage.port.servable_history_start().map_err(|()| EngineError::StorageFailure)
     }
 
+    /// Reads one bounded journal page's durable clocks using one indexed query.
+    pub(crate) fn backup_commit_clocks(
+        &self,
+        sequences: &[StorageSequence],
+    ) -> Result<Vec<u64>, EngineError> {
+        if sequences.is_empty() {
+            return Ok(Vec::new());
+        }
+        if sequences.len() > 1024 {
+            return Err(EngineError::StorageFailure);
+        }
+        let parameters: Vec<i64> = sequences
+            .iter()
+            .map(|sequence| i64::try_from(sequence.get()).map_err(|_| EngineError::StorageFailure))
+            .collect::<Result<_, _>>()?;
+        let placeholders = std::iter::repeat_n("?", sequences.len()).collect::<Vec<_>>().join(",");
+        let connection = self.open_sqlite_read_connection()?;
+        let mut statement = connection.prepare(&format!(
+            "SELECT local_seq, committed_at FROM replication_publications WHERE local_seq IN ({placeholders})"
+        )).map_err(|_| EngineError::StorageFailure)?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(parameters.iter()), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|_| EngineError::StorageFailure)?;
+        let clocks = rows
+            .collect::<Result<std::collections::BTreeMap<_, _>, _>>()
+            .map_err(|_| EngineError::StorageFailure)?;
+        parameters
+            .iter()
+            .map(|sequence| {
+                clocks
+                    .get(sequence)
+                    .copied()
+                    .and_then(|clock| u64::try_from(clock).ok())
+                    .ok_or(EngineError::StorageFailure)
+            })
+            .collect()
+    }
+
     /// Reads the durable monotonic clock of an exact source publication.
     /// Sequence zero names the empty database baseline at the Unix epoch.
     pub(crate) fn backup_boundary_unix_millis(
@@ -4296,6 +4351,7 @@ pub struct Transaction<'engine> {
     snapshot_sequence: StorageSequence,
     operation: OperationId,
     usage_admission: Option<UsageAdmissionContext>,
+    internal_maintenance: bool,
     expected_origin_epoch: u64,
     expected_uniform_context: Option<Vec<u8>>,
     merge_conflict: Option<(CollectionName, DocumentId, storage::MergeConflictEntry)>,
@@ -4669,6 +4725,7 @@ impl Transaction<'_> {
             snapshot_sequence: self.snapshot_sequence,
             durability,
             usage_admission,
+            internal_maintenance: self.internal_maintenance,
             expected_origin_epoch: if replicated { None } else { Some(self.expected_origin_epoch) },
             expected_uniform_context: self.expected_uniform_context.take(),
             merge_conflict: self.merge_conflict.clone(),

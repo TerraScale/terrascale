@@ -14,6 +14,19 @@ use crate::encryption::{DatabaseKeyLease, EncryptionError};
 use crate::engine::Engine;
 use crate::types::StorageSequence;
 
+/// Retains the admitted engine owner for the complete backup worker lifetime.
+/// Server adapters can retain a member lease without extracting an unfenced Engine.
+pub trait BackupEngineHandle: Send + Sync {
+    /// Returns the real engine held by this admitted owner.
+    fn engine(&self) -> &Engine;
+}
+
+impl BackupEngineHandle for Engine {
+    fn engine(&self) -> &Engine {
+        self
+    }
+}
+
 /// Supplies fresh authorization and reads all retained key versions.
 /// Implementations must refuse deleted or expired key authorization.
 pub trait BackupKeys: BackupReader + Send + Sync {
@@ -22,6 +35,69 @@ pub trait BackupKeys: BackupReader + Send + Sync {
     /// # Errors
     /// Returns the provider's redacted authorization failure.
     fn lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError>;
+}
+
+/// OCI-authorized backup hierarchy, including explicitly retained versions.
+///
+/// The source must be constructed for the database's separate backup key
+/// purpose and durable active backup version; data-purpose leases are refused.
+#[derive(Debug)]
+pub struct OciBackupKeys {
+    source: Arc<dyn crate::encryption::DatabaseKeySource>,
+    scope: crate::encryption::KeyScope,
+}
+
+impl OciBackupKeys {
+    /// Validates the backup hierarchy before a stream can be registered.
+    ///
+    /// # Errors
+    /// Fails closed on unavailable keys, wrong purpose or non-OCI authorization.
+    pub fn new(
+        source: Arc<dyn crate::encryption::DatabaseKeySource>,
+    ) -> Result<Self, EncryptionError> {
+        let lease = source.current_lease()?;
+        if lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
+            || lease.metadata().scope().purpose() != crate::encryption::KeyPurpose::Backup
+            || lease.is_expired()
+        {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        Ok(Self { scope: lease.metadata().scope().clone(), source })
+    }
+}
+
+impl BackupKeys for OciBackupKeys {
+    fn lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+        let lease = self.source.current_lease()?;
+        if lease.metadata().scope() != &self.scope
+            || lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
+            || lease.is_expired()
+        {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        Ok(lease)
+    }
+}
+
+impl BackupReader for OciBackupKeys {
+    fn open_backup_envelope(&self, envelope: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        let version = crate::encryption::ArtifactCipher::envelope_key_version(
+            &self.scope,
+            crate::encryption::ArtifactKind::Backup,
+            3,
+            envelope,
+        )?;
+        let lease = self.source.lease(version)?;
+        if lease.metadata().scope() != &self.scope || lease.metadata().version() != version {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        crate::encryption::ArtifactCipher::open_envelope_from_database_key_lease(
+            &lease,
+            crate::encryption::ArtifactKind::Backup,
+            3,
+            envelope,
+        )
+    }
 }
 
 /// Hard member-wide bounds; each stream also has an independent staging cap.
@@ -38,7 +114,7 @@ pub struct FleetLimits {
 /// One immutable database stream admitted by the durable member catalog.
 pub struct StreamConfig {
     /// Engine whose durable journal is captured.
-    pub engine: Arc<Engine>,
+    pub engine: Arc<dyn BackupEngineHandle>,
     /// Database-bound key provider, including retained-version recovery.
     pub keys: Arc<dyn BackupKeys>,
     /// Independently configured providers selected by effective account policy.
@@ -105,7 +181,7 @@ impl NativeBackupFleet {
         if limits.streams == 0
             || limits.streams > 65_536
             || limits.points_per_stream == 0
-            || limits.points_per_stream > 4096
+            || limits.points_per_stream > 1_000_000
             || limits.staging_bytes_per_stream < 3 * 1024 * 1024
         {
             return Err(FleetError::Configuration);
@@ -120,7 +196,7 @@ impl NativeBackupFleet {
     /// # Errors
     /// Rejects duplicate streams, unbounded/empty policies and unavailable keys.
     pub fn attach(&mut self, config: StreamConfig) -> Result<(), FleetError> {
-        let identity = config.engine.database_id().to_string();
+        let identity = config.engine.engine().database_id().to_string();
         if !matches!(config.retention_days, 1 | 7 | 30 | 35)
             || config.policy_revision.len() > 256
             || config.policy_revision.chars().any(char::is_control)
@@ -130,7 +206,8 @@ impl NativeBackupFleet {
             || config.destinations.is_empty()
             || config.destinations.iter().any(|(provider, destination)| {
                 *provider != destination.provider()
-                    || destination.admitted_region() != config.engine.database_owner().region()
+                    || destination.admitted_region()
+                        != config.engine.engine().database_owner().region()
             })
             || config.destinations.len() > 2
             || config.destinations.len() == 2
@@ -142,6 +219,7 @@ impl NativeBackupFleet {
         std::fs::create_dir_all(&config.staging).map_err(|_| FleetError::Capture)?;
         config
             .engine
+            .engine()
             .advance_backup_frontier(StorageSequence::default())
             .map_err(|_| FleetError::Capture)?;
         self.streams.insert(
@@ -155,6 +233,63 @@ impl NativeBackupFleet {
             },
         );
         Ok(())
+    }
+
+    /// Forces one independently verified capture through the current journal
+    /// boundary and returns the exact immutable point for operation receipts.
+    ///
+    /// # Errors
+    /// Refuses closed/unknown streams, unavailable keys, staging and providers.
+    pub async fn capture_snapshot(
+        &mut self,
+        database: &str,
+    ) -> Result<super::BackupManifest, FleetError> {
+        let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
+        if stream.closing {
+            return Err(FleetError::Configuration);
+        }
+        stream.health.protected = false;
+        sync_stream(database, stream, self.limits).await?;
+        let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
+        super::verify_latest_chain_encrypted(&stream.config.staging, reader.as_ref())
+            .map_err(|_| FleetError::Capture)?
+            .pop()
+            .ok_or(FleetError::Capture)
+    }
+
+    /// Lists authenticated retained point metadata, bounded by the stream limit.
+    /// These source facts include captured clocks and immutable retention horizon.
+    ///
+    /// # Errors
+    /// Refuses corrupt manifests, unavailable keys or an exceeded point limit.
+    pub fn retained_points(
+        &self,
+        database: &str,
+    ) -> Result<Vec<super::BackupManifest>, FleetError> {
+        let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+        let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
+        let mut points =
+            super::restore::discover_encrypted_points(&stream.config.staging, reader.as_ref())
+                .map_err(|_| FleetError::Capture)?;
+        if points.len() > self.limits.points_per_stream {
+            return Err(FleetError::StagingFull);
+        }
+        points.sort_by_key(|point| (point.captured_unix_millis(), point.boundary_sequence()));
+        Ok(points)
+    }
+
+    /// Returns the latest artifact-bound physical retention deadline. An empty
+    /// inventory has no retained horizon; an unavailable inventory is an error.
+    /// Historical destination inventories remain the lifecycle catalog's input.
+    ///
+    /// # Errors
+    /// Returns the same inventory/authentication failures as `retained_points`.
+    pub fn retained_until_unix_millis(&self, database: &str) -> Result<Option<u64>, FleetError> {
+        Ok(self
+            .retained_points(database)?
+            .iter()
+            .map(super::BackupManifest::retain_until_unix_millis)
+            .max())
     }
 
     /// Applies an explicit effective account-policy revision. New providers
@@ -181,7 +316,7 @@ impl NativeBackupFleet {
             || destinations.iter().any(|(provider, destination)| {
                 *provider != destination.provider()
                     || destination.admitted_region()
-                        != stream.config.engine.database_owner().region()
+                        != stream.config.engine.engine().database_owner().region()
             })
             || destinations.len() == 2 && destinations[0].0 == destinations[1].0
         {
@@ -246,7 +381,9 @@ impl NativeBackupFleet {
         if retained_destinations.is_empty()
             || retained_destinations.len() > 64
             || stream.config.destinations.iter().any(|(_, current)| {
-                !retained_destinations.iter().any(|destination| Arc::ptr_eq(current, destination))
+                !retained_destinations
+                    .iter()
+                    .any(|destination| current.identity() == destination.identity())
             })
         {
             return Err(FleetError::Configuration);
@@ -307,7 +444,7 @@ impl NativeBackupFleet {
             if stream.closing || stream.due > Instant::now() {
                 continue;
             }
-            let source = stream.config.engine.journaled_high_water();
+            let source = stream.config.engine.engine().journaled_high_water();
             if let Ok(sequence) = source {
                 stream.health.source_sequence = sequence.unwrap_or_default().get();
             }
@@ -344,7 +481,7 @@ impl NativeBackupFleet {
         database: &str,
         provider: Provider,
         point: Option<&str>,
-        target: &Path,
+        target: &crate::engine::EngineConfig,
     ) -> Result<super::RecoveryReceipt, FleetError> {
         self.restore_selected(database, provider, point, None, target).await
     }
@@ -359,7 +496,7 @@ impl NativeBackupFleet {
         database: &str,
         provider: Provider,
         at_unix_millis: u64,
-        target: &Path,
+        target: &crate::engine::EngineConfig,
     ) -> Result<super::RecoveryReceipt, FleetError> {
         self.restore_selected(database, provider, None, Some(at_unix_millis), target).await
     }
@@ -370,9 +507,13 @@ impl NativeBackupFleet {
         provider: Provider,
         point: Option<&str>,
         at: Option<u64>,
-        target: &Path,
+        target: &crate::engine::EngineConfig,
     ) -> Result<super::RecoveryReceipt, FleetError> {
         let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+        let owner = target.owner().ok_or(FleetError::Configuration)?;
+        if !target.has_encrypted_owner() || !stream.config.placement.allows(owner.region()) {
+            return Err(FleetError::Configuration);
+        }
         let destination = stream
             .config
             .destinations
@@ -404,31 +545,25 @@ impl NativeBackupFleet {
             }
             let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
             if let Some(at) = at {
-                return super::RestorePlan::restore_at_unix_millis_encrypted_in_region(
+                return super::RestorePlan::restore_at_unix_millis_encrypted_with_config(
                     at,
                     &staging,
                     target,
                     reader.as_ref(),
-                    &stream.config.placement,
-                    stream.config.engine.database_owner().region(),
                 )
                 .map_err(|_| FleetError::Capture);
             }
             match point {
-                Some(point) => super::RestorePlan::restore_recovery_point_encrypted_in_region(
+                Some(point) => super::RestorePlan::restore_recovery_point_encrypted_with_config(
                     point,
                     &staging,
                     target,
                     reader.as_ref(),
-                    &stream.config.placement,
-                    stream.config.engine.database_owner().region(),
                 ),
-                None => super::RestorePlan::restore_latest_encrypted_in_region(
+                None => super::RestorePlan::restore_latest_encrypted_with_config(
                     &staging,
                     target,
                     reader.as_ref(),
-                    &stream.config.placement,
-                    stream.config.engine.database_owner().region(),
                 ),
             }
             .map_err(|_| FleetError::Capture)
@@ -454,8 +589,12 @@ impl NativeBackupFleet {
     /// Refuses an unknown stream or an unreadable durable source journal.
     pub fn observe_protection(&self, database: &str) -> Result<StreamHealth, FleetError> {
         let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
-        let source =
-            stream.config.engine.journaled_high_water().map_err(|_| FleetError::Capture)?;
+        let source = stream
+            .config
+            .engine
+            .engine()
+            .journaled_high_water()
+            .map_err(|_| FleetError::Capture)?;
         let mut observed = stream.health.clone();
         observed.source_sequence = source.unwrap_or_default().get();
         let providers_verified = !stream.config.destinations.is_empty()
@@ -545,6 +684,7 @@ async fn sync_stream(
     let high_water = stream
         .config
         .engine
+        .engine()
         .journaled_high_water()
         .map_err(|_| FleetError::Capture)?
         .unwrap_or_default();
@@ -570,7 +710,7 @@ async fn sync_stream(
             let lease = stream.config.keys.lease().map_err(|_| FleetError::Capture)?;
             let encryption = BackupEncryption::from_database_key_lease(
                 &lease,
-                stream.config.engine.database_owner().region(),
+                stream.config.engine.engine().database_owner().region(),
                 0,
             )
             .map_err(|_| FleetError::Capture)?;
@@ -578,14 +718,17 @@ async fn sync_stream(
                 (Some(base), false) => BackupPlan::incremental_since(base, encryption),
                 _ => BackupPlan::full(encryption),
             }
+            .with_retention_days(stream.config.retention_days)
+            .map_err(|_| FleetError::Configuration)?
             .with_reader(reader)
             .with_placement_lock(stream.config.placement.clone())
             .with_archive_byte_limit(limits.staging_bytes_per_stream - bytes - 2 * 1024 * 1024);
             let engine = Arc::clone(&stream.config.engine);
             let staging = stream.config.staging.clone();
-            let result = tokio::task::spawn_blocking(move || run_backup(&engine, plan, &staging))
-                .await
-                .map_err(|_| FleetError::Capture)?;
+            let result =
+                tokio::task::spawn_blocking(move || run_backup(engine.engine(), plan, &staging))
+                    .await
+                    .map_err(|_| FleetError::Capture)?;
             match result {
                 Ok(backup) => captured_boundary = backup.manifest().boundary_sequence(),
                 Err(_) => capture_refusal = Some(FleetError::Capture),
@@ -629,6 +772,7 @@ async fn sync_stream(
     stream
         .config
         .engine
+        .engine()
         .advance_backup_frontier(captured_boundary)
         .map_err(|_| FleetError::Capture)?;
     stream.health.protected_sequence = captured_boundary.get();
@@ -694,7 +838,8 @@ async fn enforce_retention_at(
     // Authentication plus every member digest was verified before admission to
     // deletion. Exclusive fleet execution excludes concurrent local restores.
     for point in &points {
-        if point.captured_unix_millis() >= root.captured_unix_millis()
+        if point.retain_until_unix_millis() > now
+            || point.captured_unix_millis() >= root.captured_unix_millis()
             || point.boundary_sequence() >= root.boundary_sequence()
         {
             continue;
@@ -857,6 +1002,16 @@ mod tests {
         )))
     }
 
+    fn restore_config(
+        label: &str,
+        owner: &crate::storage::DatabaseOwner,
+    ) -> crate::engine::EngineConfig {
+        crate::engine::EngineConfig::durable(location(label))
+            .unwrap()
+            .with_owner(owner.clone())
+            .with_storage_keys(crate::engine::test_storage_keys(owner, 71))
+    }
+
     #[test]
     fn provider_outage_preserves_independent_success_and_source_journal_floor() {
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -901,7 +1056,7 @@ mod tests {
                 .unwrap();
             committed(put(
                 &engine,
-                "alpha",
+                engine.database_owner().tenant().to_text().as_str(),
                 "op-1",
                 "doc-1",
                 "users",
@@ -929,7 +1084,7 @@ mod tests {
                     &identity,
                     Provider::Oci,
                     None,
-                    &location("fleet-outage-restore"),
+                    &restore_config("fleet-outage-restore", engine.database_owner()),
                 )
                 .await
                 .unwrap();
@@ -938,7 +1093,7 @@ mod tests {
             // the provider recovers; newer unarchived work stays unprotected.
             committed(put(
                 &engine,
-                "alpha",
+                engine.database_owner().tenant().to_text().as_str(),
                 "op-2",
                 "doc-2",
                 "users",
@@ -998,7 +1153,7 @@ mod tests {
             fleet.attach(config()).unwrap();
             committed(put(
                 &engine,
-                "alpha",
+                engine.database_owner().tenant().to_text().as_str(),
                 "op-1",
                 "doc-1",
                 "users",
@@ -1014,7 +1169,7 @@ mod tests {
             fleet.attach(config()).unwrap();
             committed(put(
                 &engine,
-                "alpha",
+                engine.database_owner().tenant().to_text().as_str(),
                 "op-2",
                 "doc-2",
                 "users",
@@ -1024,7 +1179,12 @@ mod tests {
             assert!(fleet.sync_once().await.is_empty());
             for provider in [Provider::Oci, Provider::Tigris] {
                 let receipt = fleet
-                    .restore_from_provider(&identity, provider, None, &location("fleet-restore"))
+                    .restore_from_provider(
+                        &identity,
+                        provider,
+                        None,
+                        &restore_config("fleet-restore", engine.database_owner()),
+                    )
                     .await
                     .unwrap();
                 assert_eq!(receipt.restored_documents(), 2);
@@ -1034,6 +1194,56 @@ mod tests {
                 fleet.health(&identity).unwrap().providers,
                 vec![(Provider::Oci, true), (Provider::Tigris, true)]
             );
+            // A new full root lets retention remove older complete chains;
+            // each remaining provider still restores without those predecessors.
+            std::thread::sleep(Duration::from_millis(2));
+            committed(put(
+                &engine,
+                engine.database_owner().tenant().to_text().as_str(),
+                "op-3",
+                "doc-3",
+                "users",
+                text("three"),
+                LocalDurability::Synced,
+            ));
+            let lease = key_provider.lease().unwrap();
+            let root = run_backup(
+                &engine,
+                BackupPlan::full(
+                    BackupEncryption::from_database_key_lease(
+                        &lease,
+                        engine.database_owner().region(),
+                        0,
+                    )
+                    .unwrap(),
+                ),
+                &staging,
+            )
+            .unwrap();
+            fleet.streams.get_mut(&identity).unwrap().due = Instant::now();
+            assert!(fleet.sync_once().await.is_empty());
+            enforce_retention_at(
+                &identity,
+                fleet.streams.get(&identity).unwrap(),
+                limits,
+                root.manifest().captured_unix_millis() + 86_400_001,
+            )
+            .await
+            .unwrap();
+            assert_eq!(point_paths(&staging, 8).unwrap().len(), 1);
+            for provider in [Provider::Oci, Provider::Tigris] {
+                let receipt = fleet
+                    .restore_from_provider(
+                        &identity,
+                        provider,
+                        None,
+                        &restore_config("retained-root-restore", engine.database_owner()),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(receipt.restored_documents(), 3);
+                assert_eq!(receipt.chain_depth(), 1);
+            }
             fleet
                 .change_policy(&identity, "policy-2", vec![(Provider::Tigris, second.clone())])
                 .await
@@ -1054,7 +1264,7 @@ mod tests {
             // A new durable write must be visible before another scheduler tick.
             committed(put(
                 &engine,
-                "alpha",
+                engine.database_owner().tenant().to_text().as_str(),
                 "op-observe",
                 "doc-1",
                 "users",

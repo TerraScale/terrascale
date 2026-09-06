@@ -16,7 +16,7 @@ use crate::{host::HostingError, registry::BoundScope};
 /// Socket dispatcher discriminator.
 pub const MAGIC: &[u8; 4] = b"TBRP";
 const MAX_BYTES: usize = 512 * 1024;
-const MAX_ORIGINS: usize = 256;
+const MAX_ORIGINS: usize = 20;
 const MAX_ROWS: usize = 4096;
 const MAX_WORK: usize = 4096;
 const MAX_REPAIRS: usize = 256;
@@ -56,6 +56,8 @@ struct Frame {
     entries: Vec<Entry>,
     #[prost(uint64, tag = "6")]
     cut: u64,
+    #[prost(bytes = "vec", tag = "7")]
+    baseline: Vec<u8>,
 }
 
 fn refused(message: &str) -> HostingError {
@@ -63,6 +65,52 @@ fn refused(message: &str) -> HostingError {
 }
 fn failure(error: impl std::fmt::Debug) -> HostingError {
     HostingError::EngineFailure(format!("publication repair: {error:?}"))
+}
+
+// Count repeated entries before prost allocates them; a tiny repeated-message
+// flood must not turn a bounded wire frame into an unbounded object graph.
+fn validate_encoded_bound(mut bytes: &[u8]) -> Result<(), HostingError> {
+    fn varint(bytes: &mut &[u8]) -> Result<u64, HostingError> {
+        let mut value = 0_u64;
+        for shift in (0..70).step_by(7) {
+            let (&byte, rest) =
+                bytes.split_first().ok_or_else(|| refused("truncated repair frame"))?;
+            *bytes = rest;
+            if shift == 63 && byte > 1 {
+                return Err(refused("overflowing repair varint"));
+            }
+            value |= u64::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                return Ok(value);
+            }
+        }
+        Err(refused("invalid repair varint"))
+    }
+    let mut entries = 0;
+    while !bytes.is_empty() {
+        let key = varint(&mut bytes)?;
+        let length = match key & 7 {
+            0 => {
+                varint(&mut bytes)?;
+                0
+            }
+            1 => 8,
+            2 => {
+                let length = usize::try_from(varint(&mut bytes)?).map_err(failure)?;
+                if key >> 3 == 5 {
+                    entries += 1;
+                    if entries > MAX_ROWS || length > 2048 {
+                        return Err(refused("repair entry allocation bound exceeded"));
+                    }
+                }
+                length
+            }
+            5 => 4,
+            _ => return Err(refused("unsupported repair wire type")),
+        };
+        bytes = bytes.get(length..).ok_or_else(|| refused("truncated repair frame"))?;
+    }
+    Ok(())
 }
 
 /// Bounded metadata for a durable, versioned publication-summary cut.
@@ -75,8 +123,17 @@ pub struct PublicationIndex {
     cut: Option<ReplicationRepairCut>,
     tenant: Option<TenantId>,
     cursor: u64,
+    baseline: [u8; 32],
 }
 impl PublicationIndex {
+    fn require_scope(&self, bound: &BoundScope) -> Result<(), HostingError> {
+        if self.cut.is_none()
+            || self.tenant.as_ref().is_none_or(|tenant| tenant.as_str() != bound.tenant)
+        {
+            return Err(refused("repair index has no captured database cut"));
+        }
+        Ok(())
+    }
     /// Captures current durable summary metadata without scanning publication history.
     /// # Errors
     /// Rejects invalid scopes, unavailable summaries or excessive origin cardinality.
@@ -94,6 +151,7 @@ impl PublicationIndex {
         self.frontier = cut.frontier().clone();
         self.floors = self.frontier.keys().map(|origin| (origin.clone(), 1)).collect();
         self.cursor = cut.local_sequence();
+        self.baseline = cut.baseline_digest();
         self.cut = Some(cut);
         self.tenant = Some(tenant);
         Ok(true)
@@ -259,6 +317,7 @@ pub struct RepairDriver {
     comparison: Option<ComparisonCut>,
     verified: Option<VerifiedRepairCut>,
     repair_count: usize,
+    desired_cut: Option<LocalRepairCut>,
 }
 struct ComparisonCut {
     id: u64,
@@ -271,55 +330,104 @@ struct ComparisonCut {
 /// Physical durability must separately cover `local_sequence()` before readiness.
 #[derive(Clone, Debug)]
 pub struct VerifiedRepairCut {
+    cut: LocalRepairCut,
+    peer: String,
+}
+/// Frozen durable local publication roots. This alone proves no remote equality.
+#[derive(Clone, Debug)]
+pub struct LocalRepairCut {
     scope: DatabaseRouteScope,
     epoch: u64,
     generation: u64,
-    peer: String,
     frontier: BTreeMap<String, u64>,
     cut_digest: [u8; 32],
     root_digest: [u8; 32],
     local_sequence: u64,
+    roots: Vec<Entry>,
+    baseline: [u8; 32],
+}
+impl LocalRepairCut {
+    /// Fully bound database scope.
+    #[must_use]
+    pub const fn scope(&self) -> DatabaseRouteScope {
+        self.scope
+    }
+    /// Exact replica-set epoch.
+    #[must_use]
+    pub const fn replica_epoch(&self) -> u64 {
+        self.epoch
+    }
+    /// Exact placement generation.
+    #[must_use]
+    pub const fn placement_generation(&self) -> u64 {
+        self.generation
+    }
+    /// Source sequence upper bounds; no causal continuity is inferred.
+    #[must_use]
+    pub fn frontier(&self) -> &BTreeMap<String, u64> {
+        &self.frontier
+    }
+    /// Canonical scoped cut digest, independent of connection request identifiers.
+    #[must_use]
+    pub const fn cut_digest(&self) -> [u8; 32] {
+        self.cut_digest
+    }
+    /// Canonical root digest for exactly the scoped cut.
+    #[must_use]
+    pub const fn root_digest(&self) -> [u8; 32] {
+        self.root_digest
+    }
+    /// Durable local sequence whose physical checkpoint must cover this capture.
+    #[must_use]
+    pub const fn local_sequence(&self) -> u64 {
+        self.local_sequence
+    }
 }
 impl VerifiedRepairCut {
     /// Fully authenticated database scope.
     #[must_use]
     pub const fn scope(&self) -> DatabaseRouteScope {
-        self.scope
+        self.cut.scope
     }
     /// Fenced replica-set epoch.
     #[must_use]
     pub const fn replica_epoch(&self) -> u64 {
-        self.epoch
+        self.cut.epoch
     }
     /// Fenced placement generation.
     #[must_use]
     pub const fn placement_generation(&self) -> u64 {
-        self.generation
+        self.cut.generation
     }
     /// Selected authenticated peer whose frozen source cut was compared.
     #[must_use]
     pub fn peer(&self) -> &str {
         &self.peer
     }
-    /// Exact per-origin source upper bounds; this does not infer causal continuity.
+    /// Exact source upper bounds; does not infer causal continuity.
     #[must_use]
     pub fn frontier(&self) -> &BTreeMap<String, u64> {
-        &self.frontier
+        &self.cut.frontier
     }
     /// Domain-separated scope, epoch and frontier digest.
     #[must_use]
     pub const fn cut_digest(&self) -> [u8; 32] {
-        self.cut_digest
+        self.cut.cut_digest
     }
     /// Domain-separated fingerprints for the exact source cut.
     #[must_use]
     pub const fn root_digest(&self) -> [u8; 32] {
-        self.root_digest
+        self.cut.root_digest
     }
-    /// Local durable journal sequence observed when equal; RF2 must cover it.
+    /// Local durable sequence observed when equal; RF2 must cover it.
     #[must_use]
     pub const fn local_sequence(&self) -> u64 {
-        self.local_sequence
+        self.cut.local_sequence
+    }
+    /// Reuses the sealed descriptor as the common cut for another selected peer.
+    #[must_use]
+    pub const fn local_cut(&self) -> &LocalRepairCut {
+        &self.cut
     }
 }
 impl RepairDriver {
@@ -360,6 +468,7 @@ impl RepairDriver {
             comparison: None,
             verified: None,
             repair_count: 0,
+            desired_cut: None,
         })
     }
     /// Schedules comparison after a dependency stall or reconnection.
@@ -373,6 +482,95 @@ impl RepairDriver {
         self.verified.as_ref()
     }
 
+    /// Pins comparison to the sealed canonical cut shared by all selected peers.
+    /// # Errors
+    /// Rejects scope or placement changes; a new authenticated driver is required.
+    pub fn request_cut(&mut self, cut: &LocalRepairCut) -> Result<(), HostingError> {
+        let scope = DatabaseRouteScope::try_new(
+            &self.scope.tenant,
+            &self.scope.project,
+            &self.scope.database,
+        )
+        .map_err(failure)?;
+        if cut.scope != scope || cut.epoch != self.epoch || cut.generation != self.generation {
+            return Err(refused("common repair cut scope mismatch"));
+        }
+        if self.desired_cut.as_ref().is_some_and(|old| {
+            old.cut_digest == cut.cut_digest && old.root_digest == cut.root_digest
+        }) {
+            return Ok(());
+        }
+        self.desired_cut = Some(cut.clone());
+        self.pending = None;
+        self.comparison = None;
+        self.work.clear();
+        self.trigger();
+        Ok(())
+    }
+    /// Captures sealed local roots for the actual durable engine cut.
+    /// # Errors
+    /// Returns unavailable summary or scope/placement failures.
+    pub fn local_cut(
+        &self,
+        engine: &Engine,
+        index: &PublicationIndex,
+    ) -> Result<LocalRepairCut, HostingError> {
+        index.require_scope(&self.scope)?;
+        let mut roots = Vec::new();
+        for (origin, cutoff) in &index.frontier {
+            let mut entry = index.summary(engine, &index.table.root(origin).map_err(failure)?)?;
+            entry.floor = index.floors.get(origin).copied().unwrap_or(1);
+            if entry.floor != 1 {
+                return Err(refused("local cut requires retained prefix bootstrap"));
+            }
+            entry.cutoff = *cutoff;
+            roots.push(entry);
+        }
+        self.cut_descriptor(index.frontier.clone(), roots, index.cursor, index.baseline)
+    }
+    fn cut_descriptor(
+        &self,
+        frontier: BTreeMap<String, u64>,
+        roots: Vec<Entry>,
+        local_sequence: u64,
+        baseline: [u8; 32],
+    ) -> Result<LocalRepairCut, HostingError> {
+        let scope = DatabaseRouteScope::try_new(
+            &self.scope.tenant,
+            &self.scope.project,
+            &self.scope.database,
+        )
+        .map_err(failure)?;
+        let mut cut = blake3::Hasher::new();
+        cut.update(b"terrabase-repair-exact-cut-v1");
+        cut.update(&self.prefix);
+        cut.update(&baseline);
+        for (origin, sequence) in &frontier {
+            cut.update(&u64::try_from(origin.len()).map_err(failure)?.to_be_bytes());
+            cut.update(origin.as_bytes());
+            cut.update(&sequence.to_be_bytes());
+        }
+        let cut_digest = *cut.finalize().as_bytes();
+        let mut root = blake3::Hasher::new();
+        root.update(b"terrabase-repair-exact-root-v1");
+        root.update(&cut_digest);
+        for entry in &roots {
+            root.update(&entry.count.to_be_bytes());
+            root.update(&entry.hash);
+        }
+        Ok(LocalRepairCut {
+            scope,
+            epoch: self.epoch,
+            generation: self.generation,
+            frontier,
+            cut_digest,
+            root_digest: *root.finalize().as_bytes(),
+            local_sequence,
+            roots,
+            baseline,
+        })
+    }
+
     fn frame(&self, id: u64, kind: u32, entries: Vec<Entry>) -> Frame {
         Frame {
             source: self.local.as_str().to_owned(),
@@ -381,6 +579,7 @@ impl RepairDriver {
             kind,
             entries,
             cut: self.comparison.as_ref().map_or(0, |cut| cut.id),
+            baseline: self.desired_cut.as_ref().map_or_else(Vec::new, |cut| cut.baseline.to_vec()),
         }
     }
     fn encode(&self, frame: &Frame) -> Result<Vec<u8>, HostingError> {
@@ -400,6 +599,7 @@ impl RepairDriver {
         index: &PublicationIndex,
         now_ms: u64,
     ) -> Result<Option<Vec<u8>>, HostingError> {
+        index.require_scope(&self.scope)?;
         if let Some((frame, sent)) = &mut self.pending {
             if now_ms.saturating_sub(*sent) < RETRY_MS {
                 return Ok(None);
@@ -414,14 +614,22 @@ impl RepairDriver {
             let range = index.range(&entry)?;
             self.frame(self.next_id, 3, vec![index.summary(engine, &range)?])
         } else if self.comparison.as_ref().is_some_and(|cut| cut.verify_again) {
-            self.frame(self.next_id, 1, Vec::new())
+            self.frame(
+                self.next_id,
+                1,
+                self.desired_cut.as_ref().map_or_else(Vec::new, |cut| cut.roots.clone()),
+            )
         } else if self.triggered || now_ms.saturating_sub(self.last_pass) >= PERIOD_MS {
             self.triggered = false;
             self.comparison = None;
             self.verified = None;
             self.repair_count = 0;
             self.last_pass = now_ms;
-            self.frame(self.next_id, 1, Vec::new())
+            self.frame(
+                self.next_id,
+                1,
+                self.desired_cut.as_ref().map_or_else(Vec::new, |cut| cut.roots.clone()),
+            )
         } else {
             return Ok(None);
         };
@@ -441,17 +649,20 @@ impl RepairDriver {
         index: &PublicationIndex,
         bytes: &[u8],
     ) -> Result<RepairReceive, HostingError> {
+        index.require_scope(&self.scope)?;
         if bytes.len() > MAX_BYTES {
             return Err(refused("repair wire byte bound exceeded"));
         }
         let body = bytes
             .strip_prefix(self.prefix.as_slice())
             .ok_or_else(|| refused("repair scope or epoch mismatch"))?;
+        validate_encoded_bound(body)?;
         let frame = Frame::decode(body).map_err(failure)?;
         if frame.source != self.peer.as_str()
             || frame.target != self.local.as_str()
             || frame.id == 0
             || frame.entries.len() > MAX_ROWS
+            || frame.baseline.len() > 32
         {
             return Err(refused("repair identity or entry bound mismatch"));
         }
@@ -463,13 +674,46 @@ impl RepairDriver {
         let mut result = RepairReceive::default();
         match frame.kind {
             1 => {
-                if !frame.entries.is_empty() || index.floors.len() > MAX_ORIGINS {
+                if frame.entries.len() > MAX_ORIGINS || index.floors.len() > MAX_ORIGINS {
                     return Err(refused("invalid repair catalog"));
+                }
+                if self.source_cut.as_ref().is_some_and(|(id, _)| frame.cut == 0 && frame.id < *id)
+                {
+                    return Ok(result);
                 }
                 if frame.cut == 0 && self.source_cut.as_ref().is_none_or(|(id, _)| *id != frame.id)
                 {
-                    let frontier = index.frontier.clone();
-                    self.source_cut = Some((frame.id, index.at_frontier(&frontier)));
+                    let frontier = if frame.baseline.is_empty() {
+                        if !frame.entries.is_empty() {
+                            return Err(refused("common cut lacks baseline binding"));
+                        }
+                        self.desired_cut
+                            .as_ref()
+                            .map_or_else(|| index.frontier.clone(), |cut| cut.frontier.clone())
+                    } else {
+                        if frame.baseline.len() != 32 {
+                            return Err(refused("invalid common cut baseline"));
+                        }
+                        let mut frontier = BTreeMap::new();
+                        for entry in &frame.entries {
+                            let root = index.table.root(&entry.origin).map_err(failure)?;
+                            if entry.first != 1
+                                || entry.level != u32::from(root.level())
+                                || entry.hash.len() != 16
+                                || entry.floor != 1
+                                || frontier.insert(entry.origin.clone(), entry.cutoff).is_some()
+                            {
+                                return Err(refused("invalid requested common cut"));
+                            }
+                        }
+                        frontier
+                    };
+                    let mut frozen = index.at_frontier(&frontier);
+                    // Preserve requested bounds even when the local source currently lacks rows.
+                    frozen.frontier = frontier;
+                    frozen.floors =
+                        frozen.frontier.keys().map(|origin| (origin.clone(), 1)).collect();
+                    self.source_cut = Some((frame.id, frozen));
                 }
                 let (cut_id, frozen) =
                     self.source_cut.as_ref().ok_or_else(|| refused("unknown repair source cut"))?;
@@ -487,11 +731,15 @@ impl RepairDriver {
                 }
                 let mut response = self.frame(frame.id, 2, entries);
                 response.cut = *cut_id;
+                response.baseline = frozen.baseline.to_vec();
                 result.frames.push(self.encode(&response)?);
             }
             3 => {
                 let (cut_id, index) =
                     self.source_cut.as_ref().ok_or_else(|| refused("missing source repair cut"))?;
+                if frame.cut < *cut_id {
+                    return Ok(result);
+                }
                 if *cut_id != frame.cut {
                     return Err(refused("wrong source repair cut"));
                 }
@@ -628,6 +876,11 @@ impl RepairDriver {
             }
             _ => return Err(refused("unsupported repair message")),
         }
+        if !result.requested.is_empty() && matches!(frame.kind, 6) {
+            self.comparison = None;
+            self.work.clear();
+            self.triggered = true;
+        }
         self.repair_count = self.repair_count.saturating_add(result.expected.len());
         if self.repair_count > MAX_REPAIRS {
             result.frames.clear();
@@ -656,10 +909,16 @@ impl RepairDriver {
     ) -> Result<(), HostingError> {
         if pending.kind != 1
             || frame.entries.len() > MAX_ORIGINS
+            || frame.baseline.len() != 32
             || frame.cut == 0
             || (pending.cut != 0 && pending.cut != frame.cut)
         {
             return Err(refused("unexpected repair catalog"));
+        }
+        if frame.baseline != index.baseline {
+            result.needs_snapshot = true;
+            self.verified = None;
+            return Ok(());
         }
         if let Some(previous) = &self.comparison {
             if previous.id != frame.cut || previous.roots != frame.entries {
@@ -698,38 +957,17 @@ impl RepairDriver {
             verify_again: !equal,
         });
         if equal {
-            let scope = DatabaseRouteScope::try_new(
-                &self.scope.tenant,
-                &self.scope.project,
-                &self.scope.database,
-            )
-            .map_err(failure)?;
-            let mut cut = blake3::Hasher::new();
-            cut.update(b"terrabase-repair-exact-cut-v1");
-            cut.update(&self.prefix);
-            for (origin, sequence) in &frontier {
-                cut.update(&u64::try_from(origin.len()).map_err(failure)?.to_be_bytes());
-                cut.update(origin.as_bytes());
-                cut.update(&sequence.to_be_bytes());
+            let cut =
+                self.cut_descriptor(frontier, frame.entries.clone(), index.cursor, index.baseline)?;
+            if self.desired_cut.as_ref().is_some_and(|desired| {
+                desired.cut_digest != cut.cut_digest || desired.root_digest != cut.root_digest
+            }) {
+                result.needs_snapshot = true;
+                self.verified = None;
+            } else {
+                self.verified =
+                    Some(VerifiedRepairCut { cut, peer: self.peer.as_str().to_owned() });
             }
-            let cut_digest = *cut.finalize().as_bytes();
-            let mut root = blake3::Hasher::new();
-            root.update(b"terrabase-repair-exact-root-v1");
-            root.update(&cut_digest);
-            for entry in &frame.entries {
-                root.update(&entry.count.to_be_bytes());
-                root.update(&entry.hash);
-            }
-            self.verified = Some(VerifiedRepairCut {
-                scope,
-                epoch: self.epoch,
-                generation: self.generation,
-                peer: self.peer.as_str().to_owned(),
-                frontier,
-                cut_digest,
-                root_digest: *root.finalize().as_bytes(),
-                local_sequence: index.cursor,
-            });
         } else {
             self.verified = None;
         }
@@ -857,6 +1095,28 @@ mod tests {
         let mut old = None;
         let mut repaired = 0;
         for tick in 0..64 {
+            if tick == 1 {
+                let scope =
+                    source.scope_for(&TenantId::try_new("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
+                let mut tx = source
+                    .begin(
+                        &scope,
+                        source.read_snapshot(&scope).unwrap(),
+                        OperationId::try_new("late-operation").unwrap(),
+                    )
+                    .unwrap();
+                tx.put(
+                    Document::new(
+                        DocumentId::try_new("late").unwrap(),
+                        CollectionName::try_new("items").unwrap(),
+                        DocumentValue::Object(BTreeMap::new()),
+                    ),
+                    ExpectedVersion::Any,
+                )
+                .unwrap();
+                assert!(matches!(tx.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+                left.refresh(&source, &bound()).unwrap();
+            }
             let Some(request) = receiver.outbound_frame(&target, &right, tick).unwrap() else {
                 break;
             };
@@ -891,7 +1151,10 @@ mod tests {
             }
         }
         assert_eq!(repaired, 1);
-        assert!(receiver.verified_cut().is_some());
+        let proof = receiver.verified_cut().unwrap();
+        assert_eq!(proof.frontier().values().copied().collect::<Vec<_>>(), vec![1]);
+        assert_eq!(right.frontier.values().copied().collect::<Vec<_>>(), vec![1]);
+        assert_eq!(left.frontier.values().copied().collect::<Vec<_>>(), vec![2]);
         drop(source);
         drop(target);
         std::fs::remove_dir_all(path).unwrap();
@@ -914,6 +1177,69 @@ mod tests {
         drop(target);
         std::fs::remove_dir_all(path).unwrap();
     }
+    #[test]
+    fn canonical_cut_descriptor_is_shared_across_selected_peer_comparisons() {
+        let (path, source, target) = fixture();
+        let scope = source.scope_for(&TenantId::try_new("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
+        let group = source.replication_publications(&scope, 0, 1).unwrap().remove(0).1;
+        let target_scope =
+            target.scope_for(&TenantId::try_new("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap());
+        target.apply_replicated_publication(&target_scope, &group).unwrap();
+        let mut left = PublicationIndex::default();
+        let mut right = PublicationIndex::default();
+        left.refresh(&source, &bound()).unwrap();
+        right.refresh(&target, &bound()).unwrap();
+        let canonical = driver("a", "b", 1).local_cut(&source, &left).unwrap();
+        let mut requester = driver("c", "d", 1);
+        requester.request_cut(&canonical).unwrap();
+        let mut source_peer = driver("d", "c", 1);
+        let request = requester.outbound_frame(&target, &right, 0).unwrap().unwrap();
+        let response =
+            source_peer.receive_frame(&source, &left, &request).unwrap().frames.remove(0);
+        requester.receive_frame(&target, &right, &response).unwrap();
+        let proof = requester.verified_cut().unwrap();
+        assert_eq!(proof.cut_digest(), canonical.cut_digest());
+        assert_eq!(proof.root_digest(), canonical.root_digest());
+        assert_eq!(proof.peer(), "d");
+        assert!(driver("x", "y", 2).request_cut(&canonical).is_err());
+        drop(source);
+        drop(target);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn explicit_empty_cut_stays_empty_and_baseline_mismatch_requires_snapshot() {
+        let (path, source, target) = fixture();
+        let mut left = PublicationIndex::default();
+        let mut right = PublicationIndex::default();
+        left.refresh(&source, &bound()).unwrap();
+        right.refresh(&target, &bound()).unwrap();
+        let empty = driver("b", "a", 1).local_cut(&target, &right).unwrap();
+        let mut receiver = driver("b", "a", 1);
+        receiver.request_cut(&empty).unwrap();
+        let mut sender = driver("a", "b", 1);
+        let request = receiver.outbound_frame(&target, &right, 0).unwrap().unwrap();
+        let response = sender.receive_frame(&source, &left, &request).unwrap().frames.remove(0);
+        receiver.receive_frame(&target, &right, &response).unwrap();
+        assert_eq!(receiver.verified_cut().unwrap().root_digest(), empty.root_digest());
+        assert!(receiver.verified_cut().unwrap().frontier().is_empty());
+
+        let mut receiver = driver("b", "a", 1);
+        let request = receiver.outbound_frame(&target, &right, 0).unwrap().unwrap();
+        let mut sender = driver("a", "b", 1);
+        let response = sender.receive_frame(&source, &left, &request).unwrap().frames.remove(0);
+        let mut frame =
+            Frame::decode(response.strip_prefix(sender.prefix.as_slice()).unwrap()).unwrap();
+        frame.baseline = vec![1; 32];
+        let response = sender.encode(&frame).unwrap();
+        assert!(receiver.receive_frame(&target, &right, &response).unwrap().needs_snapshot);
+        assert!(receiver.verified_cut().is_none());
+        assert!(validate_encoded_bound(&[0x2a, 0].repeat(MAX_ROWS + 1)).is_err());
+        drop(source);
+        drop(target);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
     #[test]
     fn placement_epoch_and_wire_bounds_are_enforced() {
         let (path, source, target) = fixture();

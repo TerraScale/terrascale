@@ -226,7 +226,11 @@ impl AuthBootstrapJournal {
             }
         } else {
             let count: u64 = transaction
-                .query_row("SELECT COUNT(*) FROM auth_grants", [], |row| row.get(0))
+                .query_row("SELECT COUNT(*) FROM auth_grants", [], |row| {
+                    let value: i64 = row.get(0)?;
+                    u64::try_from(value)
+                        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, value))
+                })
                 .map_err(|_| PlacementError::Storage)?;
             if count >= 1024 {
                 return Err(PlacementError::Exhausted);

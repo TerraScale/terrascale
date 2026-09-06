@@ -180,3 +180,26 @@ fn accepted_deletion_refuses_new_customer_usage_but_replays_existing_receipt() {
     engine.shutdown().unwrap();
     std::fs::remove_dir_all(path).unwrap();
 }
+
+#[test]
+fn internal_maintenance_mutation_does_not_mint_customer_write_usage() {
+    let (path, engine, scope) = setup();
+    assert!(matches!(write(&engine, &scope, "customer"), CommitOutcome::Committed(_)));
+    let snapshot = engine.read_snapshot(&scope).unwrap();
+    let mut transaction =
+        engine.begin(&scope, snapshot, OperationId::try_new("ttl-cleanup").unwrap()).unwrap();
+    transaction.internal_maintenance = true;
+    transaction.delete_in_collection(
+        &CollectionName::try_new("users").unwrap(),
+        DocumentId::try_new("one").unwrap(),
+        ExpectedVersion::Any,
+    );
+    assert!(matches!(transaction.commit(LocalDurability::Written), CommitOutcome::Committed(_)));
+    let page = engine
+        .usage_page(&scope, UsagePageRequest::try_new(None, MAX_USAGE_PAGE_SIZE, None).unwrap())
+        .unwrap();
+    assert_eq!(page.facts().len(), 1);
+    assert_eq!(page.facts()[0].fact().delta(), 2);
+    engine.shutdown().unwrap();
+    std::fs::remove_dir_all(path).unwrap();
+}

@@ -99,6 +99,10 @@ pub struct ProductionPeer {
 /// Separate production listener and transport bindings.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductionTransport {
+    /// Explicit host concurrency ceiling, including dynamically admitted databases.
+    pub max_inflight: usize,
+    /// Authenticated host-local rotation controller for the live TBEP listener.
+    pub credential_rotation: Option<CredentialRotationConfig>,
     /// Mandatory TBEP mTLS listener.
     pub tbep_listen: SocketAddr,
     /// Mandatory Member QUIC listener.
@@ -151,6 +155,22 @@ pub struct ProductionConfig {
     pub control: Option<ProductionControl>,
     /// OCI Vault delivery needed before admitting encrypted data operations.
     pub keys: Option<ProductionKeys>,
+    /// Explicit local admission listener and persistent Member root.
+    pub member_admission: Option<ProductionMemberAdmission>,
+}
+
+/// Kernel-authenticated local database admission endpoint.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProductionMemberAdmission {
+    /// Absolute durable Member catalog root.
+    pub data_root: PathBuf,
+    /// Absolute Unix socket path.
+    pub socket: PathBuf,
+    /// Exact authorized orchestrator kernel UID.
+    pub allowed_uid: u32,
+    /// Dedicated socket traversal group.
+    pub socket_gid: u32,
 }
 
 /// Durable pending-placement control policy. It cannot grant membership or readiness.
@@ -237,7 +257,7 @@ pub struct PublicProvisioningConfig {
 }
 
 /// Private host-local credential rotation control endpoint.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialRotationConfig {
     /// Private Unix control socket path.
@@ -248,9 +268,33 @@ pub struct CredentialRotationConfig {
     pub token_file: PathBuf,
 }
 
+/// Dedicated billing authority credential for native immutable usage closure.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BillingClosureConfig {
+    /// Restricted file containing the dedicated billing service key.
+    pub key_file: PathBuf,
+}
+
+/// The resolved public `/api/v1` listener configuration.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LifecyclePublicationConfig {
+    /// Exact HTTPS dashboard publication endpoint.
+    pub endpoint: String,
+    /// Separate publisher credential file.
+    pub key_file: PathBuf,
+    /// Durable native publication outbox SQLite file.
+    pub outbox_path: PathBuf,
+}
+
 /// The resolved public `/api/v1` listener configuration.
 #[derive(Clone, Debug)]
 pub struct PublicApiConfig {
+    /// Optional authenticated durable lifecycle projection publisher.
+    pub lifecycle_publication: Option<LifecyclePublicationConfig>,
+    /// Optional private billing closure endpoint; no development default.
+    pub billing_closure: Option<BillingClosureConfig>,
     /// Optional authenticated local key rotation receiver.
     pub credential_rotation: Option<CredentialRotationConfig>,
     /// Optional durable provisioning authority; no implicit endpoint.
@@ -426,6 +470,10 @@ struct FileObservability {
 #[serde(deny_unknown_fields)]
 struct FilePublicApi {
     #[serde(default)]
+    lifecycle_publication: Option<LifecyclePublicationConfig>,
+    #[serde(default)]
+    billing_closure: Option<BillingClosureConfig>,
+    #[serde(default)]
     credential_rotation: Option<CredentialRotationConfig>,
     #[serde(default)]
     provisioning: Option<PublicProvisioningConfig>,
@@ -462,12 +510,14 @@ struct FileProductionConfig {
     mode: String,
     public_api: Option<FilePublicApi>,
     environment: FileProductionEnvironment,
+    #[serde(default)]
     databases: Vec<FileProductionDatabase>,
     placement: FileProductionPlacement,
     transport: FileProductionTransport,
     release: FileReleaseBinding,
     control: Option<FileProductionControl>,
     keys: Option<FileProductionKeys>,
+    member_admission: Option<ProductionMemberAdmission>,
 }
 
 #[derive(Deserialize)]
@@ -543,6 +593,8 @@ struct FilePlacementRegion {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileProductionTransport {
+    #[serde(default)]
+    credential_rotation: Option<CredentialRotationConfig>,
     tbep_listen: String,
     quic_listen: String,
     metrics_listen: String,
@@ -783,7 +835,9 @@ impl ServerConfig {
             cluster: parse_ulid(&file.environment.cluster, ConfigError::InvalidProductionBoundary)?,
             member: parse_ulid(&file.environment.member, ConfigError::InvalidProductionBoundary)?,
         };
-        if file.databases.is_empty() || file.databases.len() > MAX_DATABASES {
+        if file.databases.len() > MAX_DATABASES
+            || (file.databases.is_empty() && file.member_admission.is_none())
+        {
             return Err(ConfigError::InvalidProductionBoundary);
         }
         let mut databases = Vec::with_capacity(file.databases.len());
@@ -842,7 +896,7 @@ impl ServerConfig {
                 enabled: entry.enabled.unwrap_or(false),
             });
         }
-        if !databases.iter().any(|database| database.enabled) {
+        if !databases.iter().any(|database| database.enabled) && file.member_admission.is_none() {
             return Err(ConfigError::InvalidProductionBoundary);
         }
 
@@ -869,12 +923,22 @@ impl ServerConfig {
                     return Err(ConfigError::InvalidMemberPrincipal);
                 }
                 if let Some(trust) = &control.transition {
-                    if trust.authority_keys.is_empty() || trust.genesis_keys.is_empty() { return Err(ConfigError::InvalidMemberPrincipal); }
+                    if trust.authority_keys.is_empty() || trust.genesis_keys.is_empty() {
+                        return Err(ConfigError::InvalidMemberPrincipal);
+                    }
                     for pins in [&trust.authority_keys, &trust.genesis_keys, &trust.member_keys] {
-                        if pins.len() > 40 { return Err(ConfigError::InvalidMemberPrincipal); }
+                        if pins.len() > 40 {
+                            return Err(ConfigError::InvalidMemberPrincipal);
+                        }
                         let mut ids = BTreeSet::new();
                         for pin in pins {
-                            if pin.key_id.is_empty() || pin.key_id.len() > 256 || !pin.key_id.bytes().all(|byte| (33..=126).contains(&byte)) || !ids.insert(&pin.key_id) { return Err(ConfigError::InvalidMemberPrincipal); }
+                            if pin.key_id.is_empty()
+                                || pin.key_id.len() > 256
+                                || !pin.key_id.bytes().all(|byte| (33..=126).contains(&byte))
+                                || !ids.insert(&pin.key_id)
+                            {
+                                return Err(ConfigError::InvalidMemberPrincipal);
+                            }
                             production_path(&pin.public_key_file)?;
                         }
                     }
@@ -900,6 +964,18 @@ impl ServerConfig {
                 })
             })
             .transpose()?;
+        let member_admission = file
+            .member_admission
+            .map(|admission| {
+                production_path(&admission.data_root)?;
+                production_path(&admission.socket)?;
+                paths.push(admission.socket.clone());
+                if control.is_none() || keys.is_none() {
+                    return Err(ConfigError::InvalidProductionBoundary);
+                }
+                Ok(admission)
+            })
+            .transpose()?;
         let production = ProductionConfig {
             environment,
             databases,
@@ -908,15 +984,26 @@ impl ServerConfig {
             release,
             control,
             keys,
+            member_admission,
         };
-        let first = production
-            .databases
+        let first = production.databases.iter().find(|database| database.enabled);
+        let local_region = production
+            .placement
+            .regions
             .iter()
-            .find(|database| database.enabled)
+            .find_map(|(region, members)| {
+                members.contains(&production.environment.member).then_some(*region)
+            })
+            .ok_or(ConfigError::InvalidProductionBoundary)?;
+        let engine_location = first
+            .map(|database| database.location.clone())
+            .or_else(|| {
+                production.member_admission.as_ref().map(|admission| admission.data_root.clone())
+            })
             .ok_or(ConfigError::InvalidProductionBoundary)?;
         let tbep_listen = production.transport.tbep_listen;
         let metrics_listen = production.transport.metrics_listen;
-        let public_api=parse_public_api(file.public_api.as_ref(),tbep_listen,metrics_listen)?;
+        let public_api = parse_public_api(file.public_api.as_ref(), tbep_listen, metrics_listen)?;
         let uds = file
             .transport
             .uds
@@ -938,12 +1025,12 @@ impl ServerConfig {
             // These fields are a temporary, explicitly documented projection
             // for the current daemon entry point. Production serving must use
             // `ProductionConfig` and the complete Member orchestrator.
-            engine_location: first.location.clone(),
-            tenant: first.tenant.to_text(),
-            project: first.project.to_text(),
-            database: first.database.to_text(),
+            engine_location,
+            tenant: first.map(|database| database.tenant.to_text()).unwrap_or_default(),
+            project: first.map(|database| database.project.to_text()).unwrap_or_default(),
+            database: first.map(|database| database.database.to_text()).unwrap_or_default(),
             instance_id: 1,
-            region: region_label(first.region),
+            region: region_label(local_region),
             tbep_listen,
             server_certificate: production.transport.server_certificate.clone(),
             server_private_key: production.transport.server_private_key.clone(),
@@ -1141,7 +1228,20 @@ fn parse_transport(
     if seen != expected {
         return Err(ConfigError::InvalidTransportBinding);
     }
+    if let Some(rotation) = &file.credential_rotation {
+        production_path(&rotation.socket)?;
+        production_path(&rotation.state_file)?;
+        production_path(&rotation.token_file)?;
+        if rotation.socket == rotation.state_file
+            || rotation.socket == rotation.token_file
+            || rotation.state_file == rotation.token_file
+        {
+            return Err(ConfigError::InvalidTransportBinding);
+        }
+    }
     Ok(ProductionTransport {
+        max_inflight: file.max_inflight,
+        credential_rotation: file.credential_rotation.clone(),
         tbep_listen,
         quic_listen,
         metrics_listen,
@@ -1317,6 +1417,22 @@ fn parse_public_api(
         return Err(ConfigError::InvalidListenAddress);
     }
     absolute(&section.data_root)?;
+    if let Some(publisher) = &section.lifecycle_publication {
+        absolute(&publisher.key_file)?;
+        absolute(&publisher.outbox_path)?;
+        let uri: axum::http::Uri =
+            publisher.endpoint.parse().map_err(|_| ConfigError::InvalidBound)?;
+        if uri.scheme_str() != Some("https")
+            || uri.host().is_none()
+            || uri.authority().is_some_and(|v| v.as_str().contains('@'))
+            || uri.path() != "/api/internal/lifecycle/publish"
+            || uri.query().is_some()
+            || publisher.endpoint.contains('#')
+            || publisher.key_file == publisher.outbox_path
+        {
+            return Err(ConfigError::InvalidBound);
+        }
+    }
     if let Some(key_file) = &section.bootstrap_key_file {
         absolute(key_file)?;
     }
@@ -1377,7 +1493,12 @@ fn parse_public_api(
             return Err(ConfigError::InvalidBound);
         }
     }
+    if let Some(billing) = &section.billing_closure {
+        absolute(&billing.key_file)?;
+    }
     Ok(Some(PublicApiConfig {
+        lifecycle_publication: section.lifecycle_publication.clone(),
+        billing_closure: section.billing_closure.clone(),
         credential_rotation: section.credential_rotation.clone(),
         provisioning: section.provisioning.clone(),
         identity: section.identity.clone(),

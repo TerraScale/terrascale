@@ -400,42 +400,6 @@ impl RangeSummaryTable {
         Ok(ReconciliationPlan { messages, differences, rounds })
     }
 
-    /// Captures exactly the retained source prefixes named by a causal cut.
-    #[must_use]
-    pub fn at_frontier(&self, frontier: &BTreeMap<String, u64>) -> Self {
-        let mut table = Self::layout(self.leaf_rows, self.fanout);
-        for (id, row_hash) in &self.rows {
-            if frontier.get(id.origin()).is_some_and(|cut| id.sequence() <= *cut) {
-                table.insert(&RowSummary::new(id.clone(), *row_hash));
-            }
-        }
-        table
-    }
-
-    /// Returns the largest represented source sequence for each origin.
-    /// These upper bounds do not assert causal continuity.
-    #[must_use]
-    pub fn source_bounds(&self) -> BTreeMap<String, u64> {
-        let mut bounds = BTreeMap::new();
-        for id in self.rows.keys() {
-            bounds.insert(id.origin.clone(), id.sequence);
-        }
-        bounds
-    }
-
-    /// Returns only contiguous retained prefixes starting at sequence one.
-    #[must_use]
-    pub fn contiguous_frontier(&self) -> BTreeMap<String, u64> {
-        let mut frontier = BTreeMap::new();
-        for id in self.rows.keys() {
-            let prefix = frontier.entry(id.origin.clone()).or_insert(0_u64);
-            if prefix.checked_add(1) == Some(id.sequence) {
-                *prefix = id.sequence;
-            }
-        }
-        frontier
-    }
-
     /// Constructs a validated range in this table's fixed hierarchy.
     ///
     /// # Errors
@@ -457,32 +421,6 @@ impl RangeSummaryTable {
     /// Rejects an empty origin.
     pub fn root(&self, origin: &str) -> Result<JournalRange, RepairError> {
         self.range(origin, self.top_level, 0)
-    }
-
-    /// Returns nonempty child ranges in canonical order.
-    #[must_use]
-    pub fn children(&self, range: &JournalRange) -> Vec<JournalRange> {
-        if range.level == 0 {
-            return Vec::new();
-        }
-        let level = range.level - 1;
-        let span = self.level_span(level);
-        let first_bucket = (range.first - 1) / span;
-        let last_bucket = (range.last - 1) / span;
-        self.summaries
-            .range(
-                SummaryKey { origin: range.origin.clone(), level, bucket: first_bucket }
-                    ..=SummaryKey { origin: range.origin.clone(), level, bucket: last_bucket },
-            )
-            .filter(|(_, fingerprint)| fingerprint.count != 0)
-            .map(|(key, _)| JournalRange::new(range.origin.clone(), level, key.bucket, span))
-            .collect()
-    }
-
-    /// Returns exact retained identities in a leaf; internal nodes return no rows.
-    #[must_use]
-    pub fn leaf_rows(&self, range: &JournalRange) -> Vec<RowSummary> {
-        if range.level == 0 { self.rows_in(range) } else { Vec::new() }
     }
 
     fn update_path(&mut self, id: &JournalRowId, row_hash: Hash32, add: bool) {

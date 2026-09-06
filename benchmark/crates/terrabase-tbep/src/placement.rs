@@ -64,7 +64,7 @@ pub struct PlacementBoundary {
     member: String,
     generation: u64,
     epoch: u64,
-    databases: BTreeMap<DatabaseRouteScope, String>,
+    databases: std::sync::Arc<std::sync::RwLock<BTreeMap<DatabaseRouteScope, String>>>,
 }
 
 impl PlacementBoundary {
@@ -89,7 +89,7 @@ impl PlacementBoundary {
                 return Err(PlacementError::Invalid);
             }
         }
-        if scopes.is_empty() || generation == 0 || epoch == 0 {
+        if generation == 0 || epoch == 0 {
             return Err(PlacementError::Invalid);
         }
         Ok(Self {
@@ -98,18 +98,19 @@ impl PlacementBoundary {
             member: member.into(),
             generation,
             epoch,
-            databases: scopes,
+            databases: std::sync::Arc::new(std::sync::RwLock::new(scopes)),
         })
     }
 
     fn canonicalize(&self, proposal: &mut pb::PlacementProposal) -> Result<(), PlacementError> {
+        let databases = self.databases.read().map_err(|_| PlacementError::Storage)?;
         if proposal.environment != self.environment
             || proposal.cluster != self.cluster
             || proposal.generation == 0
             || proposal.epoch == 0
             || proposal.regions.is_empty()
             || proposal.regions.len() > 3
-            || proposal.assignments.len() != self.databases.len()
+            || proposal.assignments.len() > databases.len()
             || proposal.encoded_len() > MAX_PLACEMENT_PROPOSAL_BYTES
         {
             return Err(PlacementError::Invalid);
@@ -145,7 +146,7 @@ impl PlacementBoundary {
                 &assignment.database,
             )
             .map_err(|_| PlacementError::Invalid)?;
-            if self.databases.get(&scope) != Some(&assignment.region)
+            if databases.get(&scope) != Some(&assignment.region)
                 || !scopes.insert(scope)
                 || assignment.writer_member == assignment.follower_member
             {
@@ -208,6 +209,7 @@ impl PlacementJournal {
             "CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), environment TEXT NOT NULL, cluster TEXT NOT NULL, member TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS proposals (revision INTEGER PRIMARY KEY, operation TEXT NOT NULL UNIQUE, principal TEXT NOT NULL, expected_revision INTEGER NOT NULL, proposal BLOB NOT NULL);
              CREATE TABLE IF NOT EXISTS accepted (sequence INTEGER PRIMARY KEY, proposal_revision INTEGER NOT NULL, proof BLOB NOT NULL, digest TEXT NOT NULL UNIQUE);
+             CREATE TABLE IF NOT EXISTS declared (tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL PRIMARY KEY, region TEXT NOT NULL);
              PRAGMA user_version=1;"
         ).map_err(|_| PlacementError::Storage)?;
         transaction
@@ -225,6 +227,41 @@ impl PlacementJournal {
             != (boundary.environment.clone(), boundary.cluster.clone(), boundary.member.clone())
         {
             return Err(PlacementError::IdentityMismatch);
+        }
+        {
+            let mut scopes = boundary.databases.write().map_err(|_| PlacementError::Storage)?;
+            let mut statement = transaction
+                .prepare("SELECT tenant,project,database,region FROM declared")
+                .map_err(|_| PlacementError::Storage)?;
+            let mut rows = statement.query([]).map_err(|_| PlacementError::Storage)?;
+            while let Some(row) = rows.next().map_err(|_| PlacementError::Storage)? {
+                let tenant: String = row.get(0).map_err(|_| PlacementError::Storage)?;
+                let project: String = row.get(1).map_err(|_| PlacementError::Storage)?;
+                let database: String = row.get(2).map_err(|_| PlacementError::Storage)?;
+                let region: String = row.get(3).map_err(|_| PlacementError::Storage)?;
+                let scope = DatabaseRouteScope::try_new(&tenant, &project, &database)
+                    .map_err(|_| PlacementError::Storage)?;
+                RegionCatalog::production().parse(&region).map_err(|_| PlacementError::Storage)?;
+                if scopes.get(&scope).is_some_and(|existing| existing != &region)
+                    || scopes.len() > 1024
+                {
+                    return Err(PlacementError::Storage);
+                }
+                scopes.insert(scope, region);
+            }
+            for (scope, region) in scopes.iter() {
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO declared VALUES (?1,?2,?3,?4)",
+                        params![
+                            scope.tenant().to_text(),
+                            scope.project().to_text(),
+                            scope.database().to_text(),
+                            region
+                        ],
+                    )
+                    .map_err(|_| PlacementError::Storage)?;
+            }
         }
         transaction.commit().map_err(|_| PlacementError::Storage)?;
         std::fs::File::open(path.parent().ok_or(PlacementError::Storage)?)
@@ -741,3 +778,59 @@ impl terrabase_cluster::wal_route::DurableWalAssignmentSource for PlacementJourn
 
 #[cfg(test)]
 mod transition_tests;
+
+impl PlacementJournal {
+    /// Registers a durably installed CLOSED database scope for future proposals.
+    /// The authenticated admission receiver calls this only after persisting the
+    /// immutable provisioning tuple and installing its encrypted Member entry.
+    /// This does not grant membership, a writer role, or public access.
+    ///
+    /// # Errors
+    /// Rejects changed identity/Region, bounds, and failed durable registration.
+    pub fn register_database(
+        &self,
+        scope: DatabaseRouteScope,
+        region: &str,
+    ) -> Result<(), PlacementError> {
+        RegionCatalog::production().parse(region).map_err(|_| PlacementError::Invalid)?;
+        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let mut scopes = self.boundary.databases.write().map_err(|_| PlacementError::Storage)?;
+        if let Some(existing) = scopes.get(&scope) {
+            return if existing == region { Ok(()) } else { Err(PlacementError::Conflict) };
+        }
+        if scopes.len() >= 1024
+            || scopes.keys().any(|existing| existing.database() == scope.database())
+        {
+            return Err(PlacementError::Conflict);
+        }
+        connection
+            .execute(
+                "INSERT INTO declared VALUES (?1,?2,?3,?4)",
+                params![
+                    scope.tenant().to_text(),
+                    scope.project().to_text(),
+                    scope.database().to_text(),
+                    region
+                ],
+            )
+            .map_err(|_| PlacementError::Storage)?;
+        scopes.insert(scope, region.to_owned());
+        Ok(())
+    }
+}
+
+impl PlacementJournal {
+    /// Loads the verified accepted proposal, independently of newer pending intent.
+    ///
+    /// # Errors
+    /// Refuses absent or invalid accepted authority and unavailable durable storage.
+    pub fn accepted_proposal(&self) -> Result<pb::PlacementProposalResponse, PlacementError> {
+        let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
+        let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
+        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let chain = self.verified_chain(&connection, trust)?;
+        let (_, revision, _) = chain.last().ok_or(PlacementError::NotFound)?;
+        let bytes: Vec<u8> = connection.query_row("SELECT proposal FROM proposals WHERE revision=?1", [i64::try_from(*revision).map_err(|_| PlacementError::Storage)?], |row| row.get(0)).map_err(|_| PlacementError::Storage)?;
+        self.response(*revision, &bytes)
+    }
+}

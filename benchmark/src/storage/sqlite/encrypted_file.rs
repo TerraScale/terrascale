@@ -631,6 +631,10 @@ fn generations(path: &Path) -> io::Result<Vec<PathBuf>> {
 /// Remove authority durably before retiring any generation it could select.
 /// The caller owns SQLite's deletion locks and excludes local file handles.
 pub(crate) fn delete(path: &Path) -> io::Result<()> {
+    // Physical replication handles use this lock without SQLite's native
+    // locks. Exclude them across processes before removing durable authority.
+    let lock = secure_options().create(true).truncate(false).open(suffix(path, ".tbe.lock"))?;
+    lock.try_lock().map_err(io::Error::other)?;
     let backing = companion(path);
     remove_if_present(&backing)?;
     File::open(backing.parent().ok_or_else(invalid)?)?.sync_all()?;

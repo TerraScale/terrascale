@@ -39,6 +39,8 @@ pub use ownership::{DatabaseOwner, EnvironmentName, OwnershipError};
 pub(crate) use ownership::{OwnershipMode, load_or_create};
 pub use sqlite::database_file;
 pub(crate) use sqlite::import_backup_file;
+pub(crate) use sqlite::branch_import::{copy_encrypted_snapshot, rebind_owner};
+pub(crate) use sqlite::branch_provenance::transform_provenance;
 pub(crate) use sqlite::{SqliteStorage, decode_document_body};
 
 /// A retained journal page could not be served.
@@ -648,6 +650,8 @@ pub(crate) trait StoragePort: Send {
     ) -> Result<Option<crate::usage::UsagePlacement>, ()> {
         Ok(None)
     }
+
+    fn local_replication_origin(&self) -> &str;
 
     fn replication_repair_frontier(&self, tenant: &TenantId, cut: u64) -> Result<std::collections::BTreeMap<String, u64>, ()>;
     fn replication_range_summary(&self, tenant: &TenantId, origin: &str, cut: u64, first: u64, last: u64) -> Result<terrabase_replication_core::anti_entropy::RangeFingerprint, ()>;

@@ -292,23 +292,41 @@ fn execute_action(transaction: &Transaction<'_>, action: &Action) -> Result<Outc
         return Ok(invalid("invalid model"));
     }
     match action {
-        Action::Find { expected, offset, limit, .. } => {
+        Action::Find { predicates, offset, limit, .. } => {
             if *limit > 1000 || *offset > 1000 {
                 return Ok(invalid("query page exceeds bound"));
             }
-            let all = records(transaction, model)?;
-            if all.len() > 1000 {
-                return Ok(invalid("auth model query exceeds 1000 record bound"));
+            if predicates.len() > 64 {
+                return Ok(invalid("query predicate bound exceeded"));
             }
-            Ok(Outcome::Records {
-                records: all
-                    .into_iter()
-                    .map(|(_, record)| record)
-                    .filter(|record| matches(record, expected))
-                    .skip(*offset as usize)
-                    .take(*limit as usize)
-                    .collect(),
-            })
+            let mut statement = transaction
+                .prepare("SELECT body FROM auth_records WHERE model=?1 ORDER BY id")
+                .map_err(storage)?;
+            let rows =
+                statement.query_map([model], |row| row.get::<_, Vec<u8>>(0)).map_err(storage)?;
+            let mut matched = 0u32;
+            let mut result = Vec::new();
+            let mut bytes = 0usize;
+            for row in rows {
+                let body = row.map_err(storage)?;
+                let record: Record = decode(&body)?;
+                if !crate::query::matches(&record, predicates) {
+                    continue;
+                }
+                if matched < *offset {
+                    matched += 1;
+                    continue;
+                }
+                if result.len() >= *limit as usize {
+                    break;
+                }
+                bytes = bytes.saturating_add(body.len());
+                if bytes > 1024 * 1024 {
+                    return Ok(invalid("query response exceeds 1 MiB"));
+                }
+                result.push(record);
+            }
+            Ok(Outcome::Records { records: result })
         }
         Action::CreateUniqueIndex { fields, .. } => {
             if fields.is_empty()

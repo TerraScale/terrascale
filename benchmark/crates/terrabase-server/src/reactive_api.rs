@@ -880,7 +880,7 @@ impl ViewStore {
 fn ensure_materializer_access(materializer: &Materializer) -> Result<(), ApiError> {
     let engine = materializer.host.engine();
     let scope = engine.scope_for(&materializer.tenant);
-    if engine.storage_usage_stopped_at(&scope).map_err(|_| ApiError::storage_failure())?.is_some() {
+    if engine.lifecycle_state(&scope).map_err(|_| ApiError::storage_failure())?.access_revoked() {
         return Err(ApiError::forbidden("access to a deleted database"));
     }
     Ok(())
@@ -1016,6 +1016,7 @@ pub async fn attach_view(
             return error.into_response();
         }
     };
+    observe_authorized_activity(&state, &request.database_id);
     let Ok(mut body) = serde_json::to_vec(&response) else {
         return frame_error().into_response();
     };
@@ -1048,6 +1049,7 @@ pub async fn snapshot(
     {
         return error.into_response();
     }
+    observe_authorized_view(&state, &view);
     match store().read_snapshot(&view, generation, query.cut.unwrap_or(0)) {
         Ok(frozen) => {
             immutable_response(&frozen, &format!("\"{view}-snapshot-{}\"", query.cut.unwrap_or(0)))
@@ -1073,6 +1075,7 @@ pub async fn view_log(
     {
         return error.into_response();
     }
+    observe_authorized_view(&state, &view);
     match store().poll_log(&view, generation, offset).await {
         Ok(ReadResult::Data { revision, frozen }) => {
             immutable_response(&frozen, &format!("\"{view}-{generation}-{revision}\""))
@@ -1167,6 +1170,7 @@ pub async fn view_websocket(
         return ApiError::abuse_guard(&error).into_response();
     }
     let permit = WsPermit { guards: Arc::clone(&state.guards), database: database.clone() };
+    observe_authorized_activity(&state, &database);
     upgrade
         .max_message_size(terrabase_sync_core::wire::MAX_MESSAGE_BYTES)
         .protocols(["terrascale.sync.v1"])
@@ -1179,6 +1183,19 @@ pub async fn view_websocket(
                 permit,
             )
         })
+}
+
+fn observe_authorized_activity(state: &ApiState, database: &str) {
+    if let Some(registry) = &state.admitted_databases
+        && let Ok(Some(admitted)) = registry.resolve(database)
+        && let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        && let Ok(millis) = u64::try_from(now.as_millis())
+    { admitted.activity.observe(millis); }
+}
+fn observe_authorized_view(state: &ApiState, view: &str) {
+    if let Ok(views) = store().views.lock() && let Some(view) = views.get(view) {
+        observe_authorized_activity(state, &view.database);
+    }
 }
 
 pub(crate) fn websocket_target(path: &str) -> Option<(&str, u64)> {

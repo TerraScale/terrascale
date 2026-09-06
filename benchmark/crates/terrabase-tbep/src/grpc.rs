@@ -524,6 +524,21 @@ impl TbepGrpcServer {
         Ok(identity)
     }
 
+    fn observation_identity<T>(&self, request: &Request<T>) -> Result<Identity, Status> {
+        let identity = Identity::of(request)?;
+        if !self.catchup_principals.contains(&identity.principal) {
+            return self.identity(request);
+        }
+        let certificates = request
+            .peer_certs()
+            .ok_or_else(|| Status::unauthenticated("observation requires mTLS"))?;
+        let leaf = certificates
+            .first()
+            .ok_or_else(|| Status::unauthenticated("observation requires mTLS"))?;
+        authenticate_gateway_certificate(&identity.principal, leaf.as_ref())?;
+        Ok(identity)
+    }
+
     fn authenticate_gateway<T>(&self, request: &Request<T>, principal: &str) -> Result<(), Status> {
         if !self.config.gateway_principals.contains(principal) {
             return Err(tbep_status(
@@ -2289,7 +2304,7 @@ impl MaintenanceService for Arc<TbepGrpcServer> {
         request: Request<pb::MaintenanceServiceCatchUpStatusRequest>,
     ) -> Result<Response<pb::MaintenanceServiceCatchUpStatusResponse>, Status> {
         self.counted();
-        let identity = self.identity(&request)?;
+        let identity = self.observation_identity(&request)?;
         let Some(source) = &self.catchup else {
             return Ok(Response::new(pb::MaintenanceServiceCatchUpStatusResponse::default()));
         };
@@ -2306,7 +2321,7 @@ impl MaintenanceService for Arc<TbepGrpcServer> {
         request: Request<pb::MaintenanceServiceTopologyReadRequest>,
     ) -> Result<Response<pb::MaintenanceServiceTopologyReadResponse>, Status> {
         self.counted();
-        let identity = self.identity(&request)?;
+        let identity = self.observation_identity(&request)?;
         let host = Arc::clone(&self.host);
         let tenant = identity.tenant;
         let response =
@@ -2325,7 +2340,7 @@ impl MaintenanceService for Arc<TbepGrpcServer> {
         request: Request<pb::MaintenanceServiceAdminStatusRequest>,
     ) -> Result<Response<pb::MaintenanceServiceAdminStatusResponse>, Status> {
         self.counted();
-        let identity = self.identity(&request)?;
+        let identity = self.observation_identity(&request)?;
         let _ = identity;
         let host = Arc::clone(&self.host);
         let served = self.frames_served();
@@ -2345,7 +2360,7 @@ impl MaintenanceService for Arc<TbepGrpcServer> {
         request: Request<pb::MaintenanceServiceSupervisionHealthRequest>,
     ) -> Result<Response<pb::MaintenanceServiceSupervisionHealthResponse>, Status> {
         self.counted();
-        let identity = self.identity(&request)?;
+        let identity = self.observation_identity(&request)?;
         let _ = identity;
         let host = Arc::clone(&self.host);
         let served = self.frames_served();

@@ -540,8 +540,8 @@ impl ArtifactCipher {
     /// Creates a production cipher from a provider-issued, unexpired lease.
     ///
     /// Raw [`DatabaseKey`] values are never accepted for production. The
-    /// Orchestrator adapter must issue the lease through
-    /// [`KeyWrappingProvider::unwrap_database_key`].
+    /// Orchestrator adapter issues the lease through authenticated delivery
+    /// after resolving the exact regional wrapper and provider authorization.
     ///
     /// # Errors
     ///
@@ -736,6 +736,42 @@ impl ArtifactCipher {
         envelope.extend_from_slice(&aad);
         envelope.extend_from_slice(&ciphertext);
         Ok(envelope)
+    }
+
+    /// Reads an untrusted version selector only after checking the expected
+    /// owner, purpose, artifact kind and format. This does not authenticate the
+    /// envelope; callers must use the selected authorized lease to open it.
+    ///
+    /// # Errors
+    /// Returns an error for malformed or mismatched metadata.
+    pub fn envelope_key_version(
+        scope: &KeyScope,
+        artifact_kind: ArtifactKind,
+        expected_format_major: u16,
+        envelope: &[u8],
+    ) -> Result<DatabaseKeyVersion, EncryptionError> {
+        let (_, aad, _) = parse_envelope(envelope)?;
+        let parsed = parse_aad(aad)?;
+        if scope.purpose() != artifact_kind.key_purpose()
+            || parsed.environment != scope.environment().as_bytes()
+            || parsed.tenant != scope.tenant().to_text().as_bytes()
+            || parsed.project
+                != scope
+                    .project()
+                    .map(crate::identity::ProjectUlid::to_text)
+                    .as_deref()
+                    .map(str::as_bytes)
+            || parsed.database != scope.database().to_text().as_bytes()
+            || parsed.artifact_kind != artifact_kind.as_str().as_bytes()
+            || parsed.format_major != expected_format_major
+            || parsed.compression != Compression::None as u8
+        {
+            return Err(EncryptionError::InvalidKeyMetadata);
+        }
+        std::str::from_utf8(parsed.key_version)
+            .ok()
+            .and_then(|text| DatabaseKeyVersion::from_text(text).ok())
+            .ok_or(EncryptionError::MalformedEnvelope)
     }
 
     /// Authenticates a persisted artifact using a newly authorized lease.

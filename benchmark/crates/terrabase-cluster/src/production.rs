@@ -115,6 +115,12 @@ pub struct DatabaseRoutingCatalog {
 }
 
 impl DatabaseRoutingCatalog {
+    /// Creates an empty catalog for a pending self-service Member.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self { routes: BTreeMap::new() }
+    }
+
     /// Creates a routing catalog from typed scopes.
     ///
     /// Each database ULID becomes the opaque root-Member catalog key. The
@@ -502,7 +508,7 @@ pub struct ProductionMemberRuntime {
     // Revoke retained replication handles before dropping storage or transport.
     wal_bindings: Mutex<WalBindings>,
     placement: ProductionPlacement,
-    routes: DatabaseRoutingCatalog,
+    routes: Mutex<DatabaseRoutingCatalog>,
     member: Member,
     transport: ProductionQuicEndpoint,
     membership_admission: Mutex<MembershipAdmission>,
@@ -529,6 +535,40 @@ impl Drop for WalBindings {
 }
 
 impl ProductionMemberRuntime {
+    /// Registers a newly accepted database already present in the root Member.
+    /// The caller establishes its immutable owner and accepted role before this
+    /// step; registration itself grants neither writer authority nor readiness.
+    ///
+    /// # Errors
+    /// Refuses unadmitted or draining membership, foreign database keys,
+    /// duplicate ownership, and the catalog ceiling.
+    pub fn register_route(
+        &self,
+        scope: DatabaseRouteScope,
+        database: DatabaseId,
+    ) -> Result<(), ProductionMemberError> {
+        let admission = lock_unpoisoned(&self.membership_admission);
+        if *admission != MembershipAdmission::Admitted || self.draining.load(Ordering::Acquire) {
+            return Err(ProductionMemberError::MembershipMismatch);
+        }
+        if scope.catalog_database_id()? != database
+            || !self.member.database_ids().any(|id| id == database)
+        {
+            return Err(ProductionMemberError::CatalogMismatch);
+        }
+        let mut routes = lock_unpoisoned(&self.routes);
+        if routes.resolve(&scope) == Some(&database) {
+            return Ok(());
+        }
+        if routes.len() >= terrabase::member::MAX_DATABASES
+            || routes.routes.values().any(|existing| existing == &database)
+        {
+            return Err(ProductionMemberError::InvalidRoutingCatalog);
+        }
+        routes.routes.insert(scope, database);
+        Ok(())
+    }
+
     /// Assembles one process after storage and QUIC have opened.
     ///
     /// The constructor proves exact agreement between the root database
@@ -575,7 +615,7 @@ impl ProductionMemberRuntime {
 
         Ok(Self {
             placement,
-            routes,
+            routes: Mutex::new(routes),
             member,
             transport,
             membership_admission: Mutex::new(MembershipAdmission::Pending),
@@ -626,7 +666,7 @@ impl ProductionMemberRuntime {
         let admission = lock_unpoisoned(&self.membership_admission);
         if *admission != MembershipAdmission::Admitted
             || self.draining.load(Ordering::Acquire)
-            || self.routes.resolve(&scope).is_none()
+            || lock_unpoisoned(&self.routes).resolve(&scope).is_none()
         {
             return Err(WalRouteError::Unauthorized);
         }
@@ -752,7 +792,7 @@ impl ProductionMemberRuntime {
             blockers,
             placement_generation: self.placement.generation,
             replica_set_epoch: self.placement.epoch,
-            databases: self.routes.len(),
+            databases: lock_unpoisoned(&self.routes).len(),
             transport,
             data_plane,
         }
@@ -774,9 +814,11 @@ impl ProductionMemberRuntime {
         if !facts.ready {
             return Err(ProductionAdmissionError::NotReady(facts.blockers));
         }
-        let database =
-            self.routes.resolve(scope).ok_or(ProductionAdmissionError::UnknownDatabaseScope)?;
-        let lease = self.member.acquire(database).map_err(ProductionAdmissionError::Storage)?;
+        let database = lock_unpoisoned(&self.routes)
+            .resolve(scope)
+            .cloned()
+            .ok_or(ProductionAdmissionError::UnknownDatabaseScope)?;
+        let lease = self.member.acquire(&database).map_err(ProductionAdmissionError::Storage)?;
         drop(admission);
         Ok(ProductionDatabaseLease { scope: *scope, lease })
     }
@@ -805,9 +847,11 @@ impl ProductionMemberRuntime {
                 ProductionReadinessBlocker::Draining,
             ]));
         }
-        let database = self.routes.resolve(scope)
+        let database = lock_unpoisoned(&self.routes)
+            .resolve(scope)
+            .cloned()
             .ok_or(ProductionAdmissionError::UnknownDatabaseScope)?;
-        let lease = self.member.acquire(database).map_err(ProductionAdmissionError::Storage)?;
+        let lease = self.member.acquire(&database).map_err(ProductionAdmissionError::Storage)?;
         drop(admission);
         Ok(ProductionDatabaseLease { scope: *scope, lease })
     }
@@ -831,6 +875,44 @@ impl ProductionMemberRuntime {
         let storage = self.member.close(timeout);
         ProductionMemberDrainReport { transport, data_plane, storage }
     }
+
+    /// Retires this immutable placement epoch while preserving the shared Member
+    /// for a separately authenticated successor runtime. All external data-plane
+    /// tasks must first relinquish their runtime handles and database leases.
+    /// The returned catalog grants no successor membership or writer authority.
+    pub async fn retire_epoch(self) -> ProductionEpochRetirement {
+        {
+            let mut admission = lock_unpoisoned(&self.membership_admission);
+            *admission = MembershipAdmission::Fenced;
+            self.draining.store(true, Ordering::Release);
+            lock_unpoisoned(&self.wal_bindings).fence();
+        }
+        let data_plane = lock_unpoisoned(&self.data_plane).take();
+        if let Some(plane) = &data_plane {
+            plane.begin_drain();
+        }
+        let timeout = self.transport.config().limits().drain_timeout();
+        let transport = self.transport.drain().await;
+        let data_plane = data_plane.map_or(Ok(()), |plane| plane.drain(timeout));
+        ProductionEpochRetirement {
+            member: self.member,
+            routes: lock_unpoisoned(&self.routes).clone(),
+            transport,
+            data_plane,
+        }
+    }
+}
+
+/// Retired transport outcome and storage retained for an accepted successor.
+pub struct ProductionEpochRetirement {
+    /// Shared root storage; no successor role is implied.
+    pub member: Member,
+    /// Immutable owner routes to seed the replacement runtime.
+    pub routes: DatabaseRoutingCatalog,
+    /// Old authenticated endpoint shutdown outcome.
+    pub transport: TransportDrainReport,
+    /// Old data-plane drain result, which must succeed before replacement.
+    pub data_plane: Result<(), ProductionDataPlaneError>,
 }
 
 /// One admitted database operation. It exposes the engine, never its durable
@@ -912,8 +994,8 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid, Ulid};
     use terrabase::RegionCode;
+    use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid, Ulid};
 
     use super::{
         DatabaseRouteScope, DatabaseRoutingCatalog, ProductionMemberError, ProductionPlacement,

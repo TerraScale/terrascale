@@ -656,6 +656,9 @@ pub struct FollowerAck {
 }
 
 impl WalFollower {
+    pub(crate) fn location(&self) -> &Path {
+        &self.location
+    }
     /// Captures only progress that has completed the follower's sync operation.
     #[must_use]
     pub fn checkpoint(&self) -> WalCheckpoint {

@@ -468,6 +468,25 @@ mod tests {
         let envelope = cipher.seal(b"restart-safe encrypted artifact").unwrap();
         drop(cipher);
         drop(original);
+        assert_eq!(
+            ArtifactCipher::envelope_key_version(
+                metadata.scope(),
+                ArtifactKind::Database,
+                1,
+                &envelope
+            )
+            .unwrap(),
+            metadata.version()
+        );
+        assert!(
+            ArtifactCipher::envelope_key_version(
+                metadata.scope(),
+                ArtifactKind::Backup,
+                1,
+                &envelope
+            )
+            .is_err()
+        );
         let restored = make_lease();
         assert_eq!(
             ArtifactCipher::open_envelope_from_database_key_lease(

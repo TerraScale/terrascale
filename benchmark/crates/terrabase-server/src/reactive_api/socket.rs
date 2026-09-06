@@ -100,7 +100,7 @@ impl Session {
         crate::api::document_host(&self.state, &self.database)
             .map_err(|_| ErrorCode::PermissionDenied)?;
 
-        match &self.authorization {
+        let result = match &self.authorization {
             Authorization::Bearer { principal, credential } => {
                 let admitted = self
                     .state
@@ -125,7 +125,9 @@ impl Session {
                 )
                 .map_err(|_| ErrorCode::AuthenticationExpired)
             }
-        }
+        };
+        if result.is_ok() { super::observe_authorized_activity(&self.state, &self.database); }
+        result
     }
 
     fn attach(

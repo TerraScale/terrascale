@@ -178,7 +178,7 @@ impl ProductionCatalogBootstrap {
     pub fn open(config: &ProductionConfig) -> Result<Self, ProductionCatalogError> {
         let enabled =
             config.databases.iter().filter(|database| database.enabled).collect::<Vec<_>>();
-        if enabled.is_empty() {
+        if enabled.is_empty() && config.member_admission.is_none() {
             return Err(ProductionCatalogError::EmptyCatalog);
         }
 
@@ -186,10 +186,22 @@ impl ProductionCatalogBootstrap {
             .iter()
             .map(|database| normalize_location(&database.location))
             .collect::<Result<Vec<_>, _>>()?;
-        let root = derive_root(&locations)?;
+        let root = if let Some(admission) = &config.member_admission {
+            normalize_location(&admission.data_root)?
+        } else {
+            derive_root(&locations)?
+        };
         ensure_root(&root)?;
 
-        let limits = derive_limits(&enabled)?;
+        let limits = if enabled.is_empty() {
+            let bound = config.transport.max_inflight;
+            if bound == 0 || bound > MAX_ADMISSION_PERMITS {
+                return Err(ProductionCatalogError::InvalidQuota);
+            }
+            AdmissionLimits::new(bound, bound)
+        } else {
+            derive_limits(&enabled)?
+        };
         let mut specs = Vec::with_capacity(enabled.len());
         let mut route_scopes = Vec::with_capacity(enabled.len());
         for (database, location) in enabled.iter().zip(&locations) {
@@ -674,9 +686,14 @@ mod tests {
         let database = DatabaseUlid::generate();
         let scope = DatabaseScope::new("production", tenant, project, database, RegionCode::GRU)
             .expect("scope");
-        let spec = DatabaseSpec::scoped(scope, "db");
-        let member = Member::open_production(&root, [spec.clone()], AdmissionLimits::new(2, 2))
-            .expect("member");
+        let spec = DatabaseSpec::scoped(scope.clone(), "db");
+        let member = Member::open_production(
+            &root,
+            [spec.clone()],
+            AdmissionLimits::new(2, 2),
+            crate::test_keys::storage_keys(&scope),
+        )
+        .expect("member");
         let routes =
             DatabaseRoutingCatalog::try_new([DatabaseRouteScope::new(tenant, project, database)])
                 .expect("routes");
@@ -701,7 +718,8 @@ mod tests {
     }
 
     fn reopen(root: &Path, spec: DatabaseSpec) {
-        let member = Member::open_production(root, [spec], AdmissionLimits::new(2, 2))
+        let keys = crate::test_keys::storage_keys(spec.scope().unwrap());
+        let member = Member::open_production(root, [spec], AdmissionLimits::new(2, 2), keys)
             .expect("reopen after cleanup");
         member.close(Duration::from_secs(1)).expect("close reopened member");
     }

@@ -2931,7 +2931,7 @@ fn replicated_publication_missing_dependency_binds_nothing_and_retries() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-fn test_storage_keys(
+pub(crate) fn test_storage_keys(
     owner: &crate::storage::DatabaseOwner,
     byte: u8,
 ) -> Arc<dyn crate::encryption::DatabaseKeySource> {

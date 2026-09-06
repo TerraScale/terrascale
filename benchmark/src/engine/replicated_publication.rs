@@ -103,14 +103,25 @@ impl Engine {
                         &record.id,
                     );
                     let schema = storage.port.merge_schema(&record.collection);
-                    plan_record(record, current.as_ref(), context.as_deref(), schema.as_ref())
+                    let plan =
+                        plan_record(record, current.as_ref(), context.as_deref(), schema.as_ref())?;
+                    Ok((plan, schema.map(|schema| schema.to_canonical_string())))
                 })
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, EngineError>>()?;
             (snapshot, plans)
         };
         self.witness_replication_clock(publication.hlc);
         let snapshot_sequence = snapshot.sequence();
-        let mut transaction = self.begin(scope, snapshot, operation.clone())?;
+        let mut transaction = self.begin(scope, snapshot, operation.clone()).map_err(|error| {
+            // A tailer and repair lane can race the same still-unbound group.
+            // Retry after the reservation completes; durable fingerprints
+            // above decide actual identity reuse on the next attempt.
+            if matches!(error, EngineError::OperationIdReuse { .. }) {
+                EngineError::Conflict
+            } else {
+                error
+            }
+        })?;
         let mut group = storage::ReplicationPublicationIntent {
             origin: publication.origin.clone(),
             origin_sequence: publication.origin_sequence,
@@ -120,9 +131,11 @@ impl Engine {
             records: publication.records.clone(),
             private_payload: publication.private_payload.clone(),
             observations: Vec::new(),
+            schema_observations: Vec::new(),
             conflicts: Vec::new(),
         };
-        for (record, (winner, conflict)) in publication.records.iter().zip(plans) {
+        for (record, ((winner, conflict), schema)) in publication.records.iter().zip(plans) {
+            group.schema_observations.push((record.collection.clone(), schema));
             group.observations.push((record.collection.clone(), record.id.clone()));
             if let Some(winner) = winner {
                 transaction.stage_replicated(&winner)?;

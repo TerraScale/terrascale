@@ -44,54 +44,14 @@
 //! target is refused with [`BackupError::TargetNotEmpty`] before anything
 //! is touched, including a target that already holds a completed restore.
 //!
-//! Verification is a clean-restore check, not a trust-me copy: after the
-//! replay commits, the staging location is reopened through the durable
-//! storage open path (format verification and WAL recovery — the same path
-//! `Engine::open` runs), every restored tenant's live key set and count is
-//! read back and compared against the replay's independently derived
-//! expectation, and the representative value the chain leaves live for each
-//! tenant is compared byte-exactly. Verification never fails on a legitimate
-//! archive: the value sample is one of the tenant's final live keys, and the
-//! key-set read-back pages the full canonical key — the bounded window while
-//! the tenant's identifiers are unique, and the collection-scoped exact-key
-//! read from the expectation when one identifier repeats across a page's
-//! worth of collections and the identifier-only cursor cannot walk the
-//! tenant. Only after that does the rename publish the target.
-//!
-//! # Memory bound (inheriting BK-01's disclosure)
-//!
-//! The backup side's documented bound (BK-01 repair F3) applies unchanged
-//! to the archive being restored: a full or snapshot recovery point was
-//! produced by materializing the largest selected tenant's complete live
-//! document set in memory, and no bound caps that byte weight. This module
-//! does not repeat the materialization — restore streams members and
-//! re-publishes in bounded batches, so its own peak memory is the restored
-//! **live key set** (`(tenant, collection, identifier)` triples, no
-//! document values) plus one bounded member read window, one open batch
-//! per replayed tenant, and one retained representative document per
-//! tenant. The receipt sizes the inherited bound explicitly from the run
-//! itself: it records the largest tenant's archive byte weight re-derived
-//! from the decoded frames, so an inspector can recount it from the
-//! archive members.
-//!
-//! # Limits
-//!
-//! Document versions and storage sequences are re-minted by the target's
-//! own publication order; values, keys, counts, per-tenant scopes, and
-//! durability disclosures are the reproduced facts. Verification proves
-//! counts, key sets, and the live representative value of each tenant
-//! through a fresh durable reopen — it is not a whole-value digest, and a
-//! tenant whose newest decoded document the chain deletes retains no
-//! representative value for that run (the count discloses it), while the
-//! key-set read-back still covers every key the replay expects. The replay
-//! writes through the
-//! storage publication seam, so the Platform's schema-enforcement read on
-//! client writes does not run during restore: the archive's records were
-//! publishable when the source published them, and restore re-publishes
-//! them under the same structural limits the codec enforces. Formal
-//! Recovery Receipts for drills beyond these focused runs belong to the
-//! exclusive recovery lane, which BK-02 owns for this wave; the tracked
-//! receipts live under `docs/evidence/recovery/`.
+//! Verification reopens durable storage and compares every restored key and
+//! canonical document value against a per-key digest independently derived
+//! from archive replay. Reads use bounded pages with a full collection/id
+//! cursor. The receipt reports a domain-separated logical checksum over
+//! tenant, collection, identifier and canonical value, excluding re-minted
+//! document versions and storage sequences. Replay retains keys and fixed-size
+//! digests, plus bounded write batches and one representative value per tenant.
+//! Schema enforcement does not run during internal restore publication.
 
 mod decode;
 
@@ -220,25 +180,67 @@ fn resolve_encrypted_points_chain(
             .find(|point| point.identity() == identity)
             .ok_or(BackupError::ChainIncomplete)?,
     };
+    indexed_chain(head, &index_chain_parents(points))
+}
+
+/// Empty incrementals add no source state and are never needed as parents.
+/// Prefer a full root at a boundary, otherwise one nonempty incremental. This
+/// makes each parent step strictly decrease sequence, except a no-op head's
+/// first step, and avoids repeated directory scans and no-op cycles.
+fn index_chain_parents(points: &[BackupManifest]) -> BTreeMap<u64, &BackupManifest> {
+    let mut parents: BTreeMap<u64, &BackupManifest> = BTreeMap::new();
+    for point in points {
+        let sequence = point.boundary_sequence().get();
+        if point.base_sequence().is_some_and(|base| base.get() == sequence) {
+            continue;
+        }
+        let rank = (point.base_sequence().is_some(), point.identity());
+        let replace = parents
+            .get(&sequence)
+            .is_none_or(|prior| rank < (prior.base_sequence().is_some(), prior.identity()));
+        if replace {
+            parents.insert(sequence, point);
+        }
+    }
+    parents
+}
+
+fn indexed_chain(
+    head: &BackupManifest,
+    parents: &BTreeMap<u64, &BackupManifest>,
+) -> Result<Vec<BackupManifest>, BackupError> {
+    let mut current = head;
     let mut chain = vec![head.clone()];
-    let mut visited = BTreeSet::from([head.identity().to_owned()]);
-    while let Some(base) = chain.last().and_then(BackupManifest::base_sequence) {
-        let link = points
-            .iter()
-            .filter(|point| {
-                point.boundary_sequence() == base && !visited.contains(point.identity())
-            })
-            .min_by(|left, right| {
-                (usize::from(left.base_sequence().is_some()), left.identity())
-                    .cmp(&(usize::from(right.base_sequence().is_some()), right.identity()))
-            })
-            .ok_or(BackupError::ChainIncomplete)?;
-        visited.insert(link.identity().to_owned());
-        chain.push(link.clone());
+    while let Some(base) = current.base_sequence() {
+        current = parents.get(&base.get()).copied().ok_or(BackupError::ChainIncomplete)?;
+        chain.push(current.clone());
     }
     chain.reverse();
     validate_chain_frontier(&chain)?;
     Ok(chain)
+}
+
+fn indexed_root<'a>(
+    head: &'a BackupManifest,
+    parents: &BTreeMap<u64, &'a BackupManifest>,
+    roots: &mut BTreeMap<&'a str, &'a BackupManifest>,
+) -> Result<&'a BackupManifest, BackupError> {
+    let mut current = head;
+    let mut path = Vec::new();
+    let root = loop {
+        if let Some(root) = roots.get(current.identity()) {
+            break *root;
+        }
+        path.push(current);
+        let Some(base) = current.base_sequence() else {
+            break current;
+        };
+        current = parents.get(&base.get()).copied().ok_or(BackupError::ChainIncomplete)?;
+    };
+    for point in path {
+        roots.insert(point.identity(), root);
+    }
+    Ok(root)
 }
 
 fn resolve_timestamp_chain(
@@ -247,31 +249,71 @@ fn resolve_timestamp_chain(
     requested: u64,
 ) -> Result<Vec<BackupManifest>, BackupError> {
     let points = discover_encrypted_points(destination, cipher)?;
-    let mut selected: Option<Vec<BackupManifest>> = None;
+    let parents = index_chain_parents(&points);
+    let mut roots = BTreeMap::new();
+    let mut selected = None;
+    let mut selected_rank = None;
     for point in points.iter().filter(|point| point.recoverable_through_unix_millis() >= requested)
     {
-        let chain = resolve_encrypted_points_chain(
-            &points,
-            &Selection::Point { identity: point.identity().to_owned() },
-        )?;
-        let root = chain.first().ok_or(BackupError::ChainIncomplete)?;
+        let root = indexed_root(point, &parents, &mut roots)?;
         if root.boundary_unix_millis() > requested {
             continue;
         }
-        // Prefer the newest usable root, then the newest covered head. Reading
-        // through equal-clock heads includes every available transaction in that ms.
-        let rank = (root.boundary_sequence().get(), point.boundary_sequence().get());
-        let replace = selected.as_ref().is_none_or(|prior| {
-            rank > (
-                prior[0].boundary_sequence().get(),
-                prior.last().expect("nonempty chain").boundary_sequence().get(),
-            )
-        });
-        if replace {
-            selected = Some(chain);
+        let rank = (
+            root.boundary_sequence().get(),
+            point.boundary_sequence().get(),
+            point.captured_unix_millis(),
+            point.identity(),
+        );
+        if selected_rank.is_none_or(|prior| rank > prior) {
+            selected = Some(point);
+            selected_rank = Some(rank);
         }
     }
-    selected.ok_or(BackupError::ChainIncomplete)
+    indexed_chain(selected.ok_or(BackupError::ChainIncomplete)?, &parents)
+}
+
+#[cfg(test)]
+#[test]
+fn indexed_timestamp_roots_handle_long_chains_and_noop_heads() {
+    use crate::backup::manifest::ManifestFacts;
+    let point = |sequence: u64, kind: BackupKind| {
+        BackupManifest::assemble(ManifestFacts {
+            database_id: "0123456789abcdef0123456789abcdef".to_owned(),
+            partition_id: "partition-000000".to_owned(),
+            kind,
+            boundary: StorageSequence::new(sequence),
+            boundary_unix_millis: sequence,
+            captured_unix_millis: sequence + 1,
+            retain_until_unix_millis: sequence + 1 + 86_400_000,
+            documents: 0,
+            family_records: 0,
+            deletes: 0,
+            disclosures: 0,
+            tenants: Vec::new(),
+            members: Vec::new(),
+        })
+    };
+    let mut points = vec![point(0, BackupKind::Full)];
+    for sequence in 1..=2048 {
+        points.push(point(
+            sequence,
+            BackupKind::Incremental { base: StorageSequence::new(sequence - 1) },
+        ));
+    }
+    points.push(point(2048, BackupKind::Incremental { base: StorageSequence::new(2048) }));
+    let parents = index_chain_parents(&points);
+    let mut roots = BTreeMap::new();
+    for head in points.iter().rev() {
+        assert_eq!(
+            indexed_root(head, &parents, &mut roots).unwrap().identity(),
+            points[0].identity()
+        );
+    }
+    assert_eq!(roots.len(), points.len());
+    let chain = indexed_chain(points.last().unwrap(), &parents).unwrap();
+    assert_eq!(chain.len(), 2050);
+    assert_eq!(chain.last().unwrap().boundary_sequence().get(), 2048);
 }
 
 pub(super) fn discover_encrypted_points(
@@ -732,7 +774,7 @@ impl RecoveryReceipt {
         self.documents_read_back
     }
 
-    /// Returns how many representative values compared byte-exactly.
+    /// Returns the BLAKE3 checksum of all restored logical keys and values.
     #[must_use]
     pub fn logical_checksum(&self) -> &str {
         &self.logical_checksum
@@ -833,7 +875,11 @@ impl RecoveryReceipt {
             self.tenants_verified, self.documents_read_back, self.representative_values_matched
         ));
         lines.push(format!(
-            "memory bound: restore streams members through a {}-byte window and replays in batches of at most {} writes; restore's peak memory is the restored live key set (tenant, collection, identifier triples). the backup side's uncapped bound (BK-01 repair F3) applies to the source archive: the largest tenant's archive byte weight in this run was {} bytes",
+            "logical checksum: {} (BLAKE3; every key and value verified)",
+            self.logical_checksum
+        ));
+        lines.push(format!(
+            "memory bound: restore streams members through a {}-byte window and replays in batches of at most {} writes; restore retains the restored live key set and one fixed-size content digest per key. the backup side's uncapped bound (BK-01 repair F3) applies to the source archive: the largest tenant's archive byte weight in this run was {} bytes",
             decode::READ_CHUNK_BYTES,
             MAX_BATCH_WRITES,
             self.largest_tenant_archive_bytes
@@ -871,6 +917,53 @@ fn kind_text(kind: BackupKind) -> &'static str {
 // ---------------------------------------------------------------------------
 
 impl RestorePlan {
+    /// Restores the latest encrypted chain into an explicitly owned, encrypted target.
+    ///
+    /// # Errors
+    /// Rejects missing target owner/keys, invalid archives, or unavailable storage.
+    pub fn restore_latest_encrypted_with_config(
+        destination: &Path,
+        target: &EngineConfig,
+        cipher: &dyn BackupReader,
+    ) -> Result<RecoveryReceipt, BackupError> {
+        let chain = resolve_encrypted_chain(destination, cipher, &Selection::Latest)?;
+        execute_configured_restore(destination, target, cipher, &chain, None)
+    }
+
+    /// Restores a named encrypted chain into an explicitly owned, encrypted target.
+    ///
+    /// # Errors
+    /// Rejects invalid identities, missing target owner/keys, or invalid archives.
+    pub fn restore_recovery_point_encrypted_with_config(
+        identity: &str,
+        destination: &Path,
+        target: &EngineConfig,
+        cipher: &dyn BackupReader,
+    ) -> Result<RecoveryReceipt, BackupError> {
+        crate::backup::manifest::validate_identity(identity)?;
+        let chain = resolve_encrypted_chain(
+            destination,
+            cipher,
+            &Selection::Point { identity: identity.to_owned() },
+        )?;
+        execute_configured_restore(destination, target, cipher, &chain, None)
+    }
+
+    /// Restores through an inclusive timestamp into an owned, encrypted target.
+    /// The caller must enforce placement before invoking this materialization seam.
+    ///
+    /// # Errors
+    /// Rejects uncovered timestamps, missing target owner/keys, or invalid archives.
+    pub fn restore_at_unix_millis_encrypted_with_config(
+        requested_unix_millis: u64,
+        destination: &Path,
+        target: &EngineConfig,
+        cipher: &dyn BackupReader,
+    ) -> Result<RecoveryReceipt, BackupError> {
+        let chain = resolve_timestamp_chain(destination, cipher, requested_unix_millis)?;
+        execute_configured_restore(destination, target, cipher, &chain, Some(requested_unix_millis))
+    }
+
     /// Restores the destination's newest recovery point, consuming the
     /// complete ordered chain behind it (PB-6016).
     ///
@@ -1141,6 +1234,63 @@ fn execute_restore_encrypted(
         .and_then(|run| publish(&staging, target).map(|()| run));
     match outcome {
         Ok(run) => Ok(receipt(&chain, run)),
+        Err(error) => {
+            staging.discard();
+            Err(error)
+        }
+    }
+}
+
+fn execute_configured_restore(
+    destination: &Path,
+    target: &EngineConfig,
+    cipher: &dyn BackupReader,
+    chain: &[BackupManifest],
+    cutoff: Option<u64>,
+) -> Result<RecoveryReceipt, BackupError> {
+    if !target.has_encrypted_owner() {
+        return Err(BackupError::DestinationUnavailable);
+    }
+    let path = target.location();
+    admit_target(path)?;
+    // Config construction creates an empty directory. Remove only that admitted
+    // empty placeholder so failed restores leave no target and NOREPLACE works.
+    if path.exists() {
+        std::fs::remove_dir(path).map_err(|_| BackupError::TargetNotEmpty)?;
+    }
+    let staging = StagingDir::create(path)?;
+    let config = target.clone().at_location(staging.path());
+    let outcome = (|| {
+        let engine =
+            Engine::open(config.clone()).map_err(|_| BackupError::DestinationUnavailable)?;
+        // Archives describe one database. Never combine foreign tenant scopes
+        // into a target or inherit source ownership/authentication metadata.
+        if chain.iter().any(|link| {
+            link.tenants().iter().any(|tenant| {
+                tenant.tenant().as_str() != engine.database_owner().tenant().to_text().as_str()
+            })
+        }) {
+            return Err(BackupError::ManifestInvalid);
+        }
+        let mut replay = Replay::new();
+        replay.cutoff = cutoff;
+        replay.chain(&engine, destination, chain, Some(cipher))?;
+        drop(engine);
+        let reopened = Engine::open(config).map_err(|_| BackupError::DestinationUnavailable)?;
+        let guard = reopened.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
+        let verification = verify_storage(guard.port.as_ref(), &replay)?;
+        drop(guard);
+        drop(reopened);
+        let facts = replay.into_facts(verification);
+        publish(&staging, path)?;
+        Ok(facts)
+    })();
+    match outcome {
+        Ok(facts) => {
+            let mut result = receipt(chain, facts);
+            result.requested_unix_millis = cutoff;
+            Ok(result)
+        }
         Err(error) => {
             staging.discard();
             Err(error)
@@ -1602,9 +1752,13 @@ impl Replay {
                     // compares a value against a key the archive's own chain
                     // deleted.
                     Some(removed_key) => {
-                        self.content_hashes.remove(&(tenant.clone(), removed_key.0.clone(), removed_key.1.clone()));
+                        self.content_hashes.remove(&(
+                            tenant.clone(),
+                            removed_key.0.clone(),
+                            removed_key.1.clone(),
+                        ));
                         self.retire_sample(tenant, &removed_key);
-                    },
+                    }
                     None => self.missing_key_deletes += 1,
                 }
                 let staged_collection = match collection {
@@ -1688,6 +1842,7 @@ impl Replay {
             // It must never mint admitted-request usage without authenticated
             // serving-boundary facts.
             usage_admission: None,
+            internal_maintenance: true,
             expected_origin_epoch: None,
             expected_uniform_context: None,
             merge_conflict: None,
@@ -1807,6 +1962,13 @@ struct VerificationFacts {
 /// archive replay, retaining only one bounded document page at a time.
 fn verify_staging(staging: &Path, replay: &Replay) -> Result<VerificationFacts, BackupError> {
     let storage = SqliteStorage::open(staging).map_err(|_| BackupError::DestinationUnavailable)?;
+    verify_storage(&storage, replay)
+}
+
+fn verify_storage(
+    storage: &dyn StoragePort,
+    replay: &Replay,
+) -> Result<VerificationFacts, BackupError> {
     let (sequence, root) = storage.published_state();
     let mut documents_read_back = 0;
     let mut digest = crate::engine::logical_state_hasher();
@@ -1814,13 +1976,23 @@ fn verify_staging(staging: &Path, replay: &Replay) -> Result<VerificationFacts, 
         let mut after: Option<(CollectionName, DocumentId)> = None;
         let mut observed = 0;
         loop {
-            let page = storage.documents_at_from_key(
-                sequence, tenant,
-                after.as_ref().map(|(collection, id)| (collection, id)), READBACK_PAGE,
-            ).map_err(|_| BackupError::ChecksumMismatch)?;
-            if page.is_empty() { break; }
+            let page = storage
+                .documents_at_from_key(
+                    sequence,
+                    tenant,
+                    after.as_ref().map(|(collection, id)| (collection, id)),
+                    READBACK_PAGE,
+                )
+                .map_err(|_| BackupError::ChecksumMismatch)?;
+            if page.is_empty() {
+                break;
+            }
             for document in &page {
-                let key = (tenant.clone(), document.collection().as_str().to_owned(), document.id().as_str().to_owned());
+                let key = (
+                    tenant.clone(),
+                    document.collection().as_str().to_owned(),
+                    document.id().as_str().to_owned(),
+                );
                 let actual = crate::engine::logical_document_digest(tenant, document);
                 if replay.content_hashes.get(&key) != Some(&actual) {
                     return Err(BackupError::ChecksumMismatch);
@@ -1880,5 +2052,65 @@ fn receipt(chain: &[BackupManifest], run: RunFacts) -> RecoveryReceipt {
         logical_checksum: run.logical_checksum,
         largest_tenant_archive_bytes: run.largest_tenant_archive_bytes,
         chain: links,
+    }
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+    use crate::types::DocumentValue;
+
+    #[test]
+    fn readback_rejects_corruption_outside_representative_value() {
+        let path = std::env::temp_dir().join(format!(
+            "terrabase-readback-digest-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
+        let tenant = TenantId::try_new("digest-test").unwrap();
+        let collection = CollectionName::try_new("items").unwrap();
+        let mut replay = Replay::new();
+        let mut counts = LinkCounts::default();
+        for id in ["first", "sample"] {
+            let document = Document::new(
+                DocumentId::try_new(id).unwrap(),
+                collection.clone(),
+                DocumentValue::Integer(7),
+            );
+            replay
+                .apply(
+                    &engine,
+                    &Record::Document {
+                        tenant: tenant.clone(),
+                        sequence: 1,
+                        committed_unix_millis: 1,
+                        document,
+                        durability: LocalDurability::Synced,
+                    },
+                    1,
+                    &mut counts,
+                )
+                .unwrap();
+        }
+        replay.flush_all(&engine).unwrap();
+        drop(engine);
+        let checksum = verify_staging(&path, &replay).unwrap().logical_checksum;
+        assert_eq!(checksum.len(), 64);
+        // Change a document other than the retained sample through publication.
+        let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
+        let mut batch = OpenBatch::empty();
+        batch.writes.push(StagedWrite::Put {
+            document: Document::new(
+                DocumentId::try_new("first").unwrap(),
+                collection,
+                DocumentValue::Integer(8),
+            ),
+            expected: ExpectedVersion::Any,
+        });
+        replay.flush(&engine, &tenant, batch).unwrap();
+        drop(engine);
+        assert!(matches!(verify_staging(&path, &replay), Err(BackupError::ChecksumMismatch)));
+        std::fs::remove_dir_all(path).unwrap();
     }
 }

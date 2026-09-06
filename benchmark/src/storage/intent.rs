@@ -105,6 +105,7 @@ pub(crate) struct ReplicationPublicationIntent {
     pub(crate) records: Vec<crate::engine::ReplicatedRecord>,
     pub(crate) private_payload: Vec<u8>,
     pub(crate) observations: Vec<(CollectionName, DocumentId)>,
+    pub(crate) schema_observations: Vec<(CollectionName, Option<String>)>,
     pub(crate) conflicts: Vec<(CollectionName, DocumentId, super::MergeConflictEntry)>,
 }
 
@@ -129,6 +130,8 @@ pub(crate) struct CommitIntent {
     /// Trusted usage admission bound atomically to this origin mutation.
     /// Replication, repair, and internal writes carry `None` and never mint.
     pub(crate) usage_admission: Option<UsageAdmissionContext>,
+    /// Engine-internal TTL cleanup and restore replay are unbilled.
+    pub(crate) internal_maintenance: bool,
     /// Original source content, independent of the merged publication bytes.
     pub(crate) replication_fingerprint: Option<[u8; 32]>,
     pub(crate) replication_publication: Option<ReplicationPublicationIntent>,

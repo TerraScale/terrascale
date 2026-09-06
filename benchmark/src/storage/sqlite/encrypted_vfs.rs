@@ -1087,6 +1087,8 @@ mod tests {
         file.write_all_at(b"database secret", 0).unwrap();
         file.sync().unwrap();
         assert!(EncryptedFile::open(&path, keys(26), ArtifactKind::Database).is_err());
+        assert!(super::super::encrypted_file::delete(&path).is_err());
+        assert!(backing(&path).exists());
         drop(file);
         let wal = path.with_file_name("data.sqlite3-wal");
         std::fs::copy(backing(&path), backing(&wal)).unwrap();

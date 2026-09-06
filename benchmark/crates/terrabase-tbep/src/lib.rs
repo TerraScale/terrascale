@@ -26,9 +26,8 @@
 //! - [`replication`]: the cross-region journal tailer's in-process form
 //!   (D-35/D-36) — pull origin rows, apply them on a peer, idempotently;
 //!   the QUIC lanes drive the same apply path.
-//! - [`replication_lanes`]: the cross-region lanes (S-05, D-45) — the
-//!   tailer's pull/apply path driven over a fault-injectable
-//!   `MemberTransport`, one frame per pull with a credit window.
+//! - [`production_causal`]: scoped complete-publication QUIC frames with
+//!   bounded fragmentation, credit, dependency admission and RF2 receipts.
 //! - [`wal_follower`]: the intra-region WAL-frame follower (S-05, D-35)
 //!   — the writer's WAL tail, the follower's validated append with an
 //!   `fdatasync` ack, fold-and-adopt across the per-wave generations,
@@ -71,7 +70,6 @@ pub mod production_repair;
 pub mod reactive;
 pub mod registry;
 pub mod replication;
-pub mod replication_lanes;
 pub mod value;
 pub use terrabase_cluster::wal_follower;
 

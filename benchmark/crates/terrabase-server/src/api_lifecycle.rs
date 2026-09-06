@@ -7,6 +7,7 @@ pub(super) async fn deletion_status(
     State(state): State<Arc<ApiState>>,
     Path((name, operation)): Path<(String, String)>,
     Extension(principal): Extension<crate::api_keys::Principal>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
     if !principal.scope().admits_database(Verbs::ADMIN, &name) {
         return ApiError::forbidden("whole database deletion status").into_response();
@@ -19,7 +20,16 @@ pub(super) async fn deletion_status(
         Err(error) => return error.into_response(),
     };
     let scope = crate::delegated_identity::VerifiedProjectScope { tenant_id, project_id };
-    match authority.deletion(&scope, &name, &operation, false).await {
+    match authority
+        .deletion(
+            &scope,
+            &name,
+            &operation,
+            false,
+            headers.get("authorization").and_then(|value| value.to_str().ok()),
+        )
+        .await
+    {
         Ok(value) => json_response(StatusCode::OK, value.to_string()),
         Err(error) => provisioning_error(error).into_response(),
     }

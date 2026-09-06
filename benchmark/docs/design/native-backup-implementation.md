@@ -25,7 +25,7 @@ are retained. The unused `RestoreResult` compatibility alias had no callers acro
 | `db.go:checkpointWithExecutor` | Capture before checkpoint, then seal writes under a barrier; compare WAL restart state | Backup retention is independent of follower acknowledgement. Native worker pins `consumer_frontiers['native-backup']`; only every selected provider's complete readback advances it. |
 | `replica.go:syncOnce` | Serialize replica sync; recompute remote position on error; bounded batches | One shared fleet tick bounds in-flight capture/upload and retries every selected provider independently. Upload index is last; retry never treats a PUT acknowledgement as verified coverage. |
 | `replica.go:calcRestorePlan`, `applyNewLTXFiles` | Select complete paths; bridge compacted gaps, refuse unsupported gaps; verify restore before follow progress | Restore authenticates every manifest/member and validates predecessor boundaries before publication. One provider supplies its own listing and complete chain. |
-| `db.go:EnforceSnapshotRetention` | Retain a root even when all snapshots are old; conservative floor preserves in-flight restore plans | No age-only deletion of segments. Current worker stops when its explicit point/staging cap is reached; automated chain-preserving retention remains required before replacing the adapter. |
+| `db.go:EnforceSnapshotRetention` | Retain a root even when all snapshots are old; conservative floor preserves in-flight restore plans | Daily full roots and retention keep the newest complete root preceding the cutoff and every newer point. Exclusive fleet operations prevent pruning during local restores. Staging exhaustion preserves pending data. |
 
 Reviewed tests include `TestReplica_RestoreRetriesInitialLTXOpenError`,
 `TestReplica_Restore_InvalidFileSize`, `TestReplica_Restore_RemovesTempFileOnFailure`,
@@ -57,10 +57,14 @@ publishing a new engine location.
 
 ## Qualification still required
 
-This is not yet ADR 0046 completion. Production catalog/runtime composition,
-automated retention with restore leases, durable policy transitions, timestamp
-PITR selection, journal-frontier-complete physical bootstrap, and physical WAL
-capture/checkpoint/reuse fault qualification remain required. The logical archive
+This is not yet ADR 0046 completion. Timestamp PITR now authenticates complete
+archives and applies whole transactions through the inclusive requested clock;
+retention and policy transitions have concrete native execution paths. Policy
+intent still belongs to the durable caller catalog. The server physical snapshot
+bridge encrypts the replication driver's authenticated logical chunks and
+installs through its admitted follower sink. Production runtime/API composition,
+branch ownership/rekey integration, physical WAL capture/checkpoint/reuse fault
+qualification and comprehensive retention/policy crash tests remain required. The logical archive
 is not advertised as a complete physical SQLite image. The fleet's pending-age
 gauge measures observed unprotected work, not the exact last remotely recoverable
 commit time; a ten-second timer alone does not establish ten-second RPO.

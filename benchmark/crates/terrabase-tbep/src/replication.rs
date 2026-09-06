@@ -1,190 +1,94 @@
-//! The cross-region journal tailer, in-process form (S-05 slice 2a,
-//! D-35/D-36): pull origin rows from one member's publication journal,
-//! apply them on a peer member, idempotently.
-//!
-//! This module is the apply path the QUIC lanes (slice 2b) will drive from
-//! a real peer: [`pull_origin_records`] is the shipping side — it filters
-//! the durable journal by provenance so replicated rows never re-ship and
-//! the tail cannot loop — and [`Engine::apply_replicated`] (on the
-//! terrabase crate) is the receiving side, binding each record to the
-//! deterministic identity `repl-{commit_ulid}` so a duplicate delivery
-//! replays the recorded publication instead of double-writing. No wire
-//! encoding, batching, coalescing, or compression lives here yet; the
-//! transport mechanics are D-45's, unchanged by this slice.
-
-use terrabase::engine::ReplicatedRecord;
-use terrabase::streaming::{ChangeCheckpoint, JournalKind};
-use terrabase::types::{Cancellation, DocumentValue};
-
-use crate::engine_host::EngineHost;
-use crate::host::HostingError;
-use crate::registry::BoundScope;
-
-/// Pulls one bounded page of this host's ORIGIN journal rows as replicated
-/// records, with the cursor that resumes exactly after everything the page
-/// examined.
-///
-/// Loop prevention is the filter: a row applied from a peer region is
-/// `kind='replicated'` and never ships again, so a tailer pointing back at
-/// its own writes sees nothing.
-///
-/// # Errors
-///
-/// Returns [`HostingError`] when the durable journal cannot be replayed
-/// under the bound scope.
-pub fn pull_origin_records(
-    host: &EngineHost,
-    scope: &BoundScope,
-    after: Option<ChangeCheckpoint>,
-) -> Result<(Vec<ReplicatedRecord>, Option<ChangeCheckpoint>), HostingError> {
-    pull_origin_records_with_cancellation(host, scope, after, &Cancellation::default())
+//! Complete retained publication transfer for in-process engine composition.
+//! Production socket traffic uses `production_causal` and its RF2 receipt gate.
+use crate::{engine_host::EngineHost, host::HostingError, registry::BoundScope};
+use terrabase::engine::ReplicatedPublication;
+use terrabase::types::Cancellation;
+fn failure(error: impl std::fmt::Debug) -> HostingError {
+    HostingError::EngineFailure(format!("publication transfer: {error:?}"))
 }
 
-/// Pulls one bounded page while observing a caller-owned cancellation signal.
-///
-/// Cancellation is checked at the page boundary and again after the durable
-/// read.  The journal cursor is returned only on success, so a cancelled
-/// tailer never accidentally commits progress it did not hand to its peer.
-/// This is the synchronous counterpart of the async member pump: callers can
-/// use the same signal to stop a retry loop without losing idempotent replay.
-///
+/// Reads one bounded page of complete locally originated transactions.
 /// # Errors
-///
-/// Returns a hosting error for cancellation, invalid scope, unavailable
-/// durable storage, or a refused replication operation.
-pub fn pull_origin_records_with_cancellation(
+/// Returns durable scope/storage errors without advancing the caller cursor.
+pub fn pull_origin_publications(
     host: &EngineHost,
     scope: &BoundScope,
-    after: Option<ChangeCheckpoint>,
-    cancellation: &Cancellation,
-) -> Result<(Vec<ReplicatedRecord>, Option<ChangeCheckpoint>), HostingError> {
-    if cancellation.is_cancelled() {
-        return Err(HostingError::Refused("replication pull cancelled".into()));
-    }
-    let batch = host.replay_sync_journal(scope, after)?;
-    if cancellation.is_cancelled() {
-        return Err(HostingError::Refused("replication pull cancelled".into()));
-    }
-    let mut records = Vec::with_capacity(batch.records().len());
-    for record in batch.records() {
-        let provenance = record.provenance();
-        if provenance.kind() != JournalKind::Origin {
-            continue;
-        }
-        let (body, deleted) = match record.mutation() {
-            terrabase::streaming::SyncJournalMutation::Put(value) => (value.clone(), false),
-            terrabase::streaming::SyncJournalMutation::Delete => (DocumentValue::Null, true),
-        };
-        records.push(ReplicatedRecord {
-            collection: record.collection().clone(),
-            id: record.document().clone(),
-            body,
-            deleted,
-            commit_ulid: record.operation_id().as_str().to_owned(),
-            hlc: provenance.hlc(),
-            origin: provenance.origin().to_owned(),
-            origin_sequence: provenance.origin_sequence(),
-            // Preserve the durable causal frontier exactly. Empty context is
-            // retained for legacy rows and decodes as the empty frontier.
-            context: provenance.context().to_vec(),
-        });
-    }
-    Ok((records, batch.next_checkpoint()))
+    after: Option<u64>,
+) -> Result<(Vec<ReplicatedPublication>, Option<u64>), HostingError> {
+    let bound = host.engine_scope_of(scope)?;
+    let origin = host.engine().replication_origin().map_err(failure)?;
+    let rows = host
+        .engine()
+        .replication_publications(&bound, after.unwrap_or(0), 1024)
+        .map_err(failure)?;
+    let next = rows.last().map(|(sequence, _)| *sequence);
+    Ok((
+        rows.into_iter()
+            .filter_map(|(_, publication)| (publication.origin == origin).then_some(publication))
+            .collect(),
+        next,
+    ))
 }
-
-/// Applies replicated records on this host's engine, returning how many
-/// published now — records already applied replay their receipt and count
-/// as skips, never as double-writes.
-///
+/// Atomically applies each complete source transaction; replay counts as zero.
 /// # Errors
-///
-/// Returns [`HostingError`] when any record's apply fails on the engine.
-pub fn apply_records(
+/// Refuses missing causal dependencies or failed complete-group publication.
+pub fn apply_publications(
     host: &EngineHost,
     scope: &BoundScope,
-    records: &[ReplicatedRecord],
+    publications: &[ReplicatedPublication],
 ) -> Result<usize, HostingError> {
-    apply_records_with_cancellation(host, scope, records, &Cancellation::default())
-}
-
-/// Applies a bounded batch while observing cancellation between records.
-/// Already committed records remain safe to replay on a later retry because
-/// the engine binds the source operation identity durably.
-///
-/// # Errors
-///
-/// Returns a hosting error for cancellation, invalid scope, unavailable
-/// durable storage, or a refused replication operation.
-pub fn apply_records_with_cancellation(
-    host: &EngineHost,
-    scope: &BoundScope,
-    records: &[ReplicatedRecord],
-    cancellation: &Cancellation,
-) -> Result<usize, HostingError> {
-    let engine_scope = host.engine_scope_of(scope)?;
-    let mut applied = 0;
-    for record in records {
-        if cancellation.is_cancelled() {
-            return Err(HostingError::Refused("replication apply cancelled".into()));
+    let bound = host.engine_scope_of(scope)?;
+    let mut count = 0;
+    for publication in publications {
+        if !host
+            .engine()
+            .replication_publication_dependencies_ready(&bound, publication)
+            .map_err(failure)?
+        {
+            return Err(HostingError::Refused(
+                "publication dependencies need reconciliation".into(),
+            ));
         }
-        let outcome = host.engine().apply_replicated(&engine_scope, record).map_err(|error| {
-            HostingError::EngineFailure(format!(
-                "the replicated record could not be applied: {error:?}"
-            ))
-        })?;
+        let outcome =
+            host.engine().apply_replicated_publication(&bound, publication).map_err(failure)?;
         if !outcome.replayed() {
-            applied += 1;
+            count += publication.records.len().max(1);
         }
     }
-    Ok(applied)
+    Ok(count)
 }
-
-/// Ships every origin row the source has past the cursor onto the target,
-/// advancing the cursor through every page it applied. Returns the number
-/// of newly applied records; re-pulled records that had already been
-/// applied are idempotent replays.
-///
+/// Transfers every complete local transaction beyond the acknowledged cursor.
 /// # Errors
-///
-/// Returns [`HostingError`] when a pull or an apply fails.
+/// Refuses source/apply failures without advancing past an incomplete page.
 pub fn replicate_once(
     source: &EngineHost,
     target: &EngineHost,
     scope: &BoundScope,
-    cursor: &mut Option<ChangeCheckpoint>,
+    cursor: &mut Option<u64>,
 ) -> Result<usize, HostingError> {
     replicate_once_with_cancellation(source, target, scope, cursor, &Cancellation::default())
 }
-
-/// Ships every origin row past `cursor`, stopping at a cancellation boundary.
-/// The cursor is advanced only after a complete page has been handed to the
-/// target, so cancellation and transient transport failures are retry-safe.
-///
+/// Transfers complete transactions with cancellation at each bounded page.
 /// # Errors
-///
-/// Returns a hosting error for cancellation, invalid scope, unavailable
-/// durable storage, or a refused replication operation.
+/// Returns cancellation or source/apply failures, preserving retry-safe progress.
 pub fn replicate_once_with_cancellation(
     source: &EngineHost,
     target: &EngineHost,
     scope: &BoundScope,
-    cursor: &mut Option<ChangeCheckpoint>,
+    cursor: &mut Option<u64>,
     cancellation: &Cancellation,
 ) -> Result<usize, HostingError> {
-    let mut applied = 0;
+    let mut count = 0;
     loop {
         if cancellation.is_cancelled() {
-            return Err(HostingError::Refused("replication cancelled".into()));
+            return Err(HostingError::Refused("publication transfer cancelled".into()));
         }
-        let (records, next) =
-            pull_origin_records_with_cancellation(source, scope, *cursor, cancellation)?;
-        if !records.is_empty() {
-            applied += apply_records_with_cancellation(target, scope, &records, cancellation)?;
+        let (publications, next) = pull_origin_publications(source, scope, *cursor)?;
+        count += apply_publications(target, scope, &publications)?;
+        let Some(next) = next else { return Ok(count) };
+        if cursor.is_some_and(|previous| next <= previous) {
+            return Err(HostingError::Refused("publication cursor did not advance".into()));
         }
-        match next {
-            Some(next) => *cursor = Some(next),
-            // The journal is drained past the cursor.
-            None => return Ok(applied),
-        }
+        *cursor = Some(next);
     }
 }

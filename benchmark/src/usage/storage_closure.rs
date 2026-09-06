@@ -14,9 +14,41 @@ pub struct StorageUsageClosure {
     pub(crate) write_units: i128,
     pub(crate) fact_count: u64,
     pub(crate) checksum: [u8; 32],
+    pub(crate) storage_intervals: Vec<StorageUsageInterval>,
+}
+
+/// One exact local logical-byte level in a frozen half-open interval.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageUsageInterval {
+    pub(crate) start_millis: u64,
+    pub(crate) end_millis: u64,
+    pub(crate) logical_bytes: u128,
+}
+impl StorageUsageInterval {
+    /// Inclusive start.
+    #[must_use]
+    pub const fn start_millis(&self) -> u64 {
+        self.start_millis
+    }
+    /// Exclusive end.
+    #[must_use]
+    pub const fn end_millis(&self) -> u64 {
+        self.end_millis
+    }
+    /// Actual local logical bytes; no Region multiplier.
+    #[must_use]
+    pub const fn logical_bytes(&self) -> u128 {
+        self.logical_bytes
+    }
 }
 
 impl StorageUsageClosure {
+    /// Complete chronological storage levels for organization allowance rating.
+    #[must_use]
+    pub fn storage_intervals(&self) -> &[StorageUsageInterval] {
+        &self.storage_intervals
+    }
+
     /// Authoritative database, partition, and Region identity.
     #[must_use]
     pub const fn scope(&self) -> &UsageScope {

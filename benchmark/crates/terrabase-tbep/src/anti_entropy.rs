@@ -1,7 +1,7 @@
 //! Journal-independent catch-up over range-based set reconciliation (D-45):
 //! state comparison, bounded repair, and snapshot bootstrap.
 //!
-//! The journal tailer ([`crate::replication`], [`crate::replication_lanes`])
+//! The journal tailer ([`crate::replication`], [`crate::production_causal`])
 //! converges members while the publication journal still holds the writes.
 //! This module owns what happens when it cannot: the cursor is past
 //! retention, the journal never saw the writes (a partition predates the
@@ -635,9 +635,7 @@ pub struct SnapshotBootstrap {
 /// flight), exactly the bootstrap contract [`wal_follower`](crate::wal_follower)
 /// documents. The target directory must not hold a live engine.
 ///
-/// [`crate::replication_lanes::RegionLink::set_cursor`] adopts
-/// [`journal_end`] afterwards; the composition never re-ships what the
-/// snapshot already serves.
+/// Production placement verifies the restored publication cut before serving.
 ///
 /// # Errors
 ///

@@ -20,6 +20,13 @@ pub struct PreparedTls {
     expires_at: u64,
     names: Vec<String>,
 }
+impl PreparedTls {
+    /// Effective credential deadline, bounded by the leaf certificate expiry.
+    #[must_use]
+    pub fn valid_until(&self) -> u64 {
+        self.expires_at
+    }
+}
 /// Atomic active TLS policy shared by the actual TBEP listeners.
 #[derive(Clone)]
 pub struct ReloadableTls {
@@ -57,6 +64,31 @@ impl ReloadableTls {
         let der = CertificateDer::pem_slice_iter(certificate.as_bytes())
             .next()
             .ok_or_else(|| io::Error::other("missing TLS certificate"))?
+            .map_err(io::Error::other)?;
+        let chain = CertificateDer::pem_slice_iter(certificate.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(io::Error::other)?;
+        let roots = CertificateDer::pem_slice_iter(trust.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(io::Error::other)?;
+        let anchors = roots
+            .iter()
+            .map(webpki::anchor_from_trusted_cert)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(io::Error::other)?;
+        webpki::EndEntityCert::try_from(&der)
+            .map_err(io::Error::other)?
+            .verify_for_usage(
+                tokio_rustls::rustls::crypto::ring::default_provider()
+                    .signature_verification_algorithms
+                    .all,
+                &anchors,
+                &chain[1..],
+                rustls_pki_types::UnixTime::now(),
+                webpki::KeyUsage::server_auth(),
+                None,
+                None,
+            )
             .map_err(io::Error::other)?;
         let (_, parsed) = x509_parser::parse_x509_certificate(&der)
             .map_err(|_| io::Error::other("invalid TLS certificate"))?;
@@ -248,6 +280,12 @@ mod tests {
         use tokio::io::AsyncReadExt;
         let first = material();
         let second = material();
+        assert!(ReloadableTls::prepare(&first.1, &first.2, &second.0, now() + 600).is_err());
+        assert!(ReloadableTls::prepare(&first.1, &first.2, &first.0, now()).is_err());
+        assert!(
+            ReloadableTls::prepare(&first.1, &first.2, &first.0, u64::MAX).unwrap().valid_until()
+                < u64::MAX
+        );
         let tls = ReloadableTls::new(&first.1, &first.2, &first.0).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();

@@ -8,7 +8,7 @@
 #![allow(clippy::missing_errors_doc)]
 
 mod storage_closure;
-pub use storage_closure::StorageUsageClosure;
+pub use storage_closure::{StorageUsageClosure, StorageUsageInterval};
 
 mod placement;
 

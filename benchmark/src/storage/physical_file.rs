@@ -216,3 +216,48 @@ impl EncryptedStorage {
             .reencrypt()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_handles_encrypt_seek_reopen_and_refuse_missing_keys() {
+        let root = std::env::temp_dir().join(format!("terrabase-physical-encrypted-{}", crate::identity::process_generator().generate().to_text()));
+        let owner = crate::storage::DatabaseOwner::local_development();
+        let keys = crate::engine::test_storage_keys(&owner, 111);
+        let guard = EncryptedStorage::register(&root, keys.clone()).unwrap();
+        let path = root.join("terrabase.sqlite3");
+        let mut file = create_physical_file(&path).unwrap();
+        file.write_all(b"physical-encrypted-secret").unwrap();
+        file.sync_all().unwrap();
+        file.seek(SeekFrom::Start(9)).unwrap();
+        let mut bytes = [0; 9];
+        file.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"encrypted");
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+        drop(file); drop(guard);
+        assert!(open_physical_file(&path).is_err());
+        let guard = EncryptedStorage::register(&root, keys).unwrap();
+        let mut file = open_physical_file(&path).unwrap();
+        let mut value = String::new(); file.read_to_string(&mut value).unwrap();
+        assert_eq!(value, "physical-encrypted-secret");
+        drop(file); drop(guard);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn physical_create_refuses_plaintext_adoption_and_missing_main_companion() {
+        let root = std::env::temp_dir().join(format!("terrabase-physical-refusal-{}", crate::identity::process_generator().generate().to_text()));
+        let owner = crate::storage::DatabaseOwner::local_development();
+        let keys = crate::engine::test_storage_keys(&owner, 112);
+        let guard = EncryptedStorage::register(&root, keys).unwrap();
+        let path = root.join("terrabase.sqlite3");
+        std::fs::write(&path, b"plaintext-existing").unwrap();
+        assert!(create_physical_file(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"plaintext-existing");
+        std::fs::write(&path, []).unwrap();
+        assert!(create_physical_file(&path).is_err());
+        drop(guard); std::fs::remove_dir_all(root).unwrap();
+    }
+}

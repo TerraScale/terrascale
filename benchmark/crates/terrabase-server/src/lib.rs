@@ -23,10 +23,13 @@ pub mod export_local;
 pub mod guards;
 pub mod http;
 pub mod index_api;
+pub mod lifecycle_publication;
 pub mod production;
 pub mod production_admission;
+pub mod production_data_runtime;
 pub mod replication_runtime;
 pub mod replication_proof;
+pub mod replication_cut;
 pub mod provisioning;
 pub mod reactive_api;
 mod read_operation;
@@ -34,6 +37,7 @@ pub mod runtime;
 pub mod schema_api;
 pub mod tenant_api;
 pub mod usage_api;
+pub mod usage_closure_http;
 pub mod view_capability;
 pub mod webhook_api;
 
@@ -52,5 +56,11 @@ pub mod replication_peers;
 /// Encrypted native backup bridge for complete physical bootstrap snapshots.
 pub mod native_snapshot_backup;
 
+/// Signed verified native recovery facts for scoped control consumers.
+pub mod native_recovery_receipt;
+
 /// Joined live delivery catchup observations.
 pub mod catchup_observation;
+
+#[cfg(all(test, target_os = "linux"))]
+mod test_keys;

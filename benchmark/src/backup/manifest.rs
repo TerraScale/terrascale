@@ -150,6 +150,8 @@ pub(crate) struct ManifestFacts {
     pub(crate) boundary_unix_millis: u64,
     /// Wall clock when the source boundary was captured.
     pub(crate) captured_unix_millis: u64,
+    /// Immutable minimum retention deadline for the encrypted artifact.
+    pub(crate) retain_until_unix_millis: u64,
     /// The archived user-document count.
     pub(crate) documents: u64,
     /// The archived family-record count.
@@ -181,6 +183,7 @@ pub struct BackupManifest {
     boundary: StorageSequence,
     boundary_unix_millis: u64,
     captured_unix_millis: u64,
+    retain_until_unix_millis: u64,
     documents: u64,
     family_records: u64,
     deletes: u64,
@@ -201,6 +204,7 @@ impl BackupManifest {
             boundary,
             boundary_unix_millis,
             captured_unix_millis,
+            retain_until_unix_millis,
             documents,
             family_records,
             deletes,
@@ -219,6 +223,7 @@ impl BackupManifest {
             boundary,
             boundary_unix_millis,
             captured_unix_millis,
+            retain_until_unix_millis,
             documents,
             family_records,
             deletes,
@@ -280,6 +285,12 @@ impl BackupManifest {
     #[must_use]
     pub fn captured_unix_millis(&self) -> u64 {
         self.captured_unix_millis
+    }
+
+    /// Returns the immutable earliest deletion time bound to this artifact.
+    #[must_use]
+    pub fn retain_until_unix_millis(&self) -> u64 {
+        self.retain_until_unix_millis
     }
 
     /// Returns the inclusive source-clock interval covered by this capture.
@@ -398,6 +409,7 @@ impl BackupManifest {
         lines.push(format!("boundary {}", self.boundary.get()));
         lines.push(format!("boundary_unix_millis {}", self.boundary_unix_millis));
         lines.push(format!("captured_unix_millis {}", self.captured_unix_millis));
+        lines.push(format!("retain_until_unix_millis {}", self.retain_until_unix_millis));
         lines.push(format!("documents {}", self.documents));
         lines.push(format!("family_records {}", self.family_records));
         lines.push(format!("deletes {}", self.deletes));
@@ -461,6 +473,13 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
         parse_number(lines.next().ok_or_else(invalid)?, "boundary_unix_millis")?;
     let captured_unix_millis =
         parse_number(lines.next().ok_or_else(invalid)?, "captured_unix_millis")?;
+    let retain_until_unix_millis =
+        parse_number(lines.next().ok_or_else(invalid)?, "retain_until_unix_millis")?;
+    let retained_millis =
+        retain_until_unix_millis.checked_sub(captured_unix_millis).ok_or_else(invalid)?;
+    if ![1_u64, 7, 30, 35].into_iter().any(|days| retained_millis == days * 86_400_000) {
+        return Err(invalid());
+    }
     if captured_unix_millis < boundary_unix_millis {
         return Err(invalid());
     }
@@ -541,6 +560,7 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
         boundary: StorageSequence::new(boundary),
         boundary_unix_millis,
         captured_unix_millis,
+        retain_until_unix_millis,
         documents,
         family_records,
         deletes,
@@ -719,6 +739,7 @@ mod tests {
             boundary: StorageSequence::new(7),
             boundary_unix_millis: 700,
             captured_unix_millis: 800,
+            retain_until_unix_millis: 86_400_800,
             documents: 1,
             family_records: 0,
             deletes: 0,
@@ -740,6 +761,28 @@ mod tests {
         lines[1] = format!("identity {}", to_hex(&hasher.finish()));
         text = lines.join("\n");
         text
+    }
+
+    #[test]
+    fn retention_deadline_is_bound_and_cannot_be_rewritten_or_shortened() {
+        let manifest = sample();
+        assert_eq!(manifest.retain_until_unix_millis(), 86_400_800);
+        let changed = manifest
+            .render()
+            .replace("retain_until_unix_millis 86400800", "retain_until_unix_millis 604800800");
+        assert_eq!(parse_manifest(&changed), Err(BackupError::ManifestInvalid));
+        let too_short = rebind(
+            manifest
+                .render()
+                .replace("retain_until_unix_millis 86400800", "retain_until_unix_millis 799"),
+        );
+        assert_eq!(parse_manifest(&too_short), Err(BackupError::ManifestInvalid));
+        let unsupported_term = rebind(
+            manifest
+                .render()
+                .replace("retain_until_unix_millis 86400800", "retain_until_unix_millis 172800800"),
+        );
+        assert_eq!(parse_manifest(&unsupported_term), Err(BackupError::ManifestInvalid));
     }
 
     #[test]

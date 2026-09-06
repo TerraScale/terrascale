@@ -220,6 +220,10 @@ impl WalReplicaBinding {
         self.epoch
     }
 
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub(crate) fn authorize_local(&self, writer: bool) -> Result<(), WalRouteError> {
         let _admission = self.preflight_admission()?;
         if self.local_is_writer != writer {

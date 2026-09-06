@@ -101,6 +101,7 @@ impl ProvisioningClient {
             || result.tenant_id != scope.tenant_id
             || result.project_id != scope.project_id
             || result.name != name
+            || result.parent_database_id.is_some()
             || result.operation_id != operation_id
             || result.regions != regions
             || result.residency != residency
@@ -161,8 +162,14 @@ impl ProvisioningClient {
         database_id: &str,
         operation_id: &str,
         begin: bool,
+        authorization: Option<&str>,
     ) -> Result<serde_json::Value, ProvisioningError> {
-        if !canonical_ulid(database_id) || !valid_operation_id(operation_id) {
+        if !canonical_ulid(database_id)
+            || !valid_operation_id(operation_id)
+            || !operation_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
             return Err(ProvisioningError::InvalidRequest);
         }
         let expected = serde_json::json!({"environment":self.environment,"tenant_id":scope.tenant_id,"project_id":scope.project_id,"database_id":database_id,"operation_id":operation_id});
@@ -175,17 +182,47 @@ impl ProvisioningClient {
         };
         let result: serde_json::Value = tokio::time::timeout(
             Duration::from_secs(10),
-            self.exchange(path, body, hyper::StatusCode::OK),
+            self.exchange_authorized(path, body, hyper::StatusCode::OK, authorization),
         )
         .await
         .map_err(|_| ProvisioningError::Unavailable)??;
         if result.get("request") != Some(&expected)
             || !matches!(
                 result.get("state").and_then(serde_json::Value::as_str),
-                Some("stopping" | "cleanup_pending")
+                Some("preparing" | "stopping" | "cleanup_pending")
             )
             || result.get("cutoff").and_then(serde_json::Value::as_str).is_none()
             || !result.get("targets").is_some_and(serde_json::Value::is_array)
+        {
+            return Err(ProvisioningError::Unavailable);
+        }
+        let targets = result
+            .get("targets")
+            .and_then(serde_json::Value::as_array)
+            .ok_or(ProvisioningError::Unavailable)?;
+        if targets.is_empty()
+            || targets.len() > 3000
+            || targets.iter().any(|target| {
+                let Some(stop) = target.get("stop") else {
+                    return true;
+                };
+                stop.get("environment").and_then(serde_json::Value::as_str)
+                    != Some(self.environment.as_str())
+                    || stop.get("organization_id").and_then(serde_json::Value::as_str)
+                        != Some(scope.tenant_id.as_str())
+                    || stop.get("project_id").and_then(serde_json::Value::as_str)
+                        != Some(scope.project_id.as_str())
+                    || stop.get("operation_id").and_then(serde_json::Value::as_str)
+                        != Some(operation_id)
+                    || stop
+                        .get("database_id")
+                        .and_then(serde_json::Value::as_str)
+                        .is_none_or(|id| !canonical_ulid(id))
+                    || (stop.get("database_id").and_then(serde_json::Value::as_str)
+                        != Some(database_id)
+                        && stop.get("parent_database_id").and_then(serde_json::Value::as_str)
+                            != Some(database_id))
+            })
         {
             return Err(ProvisioningError::Unavailable);
         }
@@ -233,6 +270,16 @@ impl ProvisioningClient {
         body: Vec<u8>,
         status: hyper::StatusCode,
     ) -> Result<T, ProvisioningError> {
+        self.exchange_authorized(path, body, status, None).await
+    }
+
+    async fn exchange_authorized<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: Vec<u8>,
+        status: hyper::StatusCode,
+        authorization: Option<&str>,
+    ) -> Result<T, ProvisioningError> {
         let stream = tokio::net::UnixStream::connect(&self.socket)
             .await
             .map_err(|_| ProvisioningError::Unavailable)?;
@@ -247,11 +294,15 @@ impl ProvisioningClient {
             .handshake(TokioIo::new(stream))
             .await
             .map_err(|_| ProvisioningError::Unavailable)?;
-        let request = hyper::Request::builder()
+        let mut request = hyper::Request::builder()
             .method("POST")
             .uri(path)
             .header("host", "localhost")
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+        if let Some(authorization) = authorization {
+            request = request.header("authorization", authorization);
+        }
+        let request = request
             .body(Full::new(Bytes::from(body)))
             .map_err(|_| ProvisioningError::Unavailable)?;
         let response = async {

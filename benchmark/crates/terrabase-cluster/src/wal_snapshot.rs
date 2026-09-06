@@ -168,6 +168,7 @@ impl WalSnapshotManifest {
 #[derive(Clone, Debug)]
 pub struct WalInstalledSnapshotProof {
     scope: DatabaseRouteScope,
+    generation: u64,
     epoch: u64,
     snapshot: [u8; 32],
     checkpoint: [u8; 32],
@@ -175,6 +176,11 @@ pub struct WalInstalledSnapshotProof {
 }
 
 impl WalInstalledSnapshotProof {
+    /// Accepted placement generation at installation.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
     /// Database whose files were durably installed.
     #[must_use]
     pub fn scope(&self) -> DatabaseRouteScope {
@@ -218,6 +224,7 @@ impl WalSnapshotAck {
         bytes.extend_from_slice(&self.proof.snapshot);
         bytes.extend_from_slice(&self.proof.checkpoint);
         bytes.extend_from_slice(&self.proof.sequence.to_be_bytes());
+        bytes.extend_from_slice(&self.proof.generation.to_be_bytes());
         Ok(bytes)
     }
 
@@ -227,7 +234,7 @@ impl WalSnapshotAck {
     /// # Errors
     /// Rejects wrong framing, invalid scope, epoch, and trailing bytes.
     pub fn decode(bytes: &[u8]) -> Result<Self, WalSnapshotError> {
-        if bytes.len() != PREFIX + 72 {
+        if bytes.len() != PREFIX + 80 {
             return Err(WalSnapshotError::InvalidSnapshot);
         }
         let (scope, epoch) = decode_prefix(bytes, b"TBWSA\0\0\x01")?;
@@ -237,10 +244,25 @@ impl WalSnapshotAck {
             .try_into()
             .map_err(|_| WalSnapshotError::InvalidSnapshot)?;
         let sequence = u64::from_be_bytes(
-            bytes[PREFIX + 64..].try_into().map_err(|_| WalSnapshotError::InvalidSnapshot)?,
+            bytes[PREFIX + 64..PREFIX + 72]
+                .try_into()
+                .map_err(|_| WalSnapshotError::InvalidSnapshot)?,
         );
+        let generation = u64::from_be_bytes(
+            bytes[PREFIX + 72..].try_into().map_err(|_| WalSnapshotError::InvalidSnapshot)?,
+        );
+        if generation == 0 {
+            return Err(WalSnapshotError::InvalidSnapshot);
+        }
         Ok(Self {
-            proof: WalInstalledSnapshotProof { scope, epoch, snapshot, checkpoint, sequence },
+            proof: WalInstalledSnapshotProof {
+                scope,
+                epoch,
+                snapshot,
+                checkpoint,
+                sequence,
+                generation,
+            },
         })
     }
 
@@ -393,10 +415,13 @@ pub struct WalSnapshotSource {
 struct SnapshotDirectory {
     path: PathBuf,
     _encryption: Option<EncryptedStorage>,
+    retain: bool,
 }
 impl Drop for SnapshotDirectory {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        if !self.retain {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
     }
 }
 
@@ -435,8 +460,11 @@ impl WalSnapshotSource {
                     let encryption = EncryptedStorage::for_related_location(&staging, &staging)
                         .map_err(|error| WalRouteError::Storage(error.into()))?;
                     drop(follower);
-                    let snapshot =
-                        Arc::new(SnapshotDirectory { path: staging, _encryption: encryption });
+                    let snapshot = Arc::new(SnapshotDirectory {
+                        path: staging,
+                        _encryption: encryption,
+                        retain: false,
+                    });
                     let mut files: [Option<FileManifest>; 3] = [None, None, None];
                     for (slot, name) in FILES.iter().enumerate() {
                         let path = snapshot.path.join(name);
@@ -478,6 +506,12 @@ impl WalSnapshotSource {
         &self.manifest
     }
 
+    /// Local parent directory authorized for refreshed immutable snapshots.
+    #[must_use]
+    pub fn staging_parent(&self) -> &std::path::Path {
+        self.snapshot.path.parent().expect("captured snapshot has a parent")
+    }
+
     /// Verifies that the admitted follower installed this exact immutable
     /// snapshot and its durable checkpoint before granting writer-side evidence.
     ///
@@ -494,7 +528,8 @@ impl WalSnapshotSource {
                 .map_err(|_| WalSnapshotError::InvalidSnapshot)?,
         )
         .as_bytes();
-        if ack.proof.scope != self.manifest.scope
+        if ack.proof.generation != self.binding.generation()
+            || ack.proof.scope != self.manifest.scope
             || ack.proof.epoch != self.manifest.replica_epoch
             || ack.proof.snapshot != self.manifest.identity
             || ack.proof.checkpoint != expected
@@ -580,6 +615,7 @@ struct SinkState {
     destination: PathBuf,
     manifest: WalSnapshotManifest,
     received: [u64; 3],
+    keys: Option<Arc<dyn terrabase::encryption::DatabaseKeySource>>,
 }
 
 impl WalSnapshotSink {
@@ -632,6 +668,18 @@ impl WalSnapshotSink {
             worker_binding
                 .with_admission(|| {
                     let parent = destination.parent().ok_or(WalRouteError::Unauthorized)?;
+                    if let Some(keys) = &keys {
+                        let lease =
+                            keys.current_lease().map_err(|_| WalRouteError::Unauthorized)?;
+                        let key_scope = lease.metadata().scope();
+                        if key_scope.tenant() != manifest.scope.tenant()
+                            || key_scope.project() != Some(manifest.scope.project())
+                            || key_scope.database() != manifest.scope.database()
+                            || key_scope.purpose() != terrabase::encryption::KeyPurpose::Data
+                        {
+                            return Err(WalRouteError::Unauthorized);
+                        }
+                    }
                     let staging_path = parent.join(format!(
                         ".wal-snapshot-{}",
                         terrabase::identity::DatabaseUlid::generate()
@@ -646,10 +694,15 @@ impl WalSnapshotSink {
                         .create(&staging_path)
                         .map_err(|error| WalRouteError::Storage(error.into()))?;
                     let encryption = keys
+                        .clone()
                         .map(|keys| EncryptedStorage::register(&staging_path, keys))
                         .transpose()
                         .map_err(|error| WalRouteError::Storage(error.into()))?;
-                    let staging = SnapshotDirectory { path: staging_path, _encryption: encryption };
+                    let staging = SnapshotDirectory {
+                        path: staging_path,
+                        _encryption: encryption,
+                        retain: false,
+                    };
                     for (slot, file) in manifest.contents.files.iter().enumerate() {
                         if file.is_some() {
                             create_physical_file(&staging.path.join(FILES[slot]))
@@ -665,7 +718,7 @@ impl WalSnapshotSink {
                             }
                         }
                     }
-                    Ok(SinkState { staging, destination, manifest, received: [0; 3] })
+                    Ok(SinkState { staging, destination, manifest, received: [0; 3], keys })
                 })
                 .map_err(|error| WalSnapshotError::Admission(WalQuicError::Route(error)))
         })
@@ -728,6 +781,114 @@ impl WalSnapshotSink {
         self.finish_local().await
     }
 
+    /// Replaces the consumed physical follower at its fixed catalog location
+    /// using Linux's atomic directory exchange. The old files remain at the
+    /// private stage until the parent directory sync and new-file recovery pass.
+    /// No SQLite engine or other follower may own either directory.
+    ///
+    /// # Errors
+    /// Rejects invalid chunks, mismatched old assignments/paths, open workers,
+    /// failed integrity, atomic exchange, sync, or recovery. A post-exchange
+    /// failure preserves the retired directory and issues no receipt.
+    pub async fn finish_replacing(
+        self,
+        peer: &WalAuthenticatedPeer,
+        old: WalFollowerDriver,
+    ) -> Result<(WalFollowerDriver, WalCheckpointMessage), WalSnapshotError> {
+        peer.authorize(&self.binding, false)?;
+        self.finish_replacing_admitted(old).await
+    }
+
+    async fn finish_replacing_admitted(
+        self,
+        old: WalFollowerDriver,
+    ) -> Result<(WalFollowerDriver, WalCheckpointMessage), WalSnapshotError> {
+        self.binding.authorize_local(false).map_err(WalQuicError::Route)?;
+        let permit = self.binding.reserve_worker().map_err(WalQuicError::Route)?;
+        let binding = self.binding.clone();
+        let state = self.state.clone();
+        let (follower, receipt, proof) = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            binding
+                .with_admission(|| {
+                    let mut state = state.lock().map_err(|_| WalRouteError::Fenced)?;
+                    for (slot, expected) in state.manifest.contents.files.iter().enumerate() {
+                        if let Some(expected) = expected {
+                            if state.received[slot] != expected.bytes {
+                                return Err(WalRouteError::Unauthorized);
+                            }
+                            let mut file =
+                                open_physical_file(&state.staging.path.join(FILES[slot]))
+                                    .map_err(|error| WalRouteError::Storage(error.into()))?;
+                            if file_digest(&mut file).map_err(WalRouteError::Storage)?
+                                != expected.digest
+                            {
+                                return Err(WalRouteError::Unauthorized);
+                            }
+                        }
+                    }
+                    let (verified, checkpoint) = WalFollower::open_existing(&state.staging.path)
+                        .map_err(WalRouteError::Storage)?;
+                    drop(verified);
+                    if checkpoint != state.manifest.contents.checkpoint {
+                        return Err(WalRouteError::Unauthorized);
+                    }
+                    old.retire_for_replacement(&binding, &state.destination)?;
+                    // Both VFS registrations must release path-bound handles before
+                    // renaming. The admitted source itself survives in `keys`.
+                    state.staging._encryption = None;
+                    state.staging.retain = true;
+                    rustix::fs::renameat_with(
+                        rustix::fs::CWD,
+                        &state.staging.path,
+                        rustix::fs::CWD,
+                        &state.destination,
+                        rustix::fs::RenameFlags::EXCHANGE,
+                    )
+                    .map_err(|error| WalRouteError::Storage(std::io::Error::from(error).into()))?;
+                    let parent = state.destination.parent().ok_or(WalRouteError::Unauthorized)?;
+                    std::fs::File::open(parent)
+                        .and_then(|file| file.sync_all())
+                        .map_err(|error| WalRouteError::Storage(error.into()))?;
+                    let _registration = state
+                        .keys
+                        .clone()
+                        .map(|keys| EncryptedStorage::register(&state.destination, keys))
+                        .transpose()
+                        .map_err(|error| WalRouteError::Storage(error.into()))?;
+                    let (follower, installed) = WalFollower::open_existing(&state.destination)
+                        .map_err(WalRouteError::Storage)?;
+                    if installed != checkpoint {
+                        return Err(WalRouteError::Unauthorized);
+                    }
+                    state.staging.retain = false;
+                    let checkpoint_bytes =
+                        serde_json::to_vec(&installed).map_err(|_| WalRouteError::Unauthorized)?;
+                    let proof = WalInstalledSnapshotProof {
+                        scope: state.manifest.scope,
+                        generation: binding.generation(),
+                        epoch: state.manifest.replica_epoch,
+                        snapshot: state.manifest.identity,
+                        checkpoint: *blake3::hash(&checkpoint_bytes).as_bytes(),
+                        sequence: state.manifest.contents.sequence,
+                    };
+                    let receipt = WalCheckpointMessage {
+                        scope: state.manifest.scope,
+                        replica_epoch: state.manifest.replica_epoch,
+                        checkpoint: Some(checkpoint),
+                    };
+                    Ok((follower, receipt, proof))
+                })
+                .map_err(|error| WalSnapshotError::Admission(WalQuicError::Route(error)))
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)??;
+        Ok((
+            WalFollowerDriver::new(self.binding.clone(), follower).with_installed_snapshot(proof),
+            receipt,
+        ))
+    }
+
     /// Verifies and installs authenticated native backup bytes under the
     /// accepted follower assignment. This does not admit public serving.
     ///
@@ -779,6 +940,7 @@ impl WalSnapshotSink {
                     let checkpoint_bytes =
                         serde_json::to_vec(&installed).map_err(|_| WalRouteError::Unauthorized)?;
                     let proof = WalInstalledSnapshotProof {
+                        generation: binding.generation(),
                         scope: state.manifest.scope,
                         epoch: state.manifest.replica_epoch,
                         snapshot: state.manifest.identity,
@@ -1027,7 +1189,35 @@ mod tests {
             assert_eq!(proof.snapshot_digest(), manifest.identity());
             assert_eq!(proof.scope(), scope);
             assert_eq!(proof.sequence(), manifest.sequence());
-            drop(follower);
+            let mut replacement = WalSnapshotSink::begin_local(
+                binding(follower_id),
+                manifest.clone(),
+                root.join("installed"),
+                64 * 1024 * 1024,
+                None,
+            )
+            .await
+            .unwrap();
+            for slot in 0..3 {
+                let mut offset = 0;
+                while let Some(size) = manifest.file_bytes(slot) {
+                    if offset == size {
+                        break;
+                    }
+                    offset = replacement
+                        .write_local(source.read_local(slot, offset).await.unwrap())
+                        .await
+                        .unwrap();
+                }
+            }
+            let (replaced, replacement_receipt) =
+                replacement.finish_replacing_admitted(follower).await.unwrap();
+            assert_eq!(replacement_receipt.checkpoint, Some(manifest.checkpoint()));
+            assert_eq!(
+                replaced.installed_snapshot().unwrap().snapshot_digest(),
+                manifest.identity()
+            );
+            drop(replaced);
             let (_, recovered) = WalFollower::open_existing(&root.join("installed")).unwrap();
             assert_eq!(recovered, manifest.checkpoint());
         });

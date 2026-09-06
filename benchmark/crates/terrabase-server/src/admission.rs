@@ -1,7 +1,7 @@
 //! Authenticated host admission with durable, immutable replay records.
 #[path = "admission_stop.rs"]
 mod stop;
-pub use stop::{StopReceipt, StopRequest, StorageStop};
+pub use stop::{StopPreflightReceipt,StorageStopPreflight,PrepareStopRequest,PrepareStopReceipt,StoragePrepareStop,StopReceipt, StopRequest, StorageStop};
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -61,6 +61,8 @@ pub struct AdmissionHost {
     admit_storage: StorageAdmission,
     identity_delivery: Option<Arc<crate::identity_secret_delivery::IdentitySecretDelivery>>,
     stop_storage: Option<StorageStop>,
+    prepare_stop_storage: Option<StoragePrepareStop>,
+    preflight_stop_storage: Option<StorageStopPreflight>,
 }
 
 impl AdmissionHost {
@@ -106,6 +108,8 @@ impl AdmissionHost {
             admit_storage,
             identity_delivery: None,
             stop_storage: None,
+            prepare_stop_storage: None,
+            preflight_stop_storage: None,
         };
         for entry in fs::read_dir(&host.root).map_err(|_| "manifest unavailable")? {
             let entry = entry.map_err(|_| "manifest unavailable")?;
@@ -259,9 +263,25 @@ impl AdmissionHost {
         }
         let identity_router =
             self.identity_delivery.as_ref().map(|delivery| delivery.clone().router());
+        async fn prepare_stop(State(host): State<Arc<AdmissionHost>>, body: axum::body::Bytes) -> axum::response::Response {
+            let Ok(request) = serde_json::from_slice::<PrepareStopRequest>(&body) else { return StatusCode::BAD_REQUEST.into_response(); };
+            match tokio::task::spawn_blocking(move || host.prepare_stop(request)).await {
+                Ok(Ok(receipt)) => axum::Json(receipt).into_response(),
+                _ => StatusCode::CONFLICT.into_response(),
+            }
+        }
+        async fn preflight_stop(State(host): State<Arc<AdmissionHost>>, body: axum::body::Bytes) -> axum::response::Response {
+            let Ok(request) = serde_json::from_slice::<PrepareStopRequest>(&body) else { return StatusCode::BAD_REQUEST.into_response(); };
+            match tokio::task::spawn_blocking(move || host.preflight_stop(request)).await {
+                Ok(Ok(receipt)) => axum::Json(receipt).into_response(),
+                _ => StatusCode::CONFLICT.into_response(),
+            }
+        }
         let router = Router::new()
             .route("/internal/v1/databases/admit", post(admit))
             .route("/internal/v1/databases/stop", post(stop))
+            .route("/internal/v1/databases/delete/prepare", post(prepare_stop))
+            .route("/internal/v1/databases/delete/preflight", post(preflight_stop))
             .layer(DefaultBodyLimit::max(16384))
             .with_state(self);
         let router =

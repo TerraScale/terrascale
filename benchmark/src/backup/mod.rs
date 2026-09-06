@@ -396,6 +396,7 @@ pub struct BackupPlan {
     reader: Option<Arc<dyn BackupReader + Send + Sync>>,
     archive_byte_limit: Option<u64>,
     capture_unix_millis: Option<u64>,
+    retention_days: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -408,6 +409,19 @@ enum BackupEncryptionMode {
 }
 
 impl BackupPlan {
+    /// Binds an immutable retention term to each sealed artifact.
+    ///
+    /// # Errors
+    /// Returns `ManifestInvalid` unless the term is one of the plan limits:
+    /// 1, 7, 30, or 35 days. Existing artifacts retain their original deadline.
+    pub fn with_retention_days(mut self, days: u8) -> Result<Self, BackupError> {
+        if !matches!(days, 1 | 7 | 30 | 35) {
+            return Err(BackupError::ManifestInvalid);
+        }
+        self.retention_days = days;
+        Ok(self)
+    }
+
     /// Pins the capture clock for an idempotent retry of the same source boundary.
     /// Supply the original manifest capture time; a newer source commit than this
     /// clock fails closed. New scheduled captures should use the default clock.
@@ -434,6 +448,7 @@ impl BackupPlan {
             reader: None,
             archive_byte_limit: None,
             capture_unix_millis: None,
+            retention_days: 1,
         }
     }
 
@@ -462,6 +477,7 @@ impl BackupPlan {
             reader: None,
             archive_byte_limit: None,
             capture_unix_millis: None,
+            retention_days: 1,
         }
     }
 
@@ -481,6 +497,7 @@ impl BackupPlan {
             reader: None,
             archive_byte_limit: None,
             capture_unix_millis: None,
+            retention_days: 1,
         }
     }
 
@@ -1096,7 +1113,6 @@ fn execute(
         None => MemberWriter::new(staging.path().to_owned(), plan.member_bound_bytes),
     };
 
-    let tenants = selected_tenants(engine, &mut state, plan)?;
     writer.set_byte_limit(plan.archive_byte_limit);
     let now_unix_millis = u64::try_from(
         std::time::SystemTime::now()
@@ -1118,6 +1134,9 @@ fn execute(
     if captured_unix_millis < boundary_unix_millis {
         return Err(BackupError::SourceUnavailable);
     }
+    // Enumerate after the fixed boundary so a newly committed tenant cannot
+    // be omitted from the source frontier captured above.
+    let tenants = selected_tenants(engine, &mut state, plan)?;
     // Bind the complete selected scope even when a tenant contributes no
     // records to this particular range. Object-store chain planners use the
     // manifest scope to detect a requested tenant that is absent from the
@@ -1160,6 +1179,9 @@ fn execute(
         plan.kind,
         boundary_unix_millis,
         captured_unix_millis,
+        captured_unix_millis
+            .checked_add(u64::from(plan.retention_days) * 86_400_000)
+            .ok_or(BackupError::ManifestInvalid)?,
         engine.database_id().to_text(),
         destination,
         staging,
@@ -1274,14 +1296,13 @@ fn archive_journal_range(
             }
             let reached_boundary =
                 page.last().is_none_or(|commit| commit.sequence().get() >= boundary.get());
-            for commit in &page {
+            state.spend_read()?;
+            let sequences: Vec<_> = page.iter().map(PublishedCommit::sequence).collect();
+            let clocks = engine.backup_commit_clocks(&sequences).map_err(unavailable)?;
+            for (commit, committed_unix_millis) in page.iter().zip(clocks) {
                 if commit.sequence().get() > boundary.get() {
                     continue;
                 }
-                state.spend_read()?;
-                let committed_unix_millis = engine
-                    .backup_boundary_unix_millis(commit.sequence())
-                    .map_err(|_| BackupError::SourceUnavailable)?;
                 archive_commit(state, writer, tenant_counts, commit, committed_unix_millis)?;
             }
             after = page.last().map_or(after, PublishedCommit::sequence);
@@ -1373,6 +1394,7 @@ fn seal_run(
     kind: BackupKind,
     boundary_unix_millis: u64,
     captured_unix_millis: u64,
+    retain_until_unix_millis: u64,
     database_id: String,
     destination: &Path,
     staging: &StagingDir,
@@ -1400,6 +1422,7 @@ fn seal_run(
         boundary,
         boundary_unix_millis,
         captured_unix_millis,
+        retain_until_unix_millis,
         documents: state.documents,
         family_records: state.family_records,
         deletes: state.deletes,

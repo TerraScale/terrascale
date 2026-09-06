@@ -122,14 +122,17 @@ pub(super) fn read_publications(
         .map_err(|_| ())?;
     let mut result = Vec::new();
     let mut bytes = 0_usize;
-    while let Some(row) = rows.next().map_err(|_| ())? {
+    'publications: while let Some(row) = rows.next().map_err(|_| ())? {
         let private_payload: Vec<u8> = row.get(6).map_err(|_| ())?;
         let context: Vec<u8> = row.get(5).map_err(|_| ())?;
         bytes = bytes
             .checked_add(private_payload.len())
             .and_then(|bytes| bytes.checked_add(context.len()))
             .ok_or(())?;
-        if bytes > 64 * 1024 * 1024 {
+        if bytes > crate::engine::MAX_REPLICATION_PUBLICATION_BYTES {
+            if !result.is_empty() {
+                break 'publications;
+            }
             return Err(());
         }
         let local_sequence =
@@ -148,7 +151,7 @@ pub(super) fn read_publications(
         let mut records =
             records.query(params![tenant.as_str(), local_sequence as i64]).map_err(|_| ())?;
         while let Some(row) = records.next().map_err(|_| ())? {
-            if publication.records.len() == 100_000 {
+            if publication.records.len() == crate::engine::MAX_REPLICATION_PUBLICATION_RECORDS {
                 return Err(());
             }
             let collection: String = row.get(0).map_err(|_| ())?;
@@ -158,7 +161,10 @@ pub(super) fn read_publications(
                 .checked_add(encoded.as_ref().map_or(0, Vec::len))
                 .and_then(|bytes| bytes.checked_add(collection.len() + id.len()))
                 .ok_or(())?;
-            if bytes > 64 * 1024 * 1024 {
+            if bytes > crate::engine::MAX_REPLICATION_PUBLICATION_BYTES {
+                if !result.is_empty() {
+                    break 'publications;
+                }
                 return Err(());
             }
             let body = encoded

@@ -41,6 +41,8 @@ pub(super) fn close(
         if regions != selected_regions {
             return Err(());
         }
+        let storage_intervals =
+            super::storage_intervals::load(connection, tenant, start_sql, end_sql)?;
         return Ok(StorageUsageClosure {
             scope,
             window,
@@ -50,6 +52,7 @@ pub(super) fn close(
             write_units: writes.parse().map_err(|_| ())?,
             fact_count: u64::try_from(fact_count).map_err(|_| ())?,
             checksum: checksum.try_into().map_err(|_| ())?,
+            storage_intervals,
         });
     }
     let previous = connection
@@ -68,6 +71,8 @@ pub(super) fn close(
         super::accounting::begin_change(connection, u64::try_from(unix_millis()).map_err(|_| ())?)?;
     super::accounting::settle(connection, tenant, now)?;
     let observed = super::accounting::byte_millis(connection, tenant, start, end)?;
+    let storage_intervals =
+        super::storage_intervals::observe(connection, tenant, start_sql, end_sql)?;
     let byte_millis = observed
         .checked_add(
             u128::try_from(previous.map_or(0, |(_, remainder)| remainder)).map_err(|_| ())?,
@@ -92,12 +97,20 @@ pub(super) fn close(
     if seal.storage_byte_seconds != i128::try_from(byte_seconds).map_err(|_| ())? {
         return Err(());
     }
+    let checksum = super::storage_intervals::persist(
+        connection,
+        tenant,
+        start_sql,
+        end_sql,
+        &storage_intervals,
+        &seal.checksum,
+    )?;
     connection.execute(
         "INSERT INTO storage_usage_closures
          (tenant,start_millis,end_millis,seq,regions,byte_seconds,remainder,write_units,fact_count,checksum)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
         rusqlite::params![tenant,start_sql,end_sql,i64::try_from(seal.through_sequence).map_err(|_| ())?,selected_regions,byte_seconds.to_string(),
-            (byte_millis % 1_000) as i64,seal.write_units.to_string(),i64::try_from(seal.fact_count).map_err(|_| ())?,seal.checksum.as_slice()]
+            (byte_millis % 1_000) as i64,seal.write_units.to_string(),i64::try_from(seal.fact_count).map_err(|_| ())?,checksum.as_slice()]
     ).map_err(|_| ())?;
     Ok(StorageUsageClosure {
         scope,
@@ -107,7 +120,8 @@ pub(super) fn close(
         byte_seconds,
         write_units: seal.write_units,
         fact_count: seal.fact_count,
-        checksum: seal.checksum,
+        checksum,
+        storage_intervals,
     })
 }
 
@@ -122,6 +136,7 @@ mod tests {
         connection.execute_batch(super::super::SCHEMA).unwrap();
         super::super::accounting::initialize_at(&connection, 1000).unwrap();
         initialize(&connection).unwrap();
+        super::super::storage_intervals::initialize(&connection).unwrap();
         let scope = UsageScope::try_new(
             TenantId::try_new("db").unwrap(),
             "project",
@@ -168,6 +183,7 @@ mod tests {
         connection.execute_batch(super::super::SCHEMA).unwrap();
         super::super::accounting::initialize_at(&connection, 1000).unwrap();
         initialize(&connection).unwrap();
+        super::super::storage_intervals::initialize(&connection).unwrap();
         let scope = UsageScope::try_new(
             TenantId::try_new("db").unwrap(),
             "project",
@@ -202,6 +218,7 @@ mod tests {
             connection.execute_batch(super::super::SCHEMA).unwrap();
             super::super::accounting::initialize_at(&connection, 1000).unwrap();
             initialize(&connection).unwrap();
+            super::super::storage_intervals::initialize(&connection).unwrap();
             connection
                 .execute(
                     "INSERT INTO storage_accounting_revisions VALUES ('db','items','a',1,10,?1,?2)",

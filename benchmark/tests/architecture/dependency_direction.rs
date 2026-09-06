@@ -89,7 +89,7 @@ const LAYERS: &[(&str, u32)] = &[
 ///
 /// Review note (2026-09-03, issue #130 slice 2b): `terrabase-tbep` gained
 /// its edge onto `terrabase-member-transport` — the cross-region lanes
-/// (`replication_lanes`) drive the journal tailer's pull/apply path over
+/// (`production_causal`) drive the journal tailer's pull/apply path over
 /// the fault-injectable `MemberTransport` seam. The edge points strictly
 /// down the frozen layer order (6 -> 3), and ADR 0041 (GOAL D-45: pooled
 /// QUIC member lanes carry the journal tailer) is the accepting record.

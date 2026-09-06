@@ -1445,6 +1445,13 @@ async fn authenticate(
             if let Err(error) = development::admit(&state, &principal, &development_path).await {
                 return error.into_response();
             }
+            if let (Some(registry), Some(database)) = (&state.admitted_databases, database_of(request.uri().path()))
+                && let Ok(Some(admitted)) = registry.resolve(database)
+            {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                    .ok().and_then(|v| u64::try_from(v.as_millis()).ok());
+                if let Some(now) = now { admitted.activity.observe(now); }
+            }
             request.extensions_mut().insert(principal.clone());
             let mut response = next.run(request).await;
             if let Ok(label) = HeaderValue::from_str(principal.label()) {
@@ -1782,7 +1789,11 @@ async fn delete_database(State(state): State<Arc<ApiState>>, Path(name): Path<St
         let operation = match headers.get("idempotency-key").and_then(|value|value.to_str().ok()) { Some(value) => value, None => return ApiError { status:StatusCode::BAD_REQUEST,code:"missing_operation_id",message:"deletion requires an idempotency key".into(),fix:"send Idempotency-Key with a stable deletion operation identifier".into(),placement:None }.into_response() };
         let (tenant_id,project_id) = match database_owner_scope(&state,&name) { Ok(value)=>value,Err(error)=>return error.into_response() };
         let scope = crate::delegated_identity::VerifiedProjectScope { tenant_id,project_id };
-        return match authority.deletion(&scope,&name,operation,true).await { Ok(value)=>json_response(StatusCode::ACCEPTED,value.to_string()),Err(error)=>provisioning_error(error).into_response() };
+        return match authority.deletion(&scope,&name,operation,true,headers.get("authorization").and_then(|value|value.to_str().ok())).await { Ok(value)=>{
+            let mut response = json_response(StatusCode::ACCEPTED,value.to_string());
+            if let Ok(location) = HeaderValue::from_str(&format!("/api/v1/databases/{name}/deletions/{operation}")) { response.headers_mut().insert(axum::http::header::LOCATION,location); }
+            response
+        },Err(error)=>provisioning_error(error).into_response() };
     }
     let Some(control) = state.control.clone() else {
         return ApiError::control_unavailable().into_response();
@@ -2536,7 +2547,7 @@ pub(crate) fn document_host(
             return Err(ApiError::misdirected(&record.placement, record.residency_header()));
         }
         let scope = document_scope(database.host.engine()).map_err(|()| ApiError::storage_failure())?;
-        if database.host.engine().storage_usage_stopped_at(&scope).map_err(|_| ApiError::storage_failure())?.is_some() {
+        if database.host.engine().lifecycle_state(&scope).map_err(|_| ApiError::storage_failure())?.access_revoked() {
             return Err(ApiError::database_not_found(name));
         }
         return Ok(database.host.clone());
@@ -3671,6 +3682,7 @@ async fn create_branch(
 ) -> Response {
     if !principal.scope().admits_database(Verbs::ADMIN, &name) { return ApiError::forbidden("whole database branching").into_response(); }
     if let Some(authority) = &state.provisioning {
+        if let Err(error) = document_host(&state,&name) { return error.into_response(); }
         let Some(registry) = &state.admitted_databases else { return ApiError::control_unavailable().into_response(); };
         let parent = match registry.resolve(&name) { Ok(Some(value))=>value,Ok(None)=>return ApiError::database_not_found(&name).into_response(),Err(_)=>return ApiError::storage_failure().into_response() };
         let value: serde_json::Value = match serde_json::from_str(&body) { Ok(value)=>value,Err(_)=>return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest).into_response() };
