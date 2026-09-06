@@ -44,7 +44,11 @@ machine. Seed execution, log tailing, and codegen watch are separate CLI
 capabilities; do not add those flags unless the CLI release you installed
 advertises their contracts.
 
-The starter is a Next.js app wired to `@terrascale/sdk`. Sign in when prompted.
+The starter is a Next.js app wired to `@terrascale/sdk`. Sign in to the
+dashboard to obtain a credential limited to the development branch. Enter it
+in each browser tab; the starter keeps it only in memory until disconnect or
+reload. Never embed a privileged key in NEXT_PUBLIC settings. Application
+sign-in integration and the real five-minute journey remain unqualified.
 A card is required at signup for fraud screening; you can continue on the free
 plan without subscribing, and the onboarding promotion waives only the first paid month’s
 subscription fee. Explicitly authorized excess usage remains chargeable.
@@ -99,7 +103,7 @@ import { posts, title, publishedAt } from './schema'
 const databaseId = process.env.NEXT_PUBLIC_TERRASCALE_DATABASE_ID!
 const sync = new TerraScaleSyncV1Client({
   apiBaseUrl: process.env.NEXT_PUBLIC_TERRASCALE_API_URL,
-  accessToken: process.env.NEXT_PUBLIC_TERRASCALE_API_KEY,
+  accessToken: developmentCredential, // entered in the tab, kept only in memory
 })
 
 const postsQuery = select(posts)
@@ -145,22 +149,22 @@ resumed.close()
 
 `Query.raw(sql, parameters)` remains available for a validated, parameterized
 read-only statement when a schema-bound builder is not practical. It cannot
-perform DDL or DML. The starter uses the typed builder; document writes stay
-blocked until the
-published Database API contract is available.
+perform DDL or DML. The starter uses the typed builder and the public `client.documents.put`
+operation for document writes.
 
 ## 5. Verify it is live
 
-Open the app in two tabs to attach the same CDN-backed live result view. The
-starter does not perform writes while the typed Database API contract is
-pending. The CRUD snippet demonstrates writes against the qualified sandbox;
+Open the app in two tabs and connect each to the same cloud branch using a
+scoped development credential. Add a post in either tab; both live views
+should display it. This journey still requires real cloud qualification.
+The CRUD snippet exercises the public write API when its real sandbox is available;
 see [pricing](/pt-br/pricing/) for billing (writes and logical document/history
 storage are billed; reads, queries, egress, delivery, fan-out, and subscribers
 are free).
 
 ## Where to go next
 
-- [The two engines](/pt-br/concepts/engines) — what actually serves your reads and writes
+- [Replication and durability](/pt-br/concepts/replication) — sessions, acknowledgements, and conflicts
 - [Replication model](/pt-br/concepts/replication) — leaderless active-active, CRDTs, consistency
 - [Sync model](/pt-br/concepts/sync) — shared views, the immutable delta log, the CDN
 - [SQL](/pt-br/concepts/sql) — the live subset, `execute`-only queries, codegen

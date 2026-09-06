@@ -12,11 +12,10 @@ const check = process.argv.includes("--check");
 const base = "https://docs.terrascale.tech";
 const routes = [
   ["/", "TerraScale docs home: what TerraScale is, 5-minute quickstart."],
-  ["/getting-started", "Quickstart: create-terrascale-app to first live query in < 5 minutes."],
+  ["/getting-started", "Quickstart: create-terrascale-app to development write and live query; sign-in journey unqualified."],
   ["/getting-started/", "Quickstart (guides IA): cloud dev branch, seed, codegen, first live query."],
   ["/concepts", "Core concepts: documents, SQL-only queries (D-78), live queries vs collection sync (D-38), branches, tenants, placement."],
-  ["/concepts/engines", "The two engines: sync engine and replication engine."],
-  ["/concepts/replication", "Replication model: leaderless CRDT, causal+, RegionalDurable/GlobalDurable."],
+  ["/concepts/replication", "Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable."],
   ["/concepts/sync", "Sync model: shared views, immutable delta log, CDN delivery."],
   ["/concepts/sql", "SQL: live subset, allow-list, typed builder, auto-indexing."],
   ["/concepts/pricing-philosophy", "Pricing philosophy: writes + storage are the only billed dimensions."],
@@ -25,10 +24,9 @@ const routes = [
   ["/pricing/", "Pricing & limits: plans, quotas, guards, shared organization allowances."],
   ["/limits", "Limits and unbilled abuse guards (D-25/D-64), generated from the same source as pricing."],
   ["/snippets", "Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key (D-56); tenant, branch, backup, and export fixtures are retained but skipped until their producer contracts are published."],
-  ["/blog/why-sqlite", "Launch post draft (L-5): Why TerraScale runs on SQLite."],
   ["/blog/reads-are-free", "Launch post draft (L-5): Reads are free — how."],
-  ["/blog/benchmarks", "Launch post draft (L-5): benchmarks."],
-  ["/blog/replication", "Launch post draft (L-5): replication design."],
+  ["/blog/benchmarks", "Benchmark publication policy: no measured results published."],
+  ["/blog/replication", "Draft: choosing durability across Regions."],
   ["/blog/database-per-customer", "Launch post draft (L-5): a database per customer."],
   ["/legal/", "Legal overview: ToS, Privacy, DPA, security.txt, Support."],
   ["/legal/terms", "Terms of Service"],
@@ -42,15 +40,15 @@ const routes = [
 const txt = `# TerraScale docs — llms.txt (P-8)
 
 > TerraScale is a multi-region document database-as-a-service: leaderless
-> CRDT replication across regions (RF=2 inside a region), CDN-backed reactive
+> causal replication across selected Regions, CDN-backed reactive
 > live queries, SQL over documents (SQLite dialect), per-document history
 > with deterministic conflict explanations, PITR/branching, and a database
 > per tenant. Pay only for writes (one write = one create/update/patch/delete
 > of <= 4 KiB, ceil(bytes/4 KiB); replicating to another selected region
-> costs +1 write per region) and storage (logical bytes x regions at
+> multiplies its 4 KiB units by selected Regions before allowances) and storage (logical bytes x regions at
 > $/GB-month). Reads, queries, egress, CDN delivery, fan-out, subscribers,
 > WebSocket connections, webhook delivery, catch-up/replay, and TTL expiry
-> are free and unlimited; reads, queries, and direct member read egress are
+> are unbilled within disclosed safety limits; reads, queries, and direct member read egress are
 > metered for unbilled abuse guards, while CDN-delivered reactive data has no
 > bandwidth guard.
 > SQL is the only query language (D-78). A write is billed once regardless of
@@ -64,7 +62,7 @@ ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
 
 ## Pricing summary (L-1 draft; full tables in /pricing and /pricing/)
 
-- Billed: writes (1 op <= 4 KiB; +1 per extra replicated region) and storage
+- Billed: writes (4 KiB units multiplied by selected Regions before allowances) and storage
   (logical bytes x regions at $/GB-month). Overage/PAYG: $1 per 1M writes,
   $0.20 per GB-month per region.
 - Free/unbilled: reads, queries, egress, CDN delivery, fan-out, subscribers,
@@ -102,7 +100,7 @@ Base domain terrascale.tech. Regions at launch: GRU, SFO, FRA.
   GET /api/v1/reactive/views/{view}/{generation}/log?offset={revision}
 - Export (lossless bundle or JSONL):
   POST /api/v1/databases/{id}/exports
-- Status: https://status.terrascale.tech
+- Public status and metrics pages are deferred.
 
 ## SDKs
 

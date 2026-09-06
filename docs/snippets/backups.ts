@@ -1,5 +1,5 @@
 // Runnable snippet: configure and trigger an on-demand backup with
-// @terrascale/sdk 0.3.0. Backups are billed storage/retention, not reads.
+// @terrascale/sdk 0.3.0. Backups are unbilled; logical documents and retained history are billed storage.
 import { strict as assert } from "node:assert";
 import type { TerraScaleClient } from "@terrascale/sdk";
 

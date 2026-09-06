@@ -4,7 +4,7 @@ layout: home
 hero:
   name: TerraScale
   text: Multi-region document database
-  tagline: Leaderless CRDT replication, CDN-backed reactive live queries, and SQL you already know — on one radically simple price. Pay for writes and storage; reads, queries, egress, and delivery are free.
+  tagline: Selected Regions, reactive live queries, and read-only SQL. Pay for writes and storage; reads, queries, egress, and delivery are free.
   actions:
     - theme: brand
       text: Get started
@@ -14,28 +14,32 @@ hero:
       link: /fr/pricing/
     - theme: alt
       text: Concepts
-      link: /fr/concepts/engines
+      link: /fr/concepts/replication
 
 features:
   - icon: ⚙️
-    title: Two engines, one product
-    details: A replication engine (leaderless CRDT across regions, RF=2 inside a region) and a sync engine (incremental result views encoded once into an immutable HTTP log the CDN serves and collapses). Replicated writes cost one write per region — shown up front.
+    title: Live results across selected Regions
+    details: Subscribe to authorized results and receive changes as documents are written. Selected Regions multiply write units and logical storage before included allowances.
   - icon: 📝
     title: SQL you already know
-    details: "Every collection is a SQL table: typed columns from your schema, JSON paths into the document body, FTS5 full-text search. The same query ends in .subscribe() for live results or .execute() for one shot."
+    details: "Every collection is a SQL table: typed columns from your schema, JSON paths into the document body, full-text search. The same query ends in .subscribe() for live results or .execute() for one shot."
   - icon: 🌍
     title: Active-active multi-region
-    details: Write in GRU, SFO, and FRA at the same time. Single-digit-ms local reads, causal consistency by default, deterministic conflict resolution with per-document history that explains every merge.
+    details: Choose placement in GRU, SFO, and FRA. Causal sessions and deterministic conflict resolution have explicit limits; global uniqueness and linearizable reads are not promised.
   - icon: 💰
     title: Writes and storage, nothing else
-    details: One write = one create/update/patch/delete of ≤ 4 KiB. Storage = logical bytes × regions. Reads, queries, egress, CDN delivery, fan-out, subscribers, webhooks, catch-up and replay are free and unlimited — bounded only by unbilled abuse guards.
+    details: One write = one create/update/patch/delete of ≤ 4 KiB. Storage = logical bytes × regions. Reads, queries, egress, CDN delivery, fan-out, subscribers, webhooks, catch-up and replay are unbilled within disclosed safety guards.
   - icon: 🌿
     title: Branches, PITR, per-document history
-    details: Databases and branches create in under 5 seconds. Restore to a new database, branch from any point in time, and see "why this version won" for every conflict.
+    details: Keep retained document history within plan limits. Recovery and branching preserve placement and access scope; their real-service workflows require qualification.
   - icon: 🧩
     title: A database per customer
-    details: "Thousands of small databases per project are routine and near-free when idle. Tenant = database: scoped keys, per-tenant usage, per-tenant branching, and placement locks that are never widened."
+    details: "Separate customer databases can scope access, usage, recovery, and residency. Capacity and idle-cost claims require measured evidence."
 ---
+
 <!-- i18n:fallback:fr -->
 > **Traduction en attente.** Cette page n’a pas encore été relue en français et affiche le contenu original en anglais.
 
+TerraScale is preparing for public self-service launch. Production qualification
+and final pricing approval remain incomplete; these pages describe the intended
+service and identify unavailable workflows.

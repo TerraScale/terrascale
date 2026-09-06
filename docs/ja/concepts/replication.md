@@ -3,74 +3,48 @@
 <!-- i18n:fallback:ja -->
 > **翻訳レビュー待ち。** このページはまだ日本語の人力レビューがなく、英語の原文を表示しています。
 
-# Replication model
+# Replication and durability
 
-TerraScale replication is **leaderless active-active**. There is no home
-region, no single-writer mode, and no failover ceremony: every selected region
-has its own writer per database, and all copies converge.
+> Pre-launch: these describe required service guarantees. Production fault and
+> recovery qualification remains incomplete.
 
-## Inside a region: RF=2, physical bytes
+A database accepts reads and writes in its selected Regions. Placement is
+explicit and immutable: selecting additional Regions changes both residency
+and usage accounting. Copies across Regions converge with causal replication
+and deterministic conflict resolution. This does not provide linearizable
+reads or global uniqueness.
 
-The second copy in a region is a **physical WAL-frame follower** of the
-writer's SQLite file. The follower applies the writer's WAL frames verbatim —
-byte-identical, no logical replay, no CRDT machinery. A write acknowledged
-**`RegionalDurable`** is one whose WAL frames the follower has fsynced. If the
-writer dies, promotion is opening the file under a new replica epoch.
+## Durability choices
 
-## Across regions: causal+ delivery
+- **RegionalDurable** acknowledges a write after it is durable on both copies
+  in the accepting Region.
+- **GlobalDurable** requires durability in every selected Region, including
+  the write’s causal dependencies. An unavailable required Region prevents
+  this acknowledgement; the service must not silently weaken durability.
 
-A journal tailer per peer region ships committed journal rows (canonical body
-bytes plus causal metadata) over pooled QUIC lanes, compressed with a
-dictionary trained on canonical JSON. The receiver applies a remote row only
-once **every row in its causal context is already applied** — causal+
-consistency (the COPS model). Rows waiting for dependencies sit in a bounded
-queue; overflow triggers reconciliation, never a skip.
+A timeout may leave a write’s outcome uncertain. Reuse its idempotency identity
+and follow the SDK’s retry guidance; creating a new operation can duplicate it.
 
-Three outcomes per incoming row:
+## Sessions and conflicts
 
-- **Dominated** (a later version of the document exists) → dropped.
-- **Clean** (no concurrent version) → written as bytes, never parsed.
-- **Concurrent** → both bodies are parsed and merged per field:
-  remove-wins map semantics, HLC tiebreak. The merged bytes, both inputs, and
-  the rule applied go to history.
+Session guarantees include read-your-writes and monotonic reads. Keep the
+opaque session token returned by the API and pass it on subsequent requests.
+A Region that cannot satisfy the requested session must return a useful
+restriction or retry response rather than silently return stale data.
 
-Merge is a pure function of the observed set of rows, so delivery order and
-duplication can never produce divergence.
+Concurrent writes across Regions can conflict. Deterministic resolution makes
+copies converge; retained history provides conflict information within the
+configured retention period. Do not treat a local uniqueness or conditional
+write check as a global constraint. Applications needing global uniqueness
+must use a separately qualified authority for that decision.
 
-## Durability classes
+During an outage, admitted operations may continue only where the requested
+placement, session, authorization, and durability guarantees can be satisfied.
+Recovery does not widen residency or invent a successful acknowledgement.
 
-- **`RegionalDurable`** — the row is durable in its region (RF=2 follower
-  fsync).
-- **`GlobalDurable`** — every selected region has fsynced the row **and** all
-  of its causal dependencies are already uniform. Fewer than two reachable
-  regions fails closed: the write is refused, not weakened.
+## Usage
 
-## Consistency: what you get, stated honestly
-
-The client's **session token is its causal frontier**. Defaults:
-
-- **Read-your-writes** and **monotonic reads** always.
-- Per-request opt-outs: `eventual`, or `writes-follow-reads`.
-- **Never linearizable.** If you need a linearizable read, that is not this
-  database, and we say so.
-
-A member that cannot serve your session's frontier within a bounded wait
-returns `StaleReplica` naming a region that can; the SDK follows it.
-
-Unique indexes and conditional writes are enforced **within a region**.
-Cross-region uniqueness is best-effort, and any conflict is surfaced in
-history with a deterministic explanation — not silently resolved.
-
-## Anti-entropy
-
-Range-based set reconciliation over `(origin, seq) → row hash` runs on
-reconnect, region bootstrap, queue overflow, and a slow sweep — O(log n)
-rounds worst case, no per-connection state. A joining region bootstraps from a
-backup snapshot in its own region's object storage, then tails, then proves
-equality with one full reconciliation before it serves.
-
-## What it costs
-
-Replicating a write to another selected region costs **one write per region**.
-That is the whole rule — shown on the [pricing page](/ja/pricing/) up front,
-never folded into a vague "multi-region surcharge".
+Multiply each write’s 4 KiB units by selected Regions before consuming the
+organization’s shared database and branch allowances. Logical storage also
+counts selected Regions over time. Reads and replication delivery create no
+separate charge; see [pricing and limits](/ja/pricing/).

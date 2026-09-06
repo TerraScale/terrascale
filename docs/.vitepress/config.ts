@@ -43,7 +43,6 @@ const TREES: Record<string, { groups: { header: string; items: string[] }[] }> =
       {
         header: 'concepts',
         items: [
-          '/concepts/engines',
           '/concepts/replication',
           '/concepts/sync',
           '/concepts/sql',
@@ -58,7 +57,6 @@ const TREES: Record<string, { groups: { header: string; items: string[] }[] }> =
       {
         header: 'drafts',
         items: [
-          '/blog/why-sqlite',
           '/blog/reads-are-free',
           '/blog/benchmarks',
           '/blog/replication',
@@ -121,7 +119,6 @@ const EN_NAV = [
   {
     text: 'Concepts',
     items: [
-      { text: 'The two engines', link: '/concepts/engines' },
       { text: 'Replication model', link: '/concepts/replication' },
       { text: 'Sync model', link: '/concepts/sync' },
       { text: 'SQL', link: '/concepts/sql' },
@@ -134,10 +131,9 @@ const EN_NAV = [
   {
     text: 'Blog',
     items: [
-      { text: 'Why TerraScale runs on SQLite (draft)', link: '/blog/why-sqlite' },
       { text: 'Reads are free: how (draft)', link: '/blog/reads-are-free' },
-      { text: 'Benchmarks (draft)', link: '/blog/benchmarks' },
-      { text: 'Replication design (draft)', link: '/blog/replication' },
+      { text: 'Benchmark publication policy', link: '/blog/benchmarks' },
+      { text: 'Choosing durability (draft)', link: '/blog/replication' },
       { text: 'A database per customer (draft)', link: '/blog/database-per-customer' },
     ],
   },
@@ -152,7 +148,6 @@ const EN_NAV = [
     ],
   },
   { text: 'Changelog', link: '/changelog' },
-  { text: 'Status', link: 'https://status.terrascale.tech' },
 ]
 
 const EN_STRINGS: LocaleStrings = {
@@ -197,7 +192,6 @@ const flatNav = (
   { text: t.snippets, link: '/snippets' },
   { text: t.legal, link: '/legal/' },
   { text: t.changelog, link: '/changelog' },
-  { text: t.status, link: 'https://status.terrascale.tech' },
 ]
 
 const STRINGS: Record<string, LocaleStrings> = {

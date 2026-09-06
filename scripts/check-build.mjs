@@ -77,15 +77,23 @@ const llms = read("docs/public/llms.txt");
 assert.ok(llms.includes("tenant, branch, backup, and export fixtures are retained but skipped"), "llms marks unpublished management fixtures as non-runnable");
 assert.ok(!llms.includes("live subscriptions, and tenants run"), "llms does not claim unpublished tenant snippets run");
 for (const route of [
-  "/", "/getting-started", "/getting-started/", "/concepts", "/concepts/engines",
+  "/", "/getting-started", "/getting-started/", "/concepts",
   "/concepts/replication", "/concepts/sync", "/concepts/sql", "/concepts/pricing-philosophy",
-  "/guides/", "/pricing", "/pricing/", "/limits", "/snippets", "/blog/why-sqlite",
+  "/guides/", "/pricing", "/pricing/", "/limits", "/snippets",
   "/blog/reads-are-free", "/blog/benchmarks", "/blog/replication", "/blog/database-per-customer",
   "/legal/", "/legal/terms", "/legal/privacy", "/legal/dpa", "/legal/security", "/legal/support",
   "/changelog", "sync.api.terrascale.tech",
 ]) assert.ok(llms.includes(route), `llms.txt lists ${route}`);
 
-for (const slug of ["why-sqlite", "reads-are-free", "benchmarks", "replication", "database-per-customer"]) {
+for (const retired of ["concepts/engines", "blog/why-sqlite"]) {
+  assert.ok(!existsSync(join(root, "docs", `${retired}.md`)), `${retired} is outside public source`);
+  assert.ok(!existsSync(join(root, "docs/.vitepress/dist", `${retired}.html`)), `${retired} is outside the site build`);
+  assert.ok(!llms.includes(`/${retired}`), `${retired} is absent from llms navigation`);
+}
+assert.ok(!read("docs/.vitepress/config.ts").includes("https://status.terrascale.tech"), "deferred status page is not advertised in navigation");
+assert.ok(read("docs/snippets/backups.ts").includes("Backups are unbilled"), "backup fixture agrees with billing policy");
+
+for (const slug of ["reads-are-free", "benchmarks", "replication", "database-per-customer"]) {
   assert.ok(existsSync(join(root, `docs/blog/${slug}.md`)), `blog/${slug}.md exists`);
 }
 

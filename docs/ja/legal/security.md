@@ -46,14 +46,14 @@ one: [PLACEHOLDER — acknowledgement and remediation timeframes pending].
 good-faith testing is limited to resources you own or are authorized to test;
 no bounty program is approved for launch.]
 
-## Key hierarchy
+## Encryption and deletion
 
-Every database has its own data encryption key (DEK), wrapped by a
-per-region key encryption key (KEK) in OCI Vault. SQLite files, WAL,
-backups, exports, and branches are encrypted under the DEK. Deleting an
-account destroys its DEKs — crypto-shred — making the data unreadable.
-The capability-signing key rotates every 24 hours. Administrative access
-("crown jewels") requires hardware two-factor authentication.
+Customer data, backups, exports, and branches must remain encrypted under
+the database’s residency policy. Authorized deletion revokes access and stops
+further billable usage while retained copies are removed. Physical completion
+timing requires verified retention behavior and owner approval; see the
+[deletion and billing policy](/ja/pricing/). This draft does not promise a fixed
+key-rotation interval or unverified completion deadline.
 
 A SOC 2 report and a paid external penetration test are planned
 post-first-customer.

@@ -1,7 +1,7 @@
----
----
-<!-- i18n:fallback:hi -->
-> **अनुवाद लंबित।** इस पृष्ठ का मानव-समीक्षित हिंदी अनुवाद अभी उपलब्ध नहीं है, इसलिए मूल अंग्रेज़ी सामग्री दिखाई जा रही है।
+> Historical internal design draft moved out of public documentation on 2026-09-05.
+> This preserves design and recovery qualification questions, not evidence that
+> these mechanisms are implemented or qualified. Current implementation decisions
+> belong to the engine ADRs; consult source before reusing any claim below.
 
 # Why TerraScale runs on SQLite (draft)
 

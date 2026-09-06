@@ -8,7 +8,7 @@
 **Writes and storage are the only billed dimensions.** Everything else —
 reads, queries, egress, CDN delivery, fan-out, concurrent subscribers,
 WebSocket connections, webhook delivery, catch-up and replay, TTL expiry — is
-free, unlimited, and unbilled. Guards on those free dimensions exist to stop
+free and unbilled within disclosed safety limits. Guards on those free dimensions exist to stop
 abuse, not to bill you (see [pricing & limits](/ar/pricing/)).
 
 Stated precisely, because honesty is the brand:
@@ -24,7 +24,7 @@ Stated precisely, because honesty is the brand:
 
 One write = one create, update, patch, or delete of **≤ 4 KiB**, counted as
 `ceil(bytes / 4 KiB)`. Replicating that write to another selected region
-counts **+1 write per region**. That is the entire metering rule for writes.
+multiplies its 4 KiB units by the number of selected Regions before allowances. That is the entire metering rule for writes.
 
 A write is billed **once** regardless of how many shared views it affects or
 how many clients are attached to them — authorization-equivalent subscribers
@@ -39,19 +39,14 @@ documents plus retained history, TTL-aware, measured in byte-seconds, billed
 at $/GB-month per region. Indexes, WAL, and backups are **not billed** — you
 should never be taxed for our performance work.
 
-## Why we can price this way
+## Prices require evidence
 
-The engine is built so free things are actually cheap to give away:
+Before publication, each billed line must sustain at least 50% measured
+margin, and unbilled dimensions must have measured worst cases under their
+guards. The draft rates need owner approval of that evidence and the final
+price sheet. Customer usage facts must reconcile with invoices.
 
-- Reads are zero-parse: documents are canonical bytes spliced into responses.
-- Live delivery is an immutable HTTP log the CDN caches and collapses; a
-  cache hit runs no metered compute at the edge and no database work at the
-  origin. One million readers of one shared view cost the same as one.
-- Storage is mainline SQLite — one file per database, idle files closed, so
-  a database at rest costs almost nothing.
-
-Every price must clear a measured unit-economics bar before it is published:
-each billed line shows the margin at list price on measured cost, and prices
-only ever go down. Engine usage facts — not sampling, not estimates — are the
-source of truth on your invoice, and the dashboard shows per-query cost
-attribution down to individual queries.
+A stored card does not authorize excess usage. Databases and branches share
+normal organization allowances; there is no additional branch allowance.
+Review the [billing policy](/ar/pricing/) for explicit consent, spending caps,
+continuing storage costs, and retention policies.
