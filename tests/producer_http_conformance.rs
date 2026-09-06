@@ -89,6 +89,14 @@ where
             assert_eq!(error.kind, expected_kind);
             assert_eq!(error.code, vector["body"]["error"]["code"]);
             assert_eq!(
+                error.message,
+                format!(
+                    "{} Fix: {}",
+                    vector["body"]["error"]["message"].as_str().unwrap(),
+                    vector["body"]["error"]["fix"].as_str().unwrap()
+                )
+            );
+            assert_eq!(
                 error.fix.as_deref(),
                 vector["body"]["error"]["fix"].as_str()
             );
@@ -382,17 +390,28 @@ async fn producer_421_diagnostics_and_placement_repair_are_preserved() {
         .await
         .expect_err("421");
     assert_eq!(error.kind, ErrorKind::RegionRedirect);
+    assert_eq!(error.status, Some(421));
     assert_eq!(error.code, "misdirected_request");
+    assert_eq!(
+        error.message,
+        "conformance 421 response Fix: follow the contract and retry when safe"
+    );
     assert_eq!(
         error.fix.as_deref(),
         Some("follow the contract and retry when safe")
     );
     assert_eq!(error.request_id.as_deref(), Some("producer-conformance"));
     assert_eq!(error.placement.as_deref(), Some("GRU"));
-    let _ = client.management().databases().get("sample", None).await;
-    assert!(mock.requests.lock().unwrap()[1]
-        .url
-        .contains("gru.api.terrascale.tech"));
+    client
+        .management()
+        .databases()
+        .get("sample", None)
+        .await
+        .unwrap();
+    let requests = mock.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    let next = reqwest::Url::parse(&requests[1].url).unwrap();
+    assert_eq!(next.host_str(), Some("gru.api.terrascale.tech"));
 }
 
 #[test]
@@ -529,14 +548,6 @@ async fn public_database_create_consumes_every_producer_response_and_error_once(
                 }
             );
             assert_eq!(error.code, body["error"]["code"]);
-            assert_eq!(
-                error.message,
-                format!(
-                    "{} Fix: {}",
-                    body["error"]["message"].as_str().unwrap(),
-                    body["error"]["fix"].as_str().unwrap()
-                )
-            );
             assert_eq!(error.fix.as_deref(), body["error"]["fix"].as_str());
             assert_eq!(error.request_id.as_deref(), Some("producer-conformance"));
             assert_eq!(
