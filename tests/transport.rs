@@ -10,7 +10,7 @@ async fn production_transport_returns_redirects_without_replaying_mutations() {
         for status in [307, 308] {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = [0; 4096];
-            stream.read(&mut request).unwrap();
+            assert!(stream.read(&mut request).unwrap() > 0);
             write!(stream, "HTTP/1.1 {status} Redirect\r\nLocation: http://127.0.0.1:9/mutation\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
         }
     });

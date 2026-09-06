@@ -870,6 +870,7 @@ pub struct ExportAccepted {
 pub enum ExportJobStatus {
     Accepted,
     Running,
+    Cancelled,
     Complete,
     Failed,
 }
@@ -881,6 +882,10 @@ pub struct ExportArtifact {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExportStatus {
+    pub created_at_millis: u64,
+    pub phase: ExportPhase,
+    pub cancellation: ExportCancellation,
+    pub pages: u64,
     pub job_id: String,
     pub status: ExportJobStatus,
     pub records: u64,
@@ -889,6 +894,25 @@ pub struct ExportStatus {
     pub resume_cursor: String,
     pub manifest: Option<ExportArtifact>,
     pub error: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ExportPhase {
+    Documents,
+    History,
+    Done,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportCancellation {
+    Available,
+    Requested,
+    Complete,
+    Unavailable,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportList {
+    pub exports: Vec<ExportStatus>,
+    pub next_cursor: Option<String>,
 }
 #[derive(Debug, Clone)]
 pub struct Exports {
@@ -911,6 +935,63 @@ impl Exports {
             Method::Post,
             format!("{}/exports", database_url(&self.shared, database_id)?),
             &input,
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
+    pub async fn list(
+        &self,
+        database_id: &str,
+        after: Option<&str>,
+        limit: Option<u16>,
+    ) -> Result<ExportList> {
+        if limit.is_some_and(|limit| !(1..=50).contains(&limit)) {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_limit",
+                "limit must be between 1 and 50.",
+            ));
+        }
+        let mut url = format!("{}/exports", database_url(&self.shared, database_id)?);
+        let mut query = Vec::new();
+        if let Some(after) = after {
+            query.push(format!("after={}", encode_segment(after, "after")?));
+        }
+        if let Some(limit) = limit {
+            query.push(format!("limit={limit}"));
+        }
+        if !query.is_empty() {
+            url.push('?');
+            url.push_str(&query.join("&"));
+        }
+        self.shared
+            .send_typed(Request {
+                route_name: "exports.list".into(),
+                method: Method::Get,
+                url,
+                headers: vec![],
+                body: None,
+            })
+            .await
+    }
+    pub async fn cancel(
+        &self,
+        database_id: &str,
+        job_id: &str,
+        options: OperationOptions,
+    ) -> Result<ExportStatus> {
+        let request = request_options(
+            Request {
+                route_name: "exports.cancel".into(),
+                method: Method::Post,
+                url: format!(
+                    "{}/exports/{}/cancel",
+                    database_url(&self.shared, database_id)?,
+                    encode_segment(job_id, "job_id")?
+                ),
+                headers: vec![],
+                body: None,
+            },
             &options,
         )?;
         send_with_options(&self.shared, request, &options).await

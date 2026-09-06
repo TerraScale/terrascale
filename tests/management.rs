@@ -352,7 +352,7 @@ async fn webhook_operations_match_endpoint_and_delivery_contracts() {
 #[tokio::test]
 async fn exports_send_identity_and_resume_cursor_and_preserve_progress() {
     use terrascale::{CreateExport, ExportJobStatus, ResumeExport};
-    let status = json!({"job_id":"job","status":"Complete","records":5,"estimated_records":null,"progress_basis_points":10000,"resume_cursor":"next","manifest":{"path":"manifest","length":20,"checksum":"abc"},"error":null});
+    let status = json!({"job_id":"job","status":"Complete","created_at_millis":1,"phase":"Done","cancellation":"unavailable","pages":1,"records":5,"estimated_records":null,"progress_basis_points":10000,"resume_cursor":"next","manifest":{"path":"manifest","length":20,"checksum":"abc"},"error":null});
     let mock = Mock::new(vec![
         Response::json(
             202,
@@ -627,4 +627,173 @@ async fn operations_poll_durable_provisioning_with_get() {
     assert_eq!(mock.last().method, Method::Get);
     assert!(mock.last().url.ends_with("/api/v1/operations/op"));
     assert!(mock.last().body.is_none());
+}
+
+#[tokio::test]
+async fn scope_selectors_and_put_create_only_use_canonical_headers() {
+    use terrascale::{DatabaseScope, DocumentOperationOptions};
+    let mock = Mock::new(vec![Response::json(200, &json!({"revision":"1"}))]);
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_key("test")
+            .tenant_id("tenant")
+            .project_id("project")
+            .build()
+            .unwrap(),
+        mock.clone(),
+    );
+    let scope = DatabaseScope::new("db");
+    let options = DocumentOperationOptions::default().with_create_only();
+    sdk.documents()
+        .put_with_options(
+            &scope,
+            "orders",
+            "one",
+            json!({"status":"paid"}),
+            options.clone(),
+        )
+        .await
+        .unwrap();
+    let request = mock.last();
+    for (name, value) in [
+        ("x-terrascale-tenant-id", "tenant"),
+        ("x-terrascale-project-id", "project"),
+        ("if-none-match", "*"),
+    ] {
+        assert_eq!(
+            request
+                .headers
+                .iter()
+                .filter(|(header, _)| header.eq_ignore_ascii_case(name))
+                .map(|(_, value)| value.as_str())
+                .collect::<Vec<_>>(),
+            [value]
+        );
+    }
+    assert!(sdk
+        .documents()
+        .put_with_options(
+            &scope,
+            "orders",
+            "one",
+            json!({}),
+            options.clone().with_if_match("etag")
+        )
+        .await
+        .is_err());
+    assert!(sdk
+        .documents()
+        .patch_with_options(&scope, "orders", "one", json!({}), options.clone())
+        .await
+        .is_err());
+    assert!(sdk
+        .documents()
+        .delete_with_options(&scope, "orders", "one", options)
+        .await
+        .is_err());
+    assert_eq!(mock.requests.lock().unwrap().len(), 1);
+    assert!(ClientConfig::builder()
+        .tenant_id("bad\nheader")
+        .build()
+        .is_err());
+}
+
+#[tokio::test]
+async fn webhook_secret_rotation_never_retries_while_create_requires_stable_identity() {
+    use terrascale::{CreateWebhook, RotateWebhookSecret};
+    let unavailable = Response::json(
+        503,
+        &json!({"error":{"code":"unavailable","message":"retry later"}}),
+    );
+    let mock = Mock::new(vec![
+        unavailable.clone(),
+        unavailable.clone(),
+        unavailable,
+        Response::json(
+            201,
+            &json!({"id":"hook","endpoint":"https://example.com","created_at":0,"deleted":false,"secret":"stable-secret"}),
+        ),
+    ]);
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .max_retry_attempts(1)
+            .retry_delay_ms(0)
+            .build()
+            .unwrap(),
+        mock.clone(),
+    );
+    let api = sdk.management().webhooks();
+    assert!(api
+        .rotate_secret(
+            "db",
+            "hook",
+            RotateWebhookSecret::default(),
+            OperationOptions {
+                idempotency_key: Some("rotation".into()),
+                cancellation: None
+            }
+        )
+        .await
+        .is_err());
+    assert_eq!(mock.requests.lock().unwrap().len(), 1);
+    assert!(api
+        .create(
+            "db",
+            CreateWebhook {
+                endpoint: "https://example.com".into()
+            },
+            OperationOptions::default()
+        )
+        .await
+        .is_err());
+    assert_eq!(mock.requests.lock().unwrap().len(), 2);
+    assert_eq!(
+        api.create(
+            "db",
+            CreateWebhook {
+                endpoint: "https://example.com".into()
+            },
+            OperationOptions {
+                idempotency_key: Some("create".into()),
+                cancellation: None
+            }
+        )
+        .await
+        .unwrap()
+        .secret,
+        "stable-secret"
+    );
+    assert_eq!(mock.requests.lock().unwrap().len(), 4);
+}
+
+#[tokio::test]
+async fn exports_discover_and_cancel_with_durable_progress() {
+    use terrascale::{ExportCancellation, ExportJobStatus};
+    let status = json!({"job_id":"job","status":"Cancelled","created_at_millis":1,"phase":"Documents","cancellation":"complete","pages":2,"records":5,"estimated_records":null,"progress_basis_points":1000,"resume_cursor":"resume","manifest":null,"error":null});
+    let mock = Mock::new(vec![
+        Response::json(
+            200,
+            &json!({"exports":[status.clone()],"next_cursor":"job"}),
+        ),
+        Response::json(200, &status),
+    ]);
+    let api = client(Arc::clone(&mock)).management().exports();
+    let list = api.list("db", Some("job previous"), Some(2)).await.unwrap();
+    assert_eq!(list.next_cursor.as_deref(), Some("job"));
+    assert_eq!(list.exports[0].pages, 2);
+    assert!(mock
+        .last()
+        .url
+        .ends_with("/exports?after=job%20previous&limit=2"));
+    let cancelled = api
+        .cancel("db", "job", OperationOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(cancelled.status, ExportJobStatus::Cancelled);
+    assert_eq!(cancelled.cancellation, ExportCancellation::Complete);
+    assert_eq!(mock.last().method, Method::Post);
+    assert!(mock.last().url.ends_with("/exports/job/cancel"));
+    assert!(mock.last().body.is_none());
+    assert!(api.list("db", None, Some(51)).await.is_err());
+    assert_eq!(mock.requests.lock().unwrap().len(), 2);
 }

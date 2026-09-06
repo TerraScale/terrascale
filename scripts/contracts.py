@@ -393,7 +393,7 @@ def schema_type(schema: dict, required: bool, models: dict) -> str:
     if kind == "string":
         return "String"
     if kind == "integer":
-        return "i64"
+        return {"uint64": "u64", "uint32": "u32", "uint16": "u16", "uint8": "u8", "int32": "i32", "int16": "i16", "int8": "i8"}.get(schema.get("format"), "i64")
     if kind == "number":
         return "f64"
     if kind == "boolean":

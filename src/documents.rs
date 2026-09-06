@@ -51,6 +51,8 @@ pub struct DocumentOperationOptions {
     pub idempotency_key: Option<String>,
     pub durability: Option<Durability>,
     pub if_match: Option<String>,
+    /// Admit a PUT only when the document does not exist.
+    pub create_only: bool,
     pub session: Option<String>,
     pub consistency: Option<Consistency>,
     pub region_hint: Option<RegionCode>,
@@ -69,6 +71,11 @@ impl DocumentOperationOptions {
     #[must_use]
     pub fn with_durability(mut self, durability: Durability) -> Self {
         self.durability = Some(durability);
+        self
+    }
+    #[must_use]
+    pub fn with_create_only(mut self) -> Self {
+        self.create_only = true;
         self
     }
     #[must_use]
@@ -608,7 +615,7 @@ impl DocumentsClient {
         value: serde_json::Value,
         options: &DocumentOperationOptions,
     ) -> Result<DocumentWriteResponse> {
-        validate_operation_options(options)?;
+        validate_operation_options(options, method)?;
         let url = self.document_url_in(scope, collection, id, options.region_hint)?;
         let encoded = encode_document(&value)?;
         let request = Request {
@@ -639,7 +646,7 @@ impl DocumentsClient {
         id: &str,
         options: DocumentOperationOptions,
     ) -> Result<()> {
-        validate_operation_options(&options)?;
+        validate_operation_options(&options, Method::Delete)?;
         let request = Request {
             route_name: "documents.delete".to_owned(),
             method: Method::Delete,
@@ -698,7 +705,7 @@ impl DocumentsClient {
         operations: Vec<BatchOperation>,
         options: DocumentOperationOptions,
     ) -> Result<BatchResponse> {
-        validate_operation_options(&options)?;
+        validate_operation_options(&options, Method::Post)?;
         if operations.is_empty() || operations.len() > MAX_BATCH_OPERATIONS {
             return Err(Error::new(
                 ErrorKind::Validation,
@@ -864,7 +871,14 @@ fn normalize_session_token(value: &str) -> Option<&str> {
     Some(value)
 }
 
-fn validate_operation_options(options: &DocumentOperationOptions) -> Result<()> {
+fn validate_operation_options(options: &DocumentOperationOptions, method: Method) -> Result<()> {
+    if options.create_only && (method != Method::Put || options.if_match.is_some()) {
+        return Err(Error::new(
+            ErrorKind::Validation,
+            "invalid_create_only",
+            "create_only requires PUT and cannot be combined with if_match.",
+        ));
+    }
     if let Some(key) = options.idempotency_key.as_deref() {
         validate_header_value(
             key,
@@ -943,6 +957,11 @@ fn apply_operation_headers(mut request: Request, options: &DocumentOperationOpti
         request
             .headers
             .push(("idempotency-key".to_owned(), key.trim().to_owned()));
+    }
+    if options.create_only {
+        request
+            .headers
+            .push(("if-none-match".to_owned(), "*".to_owned()));
     }
     if let Some(etag) = options.if_match.as_deref() {
         request

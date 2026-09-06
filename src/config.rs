@@ -9,6 +9,7 @@ pub struct ClientConfig {
     api_base_url: String,
     api_key: Option<String>,
     project_id: Option<String>,
+    tenant_id: Option<String>,
     preferred_region: Option<RegionCode>,
     region_affinity: RegionAffinity,
     max_retry_attempts: u8,
@@ -32,6 +33,12 @@ impl ClientConfig {
     #[must_use]
     pub fn project_id(&self) -> Option<&str> {
         self.project_id.as_deref()
+    }
+
+    /// Tenant selector checked against the authenticated server authority.
+    #[must_use]
+    pub fn tenant_id(&self) -> Option<&str> {
+        self.tenant_id.as_deref()
     }
 
     /// Preferred region for pinned REST traffic.
@@ -69,6 +76,7 @@ pub struct ClientConfigBuilder {
     api_base_url: Option<String>,
     api_key: Option<String>,
     project_id: Option<String>,
+    tenant_id: Option<String>,
     preferred_region: Option<RegionCode>,
     region_affinity: RegionAffinity,
     max_retry_attempts: u8,
@@ -90,10 +98,17 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Default project scope for project-scoped operations.
+    /// Project selector checked against the authenticated server authority.
     #[must_use]
     pub fn project_id(mut self, project_id: impl Into<String>) -> Self {
         self.project_id = Some(project_id.into());
+        self
+    }
+
+    /// Tenant selector checked against the authenticated server authority.
+    #[must_use]
+    pub fn tenant_id(mut self, tenant_id: impl Into<String>) -> Self {
+        self.tenant_id = Some(tenant_id.into());
         self
     }
 
@@ -127,6 +142,20 @@ impl ClientConfigBuilder {
 
     /// Validate and build the config.
     pub fn build(self) -> Result<ClientConfig> {
+        for (name, value) in [
+            ("tenant_id", &self.tenant_id),
+            ("project_id", &self.project_id),
+        ] {
+            if value.as_ref().is_some_and(|value| {
+                value.is_empty() || !value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+            }) {
+                return Err(Error::new(
+                    ErrorKind::Validation,
+                    "invalid_scope_selector",
+                    format!("{name} must be a non-empty ASCII header value."),
+                ));
+            }
+        }
         if self.max_retry_attempts > 8 {
             return Err(Error::new(
                 ErrorKind::Validation,
@@ -155,6 +184,7 @@ impl ClientConfigBuilder {
             api_base_url,
             api_key: self.api_key,
             project_id: self.project_id,
+            tenant_id: self.tenant_id,
             preferred_region: self.preferred_region,
             region_affinity: self.region_affinity,
             max_retry_attempts: self.max_retry_attempts,

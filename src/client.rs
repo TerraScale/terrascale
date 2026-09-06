@@ -178,6 +178,17 @@ impl Shared {
                 .headers
                 .push(("authorization".to_owned(), format!("Bearer {api_key}")));
         }
+        for (header, value) in [
+            ("x-terrascale-tenant-id", self.config.tenant_id()),
+            ("x-terrascale-project-id", self.config.project_id()),
+        ] {
+            if let Some(value) = value {
+                request
+                    .headers
+                    .retain(|(name, _)| !name.eq_ignore_ascii_case(header));
+                request.headers.push((header.to_owned(), value.to_owned()));
+            }
+        }
         if !request
             .headers
             .iter()
@@ -422,7 +433,8 @@ impl Shared {
     fn can_retry(&self, request: &Request, error: &Error, retries: u8) -> bool {
         // Reactive polling owns its own attempt budget and deadline; applying
         // the general client retry budget here would multiply those bounds.
-        if request.route_name == "reactive.poll" {
+        // Secret rotation has no replay contract, even with an idempotency header.
+        if request.route_name == "reactive.poll" || request.route_name == "webhooks.rotate_secret" {
             return false;
         }
         if retries >= self.config.max_retry_attempts() || !is_retryable(error) {
