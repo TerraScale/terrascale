@@ -553,6 +553,24 @@ async fn auth_http_errors_keep_status_envelope_and_headers() {
     assert_eq!(unavailable.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(unavailable.code, "auth_authority_unavailable");
     *fixture.runtime.domains.write().unwrap() = domains;
+    for (failure, status, code) in [
+        (missing, StatusCode::UNAUTHORIZED, "unauthorized"),
+        (denied, StatusCode::FORBIDDEN, "forbidden"),
+        (unavailable, StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"),
+    ] {
+        let response = failure.into_response();
+        assert_eq!(response.status(), status);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({"error": {
+                "code": code,
+                "message": "Auth operation could not be completed safely",
+                "fix": "Resolve uncertain mutations using the same idempotency key; retry when the admitted authority is available"
+            }})
+        );
+    }
     let (status, body, headers) = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/count", fixture.database))
@@ -566,11 +584,21 @@ async fn auth_http_errors_keep_status_envelope_and_headers() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"]["code"], "invalid_auth_operation");
+    assert_eq!(body["error"]["message"], "Auth operation could not be completed safely");
+    assert_eq!(
+        body["error"]["fix"],
+        "Resolve uncertain mutations using the same idempotency key; retry when the admitted authority is available"
+    );
     assert_eq!(headers.get(CACHE_CONTROL).and_then(|value| value.to_str().ok()), Some("no-store"));
     fixture.runtime.shutdown().await;
     fixture.remote.shutdown().await.unwrap();
+    fixture.local_receive.abort();
+    fixture.remote_receive.abort();
     let _ = fixture.local_receive.await;
     let _ = fixture.remote_receive.await;
+    drop(fixture.runtime);
+    drop(fixture.local_endpoint);
+    drop(fixture.remote_endpoint);
     let _ = std::fs::remove_dir_all(fixture.root);
 }
 

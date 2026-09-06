@@ -59,9 +59,9 @@ pub mod replication_peers;
 /// Encrypted native backup bridge for complete physical bootstrap snapshots.
 pub mod native_snapshot_backup;
 
+pub mod native_recovery;
 /// Signed verified native recovery facts for scoped control consumers.
 pub mod native_recovery_receipt;
-pub mod native_recovery;
 
 /// Joined live delivery catchup observations.
 pub mod catchup_observation;

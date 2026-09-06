@@ -6,6 +6,35 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use terrabase::backup::worker::NativeBackupFleet;
 use terrabase_tbep::member_host::MemberHost;
+use crate::admitted_databases::AdmittedDatabaseRegistry;
+
+/// Finite bounds for the durable recovery ledger.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRecoveryLimits {
+    /// Maximum number of unfinished operations.
+    pub pending_operations: usize,
+    /// Maximum number of retained ledger rows.
+    pub retained_operations: usize,
+}
+
+impl NativeRecoveryLimits {
+    /// Validates finite bounds accepted by the worker.
+    pub fn validate(self) -> Result<Self, NativeRecoveryError> {
+        if !(1..=10_000).contains(&self.pending_operations) || self.pending_operations > self.retained_operations || self.retained_operations > 10_000 { return Err(NativeRecoveryError::InvalidRequest); }
+        Ok(self)
+    }
+}
+
+/// Owner handle for the single serial recovery worker.
+pub struct NativeRecoveryWorker { stop: tokio::sync::oneshot::Sender<()>, join: tokio::task::JoinHandle<()> }
+
+impl NativeRecoveryWorker {
+    /// Signals the worker and waits for its owned task to finish.
+    pub async fn shutdown(self) -> Result<(), NativeRecoveryError> {
+        let _ = self.stop.send(());
+        self.join.await.map_err(|_| NativeRecoveryError::Unavailable)
+    }
+}
 
 /// Source content facts measured at an immutable, provider-verified recovery point.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -82,6 +111,9 @@ pub struct NativeRecoveryRuntime {
     fleet: Arc<Mutex<NativeBackupFleet>>,
     operations: Mutex<Connection>,
     active: Mutex<std::collections::BTreeSet<String>>,
+    registry: Arc<AdmittedDatabaseRegistry>,
+    limits: NativeRecoveryLimits,
+    lifecycle: Mutex<bool>,
 }
 
 impl NativeRecoveryRuntime {
@@ -92,7 +124,10 @@ impl NativeRecoveryRuntime {
     pub fn new(
         root: &Path,
         fleet: Arc<Mutex<NativeBackupFleet>>,
+        registry: Arc<AdmittedDatabaseRegistry>,
+        limits: NativeRecoveryLimits,
     ) -> Result<Arc<Self>, NativeRecoveryError> {
+        let limits = limits.validate()?;
         crate::export_api::ensure_no_symlink_components(root)
             .map_err(|_| NativeRecoveryError::Unavailable)?;
         std::fs::create_dir_all(root).map_err(|_| NativeRecoveryError::Unavailable)?;
@@ -116,7 +151,7 @@ impl NativeRecoveryRuntime {
                 .and_then(|file| file.sync_all())
                 .map_err(|_| NativeRecoveryError::Unavailable)?;
         }
-        Ok(Arc::new(Self { fleet, operations: Mutex::new(connection), active: Mutex::default() }))
+        Ok(Arc::new(Self { fleet, operations: Mutex::new(connection), active: Mutex::default(), registry, limits, lifecycle: Mutex::new(false) }))
     }
 
     /// Durably admits one scoped capture and continues after request disconnection.
