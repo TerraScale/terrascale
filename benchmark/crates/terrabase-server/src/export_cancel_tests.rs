@@ -109,7 +109,7 @@ fn fixture(stop: bool) -> Fixture {
 #[tokio::test]
 async fn cancellation_keeps_committed_page_cursor_and_only_explicit_resume_restarts() {
     let f = fixture(false);
-    f.service.clone_for_worker().run(&f.job).unwrap();
+    f.service.clone_for_worker().run(&f.job).await.unwrap();
     let cancelled = f.service.status(&f.job).unwrap().unwrap();
     assert_eq!(cancelled.status, JobStatus::Cancelled);
     assert_eq!(cancelled.cancellation, ExportCancellation::Complete);
@@ -149,17 +149,17 @@ async fn cancellation_keeps_committed_page_cursor_and_only_explicit_resume_resta
     fs::remove_dir_all(f.root).unwrap();
 }
 
-#[test]
-fn shutdown_yields_after_checkpoint_and_restart_finishes_same_operation() {
+#[tokio::test]
+async fn shutdown_yields_after_checkpoint_and_restart_finishes_same_operation() {
     let f = fixture(true);
-    f.service.clone_for_worker().run(&f.job).unwrap();
+    f.service.clone_for_worker().run(&f.job).await.unwrap();
     let interrupted = f.store.load(&f.job).unwrap().unwrap();
     assert_eq!(interrupted.status, JobStatus::Running);
     assert_eq!((interrupted.records, interrupted.pages), (1, 1));
     assert!(!f.store.cancel_requested(&f.job).unwrap());
     assert!(!f.root.join("artifacts/db").join(&f.job).join("COMMITTED").exists());
     f.service.stop_requested.store(false, Ordering::Release);
-    f.service.clone_for_worker().run(&f.job).unwrap();
+    f.service.clone_for_worker().run(&f.job).await.unwrap();
     assert_eq!(f.service.status(&f.job).unwrap().unwrap().status, JobStatus::Complete);
     assert_eq!(f.service.status(&f.job).unwrap().unwrap().records, 2);
     fs::remove_dir_all(f.root).unwrap();
@@ -192,38 +192,42 @@ impl ArtifactPort for BeforeCommitPort {
     fn attestation(&self) -> Option<EncryptionAttestation> {
         self.inner.attestation()
     }
-    fn open(
-        &self,
-        job: &str,
-        database: &str,
-        destination: &ExportDestination,
-        placement: &PlacementLock,
-    ) -> Result<Box<dyn ArtifactWriter>, ExportError> {
-        Ok(Box::new(BeforeCommitWriter {
-            inner: self.inner.open(job, database, destination, placement)?,
-            store: Arc::clone(&self.store),
-            job: job.into(),
-        }))
+    fn open<'a>(
+        &'a self,
+        job: &'a str,
+        database: &'a str,
+        destination: &'a ExportDestination,
+        placement: &'a PlacementLock,
+    ) -> ExportFuture<'a, Box<dyn ArtifactWriter>> {
+        Box::pin(async move {
+            Ok(Box::new(BeforeCommitWriter {
+                inner: self.inner.open(job, database, destination, placement).await?,
+                store: Arc::clone(&self.store),
+                job: job.into(),
+            }) as Box<dyn ArtifactWriter>)
+        })
     }
 }
 impl ArtifactWriter for BeforeCommitWriter {
-    fn put(&mut self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError> {
-        let fact = self.inner.put(path, plaintext)?;
-        if path == "manifest.json" {
-            self.store.request_cancel(&self.job)?;
-        }
-        Ok(fact)
+    fn put<'a>(&'a mut self, path: &'a str, plaintext: &'a [u8]) -> ExportFuture<'a, ArtifactFact> {
+        Box::pin(async move {
+            let fact = self.inner.put(path, plaintext).await?;
+            if path == "manifest.json" {
+                self.store.request_cancel(&self.job)?;
+            }
+            Ok(fact)
+        })
     }
-    fn existing_facts(&mut self) -> Result<Vec<ArtifactFact>, ExportError> {
-        self.inner.existing_facts()
+    fn existing_facts<'a>(&'a mut self) -> ExportFuture<'a, Vec<ArtifactFact>> {
+        Box::pin(async move { self.inner.existing_facts().await })
     }
-    fn commit(self: Box<Self>, _: &ArtifactFact) -> Result<(), ExportError> {
-        panic!("cancelled operation must not commit")
+    fn commit(self: Box<Self>, _: &ArtifactFact) -> ExportFuture<'static, ()> {
+        Box::pin(async { panic!("cancelled operation must not commit") })
     }
 }
 
-#[test]
-fn cancellation_after_manifest_staging_prevents_irreversible_commit() {
+#[tokio::test]
+async fn cancellation_after_manifest_staging_prevents_irreversible_commit() {
     let mut f = fixture(false);
     f.service.source = Arc::new(BoundarySource {
         store: Arc::clone(&f.store),
@@ -235,7 +239,7 @@ fn cancellation_after_manifest_staging_prevents_irreversible_commit() {
         inner: f.service.artifacts.clone(),
         store: Arc::clone(&f.store),
     });
-    f.service.clone_for_worker().run(&f.job).unwrap();
+    f.service.clone_for_worker().run(&f.job).await.unwrap();
     let status = f.service.status(&f.job).unwrap().unwrap();
     assert_eq!(status.status, JobStatus::Cancelled);
     assert_eq!((status.records, status.pages), (2, 2));
@@ -248,7 +252,7 @@ fn cancellation_after_manifest_staging_prevents_irreversible_commit() {
 #[tokio::test]
 async fn resume_refuses_a_worker_observing_cancel_without_clearing_its_flag() {
     let f = fixture(false);
-    f.service.clone_for_worker().run(&f.job).unwrap();
+    f.service.clone_for_worker().run(&f.job).await.unwrap();
     let state = f.store.load(&f.job).unwrap().unwrap();
     let worker_lease = f.store.acquire_job(&f.job).unwrap().unwrap();
     assert!(matches!(

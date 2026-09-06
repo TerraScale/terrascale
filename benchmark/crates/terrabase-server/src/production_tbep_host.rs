@@ -193,20 +193,70 @@ impl TbepHost for ProductionTbepHost {
 
     fn begin_shutdown(
         &self,
-        request: &registry::SupervisionShutdownRequest,
+        _request: &registry::SupervisionShutdownRequest,
     ) -> Result<registry::SupervisionShutdownResponse, terrabase_tbep::HostingError> {
         self.registry
             .begin_drain()
             .map_err(|error| terrabase_tbep::HostingError::Refused(error.to_owned()))?;
-        let mut result = registry::SupervisionShutdownResponse {
-            state: registry::HealthState::Serving,
-            in_flight: 0,
-        };
-        for database in self.all_members()? {
-            let shutdown = database.host.begin_shutdown(request)?;
-            result.state = Self::combined(result.state, shutdown.state);
-            result.in_flight = result.in_flight.saturating_add(shutdown.in_flight);
+        // The runtime owns reverse-order teardown of replication and native
+        // listeners. Retained MemberHost instances must remain available for
+        // those drains; fencing the registry is the only action owned here.
+        let in_flight = self
+            .all_members()?
+            .into_iter()
+            .map(|database| database.host.health().map(|health| health.subscriptions))
+            .try_fold(0_u32, |total, subscriptions| {
+                subscriptions.map(|count| total.saturating_add(count))
+            })?;
+        Ok(registry::SupervisionShutdownResponse {
+            state: registry::HealthState::Draining,
+            in_flight,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scope(record: &crate::admission::AdmissionRecord) -> registry::BoundScope {
+        registry::BoundScope {
+            principal: "gateway".into(),
+            tenant: record.tenant_id.clone(),
+            project: record.project_id.clone(),
+            database: record.database_id.clone(),
         }
-        Ok(result)
+    }
+
+    #[test]
+    fn routes_to_the_admitted_member() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let host = ProductionTbepHost::new(Arc::new(registry));
+        let response =
+            host.bind_channel(&registry::ChannelBindRequest { scope: scope(&records[0]) });
+        assert!(response.is_ok());
+        drop(host);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_wrong_scope_and_draining_registry() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let host = ProductionTbepHost::new(Arc::new(registry));
+        let mut wrong = scope(&records[0]);
+        wrong.tenant = records[1].tenant_id.clone();
+        assert!(matches!(
+            host.bind_channel(&registry::ChannelBindRequest { scope: wrong }),
+            Err(terrabase_tbep::HostingError::Refused(_))
+        ));
+        host.registry.begin_drain().unwrap();
+        assert!(matches!(
+            host.bind_channel(&registry::ChannelBindRequest { scope: scope(&records[0]) }),
+            Err(terrabase_tbep::HostingError::Refused(_))
+        ));
+        drop(host);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

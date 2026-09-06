@@ -55,6 +55,7 @@ path = "tests/member/main.rs"
 [dependencies]
 # Standard codecs and error derives replace repository-owned implementations.
 hex = "0.4"
+base64 = "0.22"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"

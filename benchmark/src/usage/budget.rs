@@ -27,6 +27,7 @@ pub struct AllocationGrant {
     pub cost_nano_dollar: i64,
     pub policy_epoch: u64,
     pub consent_epoch: u64,
+    pub writer_epoch: u64,
     pub issued_at: String,
     pub expires_at: String,
     #[serde(default)]
@@ -50,9 +51,23 @@ pub struct AllocationEnvelope {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SignedAllocation {
+    #[serde(with = "base64_bytes")]
     pub payload: Vec<u8>,
+    #[serde(with = "base64_bytes")]
     pub signature: Vec<u8>,
     pub key_id: String,
+}
+
+mod base64_bytes {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use serde::{Deserializer, Serializer, de::Error};
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        STANDARD.decode(String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
+    use serde::Deserialize;
 }
 
 /// A verified allocation bound to the local regional writer.
@@ -85,9 +100,12 @@ impl VerifiedAllocation {
         public_key: &[u8],
         local_region: &str,
         expected_placement: &str,
+        expected_organization: &str,
         expected_database: &str,
+        expected_holder: &str,
         expected_policy_epoch: u64,
         expected_consent_epoch: u64,
+        expected_writer_epoch: u64,
         now_millis: u64,
     ) -> Result<Self, AllocationError> {
         if signed_bytes.len() > MAX_ALLOCATION_BYTES
@@ -98,7 +116,9 @@ impl VerifiedAllocation {
         }
         let signed: SignedAllocation =
             serde_json::from_slice(signed_bytes).map_err(|_| AllocationError::Encoding)?;
-        let Some(key_id) = hex::decode(expected_key_id).ok() else { return Err(AllocationError::Signature) };
+        let Some(key_id) = hex::decode(expected_key_id).ok() else {
+            return Err(AllocationError::Signature);
+        };
         if key_id.len() != 32
             || signed.key_id != expected_key_id
             || signed.signature.len() < 41
@@ -112,14 +132,16 @@ impl VerifiedAllocation {
             || signed.signature[6..38] != key_id
             || u16::from_be_bytes([signed.signature[38], signed.signature[39]]) as usize
                 != signed.signature.len() - 40
-        { return Err(AllocationError::Signature); }
+        {
+            return Err(AllocationError::Signature);
+        }
         let mut message =
             Vec::with_capacity(ALLOCATION_SIGNING_DOMAIN.len() + signed.payload.len());
         message.extend_from_slice(ALLOCATION_SIGNING_DOMAIN);
         message.extend_from_slice(&signed.payload);
         let public_key = spki_point(public_key).ok_or(AllocationError::Signature)?;
         UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, public_key)
-            .verify(&message, &signed.signature)
+            .verify(&message, &signed.signature[40..])
             .map_err(|_| AllocationError::Signature)?;
         let envelope: AllocationEnvelope =
             serde_json::from_slice(&signed.payload).map_err(|_| AllocationError::Encoding)?;
@@ -132,9 +154,9 @@ impl VerifiedAllocation {
             || envelope.rate_nano_dollar < 0
             || envelope.placement != expected_placement
             || grant.operation_id.is_empty()
-            || grant.organization_id.is_empty()
+            || grant.organization_id != expected_organization
             || grant.database_id != expected_database
-            || grant.holder_id.is_empty()
+            || grant.holder_id != expected_holder
             || grant.requested_units <= 0
             || grant.units
                 != grant
@@ -152,6 +174,7 @@ impl VerifiedAllocation {
                     .ok_or(AllocationError::Binding)?
             || grant.policy_epoch != expected_policy_epoch
             || grant.consent_epoch != expected_consent_epoch
+            || grant.writer_epoch != expected_writer_epoch
             || grant.revoked
             || grant.fenced
             || issued == 0
@@ -258,7 +281,9 @@ fn fraction_millis(value: &str) -> Option<i64> {
 }
 
 fn spki_point(key: &[u8]) -> Option<&[u8]> {
-    if key.len() == 65 && key[0] == 4 { return Some(key); }
+    if key.len() == 65 && key[0] == 4 {
+        return Some(key);
+    }
     let bit = key.iter().position(|byte| *byte == 0x03)?;
     let length = *key.get(bit + 1)? as usize;
     let body = key.get(bit + 2..bit + 2 + length)?;
@@ -274,4 +299,123 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
     let doy = (153 * mp + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era.checked_mul(146097)?.checked_add(doe)?.checked_sub(719468)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aws_lc_rs::{
+        rand::SystemRandom,
+        signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair},
+    };
+
+    fn signed(holder: &str) -> (Vec<u8>, Vec<u8>, String) {
+        let rng = SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).unwrap();
+        let key =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8.as_ref()).unwrap();
+        let public = key.public_key().as_ref();
+        let key_id = hex::encode(blake3::hash(public).as_bytes());
+        let grant = AllocationGrant {
+            operation_id: "op-1".into(),
+            organization_id: "org-1".into(),
+            database_id: "db-1".into(),
+            branch_id: "main".into(),
+            holder_id: holder.into(),
+            requested_units: 2,
+            regions: vec!["gru".into(), "sfo".into(), "fra".into()],
+            units: 6,
+            cost_minor: 0,
+            cost_nano_dollar: 6,
+            policy_epoch: 4,
+            consent_epoch: 7,
+            writer_epoch: 9,
+            issued_at: "2026-01-01T00:00:00Z".into(),
+            expires_at: "2099-01-01T00:00:00Z".into(),
+            revoked: false,
+            fenced: false,
+        };
+        let envelope = AllocationEnvelope {
+            schema_version: 1,
+            grant,
+            cycle_id: "cycle-1".into(),
+            rate_nano_dollar: 1,
+            placement: "placement-1".into(),
+        };
+        let payload = serde_json::to_vec(&envelope).unwrap();
+        let mut message = ALLOCATION_SIGNING_DOMAIN.to_vec();
+        message.extend_from_slice(&payload);
+        let signature = key.sign(&rng, &message).unwrap();
+        let mut wrapped = b"TSCS".to_vec();
+        wrapped.extend_from_slice(&[1, 1]);
+        wrapped.extend_from_slice(blake3::hash(public).as_bytes());
+        wrapped.extend_from_slice(&(signature.as_ref().len() as u16).to_be_bytes());
+        wrapped.extend_from_slice(signature.as_ref());
+        let wire = serde_json::to_vec(&SignedAllocation {
+            payload,
+            signature: wrapped,
+            key_id: key_id.clone(),
+        })
+        .unwrap();
+        (wire, public.to_vec(), key_id)
+    }
+
+    #[test]
+    fn signed_allocation_rejects_wrong_holder_and_accepts_exact_binding() {
+        let (wire, public, key_id) = signed("holder-1");
+        assert!(
+            VerifiedAllocation::verify(
+                &wire,
+                &key_id,
+                &public,
+                "gru",
+                "placement-1",
+                "org-1",
+                "db-1",
+                "holder-2",
+                4,
+                7,
+                1_800_000_000_000
+            )
+            .is_err()
+        );
+        assert!(
+            VerifiedAllocation::verify(
+                &wire,
+                &key_id,
+                &public,
+                "gru",
+                "placement-1",
+                "org-1",
+                "db-1",
+                "holder-1",
+                4,
+                7,
+                1_800_000_000_000
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn signed_allocation_rejects_expired_at_verification() {
+        let (wire, public, key_id) = signed("holder-1");
+        assert_eq!(
+            VerifiedAllocation::verify(
+                &wire,
+                &key_id,
+                &public,
+                "gru",
+                "placement-1",
+                "org-1",
+                "db-1",
+                "holder-1",
+                4,
+                7,
+                4_100_000_000_000
+            )
+            .unwrap_err(),
+            AllocationError::Expired
+        );
+    }
 }

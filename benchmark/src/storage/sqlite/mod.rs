@@ -933,7 +933,7 @@ fn extract_column_value(document: &Document, field: &str) -> Option<ColumnValue>
 /// The schema statements every location carries.
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS database_lifecycle (tenant TEXT PRIMARY KEY, body BLOB NOT NULL) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS lifecycle_operations (tenant TEXT NOT NULL, operation_id TEXT NOT NULL, action TEXT NOT NULL, paused INTEGER NOT NULL, PRIMARY KEY(tenant, operation_id)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS lifecycle_operations (tenant TEXT NOT NULL, operation_id TEXT NOT NULL, action TEXT NOT NULL, paused INTEGER NOT NULL, generation INTEGER NOT NULL, PRIMARY KEY(tenant, operation_id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS webhook_metadata (
     tenant TEXT NOT NULL,
     namespace TEXT NOT NULL,
@@ -1166,7 +1166,7 @@ CREATE INDEX IF NOT EXISTS usage_facts_tenant_seq ON usage_facts (tenant, seq);
 CREATE TABLE IF NOT EXISTS usage_budget_allocations (
     tenant TEXT NOT NULL, operation TEXT NOT NULL, database_id TEXT NOT NULL,
     branch_id TEXT NOT NULL, holder_id TEXT NOT NULL, cycle_id TEXT NOT NULL,
-    policy_epoch INTEGER NOT NULL, consent_epoch INTEGER NOT NULL,
+    policy_epoch INTEGER NOT NULL, consent_epoch INTEGER NOT NULL, writer_epoch INTEGER NOT NULL,
     placement TEXT NOT NULL, payload_digest BLOB NOT NULL,
     units_total INTEGER NOT NULL, units_remaining INTEGER NOT NULL,
     expires_at TEXT NOT NULL,
@@ -2691,6 +2691,9 @@ fn stage_intent(
     }
     transaction.execute_batch("SAVEPOINT schema_unique_admission").map_err(|_| ())?;
     if schema_bundles::changed_since_snapshot(transaction, &intent.tenant, intent)? {
+        transaction
+            .execute_batch("ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission")
+            .map_err(|_| ())?;
         insert_rejection_row(
             transaction,
             &intent.tenant,
@@ -2747,22 +2750,40 @@ fn stage_intent(
             .map_err(|_| ())?;
     }
     if let Some(allocation) = &intent.budget_allocation {
-        let now_millis = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis().try_into().unwrap_or(u64::MAX));
+        let now_millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis().try_into().unwrap_or(u64::MAX));
         if !allocation.valid_at(now_millis) {
-            transaction.execute_batch("ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission").map_err(|_| ())?;
+            transaction
+                .execute_batch(
+                    "ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission",
+                )
+                .map_err(|_| ())?;
             return Ok(CommitResult::Rejected(CommitRejection::Validation));
         }
         if allocation.grant().operation_id != intent.operation.as_str() {
-            transaction.execute_batch("ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission").map_err(|_| ())?;
+            transaction
+                .execute_batch(
+                    "ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission",
+                )
+                .map_err(|_| ())?;
             return Ok(CommitResult::Rejected(CommitRejection::Validation));
         }
         let Some(admission) = intent.usage_admission.as_ref() else {
-            transaction.execute_batch("ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission").map_err(|_| ())?;
+            transaction
+                .execute_batch(
+                    "ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission",
+                )
+                .map_err(|_| ())?;
             return Ok(CommitResult::Rejected(CommitRejection::Validation));
         };
         let units = i64::try_from(admission.integer_units()).map_err(|_| ())?;
         if budget::consume(transaction, &intent.tenant, allocation, units).is_err() {
-            transaction.execute_batch("ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission").map_err(|_| ())?;
+            transaction
+                .execute_batch(
+                    "ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission",
+                )
+                .map_err(|_| ())?;
             return Ok(CommitResult::Rejected(CommitRejection::Validation));
         }
     }
@@ -4872,6 +4893,14 @@ impl StoragePort for SqliteStorage {
         crate::engine::lifecycle_state::LifecycleError,
     > {
         self.update_lifecycle(tenant, command)
+    }
+
+    fn lifecycle_operation(
+        &mut self,
+        tenant: &TenantId,
+        command: crate::engine::lifecycle_state::LifecycleCommand,
+    ) -> Result<crate::engine::lifecycle_state::LifecycleOperationOutcome, crate::engine::lifecycle_state::LifecycleError> {
+        self.update_lifecycle_operation(tenant, command)
     }
 
     fn storage_usage_stopped_at(

@@ -11,6 +11,40 @@ pub struct TbepLifecycleControl {
     control: Arc<ProductionLifecycleControl>,
 }
 
+/// Authority verifier backed by the member's retained placement journal.
+pub struct PlacementLifecycleAuthority {
+    journal: Arc<terrabase_tbep::placement::PlacementJournal>,
+}
+
+impl PlacementLifecycleAuthority {
+    #[must_use]
+    pub fn new(journal: Arc<terrabase_tbep::placement::PlacementJournal>) -> Self {
+        Self { journal }
+    }
+}
+
+impl LifecycleAuthority for PlacementLifecycleAuthority {
+    fn verify(
+        &self,
+        assignment: &AcceptedLifecycleAssignment,
+        signature: &[u8],
+    ) -> Result<(), String> {
+        self.journal
+            .verify_lifecycle_authority(
+                &assignment.environment,
+                &assignment.tenant,
+                &assignment.project,
+                &assignment.database,
+                &assignment.region,
+                &assignment.member,
+                assignment.placement_revision,
+                signature,
+            )
+            .map(|_| ())
+            .map_err(|_| "accepted lifecycle authority proof is invalid or stale".into())
+    }
+}
+
 impl TbepLifecycleControl {
     #[must_use]
     pub fn new(control: Arc<ProductionLifecycleControl>) -> Self {
@@ -124,31 +158,31 @@ pub trait NativeLifecycleWorker: Send + Sync {
         &self,
         assignment: &AcceptedLifecycleAssignment,
         operation: &str,
-    ) -> Result<(), String>;
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String>;
     /// Closes serving while retaining durable data.
     fn close_database(
         &self,
         assignment: &AcceptedLifecycleAssignment,
         operation: &str,
-    ) -> Result<(), String>;
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String>;
     /// Stops only this database's native backup stream.
     fn stop_native_backup(
         &self,
         assignment: &AcceptedLifecycleAssignment,
         operation: &str,
-    ) -> Result<(), String>;
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String>;
     /// Resumes the same retained database without replacing its identity.
     fn reactivate(
         &self,
         assignment: &AcceptedLifecycleAssignment,
         operation: &str,
-    ) -> Result<(), String>;
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String>;
     /// Verifies the native placement without changing serving state.
     fn verify_snapshot_placement(
         &self,
         _assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
-    ) -> Result<(), String> {
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         Err("native snapshot placement verifier is unavailable".into())
     }
     /// Deletes data owned by this member after durable authority admission.
@@ -193,7 +227,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         &self,
         assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
-    ) -> Result<(), String> {
+    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         let backups = self.backups.as_ref().ok_or("native backup fleet is not attached")?;
         backups
             .lock()

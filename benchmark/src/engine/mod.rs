@@ -312,12 +312,18 @@ fn usage_bound_commit_digest(
     context: Option<&UsageAdmissionContext>,
     allocation: Option<&crate::usage::VerifiedAllocation>,
 ) -> u64 {
-    if context.is_none() && allocation.is_none() { return base; }
+    if context.is_none() && allocation.is_none() {
+        return base;
+    }
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"terrascale.commit.usage-admission.v1\0");
     hasher.update(&base.to_le_bytes());
-    if let Some(context) = context { hasher.update(&context.digest_bytes()); }
-    if let Some(allocation) = allocation { hasher.update(allocation.payload_digest()); }
+    if let Some(context) = context {
+        hasher.update(&context.digest_bytes());
+    }
+    if let Some(allocation) = allocation {
+        hasher.update(allocation.payload_digest());
+    }
     let digest = hasher.finalize();
     u64::from_le_bytes(digest.as_bytes()[..8].try_into().expect("blake3 has eight bytes"))
 }
@@ -4932,7 +4938,11 @@ impl Transaction<'_> {
         let intent = CommitIntent {
             tenant: self.scope.tenant().clone(),
             operation: self.operation.clone(),
-            digest: usage_bound_commit_digest(write_digest, usage_admission.as_ref(), budget_allocation.as_ref()),
+            digest: usage_bound_commit_digest(
+                write_digest,
+                usage_admission.as_ref(),
+                budget_allocation.as_ref(),
+            ),
             snapshot_sequence: self.snapshot_sequence,
             durability,
             usage_admission,

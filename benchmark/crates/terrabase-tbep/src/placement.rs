@@ -485,6 +485,57 @@ pub struct PlacementJournal {
 }
 
 impl PlacementJournal {
+    /// Verifies that a lifecycle request carries the currently accepted GRU
+    /// proof and names the exact local database/member proposal binding.
+    pub fn verify_lifecycle_authority(
+        &self,
+        environment: &str,
+        tenant: &str,
+        project: &str,
+        database: &str,
+        region: &str,
+        member: &str,
+        revision: u64,
+        signature: &[u8],
+    ) -> Result<(u64, String), PlacementError> {
+        let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
+        let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
+        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let chain = self.verified_chain(&connection, trust)?;
+        let (_, accepted_revision, accepted) = chain.last().ok_or(PlacementError::NotFound)?;
+        if *accepted_revision != revision || environment.is_empty() {
+            return Err(PlacementError::Conflict);
+        }
+        let supplied = trust.decode(signature).map_err(|_| PlacementError::Conflict)?;
+        if supplied.digest != accepted.digest
+            || supplied.proof.authority_epoch != accepted.proof.authority_epoch
+            || supplied.proof.lease_id != accepted.proof.lease_id
+        {
+            return Err(PlacementError::Conflict);
+        }
+        let bytes: Vec<u8> = connection
+            .query_row(
+                "SELECT proposal FROM proposals WHERE revision=?1",
+                [i64::try_from(revision).map_err(|_| PlacementError::Invalid)?],
+                |row| row.get(0),
+            )
+            .map_err(|_| PlacementError::Storage)?;
+        let proposal =
+            pb::PlacementProposal::decode(bytes.as_slice()).map_err(|_| PlacementError::Storage)?;
+        if proposal.environment != environment
+            || !proposal.assignments.iter().any(|item| {
+                item.tenant == tenant
+                    && item.project == project
+                    && item.database == database
+                    && item.region == region
+                    && (item.writer_member == member || item.follower_member == member)
+            })
+        {
+            return Err(PlacementError::Conflict);
+        }
+        Ok((accepted.proof.authority_epoch, accepted.proof.lease_id.clone()))
+    }
+
     /// Opens an owner-private `SQLite` journal and checks its persisted identity.
     /// The parent directory must already exist with mode 0700.
     ///

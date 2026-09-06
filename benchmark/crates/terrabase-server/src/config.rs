@@ -200,8 +200,24 @@ pub struct ProductionConfig {
     pub control: Option<ProductionControl>,
     /// OCI Vault delivery needed before admitting encrypted data operations.
     pub keys: Option<ProductionKeys>,
+    /// Explicit command-signature trust for regional write allocations.
+    pub budget: Option<ProductionBudgetConfig>,
     /// Explicit local admission listener and persistent Member root.
     pub member_admission: Option<ProductionMemberAdmission>,
+}
+
+/// Pinned GRU write-budget signer and policy/consent epochs.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProductionBudgetConfig {
+    /// Lowercase SHA-256 identity of the command-signing SPKI key.
+    pub key_id: String,
+    /// Absolute owner-private file containing the ECDSA P-256 SPKI bytes.
+    pub public_key_spki_file: PathBuf,
+    /// Current policy epoch accepted by this member.
+    pub policy_epoch: u64,
+    /// Current consent epoch accepted by this member.
+    pub consent_epoch: u64,
 }
 
 /// Kernel-authenticated local database admission endpoint.
@@ -348,6 +364,9 @@ pub struct PublicApiConfig {
     pub provisioning: Option<PublicProvisioningConfig>,
     /// Optional live product identity authority; no defaults or local fallback.
     pub identity: Option<PublicIdentityConfig>,
+    /// Optional tenant pinned BYO-JWT issuer policy. It remains disabled
+    /// until the parent membership audit supplies its concrete hook.
+    pub byo_jwt: Option<crate::auth_runtime::byo_config::FileTenantJwtConfig>,
     /// The listener address.
     pub listen: SocketAddr,
     /// The member's data root: the control-plane engine and the database
@@ -526,6 +545,8 @@ struct FilePublicApi {
     provisioning: Option<PublicProvisioningConfig>,
     #[serde(default)]
     identity: Option<PublicIdentityConfig>,
+    #[serde(default)]
+    byo_jwt: Option<crate::auth_runtime::byo_config::FileTenantJwtConfig>,
     listen: String,
     #[serde(default)]
     allow_wildcard: bool,
@@ -564,6 +585,7 @@ struct FileProductionConfig {
     release: FileReleaseBinding,
     control: Option<FileProductionControl>,
     keys: Option<FileProductionKeys>,
+    budget: Option<ProductionBudgetConfig>,
     member_admission: Option<ProductionMemberAdmission>,
 }
 
@@ -1151,6 +1173,17 @@ impl ServerConfig {
             release,
             control,
             keys,
+            budget: file.budget.map(|budget| {
+                if budget.policy_epoch == 0
+                    || budget.consent_epoch == 0
+                    || hex::decode(&budget.key_id).map_or(true, |key| key.len() != 32)
+                {
+                    return Err(ConfigError::InvalidProductionBoundary);
+                }
+                let public_key_spki_file = production_path(&budget.public_key_spki_file)?;
+                paths.push(public_key_spki_file.clone());
+                Ok(ProductionBudgetConfig { public_key_spki_file, ..budget })
+            }).transpose()?,
             member_admission,
         };
         let first = production.databases.iter().find(|database| database.enabled);
@@ -1625,6 +1658,7 @@ fn parse_public_api(
         credential_rotation: section.credential_rotation.clone(),
         provisioning: section.provisioning.clone(),
         identity: section.identity.clone(),
+        byo_jwt: section.byo_jwt.clone(),
         listen,
         data_root: section.data_root.clone(),
         bootstrap_key_file: section.bootstrap_key_file.clone(),

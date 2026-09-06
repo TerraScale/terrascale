@@ -40,29 +40,6 @@ pub trait ByoJwtAdmission: Send + Sync {
     >;
 }
 
-/// Parent hook for the public member: binds the verified issuer to this
-/// member's server-owned tenant/project scope before request admission.
-pub struct MemberScopeHook {
-    tenant: String,
-}
-
-impl MemberScopeHook {
-    /// Creates a hook for one member-owned tenant/project.
-    #[must_use]
-    pub fn new(tenant: String) -> Self {
-        Self { tenant }
-    }
-}
-
-impl ParentAuthenticationHook for MemberScopeHook {
-    fn admit<'a>(
-        &'a self,
-        context: &'a AuthorizationContext,
-    ) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send + 'a>> {
-        Box::pin(async move { (context.tenant() == self.tenant).then_some(()).ok_or(()) })
-    }
-}
-
 /// Binds an authenticated subject to the request scope selected by the API.
 /// The database and collection are supplied by the route, never by claims.
 pub(crate) fn principal_for(
@@ -72,6 +49,16 @@ pub(crate) fn principal_for(
     verb: Verbs,
     project_admin: bool,
 ) -> Option<Principal> {
+    let required = if project_admin || verb == Verbs::ADMIN {
+        "admin"
+    } else if verb == Verbs::WRITE {
+        "write"
+    } else {
+        "read"
+    };
+    if !context.operations().contains(required) {
+        return None;
+    }
     let scope = if project_admin {
         Scope::every_database(Verbs::ADMIN)
     } else {

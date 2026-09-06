@@ -42,6 +42,7 @@ pub mod runtime;
 pub mod schema_api;
 pub mod tenant_api;
 pub mod usage_admission;
+pub mod production_budget;
 pub mod usage_api;
 pub mod usage_closure_http;
 pub mod view_capability;

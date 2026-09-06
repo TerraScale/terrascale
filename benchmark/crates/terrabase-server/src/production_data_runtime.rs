@@ -94,7 +94,7 @@ impl ProductionDataLifecycle {
     }
 
     /// Durably pauses one admitted database while retaining its identity and data.
-    pub fn pause_database(&self, database: &str, operation_id: &str) -> Result<(), String> {
+    pub fn pause_database(&self, database: &str, operation_id: &str) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         if self.is_draining() {
             return Err("production data lifecycle is draining".into());
         }
@@ -102,7 +102,7 @@ impl ProductionDataLifecycle {
     }
 
     /// Resumes one previously paused admitted database using its retained identity.
-    pub fn reactivate_database(&self, database: &str, operation_id: &str) -> Result<(), String> {
+    pub fn reactivate_database(&self, database: &str, operation_id: &str) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         if self.is_draining() {
             return Err("production data lifecycle is draining".into());
         }
@@ -896,6 +896,78 @@ impl ProductionAdmissionRuntime {
             staging: configured.backup_root.clone(),
             placement,
         })
+    }
+
+    /// Resolves an already admitted, quiescent target for native restore.
+    ///
+    /// The target must be retained by admission but not serving; its owner,
+    /// location, placement, and data key version all come from the durable
+    /// admission/configuration pair. No source key or generated identity is
+    /// reused.
+    pub fn resolve_native_restore_target(
+        &self,
+        database: &str,
+    ) -> Result<(terrabase::engine::EngineConfig, terrabase::backup::PlacementLock), String> {
+        let snapshot = self
+            .registry
+            .retained_snapshot()?
+            .into_iter()
+            .find(|snapshot| {
+                !snapshot.activated && snapshot.database.record.database_id == database
+            })
+            .ok_or("native restore target is not retained and quiescent")?;
+        let record = self
+            .admitted_records()?
+            .into_iter()
+            .find(|record| record.database_id == database)
+            .ok_or("native restore target admission is unavailable")?;
+        let configured = self
+            .config
+            .databases
+            .iter()
+            .find(|entry| entry.database.to_text() == database)
+            .ok_or("native restore target configuration is unavailable")?;
+        let region = record.region.parse().map_err(|_| "invalid restore target Region")?;
+        let owner = terrabase::storage::DatabaseOwner::try_new(
+            &record.environment,
+            configured.tenant,
+            configured.project,
+            configured.database,
+            region,
+        )
+        .map_err(failure)?;
+        let keys = self.config.keys.as_ref().ok_or("production key delivery missing")?;
+        let provider =
+            OciVaultKeyDelivery::new(keys.socket.clone(), keys.orchestrator_uid, keys.socket_gid)
+                .map_err(failure)?;
+        let scope = KeyScope::new_with_project(
+            &record.environment,
+            configured.tenant,
+            configured.project,
+            configured.database,
+            KeyPurpose::Data,
+        )
+        .map_err(failure)?;
+        let source = OciVaultDatabaseKeys::new(
+            provider,
+            KeyVersionMetadata::new(scope, configured.encryption_key),
+            region,
+        )
+        .map_err(failure)?;
+        let target = terrabase::engine::EngineConfig::durable(configured.location.clone())
+            .map_err(failure)?
+            .with_owner(owner)
+            .with_storage_keys(Arc::new(source));
+        let placement = PlacementLock::explicit(
+            record
+                .regions
+                .iter()
+                .map(|value| value.parse())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| "invalid restore target placement")?,
+        )
+        .map_err(|_| "invalid restore target placement")?;
+        Ok((target, placement))
     }
 
     /// Reconciles retained acceptance and starts the actual role-specific workers.

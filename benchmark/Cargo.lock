@@ -2555,6 +2555,7 @@ name = "terrabase"
 version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
+ "base64",
  "blake3",
  "futures-util",
  "hex",

@@ -19,15 +19,19 @@ where
     let mut backoff = Duration::from_millis(25);
     let mut immediate = false;
     loop {
+        if !stopping {
+            match stop.try_recv() {
+                Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    stopping = true;
+                    deadline = Some(tokio::time::Instant::now() + DRAIN_DEADLINE);
+                }
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+            }
+        }
         if let Some(until) = deadline
             && tokio::time::Instant::now() >= until
         {
             return true;
-        }
-        if !immediate {
-            if stopping {
-                immediate = true;
-            }
         }
         if !immediate {
             tokio::select! {
@@ -61,11 +65,15 @@ where
                 } else {
                     backoff
                 };
-                tokio::select! {
-                    _ = tokio::time::sleep(delay) => {}
-                    _ = &mut stop => {
-                        stopping = true;
-                        deadline = Some(tokio::time::Instant::now() + DRAIN_DEADLINE);
+                if stopping {
+                    tokio::time::sleep(delay).await;
+                } else {
+                    tokio::select! {
+                        _ = tokio::time::sleep(delay) => {}
+                        _ = &mut stop => {
+                            stopping = true;
+                            deadline = Some(tokio::time::Instant::now() + DRAIN_DEADLINE);
+                        }
                     }
                 }
                 backoff = (backoff * 2).min(MAX_BACKOFF);
@@ -126,5 +134,32 @@ mod tests {
         stop.send(()).unwrap();
         worker.await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stop_deadline_prevents_new_backlog_attempt_after_inflight_work() {
+        let notify = Arc::new(Notify::new());
+        let (stop, stop_rx) = oneshot::channel();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&calls);
+        let worker = tokio::spawn(supervise::<(), _, _>(stop_rx, notify.clone(), move || {
+            let observed = Arc::clone(&observed);
+            async move {
+                let call = observed.fetch_add(1, Ordering::SeqCst);
+                if call == 1 {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                }
+                Ok(call < 2)
+            }
+        }));
+        notify.notify_one();
+        while calls.load(Ordering::SeqCst) < 1 {
+            tokio::task::yield_now().await;
+        }
+        stop.send(()).unwrap();
+        tokio::time::advance(Duration::from_secs(6)).await;
+        tokio::time::advance(Duration::from_secs(5)).await;
+        worker.await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }

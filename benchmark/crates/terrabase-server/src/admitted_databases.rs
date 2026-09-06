@@ -75,33 +75,33 @@ pub struct AdmittedDatabaseRegistry {
 
 impl AdmittedDatabaseRegistry {
     /// Durably pauses one admitted database while retaining its host and data.
-    pub fn pause(&self, database: &str, operation_id: &str) -> Result<(), String> {
+    pub fn pause(&self, database: &str, operation_id: &str) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         let entry = self
             .resolve_metadata(database)?
             .ok_or_else(|| "database is not admitted".to_owned())?;
         let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
             .map_err(|_| "invalid admitted tenant")?;
-        entry
+        let outcome = entry
             .host
             .engine()
             .lifecycle_pause(&entry.host.engine().scope_for(&tenant), operation_id)
             .map_err(|_| "database pause failed")?;
-        Ok(())
+        Ok(outcome)
     }
 
     /// Resumes one paused admitted database without replacing its identity.
-    pub fn resume(&self, database: &str, operation_id: &str) -> Result<(), String> {
+    pub fn resume(&self, database: &str, operation_id: &str) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
         let entry = self
             .resolve_metadata(database)?
             .ok_or_else(|| "database is not admitted".to_owned())?;
         let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
             .map_err(|_| "invalid admitted tenant")?;
-        entry
+        let outcome = entry
             .host
             .engine()
             .lifecycle_resume(&entry.host.engine().scope_for(&tenant), operation_id)
             .map_err(|_| "database resume failed")?;
-        Ok(())
+        Ok(outcome)
     }
 
     /// Binds every serving lookup to the complete Member's current readiness.

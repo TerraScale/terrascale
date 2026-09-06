@@ -1542,19 +1542,49 @@ async fn admit_bearer(
             Ok(principal)
         }
         _ if state.byo_jwt.is_some() && token.matches('.').count() == 2 => {
+            if state.admitted_databases.is_some() && route_owner != state.scope {
+                return Err(ApiError::unauthorized());
+            }
             let admission = state.byo_jwt.as_ref().expect("checked above");
             let context = admission
                 .authenticate(token, unix_seconds())
                 .await
                 .map_err(|_| ApiError::unauthorized())?;
-            crate::auth_runtime::byo_config::principal_for(
+            if context.tenant() != route_owner.0 {
+                return Err(ApiError::unauthorized());
+            }
+            // Token operations are an upper bound; the live identity
+            // authority remains the membership/revocation source of truth.
+            let _capability = crate::auth_runtime::byo_config::principal_for(
                 &context,
                 database_of(path),
                 collection_of(path),
                 required_verb(method, path),
                 project_operation,
             )
-            .ok_or_else(ApiError::unauthorized)
+            .ok_or_else(ApiError::unauthorized)?;
+            match (&state.delegated_identity, database_of(path)) {
+                (Some(identity), Some(database)) => identity
+                    .admit(
+                        token,
+                        &route_owner.0,
+                        &route_owner.1,
+                        database,
+                        collection_of(path),
+                        required_verb(method, path),
+                    )
+                    .await
+                    .map_err(|_| ApiError::unauthorized()),
+                (Some(identity), None) if project_operation => identity
+                    .admit_project(token, &route_owner.0, &route_owner.1)
+                    .await
+                    .map(|(principal, scope)| {
+                        verified_project = Some(scope);
+                        principal
+                    })
+                    .map_err(|_| ApiError::unauthorized()),
+                _ => Err(ApiError::unauthorized()),
+            }
         }
         _ => match (&state.delegated_identity, database_of(path)) {
             (Some(identity), Some(database)) => identity
@@ -1909,14 +1939,9 @@ async fn create_database(
                     return ApiError::backup("native backup owner is unavailable").into_response();
                 };
                 let plan = backups.plan_for(name);
-                if let Err(error) = attach_backup(
-                    backups,
-                    name,
-                    &location,
-                    &state.backup_root,
-                    &plan,
-                    state.region,
-                ) {
+                if let Err(error) =
+                    attach_backup(backups, name, &location, &state.backup_root, &plan, state.region)
+                {
                     let _ = control.soft_delete(name);
                     return ApiError::backup(error).into_response();
                 }
@@ -4043,14 +4068,9 @@ fn restore_or_branch(
             // its own stream under the source's plan (Free until the
             // billing lane supplies plans; D-25 retention, fail-closed).
             let plan = backups.plan_for(&name);
-            if let Err(error) = attach_backup(
-                backups,
-                target,
-                &location,
-                &state.backup_root,
-                &plan,
-                state.region,
-            ) {
+            if let Err(error) =
+                attach_backup(backups, target, &location, &state.backup_root, &plan, state.region)
+            {
                 let _ = control.soft_delete(target);
                 return ApiError::backup(error).into_response();
             }

@@ -250,12 +250,14 @@ mod admitted_fixture {
                 orchestrator_uid: keys.uid,
                 socket_gid: keys.gid,
             }),
+            budget: None,
             member_admission: None,
         }
     }
 
     fn public_config(root: &std::path::Path, key_path: PathBuf) -> PublicApiConfig {
         PublicApiConfig {
+            byo_jwt: None,
             lifecycle_publication: None,
             billing_closure: None,
             credential_rotation: None,

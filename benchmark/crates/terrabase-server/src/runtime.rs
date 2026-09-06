@@ -395,6 +395,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             },
         ))) as Box<dyn Error + Send + Sync>
     })?;
+    let lifecycle_fleet = native.fleet();
     let Some(public) = public else {
         return Err(Box::new(DaemonError::ProductionConfigurationMissing));
     };
@@ -444,6 +445,52 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             },
         ))) as Box<dyn Error + Send + Sync>
     })?;
+    // The production TBEP endpoint uses the same retained-host registry as
+    // the HTTP surface.  It is created only after native composition, so no
+    // second engine or location based adapter can be opened.
+    let grpc_config = TbepGrpcConfig::try_new(
+        config.max_message_bytes,
+        config.max_inflight,
+        config.request_timeout,
+        config.tls_handshake_timeout,
+        config.shutdown_grace,
+        config.member_principals.clone(),
+    )?;
+    let grpc_host =
+        Arc::new(crate::production_tbep_host::ProductionTbepHost::new(Arc::clone(&registry)));
+    let lifecycle_worker = Arc::new(crate::production_lifecycle_control::RegistryLifecycleWorker {
+        registry: Arc::clone(&registry),
+        backups: Some(lifecycle_fleet),
+    });
+    let lifecycle_authority = Arc::new(
+        crate::production_lifecycle_control::PlacementLifecycleAuthority::new(
+            journal.clone().ok_or(DaemonError::ProductionConfigurationMissing)?,
+        ),
+    );
+    let lifecycle = Arc::new(crate::production_lifecycle_control::TbepLifecycleControl::new(
+        Arc::new(crate::production_lifecycle_control::ProductionLifecycleControl {
+            worker: lifecycle_worker,
+            authority: lifecycle_authority,
+        }),
+    ));
+    let grpc_metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
+    let grpc = TbepGrpcServer::with_config_and_metrics(
+        grpc_host as Arc<dyn TbepHost>,
+        pb::BindingKind::NetworkMtls,
+        grpc_config,
+        config.region,
+        grpc_metrics,
+    )
+    .with_lifecycle_control(lifecycle);
+    let certificate = read_pem(&production.transport.server_certificate, false)?;
+    let private_key = read_pem(&production.transport.server_private_key, true)?;
+    let client_ca = read_pem(&production.transport.client_ca, false)?;
+    let grpc_tls = terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(
+        &certificate,
+        &private_key,
+        &client_ca,
+    )?;
+    let mut grpc_handle = grpc.serve_tls_reloadable(production.transport.tbep_listen, grpc_tls)?;
     serving.store(true, std::sync::atomic::Ordering::Release);
     let status = prepared.status();
     let public_task = tokio::spawn(prepared.serve(async {
@@ -453,6 +500,11 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         tokio::task::yield_now().await;
     }
     let result = public_task.await.map_err(|_| DaemonError::ShutdownTimeout)?;
+    grpc_handle.begin_drain();
+    tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait())
+        .await
+        .map_err(|_| DaemonError::ShutdownTimeout)?
+        .map_err(|_| DaemonError::ShutdownTimeout)?;
     let _ = recovery_worker.shutdown().await;
     admission.drain().await.map_err(|_| DaemonError::ShutdownTimeout)?;
     serving.store(false, std::sync::atomic::Ordering::Release);

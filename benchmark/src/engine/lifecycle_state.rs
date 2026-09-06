@@ -20,6 +20,28 @@ pub struct LifecycleState {
     pub deletion_preparation: Option<DeletionPreparation>,
 }
 
+/// Immutable result retained for one pause/resume operation identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LifecycleOperationReceipt {
+    /// Operation identity.
+    pub operation_id: String,
+    /// Applied action (`pause` or `resume`).
+    pub action: String,
+    /// Resulting paused value at the operation boundary.
+    pub paused: bool,
+    /// Lifecycle generation assigned by the operation.
+    pub generation: u64,
+}
+
+/// Current state together with the immutable receipt for the requested action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LifecycleOperationOutcome {
+    /// Current state, which may have advanced after the operation.
+    pub state: LifecycleState,
+    /// Immutable applied or replayed operation result.
+    pub receipt: LifecycleOperationReceipt,
+}
+
 /// Durable preparation receipt after origin commits have drained.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeletionPreparation {
@@ -63,6 +85,7 @@ pub enum LifecycleError {
     Revoked,
 }
 
+#[derive(Clone)]
 pub(crate) enum LifecycleCommand {
     Read,
     Prepare(String),
@@ -144,10 +167,14 @@ impl Engine {
         &self,
         scope: &TenantScope,
         operation_id: &str,
-    ) -> Result<LifecycleState, LifecycleError> {
+    ) -> Result<LifecycleOperationOutcome, LifecycleError> {
         let _barrier =
             self.origin_commit_barrier.write().map_err(|_| LifecycleError::Unavailable)?;
-        self.lifecycle_command(scope, LifecycleCommand::Pause(operation_id.to_owned()))
+        self.validate_scope(scope).map_err(|_| LifecycleError::Invalid)?;
+        self.lock_storage()
+            .map_err(|_| LifecycleError::Unavailable)?
+            .port
+            .lifecycle_operation(scope.tenant(), LifecycleCommand::Pause(operation_id.to_owned()))
     }
 
     /// Resumes authorized activity for a tenant by clearing its durable pause state.
@@ -158,8 +185,12 @@ impl Engine {
         &self,
         scope: &TenantScope,
         operation_id: &str,
-    ) -> Result<LifecycleState, LifecycleError> {
-        self.lifecycle_command(scope, LifecycleCommand::Resume(operation_id.to_owned()))
+    ) -> Result<LifecycleOperationOutcome, LifecycleError> {
+        self.validate_scope(scope).map_err(|_| LifecycleError::Invalid)?;
+        self.lock_storage()
+            .map_err(|_| LifecycleError::Unavailable)?
+            .port
+            .lifecycle_operation(scope.tenant(), LifecycleCommand::Resume(operation_id.to_owned()))
     }
     fn lifecycle_command(
         &self,
@@ -212,16 +243,16 @@ mod tests {
         assert_eq!(engine.lifecycle_flush_activity(&scope, 122).unwrap(), observed);
         engine.lifecycle_set_protection(&scope, true).unwrap();
         let paused = engine.lifecycle_pause(&scope, "pause-1").unwrap();
-        assert!(paused.paused);
-        assert!(paused.deletion_protection);
-        assert_eq!(paused.last_authorized_request_at, Some(123));
+        assert!(paused.state.paused);
+        assert!(paused.state.deletion_protection);
+        assert_eq!(paused.state.last_authorized_request_at, Some(123));
         engine.shutdown().unwrap();
         let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
         let scope = engine.scope_for(&tenant);
         assert!(engine.lifecycle_state(&scope).unwrap().paused);
         let resumed = engine.lifecycle_resume(&scope, "resume-1").unwrap();
-        assert!(!resumed.paused);
-        assert!(resumed.deletion_protection);
+        assert!(!resumed.state.paused);
+        assert!(resumed.state.deletion_protection);
         let at = u64::try_from(
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
         )

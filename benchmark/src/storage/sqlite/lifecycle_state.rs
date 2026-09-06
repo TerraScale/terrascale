@@ -6,6 +6,37 @@ use crate::{
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 impl SqliteStorage {
+    /// Applies a reversible operation and returns its immutable receipt.
+    pub(super) fn update_lifecycle_operation(
+        &self,
+        tenant: &TenantId,
+        command: LifecycleCommand,
+    ) -> Result<crate::engine::lifecycle_state::LifecycleOperationOutcome, LifecycleError> {
+        let state = self.update_lifecycle(tenant, command.clone())?;
+        let operation_id = match &command {
+            LifecycleCommand::Pause(id) | LifecycleCommand::Resume(id) => id,
+            _ => return Err(LifecycleError::Invalid),
+        };
+        let writer = self.writer.lock().map_err(|_| LifecycleError::Unavailable)?;
+        let receipt = writer
+            .query_row(
+                "SELECT action, paused, generation FROM lifecycle_operations WHERE tenant=?1 AND operation_id=?2",
+                params![tenant.as_str(), operation_id],
+                |row| {
+                    Ok(crate::engine::lifecycle_state::LifecycleOperationReceipt {
+                        operation_id: operation_id.clone(),
+                        action: row.get(0)?,
+                        paused: row.get::<_, i64>(1)? != 0,
+                        generation: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|_| LifecycleError::Unavailable)?
+            .ok_or(LifecycleError::Unavailable)?;
+        Ok(crate::engine::lifecycle_state::LifecycleOperationOutcome { state, receipt })
+    }
+
     pub(super) fn update_lifecycle(
         &self,
         tenant: &TenantId,
@@ -15,27 +46,6 @@ impl SqliteStorage {
         let tx = writer
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| LifecycleError::Unavailable)?;
-        let operation = match &command {
-            LifecycleCommand::Pause(id) => Some((id, true)),
-            LifecycleCommand::Resume(id) => Some((id, false)),
-            _ => None,
-        };
-        if let Some((id, paused)) = operation {
-            if id.is_empty() || id.len() > 128 {
-                return Err(LifecycleError::Invalid);
-            }
-            let prior: Option<(String, i64)> = tx.query_row(
-                "SELECT action, paused FROM lifecycle_operations WHERE tenant=?1 AND operation_id=?2",
-                params![tenant.as_str(), id], |row| Ok((row.get(0)?, row.get(1)?))).optional()
-                .map_err(|_| LifecycleError::Unavailable)?;
-            if let Some((action, prior_paused)) = prior {
-                let expected = if paused { "pause" } else { "resume" };
-                if action != expected || prior_paused != i64::from(paused) {
-                    return Err(LifecycleError::Conflict);
-                }
-                return Ok(state);
-            }
-        }
         let bytes: Option<Vec<u8>> = tx
             .query_row(
                 "SELECT body FROM database_lifecycle WHERE tenant=?1",
@@ -46,6 +56,27 @@ impl SqliteStorage {
             .map_err(|_| LifecycleError::Unavailable)?;
         let mut state: LifecycleState = bytes.map(|b| decode(&b)).transpose()?.unwrap_or_default();
         let before = state.clone();
+        let operation = match &command {
+            LifecycleCommand::Pause(id) => Some((id.clone(), true)),
+            LifecycleCommand::Resume(id) => Some((id.clone(), false)),
+            _ => None,
+        };
+        if let Some((id, paused)) = operation.as_ref() {
+            if id.is_empty() || id.len() > 128 {
+                return Err(LifecycleError::Invalid);
+            }
+            let prior: Option<(String, i64, u64)> = tx.query_row(
+                "SELECT action, paused, generation FROM lifecycle_operations WHERE tenant=?1 AND operation_id=?2",
+                params![tenant.as_str(), id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()
+                .map_err(|_| LifecycleError::Unavailable)?;
+            if let Some((action, prior_paused, generation)) = prior {
+                let expected = if *paused { "pause" } else { "resume" };
+                if action != expected || prior_paused != i64::from(*paused) {
+                    return Err(LifecycleError::Conflict);
+                }
+                return Ok(state);
+            }
+        }
         let stopped: Option<i64> = tx
             .query_row(
                 "SELECT millis FROM storage_accounting_stops WHERE tenant=?1",
@@ -174,7 +205,7 @@ impl SqliteStorage {
         let body = encode(&state);
         tx.execute("INSERT INTO database_lifecycle VALUES (?1,?2) ON CONFLICT(tenant) DO UPDATE SET body=excluded.body", params![tenant.as_str(), body]).map_err(|_| LifecycleError::Unavailable)?;
         if let Some((id, paused)) = operation {
-            tx.execute("INSERT INTO lifecycle_operations(tenant,operation_id,action,paused) VALUES (?1,?2,?3,?4)", params![tenant.as_str(), id, if paused { "pause" } else { "resume" }, i64::from(paused)]).map_err(|_| LifecycleError::Unavailable)?;
+            tx.execute("INSERT INTO lifecycle_operations(tenant,operation_id,action,paused,generation) VALUES (?1,?2,?3,?4,?5)", params![tenant.as_str(), id, if paused { "pause" } else { "resume" }, i64::from(paused), state.generation]).map_err(|_| LifecycleError::Unavailable)?;
         }
         tx.commit().map_err(|_| LifecycleError::Unavailable)?;
         Ok(state)
