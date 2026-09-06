@@ -374,7 +374,9 @@ pub(crate) async fn recover_exports(state: &ApiState) -> Result<(), ApiError> {
 }
 
 #[utoipa::path(get, path = "/api/v1/databases/{name}/exports/{job_id}/artifacts/{member}",
-    responses((status = 200, description = "Decrypted immutable export member", content_type = "application/octet-stream", body = String)))]
+    responses((status = 200, description = "Decrypted immutable export member", content_type = "application/octet-stream", body = String,
+        headers(("X-TerraScale-Artifact-Length" = String, description = "Plaintext byte length"),
+                ("X-TerraScale-Artifact-Checksum" = String, description = "BLAKE3 checksum of plaintext bytes")))))]
 pub(super) async fn download_export(
     State(state): State<Arc<ApiState>>,
     Path((name, job, member)): Path<(String, String, String)>,

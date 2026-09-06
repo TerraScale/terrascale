@@ -30,7 +30,6 @@ pub struct AllocationGrant {
     pub paid_units: i64,
     pub regions: Vec<String>,
     pub units: i64,
-    pub cost_minor: i64,
     pub cost_nano_dollar: i64,
     pub policy_epoch: u64,
     pub consent_epoch: u64,
@@ -182,7 +181,6 @@ impl VerifiedAllocation {
             || grant.included_units < 0
             || grant.paid_units < 0
             || grant.included_units.checked_add(grant.paid_units) != Some(grant.units)
-            || grant.cost_minor < 0
             || grant.cost_nano_dollar
                 != grant
                     .paid_units
@@ -360,7 +358,6 @@ mod tests {
             paid_units: 6,
             regions: vec!["gru".into(), "sfo".into(), "fra".into()],
             units: 6,
-            cost_minor: 0,
             cost_nano_dollar: 6,
             policy_epoch: 4,
             consent_epoch: 7,
@@ -459,36 +456,42 @@ mod tests {
 
     #[test]
     fn go_signed_allocation_vector_verifies() {
-        let vector: serde_json::Value =
-            serde_json::from_slice(include_bytes!("../../testdata/allocation-go-vector.json"))
-                .unwrap();
-        let payload = base64::engine::general_purpose::STANDARD
-            .decode(vector["payload"].as_str().unwrap())
+        let vector: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../testdata/allocation-canonical-vectors.json"
+        ))
+        .unwrap();
+        let public = base64::engine::general_purpose::STANDARD
+            .decode(vector["publicSPKI"].as_str().unwrap())
             .unwrap();
-        let mut wire_sig = hex::decode(vector["signature_hex"].as_str().unwrap()).unwrap();
-        let public = hex::decode(vector["public_spki_hex"].as_str().unwrap()).unwrap();
-        let key_id = vector["key_id"].as_str().unwrap();
-        let wire = serde_json::to_vec(&SignedAllocation {
-            payload,
-            signature: std::mem::take(&mut wire_sig),
-            key_id: key_id.into(),
-        })
-        .unwrap();
-        let verified = VerifiedAllocation::verify(
-            &wire,
-            key_id,
-            &public,
-            "GRU",
-            "db-placement",
-            "org",
-            "db",
-            "writer-vector",
-            3,
-            4,
-            9,
-            1_700_000_000_000,
-        )
-        .unwrap();
-        assert_eq!(verified.grant().operation_id, "op-vector");
+        let key_id = vector["keyID"].as_str().unwrap();
+        for entry in vector["vectors"].as_array().unwrap() {
+            let payload = base64::engine::general_purpose::STANDARD
+                .decode(entry["payload"].as_str().unwrap())
+                .unwrap();
+            let signature = base64::engine::general_purpose::STANDARD
+                .decode(entry["signature"].as_str().unwrap())
+                .unwrap();
+            let envelope: AllocationEnvelope = serde_json::from_slice(&payload).unwrap();
+            let wire =
+                serde_json::to_vec(&SignedAllocation { payload, signature, key_id: key_id.into() })
+                    .unwrap();
+            let grant = &envelope.grant;
+            let verified = VerifiedAllocation::verify(
+                &wire,
+                key_id,
+                &public,
+                "gru",
+                &envelope.placement,
+                &grant.organization_id,
+                &grant.database_id,
+                &grant.holder_id,
+                grant.policy_epoch,
+                grant.consent_epoch,
+                grant.writer_epoch,
+                0,
+            )
+            .unwrap();
+            assert_eq!(verified.grant().units, entry["units"].as_i64().unwrap());
+        }
     }
 }

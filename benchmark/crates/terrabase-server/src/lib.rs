@@ -77,6 +77,7 @@ pub mod native_recovery_receipt;
 pub mod production_backup;
 /// Production export owner composition; local export fallback remains test-only.
 pub mod production_export;
+pub(crate) mod public_admission;
 
 /// Joined live delivery catchup observations.
 pub mod catchup_observation;

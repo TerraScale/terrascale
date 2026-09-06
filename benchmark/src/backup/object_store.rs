@@ -158,6 +158,25 @@ impl ObjectDestination {
         Ok(bytes)
     }
 
+    /// Lists opaque export members under a bounded prefix.
+    pub async fn list_members(&self, prefix: &str) -> Result<Vec<String>, TransferError> {
+        if prefix.is_empty() || prefix.len() > 1024 {
+            return Err(TransferError::InvalidPoint);
+        }
+        let prefix = format!("{prefix}/");
+        let prefix = ObjectPath::parse(&prefix).map_err(|_| TransferError::InvalidPoint)?;
+        let mut stream = self.store.list(Some(&prefix));
+        let mut keys = Vec::new();
+        while let Some(item) = stream.next().await {
+            let item = item.map_err(|_| TransferError::Unavailable)?;
+            keys.push(item.location.to_string());
+            if keys.len() > MAX_FILES {
+                return Err(TransferError::InvalidPoint);
+            }
+        }
+        Ok(keys)
+    }
+
     /// Builds a SigV4-authenticated HTTPS client with bounded retries and timeouts.
     ///
     /// # Errors
@@ -698,6 +717,15 @@ mod tests {
 
     fn destination(store: Arc<InMemory>) -> ObjectDestination {
         ObjectDestination::for_test(Provider::Oci, store, 1024, 4096)
+    }
+
+    #[tokio::test]
+    async fn member_create_is_atomic_and_never_overwrites() {
+        let destination = destination(Arc::new(InMemory::new()));
+        destination.put_member("exports/job/member", b"one".to_vec()).await.unwrap();
+        assert!(destination.put_member("exports/job/member", b"one".to_vec()).await.is_err());
+        assert!(destination.put_member("exports/job/member", b"two".to_vec()).await.is_err());
+        assert_eq!(destination.get_member("exports/job/member").await.unwrap(), b"one");
     }
 
     #[test]

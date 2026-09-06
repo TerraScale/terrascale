@@ -118,11 +118,23 @@ pub struct Principal {
     /// `None` is a never-expiring credential (the bootstrap key); every
     /// other credential carries a bound so a leaked key dies on its own.
     expires_at: Option<u64>,
+    /// Immutable tenant/project owner, when this is a customer credential.
+    owner: Option<(String, String)>,
 }
 
 impl Principal {
     pub(crate) fn delegated(label: String, scope: Scope, expires_at: u64) -> Self {
-        Self { label, scope, expires_at: Some(expires_at) }
+        Self { label, scope, expires_at: Some(expires_at), owner: None }
+    }
+
+    /// Creates a customer principal bound to one immutable project owner.
+    pub(crate) fn delegated_for_owner(
+        label: String,
+        scope: Scope,
+        expires_at: u64,
+        owner: (String, String),
+    ) -> Self {
+        Self { label, scope, expires_at: Some(expires_at), owner: Some(owner) }
     }
 
     /// Caps a producer admission by an earlier verified credential expiry.
@@ -149,6 +161,12 @@ impl Principal {
     #[must_use]
     pub const fn expires_at(&self) -> Option<u64> {
         self.expires_at
+    }
+
+    /// Returns the immutable tenant/project owner bound to this credential.
+    #[must_use]
+    pub fn owner(&self) -> Option<(&str, &str)> {
+        self.owner.as_ref().map(|(tenant, project)| (tenant.as_str(), project.as_str()))
     }
 
     /// Whether the credential is expired at `now` (unix milliseconds).
@@ -233,6 +251,21 @@ impl KeyStore {
         self.register_with_expiry(key, label, scope, None);
     }
 
+    /// Registers a customer key bound to one exact tenant/project owner.
+    pub fn register_for_owner(
+        &self,
+        key: &str,
+        label: &str,
+        scope: Scope,
+        owner: (String, String),
+        expires_at: Option<u64>,
+    ) {
+        self.register_principal(
+            key,
+            Principal { label: label.to_owned(), scope, expires_at, owner: Some(owner) },
+        );
+    }
+
     /// Registers one credential with a bounded admission lifetime
     /// (`expires_at`: unix milliseconds, `None` for never-expiring).
     /// Expiry is enforced on every [`Self::admit`] probe, including cache
@@ -246,14 +279,18 @@ impl KeyStore {
         scope: Scope,
         expires_at: Option<u64>,
     ) {
-        let hash = hash_key(key);
-        self.registered.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(
-            hash,
-            (
-                self.generation.load(Ordering::Acquire),
-                Principal { label: label.to_owned(), scope, expires_at },
-            ),
+        self.register_principal(
+            key,
+            Principal { label: label.to_owned(), scope, expires_at, owner: None },
         );
+    }
+
+    fn register_principal(&self, key: &str, principal: Principal) {
+        let hash = hash_key(key);
+        self.registered
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(hash, (self.generation.load(Ordering::Acquire), principal));
         // A registration after a revocation must not resurrect a stale
         // cache entry: drop any cached admission for this hash so the next
         // probe re-stamps it at the current generation.
@@ -316,6 +353,20 @@ impl KeyStore {
         shard.touch(&hash);
         shard.evict_over_capacity(self.capacity_per_shard);
         Ok(principal)
+    }
+
+    /// Admits a key only when its immutable owner matches the accepted route.
+    pub fn admit_for_owner(
+        &self,
+        key: &str,
+        owner: &(String, String),
+    ) -> Result<Principal, ApiError> {
+        let principal = self.admit(key)?;
+        if principal.owner() == Some((owner.0.as_str(), owner.1.as_str())) {
+            Ok(principal)
+        } else {
+            Err(ApiError::unauthorized())
+        }
     }
 
     /// Revokes every credential at once: the generation bump invalidates

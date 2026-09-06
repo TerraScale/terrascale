@@ -4808,6 +4808,24 @@ impl StoragePort for SqliteStorage {
                 Err(UsageStorageError::IdentityConflict)
             };
         }
+        // The deletion stop marker and this insertion share the same writer
+        // transaction. Exact replays above remain readable, but no new
+        // billable fact may extend beyond the accepted usage cutoff. Delayed
+        // facts incurred through the cutoff (including exactly at it) remain
+        // admissible; only a straddling or later window is rejected.
+        let stopped_at: Option<i64> = transaction
+            .query_row(
+                "SELECT millis FROM storage_accounting_stops WHERE tenant = ?1",
+                [tenant.as_str()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| UsageStorageError::Unavailable)?;
+		if stopped_at.is_some_and(|cutoff| {
+			i64::try_from(fact.window().end_millis()).is_ok_and(|end| end > cutoff)
+		}) {
+            return Err(UsageStorageError::IdentityConflict);
+        }
         // Usage facts share the commit sequence space, exactly the
         // reference engines' watermark rule.
         let Some(sequence) = durable_watermark(&transaction)

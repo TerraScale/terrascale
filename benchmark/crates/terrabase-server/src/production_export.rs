@@ -7,9 +7,9 @@ use crate::backup::object_store::ObjectDestination;
 use crate::export_api::{
     ArtifactFact, ArtifactPort, ArtifactWriter, EncryptionAttestation, ExportArtifactFactory,
     ExportDestination, ExportError, ExportFuture, ExportRuntime, PlacementLock, fact,
-    safe_member_path,
+    publish_artifact, safe_member_path,
 };
-use crate::export_artifact_crypto::ArtifactCrypto;
+use crate::export_artifact_crypto::{ArtifactCrypto, LocalManifest};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -50,11 +50,7 @@ async fn put_remote_exact(
                 .get_member(key)
                 .await
                 .map_err(|_| ExportError::DependencyUnavailable)?;
-            if remote == bytes {
-                Ok(())
-            } else {
-                Err(ExportError::IdempotencyConflict)
-            }
+            if remote == bytes { Ok(()) } else { Err(ExportError::IdempotencyConflict) }
         }
     }
 }
@@ -96,6 +92,33 @@ impl ArtifactWriter for ProductionWriter {
     }
     fn existing_facts<'a>(&'a mut self) -> ExportFuture<'a, Vec<ArtifactFact>> {
         Box::pin(async move {
+            let base = format!("{}/{}/{}", self.prefix, self.database, self.job);
+            let remote_keys = self
+                .destination
+                .list_members(&base)
+                .await
+                .map_err(|_| ExportError::DependencyUnavailable)?;
+            for key in remote_keys {
+                let Some(member) = key.strip_prefix(&(base.clone() + "/")) else {
+                    continue;
+                };
+                if member == "COMMITTED" || !safe_member_path(member) {
+                    continue;
+                }
+                let bytes = self
+                    .destination
+                    .get_member(&key)
+                    .await
+                    .map_err(|_| ExportError::DependencyUnavailable)?;
+                self.inner.crypto.open(&self.inner.job_id, member, &bytes)?;
+                let target = self.inner.directory.join(member);
+                crate::export_api::ensure_no_symlink_components(&target)?;
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|_| ExportError::DestinationUnavailable)?;
+                }
+                publish_artifact(&target, &bytes)?;
+            }
             let facts = self.inner.existing_facts().await?;
             reconcile_remote_facts(
                 &self.inner,
@@ -157,15 +180,36 @@ impl ArtifactPort for ProductionArtifactPort {
             if marker != expected.as_bytes() {
                 return Err(ExportError::IdempotencyConflict);
             }
+            let manifest_encrypted = self
+                .destination
+                .get_member(&format!("{base}/manifest.json"))
+                .await
+                .map_err(|_| ExportError::DependencyUnavailable)?;
+            if fact("manifest.json", &manifest_encrypted) != *manifest {
+                return Err(ExportError::IdempotencyConflict);
+            }
+            let binding = format!("{database}/{job}");
+            let manifest_plaintext =
+                self.crypto.open(&binding, "manifest.json", &manifest_encrypted)?;
+            if member == "manifest.json" {
+                return Ok(manifest_plaintext);
+            }
+            let manifest_members: LocalManifest = serde_json::from_slice(&manifest_plaintext)
+                .map_err(|_| ExportError::IdempotencyConflict)?;
+            let expected = manifest_members
+                .members
+                .iter()
+                .find(|expected| expected.path == member)
+                .ok_or(ExportError::DestinationUnavailable)?;
             let encrypted = self
                 .destination
                 .get_member(&format!("{base}/{member}"))
                 .await
                 .map_err(|_| ExportError::DependencyUnavailable)?;
-            if fact(member, &encrypted) != *manifest {
+            if fact(member, &encrypted) != *expected {
                 return Err(ExportError::IdempotencyConflict);
             }
-            self.crypto.open(&format!("{database}/{job}"), member, &encrypted)
+            self.crypto.open(&binding, member, &encrypted)
         })
     }
 
@@ -221,6 +265,9 @@ pub fn new_production_export(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backup::object_store::Provider;
+    use crate::export_artifact_crypto::LocalCrypto;
+    use object_store::memory::InMemory;
 
     #[test]
     fn cursor_key_reference_requires_exact_nonzero_key() {
@@ -240,5 +287,53 @@ mod tests {
     #[test]
     fn errors_are_redacted() {
         assert_eq!(format!("{:?}", ProductionExportError::CursorKey), "CursorKey");
+    }
+
+    #[tokio::test]
+    async fn remote_member_requires_manifest_authorization() {
+        let destination = Arc::new(ObjectDestination::for_test(
+            Provider::Oci,
+            Arc::new(InMemory::new()),
+            1024 * 1024,
+            4096,
+        ));
+        let crypto =
+            Arc::new(LocalCrypto { key: [9; 32], database: "db".into(), tenant: "t".into() });
+        let binding = "db/job";
+        let page_ciphertext = crypto.seal(binding, "page", b"page-data").unwrap();
+        let page_fact = fact("page", &page_ciphertext);
+        let manifest_plaintext =
+            serde_json::json!({ "members": [page_fact] }).to_string().into_bytes();
+        let manifest_ciphertext =
+            crypto.seal(binding, "manifest.json", &manifest_plaintext).unwrap();
+        let manifest_fact = fact("manifest.json", &manifest_ciphertext);
+        let base = "exports/db/job";
+        destination
+            .put_member(&format!("{base}/manifest.json"), manifest_ciphertext)
+            .await
+            .unwrap();
+        destination.put_member(&format!("{base}/page"), page_ciphertext).await.unwrap();
+        destination
+            .put_member(
+                &format!("{base}/COMMITTED"),
+                format!("manifest.json\t{}\t{}\n", manifest_fact.length, manifest_fact.checksum)
+                    .into_bytes(),
+            )
+            .await
+            .unwrap();
+        let port = ProductionArtifactPort {
+            root: std::env::temp_dir(),
+            destination,
+            prefix: "exports".into(),
+            crypto,
+        };
+        assert_eq!(
+            port.read_member("job", "db", "page", &manifest_fact).await.unwrap(),
+            b"page-data"
+        );
+        assert!(matches!(
+            port.read_member("job", "db", "secret", &manifest_fact).await,
+            Err(ExportError::DestinationUnavailable)
+        ));
     }
 }

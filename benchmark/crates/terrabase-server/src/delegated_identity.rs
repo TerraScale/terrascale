@@ -242,10 +242,11 @@ impl IdentityVerifier {
             || Scope::database(database, verb),
             |name| Scope::database_collection(database, name, verb),
         );
-        Ok(Principal::delegated(
+        Ok(Principal::delegated_for_owner(
             subject,
             admitted_scope,
             expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
+            (organization.to_owned(), project.to_owned()),
         ))
     }
 
@@ -317,10 +318,11 @@ impl IdentityVerifier {
             || Scope::database(database, verb),
             |name| Scope::database_collection(database, name, verb),
         );
-        Ok(Principal::delegated(
+        Ok(Principal::delegated_for_owner(
             mapped_subject,
             scope,
             expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
+            (organization.to_owned(), project.to_owned()),
         ))
     }
 
@@ -363,10 +365,11 @@ impl IdentityVerifier {
             return Err(IdentityError::Denied);
         }
         let principal = self.admit(token, organization, project, "*", None, Verbs::ADMIN).await?;
-        let principal = Principal::delegated(
+        let principal = Principal::delegated_for_owner(
             principal.label().to_owned(),
             Scope::every_database(Verbs::ADMIN),
             principal.expires_at().ok_or(IdentityError::Denied)?,
+            (organization.to_owned(), project.to_owned()),
         );
         Ok((
             principal,

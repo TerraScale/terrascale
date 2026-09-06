@@ -203,6 +203,7 @@ mod tests {
         Arc::new(crate::api::ApiState {
             native_backups: None,
             native_recovery: None,
+            native_restore_target: None,
             admitted_databases: None,
             replication_progress: None,
             development: Arc::default(),

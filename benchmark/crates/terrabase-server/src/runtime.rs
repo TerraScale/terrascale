@@ -413,6 +413,19 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         ))));
     }
     let region = public_api_region(config.region)?;
+    let admission = Arc::new(admission);
+    let native_restore_target: Arc<
+        dyn Fn(
+                &str,
+            ) -> Result<
+                (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
+                String,
+            > + Send
+            + Sync,
+    > = {
+        let admission = Arc::clone(&admission);
+        Arc::new(move |database| admission.resolve_native_restore_target(database))
+    };
     let primary = production
         .databases
         .iter()
@@ -424,21 +437,59 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         .map(crate::auth_runtime::byo_config::build_signature_admission)
         .transpose()
         .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+    let delegated_identity = public
+        .identity
+        .as_ref()
+        .map(|identity| {
+            let secret = String::from_utf8(
+                read_secret_key(&identity.service_key_file)
+                    .map_err(|_| DaemonError::ProductionConfigurationMissing)?,
+            )
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+            crate::delegated_identity::IdentityVerifier::new(
+                crate::delegated_identity::IdentityConfig {
+                    endpoint: identity.endpoint.clone(),
+                    issuer: identity.issuer.clone(),
+                    audience: identity.audience.clone(),
+                    service_key: secret,
+                },
+            )
+            .map(|verifier| {
+                Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()))
+            })
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)
+        })
+        .transpose()?;
+    let provisioning = public
+        .provisioning
+        .as_ref()
+        .map(|authority| {
+            crate::provisioning::ProvisioningClient::new(
+                authority.socket.clone(),
+                authority.authority_uid,
+                authority.environment.clone(),
+            )
+            .map(Arc::new)
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)
+        })
+        .transpose()?;
     let state = crate::api::ApiState::production(
         native,
         Arc::clone(&recovery),
+        native_restore_target,
         region,
         Arc::new(terrabase::observability::MetricsRegistry::new()),
         Arc::clone(&registry),
         Arc::clone(&progress),
         (primary.tenant.to_text(), primary.project.to_text()),
-        None,
+        provisioning,
         parts_root_for_recovery(production),
         None,
         Arc::new(crate::guards::AbuseGuards::default()),
         Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
         Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         None,
+        delegated_identity,
         byo_jwt,
         None,
         None,
@@ -1126,6 +1177,7 @@ async fn serve_public_api(
         budget: None,
         native_backups: None,
         native_recovery: None,
+        native_restore_target: None,
         region,
         metrics,
         keys: Some(Arc::new(keys)),

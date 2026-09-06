@@ -549,6 +549,18 @@ pub struct ApiState {
     pub native_backups: Option<Arc<crate::native_backup_runtime::NativeBackupRuntime>>,
     /// Native recovery worker owner retained until bounded shutdown completes.
     pub native_recovery: Option<Arc<crate::native_recovery::NativeRecoveryRuntime>>,
+    /// Production resolver for an already admitted, paused restore target.
+    pub native_restore_target: Option<
+        Arc<
+            dyn Fn(
+                    &str,
+                ) -> Result<
+                    (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
+                    String,
+                > + Send
+                + Sync,
+        >,
+    >,
     /// Production-only authoritative database ownership and retained Member leases.
     pub admitted_databases: Option<Arc<crate::admitted_databases::AdmittedDatabaseRegistry>>,
     /// Actual peer acknowledgements; absent progress cannot certify durable writes.
@@ -615,11 +627,21 @@ impl ApiState {
     pub fn production(
         native_backups: Arc<crate::native_backup_runtime::NativeBackupRuntime>,
         native_recovery: Arc<crate::native_recovery::NativeRecoveryRuntime>,
+        native_restore_target: Arc<
+            dyn Fn(
+                    &str,
+                ) -> Result<
+                    (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
+                    String,
+                > + Send
+                + Sync,
+        >,
         region: RegionCode,
         metrics: Arc<MetricsRegistry>,
         admitted_databases: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
         replication_progress: Arc<crate::replication_runtime::ReplicationProgress>,
         scope: (String, String),
+        provisioning: Option<Arc<crate::provisioning::ProvisioningClient>>,
         backups: Option<Arc<crate::backup::BackupStreams>>,
         backup_root: std::path::PathBuf,
         timetravel: Option<Arc<crate::backup::TimeTravelCache>>,
@@ -636,10 +658,11 @@ impl ApiState {
         Arc::new(Self {
             native_backups: Some(native_backups),
             native_recovery: Some(native_recovery),
+            native_restore_target: Some(native_restore_target),
             admitted_databases: Some(admitted_databases),
             replication_progress: Some(replication_progress),
             development: Arc::default(),
-            provisioning: None,
+            provisioning,
             region,
             metrics,
             keys,
@@ -1363,6 +1386,8 @@ fn browser_cors() -> tower_http::cors::CorsLayer {
                 "x-terrascale-region",
                 "x-terrascale-placement",
                 "x-terrascale-residency",
+                "x-terrascale-artifact-length",
+                "x-terrascale-artifact-checksum",
             ]
             .map(HeaderName::from_static),
         )
@@ -1545,28 +1570,39 @@ async fn admit_bearer(
     ApiError,
 > {
     let route_owner = match database_of(path) {
-        Some(database) => database_owner_scope(state, database)?,
+        Some(database) => crate::public_admission::route_owner(state, database)?,
+        None if project_operation_headers(method, path) => {
+            let tenant = headers
+                .get("x-terrascale-tenant-id")
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(ApiError::unauthorized)?;
+            let project = headers
+                .get("x-terrascale-project-id")
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(ApiError::unauthorized)?;
+            (tenant.to_owned(), project.to_owned())
+        }
         None => state.scope.clone(),
     };
     let project_operation = is_project_administration(method, path);
     let mut verified_project = None;
-    let admitted = match state.keys.as_ref().map(|keys| keys.admit(token)) {
+    let admitted = match state.keys.as_ref().map(|keys| {
+        if state.admitted_databases.is_some() {
+            keys.admit_for_owner(token, &route_owner)
+        } else {
+            keys.admit(token)
+        }
+    }) {
         Some(Ok(principal)) => {
-            if state.admitted_databases.is_some() && route_owner != state.scope {
-                return Err(ApiError::unauthorized());
-            }
             if project_operation && principal.scope().admits_global(Verbs::ADMIN) {
                 verified_project = Some(crate::delegated_identity::VerifiedProjectScope {
-                    tenant_id: state.scope.0.clone(),
-                    project_id: state.scope.1.clone(),
+                    tenant_id: route_owner.0.clone(),
+                    project_id: route_owner.1.clone(),
                 });
             }
             Ok(principal)
         }
         _ if state.byo_jwt.is_some() && token.matches('.').count() == 2 => {
-            if state.admitted_databases.is_some() && route_owner != state.scope {
-                return Err(ApiError::unauthorized());
-            }
             let admission = state.byo_jwt.as_ref().expect("checked above");
             let context = admission
                 .authenticate(token, unix_seconds())
@@ -1663,7 +1699,16 @@ async fn admit_bearer(
             _ => Err(ApiError::unauthorized()),
         },
     }?;
+    if state.admitted_databases.is_some()
+        && admitted.owner() != Some((route_owner.0.as_str(), route_owner.1.as_str()))
+    {
+        return Err(ApiError::unauthorized());
+    }
     Ok((admitted, verified_project))
+}
+
+fn project_operation_headers(method: &Method, path: &str) -> bool {
+    is_project_administration(method, path)
 }
 
 /// The two immutable delivery routes are the only routes on which the sync
@@ -2600,7 +2645,7 @@ async fn batch_documents(
         &state,
         &mut transaction,
         &scope,
-        &state.scope.1,
+        engine.database_owner().project().to_string().as_str(),
         &database_id,
         &operation_id,
         units,
@@ -2871,7 +2916,7 @@ pub(crate) fn document_host(
         .map_err(|_| ApiError::storage_failure())?;
     let placement = terrabase::usage::UsagePlacement::try_new(
         tenant,
-        &state.scope.1,
+        engine.database_owner().project().to_string().as_str(),
         name,
         name,
         state.region,
@@ -2922,14 +2967,7 @@ pub(crate) fn database_owner_scope(
     state: &ApiState,
     name: &str,
 ) -> Result<(String, String), ApiError> {
-    if let Some(admitted) = &state.admitted_databases {
-        let database = admitted
-            .resolve(name)
-            .map_err(|_| ApiError::storage_failure())?
-            .ok_or_else(|| ApiError::database_not_found(name))?;
-        return Ok((database.record.tenant_id.clone(), database.record.project_id.clone()));
-    }
-    Ok(state.scope.clone())
+    crate::public_admission::route_owner(state, name)
 }
 
 /// Admits one read or query against the database's D-64 rate guard (E-10).
@@ -3391,7 +3429,7 @@ async fn put_document(
         &state,
         &mut transaction,
         &scope,
-        &state.scope.1,
+        engine.database_owner().project().to_string().as_str(),
         &database_id,
         &operation_id,
         units,
@@ -3539,7 +3577,7 @@ async fn patch_document(
         &state,
         &mut transaction,
         &scope,
-        &state.scope.1,
+        engine.database_owner().project().to_string().as_str(),
         &database_id,
         &operation_id,
         terrabase::usage::write_units_for_bytes(
@@ -3752,7 +3790,7 @@ async fn delete_document(
         &state,
         &mut transaction,
         &scope,
-        &state.scope.1,
+        engine.database_owner().project().to_string().as_str(),
         &database_id,
         &operation_id,
         1,
@@ -4560,6 +4598,7 @@ mod tests {
             budget: None,
             native_backups: None,
             native_recovery: None,
+            native_restore_target: None,
             development: Arc::default(),
             provisioning: None,
             admitted_databases: None,
