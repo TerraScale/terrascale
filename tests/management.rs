@@ -292,7 +292,10 @@ async fn webhook_operations_match_endpoint_and_delivery_contracts() {
         json!({"id":"hook","endpoint":"https://example.com/hook","created_at":10,"deleted":false});
     let delivery = json!({"id":"hook/event","event_id":"event","revision":2,"retry_started_at":10,"attempts":1,"next_attempt_at":0,"status":204,"delivered":true,"terminal":false});
     let mock = Mock::new(vec![
-        Response::json(201, &endpoint),
+        Response::json(
+            201,
+            &json!({"id":"hook","endpoint":"https://example.com/hook","created_at":10,"deleted":false,"secret":"once"}),
+        ),
         Response::json(200, &json!({"webhooks":[endpoint.clone()]})),
         Response::json(200, &json!({"deliveries":[delivery.clone()]})),
         Response::json(200, &delivery),
@@ -312,6 +315,7 @@ async fn webhook_operations_match_endpoint_and_delivery_contracts() {
         )
         .await
         .unwrap()
+        .webhook
         .created_at,
         10
     );
@@ -429,4 +433,198 @@ async fn export_download_preserves_binary_body_and_authentication() {
         .iter()
         .any(|(name, value)| name.eq_ignore_ascii_case("accept")
             && value == "application/octet-stream"));
+}
+
+#[tokio::test]
+async fn provisioning_acceptance_is_distinct_from_database_creation() {
+    use terrascale::CreateDatabaseResult;
+    let operation = json!({"operation_id":"op","database_id":"db-id","key_version":"key-1","name":"orders","regions":["GRU"],"residency":"br-only","state":"Pending"});
+    let mock = Mock::new(vec![
+        Response::json(202, &operation),
+        Response::json(202, &json!({"name":"orders"})),
+        Response::json(201, &json!({"name":"orders"})),
+    ]);
+    let api = client(Arc::clone(&mock)).management().databases();
+    let request = CreateDatabaseRequest::new("orders", vec![RegionCode::Gru])
+        .unwrap()
+        .residency("br-only")
+        .unwrap()
+        .operation_id("op")
+        .unwrap();
+    let result = api
+        .create_with_placement(request.clone(), None, OperationOptions::default())
+        .await
+        .unwrap();
+    let CreateDatabaseResult::Accepted(accepted) = result else {
+        panic!("202 must remain accepted provisioning")
+    };
+    assert_eq!(accepted.operation_id, "op");
+    assert_eq!(accepted.state, "Pending");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&mock.last().body.unwrap()).unwrap()
+            ["operation_id"],
+        "op"
+    );
+    assert!(api
+        .create_with_placement(request.clone(), None, OperationOptions::default())
+        .await
+        .is_err());
+    assert!(matches!(
+        api.create_with_placement(request, None, OperationOptions::default())
+            .await
+            .unwrap(),
+        CreateDatabaseResult::Created(_)
+    ));
+}
+
+#[tokio::test]
+async fn webhook_rotation_returns_one_time_secret_and_bounds_overlap() {
+    use terrascale::RotateWebhookSecret;
+    let mock = Mock::new(vec![Response::json(
+        200,
+        &json!({"id":"hook","endpoint":"https://example.com/hook","created_at":10,"deleted":false,"secret":"one-time-secret"}),
+    )]);
+    let api = client(Arc::clone(&mock)).management().webhooks();
+    let response = api
+        .rotate_secret(
+            "db",
+            "hook",
+            RotateWebhookSecret::default(),
+            OperationOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.secret, "one-time-secret");
+    assert!(!format!("{response:?}").contains("one-time-secret"));
+    let request = mock.last();
+    assert!(request.url.ends_with("/webhooks/hook/rotate-secret"));
+    assert_eq!(request.method, Method::Post);
+    assert_eq!(request.body.unwrap(), b"{}");
+    assert!(api
+        .rotate_secret(
+            "db",
+            "hook",
+            RotateWebhookSecret {
+                overlap_seconds: Some(3601)
+            },
+            OperationOptions::default()
+        )
+        .await
+        .is_err());
+    assert_eq!(mock.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn database_create_consumes_every_producer_success_status() {
+    use terrascale::CreateDatabaseResult;
+    let corpus: serde_json::Value =
+        serde_json::from_str(include_str!("../contracts/v1/conformance/http.json")).unwrap();
+    let operation = corpus["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|operation| operation["operationId"] == "create_database")
+        .unwrap();
+    let responses = operation["responses"]
+        .as_array()
+        .expect("all producer success responses");
+    for response in responses {
+        let status = response["status"].as_u64().unwrap() as u16;
+        let mock = Mock::new(vec![Response::json(status, &response["body"])]);
+        let request = CreateDatabaseRequest::new("orders", vec![RegionCode::Gru])
+            .unwrap()
+            .residency("br-only")
+            .unwrap()
+            .operation_id("op")
+            .unwrap();
+        let result = client(mock)
+            .management()
+            .databases()
+            .create_with_placement(request, None, OperationOptions::default())
+            .await
+            .unwrap();
+        match (status, result) {
+            (201, CreateDatabaseResult::Created(database)) => {
+                assert_eq!(serde_json::to_value(database).unwrap(), response["body"])
+            }
+            (202, CreateDatabaseResult::Accepted(operation)) => {
+                assert_eq!(serde_json::to_value(operation).unwrap(), response["body"])
+            }
+            _ => panic!("incorrect database creation status mapping"),
+        }
+    }
+    assert_eq!(
+        responses
+            .iter()
+            .map(|response| response["status"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [201, 202]
+    );
+}
+
+#[tokio::test]
+async fn development_operations_use_branch_confirmation_and_bounded_wire_fields() {
+    use terrascale::{DevelopmentFaultKind, DevelopmentFaultRequest};
+    let mock = Mock::new(vec![
+        Response::json(200, &json!({"active":true,"expiresAtMillis":30000})),
+        Response::json(200, &json!({"active":false,"expiresAtMillis":0})),
+        Response::json(
+            200,
+            &json!({"entries":[{"sequence":2,"action":"fault.clear","atMillis":30001}],"truncated":false}),
+        ),
+    ]);
+    let api = client(Arc::clone(&mock)).management().development();
+    let input = DevelopmentFaultRequest {
+        confirm_branch: "branch".into(),
+        fault: DevelopmentFaultKind::Latency,
+        duration_ms: 1000,
+        max_operations: 2,
+        delay_ms: 10,
+    };
+    assert!(
+        api.set_fault("branch", input.clone(), OperationOptions::default())
+            .await
+            .unwrap()
+            .active
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&mock.last().body.unwrap()).unwrap(),
+        json!({"confirmBranch":"branch","fault":"latency","durationMs":1000,"maxOperations":2,"delayMs":10})
+    );
+    assert!(
+        !api.clear_fault("branch", OperationOptions::default())
+            .await
+            .unwrap()
+            .active
+    );
+    assert_eq!(mock.last().method, Method::Delete);
+    assert_eq!(
+        api.logs("branch", Some(2)).await.unwrap().entries[0].at_millis,
+        30001
+    );
+    assert!(mock.last().url.ends_with("/dev/logs?limit=2"));
+    assert!(api
+        .set_fault("other", input, OperationOptions::default())
+        .await
+        .is_err());
+    assert!(api.logs("branch", Some(101)).await.is_err());
+    assert_eq!(mock.requests.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn operations_poll_durable_provisioning_with_get() {
+    let mock = Mock::new(vec![Response::json(
+        200,
+        &json!({"operation_id":"op","database_id":"db-id","key_version":"key-1","name":"orders","regions":["GRU"],"residency":"br-only","state":"Ready"}),
+    )]);
+    let operation = client(Arc::clone(&mock))
+        .management()
+        .operations()
+        .get("op")
+        .await
+        .unwrap();
+    assert_eq!(operation.state, "Ready");
+    assert_eq!(mock.last().method, Method::Get);
+    assert!(mock.last().url.ends_with("/api/v1/operations/op"));
+    assert!(mock.last().body.is_none());
 }

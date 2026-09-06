@@ -389,7 +389,11 @@ impl Shared {
     }
 
     /// Send a request and preserve the raw success body.
-    pub async fn send_bytes(&self, mut request: Request) -> Result<Vec<u8>> {
+    pub async fn send_bytes(&self, request: Request) -> Result<Vec<u8>> {
+        Ok(self.send_response(request).await?.body)
+    }
+
+    pub async fn send_response(&self, mut request: Request) -> Result<Response> {
         self.decorate(&mut request);
         let route = request.route_name.clone();
         let mut retries = 0;
@@ -398,7 +402,7 @@ impl Shared {
                 Ok(response) => {
                     self.observe(&response);
                     match self.check(&route, &response) {
-                        Ok(()) => return Ok(response.body),
+                        Ok(()) => return Ok(response),
                         Err(error) if self.can_retry(&request, &error, retries) => {
                             retries += 1;
                             self.wait_before_retry(retries).await;

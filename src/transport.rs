@@ -123,23 +123,32 @@ impl Response {
 /// Sends [`Request`]s. Implement this to inject a custom HTTP stack.
 #[async_trait]
 pub trait HttpTransport: Send + Sync + std::fmt::Debug {
-    /// Send one request and return the raw response.
+    /// Send one request and return the raw response without following redirects.
     async fn send(&self, request: Request) -> Result<Response>;
 }
 
 /// Production transport backed by `reqwest` + rustls.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ReqwestTransport {
     inner: reqwest::Client,
 }
 
 impl ReqwestTransport {
-    /// Build with sane SDK defaults (rustls, no proxy env surprises).
+    /// Build with rustls and automatic redirects disabled.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: reqwest::Client::new(),
+            inner: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("HTTP client initialization"),
         }
+    }
+}
+
+impl Default for ReqwestTransport {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

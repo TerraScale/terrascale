@@ -17,6 +17,7 @@ pub mod management;
 pub mod reactive;
 pub mod regions;
 pub mod schema;
+pub mod serde_base64;
 pub mod sql;
 pub mod tenants;
 pub mod transport;
@@ -36,17 +37,19 @@ pub use management::{
     ApiKey, ApiKeyPage, ApiKeys, Backup, BackupPlan, BackupPolicy, BackupStatus,
     BackupStatusResponse, Backups, BillableMeter, BranchListResponse, Branches,
     CancellationToken as ManagementCancellationToken, Collections, CollectionsResponse,
-    CreateApiKey, CreateBranch, CreateDatabase, CreateDatabaseRequest, CreateDatabaseWithPlacement,
-    CreateExport, CreateIndexRequest, CreateWebhook, CreatedApiKey, DatabaseBranch,
-    DatabaseListResponse, DatabaseRecord, DatabaseSchema, Databases, DeletedDatabase, DeliveryLog,
-    DeliveryRecord, ExecuteBackupRequest, ExportAccepted, ExportArtifact, ExportJobStatus,
-    ExportStatus, Exports, HealthResponse, IndexCreatedResponse, IndexDescriptor,
-    IndexListResponse, IndexRecommendation, ManagementClient, MeterTotal, OperationOptions,
-    PageOptions, PlacementLock, PlanBackupRequest, ProjectDatabase, ReadAttribution,
-    RecommendationList, RegionSummary, Regions, RestoreAt, RestoreJob, RestorePoint,
-    RestoreRequest, ResumeExport, RevokedApiKey, RotatedApiKey, Schemas, StartRestore,
-    TransferFormat, Usage, UsageClient, UsagePoint, UsageRange, UsageSummary, UsageWorkload,
-    WebhookEndpoint, WebhookList, Webhooks,
+    CreateApiKey, CreateBranch, CreateDatabase, CreateDatabaseRequest, CreateDatabaseResult,
+    CreateDatabaseWithPlacement, CreateExport, CreateIndexRequest, CreateWebhook, CreatedApiKey,
+    DatabaseBranch, DatabaseListResponse, DatabaseRecord, DatabaseSchema, Databases,
+    DeletedDatabase, DeliveryLog, DeliveryRecord, Development, DevelopmentFaultKind,
+    DevelopmentFaultRequest, DevelopmentFaultResponse, DevelopmentLogEntry, DevelopmentLogResponse,
+    ExecuteBackupRequest, ExportAccepted, ExportArtifact, ExportJobStatus, ExportStatus, Exports,
+    HealthResponse, IndexCreatedResponse, IndexDescriptor, IndexListResponse, IndexRecommendation,
+    ManagementClient, MeterTotal, OperationOptions, Operations, PageOptions, PlacementLock,
+    PlanBackupRequest, ProjectDatabase, ProvisioningOperation, ReadAttribution, RecommendationList,
+    RegionSummary, Regions, RestoreAt, RestoreJob, RestorePoint, RestoreRequest, ResumeExport,
+    RevokedApiKey, RotateWebhookSecret, RotatedApiKey, Schemas, StartRestore, TransferFormat,
+    Usage, UsageClient, UsagePoint, UsageRange, UsageSummary, UsageWorkload, WebhookEndpoint,
+    WebhookList, WebhookSecretResponse, Webhooks,
 };
 pub use reactive::{
     ApplyOutcome, AttachedView, CancellationToken, Checkpoint, LiveSubscription, PollOptions,

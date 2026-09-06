@@ -208,9 +208,28 @@ pub struct DatabaseListResponse {
 /// Compatibility name from the pre-contract Rust draft.
 pub type ProjectDatabase = DatabaseRecord;
 
+/// Database creation distinguishes a created database from accepted provisioning.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CreateDatabaseResult {
+    Created(DatabaseRecord),
+    Accepted(ProvisioningOperation),
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProvisioningOperation {
+    pub operation_id: String,
+    pub database_id: String,
+    pub key_version: String,
+    pub name: String,
+    pub regions: Vec<String>,
+    pub residency: String,
+    pub state: String,
+}
+
 /// Request for `POST /api/v1/databases`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CreateDatabaseRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
     pub name: String,
     pub placement: Vec<RegionCode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -254,9 +273,15 @@ impl CreateDatabaseRequest {
             name: name.into(),
             placement,
             residency: None,
+            operation_id: None,
         };
         request.validate()?;
         Ok(request)
+    }
+    pub fn operation_id(mut self, operation_id: impl Into<String>) -> Result<Self> {
+        self.operation_id = Some(operation_id.into());
+        self.validate()?;
+        Ok(self)
     }
     pub fn residency(mut self, residency: impl Into<String>) -> Result<Self> {
         self.residency = Some(residency.into());
@@ -269,6 +294,16 @@ impl CreateDatabaseRequest {
         Ok(self)
     }
     fn validate(&self) -> Result<()> {
+        if let Some(operation_id) = &self.operation_id {
+            validate_non_empty(operation_id, "operation_id")?;
+            if operation_id.len() > 128 {
+                return Err(Error::new(
+                    ErrorKind::Validation,
+                    "invalid_operation_id",
+                    "operation_id must be at most 128 bytes.",
+                ));
+            }
+        }
         validate_non_empty(&self.name, "database_name")?;
         if self.placement.is_empty() {
             return Err(Error::new(
@@ -359,7 +394,7 @@ impl Databases {
         request: CreateDatabaseRequest,
         _project_id: Option<&str>,
         options: OperationOptions,
-    ) -> Result<DatabaseRecord> {
+    ) -> Result<CreateDatabaseResult> {
         request.validate()?;
         let request = request_with_options(
             "databases.create",
@@ -368,7 +403,23 @@ impl Databases {
             &request,
             &options,
         )?;
-        send_with_options(&self.shared, request, &options).await
+        let response = if let Some(token) = options.cancellation.clone() {
+            tokio::select! {
+                response = self.shared.send_response(request) => response?,
+                () = wait_cancelled(token) => return Err(Error::new(ErrorKind::Transport, "cancelled", "The management operation was cancelled.")),
+            }
+        } else {
+            self.shared.send_response(request).await?
+        };
+        match response.status {
+            201 => response.json_body().map(CreateDatabaseResult::Created),
+            202 => response.json_body().map(CreateDatabaseResult::Accepted),
+            _ => Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_create_response",
+                "Database creation must return HTTP 201 or 202.",
+            )),
+        }
     }
     pub async fn get(
         &self,
@@ -1080,6 +1131,18 @@ impl ManagementClient {
         UsageClient::new(self.shared.clone())
     }
     #[must_use]
+    pub fn operations(&self) -> Operations {
+        Operations {
+            shared: self.shared.clone(),
+        }
+    }
+    #[must_use]
+    pub fn development(&self) -> Development {
+        Development {
+            shared: self.shared.clone(),
+        }
+    }
+    #[must_use]
     pub fn webhooks(&self) -> Webhooks {
         Webhooks::new(self.shared.clone())
     }
@@ -1191,6 +1254,27 @@ pub struct WebhookEndpoint {
     pub created_at: u64,
     pub deleted: bool,
 }
+/// One-time signing material. Decode the unpadded base64url secret before verification.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebhookSecretResponse {
+    #[serde(flatten)]
+    pub webhook: WebhookEndpoint,
+    pub secret: String,
+}
+impl std::fmt::Debug for WebhookSecretResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("WebhookSecretResponse")
+            .field("webhook", &self.webhook)
+            .field("secret", &"[REDACTED]")
+            .finish()
+    }
+}
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RotateWebhookSecret {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlap_seconds: Option<u16>,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebhookList {
     pub webhooks: Vec<WebhookEndpoint>,
@@ -1242,12 +1326,35 @@ impl Webhooks {
         database_id: &str,
         input: CreateWebhook,
         options: OperationOptions,
-    ) -> Result<WebhookEndpoint> {
+    ) -> Result<WebhookSecretResponse> {
         validate_non_empty(&input.endpoint, "endpoint")?;
         let request = request_with_options(
             "webhooks.create",
             Method::Post,
             format!("{}/webhooks", database_url(&self.shared, database_id)?),
+            &input,
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
+    pub async fn rotate_secret(
+        &self,
+        database_id: &str,
+        id: &str,
+        input: RotateWebhookSecret,
+        options: OperationOptions,
+    ) -> Result<WebhookSecretResponse> {
+        if input.overlap_seconds.is_some_and(|value| value > 3600) {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_overlap",
+                "overlap_seconds must be at most 3600.",
+            ));
+        }
+        let request = request_with_options(
+            "webhooks.rotate_secret",
+            Method::Post,
+            format!("{}/rotate-secret", self.url(database_id, id)?),
             &input,
             &options,
         )?;
@@ -1304,5 +1411,138 @@ impl Webhooks {
             &options,
         )?;
         send_with_options(&self.shared, request, &options).await
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DevelopmentFaultKind {
+    Unavailable,
+    Latency,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevelopmentFaultRequest {
+    pub confirm_branch: String,
+    pub fault: DevelopmentFaultKind,
+    pub duration_ms: u64,
+    pub max_operations: u16,
+    pub delay_ms: u64,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevelopmentFaultResponse {
+    pub active: bool,
+    pub expires_at_millis: u64,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevelopmentLogEntry {
+    pub sequence: u64,
+    pub action: String,
+    pub at_millis: u64,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DevelopmentLogResponse {
+    pub entries: Vec<DevelopmentLogEntry>,
+    pub truncated: bool,
+}
+#[derive(Debug, Clone)]
+pub struct Development {
+    shared: SharedClient,
+}
+impl Development {
+    pub async fn set_fault(
+        &self,
+        database_id: &str,
+        input: DevelopmentFaultRequest,
+        options: OperationOptions,
+    ) -> Result<DevelopmentFaultResponse> {
+        if input.confirm_branch != database_id
+            || !(1..=30_000).contains(&input.duration_ms)
+            || !(1..=100).contains(&input.max_operations)
+            || match input.fault {
+                DevelopmentFaultKind::Latency => !(1..=1000).contains(&input.delay_ms),
+                DevelopmentFaultKind::Unavailable => input.delay_ms != 0,
+            }
+        {
+            return Err(Error::new(ErrorKind::Validation, "invalid_development_fault", "Confirm the branch name and use duration_ms 1..30000, max_operations 1..100, and delay_ms 1..1000 for latency or zero for unavailable."));
+        }
+        let request = request_with_options(
+            "development.set_fault",
+            Method::Post,
+            format!("{}/dev/faults", database_url(&self.shared, database_id)?),
+            &input,
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
+    pub async fn clear_fault(
+        &self,
+        database_id: &str,
+        options: OperationOptions,
+    ) -> Result<DevelopmentFaultResponse> {
+        let request = request_options(
+            Request {
+                route_name: "development.clear_fault".into(),
+                method: Method::Delete,
+                url: format!("{}/dev/faults", database_url(&self.shared, database_id)?),
+                headers: vec![],
+                body: None,
+            },
+            &options,
+        )?;
+        send_with_options(&self.shared, request, &options).await
+    }
+    pub async fn logs(
+        &self,
+        database_id: &str,
+        limit: Option<u16>,
+    ) -> Result<DevelopmentLogResponse> {
+        if limit.is_some_and(|limit| !(1..=100).contains(&limit)) {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "invalid_limit",
+                "limit must be between 1 and 100.",
+            ));
+        }
+        self.shared
+            .send_typed(Request {
+                route_name: "development.logs".into(),
+                method: Method::Get,
+                url: format!(
+                    "{}/dev/logs{}",
+                    database_url(&self.shared, database_id)?,
+                    limit
+                        .map(|limit| format!("?limit={limit}"))
+                        .unwrap_or_default()
+                ),
+                headers: vec![],
+                body: None,
+            })
+            .await
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Operations {
+    shared: SharedClient,
+}
+impl Operations {
+    /// Read the durable provisioning operation without resubmitting creation.
+    pub async fn get(&self, operation_id: &str) -> Result<ProvisioningOperation> {
+        self.shared
+            .send_typed(Request {
+                route_name: "operations.get".into(),
+                method: Method::Get,
+                url: format!(
+                    "{}/operations/{}",
+                    self.shared.pinned_base_url(None)?,
+                    encode_segment(operation_id, "operation_id")?
+                ),
+                headers: vec![],
+                body: None,
+            })
+            .await
     }
 }
