@@ -1,7 +1,10 @@
 //! Receipt-backed durability progress shared by the production transport and API.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Mutex;
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use terrabase_cluster::production::DatabaseRouteScope;
@@ -34,6 +37,7 @@ struct DatabaseProgress {
 /// authenticated checkpoint exchange before new waits can succeed. No pending
 /// operation queue is retained here; each request owns its bounded wait.
 pub struct ReplicationProgress {
+    fenced: AtomicBool,
     databases: Mutex<BTreeMap<DatabaseRouteScope, DatabaseProgress>>,
     changed: watch::Sender<u64>,
 }
@@ -51,7 +55,11 @@ pub struct ReplicationBoundary {
 
 impl Default for ReplicationProgress {
     fn default() -> Self {
-        Self { databases: Mutex::new(BTreeMap::new()), changed: watch::channel(0).0 }
+        Self {
+            fenced: AtomicBool::new(false),
+            databases: Mutex::new(BTreeMap::new()),
+            changed: watch::channel(0).0,
+        }
     }
 }
 
@@ -181,6 +189,9 @@ impl ReplicationProgress {
             }
         }
         let mut databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
+        if self.fenced.load(Ordering::Acquire) {
+            return Err(ReplicationWaitError::NotAdmitted);
+        }
         let new_count = entries.keys().filter(|scope| !databases.contains_key(scope)).count();
         if databases.len().saturating_add(new_count) > terrabase::member::MAX_DATABASES {
             return Err(ReplicationWaitError::NotAdmitted);
@@ -246,6 +257,9 @@ impl ReplicationProgress {
 
     /// Permanently fences all progress and wakes pending requests.
     pub fn fence(&self) {
+        // Publish before acquiring the ledger lock. Admissions already holding
+        // that lock are fenced below; later admissions cannot create live entries.
+        self.fenced.store(true, Ordering::Release);
         if let Ok(mut databases) = self.databases.lock() {
             for progress in databases.values_mut() {
                 progress.fenced = true;
@@ -417,6 +431,29 @@ mod tests {
             progress.admit(scope(), BTreeSet::from(["gru".into()])),
             Err(ReplicationWaitError::NotAdmitted)
         );
+    }
+
+    #[test]
+    fn global_fence_rejects_new_assignments_even_from_an_empty_ledger() {
+        for initially_admitted in [false, true] {
+            let progress = ReplicationProgress::default();
+            if initially_admitted {
+                progress.admit(scope(), BTreeSet::from(["GRU".into()])).unwrap();
+            }
+            progress.fence();
+            progress.fence();
+            let other = DatabaseRouteScope::new(
+                terrabase::identity::TenantUlid::generate(),
+                terrabase::identity::ProjectUlid::generate(),
+                terrabase::identity::DatabaseUlid::generate(),
+            );
+            assert_eq!(
+                progress.admit(other, BTreeSet::from(["GRU".into()])),
+                Err(ReplicationWaitError::NotAdmitted)
+            );
+            assert!(!progress.boundaries().unwrap().contains_key(&other));
+            assert!(progress.active_boundaries().unwrap().is_empty());
+        }
     }
 
     #[tokio::test]

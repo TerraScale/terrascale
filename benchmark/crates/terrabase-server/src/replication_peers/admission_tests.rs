@@ -64,6 +64,7 @@ fn synthetic() -> Synthetic {
             observations: observations.clone(),
             live_workers,
             stop,
+            draining: std::sync::atomic::AtomicBool::new(false),
             join: tokio::spawn(async { Ok(()) }),
         },
         receivers,
@@ -115,6 +116,16 @@ async fn incomplete_or_conflicting_metadata_leaves_queues_and_progress_unchanged
             ));
         }
     }
+}
+
+#[tokio::test]
+async fn begin_drain_rejects_new_lanes_and_drain_still_joins_owner() {
+    let synthetic = synthetic();
+    synthetic.peers.begin_drain();
+    assert!(synthetic.peers.ensure_running().is_err());
+    assert!(synthetic.peers.add_databases(batch(request(scope(1), scope(2)))).await.is_err());
+    assert!(synthetic.progress.boundaries().unwrap().is_empty());
+    assert!(synthetic.peers.drain().await.is_ok());
 }
 
 #[tokio::test]
@@ -257,4 +268,37 @@ async fn successful_admission_sends_each_lane_once_and_duplicate_is_atomic() {
     let after = synthetic.observations.lock().unwrap();
     assert_eq!(after.keys().collect::<Vec<_>>(), observations.keys().collect::<Vec<_>>());
     assert!(after.values().all(|facts| !facts.connected));
+}
+
+#[tokio::test]
+async fn drain_rejects_admission_already_waiting_for_queue_capacity() {
+    let mut synthetic = synthetic();
+    synthetic.peers.admissions["peer-b"].try_send(PeerCommand::Add(Vec::new())).unwrap();
+    {
+        let add = synthetic.peers.add_databases(batch(request(scope(1), scope(2))));
+        tokio::pin!(add);
+        for _ in 0..100 {
+            if synthetic.peers.admissions["peer-a"].capacity() == 0 {
+                break;
+            }
+            tokio::select! {
+                result = &mut add => panic!("admission completed before reservation: {result:?}"),
+                () = tokio::task::yield_now() => {}
+            }
+        }
+        assert_eq!(synthetic.peers.admissions["peer-a"].capacity(), 0);
+        synthetic.peers.begin_drain();
+        synthetic.peers.begin_drain();
+        assert!(synthetic.receivers.get_mut("peer-b").unwrap().recv().await.is_some());
+        assert!(add.await.is_err());
+    }
+    assert!(synthetic.progress.boundaries().unwrap().is_empty());
+    assert!(synthetic.peers.admitted.lock().unwrap().is_empty());
+    for receiver in synthetic.receivers.values_mut() {
+        assert!(matches!(
+            receiver.receiver.as_mut().unwrap().try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+    synthetic.peers.drain().await.unwrap();
 }

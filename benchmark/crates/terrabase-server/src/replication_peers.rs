@@ -4,6 +4,7 @@ use crate::replication_proof::{ReadinessCutFrame, VerifiedReadinessCut};
 use crate::replication_runtime::ReplicationProgress;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use terrabase_cluster::production::{DatabaseRouteScope, ProductionMemberRuntime};
 use terrabase_cluster::wal_driver::{
@@ -171,6 +172,7 @@ pub struct ReplicationPeers {
     observations: PeerObservations,
     live_workers: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
     stop: watch::Sender<bool>,
+    draining: AtomicBool,
     join: tokio::task::JoinHandle<Result<(), String>>,
 }
 fn failure(error: impl std::fmt::Debug) -> String {
@@ -339,6 +341,7 @@ impl ReplicationPeers {
         });
         Ok(Self {
             stop,
+            draining: AtomicBool::new(false),
             join,
             observations,
             live_workers,
@@ -352,6 +355,9 @@ impl ReplicationPeers {
     /// # Errors
     /// Rejects duplicate scopes, unadmitted peers, exceeded bounds, or stopped workers.
     pub async fn add_databases(&self, batch: PeerDatabaseBatch) -> Result<(), String> {
+        if self.draining.load(Ordering::Acquire) || *self.stop.borrow() {
+            return Err("replication peer owner is draining".into());
+        }
         batch.validate()?;
         let PeerDatabaseBatch { lanes: peers, selected_regions } = batch;
         // Reserve every bounded worker queue before publishing any assignment.
@@ -375,33 +381,35 @@ impl ReplicationPeers {
         {
             return Err("replication peer worker stopped".into());
         }
-        {
-            let mut admitted = self.admitted.lock().map_err(failure)?;
-            let added = peers.values().map(Vec::len).sum::<usize>();
-            if admitted.len().saturating_add(added) > terrabase::member::MAX_DATABASES * 20 {
-                return Err("replication lane bound exceeded".into());
-            }
-            let mut unique = std::collections::BTreeSet::new();
-            for (peer, lanes) in &peers {
-                if !self.admissions.contains_key(peer) {
-                    return Err("unadmitted replication peer".into());
-                }
-                for lane in lanes {
-                    let key = (peer.clone(), lane.scope);
-                    if admitted.contains(&key) || !unique.insert(key) {
-                        return Err("duplicate replication assignment".into());
-                    }
-                }
-            }
-            self.progress.admit_many(selected_regions).map_err(failure)?;
-            admitted.extend(unique);
+        let mut admitted = self.admitted.lock().map_err(failure)?;
+        if self.draining.load(Ordering::Acquire) || *self.stop.borrow() {
+            return Err("replication peer owner is draining".into());
         }
+        let added = peers.values().map(Vec::len).sum::<usize>();
+        if admitted.len().saturating_add(added) > terrabase::member::MAX_DATABASES * 20 {
+            return Err("replication lane bound exceeded".into());
+        }
+        let mut unique = std::collections::BTreeSet::new();
+        for (peer, lanes) in &peers {
+            if !self.admissions.contains_key(peer) {
+                return Err("unadmitted replication peer".into());
+            }
+            for lane in lanes {
+                let key = (peer.clone(), lane.scope);
+                if admitted.contains(&key) || !unique.insert(key) {
+                    return Err("duplicate replication assignment".into());
+                }
+            }
+        }
+        self.progress.admit_many(selected_regions).map_err(failure)?;
+        admitted.extend(unique);
         // No await occurs after the admission commit, so cancellation cannot
         // interrupt delivery between peer queues.
         for ((peer, lanes), reservation) in peers.into_iter().zip(reservations) {
             observe(&self.observations, &peer, &lanes, false);
             reservation.send(PeerCommand::Add(lanes));
         }
+        drop(admitted);
         drop(live_workers);
         Ok(())
     }
@@ -444,13 +452,25 @@ impl ReplicationPeers {
     /// # Errors
     /// A failed worker requires a fresh runtime; previously verified receipts cannot revive it.
     pub fn ensure_running(&self) -> Result<(), String> {
-        if self.join.is_finished()
+        if self.draining.load(Ordering::Acquire)
+            || self.join.is_finished()
             || *self.stop.borrow()
             || self.live_workers.lock().map_err(failure)?.len() != self.admissions.len()
         {
             return Err("replication peer owner is no longer running".into());
         }
         Ok(())
+    }
+
+    /// Fences new lane admission and signals sessions to stop without consuming
+    /// the peer owner. Already accepted callbacks may finish; [`Self::drain`]
+    /// joins those callbacks and every worker and reports failures.
+    pub fn begin_drain(&self) {
+        // Serialize with the entire admission commit and reserved-queue dispatch.
+        // Repeated callers also wait for that barrier before returning.
+        let _admitted = self.admitted.lock();
+        self.draining.store(true, Ordering::Release);
+        let _ = self.stop.send(true);
     }
 
     /// Waits for local outbound queues to empty after the caller stops origin writes.
@@ -480,7 +500,7 @@ impl ReplicationPeers {
     /// # Errors
     /// Reports a worker panic or an endpoint ownership violation.
     pub async fn drain(self) -> Result<(), String> {
-        let _ = self.stop.send(true);
+        self.begin_drain();
         self.join.await.map_err(failure)?
     }
 }

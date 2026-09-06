@@ -68,12 +68,28 @@ impl ProductionDataRuntime {
         self.peers.observations()
     }
 
+    /// Refuses use after the peer owner has stopped or begun draining.
+    ///
+    /// # Errors
+    /// Returns the durable peer-owner failure state.
+    pub fn ensure_running(&self) -> Result<(), String> {
+        self.peers.ensure_running()
+    }
+
+    /// Fences progress and new replication lanes, and signals workers to stop
+    /// without consuming their owner. Already accepted callbacks may finish;
+    /// [`Self::drain`] joins workers and reports completion failures.
+    pub fn begin_drain(&self) {
+        self.progress.fence();
+        self.peers.begin_drain();
+    }
+
     /// Fences API durability waits, then drains workers and their Engine leases.
     ///
     /// # Errors
     /// Reports failed peer shutdown.
     pub async fn drain(self) -> Result<(), String> {
-        self.progress.fence();
+        self.begin_drain();
         self.peers.drain().await
     }
 }

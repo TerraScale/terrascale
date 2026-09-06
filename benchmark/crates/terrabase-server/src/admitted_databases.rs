@@ -53,6 +53,15 @@ impl AdmittedDatabase {
     }
 }
 
+/// A retained host and its lane-activation state captured under the registry locks.
+/// This observation retains the existing lease; it does not grant serving authority.
+pub struct AdmittedDatabaseSnapshot {
+    /// The already opened host and immutable accepted owner record.
+    pub database: Arc<AdmittedDatabase>,
+    /// Whether replication lane publication has activated this host.
+    pub activated: bool,
+}
+
 /// No name aliases or implicit engine opens: unknown identities always refuse.
 pub struct AdmittedDatabaseRegistry {
     ready: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -118,6 +127,27 @@ impl AdmittedDatabaseRegistry {
         Ok(())
     }
 
+    /// Inspects retained hosts without consulting the Member readiness callback.
+    /// Readiness and metrics composition use this path to avoid recursively
+    /// invoking the readiness decision they are currently evaluating.
+    /// Public serving must continue through the readiness-gated lookup methods.
+    ///
+    /// # Errors
+    /// Refuses poisoned registry or activation state rather than returning a
+    /// partial inventory that could omit a required host.
+    pub fn retained_snapshot(&self) -> Result<Vec<AdmittedDatabaseSnapshot>, String> {
+        // Use the same lock order as activation and serving lookup.
+        let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        let retained = self.databases.read().map_err(|_| "admitted registry unavailable")?;
+        Ok(retained
+            .iter()
+            .map(|(id, database)| AdmittedDatabaseSnapshot {
+                database: Arc::clone(database),
+                activated: serving.contains(id),
+            })
+            .collect())
+    }
+
     /// Resolves an exact canonical admitted database identity.
     ///
     /// # Errors
@@ -154,11 +184,19 @@ impl AdmittedDatabaseRegistry {
     /// # Errors
     /// Returns an error when the Member is not ready or the registry is unavailable.
     pub fn resolve_serving(&self, database: &str) -> Result<Option<Arc<AdmittedDatabase>>, String> {
+        if !(self.ready)() {
+            return Err("Member is not ready to serve".into());
+        }
         let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
         if !serving.contains(database) {
             return Ok(None);
         }
-        self.resolve(database)
+        Ok(self
+            .databases
+            .read()
+            .map_err(|_| "admitted registry unavailable")?
+            .get(database)
+            .cloned())
     }
 
     /// Metadata can describe a terminal deletion without reopening document access.
@@ -169,8 +207,16 @@ impl AdmittedDatabaseRegistry {
         &self,
         database: &str,
     ) -> Result<Option<Arc<AdmittedDatabase>>, String> {
+        if !(self.ready)() {
+            return Err("Member is not ready to serve".into());
+        }
         let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
-        let retained = self.resolve(database)?;
+        let retained = self
+            .databases
+            .read()
+            .map_err(|_| "admitted registry unavailable")?
+            .get(database)
+            .cloned();
         match retained {
             Some(entry) if serving.contains(database) || entry.public_record()?.deleted => {
                 Ok(Some(entry))
@@ -326,6 +372,50 @@ pub(crate) mod tests {
         ready.store(false, std::sync::atomic::Ordering::Release);
         assert!(registry.resolve(&records[0].database_id).is_err());
         assert!(registry.records().is_err());
+        registry.serving.write().unwrap().remove(&records[0].database_id);
+        let snapshot = registry.retained_snapshot().unwrap();
+        assert_eq!(snapshot.len(), records.len());
+        for entry in &snapshot {
+            assert_eq!(
+                entry.activated,
+                entry.database.record.database_id != records[0].database_id
+            );
+            assert!(Arc::ptr_eq(
+                &entry.database,
+                registry.databases.read().unwrap().get(&entry.database.record.database_id).unwrap()
+            ));
+        }
+        drop(snapshot);
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn readiness_can_inspect_hosts_without_registry_locks_held() {
+        let (mut registry, member, records, root) = fixture();
+        let registry = Arc::new_cyclic(|weak: &std::sync::Weak<AdmittedDatabaseRegistry>| {
+            let weak = weak.clone();
+            registry.ready = Arc::new(move || {
+                let registry = weak.upgrade().unwrap();
+                drop(
+                    registry
+                        .serving
+                        .try_write()
+                        .expect("readiness called while activation lock held"),
+                );
+                drop(
+                    registry.databases.try_write().expect("readiness called while host lock held"),
+                );
+                registry.retained_snapshot().unwrap().len() == 2
+            });
+            registry
+        });
+        for record in &records {
+            assert!(registry.resolve_serving(&record.database_id).unwrap().is_some());
+            assert!(registry.resolve_metadata(&record.database_id).unwrap().is_some());
+        }
+        assert_eq!(registry.public_records().unwrap().len(), 2);
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();
