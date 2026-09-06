@@ -634,6 +634,7 @@ const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly
   "databases.putSchema": ["generation", "schema_version", "migration.total", "migration.completed"],
   "databases.databaseUsage": ["snapshot_sequence", "storage_complete_through_millis", "reads.total_reads"],
   "databases.indexRecommendations": ["generation", "recommendations.*.generation", "recommendations.*.maintenance_cost"],
+  "databases.listIndexes": ["indexes.*.backfill_remaining"],
   "databases.listWebhooks": ["webhooks.*.created_at"],
   "databases.createWebhook": ["created_at"],
   "databases.rotateSecret": ["created_at"],

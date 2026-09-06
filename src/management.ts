@@ -85,7 +85,11 @@ export type BranchListResponse = { readonly branches: readonly Database[] };
 export type BackupStatusResponse = { readonly ready: boolean; readonly streaming: boolean };
 export type CollectionsResponse = { readonly collections: readonly string[] };
 export type CreateIndexRequest = { readonly field: string };
-export type IndexDescriptor = { readonly field: string; readonly state?: "active" | "building" };
+export type IndexDescriptor = {
+  readonly field: string;
+  readonly state: "active" | "building";
+  readonly backfill_remaining: Contracts.UInt64Value;
+};
 export type IndexListResponse = { readonly indexes: readonly IndexDescriptor[] };
 export type IndexCreatedResponse = { readonly field: string; readonly state: "active" | "building" };
 export type DeleteDatabaseOptions = Models.DeleteProjectDatabaseOptions;

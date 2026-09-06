@@ -78,6 +78,19 @@ test("management uint64 fields preserve full range and reject out-of-range value
   }
 });
 
+test("index backfill remaining preserves unsafe uint64 values", async () => {
+  const client = createTerraScaleManagementClient({
+    fetch: async () => new Response(
+      '{"indexes":[{"field":"email","state":"building","backfill_remaining":18446744073709551615},{"field":"name","state":"active","backfill_remaining":3}]}',
+      { headers: { "content-type": "application/json" } },
+    ),
+  });
+  const result = await client.collections.listIndexes("demo", "users");
+  assert.ok(result.ok);
+  assert.equal(result.value.indexes[0]?.backfill_remaining, 18446744073709551615n);
+  assert.equal(result.value.indexes[1]?.backfill_remaining, 3);
+});
+
 test("database metadata preserves signed int64 timestamps and rejects overflow", async () => {
   const read = (timestamp: string) => createTerraScaleManagementClient({
     fetch: async () => new Response(`{"databases":[{"created_at":${timestamp},"name":"demo","deleted":false,"placement":"GRU","residency":"br-only","parent":null}]}`, {

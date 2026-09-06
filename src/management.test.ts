@@ -1,9 +1,38 @@
 import { describe, expect, it } from "vitest";
 import {
   createTerraScaleManagementClient,
+  type IndexDescriptor,
   ManagementContractGapError,
   validatePlacementLock,
 } from "./management.js";
+import type { WebhookDelivery } from "./management-contracts.js";
+
+const completeIndex = {
+  field: "email",
+  state: "building",
+  backfill_remaining: 123n,
+} satisfies IndexDescriptor;
+// @ts-expect-error Producer responses require both state and backfill_remaining.
+const incompleteIndex: IndexDescriptor = { field: "email" };
+const completeDelivery = {
+  id: "delivery-1",
+  event_id: "event-1",
+  revision: 1n,
+  write_index: 2,
+  retry_started_at: 3n,
+  attempts: 1,
+  next_attempt_at: 4n,
+  status: null,
+  delivered: false,
+  terminal: false,
+} satisfies WebhookDelivery;
+const { write_index: _writeIndex, ...deliveryWithoutWriteIndex } = completeDelivery;
+// @ts-expect-error Producer deliveries require write_index.
+const incompleteDelivery: WebhookDelivery = deliveryWithoutWriteIndex;
+void completeIndex;
+void incompleteIndex;
+void completeDelivery;
+void incompleteDelivery;
 
 function fixtureFetch(requests: Request[]): typeof fetch {
   return async (input) => {

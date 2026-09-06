@@ -55,6 +55,7 @@ export type WebhookDelivery = {
   readonly id: string;
   readonly event_id: string;
   readonly revision: UInt64Value;
+  readonly write_index: number;
   readonly retry_started_at: UInt64Value;
   readonly attempts: number;
   readonly next_attempt_at: UInt64Value;
