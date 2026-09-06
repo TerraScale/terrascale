@@ -71,3 +71,9 @@ its one-time secret has no replay contract, even when shared options carry a key
 requests cancellation at a safe page boundary; inspect the returned
 `Cancellation` state rather than assuming the job stopped immediately. Export
 status retains phase, page counts and creation time alongside record progress.
+
+`AuthPersistence` exposes the producer's strict record, unique-index, conditional
+update, one-time consume, paging, and transaction operations without a framework
+adapter. Supply stable operation identities. Unknown commits return the typed
+error without automatic retries or callback replay; resolve using the same
+transaction and idempotency identities. Auth record values remain raw JSON.

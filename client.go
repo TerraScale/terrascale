@@ -133,6 +133,7 @@ type Client struct {
 	// sessionToken is the canonical frontier shared by REST and subscriptions.
 	sessionToken string
 
+	AuthPersistence  *AuthPersistenceClient
 	Operations       *OperationsClient
 	Documents        *DocumentsClient
 	Tenants          *TenantsClient
@@ -260,6 +261,7 @@ func NewClient(cfg Config) (*Client, error) {
 		RetryDelay:       retryDelay,
 		RequestTimeout:   requestTimeout,
 	}, http: httpClient, sessionToken: strings.TrimSpace(cfg.SessionToken)}
+	c.AuthPersistence = &AuthPersistenceClient{c: c}
 	c.Operations = &OperationsClient{c: c}
 	c.Documents = &DocumentsClient{c: c}
 	c.Tenants = &TenantsClient{c: c}
@@ -459,6 +461,8 @@ type requestConfig struct {
 	schemaIfMatch      string
 	responseMediaType  string
 	createOnly         bool
+	authTransaction    string
+	noRetry            bool
 }
 
 // RequestOption customizes one request.
@@ -615,7 +619,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 				recoveredPin = true
 				continue
 			}
-			if idem != "" && attempt < c.cfg.MaxRetryAttempts {
+			if !rc.noRetry && idem != "" && attempt < c.cfg.MaxRetryAttempts {
 				if sleepErr := sleepContext(requestCtx, c.backoff(nil, attempt)); sleepErr != nil {
 					return sleepErr
 				}
@@ -656,7 +660,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 				continue
 			}
 		}
-		if idem != "" && attempt < c.cfg.MaxRetryAttempts && retryableStatuses[status] {
+		if !rc.noRetry && idem != "" && attempt < c.cfg.MaxRetryAttempts && retryableStatuses[status] {
 			if sleepErr := sleepContext(requestCtx, c.retryDelayFor(headers, attempt)); sleepErr != nil {
 				return sleepErr
 			}
@@ -767,6 +771,9 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 	}
 	if rc.deleteConfirmation != "" {
 		h.Set("X-TerraScale-Delete-Confirmation", rc.deleteConfirmation)
+	}
+	if rc.authTransaction != "" {
+		h.Set("X-TerraScale-Auth-Transaction", rc.authTransaction)
 	}
 	if rc.createOnly {
 		h.Set("If-None-Match", "*")
