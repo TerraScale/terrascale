@@ -1100,3 +1100,36 @@ Final all-target Clippy remains at 74 existing diagnostics after correcting two
 formatting lints in the shutdown-future fixtures (`70538`). Log:
 `/tmp/terrascale-serving-cancellation-clippy-cleanup.log`. No Cargo process is
 left running. Full workspace checks and production launch gates remain unpassed.
+
+## Authenticated durable transition intent
+
+The placement journal now validates authority-signed prepared transitions against
+the exact accepted predecessor and commits a durable intent before withdrawing
+that epoch from membership and WAL assignment sources. Historical accepted
+control inspection remains available. Exact intent retries survive successor
+acceptance without fencing the successor. A successor must match the prepared
+request and carry a later authority journal revision. Retained corrupt or orphaned
+intents fail closed during trust installation and admission checks.
+
+Prepared verification permits Region growth and shrink while enforcing sorted
+unique members and two seats per selected Region. Signed raw bytes are verified
+before strict decoding; canonical request digests bind the transition tuple.
+The new regression tests cover conflicting signed requests, stale acceptance,
+corruption, graceful reopen, and a child process that exits after committing the
+intent without running destructors or closing SQLite. This demonstrates process
+exit recovery, not physical power-loss qualification.
+
+Root review corrected test fixture errors, a shadowed helper compile failure,
+and assertions that could fail for an unrelated invalid digest or scope. Final
+independent review found no material defects. The complete TBEP library suite
+passed 77 tests (`19719`), with no ignored or filtered tests, and TBEP all-target
+Clippy with warnings denied passed (`46390`). Logs:
+`/tmp/terrascale-transition-drain-full-tests.log` and
+`/tmp/terrascale-transition-drain-all-target-clippy.log`. `git diff --check` passed.
+ULID and concurrent agent changes remain intact.
+
+This journal record authorizes and remembers transition intent only. Actual
+engine fencing, live worker retirement, physical acknowledgment fencing, durable
+frontier capture, receipt signing, and the production PlacementDataControl
+adapter still need composition. No completed drain receipt is inferred from the
+intent, and the larger production and provider qualification gates remain open.

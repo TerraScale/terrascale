@@ -24,9 +24,11 @@ use terrabase_tbep::registry::BoundScope;
 mod host_readiness;
 mod public_server;
 mod readiness_inventory;
+mod transition_retirement;
 
 pub use host_readiness::WriterHostReadiness;
 pub use public_server::{PreparedProductionPublic, PublicServingStatus};
+pub use transition_retirement::TransitionWriterFences;
 
 /// Filesystem and residency bounds of an authenticated admission record.
 /// Writer identity is deliberately obtained from the durable assignment source.

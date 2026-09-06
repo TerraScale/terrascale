@@ -919,6 +919,40 @@ pub(crate) mod tests {
         (runtime, root, spec)
     }
 
+    #[tokio::test]
+    async fn epoch_retirement_fences_runtime_arcs_and_allows_a_new_epoch_after_drain() {
+        let (runtime, root, spec) = runtime_for_readiness("epoch-retirement-barrier");
+        let owner = spec.scope().expect("scope").owner();
+        let route = DatabaseRouteScope::new(owner.tenant(), owner.project(), owner.database());
+        let runtime = Arc::new(runtime);
+
+        runtime.begin_epoch_retirement();
+        runtime.begin_epoch_retirement();
+        assert!(runtime.acquire_replication(&route).is_err());
+
+        let runtime = Arc::try_unwrap(runtime).unwrap_or_else(|_| panic!("runtime Arc retained"));
+        let retired = runtime.retire_epoch().await;
+        assert!(retired.data_plane.is_ok());
+        let database = retired.member.database_ids().next().expect("database");
+        retired
+            .member
+            .accept_database_role(&database, &DatabaseRoleAuthorityForEpoch(2))
+            .expect("successor role");
+        let lease = retired.member.acquire(&database).expect("successor member remains usable");
+        drop(lease);
+        retired.member.close(Duration::from_secs(1)).expect("close successor");
+        reopen(&root, spec);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    struct DatabaseRoleAuthorityForEpoch(u64);
+
+    impl DatabaseRoleAuthority for DatabaseRoleAuthorityForEpoch {
+        fn accepted_role(&self, _: &terrabase::member::DatabaseId) -> Option<AcceptedDatabaseRole> {
+            Some(AcceptedDatabaseRole { epoch: self.0, role: DatabaseRole::Writer })
+        }
+    }
+
     pub(crate) struct NoDatabaseAssignments;
 
     impl terrabase_cluster::wal_route::DurableWalAssignmentSource for NoDatabaseAssignments {

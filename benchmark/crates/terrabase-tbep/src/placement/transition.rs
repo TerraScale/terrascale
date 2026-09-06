@@ -10,6 +10,10 @@ use std::collections::{BTreeMap, BTreeSet};
 const DOMAIN: &[u8] = b"terrabase-placement-transition-v1\0";
 const MAX_PROOF_BYTES: usize = 256 * 1024;
 
+#[cfg(test)]
+#[path = "transition/prepared_tests.rs"]
+mod prepared_tests;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Signed {

@@ -998,6 +998,28 @@ impl ProductionMemberRuntime {
         ProductionMemberDrainReport { transport, data_plane, storage }
     }
 
+    /// Fences this placement epoch while retaining the runtime and root
+    /// [`Member`] for a separately authenticated successor composition.
+    ///
+    /// This is the synchronous authority barrier: membership admission,
+    /// serving admission, and every retained WAL binding are revoked before
+    /// the attached data plane is asked to stop accepting work. Callers must
+    /// persist the durable transition intent before invoking this method.
+    /// The method does not close storage or claim that the epoch has drained;
+    /// [`Self::retire_epoch`] performs that later bounded retirement.
+    pub fn begin_epoch_retirement(&self) {
+        let data_plane = {
+            let mut admission = lock_unpoisoned(&self.membership_admission);
+            *admission = MembershipAdmission::Fenced;
+            self.draining.store(true, Ordering::Release);
+            lock_unpoisoned(&self.wal_bindings).fence();
+            lock_unpoisoned(&self.data_plane).clone()
+        };
+        if let Some(data_plane) = data_plane {
+            data_plane.begin_drain();
+        }
+    }
+
     /// Retires this immutable placement epoch while preserving the shared Member
     /// for a separately authenticated successor runtime. All external data-plane
     /// tasks must first relinquish their runtime handles and database leases.
@@ -1016,16 +1038,8 @@ impl ProductionMemberRuntime {
                 data_plane: Err(ProductionDataPlaneError::Persistence),
             };
         }
-        {
-            let mut admission = lock_unpoisoned(&self.membership_admission);
-            *admission = MembershipAdmission::Fenced;
-            self.draining.store(true, Ordering::Release);
-            lock_unpoisoned(&self.wal_bindings).fence();
-        }
+        self.begin_epoch_retirement();
         let data_plane = lock_unpoisoned(&self.data_plane).take();
-        if let Some(plane) = &data_plane {
-            plane.begin_drain();
-        }
         let timeout = self.transport.config().limits().drain_timeout();
         let transport = self.transport.drain().await;
         let data_plane = match data_plane {
