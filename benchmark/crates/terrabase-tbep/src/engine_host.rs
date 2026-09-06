@@ -260,6 +260,11 @@ pub struct EngineHost {
 }
 
 impl EngineHost {
+    /// Returns whether this host owns a Member admission lease.
+    #[must_use]
+    pub fn is_admitted(&self) -> bool {
+        matches!(self.engine, HostEngine::Admitted(_))
+    }
     /// Consumes an admitted host and releases its exclusive Member lease.
     pub fn into_admitted_lease(self) -> Result<terrabase::member::DatabaseLease, HostingError> {
         match self.engine {

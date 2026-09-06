@@ -377,6 +377,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     admission = admission
         .with_native_deletion(native.fleet())
         .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+    let admission = Arc::new(admission);
     let recovery_root = parts_root_for_recovery(production);
     let (recovery, recovery_worker) = crate::native_recovery::NativeRecoveryRuntime::new(
         &recovery_root,
@@ -386,6 +387,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             pending_operations: 128,
             retained_operations: 512,
         },
+        admission.native_restore_target_resolver(),
     )
     .map_err(|_| {
         Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
@@ -420,7 +422,6 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     )
     .await
     .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-    let admission = Arc::new(admission);
     let native_restore_target: Arc<
         dyn Fn(
                 &str,
@@ -511,6 +512,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         Arc::clone(&progress),
         (primary.tenant.to_text(), primary.project.to_text()),
         provisioning,
+        None,
         parts_root_for_recovery(production),
         None,
         Arc::new(crate::guards::AbuseGuards::default()),
@@ -560,6 +562,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     let lifecycle_worker = Arc::new(crate::production_lifecycle_control::RegistryLifecycleWorker {
         registry: Arc::clone(&registry),
         backups: Some(lifecycle_fleet),
+        recovery: Some(Arc::clone(&recovery)),
     });
     let lifecycle_authority =
         Arc::new(crate::production_lifecycle_control::PlacementLifecycleAuthority::new(

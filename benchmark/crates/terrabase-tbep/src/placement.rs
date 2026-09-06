@@ -14,6 +14,7 @@ use terrabase::identity::MemberUlid;
 use terrabase::regions::RegionCatalog;
 use terrabase_cluster::production::{DatabaseRouteScope, MemberWorkloadIdentity};
 
+use crate::lifecycle::LifecycleOperationGrant;
 use crate::proto::terrabase::v1 as pb;
 
 mod drain;
@@ -485,6 +486,54 @@ pub struct PlacementJournal {
 }
 
 impl PlacementJournal {
+    /// Durably fences a lifecycle operation before its native effect.
+    ///
+    /// Returns `true` for a new operation and `false` for an exact retry.
+    pub fn admit_lifecycle_operation(
+        &self,
+        grant: &LifecycleOperationGrant,
+    ) -> Result<bool, PlacementError> {
+        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let transaction =
+            connection.unchecked_transaction().map_err(|_| PlacementError::Storage)?;
+        let current: Option<i64> = transaction
+            .query_row("SELECT epoch FROM lifecycle_authority WHERE id=1", [], |row| row.get(0))
+            .optional()
+            .map_err(|_| PlacementError::Storage)?;
+        if current.is_some_and(|epoch| i64::try_from(grant.authority_epoch).ok() < Some(epoch)) {
+            return Err(PlacementError::Conflict);
+        }
+        let action = serde_json::to_string(&grant.action).map_err(|_| PlacementError::Storage)?;
+        let existing: Option<(String, String, String, String, String, String, String, i64, String, i64, String)> = transaction
+            .query_row(
+                "SELECT action,environment,tenant,project,database,region,member,placement_revision,proof_digest,authority_epoch,authority_lease FROM lifecycle_operations WHERE operation_id=?1",
+                [grant.operation_id.as_str()],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?,row.get(10)?)),
+            ).optional().map_err(|_| PlacementError::Storage)?;
+        if let Some(row) = existing {
+            let same = row.0 == action
+                && row.1 == grant.environment
+                && row.2 == grant.tenant
+                && row.3 == grant.project
+                && row.4 == grant.database
+                && row.5 == grant.region
+                && row.6 == grant.member
+                && row.7 == i64::try_from(grant.accepted_placement_revision).unwrap_or_default()
+                && row.8 == grant.accepted_proof_digest
+                ;
+            if !same {
+                return Err(PlacementError::RetryMismatch);
+            }
+            transaction.execute("UPDATE lifecycle_operations SET authority_epoch=?2,authority_lease=?3,issued_at=?4,expires_at=?5 WHERE operation_id=?1", params![grant.operation_id, i64::try_from(grant.authority_epoch).map_err(|_| PlacementError::Invalid)?, grant.authority_lease, grant.issued_at_unix_millis, grant.expires_at_unix_millis]).map_err(|_| PlacementError::Storage)?;
+            transaction.commit().map_err(|_| PlacementError::Storage)?;
+            return Ok(false);
+        }
+        transaction.execute("INSERT INTO lifecycle_operations VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)", params![grant.operation_id, action, grant.environment, grant.tenant, grant.project, grant.database, grant.region, grant.member, i64::try_from(grant.accepted_placement_revision).map_err(|_| PlacementError::Invalid)?, grant.accepted_proof_digest, i64::try_from(grant.authority_epoch).map_err(|_| PlacementError::Invalid)?, grant.authority_lease, grant.issued_at_unix_millis, grant.expires_at_unix_millis]).map_err(|_| PlacementError::Conflict)?;
+        transaction.execute("INSERT INTO lifecycle_authority(id,epoch) VALUES (1,?1) ON CONFLICT(id) DO UPDATE SET epoch=MAX(epoch,excluded.epoch)", params![i64::try_from(grant.authority_epoch).map_err(|_| PlacementError::Invalid)?]).map_err(|_| PlacementError::Storage)?;
+        transaction.commit().map_err(|_| PlacementError::Storage)?;
+        Ok(true)
+    }
+
     /// Verifies one signed lifecycle grant with the retained authority pins.
     pub fn verify_lifecycle_grant(
         &self,
@@ -506,8 +555,8 @@ impl PlacementJournal {
         region: &str,
         member: &str,
         revision: u64,
-        authority_epoch: u64,
-        authority_lease: &str,
+        _authority_epoch: u64,
+        _authority_lease: &str,
         signature: &[u8],
     ) -> Result<(u64, String), PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
@@ -522,8 +571,6 @@ impl PlacementJournal {
         if supplied.digest != accepted.digest
             || supplied.proof.authority_epoch != accepted.proof.authority_epoch
             || supplied.proof.lease_id != accepted.proof.lease_id
-            || authority_epoch != accepted.proof.authority_epoch
-            || authority_lease != accepted.proof.lease_id
         {
             return Err(PlacementError::Conflict);
         }
@@ -580,6 +627,8 @@ impl PlacementJournal {
              CREATE TABLE IF NOT EXISTS transition_drains (prior_digest TEXT PRIMARY KEY, operation TEXT NOT NULL UNIQUE, prepared BLOB NOT NULL, prepared_digest TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS declared (tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL PRIMARY KEY, region TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS selected_regions (tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL, region TEXT NOT NULL, PRIMARY KEY(tenant,project,database,region));
+             CREATE TABLE IF NOT EXISTS lifecycle_authority (id INTEGER PRIMARY KEY CHECK(id=1), epoch INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS lifecycle_operations (operation_id TEXT PRIMARY KEY, action TEXT NOT NULL, environment TEXT NOT NULL, tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL, region TEXT NOT NULL, member TEXT NOT NULL, placement_revision INTEGER NOT NULL, proof_digest TEXT NOT NULL, authority_epoch INTEGER NOT NULL, authority_lease TEXT NOT NULL, issued_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
              PRAGMA user_version=1;"
         ).map_err(|_| PlacementError::Storage)?;
         transaction

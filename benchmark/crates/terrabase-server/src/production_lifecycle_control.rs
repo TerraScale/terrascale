@@ -82,6 +82,9 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
         {
             return Err("lifecycle operation grant does not bind the accepted assignment".into());
         }
+        self.journal
+            .admit_lifecycle_operation(&grant)
+            .map_err(|_| "lifecycle operation admission is stale or conflicting")?;
         Ok(())
     }
 }
@@ -90,6 +93,33 @@ impl TbepLifecycleControl {
     #[must_use]
     pub fn new(control: Arc<ProductionLifecycleControl>) -> Self {
         Self { control }
+    }
+
+    /// Restore dispatch is reserved for the native composition owner. The
+    /// authenticated RPC reaches this boundary; no local path fallback is
+    /// permitted while that owner is absent.
+    pub fn restore_to_target(
+        &self,
+        request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
+    ) -> Result<terrabase_tbep::proto::terrabase::v1::LifecycleControlResponse, String> {
+        let context = request.context.as_ref().ok_or("restore context is missing")?;
+        let assignment = Self::assignment(context);
+        self.control.authority.verify(
+            &assignment,
+            LifecycleGrantAction::RestoreToTarget,
+            &request.operation_id,
+            &context.authority_signature,
+            &context.operation_grant,
+        )?;
+        self.control.worker.restore_to_target(request)?;
+        Ok(terrabase_tbep::proto::terrabase::v1::LifecycleControlResponse {
+            status: terrabase_tbep::proto::terrabase::v1::LifecycleStatus::Applied as i32,
+            operation_id: request.operation_id.clone(),
+            detail: String::new(),
+            recovery_point_id: request.recovery_point_id.clone(),
+            recovery_point_digest: request.recovery_point_digest.clone(),
+            placement: vec![context.region.clone()],
+        })
     }
 
     fn assignment(
@@ -136,72 +166,102 @@ impl TbepLifecycleControl {
 }
 
 impl terrabase_tbep::lifecycle::LifecycleControl for TbepLifecycleControl {
+    fn restore_to_target(
+        &self,
+        request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
+    ) -> terrabase_tbep::lifecycle::LifecycleFuture<'_> {
+        Box::pin(async move { self.restore_to_target(request) })
+    }
+
     fn ensure_snapshot(
         &self,
         c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
         o: &str,
-    ) -> Result<(), String> {
-        self.invoke(
-            c,
-            o,
-            LifecycleGrantAction::EnsureSnapshot,
-            ProductionLifecycleControl::ensure_snapshot,
-        )
+    ) -> terrabase_tbep::lifecycle::LifecycleFuture<'_> {
+        Box::pin(async move {
+            self.invoke(
+                c,
+                o,
+                terrabase_tbep::lifecycle::LifecycleGrantAction::EnsureSnapshot,
+                ProductionLifecycleControl::ensure_snapshot,
+            )
+            .map(|_| terrabase_tbep::lifecycle::applied(o))
+        })
     }
     fn verify_snapshot_placement(
         &self,
         c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
         o: &str,
-    ) -> Result<(), String> {
-        self.invoke(
-            c,
-            o,
-            LifecycleGrantAction::VerifySnapshotPlacement,
-            ProductionLifecycleControl::verify_snapshot_placement,
-        )
+    ) -> terrabase_tbep::lifecycle::LifecycleFuture<'_> {
+        Box::pin(async move {
+            self.invoke(
+                c,
+                o,
+                terrabase_tbep::lifecycle::LifecycleGrantAction::VerifySnapshotPlacement,
+                ProductionLifecycleControl::verify_snapshot_placement,
+            )
+            .map(|_| terrabase_tbep::lifecycle::applied(o))
+        })
     }
     fn close_database(
         &self,
         c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
         o: &str,
-    ) -> Result<(), String> {
-        self.invoke(
-            c,
-            o,
-            LifecycleGrantAction::CloseDatabase,
-            ProductionLifecycleControl::close_database,
-        )
+    ) -> terrabase_tbep::lifecycle::LifecycleFuture<'_> {
+        Box::pin(async move {
+            self.invoke(
+                c,
+                o,
+                terrabase_tbep::lifecycle::LifecycleGrantAction::CloseDatabase,
+                ProductionLifecycleControl::close_database,
+            )
+            .map(|_| terrabase_tbep::lifecycle::applied(o))
+        })
     }
     fn stop_native_backup(
         &self,
         c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
         o: &str,
-    ) -> Result<(), String> {
-        self.invoke(
-            c,
-            o,
-            LifecycleGrantAction::StopNativeBackup,
-            ProductionLifecycleControl::stop_native_backup,
-        )
+    ) -> terrabase_tbep::lifecycle::LifecycleFuture<'_> {
+        Box::pin(async move {
+            self.invoke(
+                c,
+                o,
+                terrabase_tbep::lifecycle::LifecycleGrantAction::StopNativeBackup,
+                ProductionLifecycleControl::stop_native_backup,
+            )
+            .map(|_| terrabase_tbep::lifecycle::applied(o))
+        })
     }
     fn reactivate(
         &self,
         c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
         o: &str,
-    ) -> Result<(), String> {
-        self.invoke(c, o, LifecycleGrantAction::Reactivate, ProductionLifecycleControl::reactivate)
+    ) -> terrabase_tbep::lifecycle::LifecycleFuture<'_> {
+        Box::pin(async move {
+            self.invoke(
+                c,
+                o,
+                terrabase_tbep::lifecycle::LifecycleGrantAction::Reactivate,
+                ProductionLifecycleControl::reactivate,
+            )
+            .map(|_| terrabase_tbep::lifecycle::applied(o))
+        })
     }
     fn delete_owned_data(
         &self,
         c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
         o: &str,
-    ) -> Result<(), String> {
-        self.invoke(
-            c,
-            o,
-            LifecycleGrantAction::DeleteOwnedData,
-            ProductionLifecycleControl::delete_owned_data,
-        )
+    ) -> terrabase_tbep::lifecycle::LifecycleFuture<'_> {
+        Box::pin(async move {
+            self.invoke(
+                c,
+                o,
+                terrabase_tbep::lifecycle::LifecycleGrantAction::DeleteOwnedData,
+                ProductionLifecycleControl::delete_owned_data,
+            )
+            .map(|_| terrabase_tbep::lifecycle::applied(o))
+        })
     }
 }
 
@@ -230,6 +290,14 @@ pub struct AcceptedLifecycleAssignment {
 
 /// Native lifecycle owner supplied by member and backup composition.
 pub trait NativeLifecycleWorker: Send + Sync {
+    /// Admits an exact native restore operation into the durable recovery owner.
+    fn restore_to_target(
+        &self,
+        request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
+    ) -> Result<(), String> {
+        let _ = request;
+        Err("native restore owner is not composed".into())
+    }
     /// Ensures all selected destinations contain a complete snapshot receipt.
     fn ensure_snapshot(
         &self,
@@ -281,9 +349,43 @@ pub struct RegistryLifecycleWorker {
     pub registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
     /// Optional native backup fleet retained by the production composition.
     pub backups: Option<Arc<std::sync::Mutex<terrabase::backup::worker::NativeBackupFleet>>>,
+    /// Durable native recovery owner.
+    pub recovery: Option<Arc<crate::native_recovery::NativeRecoveryRuntime>>,
 }
 
 impl NativeLifecycleWorker for RegistryLifecycleWorker {
+    fn restore_to_target(
+        &self,
+        request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
+    ) -> Result<(), String> {
+        let recovery = self.recovery.as_ref().ok_or("native recovery owner is not composed")?;
+        let operation = crate::native_recovery::NativeRestoreRequest {
+            operation_id: request.operation_id.clone(),
+            source_owner: request.source_owner.clone(),
+            source_database_id: request.source_database.clone(),
+            recovery_point_id: request.recovery_point_id.clone(),
+            recovery_point_digest: request.recovery_point_digest.clone(),
+            target_owner: request.target_owner.clone(),
+            target_database_id: request.target_database.clone(),
+            journal_cut: request.journal_cut.clone(),
+            restore_epoch: request.restore_epoch,
+            provider: "oci".into(),
+            selection: crate::native_recovery::NativeRestoreSelection::PointId(
+                request.recovery_point_id.clone(),
+            ),
+            placement: vec![request
+                .context
+                .as_ref()
+                .ok_or("restore context is missing")?
+                .region
+                .clone()],
+        };
+        recovery
+            .admit_restore(operation)
+            .map(|_| ())
+            .map_err(|_| "native restore admission refused".into())
+    }
+
     fn ensure_snapshot(
         &self,
         _assignment: &AcceptedLifecycleAssignment,

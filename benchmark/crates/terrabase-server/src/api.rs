@@ -2766,9 +2766,7 @@ fn stage_batch_operation(
             if transaction.put(patched, ExpectedVersion::Any).is_err() {
                 return Err(("staging_refused", "the patch could not stage"));
             }
-            Ok(terrabase::usage::write_units_for_bytes(
-                serde_json::to_vec(&merged).map_or(0, |bytes| bytes.len() as u64),
-            ))
+            Ok(terrabase::usage::write_units_for_bytes(document_value_bytes(&merged)))
         }
         Some("delete") => {
             if transaction.read_in_collection(collection, &id).ok().flatten().is_none() {
@@ -2914,9 +2912,10 @@ pub(crate) fn document_host(
         .map_err(|_| ApiError::storage_failure())?;
     let tenant = terrabase::types::TenantId::try_new(host.tenant())
         .map_err(|_| ApiError::storage_failure())?;
+    let project = host.engine().database_owner().project().to_string();
     let placement = terrabase::usage::UsagePlacement::try_new(
         tenant,
-        engine.database_owner().project().to_string().as_str(),
+        &project,
         name,
         name,
         state.region,
@@ -3580,9 +3579,7 @@ async fn patch_document(
         engine.database_owner().project().to_string().as_str(),
         &database_id,
         &operation_id,
-        terrabase::usage::write_units_for_bytes(
-            serde_json::to_vec(patched.value()).map_or(0, |bytes| bytes.len() as u64),
-        ),
+        terrabase::usage::write_units_for_bytes(document_value_bytes(patched.value())),
     ) {
         return error.into_response();
     }
@@ -4102,11 +4099,19 @@ async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<Strin
         return error.into_response();
     }
     let (ready, streaming) = if let Some(native) = &state.native_backups {
-        (native.is_ready(&name).unwrap_or(false), native.attached(&name).unwrap_or(false))
+        let ready = match native.is_ready(&name) {
+            Ok(value) => value,
+            Err(error) => return ApiError::backup(error).into_response(),
+        };
+        let streaming = match native.attached(&name) {
+            Ok(value) => value,
+            Err(error) => return ApiError::backup(error).into_response(),
+        };
+        (ready, streaming)
     } else if let Some(backups) = &state.backups {
         (backups.is_ready(&name), backups.attached(&name))
     } else {
-        (false, false)
+        return ApiError::backup("backup owner unavailable").into_response();
     };
     let body = format!("{{\"ready\":{ready},\"streaming\":{streaming}}}");
     if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
@@ -4386,6 +4391,12 @@ fn push_value(out: &mut String, value: &DocumentValue) {
 
 /// Converts one parsed JSON request value into the engine's document
 /// value.
+fn document_value_bytes(value: &DocumentValue) -> u64 {
+    let mut encoded = String::new();
+    push_value(&mut encoded, value);
+    encoded.len() as u64
+}
+
 fn json_value(value: &serde_json::Value) -> DocumentValue {
     match value {
         serde_json::Value::Null => DocumentValue::Null,
@@ -6719,6 +6730,11 @@ mod tests {
         assert!(body.contains("\"deleted\":true"), "the tombstone is the newest: {body}");
         assert!(body.contains("\"policy\":\"origin\""), "policy is exposed: {body}");
         assert!(body.contains("\"explanation\":\"origin write"), "explanation is exposed: {body}");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("history JSON");
+        let first = &parsed["history"][0];
+        for field in ["commitUlid", "hlc", "origin", "policy", "explanation"] {
+            assert!(!first[field].is_null(), "history exposes {field}: {parsed}");
+        }
         // The newest entry is listed first.
         let tombstone = body.find("\"deleted\":true").expect("tombstone");
         assert!(body[..tombstone].matches("\"revision\"").count() == 1, "newest first: {body}");

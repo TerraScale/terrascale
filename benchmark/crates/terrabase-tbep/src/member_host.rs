@@ -55,6 +55,11 @@ impl MemberHost {
     pub fn into_admitted_lease(self) -> Result<terrabase::member::DatabaseLease, HostingError> {
         self.engine.into_admitted_lease()
     }
+    /// Returns whether this host owns a Member admission lease.
+    #[must_use]
+    pub fn is_admitted(&self) -> bool {
+        self.engine.is_admitted()
+    }
     /// Opens the staged host when the explicit TB-1a construction flag is on.
     ///
     /// # Errors

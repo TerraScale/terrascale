@@ -87,7 +87,6 @@ where
         self.orchestrator
             .validate_split_placement(context.database_incarnation(), context.placement_epoch())
             .map_err(SplitRuntimeError::Placement)?;
-        self.engine.create_split_target(&context).map_err(SplitRuntimeError::Data)?;
         split.begin_backfill().map_err(|error| {
             SplitRuntimeError::WrongPhase(match error {
                 super::SplitCutoverError::WrongPhase(phase) => phase,
@@ -95,9 +94,9 @@ where
             })
         })?;
         if let Err(error) = self.engine.save(&split.durable_state()) {
-            let _ = self.engine.rollback_split_target(&context);
             return Err(SplitRuntimeError::State(error));
         }
+        self.engine.create_split_target(&context).map_err(SplitRuntimeError::Data)?;
         self.split = Some(split);
         self.committed_generation = None;
         Ok(())
@@ -126,8 +125,18 @@ where
         self.orchestrator
             .validate_split_placement(context.database_incarnation(), context.placement_epoch())
             .map_err(SplitRuntimeError::Placement)?;
+        if split.phase() == SplitPhase::CutOver {
+            let route = self
+                .engine
+                .recover_split_route(&context)
+                .map_err(SplitRuntimeError::Cutover)?
+                .ok_or(SplitRuntimeError::MissingCommittedGeneration)?;
+            if route.split != context {
+                return Err(SplitRuntimeError::MissingCommittedGeneration);
+            }
+            self.committed_generation = Some(route.generation);
+        }
         self.split = Some(split);
-        self.committed_generation = None;
         Ok(true)
     }
 
@@ -211,14 +220,30 @@ where
                 permit,
             })
             .map_err(SplitRuntimeError::Cutover)?;
-        self.router
-            .cut_over(
-                context.source_shard(),
-                context.target_shard(),
-                split.split_key().to_vec(),
-                permit,
-            )
-            .map_err(SplitRuntimeError::Routing)?;
+        let routing_result = self.router.cut_over(
+            context.source_shard(),
+            context.target_shard(),
+            split.split_key().to_vec(),
+            permit,
+        );
+        if let Err(original) = routing_result {
+            let recovered = self
+                .engine
+                .recover_split_route(&context)
+                .map_err(SplitRuntimeError::Cutover)?
+                .ok_or(SplitRuntimeError::Routing(original))?;
+            if recovered.split != context || recovered.generation != generation {
+                return Err(SplitRuntimeError::Routing(original));
+            }
+            self.router
+                .cut_over(
+                    context.source_shard(),
+                    context.target_shard(),
+                    split.split_key().to_vec(),
+                    permit,
+                )
+                .map_err(SplitRuntimeError::Routing)?;
+        }
         self.committed_generation = Some(generation);
         split.cut_over().map_err(|_| SplitRuntimeError::MissingCommittedGeneration)?;
         self.engine.save(&split.durable_state()).map_err(SplitRuntimeError::State)?;

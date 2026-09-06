@@ -10,7 +10,9 @@ use serde_json::Value;
 use std::fmt;
 
 /// Supported import/export interchange formats.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TransferFormat {
     /// TerraBase native bundle members, including history and causal metadata.
@@ -28,7 +30,9 @@ pub enum TransferFormat {
 }
 
 /// Logical record scope for an export.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ExportScope {
     /// Include current documents and retained history.

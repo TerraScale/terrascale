@@ -5,13 +5,17 @@
 //! supplies that owner, unsupported mutations fail with a typed refusal.
 
 use crate::proto::terrabase::v1 as pb;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 
 /// Closed lifecycle effect action issued by the current authority lease.
 #[allow(missing_docs)]
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleGrantAction {
+    /// Restore an exact recovery point into an admitted target.
+    RestoreToTarget,
     EnsureSnapshot,
     VerifySnapshotPlacement,
     CloseDatabase,
@@ -43,11 +47,16 @@ pub struct LifecycleOperationGrant {
     pub expires_at_unix_millis: i64,
 }
 
+fn is_lower_hex_digest(value: &str) -> bool {
+    value.len() == 64
+        && value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 impl LifecycleOperationGrant {
     /// Validates bounded identity, digest, domain/version, and time ordering.
     pub fn validate(&self, now_unix_millis: i64) -> Result<(), LifecycleError> {
         if self.version != 1
-            || self.domain != "terrabase.lifecycle-operation-v1"
+            || self.domain != "terrascale-lifecycle-operation-v1"
             || self.environment.is_empty()
             || self.environment.len() > 255
             || self.tenant.is_empty()
@@ -57,13 +66,14 @@ impl LifecycleOperationGrant {
             || self.member.is_empty()
             || self.operation_id.is_empty()
             || self.operation_id.len() > 128
-            || self.accepted_proof_digest.len() != 64
+            || !is_lower_hex_digest(&self.accepted_proof_digest)
             || self.accepted_placement_revision == 0
             || self.authority_epoch == 0
             || self.authority_lease.is_empty()
             || self.issued_at_unix_millis > self.expires_at_unix_millis
+            || self.expires_at_unix_millis.saturating_sub(self.issued_at_unix_millis) > 300_000
             || now_unix_millis < self.issued_at_unix_millis
-            || now_unix_millis > self.expires_at_unix_millis
+            || now_unix_millis >= self.expires_at_unix_millis
         {
             return Err(LifecycleError::Invalid);
         }
@@ -76,43 +86,54 @@ impl LifecycleOperationGrant {
 /// Implementations own durable idempotency and native side effects. The TBEP
 /// adapter only authenticates the channel and validates the signed assignment
 /// envelope before calling this port.
+pub type LifecycleFuture<'a> = Pin<Box<dyn Future<Output = Result<pb::LifecycleControlResponse, String>> + Send + 'a>>;
+
+/// Async native lifecycle owner boundary.
 pub trait LifecycleControl: Send + Sync {
+    /// Restores an exact authenticated recovery point into an admitted target.
+    fn restore_to_target(
+        &self,
+        request: &pb::RestoreToTargetRequest,
+    ) -> LifecycleFuture<'_> {
+        let _ = request;
+        Box::pin(async { Err("native restore owner is not composed".into()) })
+    }
     /// Captures and verifies the native snapshot for this assignment.
     fn ensure_snapshot(
         &self,
         context: &pb::LifecycleControlContext,
         operation: &str,
-    ) -> Result<(), String>;
+    ) -> LifecycleFuture<'_>;
     /// Verifies snapshot placement against the admitted assignment.
     fn verify_snapshot_placement(
         &self,
         context: &pb::LifecycleControlContext,
         operation: &str,
-    ) -> Result<(), String>;
+    ) -> LifecycleFuture<'_>;
     /// Closes serving while retaining the database.
     fn close_database(
         &self,
         context: &pb::LifecycleControlContext,
         operation: &str,
-    ) -> Result<(), String>;
+    ) -> LifecycleFuture<'_>;
     /// Stops this database's native backup stream.
     fn stop_native_backup(
         &self,
         context: &pb::LifecycleControlContext,
         operation: &str,
-    ) -> Result<(), String>;
+    ) -> LifecycleFuture<'_>;
     /// Resumes the same retained database.
     fn reactivate(
         &self,
         context: &pb::LifecycleControlContext,
         operation: &str,
-    ) -> Result<(), String>;
+    ) -> LifecycleFuture<'_>;
     /// Deletes data owned by this member.
     fn delete_owned_data(
         &self,
         context: &pb::LifecycleControlContext,
         operation: &str,
-    ) -> Result<(), String>;
+    ) -> LifecycleFuture<'_>;
 }
 
 /// Bounded lifecycle refusal categories.

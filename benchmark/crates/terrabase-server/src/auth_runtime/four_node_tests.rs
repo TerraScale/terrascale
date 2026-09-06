@@ -17,7 +17,7 @@ use terrabase::encryption::{
 };
 use terrabase::identity::{ClusterUlid, DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid, Ulid};
 use terrabase::regions::RegionCode;
-use terrabase_auth::{Action, AuthAuthority, AuthNetwork, Command, SqliteStore};
+use terrabase_auth::{Action, AuthAuthority, AuthNetwork, AuthorityError, Command, SqliteStore};
 use terrabase_cluster::production::{
     MemberWorkloadIdentity, ProductionPeerAdmission, ProductionQuicEndpoint, ProductionRegion,
     ProductionTlsMaterial, ProductionTransportConfig, ProductionTransportError,
@@ -317,6 +317,9 @@ async fn stop(fixture: Fixture) {
     for worker in &fixture.workers {
         worker.abort();
     }
+    for worker in fixture.workers {
+        let _ = worker.await;
+    }
     for authority in &fixture.authorities {
         let _ = authority.shutdown().await;
     }
@@ -365,7 +368,7 @@ async fn four_voters_deny_mutation_without_quorum() {
             },
         })
         .await;
-    assert!(result.is_err());
+    assert!(matches!(result, Err(AuthorityError::Unavailable | AuthorityError::Deadline)));
     stop(fixture).await;
 }
 

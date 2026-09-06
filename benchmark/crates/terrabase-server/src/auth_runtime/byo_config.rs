@@ -339,15 +339,27 @@ impl JwtSignatureVerifier for AwsLcJwtVerifier {
             Algorithm::EdDsa => key.material("x").map(ToOwned::to_owned),
         };
         let Some(material) = material else { return false };
-        let verifier = match algorithm {
-            Algorithm::Rs256 => &aws_lc_rs::signature::RSA_PKCS1_2048_8192_SHA256,
-            // JOSE encodes ECDSA as the fixed-width raw R||S form.
-            Algorithm::Es256 => &aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED,
-            Algorithm::EdDsa => &aws_lc_rs::signature::ED25519,
-        };
-        aws_lc_rs::signature::UnparsedPublicKey::new(verifier, material)
+        match algorithm {
+            Algorithm::Rs256 => aws_lc_rs::signature::UnparsedPublicKey::new(
+                &aws_lc_rs::signature::RSA_PKCS1_2048_8192_SHA256,
+                material,
+            )
             .verify(signing_input, signature)
-            .is_ok()
+            .is_ok(),
+            // JOSE encodes ECDSA as the fixed-width raw R||S form.
+            Algorithm::Es256 => aws_lc_rs::signature::UnparsedPublicKey::new(
+                &aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED,
+                material,
+            )
+            .verify(signing_input, signature)
+            .is_ok(),
+            Algorithm::EdDsa => aws_lc_rs::signature::UnparsedPublicKey::new(
+                &aws_lc_rs::signature::ED25519,
+                material,
+            )
+            .verify(signing_input, signature)
+            .is_ok(),
+        }
     }
 }
 

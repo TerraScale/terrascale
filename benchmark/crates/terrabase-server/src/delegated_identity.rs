@@ -337,9 +337,14 @@ impl IdentityVerifier {
         let principal = self
             .admit_verified_byo(issuer, subject, organization, project, "*", None, Verbs::ADMIN)
             .await?;
-        let expires = principal.expires_at.ok_or(IdentityError::Denied)?;
+        let expires = principal.expires_at().ok_or(IdentityError::Denied)?;
         Ok((
-            Principal::delegated(principal.label, Scope::every_database(Verbs::ADMIN), expires),
+            Principal::delegated_for_owner(
+                principal.label().to_owned(),
+                Scope::every_database(Verbs::ADMIN),
+                expires,
+                (organization.to_owned(), project.to_owned()),
+            ),
             VerifiedProjectScope {
                 tenant_id: organization.to_owned(),
                 project_id: project.to_owned(),

@@ -8,9 +8,7 @@ use crate::export_api::{
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
-use terrabase::encryption::{
-    ArtifactCipher, Compression, DatabaseKey, DatabaseKeyLease, EncryptionContext, ProviderMode,
-};
+use terrabase::encryption::{ArtifactCipher, Compression, DatabaseKeyLease, EncryptionContext};
 
 /// Lease-scoped encryption operation used by production artifact writers.
 /// Implementations must perform key use inside the active authorization
@@ -45,11 +43,7 @@ impl LeaseCrypto {
             Compression::None,
         )
         .map_err(|_| ExportError::EncryptionUnavailable)?;
-        self.lease
-            .with_database_key(|key| {
-                ArtifactCipher::new(ProviderMode::Production, key.clone(), context)
-            })
-            .map_err(|_| ExportError::EncryptionUnavailable)?
+        ArtifactCipher::from_database_key_lease(&self.lease, context, 0)
             .map_err(|_| ExportError::EncryptionUnavailable)
     }
 }
@@ -331,6 +325,7 @@ impl ArtifactWriter for LocalWriter {
     }
 
     fn commit(self: Box<Self>, manifest: &ArtifactFact) -> ExportFuture<'static, ()> {
+        let manifest = manifest.clone();
         Box::pin(async move {
             if manifest.path != "manifest.json" {
                 return Err(ExportError::IdempotencyConflict);

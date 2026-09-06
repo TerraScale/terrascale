@@ -362,7 +362,7 @@ mod tests {
         let app = router(Arc::clone(&state));
         apply_schema(
             &app,
-            r#"{"name":"orders","fields":[{"name":"title","type":"string"}]}"#,
+            r#"{"name":"orders","fields":[{"name":"title","type":"string","indexed":true}]}"#,
             "initial",
             None,
         )
@@ -396,7 +396,7 @@ mod tests {
                 terrabase::CommitOutcome::Committed(_)
             ));
         }
-        apply_schema(&app, r#"{"name":"orders","fields":[{"name":"headline","type":"string"}],"renames":[{"from":"title","to":"headline"}]}"#, "rename", Some(1)).await;
+        apply_schema(&app, r#"{"name":"orders","fields":[{"name":"headline","type":"string","indexed":true}],"renames":[{"from":"title","to":"headline"}]}"#, "rename", Some(1)).await;
         assert_eq!(drive_database(&state, "demo", None).as_deref(), Some("orders"));
         {
             let host = document_host(&state, "demo").unwrap();
@@ -417,8 +417,13 @@ mod tests {
             )
             .unwrap();
             migrations::apply_page(engine, &scope, &contract, &plan).unwrap();
-            // Simulate stopping after the atomic document+cursor commit, before
-            // its public envelope projection. The worker must read core state.
+            // Simulate a crash after the atomic document+cursor commit and
+            // physical index commit, before the public envelope projection.
+            let record: DurableSchemaRecord = serde_json::from_slice(
+                &engine.schema_metadata_load("demo", "main", "orders").unwrap().unwrap(),
+            )
+            .unwrap();
+            assert!(super::super::schema_index_runtime::advance(engine, &scope, &record).unwrap());
         }
         state.catalog.as_ref().unwrap().close_database(&state.scope.0, &state.scope.1, "demo");
         for _ in 0..4 {
@@ -433,6 +438,13 @@ mod tests {
         assert_eq!((progress.total, progress.completed), (1, 1));
         assert!(record.previous_schema.is_none());
         assert!(record.migration_plan.is_none());
+        let descriptor = engine
+            .index_descriptors()
+            .unwrap()
+            .into_iter()
+            .find(|descriptor| descriptor.collection == "orders" && descriptor.field == "headline")
+            .unwrap();
+        assert!(descriptor.active, "restart must retain the committed physical index");
         let scope = document_scope(engine).unwrap();
         let snapshot = engine.read_snapshot(&scope).unwrap();
         let documents = engine.snapshot_documents(&scope, &snapshot).unwrap();

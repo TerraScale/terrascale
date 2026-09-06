@@ -544,7 +544,7 @@ async fn admit_allocation(
     match tokio::task::spawn_blocking(move || {
         let _permit = permit;
         serde_json::to_vec(&record)
-            .map_err(|_| "allocation encoding failed")
+            .map_err(|_| "allocation encoding failed".to_owned())
             .and_then(|bytes| journal.admit_allocation(&bytes))
     })
     .await

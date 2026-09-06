@@ -1115,7 +1115,16 @@ pub fn validate_parameters(text: &str, parameters: &SqlParameters) -> Result<(),
     // control-bearing value could reach SQLite's FTS parser directly.
     validate_match_values(&parsed, parameters)?;
     validate_paging_bounds(&parsed, parameters)?;
-    if matches!(classify_live_subset(&parsed), LiveSubset::Live) {
+    let subset = classify_live_subset(&parsed);
+    // SQLite's execute-only adapter receives the original SQL text.  A raw
+    // MATCH expression there would let FTS syntax in a literal alter query
+    // semantics, whereas the typed path always analyzes and quotes terms.
+    // Refuse that shape until it has a typed lowering instead of passing it
+    // through as an unvalidated FTS program.
+    if matches!(subset, LiveSubset::ExecuteOnly { .. }) && statement_has_match(&parsed) {
+        return Err(unsupported("MATCH execute-only"));
+    }
+    if matches!(subset, LiveSubset::Live) {
         match lower(&parsed, parameters) {
             Ok(_) => return Ok(()),
             Err(error) if error.class() != SqlErrorClass::UnsupportedStatement => {
@@ -1140,6 +1149,24 @@ pub fn validate_parameters(text: &str, parameters: &SqlParameters) -> Result<(),
         }
     }
     Ok(())
+}
+
+fn statement_has_match(parsed: &ParsedSql) -> bool {
+    struct MatchFound(bool);
+    impl Visitor for MatchFound {
+        type Break = ();
+
+        fn pre_visit_expr(&mut self, expression: &Expr) -> ControlFlow<Self::Break> {
+            if matches!(expression, Expr::BinaryOp { op: BinaryOperator::Match, .. }) {
+                self.0 = true;
+            }
+            ControlFlow::Continue(())
+        }
+    }
+
+    let mut found = MatchFound(false);
+    let _ = parsed.statement().visit(&mut found);
+    found.0
 }
 
 /// Validates every SQL `MATCH` operand before either the typed or SQLite
@@ -1171,7 +1198,12 @@ fn validate_match_values(parsed: &ParsedSql, parameters: &SqlParameters) -> Resu
                             name = self.next_ordinal.to_string();
                             self.next_ordinal = self.next_ordinal.saturating_add(1);
                         }
-                        self.parameters.get(&name).cloned()
+                        let Some(value) = self.parameters.get(&name) else {
+                            // Leave missing bindings to the normal collector
+                            // below so they retain UnboundParameter semantics.
+                            return ControlFlow::Continue(());
+                        };
+                        Some(value.clone())
                     }
                     _ => None,
                 },
@@ -1559,6 +1591,16 @@ mod tests {
 
     #[test]
     fn match_bindings_require_bounded_text_even_for_execute_only_sql() {
+        assert_eq!(
+            validate_parameters(
+                "SELECT * FROM users WHERE body MATCH :query",
+                &SqlParameters::new()
+            )
+            .unwrap_err()
+            .class(),
+            SqlErrorClass::UnboundParameter
+        );
+
         let numeric = SqlParameters::try_new(&[("query", DocumentValue::Integer(7))]).unwrap();
         assert_eq!(
             validate_parameters("SELECT * FROM users JOIN archive ON users.id = archive.id WHERE users.body MATCH :query", &numeric)
@@ -1588,5 +1630,16 @@ mod tests {
         )])
         .unwrap();
         validate_parameters("SELECT * FROM users WHERE body MATCH :query", &parameters).unwrap();
+
+        let execute_only = SqlParameters::new();
+        assert_eq!(
+            validate_parameters(
+                "SELECT * FROM users JOIN archive ON users.id = archive.id WHERE users.body MATCH 'quick OR secret'",
+                &execute_only,
+            )
+            .unwrap_err()
+            .class(),
+            SqlErrorClass::UnsupportedStatement
+        );
     }
 }

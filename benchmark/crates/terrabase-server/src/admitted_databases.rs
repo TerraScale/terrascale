@@ -71,6 +71,8 @@ pub struct AdmittedDatabaseSnapshot {
 pub struct RestoreReservation {
     record: AdmissionRecord,
     location: PathBuf,
+    activated: bool,
+    path_guard: Arc<std::sync::Mutex<BTreeSet<PathBuf>>>,
 }
 
 impl RestoreReservation {
@@ -93,7 +95,29 @@ impl RestoreReservation {
         lease: DatabaseLease,
         instance: u64,
     ) -> Result<(), String> {
-        registry.publish(self.record, lease, self.location, instance)
+        let activated = self.activated;
+        let location = self.location.clone();
+        let database_id = self.record.database_id.clone();
+        let result = registry.publish(self.record.clone(), lease, location.clone(), instance);
+        if result.is_ok() && activated {
+            if let Err(error) = registry.activate(&[database_id]) {
+                return Err(error);
+            }
+        }
+        if result.is_ok() {
+            if let Ok(mut paths) = self.path_guard.lock() {
+                paths.remove(&location);
+            }
+        }
+        result
+    }
+}
+
+impl Drop for RestoreReservation {
+    fn drop(&mut self) {
+        if let Ok(mut paths) = self.path_guard.lock() {
+            paths.remove(&self.location);
+        }
     }
 }
 
@@ -102,6 +126,7 @@ pub struct AdmittedDatabaseRegistry {
     ready: Arc<dyn Fn() -> bool + Send + Sync>,
     databases: RwLock<BTreeMap<String, Arc<AdmittedDatabase>>>,
     serving: RwLock<BTreeSet<String>>,
+    restore_paths: Arc<std::sync::Mutex<BTreeSet<PathBuf>>>,
     draining: AtomicBool,
 }
 
@@ -115,44 +140,69 @@ impl AdmittedDatabaseRegistry {
         if serving.contains(database) {
             return Err("restore target is still serving".into());
         }
-        let entry = databases
-            .remove(database)
-            .ok_or_else(|| "restore target is not admitted".to_owned())?;
-        let result = (|| {
-            let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
-                .map_err(|_| "restore target tenant is invalid".to_owned())?;
-            let lifecycle = entry
-                .host
-                .engine()
-                .lifecycle_state(&entry.host.engine().scope_for(&tenant))
-                .map_err(|_| "restore target lifecycle is unavailable".to_owned())?;
-            if !lifecycle.paused || lifecycle.access_revoked() {
-                return Err("restore target must be paused and active".into());
+        let entry =
+            databases.get(database).ok_or_else(|| "restore target is not admitted".to_owned())?;
+        let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
+            .map_err(|_| "restore target tenant is invalid".to_owned())?;
+        let lifecycle = entry
+            .host
+            .engine()
+            .lifecycle_state(&entry.host.engine().scope_for(&tenant))
+            .map_err(|_| "restore target lifecycle is unavailable".to_owned())?;
+        if !lifecycle.paused || lifecycle.access_revoked() {
+            return Err("restore target must be paused and active".into());
+        }
+        if Arc::strong_count(entry) != 1
+            || Arc::strong_count(&entry.host) != 1
+            || !entry.host.is_admitted()
+        {
+            return Err("restore target engine is still referenced".to_owned());
+        }
+        let location = entry.host.location().to_path_buf();
+        let mut paths = self.restore_paths.lock().map_err(|_| "restore reservation unavailable")?;
+        if !paths.insert(location.clone()) {
+            return Err("restore target is already reserved".into());
+        }
+        let activated = serving.remove(database);
+        let entry = databases.remove(database).expect("entry remains under registry write lock");
+        let database_obj = match Arc::try_unwrap(entry) {
+            Ok(database_obj) => database_obj,
+            Err(entry) => {
+                databases.insert(database.to_owned(), entry);
+                if activated {
+                    serving.insert(database.to_owned());
+                }
+                paths.remove(&location);
+                return Err("restore target admission is still referenced".into());
             }
-            if Arc::strong_count(&entry) != 1 {
-                return Err("restore target admission is still referenced".to_owned());
-            }
-            let database = Arc::try_unwrap(entry)
-                .map_err(|_| "restore target admission is still referenced")?;
-            let location = database.host.location().to_path_buf();
-            if Arc::strong_count(&database.host) != 1 {
+        };
+        let AdmittedDatabase { activity, record, host } = database_obj;
+        let host = match Arc::try_unwrap(host) {
+            Ok(host) => host,
+            Err(host) => {
+                databases.insert(
+                    database.to_owned(),
+                    Arc::new(AdmittedDatabase { activity, record, host }),
+                );
+                if activated {
+                    serving.insert(database.to_owned());
+                }
+                paths.remove(&location);
                 return Err("restore target engine is still referenced".into());
             }
-            let host = Arc::try_unwrap(database.host)
-                .map_err(|_| "restore target engine is still referenced")?;
-            let lease =
-                host.into_admitted_lease().map_err(|_| "restore target lease is not exclusive")?;
-            drop(lease);
-            Ok(RestoreReservation { record: database.record, location })
-        })();
-        if result.is_err() {
-            // `entry` was moved only on success; failed uniqueness checks
-            // retain the original owner through the early return path.
-            return result;
-        }
+        };
+        let lease =
+            host.into_admitted_lease().map_err(|_| "restore target lease is not exclusive")?;
+        drop(lease);
+        let result = RestoreReservation {
+            record,
+            location,
+            activated,
+            path_guard: Arc::clone(&self.restore_paths),
+        };
         drop(databases);
         drop(serving);
-        result
+        Ok(result)
     }
     /// Durably pauses one admitted database while retaining its host and data.
     pub fn pause(
@@ -160,8 +210,16 @@ impl AdmittedDatabaseRegistry {
         database: &str,
         operation_id: &str,
     ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
+        let mut serving = self.serving.write().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
+            return Err("Member is not ready to serve".into());
+        }
         let entry = self
-            .resolve_metadata(database)?
+            .databases
+            .read()
+            .map_err(|_| "admitted registry unavailable")?
+            .get(database)
+            .cloned()
             .ok_or_else(|| "database is not admitted".to_owned())?;
         let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
             .map_err(|_| "invalid admitted tenant")?;
@@ -170,6 +228,9 @@ impl AdmittedDatabaseRegistry {
             .engine()
             .lifecycle_pause(&entry.host.engine().scope_for(&tenant), operation_id)
             .map_err(|_| "database pause failed")?;
+        if outcome.state.paused {
+            serving.remove(database);
+        }
         Ok(outcome)
     }
 
@@ -179,8 +240,16 @@ impl AdmittedDatabaseRegistry {
         database: &str,
         operation_id: &str,
     ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
+        let mut serving = self.serving.write().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
+            return Err("Member is not ready to serve".into());
+        }
         let entry = self
-            .resolve_metadata(database)?
+            .databases
+            .read()
+            .map_err(|_| "admitted registry unavailable")?
+            .get(database)
+            .cloned()
             .ok_or_else(|| "database is not admitted".to_owned())?;
         let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
             .map_err(|_| "invalid admitted tenant")?;
@@ -189,6 +258,9 @@ impl AdmittedDatabaseRegistry {
             .engine()
             .lifecycle_resume(&entry.host.engine().scope_for(&tenant), operation_id)
             .map_err(|_| "database resume failed")?;
+        if !outcome.state.paused && !outcome.state.access_revoked() {
+            serving.insert(database.to_owned());
+        }
         Ok(outcome)
     }
 
@@ -200,6 +272,7 @@ impl AdmittedDatabaseRegistry {
             databases: RwLock::new(BTreeMap::new()),
             serving: RwLock::new(BTreeSet::new()),
             draining: AtomicBool::new(false),
+            restore_paths: Arc::new(std::sync::Mutex::new(BTreeSet::new())),
         }
     }
 

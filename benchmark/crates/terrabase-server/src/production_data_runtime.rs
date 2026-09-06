@@ -913,7 +913,7 @@ impl ProductionAdmissionRuntime {
         let destinations =
             crate::production_backup::destinations_from_config(&policy.destinations, region)
                 .map_err(|_| "native backup destination unavailable")?;
-        let placement = PlacementLock::explicit(
+        let placement = terrabase::backup::PlacementLock::explicit(
             record
                 .regions
                 .iter()
@@ -948,6 +948,22 @@ impl ProductionAdmissionRuntime {
     > {
         let admission = Arc::clone(self);
         Arc::new(move |database| admission.resolve_native_backup_input(database))
+    }
+
+    /// Returns the narrow resolver for an already admitted paused target.
+    pub fn native_restore_target_resolver(
+        self: &Arc<Self>,
+    ) -> Arc<
+        dyn Fn(
+                &str,
+            ) -> Result<
+                (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
+                String,
+            > + Send
+            + Sync,
+    > {
+        let admission = Arc::clone(self);
+        Arc::new(move |database| admission.resolve_native_restore_target(database))
     }
 
     /// Resolves an already admitted, quiescent target for native restore.
@@ -1021,7 +1037,7 @@ impl ProductionAdmissionRuntime {
             .map_err(failure)?
             .with_owner(owner)
             .with_storage_keys(Arc::new(source));
-        let placement = PlacementLock::explicit(
+        let placement = terrabase::backup::PlacementLock::explicit(
             record
                 .regions
                 .iter()
@@ -1048,53 +1064,93 @@ impl ProductionAdmissionRuntime {
     ) -> Result<terrabase::backup::RecoveryReceipt, String> {
         let reservation = self.registry.reserve_restore(target)?;
         let record = reservation.record().clone();
+        let target_location = reservation.location().to_path_buf();
+        let recover = |reservation: crate::admitted_databases::RestoreReservation,
+                       error: String| {
+            let id = terrabase::member::DatabaseId::try_new(target).map_err(failure)?;
+            let lease = self.member.acquire_existing(&id).map_err(failure)?;
+            reservation.complete(&self.registry, lease, 1).map_err(failure)?;
+            Err(error)
+        };
         let configured = self
             .config
             .databases
             .iter()
             .find(|entry| entry.database.to_text() == target)
-            .ok_or("native restore target configuration is unavailable")?;
-        let region = record.region.parse().map_err(|_| "invalid restore target Region")?;
-        let owner = terrabase::storage::DatabaseOwner::try_new(
+            .ok_or_else(|| "native restore target configuration is unavailable".to_owned());
+        let configured = match configured {
+            Ok(configured) => configured,
+            Err(error) => return recover(reservation, error),
+        };
+        let region =
+            match record.region.parse().map_err(|_| "invalid restore target Region".to_owned()) {
+                Ok(region) => region,
+                Err(error) => return recover(reservation, error),
+            };
+        let owner = match terrabase::storage::DatabaseOwner::try_new(
             &record.environment,
             configured.tenant,
             configured.project,
             configured.database,
             region,
         )
-        .map_err(failure)?;
-        let keys = self.config.keys.as_ref().ok_or("production key delivery missing")?;
-        let provider_key =
-            OciVaultKeyDelivery::new(keys.socket.clone(), keys.orchestrator_uid, keys.socket_gid)
-                .map_err(failure)?;
-        let scope = KeyScope::new_with_project(
+        .map_err(failure)
+        {
+            Ok(owner) => owner,
+            Err(error) => return recover(reservation, failure(error)),
+        };
+        let keys = match self
+            .config
+            .keys
+            .as_ref()
+            .ok_or_else(|| "production key delivery missing".to_owned())
+        {
+            Ok(keys) => keys,
+            Err(error) => return recover(reservation, error),
+        };
+        let provider_key = match OciVaultKeyDelivery::new(
+            keys.socket.clone(),
+            keys.orchestrator_uid,
+            keys.socket_gid,
+        ) {
+            Ok(provider_key) => provider_key,
+            Err(error) => return recover(reservation, failure(error)),
+        };
+        let scope = match KeyScope::new_with_project(
             &record.environment,
             configured.tenant,
             configured.project,
             configured.database,
             KeyPurpose::Data,
-        )
-        .map_err(failure)?;
-        let source = OciVaultDatabaseKeys::new(
+        ) {
+            Ok(scope) => scope,
+            Err(error) => return recover(reservation, failure(error)),
+        };
+        let target_keys = match OciVaultDatabaseKeys::new(
             provider_key,
             KeyVersionMetadata::new(scope, configured.encryption_key),
             region,
-        )
-        .map_err(failure)?;
-        let target_config =
-            terrabase::engine::EngineConfig::durable(reservation.location().to_path_buf())
-                .map_err(failure)?
-                .with_owner(owner)
-                .with_storage_keys(Arc::new(source));
-        let placement = PlacementLock::explicit(
+        ) {
+            Ok(keys) => keys,
+            Err(error) => return recover(reservation, failure(error)),
+        };
+        let target_config = match terrabase::engine::EngineConfig::durable(target_location) {
+            Ok(config) => config.with_owner(owner).with_storage_keys(Arc::new(target_keys)),
+            Err(error) => return recover(reservation, failure(error)),
+        };
+        let placement = match terrabase::backup::PlacementLock::explicit(
             record
                 .regions
                 .iter()
                 .map(|value| value.parse())
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| "invalid restore target placement")?,
+                .map_err(|_| "invalid restore target placement".to_owned()),
         )
-        .map_err(|_| "invalid restore target placement")?;
+        .map_err(|_| "invalid restore target placement".to_owned())
+        {
+            Ok(placement) => placement,
+            Err(error) => return recover(reservation, error),
+        };
         let restored = backups
             .restore_from_provider(
                 source,

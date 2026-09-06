@@ -38,6 +38,34 @@ impl TbepGrpcServer {
 
 #[tonic::async_trait]
 impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
+    async fn restore_to_target(
+        &self,
+        request: Request<pb::RestoreToTargetRequest>,
+    ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
+        self.authenticate_lifecycle(&request)?;
+        let request = request.into_inner();
+        if request.operation_id.is_empty()
+            || request.restore_epoch == 0
+            || request.source_owner.is_empty()
+            || request.source_database.is_empty()
+            || request.recovery_point_id.is_empty()
+            || request.recovery_point_digest.len() != 64
+            || request.target_owner.is_empty()
+            || request.target_database.is_empty()
+            || request.journal_cut.is_empty()
+        {
+            return Err(Status::invalid_argument("restore request is incomplete"));
+        }
+        let Some(owner) = self.lifecycle.as_ref() else {
+            return Ok(Response::new(lifecycle::unavailable(&request.operation_id)));
+        };
+        let response = owner
+            .restore_to_target(&request)
+            .await
+            .map_err(|error| Status::unavailable(error))?;
+        Ok(Response::new(response))
+    }
+
     async fn ensure_snapshot(
         &self,
         request: Request<pb::LifecycleControlRequest>,
@@ -89,10 +117,11 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         let Some(owner) = self.lifecycle.as_ref() else {
             return Ok(Response::new(lifecycle::unavailable(operation)));
         };
-        owner
+        let response = owner
             .reactivate(inner.context.as_ref().expect("validated lifecycle context"), operation)
+            .await
             .map_err(|error| Status::new(Code::Unavailable, error))?;
-        Ok(Response::new(lifecycle::applied(operation)))
+        Ok(Response::new(response))
     }
 
     async fn delete_owned_data(
@@ -110,11 +139,11 @@ impl TbepGrpcServer {
     async fn dispatch(
         &self,
         request: Request<pb::LifecycleControlRequest>,
-        invoke: impl FnOnce(
-            &dyn lifecycle::LifecycleControl,
-            &pb::LifecycleControlContext,
-            &str,
-        ) -> Result<(), String>,
+        invoke: impl for<'a> FnOnce(
+            &'a dyn lifecycle::LifecycleControl,
+            &'a pb::LifecycleControlContext,
+            &'a str,
+        ) -> lifecycle::LifecycleFuture<'a>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
         self.authenticate_lifecycle(&request)?;
         let request = request.into_inner();
@@ -124,9 +153,10 @@ impl TbepGrpcServer {
             return Ok(Response::new(lifecycle::unavailable(operation_id)));
         };
         let context = request.context.as_ref().expect("validated lifecycle context");
-        invoke(owner.as_ref(), context, operation_id)
+        let response = invoke(owner.as_ref(), context, operation_id)
+            .await
             .map_err(|error| Status::new(Code::Unavailable, error))?;
-        Ok(Response::new(lifecycle::applied(operation_id)))
+        Ok(Response::new(response))
     }
 }
 

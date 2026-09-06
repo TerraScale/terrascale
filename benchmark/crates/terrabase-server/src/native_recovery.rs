@@ -1,7 +1,7 @@
 //! Durable native recovery-point operations bound to the running member fleet.
 
 use crate::admitted_databases::AdmittedDatabaseRegistry;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::{fs::File, path::Path};
@@ -133,6 +133,48 @@ pub enum NativeRecoveryPhase {
     Failed,
 }
 
+/// Internal durable restore request; target admission occurs upstream.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeRestoreRequest {
+    pub operation_id: String,
+    pub source_owner: String,
+    pub source_database_id: String,
+    pub recovery_point_id: String,
+    pub recovery_point_digest: String,
+    pub target_owner: String,
+    pub target_database_id: String,
+    pub journal_cut: String,
+    pub restore_epoch: u64,
+    pub provider: String,
+    pub selection: NativeRestoreSelection,
+    pub placement: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum NativeRestoreSelection {
+    PointId(String),
+    AtUnixMillis(u64),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum NativeRestorePhase {
+    Accepted,
+    Restoring,
+    Verifying,
+    Complete,
+    Uncertain,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeRestoreOperation {
+    pub request: NativeRestoreRequest,
+    pub phase: NativeRestorePhase,
+    pub receipt: Option<terrabase::backup::RecoveryReceipt>,
+    pub error: Option<String>,
+}
+
 /// Compact authoritative operation record. It contains no customer values or keys.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -171,6 +213,15 @@ pub struct NativeRecoveryRuntime {
     notify: Arc<Notify>,
     worker_error: Mutex<Option<NativeRecoveryError>>,
     _worker_lease: Arc<File>,
+    restore_target: Arc<
+        dyn Fn(
+                &str,
+            ) -> Result<
+                (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
+                String,
+            > + Send
+            + Sync,
+    >,
 }
 
 impl NativeRecoveryRuntime {
@@ -183,6 +234,15 @@ impl NativeRecoveryRuntime {
         fleet: Arc<Mutex<NativeBackupFleet>>,
         registry: Arc<AdmittedDatabaseRegistry>,
         limits: NativeRecoveryLimits,
+        restore_target: Arc<
+            dyn Fn(
+                    &str,
+                ) -> Result<
+                    (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
+                    String,
+                > + Send
+                + Sync,
+        >,
     ) -> Result<(Arc<Self>, NativeRecoveryWorker), NativeRecoveryError> {
         let limits = limits.validate()?;
         let executor =
@@ -211,6 +271,9 @@ impl NativeRecoveryRuntime {
         connection
             .prepare("SELECT operation_id, source_database_id, phase, record, checkpoint FROM native_recovery_operations LIMIT 0")
             .map_err(|_| NativeRecoveryError::Unavailable)?;
+        connection
+            .execute_batch("CREATE TABLE IF NOT EXISTS native_restore_operations(operation_id TEXT PRIMARY KEY NOT NULL, source_database_id TEXT NOT NULL, target_database_id TEXT NOT NULL, phase TEXT NOT NULL, record BLOB NOT NULL CHECK(length(record)<=262144)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS native_restore_source ON native_restore_operations(source_database_id,operation_id);")
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
         for parent in root.ancestors().filter(|path| !path.as_os_str().is_empty()) {
             std::fs::File::open(parent)
                 .and_then(|file| file.sync_all())
@@ -233,6 +296,7 @@ impl NativeRecoveryRuntime {
             notify: Arc::new(Notify::new()),
             worker_error: Mutex::new(None),
             _worker_lease: Arc::new(worker_lease),
+            restore_target,
         });
         let (stop, stopped) = tokio::sync::oneshot::channel();
         let worker_runtime = Arc::clone(&runtime);
@@ -342,7 +406,92 @@ impl NativeRecoveryRuntime {
         status::read(&connection, source, operation)
     }
 
+    /// Atomically admits or replays one restore identity. Provider effects are
+    /// performed only by the restore worker after target resolution.
+    pub fn admit_restore(
+        &self,
+        request: NativeRestoreRequest,
+    ) -> Result<NativeRestoreOperation, NativeRecoveryError> {
+        if request.operation_id.is_empty()
+            || request.source_owner.is_empty()
+            || request.source_database_id.is_empty()
+            || request.recovery_point_id.is_empty()
+            || request.recovery_point_digest.len() != 64
+            || request.target_owner.is_empty()
+            || request.target_database_id.is_empty()
+            || request.source_database_id == request.target_database_id
+            || request.journal_cut.is_empty()
+            || request.restore_epoch == 0
+            || !matches!(request.provider.as_str(), "oci" | "tigris")
+            || request.placement.is_empty()
+            || request
+                .placement
+                .iter()
+                .any(|region| region.is_empty() || region.chars().any(char::is_control))
+        {
+            return Err(NativeRecoveryError::InvalidRequest);
+        }
+        let record = NativeRestoreOperation {
+            request: request.clone(),
+            phase: NativeRestorePhase::Accepted,
+            receipt: None,
+            error: None,
+        };
+        let bytes = serde_json::to_vec(&record).map_err(|_| NativeRecoveryError::Unavailable)?;
+        let mut connection =
+            self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+        let tx = connection.transaction().map_err(|_| NativeRecoveryError::Unavailable)?;
+        if let Some(existing) = tx
+            .query_row(
+                "SELECT record FROM native_restore_operations WHERE operation_id=?1",
+                [&request.operation_id],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+        {
+            let existing: NativeRestoreOperation = serde_json::from_slice(&existing)
+                .map_err(|_| NativeRecoveryError::VerificationFailed)?;
+            if existing.request != request {
+                return Err(NativeRecoveryError::VerificationFailed);
+            }
+            tx.commit().map_err(|_| NativeRecoveryError::Unavailable)?;
+            return Ok(existing);
+        }
+        tx.execute(
+            "INSERT INTO native_restore_operations(operation_id,source_database_id,target_database_id,phase,record) VALUES(?1,?2,?3,'accepted',?4)",
+            rusqlite::params![request.operation_id, request.source_database_id, request.target_database_id, bytes],
+        )
+        .map_err(|_| NativeRecoveryError::Unavailable)?;
+        tx.commit().map_err(|_| NativeRecoveryError::Unavailable)?;
+        self.notify.notify_one();
+        Ok(record)
+    }
+
+    /// Reads one durable restore operation without starting provider work.
+    pub fn restore_status(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<NativeRestoreOperation>, NativeRecoveryError> {
+        let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+        connection
+            .query_row(
+                "SELECT record FROM native_restore_operations WHERE operation_id=?1",
+                [operation_id],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .map(|bytes| {
+                serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::VerificationFailed)
+            })
+            .transpose()
+    }
+
     fn process_pending(self: &Arc<Self>) -> Result<bool, NativeRecoveryError> {
+        if self.process_restore_pending()? {
+            return Ok(true);
+        }
         let pending = {
             let connection =
                 self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
@@ -440,6 +589,97 @@ impl NativeRecoveryRuntime {
         }
         self.notify.notify_one();
         Ok(true)
+    }
+
+    fn process_restore_pending(&self) -> Result<bool, NativeRecoveryError> {
+        let row = {
+            let connection =
+                self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            connection
+                .query_row(
+                    "SELECT record FROM native_restore_operations WHERE phase='accepted' ORDER BY operation_id LIMIT 1",
+                    [],
+                    |row| row.get::<_, Vec<u8>>(0),
+                )
+                .optional()
+                .map_err(|_| NativeRecoveryError::Unavailable)?
+        };
+        let Some(bytes) = row else { return Ok(false) };
+        let mut operation: NativeRestoreOperation =
+            serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::VerificationFailed)?;
+        let request = &operation.request;
+        let admitted = self
+            .registry
+            .resolve(&request.source_database_id)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .ok_or(NativeRecoveryError::Unavailable)?;
+        if admitted.host.engine().database_id().to_text() != request.source_database_id
+            || admitted.record.regions != request.placement
+        {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
+        let (target, placement) = (self.restore_target)(&request.target_database_id)
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
+        let resolved_regions = placement
+            .regions()
+            .map(|region| region.as_str().to_owned())
+            .collect::<Vec<_>>();
+        if resolved_regions != request.placement {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
+        operation.phase = NativeRestorePhase::Restoring;
+        self.save_restore(&operation)?;
+        let provider = match request.provider.as_str() {
+            "oci" => terrabase::backup::object_store::Provider::Oci,
+            "tigris" => terrabase::backup::object_store::Provider::Tigris,
+            _ => return Err(NativeRecoveryError::InvalidRequest),
+        };
+        let receipt = {
+            let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            let result = match &request.selection {
+                NativeRestoreSelection::PointId(point) => tokio::runtime::Handle::current()
+                    .block_on(fleet.restore_from_provider(
+                        &request.source_database_id,
+                        provider,
+                        Some(point),
+                        &target,
+                    )),
+                NativeRestoreSelection::AtUnixMillis(millis) => tokio::runtime::Handle::current()
+                    .block_on(fleet.restore_at_from_provider(
+                        &request.source_database_id,
+                        provider,
+                        *millis,
+                        &target,
+                    )),
+            };
+            result.map_err(map_fleet_error)?
+        };
+        operation.phase = NativeRestorePhase::Verifying;
+        operation.receipt = Some(receipt);
+        self.save_restore(&operation)?;
+        operation.phase = NativeRestorePhase::Complete;
+        self.save_restore(&operation)?;
+        Ok(true)
+    }
+
+    fn save_restore(&self, operation: &NativeRestoreOperation) -> Result<(), NativeRecoveryError> {
+        let bytes = serde_json::to_vec(operation).map_err(|_| NativeRecoveryError::Unavailable)?;
+        let phase = serde_json::to_string(&operation.phase)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .trim_matches('"')
+            .to_owned();
+        let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+        if connection
+            .execute(
+                "UPDATE native_restore_operations SET phase=?2, record=?3 WHERE operation_id=?1",
+                rusqlite::params![operation.request.operation_id, phase, bytes],
+            )
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            != 1
+        {
+            return Err(NativeRecoveryError::Unavailable);
+        }
+        Ok(())
     }
 
     fn save(
@@ -564,14 +804,31 @@ mod tests {
         ))
     }
 
+    fn restore_target() -> Arc<
+        dyn Fn(
+                &str,
+            ) -> Result<
+                (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
+                String,
+            > + Send
+            + Sync,
+    > {
+        Arc::new(|_| Err("restore target unavailable in capture fixture".into()))
+    }
+
     #[tokio::test]
     async fn real_constructor_idle_shutdown_closes_admission_fence() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let registry = Arc::new(registry);
         let runtime_root = root.join("native-recovery-idle");
-        let (runtime, worker) =
-            NativeRecoveryRuntime::new(&runtime_root, fleet(), Arc::clone(&registry), limits())
-                .unwrap();
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+            restore_target(),
+        )
+        .unwrap();
         worker.shutdown().await.unwrap();
         assert_eq!(
             runtime.capture(records[0].database_id.clone(), "retry".into()).await,
@@ -586,9 +843,14 @@ mod tests {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
         let registry = Arc::new(registry);
         let runtime_root = root.join("native-recovery-drain");
-        let (runtime, worker) =
-            NativeRecoveryRuntime::new(&runtime_root, fleet(), Arc::clone(&registry), limits())
-                .unwrap();
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+            restore_target(),
+        )
+        .unwrap();
         let source = records[0].database_id.clone();
         let state = NativeRecoveryOperation {
             operation_id: "drain-operation".into(),

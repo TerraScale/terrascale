@@ -252,6 +252,9 @@ async fn retries_survive_cursor_advance_and_restart_then_expire_without_sending(
     let log = reopened.delivery_log(&scope, &endpoint.id, 10).expect("delivery log");
     assert!(log.deliveries[0].terminal);
     assert_eq!(log.deliveries[0].attempts, 2);
+    assert_eq!(log.deliveries[0].revision, 7);
+    assert_eq!(log.deliveries[0].write_index, 1);
+    assert_eq!(log.deliveries[0].event_id, "event-7");
     drop(reopened);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole reopened engine") };
     engine.shutdown().expect("shutdown reopened");

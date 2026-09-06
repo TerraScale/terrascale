@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use terrabase::regions::RegionCode;
-use terrabase::{Transaction, UsageAdmissionContext, UsageFactId};
+use terrabase::usage::UsageAdmissionContext;
+use terrabase::{Transaction, UsageFactId};
+use terrabase_cluster::wal_route::DurableWalAssignmentSource;
 
 use crate::usage_admission::UsageAdmissionJournal;
 

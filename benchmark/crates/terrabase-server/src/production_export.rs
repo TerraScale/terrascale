@@ -3,8 +3,6 @@
 //! Production exports must use an authenticated artifact factory supplied by
 //! the host composition.  This module intentionally has no local fallback.
 
-use crate::backup::object_store::ObjectDestination;
-use crate::backup::worker::BackupKeys;
 use crate::export_api::{
     ArtifactFact, ArtifactPort, ArtifactWriter, EncryptionAttestation, ExportArtifactFactory,
     ExportDestination, ExportError, ExportFuture, ExportRuntime, PlacementLock, fact,
@@ -14,6 +12,8 @@ use crate::export_artifact_crypto::{ArtifactCrypto, LocalManifest};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use terrabase::backup::object_store::ObjectDestination;
+use terrabase::backup::worker::BackupKeys;
 
 /// Redacted production export construction failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -172,6 +172,7 @@ impl ArtifactWriter for ProductionWriter {
         })
     }
     fn commit(self: Box<Self>, manifest: &ArtifactFact) -> ExportFuture<'static, ()> {
+        let manifest = manifest.clone();
         Box::pin(async move {
             let ProductionWriter { inner, destination, prefix, database, job } = *self;
             let mut inner = inner;
