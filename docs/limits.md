@@ -1,8 +1,7 @@
-<!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Source: GOAL.md D-16/D-17/D-21/D-25/D-64 (L-1 draft). -->
+<!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Draft; publication requires measured economics and owner approval. -->
 # Limits
 
-> **DRAFT (L-1).** Values mirror GOAL.md D-25/D-64. Confirm with the owner
-> before publication (O-6). Regenerated when measurements land.
+> **DRAFT.** Publication awaits measured unit economics and owner approval.
 
 PITR retention (days): Free 1 / Starter 7 / Pro 30 / Scale 35.
 
@@ -10,11 +9,11 @@ Databases per org: Free 1 / Starter 5 / Pro 25 / Scale soft-unlimited.
 
 - **Max document:** 1 MiB.
 - **History retention:** Default 7 days, configurable per collection 1-30 days (plan-capped at the PITR figure), billed as storage.
-- **Idle Free databases (D-76):** A Free database with no request for 30 days is paused (snapshot kept); at 90 days idle, after two more emails, it is deleted. Paid plans are never reaped (D-76).
+- **Idle Free databases:** Free databases pause after 30 idle days; a request resumes them. They may be deleted after 90 idle days with advance notices unless deletion protection is enabled. Paid databases are never idle-reaped. The final notice schedule requires owner approval.
 
 ## Abuse guards (unbilled, enforced, no upsell UI)
 
-Unbilled, enforced, no upsell UI (D-64). CDN-delivered reactive data has no bandwidth guard. Subscribers per view are unlimited on every plan. Reads, queries, and direct member read egress are metered for abuse guards and cost attribution;
+Unbilled, enforced, no upsell UI. CDN-delivered reactive data has no bandwidth guard. Subscribers per view are unlimited on every plan. Reads, queries, and direct member read egress are metered for abuse guards and cost attribution;
 exceeding one returns a typed error with the fix, and nothing is billed.
 
 | Guard (per database) | Free | Starter | Pro | Scale |

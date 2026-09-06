@@ -55,7 +55,7 @@ Writes and storage are the only billed dimensions.
   (`ceil(bytes / 4 KiB)` rounds larger documents up). A write is billed
   once, no matter how many clients, views, or subscribers see it.
 - **Replication is priced honestly**: replicating a write to another
-  selected region costs one additional write per region. There is no free
+  selected Region multiplies its 4 KiB write units before allowances. There is no free
   per-region replication; the cost is shown up front, before you add a
   region.
 - **Storage** = logical bytes (current documents plus retained history,
@@ -68,7 +68,8 @@ and TTL expiry. Guards on these free dimensions are unbilled abuse limits,
 not charges.
 
 Plan quotas, overage rates ($1 per 1M writes, $0.20 per GB-month per
-region), and per-plan limits are published on the
+region), and per-plan limits are drafts awaiting measured economics and
+owner approval on the
 [Pricing & limits](/es/pricing/) page.
 
 ## Billing
@@ -77,16 +78,19 @@ Payments are processed by Stripe. Stripe Tax is intended to be enabled from
 day one to calculate applicable taxes; [PLACEHOLDER — Stripe Tax account,
 configuration, and provider confirmation pending O-4; do not publish a claim
 about tax treatment until confirmed]. Invoices, dunning, and receipts are
-issued by Stripe. Overage is billed at the published rates; prices may only
-go down. Spend caps, where set, are respected: a capped organization never
-pays above its cap.
+issued by Stripe. Overage requires explicit paid-excess consent after reviewing rates and
+allowances; a stored card alone is not consent. Organization caps stop
+chargeable writes, but retained storage continues to accrue agreed charges.
+See [billing policies](/es/pricing/) for shared branch allowances, promotion
+eligibility, subscription changes, and separate 30-day unpaid-storage and
+card-related grace periods. Prices remain drafts awaiting approval.
 
 ## Availability
 
-We publish an SLO, not an SLA: a 99.9% monthly API availability target per
-Region, measured by an external probe and shown live on our status page.
-Incidents receive a public postmortem within 5 days. A contractual SLA with
-credits is offered only on the Scale plan and only after launch.
+The launch objective is 99.9% monthly API availability per Region, measured
+by external probes. This is an SLO, not a contractual SLA. Public status and
+metrics pages are deferred. Contractual SLA credits, staffed response times,
+and fixed public postmortem deadlines are not launch promises.
 
 ## API stability
 
@@ -128,11 +132,12 @@ and security measures.
 
 ## Free-tier reaper
 
-Free-tier databases with no request for 30 days are paused (kept, not
-deleted) and the owner is emailed. After 90 days idle and further email
-notices, they enter the account-deletion sequence above and are deleted
-(including cache-tag purge and crypto-shred). Reactivating a paused database
-takes one request. Paid plans are never reaped.
+Free databases pause after 30 idle days; a request resumes them. They may be deleted after 90 idle days with advance notices unless deletion protection is enabled. Paid databases are never idle-reaped. The final notice schedule requires owner approval.
+
+Deletion protection is opt-in and disabled by default. An owner must explicitly disable it before customer deletion. Protection prevents automatic idle-Free deletion, but not idle pause, unpaid-storage deletion, or required-card-loss deletion. Once authorized deletion is accepted, access is revoked immediately and further billable usage stops. Previously incurred charges remain payable; asynchronous physical cleanup must not create new usage charges. Deletion progress continues until retained copies are removed. Physical completion timing and final notices require verified retention behavior and owner approval.
+
+See the draft [billing policy](/es/pricing/) for separate unpaid-storage and
+required-card grace periods. These exceptions are not overridden by protection.
 
 ## Single-provider risk
 

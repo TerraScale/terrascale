@@ -46,8 +46,10 @@ advertises their contracts.
 
 The starter is a Next.js app wired to `@terrascale/sdk`. Sign in when prompted.
 A card is required at signup for fraud screening; you can continue on the free
-plan without subscribing, and your first paid month is free if you subscribe
-during onboarding.
+plan without subscribing, and the onboarding promotion waives only the first paid month’s
+subscription fee. Explicitly authorized excess usage remains chargeable.
+Free and promotional eligibility are limited per verified billing customer
+across organizations; review [billing terms](/ar/pricing/) before enrollment.
 
 ## 2. Define a schema
 

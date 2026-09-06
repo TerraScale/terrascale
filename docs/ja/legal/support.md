@@ -1,6 +1,6 @@
 ---
 title: Support policy
-description: TerraScale support channels — Discord, email, and the Scale shared channel. No ticketing product, no phone.
+description: Actual support availability and self-service diagnostics.
 ---
 
 <!-- i18n:fallback:ja -->
@@ -9,43 +9,32 @@ description: TerraScale support channels — Discord, email, and the Scale share
 # Support policy
 
 ::: danger
-DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).
-
-[PLACEHOLDER — owner entity/jurisdiction, support-inbox ownership, and
-provider/channel confirmations are pending. Do not publish until O-5 review
-and launch confirmation are complete.]
+DRAFT — owner legal review and confirmation of actual service availability
+are required before publication. No staffed response commitment is approved.
 :::
 
-## Channels
+## Availability
 
-- **Discord** — public, for everyone ([invite link — placeholder, publish at launch]). Community-supported, not a contractual
-  channel.
-- **Email** — for paid plans (Starter, Pro, Scale): **support@terrascale.tech**
-  (draft address; inbox ownership and monitoring confirmed before launch).
-- **Shared channel with response-time targets** — for Scale customers and
-  their authorized contacts. [PLACEHOLDER — channel provider, membership,
-  and response-time targets pending launch confirmation.]
+Customer support email intake, a support form, and diagnostic attachments are
+deferred until after launch. Do not send account information to an unconfirmed
+address. Community channels may be listed once their operation is confirmed.
+No response-time guarantee, staffed incident coverage, or Scale shared channel
+is promised at launch. Scale support/compliance benefits require explicit
+confirmation before enrollment; SOC 2 and contractual SLA capabilities are
+post-launch work.
 
-There is no ticketing product, and no phone support.
-
-Response-time targets: [PLACEHOLDER — targets set before launch].
-
-Discord is public and community-supported. Do not post API keys, credentials,
-personal data, or database contents there. Use the confirmed email address or
-Scale shared channel for account-specific information. [PLACEHOLDER — access
-controls and retention terms for the Scale channel pending O-5 review.]
-
-## Status and incidents
-
-The intended status page at [status.terrascale.tech](https://status.terrascale.tech)
-will show the live SLO per Region — a 99.9% monthly API availability target —
-measured by an external probe. Incidents receive a public postmortem within
-5 days. [PLACEHOLDER — status-page operation and postmortem commitment
-pending launch approval.]
+Public status and metrics pages are also deferred. The launch availability
+objective is a 99.9% monthly SLO per Region, measured by external probes;
+this is not a contractual SLA or promise of a public incident timeline.
 
 ## Self-service
 
-- `terrascale doctor` diagnoses common setup problems from the CLI.
-- Every error the API returns carries its fix — typed errors with upgrade
-  paths, e.g. `IndexBuilding: retry in 800 ms, or terrascale index wait`.
-- The [docs](/ja/) cover pricing, limits, and every API surface.
+Use the dashboard, CLI, and MCP health and diagnostic workflows as their
+public contracts become available. Diagnostics must exclude credentials,
+customer documents, and other tenants’ information. See the [docs](/ja/) for
+setup and [pricing and billing policies](/ja/pricing/) for restrictions and the
+steps to restore write access.
+
+Mandatory recovery, billing, and deletion notices are delivered through the
+dashboard and email, separately from customer support intake. Relevant
+deadlines remain visible in the dashboard if email delivery fails.

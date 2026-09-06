@@ -65,7 +65,7 @@ assert.ok(read("scripts/run-snippets.mjs").includes("x-terrascale-view-capabilit
 assert.ok(!read("scripts/run-snippets.mjs").includes("frame.t"), "remote runner does not decode legacy JSON frame fields");
 
 for (const [page, needles] of [
-  ["docs/pricing.md", ["$1 per 1M writes", "$0.20 per GB-month per region", "billed once", "Branch allowance", "Metered for abuse guards"]],
+  ["docs/pricing.md", ["$1 per 1M writes", "$0.20 per GB-month per region", "billed once", "Shared organization allowances", "Metered for abuse guards"]],
   ["docs/limits.md", ["Max document", "1 MiB", "Abuse guards", "unlimited on every plan", "direct member read egress"]],
 ]) {
   assert.ok(existsSync(join(root, page)), `${page} exists`);
@@ -90,7 +90,7 @@ for (const slug of ["why-sqlite", "reads-are-free", "benchmarks", "replication",
 }
 
 const pricingIndex = read("docs/pricing/index.md");
-for (const needle of ["$1 per 1M", "$0.20 per GB-month", "100k writes", "1 GB", "crypto-shred", "billed once"]) {
+for (const needle of ["$1 per 1M", "$0.20 per GB-month", "| Writes / month | 100k", "no additional branch allowance", "30-day grace period", "billed once"]) {
   assert.ok(pricingIndex.includes(needle), `pricing/index.md agrees on ${needle}`);
 }
 

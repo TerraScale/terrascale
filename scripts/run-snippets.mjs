@@ -27,6 +27,7 @@ class MsgpackCursor {
   constructor(bytes) {
     this.bytes = bytes;
     this.offset = 0;
+    this.depth = 0;
   }
 
   take(length) {
@@ -41,12 +42,28 @@ class MsgpackCursor {
   text(length) { return new TextDecoder().decode(this.take(length)); }
   view(bytes) { return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); }
 
+  integer64(value) {
+    return value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(value) : value;
+  }
+
+  array(length) {
+    if (length > this.bytes.length - this.offset) throw new Error("truncated MessagePack array");
+    return Array.from({ length }, () => this.value());
+  }
+
   value() {
+    if (this.depth >= 64) throw new Error("MessagePack nesting limit exceeded");
+    this.depth += 1;
+    try { return this.readValue(); } finally { this.depth -= 1; }
+  }
+
+  readValue() {
     const tag = this.u8();
     if (tag <= 0x7f) return tag;
     if (tag >= 0xe0) return tag - 0x100;
     if ((tag & 0xe0) === 0xa0) return this.text(tag & 0x1f);
-    if ((tag & 0xf0) === 0x90) return Array.from({ length: tag & 0x0f }, () => this.value());
+    if ((tag & 0xf0) === 0x90) return this.array(tag & 0x0f);
     if ((tag & 0xf0) === 0x80) return this.map(tag & 0x0f);
     switch (tag) {
       case 0xc0: return null;
@@ -55,11 +72,11 @@ class MsgpackCursor {
       case 0xcc: return this.u8();
       case 0xcd: return this.view(this.take(2)).getUint16(0);
       case 0xce: return this.view(this.take(4)).getUint32(0);
-      case 0xcf: return Number(this.view(this.take(8)).getBigUint64(0));
+      case 0xcf: return this.integer64(this.view(this.take(8)).getBigUint64(0));
       case 0xd0: return this.view(this.take(1)).getInt8(0);
       case 0xd1: return this.view(this.take(2)).getInt16(0);
       case 0xd2: return this.view(this.take(4)).getInt32(0);
-      case 0xd3: return Number(this.view(this.take(8)).getBigInt64(0));
+      case 0xd3: return this.integer64(this.view(this.take(8)).getBigInt64(0));
       case 0xca: return this.view(this.take(4)).getFloat32(0);
       case 0xcb: return this.view(this.take(8)).getFloat64(0);
       case 0xd9: return this.text(this.u8());
@@ -68,8 +85,8 @@ class MsgpackCursor {
       case 0xc4: return this.take(this.u8());
       case 0xc5: return this.take(this.view(this.take(2)).getUint16(0));
       case 0xc6: return this.take(this.view(this.take(4)).getUint32(0));
-      case 0xdc: return Array.from({ length: this.view(this.take(2)).getUint16(0) }, () => this.value());
-      case 0xdd: return Array.from({ length: this.view(this.take(4)).getUint32(0) }, () => this.value());
+      case 0xdc: return this.array(this.view(this.take(2)).getUint16(0));
+      case 0xdd: return this.array(this.view(this.take(4)).getUint32(0));
       case 0xde: return this.map(this.view(this.take(2)).getUint16(0));
       case 0xdf: return this.map(this.view(this.take(4)).getUint32(0));
       default: throw new Error(`unsupported MessagePack tag 0x${tag.toString(16)}`);
@@ -77,8 +94,13 @@ class MsgpackCursor {
   }
 
   map(length) {
-    const result = {};
-    for (let index = 0; index < length; index += 1) result[this.value()] = this.value();
+    if (length > Math.floor((this.bytes.length - this.offset) / 2)) throw new Error("truncated MessagePack map");
+    const result = Object.create(null);
+    for (let index = 0; index < length; index += 1) {
+      const key = this.value();
+      if (typeof key !== "string" || Object.hasOwn(result, key)) throw new Error("invalid MessagePack map key");
+      result[key] = this.value();
+    }
     return result;
   }
 }
@@ -96,11 +118,16 @@ function bytesToBase64(bytes) {
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 }
+function unsignedInteger64(value) {
+  return typeof value === "bigint"
+    ? value >= 0n && value <= 0xffffffffffffffffn
+    : Number.isSafeInteger(value) && value >= 0;
+}
 function canonicalEnvelope(bytes) {
   const value = decodeMessagePack(bytes);
   if (!Array.isArray(value) || value.length !== 7) throw new Error("pending canonical reactive contract: envelope must be an indexed array of seven fields");
   const [major, minor, features, tag, correlation, causation, body] = value;
-  if (major !== 1 || minor !== 0 || features !== 0 || !Number.isSafeInteger(tag) || !Number.isSafeInteger(correlation) || !Number.isSafeInteger(causation)) {
+  if (major !== 1 || minor !== 0 || features !== 0 || !Number.isSafeInteger(tag) || !unsignedInteger64(correlation) || !unsignedInteger64(causation)) {
     throw new Error("pending canonical reactive contract: expected protocol 1.0 indexed envelope");
   }
   const messages = { 3: "snapshot", 4: "delta", 5: "reset", 6: "heartbeat", 8: "authorization_changed", 9: "region_route_change", 10: "error", 11: "backpressure" };
@@ -176,7 +203,7 @@ function resolveSandboxUrl(raw, sandboxOrigin, kind = "reactive") {
 
 export { normalizeSandboxOrigin, resolveSandboxUrl, VIEW_CAPABILITY_HEADER };
 
-function createRemoteSandbox() {
+export function createRemoteSandbox() {
   const configuredBase = process.env.TERRASCALE_SANDBOX_URL;
   const key = process.env.TERRASCALE_API_KEY;
   const database = process.env.TERRASCALE_DATABASE_ID;
@@ -338,7 +365,7 @@ function createRemoteSandbox() {
     },
     async subscribe({ databaseId: requestedDatabaseId, subscription, query, parameters }) {
       if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
-      const { value } = await reactiveRequest({ databaseId, subscription, statement: query, parameters: bytesToBase64(parameters), checkpoint: null, transport: "http" });
+      const { value } = await reactiveRequest({ databaseId: database, subscription, statement: query, parameters: bytesToBase64(parameters), checkpoint: null, transport: "http" });
       const view = value?.viewId ?? value?.view_id ?? value?.view;
       const generation = value?.generation ?? value?.view_generation;
       const capability = value?.capability ?? value?.viewCapability ?? value?.view_capability;
@@ -349,7 +376,7 @@ function createRemoteSandbox() {
       }
       const logUrl = resolveSandboxUrl(rawLogUrl, base, "reactive log");
       const snapshotUrls = snapshots.map((snapshotUrl) => resolveSandboxUrl(snapshotUrl, base, "reactive snapshot"));
-      const state = { collection: query.match(/FROM\s+([A-Za-z_][A-Za-z0-9_]*)/iu)?.[1], subscription, capability, logUrl, revision: 0, items: [], listeners: new Set(), closed: false };
+      const state = { collection: query.match(/FROM\s+([A-Za-z_][A-Za-z0-9_]*)/iu)?.[1], subscription: view, capability, logUrl, revision: 0, items: [], listeners: new Set(), closed: false };
       subscriptions.add(state);
       for (const snapshotUrl of snapshotUrls) {
         // The capability is the only credential accepted by the reactive

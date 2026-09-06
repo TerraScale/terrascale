@@ -50,7 +50,8 @@ test("scaffold is deterministic, cloud-only, and complete", async () => {
       assert.match(page, /TerraScaleSyncV1Client/);
       assert.match(page, /select\(posts\)/);
       assert.match(page, /parameters: queryParameters/);
-      assert.doesNotMatch(page, /client\.documents|client\.from|new TerraScale\(/iu);
+      assert.match(page, /client\.documents\.put/);
+      assert.doesNotMatch(page, /NEXT_PUBLIC_TERRASCALE_API_KEY|client\.from|new TerraScale\(/iu);
       assert.doesNotMatch(page, /production binding|local engine|emulator/iu);
       assert.doesNotMatch(page, /BroadcastChannel|localStorage|sqlite|node:sqlite/iu);
       const readme = await readFile(join(root, "first", "README.md"), "utf8");

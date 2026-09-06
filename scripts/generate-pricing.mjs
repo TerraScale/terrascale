@@ -18,20 +18,19 @@ function planRow(f) {
   return `| ${f} | ${d.plans.map((p) => p[f] ?? "—").join(" | ")} |`;
 }
 
-const pricingMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Source: GOAL.md D-16/D-17/D-21/D-25/D-64 (L-1 draft). -->
+const pricingMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Draft; publication requires measured economics and owner approval. -->
 # Pricing
 
-> **DRAFT (L-1).** Values mirror GOAL.md D-16/D-17/D-21/D-25/D-64. Confirm
-> with the owner before publication (O-6); every published number needs a
-> measured unit cost behind it (D-61). Regenerated when measurements land.
+> **DRAFT.** Publication awaits measured unit economics and owner approval
+> of the final price sheet. These targets do not establish service readiness.
 >
 > **Pay for writes and storage; everything else is free.** Reads, queries,
 > egress, CDN delivery, fan-out, subscribers, and webhook delivery are free
 > and unbilled. Reads, queries, and direct member read egress are metered for
 > abuse guards and cost attribution; a guard is never a charge. A write is billed once no matter how many views or
-> subscribers it reaches (D-22). We never claim infrastructure is free:
-> replicating a write to another selected region costs +1 write per region,
-> shown up front.
+> subscribers it reaches. We never claim infrastructure is free:
+> selected Regions multiply 4 KiB write units before included allowances,
+> shown before Region selection.
 
 ## What you pay for
 
@@ -53,13 +52,15 @@ ${planRow("pitrDays")}
 
 Overage and PAYG: **${d.overagePayg.writes}**, **${d.overagePayg.storage}** (${d.overagePayg.note})
 
-**Branch allowance.** ${d.branchAllowance}
+**Shared organization allowances.** ${d.sharedAllowances}
 
-**Free tier.** ${d.freeTier.databases} database, ${d.freeTier.storage}, **${d.freeTier.writesPerMonth.toLocaleString("en-US")} writes/month**, up to ${d.freeTier.maxRegions} regions, ${d.freeTier.support} support. ${d.freeTier.notes}
+**Free tier.** ${d.freeTier.databases} database, ${d.freeTier.storage}, **${d.freeTier.writesPerMonth.toLocaleString("en-US")} writes/month**, up to ${d.freeTier.maxRegions} regions. ${d.freeTier.notes}
 
 **Scale.** ${d.plans.find((p) => p.name === "Scale").notes}
 
 **Idle Free databases.** ${d.reaper}
+
+${Object.entries(d.billingPolicies).map(([title, body]) => `## ${title}\n\n${body}`).join("\n\n")}
 
 See also: [Limits](./limits.md).
 `;
@@ -68,11 +69,10 @@ const g = d.limits.abuseGuards;
 const guardRow = (label, obj) =>
   `| ${label} | ${planNames.map((p) => obj[p]).join(" | ")} |`;
 
-const limitsMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Source: GOAL.md D-16/D-17/D-21/D-25/D-64 (L-1 draft). -->
+const limitsMd = `<!-- GENERATED from data/pricing.json by scripts/generate-pricing.mjs — do not edit. Draft; publication requires measured economics and owner approval. -->
 # Limits
 
-> **DRAFT (L-1).** Values mirror GOAL.md D-25/D-64. Confirm with the owner
-> before publication (O-6). Regenerated when measurements land.
+> **DRAFT.** Publication awaits measured unit economics and owner approval.
 
 PITR retention (days): Free ${d.limits.pitrRetentionDays.Free} / Starter ${d.limits.pitrRetentionDays.Starter} / Pro ${d.limits.pitrRetentionDays.Pro} / Scale ${d.limits.pitrRetentionDays.Scale}.
 
@@ -80,7 +80,7 @@ Databases per org: Free ${d.limits.databasesPerOrg.Free} / Starter ${d.limits.da
 
 - **Max document:** ${d.limits.maxDocument}.
 - **History retention:** ${d.limits.historyRetention}
-- **Idle Free databases (D-76):** ${d.reaper}
+- **Idle Free databases:** ${d.reaper}
 
 ## Abuse guards (unbilled, enforced, no upsell UI)
 

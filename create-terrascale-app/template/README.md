@@ -5,7 +5,7 @@ install locally: TerraScale has no customer-run emulator or local database
 process. `terrascale dev` gives you a personal cloud branch of this project's
 database.
 
-## Run it (under 5 minutes, D-74)
+## Run the development connection
 
 ```bash
 npm install
@@ -19,15 +19,16 @@ package. Install it from a checkout with `go install ./cmd/terrascale`, then
 run the command above to create or reuse a cloud branch. It prints the branch
 name, source, and selected region, but not credentials or a database id. Use
 the dashboard/API response to obtain the branch database id, then put that id,
-the API URL, and a scoped API key in `.env.local`. Export the same key as
+the API URL in `.env.local`. Enter a scoped development credential in each
+browser tab; it stays only in memory until disconnect/reload. Export a key as
 `TERRASCALE_API_KEY` (or pass `--api-key`) for the CLI; `.env.local` is read by
 Next.js, not by the shell. Seed execution, log tailing, and codegen watch
 require their published CLI capabilities; this starter never starts a local
 engine.
 
 Open the app in two tabs to attach the same cloud-backed live result view. The
-starter does not add document writes while the typed Database API contract is
-pending; seed execution is also pending its CLI contract.
+starter can add posts through the typed Database API contract. The cloud
+seed CLI contract remains pending; the Add post form needs no seed runner.
 
 ## Files
 
@@ -40,3 +41,10 @@ pending; seed execution is also pending its CLI contract.
 - `AGENTS.md` — SDK, schema/SQL builders, `terrascale dev`, MCP setup.
 
 Full quickstart: https://docs.terrascale.tech/getting-started/
+
+Application sign-in to live updates remains an unmet launch journey: the
+production auth/delegation binding and real cloud credentials are still
+required. Never embed privileged API keys in NEXT_PUBLIC settings. Browser
+credentials must be limited to this development branch and its required
+posts read/write/reactive permissions. Local checks do not prove real cloud
+behavior or the five-minute setup target.

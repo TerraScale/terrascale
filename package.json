@@ -8,8 +8,8 @@
     "dev": "vitepress dev docs",
     "build": "vitepress build docs",
     "preview": "vitepress preview docs",
-    "test": "node scripts/check-build.mjs",
-    "test:stub": "node scripts/check-build.mjs --sandbox=stub",
+    "test": "node --test scripts/wire-decoder.test.mjs create-terrascale-app/test/generate.test.mjs && node scripts/check-build.mjs",
+    "test:stub": "node --test scripts/wire-decoder.test.mjs create-terrascale-app/test/generate.test.mjs && node scripts/check-build.mjs --sandbox=stub",
     "i18n:sync": "node scripts/i18n-sync.mjs",
     "i18n:status": "node scripts/i18n-status.mjs"
   },

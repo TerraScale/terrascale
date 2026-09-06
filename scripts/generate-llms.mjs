@@ -22,7 +22,7 @@ const routes = [
   ["/concepts/pricing-philosophy", "Pricing philosophy: writes + storage are the only billed dimensions."],
   ["/guides/", "Guides overview."],
   ["/pricing", "Pricing (L-1 draft, generated from D-16/D-17/D-21/D-25/D-64): writes + storage billed, everything else free."],
-  ["/pricing/", "Pricing & limits: plans, quotas, guards, branch allowance."],
+  ["/pricing/", "Pricing & limits: plans, quotas, guards, shared organization allowances."],
   ["/limits", "Limits and unbilled abuse guards (D-25/D-64), generated from the same source as pricing."],
   ["/snippets", "Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key (D-56); tenant, branch, backup, and export fixtures are retained but skipped until their producer contracts are published."],
   ["/blog/why-sqlite", "Launch post draft (L-5): Why TerraScale runs on SQLite."],

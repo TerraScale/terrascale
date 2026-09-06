@@ -1,23 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { createTerraScaleClient, Direction, select, TerraScaleSyncV1Client } from "@terrascale/sdk";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createTerraScaleClient, Direction, select, type TerraScaleSyncV1Client } from "@terrascale/sdk";
 import { authorId, posts, publishedAt, title } from "../schema";
 
-type Post = { id: string; title: string; authorId: string; publishedAt: string };
-
+type Post = { id: string; title: string };
 const databaseId = process.env.NEXT_PUBLIC_TERRASCALE_DATABASE_ID?.trim() ?? "";
 const apiBaseUrl = process.env.NEXT_PUBLIC_TERRASCALE_API_URL;
-const client = createTerraScaleClient({
-  apiBaseUrl,
-  projectId: process.env.NEXT_PUBLIC_TERRASCALE_PROJECT_ID,
-  accessToken: process.env.NEXT_PUBLIC_TERRASCALE_API_KEY,
-});
-const sync = client.reactive;
-
-// The SQL builder validates fields against the schema and keeps LIMIT as a
-// positional parameter. The attach contract carries that parameter list as
-// canonical JSON bytes.
 const postsQuery = select(posts)
   .columns([title, authorId, publishedAt])
   .orderByField(publishedAt, Direction.Desc)
@@ -25,83 +14,140 @@ const postsQuery = select(posts)
   .subscribe();
 const queryParameters = new TextEncoder().encode(JSON.stringify(postsQuery.parameters));
 
-function decodeJson(bytes: Uint8Array | undefined): unknown {
-  if (bytes === undefined) return undefined;
-  try {
-    return JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return undefined;
-  }
-}
-
 function projectPost(item: { identity: string; value: Readonly<Record<string, Uint8Array>> }): Post {
-  return {
-    id: item.identity,
-    title: String(decodeJson(item.value.title) ?? "Untitled post"),
-    authorId: String(decodeJson(item.value.authorId) ?? ""),
-    publishedAt: String(decodeJson(item.value.publishedAt) ?? ""),
-  };
+  const bytes = item.value.title;
+  const value: unknown = bytes === undefined ? undefined : JSON.parse(new TextDecoder().decode(bytes));
+  return { id: item.identity, title: typeof value === "string" ? value : "Untitled post" };
 }
 
 export default function Page() {
+  const [credential, setCredential] = useState("");
+  function connect(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const key = String(new FormData(form).get("credential") ?? "").trim();
+    if (key) setCredential(key);
+    form.reset();
+  }
+  return (
+    <main style={{ maxWidth: 720, margin: "0 auto", padding: "4rem 1.5rem", fontFamily: "system-ui, sans-serif" }}>
+      <p>TerraScale development starter</p>
+      <h1>Posts that stay in sync.</h1>
+      <p>Connect two browser tabs to the same cloud branch, then add a post in either tab.</p>
+      {!databaseId ? <p role="alert">Set NEXT_PUBLIC_TERRASCALE_DATABASE_ID in .env.local and restart the development server.</p> : credential ? (
+        <>
+          <button onClick={() => setCredential("")}>Disconnect and clear credential</button>
+          <LivePosts key={credential} credential={credential} />
+        </>
+      ) : (
+        <>
+          <p><a href="https://app.terrascale.tech/sign-in">Sign in to TerraScale</a> to obtain a credential restricted to your development branch, with posts read/write and reactive access.</p>
+          <p>This development connection keeps your credential in this tab’s memory until disconnect or reload. Application sign-in integration is not available in this template yet.</p>
+          <form onSubmit={connect}>
+            <label htmlFor="credential">Development branch credential</label>{" "}
+            <input id="credential" name="credential" type="password" autoComplete="off" required />{" "}
+            <button type="submit">Connect</button>
+          </form>
+        </>
+      )}
+    </main>
+  );
+}
+
+function LivePosts({ credential }: { credential: string }) {
+  const client = useMemo(() => createTerraScaleClient({
+    apiBaseUrl,
+    projectId: process.env.NEXT_PUBLIC_TERRASCALE_PROJECT_ID,
+    accessToken: credential,
+  }), [credential]);
   const [rows, setRows] = useState<Post[]>([]);
-  const [connected, setConnected] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-  const configured = databaseId.length > 0 && Boolean(process.env.NEXT_PUBLIC_TERRASCALE_API_KEY);
-  const signInUrl = useMemo(() => "https://app.terrascale.tech/sign-in", []);
+  const [attached, setAttached] = useState(false);
+  const [error, setError] = useState<string>();
+  const [writing, setWriting] = useState(false);
+  const [writeStatus, setWriteStatus] = useState("");
+  const writeController = useRef<AbortController | undefined>(undefined);
+  // Keep the same operation identity and value when retrying an uncertain write.
+  const pending = useRef<{ id: string; title: string; publishedAt: string } | undefined>(undefined);
 
   useEffect(() => {
-    if (!configured) return;
-    let closed = false;
+    const controller = new AbortController();
     let stop: (() => void) | undefined;
     let live: Awaited<ReturnType<TerraScaleSyncV1Client["subscribe"]>> | undefined;
-    setError(undefined);
-
-    void sync.subscribe({
+    void client.reactive.subscribe({
       databaseId,
       subscription: "starter-posts",
       query: postsQuery.sql,
       parameters: queryParameters,
+      signal: controller.signal,
     }).then((next) => {
+      if (controller.signal.aborted) { next.close(); return; }
       live = next;
-      if (closed) {
-        next.close();
-        return;
-      }
-      const render = () => setRows(next.view.getVisibleItems().map(projectPost));
+      const render = () => {
+        try { setRows(next.view.getVisibleItems().map(projectPost)); }
+        catch { setError("The live result contains an invalid post. Check the collection schema."); }
+      };
       stop = next.view.subscribe(render);
-      setConnected(true);
+      setAttached(true);
       render();
     }).catch((cause: unknown) => {
-      if (!closed) setError(cause instanceof Error ? cause.message : String(cause));
+      if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause));
     });
-
     return () => {
-      closed = true;
+      controller.abort();
+      writeController.current?.abort();
       stop?.();
       live?.close();
-      setConnected(false);
     };
-  }, [configured]);
+  }, [client]);
+
+  async function addPost(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (writeController.current) return;
+    const form = event.currentTarget;
+    const postTitle = String(new FormData(form).get("title") ?? "").trim();
+    if (!postTitle) return;
+    if (pending.current && pending.current.title !== postTitle) {
+      setError("Retry the unchanged post to resolve the previous write before creating another.");
+      return;
+    }
+    const operation = pending.current ?? { id: crypto.randomUUID(), title: postTitle, publishedAt: new Date().toISOString() };
+    pending.current = operation;
+    const controller = new AbortController();
+    writeController.current = controller;
+    setWriting(true);
+    setError(undefined);
+    setWriteStatus("");
+    try {
+      const result = await client.documents.put(databaseId, "posts", operation.id, {
+        title: operation.title,
+        authorId: "development-starter",
+        publishedAt: operation.publishedAt,
+      }, { durability: "regional", idempotencyKey: operation.id, signal: controller.signal });
+      if (!result.ok) throw new Error(result.error.message);
+      pending.current = undefined;
+      if (!controller.signal.aborted) {
+        form.reset();
+        setWriteStatus("Post saved. The live query will show it in both tabs.");
+      }
+    } catch (cause: unknown) {
+      if (!controller.signal.aborted) setError(`${cause instanceof Error ? cause.message : String(cause)} Retry the same post to resolve this write.`);
+    } finally {
+      writeController.current = undefined;
+      if (!controller.signal.aborted) setWriting(false);
+    }
+  }
 
   return (
-    <main style={{ maxWidth: 720, margin: "0 auto", padding: "4rem 1.5rem", fontFamily: "system-ui, sans-serif" }}>
-      <p style={{ color: "#5b6472", letterSpacing: "0.08em", textTransform: "uppercase", fontSize: 12 }}>TerraScale starter</p>
-      <h1>Posts that stay in sync.</h1>
-      <p>Open this page in two tabs. Both attach the same cloud-backed live query.</p>
-      {!configured ? (
-        <p><a href={signInUrl}>Sign in to TerraScale</a> to get an API key and cloud dev branch, then add them to <code>.env.local</code> and restart the dev server.</p>
-      ) : (
-        <>
-          <p aria-live="polite">{connected ? "Live over CDN-backed HTTP" : "Connecting to the cloud branch…"}</p>
-          {rows.length === 0 ? <p>No posts yet. Seed the cloud branch when the published CLI seed contract is available.</p> : (
-            <ul>
-              {rows.map((post) => <li key={post.id} style={{ margin: "0.75rem 0" }}>{post.title}</li>)}
-            </ul>
-          )}
-        </>
-      )}
-      {error ? <p role="alert" style={{ color: "#a12622" }}>{error}</p> : null}
-    </main>
+    <>
+      <p aria-live="polite">{attached ? "Live query attached over CDN-backed HTTP" : "Connecting to the cloud branch…"}</p>
+      <form onSubmit={addPost}>
+        <label htmlFor="post-title">Post title</label>{" "}
+        <input id="post-title" name="title" maxLength={200} required disabled={writing} />{" "}
+        <button type="submit" disabled={!attached || writing}>{writing ? "Saving…" : "Add post"}</button>
+      </form>
+      <p aria-live="polite">{writeStatus}</p>
+      {rows.length === 0 ? <p>No posts yet.</p> : <ul>{rows.map((post) => <li key={post.id}>{post.title}</li>)}</ul>}
+      {error ? <p role="alert">{error}</p> : null}
+    </>
   );
 }

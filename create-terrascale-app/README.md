@@ -1,7 +1,7 @@
 # `create-terrascale-app` (P-8/D-56/D-74)
 
-Scaffold a Next.js + TerraScale app with a first live query in under five
-minutes once Node, the Go CLI, and a TerraScale API key are available.
+Scaffold a Next.js + TerraScale development app with document writes and a
+live query. The five-minute sign-in journey still requires qualification.
 
 ## Use it
 
@@ -25,23 +25,25 @@ go install ./cmd/terrascale
 `terrascale dev <database> --watch=false --no-log-tail` creates or reuses a
 cloud branch. It prints the branch name, source, and selected region, but not
 credentials or a database id. Use the dashboard/API response to obtain the
-branch database id, then put that id, the API URL, and a scoped API key in
-`.env.local`. Export the same key as `TERRASCALE_API_KEY` (or pass
+branch database id, then put that id and the API URL in `.env.local`.
+Enter a scoped development credential into each browser tab; it stays only
+in tab memory and is cleared on disconnect/reload. Export a scoped key as
+`TERRASCALE_API_KEY` (or pass
 `--api-key`) for the CLI; `.env.local` is read by Next.js, not by the shell.
 Seed execution, log tailing, and codegen watch are separate CLI capabilities;
 use those flags only when the installed CLI release advertises their contracts.
 The starter attaches a typed SQL live query through the current reactive SDK;
-it does not invent a document-write helper while that public contract is
-pending. There is no local engine or fake SDK involved.
+it writes posts through the published typed `client.documents.put` API. There is no local engine or fake SDK involved.
 
 - Sign in when prompted. A card is required at signup for fraud screening;
-  you can continue on the free plan without subscribing, and your first paid
-  month is free if you subscribe during onboarding.
+  you can continue on Free while eligible. The eligible onboarding promotion
+  waives only the subscription fee; explicitly authorized excess is billed.
 - There is nothing to install locally: TerraScale has no customer-run emulator
   or local database process. `terrascale dev` gives you a personal cloud branch
   of your project's database, and dev and prod run the same engine in the same
   regions (D-18).
 - Open the app in two tabs to attach the same cloud-backed live result view.
+  Add a post in either tab to exercise a real write and live delivery.
   Seed execution remains blocked until its CLI contract is published.
 
 ## What it scaffolds (`template/`)
@@ -56,13 +58,20 @@ pending. There is no local engine or fake SDK involved.
   when seed execution is enabled; it never starts a local engine.
 - `AGENTS.md`: starter-owned assistant brief (SDK, schema/SQL builders,
   `terrascale dev`, MCP setup) so AI-assisted builders work on minute one.
-- `.env.example`: API key, project ID, database ID, and API URL settings.
+- `.env.example`: public project ID, database ID, and API URL settings; no key.
 
 ## Status
 
 The template pins the current SDK surface (`@terrascale/sdk` 0.3.0: schema/SQL
-builders and `TerraScaleSyncV1Client`). Typed document writes and tenant
-provisioning remain outside the starter until their owning contracts are
-published.
+builders, typed document writes, and `TerraScaleSyncV1Client`). Tenant
+provisioning and application sign-in remain unqualified. The development
+credential form is not an application sign-in implementation.
 Full docs:
 https://docs.terrascale.tech/getting-started/
+
+Application sign-in to live updates remains an unmet launch journey: the
+production auth/delegation binding and real cloud credentials are still
+required. Never embed privileged API keys in NEXT_PUBLIC settings. Browser
+credentials must be limited to this development branch and its required
+posts read/write/reactive permissions. Local checks do not prove real cloud
+behavior or the five-minute setup target.

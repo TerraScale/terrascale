@@ -32,15 +32,15 @@ cpSync(templateDir, target, { recursive: true });
 
 console.log(`Created ${targetArg} from create-terrascale-app.`);
 console.log("");
-console.log("Next steps (under 5 minutes once Node, the Go CLI, and an API key are ready, D-74):");
+console.log("Next steps (the five-minute real-cloud journey remains unqualified):");
 console.log(`  cd ${targetArg}`);
 console.log("  npm install");
 console.log("  cp .env.example .env.local");
 console.log("  # sign in when prompted (card required at signup for fraud screening;");
-console.log("  # free plan needs no subscription; first paid month free during onboarding)");
+console.log("  # free plan needs no subscription; eligible onboarding promotion waives subscription only; authorized excess is billed)");
 console.log("  # from a ts-cli checkout: go install ./cmd/terrascale");
 console.log("  terrascale dev <database> --watch=false --no-log-tail");
 console.log("  # copy the branch database id/API settings into .env.local");
-console.log("  npm run dev   # attach the starter's live result view");
+console.log("  npm run dev   # enter a scoped development credential, then add a post");
 console.log("");
 console.log("Docs: https://docs.terrascale.tech/getting-started/");

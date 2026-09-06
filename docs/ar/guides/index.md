@@ -21,8 +21,8 @@ published are retained as non-runnable references.
 ## Operations
 
 - **Branches** — `branch-per-developer`, `branch-per-preview`; branches share
-  a per-org allowance (100k writes/month + 1 GB) on every plan; creation
-  takes under 5 seconds.
+  their organization’s normal plan allowances and billing cycle, with no
+  separate branch allowance. See [pricing](/ar/pricing/).
 - **Backups and PITR** — continuous backup, restore-to-new-database, and
   branching from any point in the retention window.
 - **Regions and placement** — select regions per database; placement is the

@@ -10,8 +10,8 @@ description: TerraScale plans, quotas, write and storage definitions, abuse guar
 
 > **Draft.** The generated [pricing sheet](/es/pricing) and [limits page](/es/limits)
 > are sourced from `data/pricing.json`. The values must be confirmed by the
-> owner before publication (O-6), and every published number must have a
-> measured unit cost behind it (D-61).
+> owner before publication, and every published number must have a
+> measured unit cost behind it.
 
 TerraScale bills exactly two dimensions: **writes and storage**. Reads,
 queries, and direct member read egress are free and unbilled, but are metered
@@ -22,8 +22,8 @@ for abuse guards and cost attribution. The guards are limits, never charges.
 One write = one create, update, patch, or delete of a document of **≤ 4 KiB**,
 counted as `ceil(bytes / 4 KiB)` — a 5 KiB update is 2 writes.
 
-**Replicated writes cost one write per region.** A write to a database
-selected in 3 regions is billed as 3 writes. This is the per-region
+**Replicated writes cost one write per region.** A one-unit write to a database
+selected in 3 regions consumes 3 write allowance units; a 5 KiB write consumes 6. This is the per-region
 replication cost, shown up front. We never claim infrastructure is free:
 replication across your selected regions is priced as writes, above.
 Delivering that write to any number of subscribers is free.
@@ -61,11 +61,11 @@ apply where a guard exists. CDN-delivered reactive data has no bandwidth guard.
 | Regions per database | Up to 3 | Up to 3 | Up to 3 | Up to 3 |
 | Databases per org | 1 | 5 | 25 | soft-unlimited |
 | PITR retention | 1 day | 7 days | 30 days | 35 days |
-| Support | Community (Discord) | Email | Email | Shared channel with response-time targets |
 
-**Scale** is a support-and-compliance fee: priority support, SOC 2 report
-access, security questionnaires, and DPA/SLA — with every write and GB billed
-at PAYG rates.
+**Scale.** The $500/month target is a paid support/compliance offering. Available benefits require confirmation before enrollment; priority response, SOC 2, and contractual SLA benefits are not available launch promises.
+
+Support channels and response commitments must be confirmed before enrollment;
+email intake and staffed response coverage are not advertised as available.
 
 ## Overage & PAYG
 
@@ -74,11 +74,9 @@ at PAYG rates.
 
 Both may only go down.
 
-## Branch allowance
+## Shared organization allowances
 
-Every org, on any plan, gets **100k writes/month + 1 GB** shared across all of
-its branches (dev branches included), on top of plan quotas. Branch usage
-beyond that allowance bills like a database.
+Databases and branches share their owning organization’s normal plan allowances and billing cycle. There is no additional branch allowance or separate branch reset. Writes consume allowances after Region multiplication. 100 MB stored across three Regions consumes 300 MB of included storage, measured over time in byte-seconds.
 
 ## Guards (unbilled abuse limits)
 
@@ -110,15 +108,11 @@ guard.** Subscribers per view are unlimited on every plan.
   the reader worldwide as a sub-processor under its DPA; we do not promise
   in-region edge processing at launch.
 
-## The free tier, stated honestly
+## Free eligibility and idle databases
 
-- A card is required at signup (fraud screening + rate limits); it is
-  effortless to continue without a plan.
-- First paid month free if you subscribe during onboarding.
-- **Free-tier reaper:** a Free database with no request for 30 days is paused
-  (closed, backup stream stopped, snapshot kept) and the owner is emailed; at
-  90 days idle, after two more emails, it is deleted (crypto-shred). Paid
-  plans are never reaped. Reactivation is one request.
+Free indefinitely with a valid verified card and automated fraud checks. Free eligibility and the first paid month promotion each have one entitlement per verified billing customer across organizations; only audited owner exceptions may expand eligibility.
+
+Free databases pause after 30 idle days; a request resumes them. They may be deleted after 90 idle days with advance notices unless deletion protection is enabled. Paid databases are never idle-reaped. The final notice schedule requires owner approval.
 
 ## How billing works
 
@@ -139,3 +133,28 @@ Free. Automated fraud checks apply. Free has no time limit while the account
 remains eligible and usage stays within its allowance. Customers can subscribe
 and explicitly enable paid usage above that allowance. A stored card alone
 does not authorize overage charges; review the rates and spend controls first.
+
+
+## Billing cycle and promotion
+
+Monthly write allowances reset on the organization’s billing anniversary, including Free, with no rollover. Storage remains measured over time; renewal does not erase data or continuing usage. The onboarding first paid month promotion waives only the subscription fee. Explicitly authorized usage beyond allowances remains chargeable; this must be explained before enrollment.
+
+## Consent and subscription changes
+
+Payments, invoices, consent, and spending controls belong to the organization. A stored card is not consent to overage. Customers must explicitly subscribe and enable paid excess after reviewing rates, allowances, and spending controls. Upgrades apply immediately with a preview of prorated charges and resulting allowances; they never enable paid excess automatically. Downgrades and cancellation apply at renewal. Preview resulting limits and preserve existing data; cancellation returns to Free only when eligible. Neither action silently deletes data or authorizes overage.
+
+## Spending caps and exhausted allowances
+
+One monthly organization spending cap covers every database, branch, and Region; optional lower database caps cannot raise it. At the cap, or when allowances are exhausted without paid excess consent, chargeable writes stop, including concurrent Regional usage. Reads and exports remain available within safety limits. Retained storage continues to accrue charges under agreed rates and consent, even while writes are restricted; show this exception before enabling a cap. Reaching a cap alone neither deletes data nor authorizes charges. Document deletes remain billed writes: restore paid write access before document cleanup. Account/database closure and retention deletion remain separate workflows.
+
+## Unpaid storage
+
+Storage without eligible allowance or payment coverage receives a 30-day grace period, advance dashboard and email notices, an exact visible deadline, and read/export access within safety limits. Deletion becomes eligible only while storage remains unpaid after the deadline and notice requirements are met. Authorized postpaid storage becomes unpaid when its invoice is due and payment fails, not when usage merely accrues. Retries do not reset the deadline. Restored eligible allowance or successful payment removes storage-related deletion eligibility. Exhausted writes with covered storage do not start this period.
+
+## Card eligibility
+
+Removing the required card, confirmed expiry, or permanent invalidity ends Free eligibility and starts the 30-day deletion grace period, even within the Free storage allowance. Warn before removal and show the deadline in dashboard and email. Temporary provider failures and replacement retaining a valid payment method do not establish card loss. Restoring a valid card stops the card-related countdown and restores Free access when otherwise eligible, without a paid subscription; outstanding charges and separate unpaid storage still need resolution. An already-paid term retains its coverage; the card-related countdown starts only when that coverage ends unless coverage or Free eligibility is restored.
+
+## Deletion protection and completion
+
+Deletion protection is opt-in and disabled by default. An owner must explicitly disable it before customer deletion. Protection prevents automatic idle-Free deletion, but not idle pause, unpaid-storage deletion, or required-card-loss deletion. Once authorized deletion is accepted, access is revoked immediately and further billable usage stops. Previously incurred charges remain payable; asynchronous physical cleanup must not create new usage charges. Deletion progress continues until retained copies are removed. Physical completion timing and final notices require verified retention behavior and owner approval.

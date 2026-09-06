@@ -30,7 +30,7 @@ Base URL: https://docs.terrascale.tech
 - Pricing philosophy: writes + storage are the only billed dimensions.: https://docs.terrascale.tech/concepts/pricing-philosophy
 - Guides overview.: https://docs.terrascale.tech/guides/
 - Pricing (L-1 draft, generated from D-16/D-17/D-21/D-25/D-64): writes + storage billed, everything else free.: https://docs.terrascale.tech/pricing
-- Pricing & limits: plans, quotas, guards, branch allowance.: https://docs.terrascale.tech/pricing/
+- Pricing & limits: plans, quotas, guards, shared organization allowances.: https://docs.terrascale.tech/pricing/
 - Limits and unbilled abuse guards (D-25/D-64), generated from the same source as pricing.: https://docs.terrascale.tech/limits
 - Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key (D-56); tenant, branch, backup, and export fixtures are retained but skipped until their producer contracts are published.: https://docs.terrascale.tech/snippets
 - Launch post draft (L-5): Why TerraScale runs on SQLite.: https://docs.terrascale.tech/blog/why-sqlite
