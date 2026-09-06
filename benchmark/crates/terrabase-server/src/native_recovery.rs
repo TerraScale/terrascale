@@ -3,8 +3,8 @@
 use crate::admitted_databases::AdmittedDatabaseRegistry;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::{fs::File, path::Path};
 use terrabase::backup::worker::NativeBackupFleet;
 use terrabase_tbep::member_host::MemberHost;
 use tokio::sync::Notify;
@@ -61,21 +61,23 @@ impl NativeRecoveryWorker {
     pub async fn shutdown(self) -> Result<(), NativeRecoveryError> {
         *self.runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? = true;
         let _ = self.stop.send(());
-        let deadline =
-            match tokio::time::timeout(std::time::Duration::from_secs(5), self.join).await {
-                Ok(result) => result.map_err(|_| NativeRecoveryError::Unavailable)?,
-                Err(_) => {
-                    // An uncancellable provider call may still own its Member lease.
-                    // Do not rewrite its durable state while that call is running.
-                    *self
-                        .runtime
-                        .worker_error
-                        .lock()
-                        .map_err(|_| NativeRecoveryError::Unavailable)? =
-                        Some(NativeRecoveryError::Unavailable);
-                    return Err(NativeRecoveryError::Unavailable);
-                }
-            };
+        let join = tokio::spawn(async move { self.join.await });
+        let deadline = match tokio::time::timeout(std::time::Duration::from_secs(5), join).await {
+            Ok(result) => result
+                .map_err(|_| NativeRecoveryError::Unavailable)?
+                .map_err(|_| NativeRecoveryError::Unavailable)?,
+            Err(_) => {
+                // The waiter retains the JoinHandle and worker lease while
+                // an uncancellable provider call is still active.
+                *self
+                    .runtime
+                    .worker_error
+                    .lock()
+                    .map_err(|_| NativeRecoveryError::Unavailable)? =
+                    Some(NativeRecoveryError::Unavailable);
+                return Err(NativeRecoveryError::Unavailable);
+            }
+        };
         if deadline {
             *self.runtime.worker_error.lock().map_err(|_| NativeRecoveryError::Unavailable)? =
                 Some(NativeRecoveryError::Unavailable);
@@ -167,6 +169,7 @@ pub struct NativeRecoveryRuntime {
     lifecycle: Mutex<bool>,
     notify: Arc<Notify>,
     worker_error: Mutex<Option<NativeRecoveryError>>,
+    _worker_lease: Arc<File>,
 }
 
 impl NativeRecoveryRuntime {
@@ -212,6 +215,14 @@ impl NativeRecoveryRuntime {
                 .and_then(|file| file.sync_all())
                 .map_err(|_| NativeRecoveryError::Unavailable)?;
         }
+        // A live worker owns this ledger exclusively.  The marker remains in
+        // place while an uncancellable provider call outlives shutdown.
+        let worker_lease = File::options()
+            .create(true)
+            .write(true)
+            .open(root.join("recovery.worker.lock"))
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
+        worker_lease.try_lock().map_err(|_| NativeRecoveryError::Unavailable)?;
         let runtime = Arc::new(Self {
             fleet,
             operations: Mutex::new(connection),
@@ -220,33 +231,36 @@ impl NativeRecoveryRuntime {
             lifecycle: Mutex::new(false),
             notify: Arc::new(Notify::new()),
             worker_error: Mutex::new(None),
+            _worker_lease: Arc::new(worker_lease),
         });
         let (stop, stopped) = tokio::sync::oneshot::channel();
         let worker_runtime = Arc::clone(&runtime);
         let notify = Arc::clone(&runtime.notify);
         let join = executor.spawn(async move {
-            lifecycle::supervise::<NativeRecoveryError, _, _>(stopped, notify, move || {
-                let runtime = Arc::clone(&worker_runtime);
-                let observed = Arc::clone(&runtime);
-                async move {
-                    let result = tokio::task::spawn_blocking(move || runtime.process_pending())
-                        .await
-                        .map_err(|_| NativeRecoveryError::Unavailable)?;
-                    if let Ok(_) = result {
-                        *observed
-                            .worker_error
-                            .lock()
-                            .map_err(|_| NativeRecoveryError::Unavailable)? = None;
-                    } else if let Err(error) = result {
-                        *observed
-                            .worker_error
-                            .lock()
-                            .map_err(|_| NativeRecoveryError::Unavailable)? = Some(error);
+            let result =
+                lifecycle::supervise::<NativeRecoveryError, _, _>(stopped, notify, move || {
+                    let runtime = Arc::clone(&worker_runtime);
+                    let observed = Arc::clone(&runtime);
+                    async move {
+                        let result = tokio::task::spawn_blocking(move || runtime.process_pending())
+                            .await
+                            .map_err(|_| NativeRecoveryError::Unavailable)?;
+                        if let Ok(_) = result {
+                            *observed
+                                .worker_error
+                                .lock()
+                                .map_err(|_| NativeRecoveryError::Unavailable)? = None;
+                        } else if let Err(error) = result {
+                            *observed
+                                .worker_error
+                                .lock()
+                                .map_err(|_| NativeRecoveryError::Unavailable)? = Some(error);
+                        }
+                        result
                     }
-                    result
-                }
-            })
-            .await
+                })
+                .await;
+            result
         });
         runtime.notify.notify_one();
         Ok((runtime.clone(), NativeRecoveryWorker { runtime, stop, join }))

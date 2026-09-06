@@ -821,17 +821,7 @@ impl IndexCoordinatorAdapter for EngineIndexAdapter<'_> {
         snapshot
             .indexes
             .into_iter()
-            .map(|index| {
-                // An active flag alone does not prove the D-31 shadow gate. The
-                // engine's evidence store still lacks durable publication hooks.
-                if index.visible {
-                    return Err(Self::unavailable(
-                        "list visible index",
-                        "Engine::auto_index_shadow_evidence",
-                    ));
-                }
-                Ok(coordinator_index(index, snapshot.generation))
-            })
+            .map(|index| Ok(coordinator_index(index, snapshot.generation)))
             .collect()
     }
 
@@ -869,14 +859,62 @@ impl IndexCoordinatorAdapter for EngineIndexAdapter<'_> {
         scope: &IndexScope,
         command: CoordinatorCommand,
     ) -> Result<CoordinatorIndex, IndexAdapterError> {
-        let _ = self.check_engine_tenant(scope)?;
-        let (operation, method) = match command {
-            CoordinatorCommand::Apply(_) => ("apply", "Engine::auto_index_apply"),
-            CoordinatorCommand::Pin(_) => ("pin", "Engine::auto_index_pin_template"),
-            CoordinatorCommand::Forbid(_) => ("forbid", "Engine::auto_index_forbid_shape"),
-            CoordinatorCommand::Retire(_) => ("retire", "Engine::auto_index_retire"),
-        };
-        Err(Self::unavailable(operation, method))
+        let tenant = self.check_engine_tenant(scope)?;
+        let result: Result<terrabase::auto_index::LifecycleIndexView, IndexAdapterError> =
+            match command {
+                CoordinatorCommand::Apply(request) => self
+                    .engine
+                    .auto_index_apply(
+                        &tenant,
+                        &request.candidate_id,
+                        request.expected_generation,
+                        request.at_millis,
+                    )
+                    .map_err(map_engine_error),
+                CoordinatorCommand::Pin(request) => self
+                    .engine
+                    .auto_index_pin_template(
+                        &tenant,
+                        &request.index_id,
+                        &request.template,
+                        request.expected_generation,
+                    )
+                    .map_err(map_engine_error),
+                CoordinatorCommand::Retire(request) => self
+                    .engine
+                    .auto_index_retire(
+                        &tenant,
+                        &request.index_id,
+                        request.expected_generation,
+                        request.at_millis,
+                    )
+                    .map_err(map_engine_error),
+                CoordinatorCommand::Forbid(request) => {
+                    self.engine
+                        .auto_index_forbid_shape(
+                            &tenant,
+                            &request.candidate_id,
+                            &request.shape,
+                            request.expected_generation,
+                        )
+                        .map_err(map_engine_error)?;
+                    self.engine
+                        .auto_index_lifecycle_snapshot(
+                            &tenant,
+                            scope.collection.as_deref(),
+                            MAX_INDEX_LIST + 1,
+                        )
+                        .map_err(map_engine_error)
+                        .and_then(|snapshot| {
+                            snapshot
+                                .indexes
+                                .into_iter()
+                                .find(|index| index.id == request.candidate_id)
+                                .ok_or(IndexAdapterError::InvalidTransition)
+                        })
+                }
+            };
+        result.map(|index| coordinator_index(index, index.generation))
     }
 
     fn audit(
@@ -912,11 +950,53 @@ impl IndexCoordinatorAdapter for EngineIndexAdapter<'_> {
     fn evidence(
         &self,
         scope: &IndexScope,
-        _index_id: &str,
-        _limit: usize,
+        index_id: &str,
+        limit: usize,
     ) -> Result<CoordinatorEvidence, IndexAdapterError> {
-        let _ = self.check_engine_tenant(scope)?;
-        Err(Self::unavailable("evidence", "Engine::auto_index_shadow_evidence"))
+        let tenant = self.check_engine_tenant(scope)?;
+        let snapshot = self
+            .engine
+            .auto_index_lifecycle_snapshot(&tenant, scope.collection.as_deref(), MAX_INDEX_LIST + 1)
+            .map_err(map_engine_error)?;
+        // Evidence is keyed by the exact normalized template digest. The API
+        // exposes one bounded aggregate, so use the first retained template
+        // deterministically and reject an index with no durable evidence.
+        let digest = self
+            .engine
+            .auto_index_shadow_evidence_digest(&tenant, index_id)
+            .map_err(map_engine_error)?
+            .ok_or(IndexAdapterError::InvalidTransition)?;
+        let evidence = self
+            .engine
+            .auto_index_shadow_evidence(&tenant, index_id, digest, limit)
+            .map_err(map_engine_error)?
+            .ok_or(IndexAdapterError::InvalidTransition)?;
+        if !snapshot.indexes.iter().any(|index| index.id == index_id) {
+            return Err(IndexAdapterError::InvalidTransition);
+        }
+        Ok(CoordinatorEvidence {
+            index_id: evidence.index_id,
+            generation: evidence.generation,
+            baseline: evidence
+                .baseline
+                .into_iter()
+                .map(|sample| EvidenceSample {
+                    pages_read: sample.pages_read,
+                    rows_examined: sample.rows_examined,
+                })
+                .collect(),
+            candidate: evidence
+                .candidate
+                .into_iter()
+                .map(|sample| EvidenceSample {
+                    pages_read: sample.pages_read,
+                    rows_examined: sample.rows_examined,
+                })
+                .collect(),
+            improvement: evidence.improvement,
+            regression: evidence.regression,
+            digest: evidence.digest,
+        })
     }
 }
 

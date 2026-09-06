@@ -12,12 +12,42 @@ use crate::proto::terrabase::v1 as pb;
 /// adapter only authenticates the channel and validates the signed assignment
 /// envelope before calling this port.
 pub trait LifecycleControl: Send + Sync {
-    fn ensure_snapshot(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
-    fn verify_snapshot_placement(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
-    fn close_database(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
-    fn stop_native_backup(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
-    fn reactivate(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
-    fn delete_owned_data(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
+    /// Captures and verifies the native snapshot for this assignment.
+    fn ensure_snapshot(
+        &self,
+        context: &pb::LifecycleControlContext,
+        operation: &str,
+    ) -> Result<(), String>;
+    /// Verifies snapshot placement against the admitted assignment.
+    fn verify_snapshot_placement(
+        &self,
+        context: &pb::LifecycleControlContext,
+        operation: &str,
+    ) -> Result<(), String>;
+    /// Closes serving while retaining the database.
+    fn close_database(
+        &self,
+        context: &pb::LifecycleControlContext,
+        operation: &str,
+    ) -> Result<(), String>;
+    /// Stops this database's native backup stream.
+    fn stop_native_backup(
+        &self,
+        context: &pb::LifecycleControlContext,
+        operation: &str,
+    ) -> Result<(), String>;
+    /// Resumes the same retained database.
+    fn reactivate(
+        &self,
+        context: &pb::LifecycleControlContext,
+        operation: &str,
+    ) -> Result<(), String>;
+    /// Deletes data owned by this member.
+    fn delete_owned_data(
+        &self,
+        context: &pb::LifecycleControlContext,
+        operation: &str,
+    ) -> Result<(), String>;
 }
 
 /// Bounded lifecycle refusal categories.
@@ -78,8 +108,13 @@ pub fn unavailable(operation_id: &str) -> pb::LifecycleControlResponse {
     }
 }
 
+/// Reports a successfully applied native lifecycle operation.
 pub fn applied(operation_id: &str) -> pb::LifecycleControlResponse {
-    pb::LifecycleControlResponse { status: pb::LifecycleStatus::Applied as i32, operation_id: operation_id.to_owned(), detail: String::new() }
+    pb::LifecycleControlResponse {
+        status: pb::LifecycleStatus::Applied as i32,
+        operation_id: operation_id.to_owned(),
+        detail: String::new(),
+    }
 }
 
 /// Validates a same-database reactivation request before admission.

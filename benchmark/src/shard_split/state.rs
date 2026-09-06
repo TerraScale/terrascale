@@ -252,6 +252,9 @@ impl DurableSplitState {
         }
         let lower = (lower_len > 0).then(|| bytes[5..upper_len_start].to_vec());
         let key = bytes[upper_len_end..end].to_vec();
+        if lower.as_deref().is_some_and(|lower| lower >= key.as_slice()) {
+            return Err(SplitStateError::Malformed);
+        }
         let source = u64::from_be_bytes(bytes[end..end + 8].try_into().expect("length checked"));
         let target =
             u64::from_be_bytes(bytes[end + 8..end + 16].try_into().expect("length checked"));

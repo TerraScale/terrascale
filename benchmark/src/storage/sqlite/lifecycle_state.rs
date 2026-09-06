@@ -134,13 +134,13 @@ impl SqliteStorage {
                 state.deletion = Some(intent);
             }
             LifecycleCommand::Pause => {
-                if state.deletion.is_some() {
+                if state.access_revoked() {
                     return Err(LifecycleError::Revoked);
                 }
                 state.paused = true;
             }
             LifecycleCommand::Resume => {
-                if state.deletion.is_some() {
+                if state.access_revoked() {
                     return Err(LifecycleError::Revoked);
                 }
                 state.paused = false;
@@ -185,7 +185,7 @@ fn decode(body: &[u8]) -> Result<LifecycleState, LifecycleError> {
             body.get(at..at + 8).ok_or_else(invalid)?.try_into().map_err(|_| invalid())?,
         ))
     };
-    if body.len() < 43 || body.len() > 554 || body[16] > 1 {
+    if body.len() < 44 || body.len() > 554 || body[16] > 1 {
         return Err(invalid());
     }
     let at = number(8)?;
@@ -204,13 +204,10 @@ fn decode(body: &[u8]) -> Result<LifecycleState, LifecycleError> {
     };
     let preparation_id = operation()?;
     let deletion_id = operation()?;
-    let paused = match body.get(cursor..) {
-        None => return Err(invalid()),
-        Some([]) => false,
-        Some([value]) if *value <= 1 => *value != 0,
-        Some(_) => return Err(invalid()),
+    let Some([paused]) = body.get(cursor..) else {
+        return Err(invalid());
     };
-    if cursor > body.len()
+    if *paused > 1
         || at > i64::MAX as u64
         || minimum_cutoff_millis > i64::MAX as u64
         || retain_until > i64::MAX as u64
@@ -236,7 +233,7 @@ fn decode(body: &[u8]) -> Result<LifecycleState, LifecycleError> {
         generation: number(0)?,
         last_authorized_request_at: (at != 0).then_some(at),
         deletion_protection: body[16] != 0,
-        paused,
+        paused: *paused != 0,
         deletion_preparation,
         deletion,
     })

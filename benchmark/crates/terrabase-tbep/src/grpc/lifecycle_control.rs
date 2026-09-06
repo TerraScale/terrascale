@@ -42,28 +42,38 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch(request, |owner, context, operation| owner.ensure_snapshot(context, operation)).await
+        self.dispatch(request, |owner, context, operation| {
+            owner.ensure_snapshot(context, operation)
+        })
+        .await
     }
 
     async fn verify_snapshot_placement(
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch(request, |owner, context, operation| owner.verify_snapshot_placement(context, operation)).await
+        self.dispatch(request, |owner, context, operation| {
+            owner.verify_snapshot_placement(context, operation)
+        })
+        .await
     }
 
     async fn close_database(
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch(request, |owner, context, operation| owner.close_database(context, operation)).await
+        self.dispatch(request, |owner, context, operation| owner.close_database(context, operation))
+            .await
     }
 
     async fn stop_native_backup(
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch(request, |owner, context, operation| owner.stop_native_backup(context, operation)).await
+        self.dispatch(request, |owner, context, operation| {
+            owner.stop_native_backup(context, operation)
+        })
+        .await
     }
 
     async fn reactivate(
@@ -76,8 +86,11 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
             Status::new(Code::InvalidArgument, "lifecycle restore target is invalid")
         })?;
         let inner = request.request.as_ref().expect("validated reactivation request");
-        let Some(owner) = self.lifecycle.as_ref() else { return Ok(Response::new(lifecycle::unavailable(operation))) };
-        owner.reactivate(inner.context.as_ref().expect("validated lifecycle context"), operation)
+        let Some(owner) = self.lifecycle.as_ref() else {
+            return Ok(Response::new(lifecycle::unavailable(operation)));
+        };
+        owner
+            .reactivate(inner.context.as_ref().expect("validated lifecycle context"), operation)
             .map_err(|error| Status::new(Code::Unavailable, error))?;
         Ok(Response::new(lifecycle::applied(operation)))
     }
@@ -86,7 +99,10 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch(request, |owner, context, operation| owner.delete_owned_data(context, operation)).await
+        self.dispatch(request, |owner, context, operation| {
+            owner.delete_owned_data(context, operation)
+        })
+        .await
     }
 }
 
@@ -94,13 +110,19 @@ impl TbepGrpcServer {
     async fn dispatch(
         &self,
         request: Request<pb::LifecycleControlRequest>,
-        invoke: impl FnOnce(&dyn lifecycle::LifecycleControl, &pb::LifecycleControlContext, &str) -> Result<(), String>,
+        invoke: impl FnOnce(
+            &dyn lifecycle::LifecycleControl,
+            &pb::LifecycleControlContext,
+            &str,
+        ) -> Result<(), String>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
         self.authenticate_lifecycle(&request)?;
         let request = request.into_inner();
         let operation_id = lifecycle::validate_request(&request)
             .map_err(|_| Status::new(Code::InvalidArgument, "lifecycle identity is invalid"))?;
-        let Some(owner) = self.lifecycle.as_ref() else { return Ok(Response::new(lifecycle::unavailable(operation_id))) };
+        let Some(owner) = self.lifecycle.as_ref() else {
+            return Ok(Response::new(lifecycle::unavailable(operation_id)));
+        };
         let context = request.context.as_ref().expect("validated lifecycle context");
         invoke(owner.as_ref(), context, operation_id)
             .map_err(|error| Status::new(Code::Unavailable, error))?;

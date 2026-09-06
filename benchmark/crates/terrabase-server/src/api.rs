@@ -575,15 +575,15 @@ pub struct ApiState {
     /// member (the single-tenant local stack shape; the multi-project
     /// router arrives with the ts-proxy lane).
     pub scope: (String, String),
-    /// The Litestream fleet (`S-06`): one stream per hosted database.
-    pub backups: Arc<crate::backup::BackupStreams>,
+    /// Development-only external backup adapter. Production uses
+    /// `native_backups` and leaves this unset.
+    pub backups: Option<Arc<crate::backup::BackupStreams>>,
     /// Where the fleet writes replicas: `<data_root>/backup` on the local
     /// stack (`S-06`).
     pub backup_root: std::path::PathBuf,
-    /// Throwaway PITR restores backing `?at=` time-travel reads (`S-06`):
-    /// cached per (database, second) under the backup root with a bounded
-    /// budget.
-    pub timetravel: Arc<crate::backup::TimeTravelCache>,
+    /// Development-only external time-travel cache. Production leaves this
+    /// unset and routes restore operations through the native owner.
+    pub timetravel: Option<Arc<crate::backup::TimeTravelCache>>,
     /// The D-64 abuse guards and per-tenant governance budgets (E-10):
     /// every read/query/transport admission on this surface checks them
     /// first, and every served direct-read byte accounts against them.
@@ -616,9 +616,9 @@ impl ApiState {
         admitted_databases: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
         replication_progress: Arc<crate::replication_runtime::ReplicationProgress>,
         scope: (String, String),
-        backups: Arc<crate::backup::BackupStreams>,
+        backups: Option<Arc<crate::backup::BackupStreams>>,
         backup_root: std::path::PathBuf,
-        timetravel: Arc<crate::backup::TimeTravelCache>,
+        timetravel: Option<Arc<crate::backup::TimeTravelCache>>,
         guards: Arc<crate::guards::AbuseGuards>,
         origin_proof_keys: Arc<crate::reactive_api::OriginProofKeyRing>,
         capability_keys: Arc<crate::reactive_api::CapabilityKeyRing>,
@@ -1886,9 +1886,13 @@ async fn create_database(
                     return ApiError::storage_failure().into_response();
                 }
                 let location = catalog.location_for(&state.scope.0, &state.scope.1, name);
-                let plan = state.backups.plan_for(name);
+                let Some(backups) = state.backups.as_ref() else {
+                    let _ = control.soft_delete(name);
+                    return ApiError::backup("native backup owner is unavailable").into_response();
+                };
+                let plan = backups.plan_for(name);
                 if let Err(error) = attach_backup(
-                    &state.backups,
+                    backups,
                     name,
                     &location,
                     &state.backup_root,
@@ -1977,7 +1981,9 @@ async fn delete_database(
     };
     match control.soft_delete(&name) {
         Ok(record) => {
-            state.backups.detach(&name);
+            if let Some(backups) = &state.backups {
+                backups.detach(&name);
+            }
             record_response(StatusCode::OK, &record)
         }
         Err(error) => ApiError::control(error).into_response(),
@@ -3083,7 +3089,10 @@ fn time_travel_document(
     // The retention gate reads the database's plan from the fleet's
     // per-database registry — Free until the billing lane supplies it
     // (D-25 retention, unknown plans fail closed to the Free window).
-    let plan = state.backups.plan_for(name);
+    let Some(backups) = state.backups.as_ref() else {
+        return ApiError::backup("native backup owner is unavailable").into_response();
+    };
+    let plan = backups.plan_for(name);
     let retention_days = crate::backup::retention_days_for_plan(&plan);
     if at_seconds.saturating_add(retention_days.saturating_mul(86_400)) < now_seconds {
         return ApiError {
@@ -3106,7 +3115,10 @@ fn time_travel_document(
     let Ok(tenant) = terrabase::types::TenantId::try_new(&owner.0) else {
         return ApiError::control_unavailable().into_response();
     };
-    match state.timetravel.read_at(name, &tenant, at_seconds, collection, id) {
+    let Some(timetravel) = state.timetravel.as_ref() else {
+        return ApiError::backup("native backup owner is unavailable").into_response();
+    };
+    match timetravel.read_at(name, &tenant, at_seconds, collection, id) {
         Err(error) => ApiError::backup(error).into_response(),
         Ok(None) => document_not_found(collection.as_str(), id.as_str()).into_response(),
         Ok(Some(read)) => {
@@ -3847,8 +3859,14 @@ async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<Strin
     if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
         return error.into_response();
     }
-    let ready = state.backups.is_ready(&name);
-    let body = format!("{{\"ready\":{ready},\"streaming\":{}}}", state.backups.attached(&name));
+    let (ready, streaming) = if let Some(native) = &state.native_backups {
+        (native.is_ready(&name).unwrap_or(false), native.attached(&name).unwrap_or(false))
+    } else if let Some(backups) = &state.backups {
+        (backups.is_ready(&name), backups.attached(&name))
+    } else {
+        (false, false)
+    };
+    let body = format!("{{\"ready\":{ready},\"streaming\":{streaming}}}");
     if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
         return error.into_response();
     }
@@ -3998,14 +4016,17 @@ fn restore_or_branch(
     // swaps (S-06: restore never writes under a live engine).
     catalog.close_database(&state.scope.0, &state.scope.1, target);
     let at_seconds = at.map(|millis| u64::try_from(millis.div_euclid(1000)).unwrap_or(0));
-    match state.backups.restore_to_location(&name, at_seconds, &location) {
+    let Some(backups) = state.backups.as_ref() else {
+        return ApiError::backup("native backup restore authority is unavailable").into_response();
+    };
+    match backups.restore_to_location(&name, at_seconds, &location) {
         Ok(()) => {
             // The new database is a main.db from its first moment: it gets
             // its own stream under the source's plan (Free until the
             // billing lane supplies plans; D-25 retention, fail-closed).
-            let plan = state.backups.plan_for(&name);
+            let plan = backups.plan_for(&name);
             if let Err(error) = attach_backup(
-                &state.backups,
+                backups,
                 target,
                 &location,
                 &state.backup_root,
@@ -4350,9 +4371,9 @@ mod tests {
             control: None,
             catalog: None,
             scope: ("terrabase-local".into(), "local".into()),
-            backups,
+            backups: Some(backups),
             backup_root,
-            timetravel,
+            timetravel: Some(timetravel),
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             webhook_keys: None,
@@ -4404,9 +4425,9 @@ mod tests {
             control: Some(Arc::new(control)),
             catalog: Some(Arc::new(catalog)),
             scope: ("terrabase-local".into(), "local".into()),
-            backups,
+            backups: Some(backups),
             backup_root: dir.join("backup"),
-            timetravel,
+            timetravel: Some(timetravel),
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             webhook_keys: None,
@@ -4795,7 +4816,7 @@ mod tests {
         }
         let state = state_with_keys_and_control();
         let backup_root = state.backup_root.clone();
-        let fleet = Arc::clone(&state.backups);
+        let fleet = Arc::clone(state.backups.as_ref().expect("development backup fleet"));
         let router = router(state);
         let auth = "Bearer tskey_test_abcdefghijklmnop";
 
@@ -4921,7 +4942,7 @@ mod tests {
         .status();
         assert_eq!(refused, StatusCode::UNPROCESSABLE_ENTITY, "Free refuses the old moment");
 
-        state.backups.set_plan("planned", "pro");
+        state.backups.as_ref().expect("development backup fleet").set_plan("planned", "pro");
         let gated = super::time_travel_document(
             &state,
             "planned",
@@ -4938,7 +4959,7 @@ mod tests {
             "Pro admits the moment past the Free window"
         );
 
-        state.backups.set_plan("planned", "team");
+        state.backups.as_ref().expect("development backup fleet").set_plan("planned", "team");
         let closed = super::time_travel_document(
             &state,
             "planned",
@@ -5006,7 +5027,7 @@ mod tests {
         }
         let state = state_with_keys_and_control();
         let backup_root = state.backup_root.clone();
-        let fleet = Arc::clone(&state.backups);
+        let fleet = Arc::clone(state.backups.as_ref().expect("development backup fleet"));
         let router = router(state);
         let auth = "Bearer tskey_test_abcdefghijklmnop";
         let unix_now = super::unix_now_seconds;

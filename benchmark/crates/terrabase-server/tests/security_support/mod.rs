@@ -54,9 +54,9 @@ impl Fixture {
             control: Some(Arc::new(control)),
             catalog: Some(Arc::new(catalog)),
             scope: ("tenant-a".into(), "project-a".into()),
-            backups: Arc::clone(&backups),
+            backups: Some(Arc::clone(&backups)),
             backup_root: root.join("backup"),
-            timetravel: Arc::new(TimeTravelCache::new(backups, &root.join("timetravel"))),
+            timetravel: Some(Arc::new(TimeTravelCache::new(backups, &root.join("timetravel")))),
             guards: Arc::new(terrabase_server::guards::AbuseGuards::new()),
             origin_proof_keys: Arc::new(
                 OriginProofKeyRing::new(

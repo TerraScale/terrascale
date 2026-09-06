@@ -5,6 +5,95 @@
 
 use std::sync::Arc;
 
+/// Adapter installed on the TBEP server; it binds every request to the exact
+/// accepted assignment before entering the native worker.
+pub struct TbepLifecycleControl {
+    control: Arc<ProductionLifecycleControl>,
+}
+
+impl TbepLifecycleControl {
+    #[must_use]
+    pub fn new(control: Arc<ProductionLifecycleControl>) -> Self {
+        Self { control }
+    }
+
+    fn assignment(
+        context: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
+    ) -> AcceptedLifecycleAssignment {
+        AcceptedLifecycleAssignment {
+            environment: context.environment.clone(),
+            tenant: context.tenant.clone(),
+            project: context.project.clone(),
+            database: context.database.clone(),
+            region: context.region.clone(),
+            member: context.member.clone(),
+            placement_revision: context.placement_revision,
+            authority_epoch: context.authority_epoch,
+            authority_lease: context.authority_lease.clone(),
+        }
+    }
+
+    fn invoke(
+        &self,
+        context: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
+        operation: &str,
+        f: impl FnOnce(
+            &ProductionLifecycleControl,
+            &AcceptedLifecycleAssignment,
+            &[u8],
+            &str,
+        ) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let assignment = Self::assignment(context);
+        f(&self.control, &assignment, &context.authority_signature, operation)
+    }
+}
+
+impl terrabase_tbep::lifecycle::LifecycleControl for TbepLifecycleControl {
+    fn ensure_snapshot(
+        &self,
+        c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
+        o: &str,
+    ) -> Result<(), String> {
+        self.invoke(c, o, ProductionLifecycleControl::ensure_snapshot)
+    }
+    fn verify_snapshot_placement(
+        &self,
+        c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
+        o: &str,
+    ) -> Result<(), String> {
+        self.invoke(c, o, ProductionLifecycleControl::verify_snapshot_placement)
+    }
+    fn close_database(
+        &self,
+        c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
+        o: &str,
+    ) -> Result<(), String> {
+        self.invoke(c, o, ProductionLifecycleControl::close_database)
+    }
+    fn stop_native_backup(
+        &self,
+        c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
+        o: &str,
+    ) -> Result<(), String> {
+        self.invoke(c, o, ProductionLifecycleControl::stop_native_backup)
+    }
+    fn reactivate(
+        &self,
+        c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
+        o: &str,
+    ) -> Result<(), String> {
+        self.invoke(c, o, ProductionLifecycleControl::reactivate)
+    }
+    fn delete_owned_data(
+        &self,
+        c: &terrabase_tbep::proto::terrabase::v1::LifecycleControlContext,
+        o: &str,
+    ) -> Result<(), String> {
+        self.invoke(c, o, ProductionLifecycleControl::delete_owned_data)
+    }
+}
+
 /// Exact assignment retained by the durable placement journal.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceptedLifecycleAssignment {
@@ -54,6 +143,65 @@ pub trait NativeLifecycleWorker: Send + Sync {
         assignment: &AcceptedLifecycleAssignment,
         operation: &str,
     ) -> Result<(), String>;
+    /// Verifies the native placement without changing serving state.
+    fn verify_snapshot_placement(
+        &self,
+        _assignment: &AcceptedLifecycleAssignment,
+        _operation: &str,
+    ) -> Result<(), String> {
+        Err("native snapshot placement verifier is unavailable".into())
+    }
+    /// Deletes data owned by this member after durable authority admission.
+    fn delete_owned_data(
+        &self,
+        _assignment: &AcceptedLifecycleAssignment,
+        _operation: &str,
+    ) -> Result<(), String> {
+        Err("native owned-data deletion is unavailable".into())
+    }
+}
+
+/// Native worker backed by the admitted database registry.
+///
+/// This supplies the reversible pause/resume portion; snapshot and backup
+/// receipt work still requires the configured fleet owner.
+pub struct RegistryLifecycleWorker {
+    /// Durable admitted database registry.
+    pub registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+}
+
+impl NativeLifecycleWorker for RegistryLifecycleWorker {
+    fn ensure_snapshot(
+        &self,
+        _assignment: &AcceptedLifecycleAssignment,
+        _operation: &str,
+    ) -> Result<(), String> {
+        Err("native snapshot fleet is not attached".into())
+    }
+
+    fn close_database(
+        &self,
+        assignment: &AcceptedLifecycleAssignment,
+        _operation: &str,
+    ) -> Result<(), String> {
+        self.registry.pause(&assignment.database)
+    }
+
+    fn stop_native_backup(
+        &self,
+        _assignment: &AcceptedLifecycleAssignment,
+        _operation: &str,
+    ) -> Result<(), String> {
+        Err("native backup fleet is not attached".into())
+    }
+
+    fn reactivate(
+        &self,
+        assignment: &AcceptedLifecycleAssignment,
+        _operation: &str,
+    ) -> Result<(), String> {
+        self.registry.resume(&assignment.database)
+    }
 }
 
 /// Authority verifier for signed accepted placement proofs.
@@ -117,5 +265,25 @@ impl ProductionLifecycleControl {
     ) -> Result<(), String> {
         self.authority.verify(assignment, signature)?;
         self.worker.reactivate(assignment, operation)
+    }
+
+    pub fn verify_snapshot_placement(
+        &self,
+        assignment: &AcceptedLifecycleAssignment,
+        signature: &[u8],
+        operation: &str,
+    ) -> Result<(), String> {
+        self.authority.verify(assignment, signature)?;
+        self.worker.verify_snapshot_placement(assignment, operation)
+    }
+
+    pub fn delete_owned_data(
+        &self,
+        assignment: &AcceptedLifecycleAssignment,
+        signature: &[u8],
+        operation: &str,
+    ) -> Result<(), String> {
+        self.authority.verify(assignment, signature)?;
+        self.worker.delete_owned_data(assignment, operation)
     }
 }

@@ -3955,6 +3955,48 @@ impl Engine {
         ))
     }
 
+    /// Returns the deterministic template digest for the first retained
+    /// evidence record of an index. The digest is required to retrieve the
+    /// exact paired sample set without exposing a template through the
+    /// lifecycle API.
+    pub fn auto_index_shadow_evidence_digest(
+        &self,
+        tenant: &TenantId,
+        index_id: &str,
+    ) -> Result<Option<[u8; 32]>, EngineError> {
+        self.validate_tenant(tenant)?;
+        Ok(self
+            .auto_index_lifecycle
+            .lock()
+            .map_err(|_| EngineError::StorageFailure)?
+            .evidence_digest(tenant.as_str(), index_id))
+    }
+
+    /// Records bounded paired shadow samples in the durable lifecycle journal.
+    /// The lifecycle generation is checked and advanced atomically with the
+    /// evidence event; recording evidence never changes planner visibility.
+    pub fn auto_index_record_shadow_evidence(
+        &self,
+        tenant: &TenantId,
+        evidence: crate::auto_index::ShadowEvidence,
+        at_millis: u64,
+    ) -> Result<crate::auto_index::ShadowEvidence, EngineError> {
+        self.validate_tenant(tenant)?;
+        if evidence.index_id.is_empty() || evidence.index_id.len() > 1024 {
+            return Err(EngineError::InvalidDocument);
+        }
+        let mut lifecycle =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        lifecycle
+            .record_evidence(
+                self.lock_storage()?.port.as_mut(),
+                tenant.as_str(),
+                evidence,
+                at_millis,
+            )
+            .map_err(|_| EngineError::Conflict)
+    }
+
     /// Records one literal-free execution observation for the D-31 bounded
     /// workload sketch. Query execution supplies this after it has computed
     /// the result statistics, so the observation is never synthetic.

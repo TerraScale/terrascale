@@ -195,11 +195,11 @@ mod tests {
             control: None,
             catalog: None,
             scope: ("tenant".into(), "project".into()),
-            timetravel: Arc::new(crate::backup::TimeTravelCache::new(
+            timetravel: Some(Arc::new(crate::backup::TimeTravelCache::new(
                 Arc::clone(&backups),
                 &backup_root,
-            )),
-            backups,
+            ))),
+            backups: Some(backups),
             backup_root,
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),

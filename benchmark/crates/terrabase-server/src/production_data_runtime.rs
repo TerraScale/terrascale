@@ -93,6 +93,22 @@ impl ProductionDataLifecycle {
         }
     }
 
+    /// Durably pauses one admitted database while retaining its identity and data.
+    pub fn pause_database(&self, database: &str) -> Result<(), String> {
+        if self.is_draining() {
+            return Err("production data lifecycle is draining".into());
+        }
+        self.registry.pause(database)
+    }
+
+    /// Resumes one previously paused admitted database using its retained identity.
+    pub fn reactivate_database(&self, database: &str) -> Result<(), String> {
+        if self.is_draining() {
+            return Err("production data lifecycle is draining".into());
+        }
+        self.registry.resume(database)
+    }
+
     /// Returns the installed runtime without transferring ownership.
     #[must_use]
     pub fn get(&self) -> Option<&ProductionDataRuntime> {
@@ -802,12 +818,34 @@ impl ProductionAdmissionRuntime {
             .into_iter()
             .find(|record| record.database_id == database)
             .ok_or("admitted backup record unavailable")?;
+        let owner = snapshot.database.host.engine().database_owner();
+        if owner.database().to_text() != record.database_id
+            || owner.tenant().to_text() != record.tenant_id
+            || owner.project().to_text() != record.project_id
+            || owner.region().as_str() != record.region
+        {
+            return Err("retained engine owner disagrees with admitted record".into());
+        }
         let configured = self
             .config
             .databases
             .iter()
             .find(|entry| entry.database.to_text() == database)
             .ok_or("configured database unavailable")?;
+        if configured.tenant.to_text() != record.tenant_id
+            || configured.project.to_text() != record.project_id
+            || configured.region.as_str() != record.region
+            || configured.selected_regions
+                != record
+                    .regions
+                    .iter()
+                    .map(|region| region.parse())
+                    .collect::<Result<BTreeSet<_>, _>>()
+                    .map_err(|_| "invalid admitted placement")?
+            || configured.encryption_key.to_string() != record.key_version
+        {
+            return Err("configured backup identity disagrees with admitted record".into());
+        }
         let policy = configured.backup.as_ref().ok_or("native backup policy missing")?;
         let key_config = self.config.keys.as_ref().ok_or("production key delivery missing")?;
         let provider = OciVaultKeyDelivery::new(

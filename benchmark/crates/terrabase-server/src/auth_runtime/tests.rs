@@ -1090,6 +1090,108 @@ async fn admitted_quic_client_response_completes_after_runtime_dispatch() {
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn lost_consume_response_replays_the_same_public_operation() {
+    use terrabase_member_transport::production::ProductionConnectionClass;
+
+    let fixture = admitted_fixture::create().await;
+    let auth = format!("Bearer {}", fixture.key);
+    let seed = admitted_fixture::request(
+        &fixture.runtime,
+        Request::post(format!("/api/v1/databases/{}/auth/insertUnique", fixture.database))
+            .header("authorization", &auth)
+            .header("idempotency-key", "seed-consume-token")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"model":"token","record":{"id":"single-use","value":"opaque"}}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(seed.0, StatusCode::OK, "seed response: {:?}", seed.1);
+
+    let group = fixture.runtime.domains.read().unwrap().keys().next().unwrap().clone();
+    let command = Command {
+        idempotency_key: "consume-lost-response".into(),
+        observed_at_ms: 1,
+        action: Action::ConsumeMatching {
+            model: "token".into(),
+            predicates: vec![Predicate {
+                field: "value".into(),
+                value: serde_json::Value::String("opaque".into()),
+                operator: Operator::Eq,
+                connector: Connector::AND,
+                mode: Mode::Sensitive,
+            }],
+        },
+    };
+    let frame = serde_json::to_vec(&serde_json::json!({
+        "protocol": "terrabase.auth.raft.v1",
+        "group": group,
+        "sender": 2,
+        "body": { "method": "clientWrite", "request": command },
+    }))
+    .unwrap();
+    let member = fixture.local_endpoint.config().local_identity().member().clone();
+    let (_permit, connection) = fixture
+        .remote_endpoint
+        .connect_request(
+            &member,
+            ProductionConnectionClass::AuthClient,
+            frame.len(),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    connection.send_frame(&frame).await.unwrap();
+    // The request has crossed the authenticated transport; closing the client
+    // now models the caller losing the response after transmission.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    drop(connection);
+
+    let mut replay = None;
+    for _ in 0..20 {
+        let response = admitted_fixture::request(
+            &fixture.runtime,
+            Request::post(format!("/api/v1/databases/{}/auth/consumeMatching", fixture.database))
+                .header("authorization", &auth)
+                .header("idempotency-key", "consume-lost-response")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"model":"token","predicates":[{"field":"value","operator":"eq","value":"opaque"}]}"#))
+                .unwrap(),
+        )
+        .await;
+        if response.0 == StatusCode::OK {
+            replay = Some(response);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let replay = replay.expect("same idempotency key resolves the lost consume response");
+    assert_eq!(replay.1["record"]["id"], "single-use");
+
+    let second = admitted_fixture::request(
+        &fixture.runtime,
+        Request::post(format!("/api/v1/databases/{}/auth/consumeMatching", fixture.database))
+            .header("authorization", &auth)
+            .header("idempotency-key", "consume-second-attempt")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"model":"token","predicates":[{"field":"value","operator":"eq","value":"opaque"}]}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(second.0, StatusCode::OK, "second consume: {:?}", second.1);
+    assert!(second.1["record"].is_null(), "token must be single-use: {:?}", second.1);
+
+    fixture.runtime.shutdown().await;
+    fixture.local_receive.abort();
+    fixture.remote_receive.abort();
+    fixture.remote.shutdown().await.unwrap();
+    drop(fixture.local_endpoint);
+    drop(fixture.remote_endpoint);
+    let _ = std::fs::remove_dir_all(fixture.root);
+    drop(fixture.keys);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn client_capacity_does_not_consume_consensus_capacity() {
     let fixture = admitted_fixture::create().await;
     let client = fixture.runtime.client_slots.clone().try_acquire_many_owned(8).unwrap();

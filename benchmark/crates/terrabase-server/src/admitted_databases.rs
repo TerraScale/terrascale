@@ -242,13 +242,12 @@ impl AdmittedDatabaseRegistry {
         if let Some(entry) = &entry {
             let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
                 .map_err(|_| "invalid admitted tenant")?;
-            if entry
+            let state = entry
                 .host
                 .engine()
                 .lifecycle_state(&entry.host.engine().scope_for(&tenant))
-                .map_err(|_| "lifecycle source unavailable")?
-                .paused
-            {
+                .map_err(|_| "lifecycle source unavailable")?;
+            if state.paused {
                 return Ok(None);
             }
         }
@@ -297,13 +296,12 @@ impl AdmittedDatabaseRegistry {
         if let Some(entry) = &entry {
             let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
                 .map_err(|_| "invalid admitted tenant")?;
-            if entry
+            let state = entry
                 .host
                 .engine()
                 .lifecycle_state(&entry.host.engine().scope_for(&tenant))
-                .map_err(|_| "lifecycle source unavailable")?
-                .paused
-            {
+                .map_err(|_| "lifecycle source unavailable")?;
+            if state.paused || state.access_revoked() {
                 return Ok(None);
             }
         }
@@ -776,6 +774,12 @@ pub(crate) mod tests {
         assert!(!engine.lifecycle_state(&scope).unwrap().paused);
         let resumed = registry.resolve(database).unwrap().unwrap();
         assert!(Arc::ptr_eq(&admitted, &resumed));
+
+        engine.lifecycle_prepare_deletion(&scope, "delete-after-pause").unwrap();
+        assert!(registry.resolve(database).unwrap().is_some());
+        assert!(registry.resolve_serving(database).unwrap().is_none());
+        assert!(registry.pause(database).is_err());
+        assert!(registry.resume(database).is_err());
 
         drop(admitted);
         drop(registry);

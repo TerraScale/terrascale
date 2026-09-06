@@ -199,6 +199,20 @@ mod tests {
         assert_eq!(ShardSplit::plan(None, Vec::new()), Err(SplitPlanError::EmptySplitKey));
     }
 
+    #[test]
+    fn durable_reversed_interval_is_refused_after_restart_decode() {
+        let state = DurableSplitState::new(
+            Some(b"z".to_vec()),
+            b"m".to_vec(),
+            0,
+            0,
+            0,
+            SplitPhase::Planned,
+        );
+        assert_eq!(DurableSplitState::decode(&state.encode()), Err(SplitStateError::Malformed));
+        assert_eq!(ShardSplit::from_durable_state(state), Err(SplitStateError::Malformed));
+    }
+
     /// Cutover refuses while the shard trails an acknowledged write, then
     /// succeeds once the tail drains — zero acknowledged-write loss.
     #[test]

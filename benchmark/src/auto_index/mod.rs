@@ -1363,6 +1363,17 @@ impl LifecycleStore {
         Some(evidence)
     }
 
+    /// Returns the digest of the oldest retained template evidence for an
+    /// index. Evidence keys are ordered, making the public aggregate endpoint
+    /// deterministic while preserving the exact template identity on disk.
+    pub(crate) fn evidence_digest(&self, tenant: &str, index_id: &str) -> Option<[u8; 32]> {
+        self.evidence
+            .range((tenant.to_owned(), index_id.to_owned(), [0; 32])..)
+            .take_while(|((owner, candidate, _), _)| owner == tenant && candidate == index_id)
+            .map(|((_, _, digest), _)| *digest)
+            .next()
+    }
+
     fn invalidate_evidence(&mut self, tenant: &str, id: &str) {
         self.evidence.retain(|(owner, candidate, _), _| owner != tenant || candidate != id);
     }
