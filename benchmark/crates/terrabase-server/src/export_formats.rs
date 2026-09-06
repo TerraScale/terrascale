@@ -5,12 +5,16 @@
 //! record is rejected before it reaches storage, and a caller can persist the
 //! byte offset after the corresponding storage write has committed.
 
+use base64::Engine as _;
 use serde_json::Value;
 use std::fmt;
 
 /// Supported import/export interchange formats.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TransferFormat {
+    /// TerraBase native bundle members, including history and causal metadata.
+    Native,
     /// One envelope per line.
     Jsonl,
     /// RFC 4180 CSV with a `value` JSON column.
@@ -21,6 +25,37 @@ pub enum TransferFormat {
     CosmosJson,
     /// DynamoDB JSON export envelopes.
     DynamoJson,
+}
+
+impl Default for TransferFormat {
+    fn default() -> Self {
+        Self::Native
+    }
+}
+
+/// Stable artifact suffix for the selected encoding.
+#[must_use]
+pub const fn extension(format: TransferFormat) -> &'static str {
+    match format {
+        TransferFormat::Native => "tbx",
+        TransferFormat::Jsonl => "jsonl",
+        TransferFormat::Csv => "csv",
+        TransferFormat::MongoJson | TransferFormat::CosmosJson => "json",
+        TransferFormat::DynamoJson => "json",
+    }
+}
+
+/// MIME type paired with [`extension`].
+#[must_use]
+pub const fn content_type(format: TransferFormat) -> &'static str {
+    match format {
+        TransferFormat::Native => "application/vnd.terrascale.export+jsonl",
+        TransferFormat::Jsonl
+        | TransferFormat::MongoJson
+        | TransferFormat::CosmosJson
+        | TransferFormat::DynamoJson => "application/jsonl",
+        TransferFormat::Csv => "text/csv",
+    }
 }
 
 /// One logical document accepted by an import writer.
@@ -68,7 +103,7 @@ pub fn decode(
         return Err(CodecError::Oversized);
     }
     match format {
-        TransferFormat::Jsonl | TransferFormat::DynamoJson => input
+        TransferFormat::Native | TransferFormat::Jsonl | TransferFormat::DynamoJson => input
             .split(|byte| *byte == b'\n')
             .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
             .map(|line| decode_one(line, format, max_record))
@@ -96,7 +131,7 @@ pub fn encode(records: &[ImportRecord], format: TransferFormat) -> Result<Vec<u8
         let value: Value =
             serde_json::from_slice(&record.value).map_err(|_| CodecError::Malformed)?;
         match format {
-            TransferFormat::Jsonl => {
+            TransferFormat::Native | TransferFormat::Jsonl => {
                 let envelope = serde_json::json!({"collection": record.collection, "id": record.id, "value": value});
                 serde_json::to_writer(&mut out, &envelope).map_err(|_| CodecError::Malformed)?;
                 out.push(b'\n');
@@ -135,6 +170,28 @@ pub fn encode(records: &[ImportRecord], format: TransferFormat) -> Result<Vec<u8
         out.push(b']');
     }
     Ok(out)
+}
+
+/// Encodes current document records produced by the export source. History
+/// remains in the dedicated history member and is intentionally not flattened.
+pub fn encode_documents(
+    records: &[crate::export_api::ExportRecord],
+    format: TransferFormat,
+) -> Result<Vec<u8>, CodecError> {
+    let records = records
+        .iter()
+        .filter_map(|record| match record {
+            crate::export_api::ExportRecord::Document {
+                collection, id, canonical_json, ..
+            } => Some(ImportRecord {
+                collection: collection.clone(),
+                id: id.clone(),
+                value: canonical_json.clone(),
+            }),
+            crate::export_api::ExportRecord::History { .. } => None,
+        })
+        .collect::<Vec<_>>();
+    encode(&records, format)
 }
 
 fn decode_one(line: &[u8], format: TransferFormat, max: usize) -> Result<ImportRecord, CodecError> {
@@ -285,12 +342,17 @@ fn from_dynamo_attr(value: &Value) -> Result<Value, CodecError> {
         return Ok(Value::Bool(v));
     }
     if let Some(v) = o.get("B").and_then(Value::as_str) {
+        if base64::engine::general_purpose::STANDARD.decode(v).is_err() {
+            return Err(CodecError::Malformed);
+        }
         // Keep binary values explicitly tagged in canonical JSON; decoding
         // them as text would silently corrupt the source representation.
         return Ok(serde_json::json!({ "$binary": v }));
     }
     if let Some(v) = o.get("SS").and_then(Value::as_array) {
-        if !v.iter().all(Value::is_string) { return Err(CodecError::Malformed); }
+        if !v.iter().all(Value::is_string) {
+            return Err(CodecError::Malformed);
+        }
         return Ok(Value::Array(v.clone()));
     }
     if let Some(v) = o.get("NS").and_then(Value::as_array) {
@@ -302,7 +364,9 @@ fn from_dynamo_attr(value: &Value) -> Result<Value, CodecError> {
         return Ok(Value::Array(values));
     }
     if let Some(v) = o.get("BS").and_then(Value::as_array) {
-        if !v.iter().all(Value::is_string) { return Err(CodecError::Malformed); }
+        if !v.iter().all(Value::is_string) {
+            return Err(CodecError::Malformed);
+        }
         return Ok(serde_json::json!({ "$binarySet": v }));
     }
     if o.get("NULL").is_some() {
@@ -338,5 +402,19 @@ mod tests {
         let encoded = encode(&records, TransferFormat::DynamoJson).unwrap();
         assert_eq!(decode(&encoded, TransferFormat::DynamoJson, 1024).unwrap(), records);
         assert_eq!(decode(&encoded, TransferFormat::DynamoJson, 1), Err(CodecError::Oversized));
+    }
+
+    #[test]
+    fn preserves_dynamo_binary_metadata() {
+        let input = br#"{"Item":{"id":{"S":"a"},"value":{"M":{"blob":{"B":"AQI="}}}}}"#;
+        let records = decode(input, TransferFormat::DynamoJson, 1024).expect("dynamo record");
+        assert_eq!(records[0].value, br#"{"blob":{"$binary":"AQI="}}"#);
+    }
+
+    #[test]
+    fn preserves_dynamo_integers_beyond_f64_precision() {
+        let input = br#"{"Item":{"id":{"S":"a"},"value":{"M":{"n":{"N":"9007199254740993"}}}}}"#;
+        let records = decode(input, TransferFormat::DynamoJson, 1024).expect("dynamo record");
+        assert_eq!(records[0].value, br#"{"n":9007199254740993}"#);
     }
 }

@@ -173,7 +173,77 @@ pub enum FleetError {
     StagingFull,
 }
 
+/// Receipt returned only after a native lifecycle effect has completed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LifecycleReceipt {
+    pub operation_id: String,
+    pub database: String,
+    pub action: String,
+    pub retained_points: usize,
+}
+
 impl NativeBackupFleet {
+    /// Captures and verifies one native point for a lifecycle operation.
+    pub async fn lifecycle_snapshot(
+        &mut self,
+        database: &str,
+        operation_id: &str,
+    ) -> Result<LifecycleReceipt, FleetError> {
+        let manifest = self.capture_snapshot(database).await?;
+        let points = self.retained_points(database)?;
+        if points.iter().all(|point| point.boundary_sequence() != manifest.boundary_sequence()) {
+            return Err(FleetError::Capture);
+        }
+        Ok(LifecycleReceipt {
+            operation_id: operation_id.to_owned(),
+            database: database.to_owned(),
+            action: "snapshot".into(),
+            retained_points: points.len(),
+        })
+    }
+
+    /// Verifies that the native fleet retains an authenticated point.
+    pub fn lifecycle_verify(
+        &self,
+        database: &str,
+        operation_id: &str,
+    ) -> Result<LifecycleReceipt, FleetError> {
+        let points = self.retained_points(database)?;
+        if points.is_empty() {
+            return Err(FleetError::Capture);
+        }
+        Ok(LifecycleReceipt {
+            operation_id: operation_id.to_owned(),
+            database: database.to_owned(),
+            action: "verify_snapshot_placement".into(),
+            retained_points: points.len(),
+        })
+    }
+
+    /// Deletes all retained points through the fleet-owned historical destinations.
+    pub async fn lifecycle_delete(
+        &mut self,
+        database: &str,
+        operation_id: &str,
+    ) -> Result<LifecycleReceipt, FleetError> {
+        let destinations = self
+            .streams
+            .get(database)
+            .ok_or(FleetError::Configuration)?
+            .config
+            .destinations
+            .iter()
+            .map(|(_, destination)| Arc::clone(destination))
+            .collect::<Vec<_>>();
+        let removed = self.purge_retained(database, &destinations).await?;
+        Ok(LifecycleReceipt {
+            operation_id: operation_id.to_owned(),
+            database: database.to_owned(),
+            action: "delete_owned_data".into(),
+            retained_points: removed,
+        })
+    }
+
     /// Validates finite member limits before any stream is attached.
     ///
     /// # Errors

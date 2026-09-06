@@ -5,6 +5,12 @@
 
 use std::sync::Arc;
 
+/// Receipt of a completed native lifecycle effect.
+pub enum NativeLifecycleReceipt {
+    State(terrabase::engine::lifecycle_state::LifecycleOperationOutcome),
+    Backup(terrabase::backup::worker::LifecycleReceipt),
+}
+
 /// Adapter installed on the TBEP server; it binds every request to the exact
 /// accepted assignment before entering the native worker.
 pub struct TbepLifecycleControl {
@@ -78,8 +84,7 @@ impl TbepLifecycleControl {
             &AcceptedLifecycleAssignment,
             &[u8],
             &str,
-        )
-            -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String>,
+        ) -> Result<NativeLifecycleReceipt, String>,
     ) -> Result<(), String> {
         let assignment = Self::assignment(context);
         f(&self.control, &assignment, &context.authority_signature, operation).map(|_| ())
@@ -161,25 +166,25 @@ pub trait NativeLifecycleWorker: Send + Sync {
         &self,
         assignment: &AcceptedLifecycleAssignment,
         operation: &str,
-    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String>;
+    ) -> Result<NativeLifecycleReceipt, String>;
     /// Closes serving while retaining durable data.
     fn close_database(
         &self,
         assignment: &AcceptedLifecycleAssignment,
         operation: &str,
-    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String>;
+    ) -> Result<NativeLifecycleReceipt, String>;
     /// Stops only this database's native backup stream.
     fn stop_native_backup(
         &self,
         assignment: &AcceptedLifecycleAssignment,
         operation: &str,
-    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String>;
+    ) -> Result<NativeLifecycleReceipt, String>;
     /// Resumes the same retained database without replacing its identity.
     fn reactivate(
         &self,
         assignment: &AcceptedLifecycleAssignment,
         operation: &str,
-    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String>;
+    ) -> Result<NativeLifecycleReceipt, String>;
     /// Verifies the native placement without changing serving state.
     fn verify_snapshot_placement(
         &self,
@@ -214,7 +219,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         &self,
         _assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
-    ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
+    ) -> Result<NativeLifecycleReceipt, String> {
         Err("native snapshot fleet is not attached".into())
     }
 
@@ -223,7 +228,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
     ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
-        self.registry.pause(&assignment.database, _operation)
+        self.registry.pause(&assignment.database, _operation).map(NativeLifecycleReceipt::State)
     }
 
     fn stop_native_backup(
@@ -236,7 +241,15 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             .lock()
             .map_err(|_| "native backup fleet poisoned")?
             .pause(&assignment.database)
-            .map_err(|_| "native backup pause refused")
+            .map(|_| {
+                NativeLifecycleReceipt::Backup(terrabase::backup::worker::LifecycleReceipt {
+                    operation_id: _operation.to_owned(),
+                    database: assignment.database.clone(),
+                    action: "stop_native_backup".into(),
+                    retained_points: 0,
+                })
+            })
+            .map_err(|_| "native backup pause refused".into())
     }
 
     fn reactivate(
@@ -244,7 +257,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
     ) -> Result<terrabase::engine::lifecycle_state::LifecycleOperationOutcome, String> {
-        self.registry.resume(&assignment.database, _operation)
+        self.registry.resume(&assignment.database, _operation).map(NativeLifecycleReceipt::State)
     }
 }
 
@@ -273,7 +286,7 @@ impl ProductionLifecycleControl {
         assignment: &AcceptedLifecycleAssignment,
         signature: &[u8],
         operation: &str,
-    ) -> Result<(), String> {
+    ) -> Result<NativeLifecycleReceipt, String> {
         self.authority.verify(assignment, signature)?;
         self.worker.ensure_snapshot(assignment, operation).map(|_| ())
     }

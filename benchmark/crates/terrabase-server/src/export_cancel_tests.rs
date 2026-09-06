@@ -67,6 +67,7 @@ fn fixture(stop: bool) -> Fixture {
     let request = ExportRequest {
         database: "db".into(),
         destination,
+        format: crate::export_formats::TransferFormat::Jsonl,
         placement: PlacementLock::single(RegionCode::GRU),
         idempotency_key: Some("original-operation".into()),
     };

@@ -5,6 +5,7 @@ use super::{
     database_records, document_host, document_scope, push_value,
 };
 use crate::export_api::{self as export, ExportService, ExportSource, ExportSourceError};
+use crate::export_formats::TransferFormat;
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::response::IntoResponse;
 use serde::Deserialize;
@@ -15,6 +16,9 @@ use terrabase_tbep::member_host::MemberHost;
 pub(super) struct CreateExport {
     /// Stable retry identity. Reusing it returns the same admitted operation.
     idempotency_key: String,
+    /// Output encoding. Defaults to JSONL for existing callers.
+    #[serde(default)]
+    format: TransferFormat,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -228,6 +232,7 @@ pub(super) async fn create_export(
             destination,
             placement,
             idempotency_key: Some(request.idempotency_key),
+            format: request.format,
         })
         .await
     {

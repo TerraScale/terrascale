@@ -32,6 +32,7 @@ pub(crate) type ExportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, ExportError>> + Send + 'a>>;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::export_formats::TransferFormat;
 use axum::body::Body;
 use axum::http::{Response as HttpResponse, StatusCode, header};
 use serde::{Deserialize, Serialize};
@@ -422,6 +423,9 @@ pub struct ExportJobState {
     pub database: String,
     /// Placement used at admission.
     pub destination: ExportDestination,
+    /// Encoding selected at admission; changing it cannot resume this job.
+    #[serde(default)]
+    pub format: TransferFormat,
     /// Fixed placement lock text (Region enum is serializable).
     #[serde(with = "region_vec_serde")]
     pub placement: Vec<RegionCode>,
@@ -664,6 +668,8 @@ pub struct ExportRequest {
     pub database: String,
     /// Destination identity.
     pub destination: ExportDestination,
+    /// Encoding selected at admission.
+    pub format: TransferFormat,
     /// Exact database placement lock.
     pub placement: PlacementLock,
     /// Optional retry identity. Repeating it returns the original job.
@@ -740,6 +746,7 @@ impl ExportService {
             job_id: job_id.clone(),
             database: request.database.clone(),
             destination: request.destination.clone(),
+            format: request.format,
             placement: request.placement.regions().collect(),
             snapshot,
             phase: ExportPhase::Documents,
@@ -765,6 +772,7 @@ impl ExportService {
         if state.job_id != job_id
             || state.database != request.database
             || state.destination != request.destination
+            || state.format != request.format
             || state.placement != request.placement.regions().collect::<Vec<_>>()
         {
             return Err(ExportError::IdempotencyConflict);
@@ -1204,6 +1212,17 @@ impl Worker {
             }
             if !page.records.is_empty() {
                 let (jsonl, history) = encode_page(&page.records)?;
+                let jsonl =
+                    if matches!(state.format, TransferFormat::Native | TransferFormat::Jsonl) {
+                        jsonl
+                    } else {
+                        crate::export_formats::encode_documents(&page.records, state.format)
+                            .map_err(|_| {
+                                ExportError::Source(ExportSourceError::InvalidPage(
+                                    "format encoding failed",
+                                ))
+                            })?
+                    };
                 let page_number = state.pages;
                 if !jsonl.is_empty() {
                     let path = format!("documents/{page_number:012}.jsonl");
@@ -2088,6 +2107,7 @@ mod tests {
                 root: root.join("artifacts"),
                 region: RegionCode::GRU,
             },
+            format: TransferFormat::Jsonl,
             placement: vec![RegionCode::GRU],
             snapshot: Source { pages: Mutex::new(Vec::new()) }.snapshot("db").expect("snapshot"),
             phase: ExportPhase::Documents,
@@ -2390,6 +2410,7 @@ mod tests {
             .submit(ExportRequest {
                 database: state.database.clone(),
                 destination: state.destination.clone(),
+                format: TransferFormat::Jsonl,
                 placement: PlacementLock::single(RegionCode::GRU),
                 idempotency_key: None,
             })
@@ -2472,6 +2493,7 @@ mod tests {
                 .submit(ExportRequest {
                     database: state.database,
                     destination: state.destination,
+                    format: TransferFormat::Jsonl,
                     placement: PlacementLock::single(RegionCode::GRU),
                     idempotency_key: None,
                 })
@@ -2705,6 +2727,7 @@ mod tests {
                 root: PathBuf::from("/tmp/export"),
                 region: RegionCode::FRA,
             },
+            format: TransferFormat::Jsonl,
             placement: PlacementLock::single(RegionCode::GRU),
             idempotency_key: None,
         };

@@ -2569,7 +2569,15 @@ async fn batch_documents(
             Err((code, message)) => return batch_refusal(index, code, message),
         }
     }
-    if let Err(error) = attach_write_budget(&state, &mut transaction, &scope, &state.scope.1, &database_id, &operation_id, units) {
+    if let Err(error) = attach_write_budget(
+        &state,
+        &mut transaction,
+        &scope,
+        &state.scope.1,
+        &database_id,
+        &operation_id,
+        units,
+    ) {
         return error.into_response();
     }
     if let Err(error) = durability.guard(&mut transaction) {
@@ -3500,7 +3508,17 @@ async fn patch_document(
     merge_patch(&mut merged, &json_value(&value));
     let probe = (collection.clone(), id.clone());
     let patched = Document::new(id.clone(), collection.clone(), merged);
-    if let Err(error) = attach_write_budget(&state, &mut transaction, &scope, &state.scope.1, &database_id, &operation_id, terrabase::usage::write_units_for_bytes(serde_json::to_vec(patched.value()).map_or(0, |bytes| bytes.len() as u64))) {
+    if let Err(error) = attach_write_budget(
+        &state,
+        &mut transaction,
+        &scope,
+        &state.scope.1,
+        &database_id,
+        &operation_id,
+        terrabase::usage::write_units_for_bytes(
+            serde_json::to_vec(patched.value()).map_or(0, |bytes| bytes.len() as u64),
+        ),
+    ) {
         return error.into_response();
     }
     // The merge base is snapshot state, not the logical request: with an
@@ -3703,7 +3721,15 @@ async fn delete_document(
     }
     let database_id = engine.database_owner().database().to_text();
     let operation_id = transaction.operation_id().clone();
-    if let Err(error) = attach_write_budget(&state, &mut transaction, &scope, &state.scope.1, &database_id, &operation_id, 1) {
+    if let Err(error) = attach_write_budget(
+        &state,
+        &mut transaction,
+        &scope,
+        &state.scope.1,
+        &database_id,
+        &operation_id,
+        1,
+    ) {
         return error.into_response();
     }
     let expected = if has_idempotency_key(&headers) {

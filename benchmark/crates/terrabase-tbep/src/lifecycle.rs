@@ -5,6 +5,67 @@
 //! supplies that owner, unsupported mutations fail with a typed refusal.
 
 use crate::proto::terrabase::v1 as pb;
+use serde::Deserialize;
+
+/// Closed lifecycle effect action issued by the current authority lease.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleGrantAction {
+    EnsureSnapshot,
+    VerifySnapshotPlacement,
+    CloseDatabase,
+    StopNativeBackup,
+    Reactivate,
+    DeleteOwnedData,
+}
+
+/// Strict, scoped lifecycle effect grant payload.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LifecycleOperationGrant {
+    pub version: u64,
+    pub domain: String,
+    pub environment: String,
+    pub tenant: String,
+    pub project: String,
+    pub database: String,
+    pub region: String,
+    pub member: String,
+    pub action: LifecycleGrantAction,
+    pub operation_id: String,
+    pub accepted_proof_digest: String,
+    pub accepted_placement_revision: u64,
+    pub authority_epoch: u64,
+    pub authority_lease: String,
+    pub issued_at_unix_millis: i64,
+    pub expires_at_unix_millis: i64,
+}
+
+impl LifecycleOperationGrant {
+    /// Validates bounded identity, digest, domain/version, and time ordering.
+    pub fn validate(&self, now_unix_millis: i64) -> Result<(), LifecycleError> {
+        if self.version != 1
+            || self.domain != "terrabase.lifecycle-operation-v1"
+            || self.tenant.is_empty()
+            || self.project.is_empty()
+            || self.database.is_empty()
+            || self.region.is_empty()
+            || self.member.is_empty()
+            || self.operation_id.is_empty()
+            || self.operation_id.len() > 128
+            || self.accepted_proof_digest.len() != 64
+            || self.accepted_placement_revision == 0
+            || self.authority_epoch == 0
+            || self.authority_lease.is_empty()
+            || self.issued_at_unix_millis > self.expires_at_unix_millis
+            || now_unix_millis < self.issued_at_unix_millis
+            || now_unix_millis > self.expires_at_unix_millis
+        {
+            return Err(LifecycleError::Invalid);
+        }
+        Ok(())
+    }
+}
 
 /// Native lifecycle port composed by the serving process.
 ///
