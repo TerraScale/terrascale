@@ -1860,18 +1860,16 @@ async fn delete_database(
         if !principal.scope().admits_database(Verbs::ADMIN, &name) {
             return ApiError::forbidden("whole database deletion").into_response();
         }
-        let operation = match headers.get("idempotency-key").and_then(|value| value.to_str().ok()) {
-            Some(value) => value,
-            None => {
-                return ApiError {
-                    status: StatusCode::BAD_REQUEST,
-                    code: "missing_operation_id",
-                    message: "deletion requires an idempotency key".into(),
-                    fix: "send Idempotency-Key with a stable deletion operation identifier".into(),
-                    placement: None,
-                }
-                .into_response();
+        let Some(operation) = headers.get("idempotency-key").and_then(|value| value.to_str().ok())
+        else {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "missing_operation_id",
+                message: "deletion requires an idempotency key".into(),
+                fix: "send Idempotency-Key with a stable deletion operation identifier".into(),
+                placement: None,
             }
+            .into_response();
         };
         let (tenant_id, project_id) = match database_owner_scope(&state, &name) {
             Ok(value) => value,

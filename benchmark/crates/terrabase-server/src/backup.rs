@@ -162,8 +162,7 @@ fn valid_https_endpoint(endpoint: &str) -> bool {
     if remainder.contains('?') || remainder.contains('#') {
         return false;
     }
-    let authority_end =
-        remainder.find(|character| matches!(character, '/' | '?' | '#')).unwrap_or(remainder.len());
+    let authority_end = remainder.find(['/', '?', '#']).unwrap_or(remainder.len());
     valid_authority(&remainder[..authority_end])
 }
 

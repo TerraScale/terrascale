@@ -111,7 +111,7 @@ fn audit(
     principal: &Principal,
     name: &str,
     action: &str,
-    details: serde_json::Value,
+    details: &serde_json::Value,
 ) -> Result<(), ApiError> {
     state.control.as_ref().ok_or_else(ApiError::control_unavailable)?.development_audit(name, serde_json::json!({"actor":principal.label(),"action":action,"atMillis":now_millis(),"details":details})).map_err(ApiError::control)
 }
@@ -127,16 +127,13 @@ pub(super) async fn development_fault(
         Ok(v) => v,
         Err(e) => return e.into_response(),
     };
-    let request = match body {
-        Ok(extract::Json(v)) => v,
-        Err(_) => {
-            return refusal(
-                "invalid_development_fault",
-                "invalid fault request",
-                "send confirmBranch, fault, durationMs, maxOperations and delayMs",
-            )
-            .into_response();
-        }
+    let Ok(extract::Json(request)) = body else {
+        return refusal(
+            "invalid_development_fault",
+            "invalid fault request",
+            "send confirmBranch, fault, durationMs, maxOperations and delayMs",
+        )
+        .into_response();
     };
     if request.confirm_branch != name
         || !(1..=30_000).contains(&request.duration_ms)
@@ -165,7 +162,7 @@ pub(super) async fn development_fault(
         &principal,
         &name,
         "fault_enabled",
-        serde_json::json!({"fault":request.fault,"durationMs":request.duration_ms,"maxOperations":request.max_operations,"delayMs":request.delay_ms}),
+        &serde_json::json!({"fault":request.fault,"durationMs":request.duration_ms,"maxOperations":request.max_operations,"delayMs":request.delay_ms}),
     ) {
         return e.into_response();
     }
@@ -198,7 +195,7 @@ pub(super) async fn clear_development_fault(
     let Ok(mut faults) = state.development.faults.lock() else {
         return ApiError::storage_failure().into_response();
     };
-    if let Err(e) = audit(&state, &principal, &name, "fault_cleared", serde_json::json!({})) {
+    if let Err(e) = audit(&state, &principal, &name, "fault_cleared", &serde_json::json!({})) {
         return e.into_response();
     }
     faults.remove(&name);
@@ -229,19 +226,17 @@ pub(super) async fn development_logs(
         Ok(v) => v,
         Err(e) => return e.into_response(),
     };
-    let tenant = match terrabase::types::TenantId::try_new(host.tenant()) {
-        Ok(v) => v,
-        Err(_) => return ApiError::storage_failure().into_response(),
+    let Ok(tenant) = terrabase::types::TenantId::try_new(host.tenant()) else {
+        return ApiError::storage_failure().into_response();
     };
-    let mut entries = match host.engine().auto_index_lifecycle_audit(&tenant, None, None, limit + 1)
-    {
-        Ok(v) => v,
-        Err(_) => return ApiError::storage_failure().into_response(),
+    let Ok(mut entries) = host.engine().auto_index_lifecycle_audit(&tenant, None, None, limit + 1)
+    else {
+        return ApiError::storage_failure().into_response();
     };
     let truncated = entries.len() > limit;
     entries.truncate(limit);
     if let Err(e) =
-        audit(&state, &principal, &name, "logs_read", serde_json::json!({"limit":limit}))
+        audit(&state, &principal, &name, "logs_read", &serde_json::json!({"limit":limit}))
     {
         return e.into_response();
     }
@@ -302,7 +297,7 @@ pub(super) async fn admit(
             faults.remove(name);
             return Ok(());
         }
-        audit(state, principal, name, "fault_applied", serde_json::json!({"fault":fault.fault}))?;
+        audit(state, principal, name, "fault_applied", &serde_json::json!({"fault":fault.fault}))?;
         fault.remaining -= 1;
         (fault.fault, fault.delay)
     };

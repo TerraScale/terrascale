@@ -27,15 +27,15 @@ pub type RetirementEvidence = BTreeMap<(String, DatabaseRouteScope), RetiredPeer
 
 pub(super) async fn capture_lane(lane: &mut PeerDatabase) -> Result<RetiredPeerLane, String> {
     let physical = match lane.physical.as_mut() {
-        Some(PhysicalDriver::Writer(_)) | Some(PhysicalDriver::BootstrapWriter { .. }) => {
+        Some(PhysicalDriver::Writer(_) | PhysicalDriver::BootstrapWriter { .. }) => {
             Some(RetiredPhysicalLane::Writer)
         }
-        Some(PhysicalDriver::Follower(follower))
-        | Some(PhysicalDriver::InstalledFollower { driver: follower, .. }) => {
-            Some(RetiredPhysicalLane::Follower(
-                follower.retired_physical_boundary().await.map_err(|error| format!("{error:?}"))?,
-            ))
-        }
+        Some(
+            PhysicalDriver::Follower(follower)
+            | PhysicalDriver::InstalledFollower { driver: follower, .. },
+        ) => Some(RetiredPhysicalLane::Follower(
+            follower.retired_physical_boundary().await.map_err(|error| format!("{error:?}"))?,
+        )),
         Some(PhysicalDriver::BootstrapFollower(_)) => {
             return Err("bootstrap follower has no installed physical boundary".into());
         }

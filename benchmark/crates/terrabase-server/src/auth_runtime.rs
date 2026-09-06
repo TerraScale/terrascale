@@ -1025,10 +1025,7 @@ pub fn router(runtime: Arc<AuthRuntime>) -> Router {
 
 fn now_ms() -> u64 {
     match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(value) => match u64::try_from(value.as_millis()) {
-            Ok(milliseconds) => milliseconds,
-            Err(_) => u64::MAX,
-        },
+        Ok(value) => u64::try_from(value.as_millis()).unwrap_or(u64::MAX),
         Err(_) => 0,
     }
 }

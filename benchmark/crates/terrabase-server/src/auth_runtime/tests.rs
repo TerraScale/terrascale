@@ -399,7 +399,7 @@ mod admitted_fixture {
             loop {
                 let connection = match remote_listener.accept().await {
                     Ok(Some(connection)) => connection,
-                    Ok(None) | Err(ProductionTransportError::Draining) => break,
+                    Ok(None) => break,
                     Err(
                         ProductionTransportError::Timeout
                         | ProductionTransportError::ConnectionFailed
@@ -414,7 +414,10 @@ mod admitted_fixture {
                         tokio::time::sleep(Duration::from_millis(10)).await;
                         continue;
                     }
-                    Err(_) => break,
+                    Err(error) => {
+                        drop(error);
+                        break;
+                    }
                 };
                 let authority = remote_for_task.clone();
                 let network = remote_network_for_task.clone();

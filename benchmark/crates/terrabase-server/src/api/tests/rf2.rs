@@ -1,4 +1,4 @@
-//! Local API success fixture: physical SQLite copies and scoped durable receipts.
+//! Local API success fixture: physical `SQLite` copies and scoped durable receipts.
 //! This exercises in-process WAL transport, not provider or production qualification.
 
 use crate::replication_runtime::ReplicationProgress;
@@ -100,7 +100,7 @@ pub(in crate::api) fn replicate(
         // newer writer sequence merely because a prior batch was acknowledged.
         let sequence = engine.read_snapshot(tenant).unwrap().sequence().get();
         let (mut replica, checkpoint) = WalFollower::bootstrap_engine(engine, &copy.0).unwrap();
-        let location = engine.with_quiescent_wal(|location| location.to_path_buf()).unwrap();
+        let location = engine.with_quiescent_wal(std::path::Path::to_path_buf).unwrap();
         let mut tail = WalTail::resume(&location, checkpoint);
         loop {
             match tail.poll_engine(engine).unwrap() {
