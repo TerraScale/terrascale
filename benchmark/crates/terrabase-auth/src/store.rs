@@ -411,39 +411,77 @@ fn execute_action(transaction: &Transaction<'_>, action: &Action) -> Result<Outc
         return Ok(invalid("invalid model"));
     }
     match action {
-        Action::Find { predicates, offset, limit, .. } => {
+        Action::Find { predicates, offset, limit, select, sort } => {
             if *limit > 1000 || *offset > 1000 {
                 return Ok(invalid("query page exceeds bound"));
             }
             if predicates.len() > 64 {
                 return Ok(invalid("query predicate bound exceeded"));
             }
+            if select.as_ref().is_some_and(|fields| {
+                fields.len() > 64 || fields.iter().any(|field| !valid_name(field))
+            }) {
+                return Ok(invalid("query selection exceeds bound"));
+            }
+            if sort.as_ref().is_some_and(|sort| !valid_name(&sort.field)) {
+                return Ok(invalid("invalid query sort field"));
+            }
+            let retained = (*offset as usize).saturating_add(*limit as usize);
+            if retained == 0 {
+                return Ok(Outcome::Records { records: Vec::new() });
+            }
             let mut statement = transaction
                 .prepare("SELECT body FROM auth_records WHERE model=?1 ORDER BY id")
                 .map_err(storage)?;
             let rows =
                 statement.query_map([model], |row| row.get::<_, Vec<u8>>(0)).map_err(storage)?;
-            let mut matched = 0u32;
-            let mut result = Vec::new();
-            let mut bytes = 0usize;
+            let mut retained_rows: Vec<Record> = Vec::new();
+            let mut retained_bytes = 0usize;
             for row in rows {
                 let body = row.map_err(storage)?;
                 let record: Record = decode(&body)?;
                 if !crate::query::matches(&record, predicates) {
                     continue;
                 }
-                if matched < *offset {
-                    matched += 1;
-                    continue;
+                retained_rows.push(record);
+                if let Some(sort) = sort {
+                    retained_rows
+                        .sort_by(|left, right| crate::query::compare_records(left, right, sort));
                 }
-                if result.len() >= *limit as usize {
-                    break;
+                if retained_rows.len() > retained {
+                    retained_rows.pop();
                 }
-                bytes = bytes.saturating_add(body.len());
-                if bytes > 1024 * 1024 {
+                retained_bytes = retained_rows.iter().try_fold(0usize, |total, record| {
+                    total
+                        .checked_add(encode(record)?.len())
+                        .ok_or_else(|| storage("query response exceeds 4 MiB"))
+                })?;
+                if retained_bytes > 4 * 1024 * 1024 {
                     return Ok(invalid("query response exceeds 1 MiB"));
                 }
-                result.push(record);
+            }
+            let result = retained_rows
+                .into_iter()
+                .skip(*offset as usize)
+                .take(*limit as usize)
+                .map(|record| {
+                    select.as_ref().map_or(record.clone(), |fields| {
+                        fields
+                            .iter()
+                            .filter_map(|field| {
+                                record.get(field).map(|value| (field.clone(), value.clone()))
+                            })
+                            .collect()
+                    })
+                })
+                .collect::<Vec<Record>>();
+            let output_bytes = result.iter().try_fold(0usize, |total, record| {
+                total
+                    .checked_add(encode(record)?.len())
+                    .ok_or_else(|| storage("query response exceeds 1 MiB"))
+            })?;
+            if output_bytes > 1024 * 1024 {
+                return Ok(invalid("query response exceeds 1 MiB"));
             }
             Ok(Outcome::Records { records: result })
         }

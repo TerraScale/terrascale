@@ -7,7 +7,7 @@ use std::io::Cursor;
 
 mod authority;
 mod query;
-pub use query::{Connector, Mode, Operator, Predicate};
+pub use query::{Connector, JoinRelation, Mode, Operator, Predicate, QueryJoin, QuerySort, SortDirection};
 mod network;
 mod store;
 pub use authority::{AuthAuthority, AuthorityError};
@@ -74,7 +74,18 @@ pub enum Action {
     /// Count all matching records exactly.
     Count { model: String, predicates: Vec<Predicate> },
     /// Read a bounded model page using exact field predicates.
-    Find { model: String, predicates: Vec<Predicate>, offset: u32, limit: u32 },
+    Find {
+        model: String,
+        predicates: Vec<Predicate>,
+        offset: u32,
+        limit: u32,
+        #[serde(default)]
+        select: Option<Vec<String>>,
+        #[serde(default)]
+        sort: Option<QuerySort>,
+        #[serde(default)]
+        joins: Vec<QueryJoin>,
+    },
     /// Start a bounded optimistic transaction using a client label of at most 100 bytes.
     /// Subsequent operations must use the returned generation-qualified identity.
     BeginTransaction { transaction_id: String },

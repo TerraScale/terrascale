@@ -114,6 +114,19 @@ a stable idempotency key and execute against the replicated workspace. The
 public auth routes contribute their schemas to the same OpenAPI document used
 by the served JSON, Scalar, and contract exporter.
 
+Admitted followers route client operations to the elected voter over mutually
+authenticated member QUIC. Receivers execute forwarded operations locally to
+prevent forwarding loops; no leader or failed transport returns a bounded
+unavailable outcome. Forwarded requests have a separate eight-task limit so
+waiting for replication does not consume the consensus dispatch pool. Peer
+handshake and connection failures do not terminate the listener. Finished
+transport frames wait for peer acknowledgement before connection disposal;
+this acknowledgement does not replace application or durable replication checks.
+
+Consensus currently uses a two-second heartbeat/RPC interval and six-to-ten
+second election timeouts to accommodate fresh authenticated connections. These
+initial settings require WAN latency and failover qualification.
+
 ## Implementation and qualification dependencies
 
 Integrate the consensus storage and transport in the real member startup path,

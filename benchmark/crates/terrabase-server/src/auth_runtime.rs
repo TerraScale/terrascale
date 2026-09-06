@@ -12,7 +12,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use terrabase_auth::{
     Action, AuthAuthority, AuthNetwork, AuthorityError, Command, Connector, Mode, Operator,
-    Outcome, Predicate, SqliteStore,
+    Outcome, Predicate, QueryJoin, JoinRelation, QuerySort, SortDirection, SqliteStore,
 };
 use terrabase_cluster::production::{ProductionQuicEndpoint, ProductionRegion};
 use terrabase_tbep::auth_bootstrap::AuthBootstrapJournal;
@@ -888,6 +888,9 @@ async fn find_one(
                 }],
                 offset: 0,
                 limit: 1,
+                select: None,
+                sort: None,
+                joins: Vec::new(),
             }),
         };
         let response = match domain
@@ -969,6 +972,43 @@ struct PageQuery {
     predicates: Vec<PredicateInput>,
     offset: u32,
     limit: u32,
+    /// Return these base fields after sorting; absent selects the full record.
+    #[serde(default)]
+    select: Option<Vec<String>>,
+    /// Deterministic scalar order with ascending ID ties.
+    #[serde(default)]
+    sort_by: Option<PageSort>,
+    /// At most eight explicit relations, read from the same authority snapshot.
+    #[serde(default)]
+    joins: Vec<PageJoin>,
+}
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PageJoin {
+    model: String,
+    output_field: String,
+    from_field: String,
+    to_field: String,
+    relation: PageJoinRelation,
+    limit: u32,
+}
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "kebab-case")]
+enum PageJoinRelation {
+    OneToOne,
+    OneToMany,
+}
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+struct PageSort {
+    field: String,
+    direction: PageSortDirection,
+}
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+enum PageSortDirection {
+    Asc,
+    Desc,
 }
 #[utoipa::path(post,path="/api/v1/databases/{database}/auth/findPage",request_body=PageQuery,params(("database"=String,Path),("Idempotency-Key"=Option<String>,Header,description="Required only with an active transaction; reuse the same key for retries"),("X-TerraScale-Auth-Transaction"=Option<String>,Header)),responses((status=200,body=AuthResult),(status=503,description="Authority unavailable")))]
 async fn find_page(
@@ -985,7 +1025,31 @@ async fn find_page(
         &runtime,
         &database,
         &headers,
-        Action::Find { model: input.model, predicates, offset: input.offset, limit: input.limit },
+        Action::Find {
+            model: input.model,
+            predicates,
+            offset: input.offset,
+            limit: input.limit,
+            select: input.select,
+            joins: input.joins.into_iter().map(|join| QueryJoin {
+                model: join.model,
+                output_field: join.output_field,
+                from_field: join.from_field,
+                to_field: join.to_field,
+                relation: match join.relation {
+                    PageJoinRelation::OneToOne => JoinRelation::OneToOne,
+                    PageJoinRelation::OneToMany => JoinRelation::OneToMany,
+                },
+                limit: join.limit,
+            }).collect(),
+            sort: input.sort_by.map(|sort| QuerySort {
+                field: sort.field,
+                direction: match sort.direction {
+                    PageSortDirection::Asc => SortDirection::Asc,
+                    PageSortDirection::Desc => SortDirection::Desc,
+                },
+            }),
+        },
     )
     .await
 }

@@ -1,6 +1,7 @@
 use crate::Record;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::cmp::Ordering;
 
 /// Public Better Auth predicate. Unknown operator spellings are rejected by decoding.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -19,6 +20,41 @@ pub struct Predicate {
     /// String matching mode.
     #[serde(default)]
     pub mode: Mode,
+}
+/// Deterministic scalar ordering for bounded Better Auth pages.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuerySort {
+    pub field: String,
+    #[serde(default)]
+    pub direction: SortDirection,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueryJoin {
+    pub model: String,
+    pub output_field: String,
+    pub from_field: String,
+    pub to_field: String,
+    pub relation: JoinRelation,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JoinRelation {
+    OneToOne,
+    OneToMany,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortDirection {
+    #[default]
+    Asc,
+    Desc,
 }
 /// Supported comparisons.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
@@ -61,9 +97,7 @@ fn scalar(value: &Value, mode: Mode) -> Value {
     }
 }
 
-fn compare_numbers(left: &serde_json::Number, right: &serde_json::Number) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
-
+fn compare_numbers(left: &serde_json::Number, right: &serde_json::Number) -> Ordering {
     let integer = |value: &serde_json::Number| {
         value.as_i64().map(i128::from).or_else(|| value.as_u64().map(i128::from))
     };
@@ -90,6 +124,55 @@ fn compare_numbers(left: &serde_json::Number, right: &serde_json::Number) -> std
             .partial_cmp(&right.as_f64().expect("JSON number"))
             .expect("finite JSON numbers"),
     }
+}
+
+fn value_rank(value: &Value) -> u8 {
+    match value {
+        Value::Null => 0,
+        Value::Bool(_) => 1,
+        Value::Number(_) => 2,
+        Value::String(_) => 3,
+        Value::Array(_) => 4,
+        Value::Object(_) => 5,
+    }
+}
+
+pub(crate) fn compare_values(left: &Value, right: &Value) -> Ordering {
+    let rank = value_rank(left).cmp(&value_rank(right));
+    if rank != Ordering::Equal {
+        return rank;
+    }
+    match (left, right) {
+        (Value::Null, Value::Null) => Ordering::Equal,
+        (Value::Bool(left), Value::Bool(right)) => left.cmp(right),
+        (Value::Number(left), Value::Number(right)) => compare_numbers(left, right),
+        (Value::String(left), Value::String(right)) => left.cmp(right),
+        (Value::Array(left), Value::Array(right)) => encode_json(left).cmp(&encode_json(right)),
+        (Value::Object(left), Value::Object(right)) => encode_json(left).cmp(&encode_json(right)),
+        _ => Ordering::Equal,
+    }
+}
+
+fn encode_json(value: &impl Serialize) -> String {
+    serde_json::to_string(value).expect("JSON values are serializable")
+}
+
+pub(crate) fn compare_records(left: &Record, right: &Record, sort: &QuerySort) -> Ordering {
+    let ordering = compare_values(
+        left.get(&sort.field).unwrap_or(&Value::Null),
+        right.get(&sort.field).unwrap_or(&Value::Null),
+    );
+    let ordering = match sort.direction {
+        SortDirection::Asc => ordering,
+        SortDirection::Desc => ordering.reverse(),
+    };
+    if ordering != Ordering::Equal {
+        return ordering;
+    }
+    left.get("id")
+        .unwrap_or(&Value::Null)
+        .to_string()
+        .cmp(&right.get("id").unwrap_or(&Value::Null).to_string())
 }
 
 fn one(record: &Record, predicate: &Predicate) -> bool {

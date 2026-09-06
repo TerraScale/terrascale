@@ -266,6 +266,41 @@ async fn bulk_predicate_operations_are_deterministic_atomic_and_idempotent() {
 }
 
 #[tokio::test]
+async fn find_sort_preserves_numeric_precision_and_projects_after_ordering() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
+    for (index, value) in [("a", 9_007_199_254_740_993_u64), ("b", 9_007_199_254_740_992_u64)] {
+        let record =
+            serde_json::from_value(json!({"id": index, "counter": value, "secret": true})).unwrap();
+        apply(
+            &mut store,
+            if index == "a" { 1 } else { 2 },
+            command(index, Action::InsertUnique { model: "number".into(), record }),
+        )
+        .await;
+    }
+    let found = apply(
+        &mut store,
+        3,
+        command(
+            "sorted",
+            Action::Find {
+                model: "number".into(),
+                predicates: vec![],
+                offset: 0,
+                limit: 2,
+                select: Some(vec!["id".into(), "counter".into()]),
+                sort: Some(QuerySort { field: "counter".into(), direction: SortDirection::Asc }),
+            },
+        ),
+    )
+    .await;
+    assert!(matches!(found, Outcome::Records { records } if records.len() == 2
+        && records[0]["id"] == "b" && records[1]["id"] == "a"
+        && records[0].get("secret").is_none()));
+}
+
+#[tokio::test]
 async fn update_many_unique_conflict_is_atomic_and_consume_matching_uses_lowest_id() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
@@ -481,7 +516,14 @@ async fn real_raft_rejects_partitioned_leader_and_serializes_competing_auth_writ
         Outcome::Count { count: 1 }
     );
     let Outcome::Records { records } = nodes[current]
-        .query(Action::Find { model: "user".into(), predicates: vec![], offset: 0, limit: 1 })
+        .query(Action::Find {
+            model: "user".into(),
+            predicates: vec![],
+            offset: 0,
+            limit: 1,
+            select: None,
+            sort: None,
+        })
         .await
         .unwrap()
     else {
@@ -525,7 +567,14 @@ async fn real_raft_rejects_partitioned_leader_and_serializes_competing_auth_writ
     );
     assert!(
         nodes[current]
-            .query(Action::Find { model: "user".into(), predicates: vec![], offset: 0, limit: 1 })
+            .query(Action::Find {
+                model: "user".into(),
+                predicates: vec![],
+                offset: 0,
+                limit: 1,
+                select: None,
+                sort: None
+            })
             .await
             .is_err()
     );
@@ -591,7 +640,14 @@ async fn transaction_reads_own_writes_and_commit_replay_survives_expiry_and_rest
             "tx-read",
             tx(
                 "tx#1",
-                Action::Find { model: "user".into(), predicates: vec![], offset: 0, limit: 100 },
+                Action::Find {
+                    model: "user".into(),
+                    predicates: vec![],
+                    offset: 0,
+                    limit: 100,
+                    select: None,
+                    sort: None,
+                },
             ),
         ),
     )
@@ -939,7 +995,9 @@ async fn operation_limit_rejection_poisons_workspace() {
                             model: "user".into(),
                             predicates: vec![],
                             offset: 0,
-                            limit: 1
+                            limit: 1,
+                            select: None,
+                            sort: None,
                         },
                     )
                 )
@@ -956,7 +1014,14 @@ async fn operation_limit_rejection_poisons_workspace() {
                 "limit",
                 tx(
                     "limited#1",
-                    Action::Find { model: "user".into(), predicates: vec![], offset: 0, limit: 1 },
+                    Action::Find {
+                        model: "user".into(),
+                        predicates: vec![],
+                        offset: 0,
+                        limit: 1,
+                        select: None,
+                        sort: None
+                    },
                 )
             )
         )
@@ -1011,6 +1076,8 @@ async fn competing_owner_departure_snapshots_allow_only_one_commit() {
                         predicates: vec![],
                         offset: 0,
                         limit: 100,
+                        select: None,
+                        sort: None,
                     },
                 ),
             ),
@@ -1136,6 +1203,8 @@ async fn transaction_touches_one_record_in_database_larger_than_snapshot_bound()
                     predicates: vec![predicate],
                     offset: 0,
                     limit: 1,
+                    select: None,
+                    sort: None,
                 },
             ),
         ),

@@ -163,6 +163,8 @@ impl AuthAuthority {
                 }],
                 offset: 0,
                 limit: 1,
+                select: None,
+                sort: None,
             })
             .await?;
         match outcome {

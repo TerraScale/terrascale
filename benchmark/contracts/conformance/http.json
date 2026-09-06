@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
-  "openapiBlake3": "a37e18e04f29a09cf96d5d5fa053dcdab08ee2e0d74113b67e53f2cf4cd1a9bb",
-  "openapiSha256": "2c769fe0dfe2f69c4cca4f95c3df6f37bd538dd38c748bc623e06157e47f2354",
+  "openapiBlake3": "bf10b17a5abce282a305ddc845da372318c09df1b27b99b40acb42f7c45d73ae",
+  "openapiSha256": "b6372b590409906d9b87db3c3852e27d79a6f1c48c203360ec3c618b9fdff18f",
   "operations": [
     {
       "errors": [
@@ -469,6 +469,173 @@
           "status": 504
         }
       ],
+      "operationId": "begin_transaction",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "transactionId": "sample"
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/transactions/begin",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
       "operationId": "cancel_export",
       "request": {
         "body": null,
@@ -665,6 +832,858 @@
           "body": {
             "active": false,
             "expiresAtMillis": 0
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "commit_transaction",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "transactionId": "sample"
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/transactions/commit",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "compare_and_swap",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "expected": {
+              "sample": null
+            },
+            "id": "sample",
+            "model": "sample",
+            "update": {
+              "sample": null
+            }
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/compareAndSwap",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "consume_matching",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "model": "sample",
+            "predicates": []
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/consumeMatching",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "consume_one",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "expected": {
+              "sample": null
+            },
+            "id": "sample",
+            "model": "sample"
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/consumeOne",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "count",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "model": "sample",
+            "predicates": []
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/count",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
           },
           "mediaType": "application/json",
           "status": 200
@@ -2255,6 +3274,344 @@
           "status": 504
         }
       ],
+      "operationId": "delete_many",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "model": "sample",
+            "predicates": []
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/deleteMany",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "delete_one",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "model": "sample",
+            "predicates": []
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/deleteOne",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
       "operationId": "delete_webhook",
       "request": {
         "body": null,
@@ -3066,6 +4423,340 @@
           "body": {
             "matched": 0,
             "rows": []
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "find_one",
+      "request": {
+        "body": null,
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "GET",
+        "path": "/api/v1/databases/sample/auth/records/sample/order-1",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "find_page",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "limit": 0,
+            "model": "sample",
+            "offset": 0,
+            "predicates": []
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/findPage",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
           },
           "mediaType": "application/json",
           "status": 200
@@ -4200,6 +5891,350 @@
           "status": 504
         }
       ],
+      "operationId": "increment_one",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "increment": {
+              "sample": 0
+            },
+            "model": "sample",
+            "predicates": [],
+            "set": {
+              "sample": null
+            }
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/incrementOne",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "index",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "fields": [],
+            "model": "sample"
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/index",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
       "operationId": "index_recommendations",
       "request": {
         "body": null,
@@ -4227,6 +6262,177 @@
             "generation": 0,
             "recommendations": [],
             "truncated": false
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "insert_unique",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "model": "sample",
+            "record": {
+              "sample": null
+            }
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/insertUnique",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
           },
           "mediaType": "application/json",
           "status": 200
@@ -7103,6 +9309,173 @@
           "status": 504
         }
       ],
+      "operationId": "rollback_transaction",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "transactionId": "sample"
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/transactions/rollback",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
       "operationId": "rotate_secret",
       "request": {
         "body": {
@@ -7294,6 +9667,350 @@
             null
           ],
           "mediaType": "application/msgpack",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "update_many",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "model": "sample",
+            "predicates": [],
+            "update": {
+              "sample": null
+            }
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/updateMany",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
+      "operationId": "update_one",
+      "request": {
+        "body": {
+          "mediaType": "application/json",
+          "value": {
+            "model": "sample",
+            "predicates": [],
+            "update": {
+              "sample": null
+            }
+          }
+        },
+        "headers": {
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample",
+          "x-terrascale-auth-transaction": "sample"
+        },
+        "method": "POST",
+        "path": "/api/v1/databases/sample/auth/updateOne",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "count": null,
+          "expiresAtMs": null,
+          "matched": false,
+          "record": null,
+          "records": null,
+          "transactionId": null
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "count": null,
+            "expiresAtMs": null,
+            "matched": false,
+            "record": null,
+            "records": null,
+            "transactionId": null
+          },
+          "mediaType": "application/json",
           "status": 200
         }
       ]

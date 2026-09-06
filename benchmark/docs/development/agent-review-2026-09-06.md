@@ -113,9 +113,9 @@ byte. Exporter regression
 `bundle_contains_served_openapi_all_protos_and_integrity_metadata` passed in
 session `34527`, checking the served document, protobuf sources, and manifest
 digests. Regeneration also incorporates existing public database route and
-conformance changes; no exported routes were removed. The auth route annotations
-remain absent from `api::openapi_json()` and therefore the exported bundle.
-That producer-contract integration remains unfinished.
+conformance changes; no exported routes were removed. At that stage the auth route annotations
+were absent from `api::openapi_json()` and the exported bundle; the later auth
+integration below closes that producer-contract gap.
 
 The first full orchestrator command-package run exposed a bootstrap receipt
 mismatch: publisher canonicalization discarded Stage declarations. The publisher
@@ -126,3 +126,30 @@ The final full `tbep`, `placementpublisher`, and `cmd/orchestrator` Go package
 tests passed. A durable request roundtrip regression covers declaration
 preservation. Independent review found no material defect in these integration
 fixes; `git diff --check` passed in both affected repositories.
+
+Auth integration review preserved typed ULIDs and concurrent agent work.
+Admitted followers now forward to the elected voter over authenticated QUIC;
+forwarded client work has an independent eight-task limit. Recoverable peer
+failures leave the listener running. Finished frames wait for peer ACK before
+connection disposal, fixing a response-delivery race. Independent review found
+no further material defect in these revised transport and dispatch paths.
+
+Verification: all 22 auth library tests passed (session `40486`); all 11
+production transport tests passed (session `9965`), including a 512 KiB reply
+followed by immediate connection drop; all eight targeted server auth/OpenAPI
+tests passed (session `12839`). OpenAPI fixtures now account for 64 operations
+and the enlarged Scalar document. The real encrypted two-voter HTTP fixture
+covers staged/committed/rolled-back visibility and concurrent operations on both
+authorities. Bounded overload rejections are allowed while reads and writes
+must make progress. This is concurrent smoke coverage, not deterministic proof
+that eight forwarding slots are occupied; controlled saturation, leader
+observation and WAN qualification remain unfinished.
+
+The merged public/auth OpenAPI was exported with the standard producer binary
+(session `88764`). TypeScript build and standard local-source metadata
+generation passed, producing 64-route manifests/descriptors; both generator
+`--check` modes passed. This local regeneration does not publish or qualify an
+immutable release artifact.
+
+The regenerated bundle integrity regression passed in session `64131`, checking
+the served OpenAPI, included protobuf sources, and recorded content digests.
