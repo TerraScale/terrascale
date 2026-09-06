@@ -2,7 +2,7 @@
 //! Customer records never pass through the control journal or a Worker.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -247,6 +247,8 @@ impl AuthRuntime {
     /// Returns a transport failure; no alternate local consensus is created.
     pub async fn receive(self: Arc<Self>) -> Result<(), String> {
         let mut work = tokio::task::JoinSet::new();
+        let client_slots = Arc::new(tokio::sync::Semaphore::new(8));
+        let client_work = Arc::new(Mutex::new(tokio::task::JoinSet::<()>::new()));
         loop {
             if work.len() >= 32 {
                 let _ = work.join_next().await;
@@ -272,23 +274,52 @@ impl AuthRuntime {
                 Err(_) => return Err("auth consensus listener unavailable".into()),
             };
             let runtime = Arc::clone(&self);
+            let client_slots = Arc::clone(&client_slots);
+            let client_work = Arc::clone(&client_work);
             work.spawn(async move {
                 let Ok(bytes) = connection.receive_frame().await else {
                     return;
                 };
-                let Ok(group) = AuthNetwork::frame_group(&bytes) else {
+                let Ok((group, forwarded_client)) = AuthNetwork::frame_route(&bytes) else {
                     return;
                 };
                 let domain =
                     runtime.domains.read().ok().and_then(|domains| domains.get(&group).cloned());
                 if let Some(domain) = domain {
-                    let _ =
-                        domain.network.receive_frame(&connection, &domain.authority, &bytes).await;
+                    if forwarded_client {
+                        // Never let client requests waiting for replication occupy
+                        // the slots needed by AppendEntries/Vote/read barriers.
+                        let Ok(permit) = client_slots.try_acquire_owned() else {
+                            return;
+                        };
+                        let Ok(mut clients) = client_work.lock() else {
+                            return;
+                        };
+                        while clients.try_join_next().is_some() {}
+                        clients.spawn(async move {
+                            let _permit = permit;
+                            let _ = domain
+                                .network
+                                .receive_frame(&connection, &domain.authority, &bytes)
+                                .await;
+                        });
+                    } else {
+                        let _ = domain
+                            .network
+                            .receive_frame(&connection, &domain.authority, &bytes)
+                            .await;
+                    }
                 }
             });
             while work.try_join_next().is_some() {}
         }
         while work.join_next().await.is_some() {}
+        let mut clients = {
+            let mut clients =
+                client_work.lock().map_err(|_| "auth client task registry unavailable")?;
+            std::mem::take(&mut *clients)
+        };
+        while clients.join_next().await.is_some() {}
         Ok(())
     }
 

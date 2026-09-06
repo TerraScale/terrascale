@@ -124,8 +124,9 @@ impl AuthNetwork {
             .collect()
     }
 
-    /// Peek the bounded versioned group routing key before dispatching a frame.
-    pub fn frame_group(bytes: &[u8]) -> Result<String, AuthorityError> {
+    /// Return the bounded group routing key and whether this is forwarded client work.
+    /// Listeners must reserve consensus capacity independently of forwarded clients.
+    pub fn frame_route(bytes: &[u8]) -> Result<(String, bool), AuthorityError> {
         if bytes.len() > MAX_RPC_BYTES {
             return Err(AuthorityError::Unavailable);
         }
@@ -134,7 +135,8 @@ impl AuthNetwork {
         if envelope.protocol != "terrabase.auth.raft.v1" {
             return Err(AuthorityError::Unavailable);
         }
-        Ok(envelope.group)
+        let client = matches!(envelope.body, Request::ClientWrite(_) | Request::ClientQuery(_));
+        Ok((envelope.group, client))
     }
 
     /// Dispatch one already authenticated member connection.

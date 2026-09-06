@@ -1100,14 +1100,22 @@ impl ProductionConnection {
             .map_err(|_| ProductionTransportError::FrameTooLarge)?
             .to_be_bytes();
         tokio::time::timeout_at(deadline, async {
-            stream.write_all(&length).await?;
-            stream.write_all(frame).await?;
-            stream.finish()?;
-            Ok::<(), quinn::WriteError>(())
+            stream
+                .write_all(&length)
+                .await
+                .map_err(|_| ProductionTransportError::ConnectionFailed)?;
+            stream
+                .write_all(frame)
+                .await
+                .map_err(|_| ProductionTransportError::ConnectionFailed)?;
+            stream.finish().map_err(|_| ProductionTransportError::ConnectionFailed)?;
+            match stream.stopped().await.map_err(|_| ProductionTransportError::ConnectionFailed)? {
+                None => Ok(()),
+                Some(_) => Err(ProductionTransportError::ConnectionFailed),
+            }
         })
         .await
         .map_err(|_| ProductionTransportError::Timeout)?
-        .map_err(|_| ProductionTransportError::ConnectionFailed)
     }
 
     /// Receives one bounded length-prefixed frame terminated by stream FIN.
@@ -1723,6 +1731,12 @@ mod tests {
     }
 
     fn endpoint_pair() -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
+        endpoint_pair_with_max_frame(4096)
+    }
+
+    fn endpoint_pair_with_max_frame(
+        maximum_frame_bytes: usize,
+    ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
         let first_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("first port");
         let second_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("second port");
         let first_address = first_socket.local_addr().expect("first address");
@@ -1750,10 +1764,10 @@ mod tests {
             member_tls_material(&second_identity, second_name, &issuer, &issuer_key, &anchor);
 
         let limits = ProductionTransportLimits::try_new(
-            4096,
+            maximum_frame_bytes,
             8,
             8,
-            32 * 1024,
+            maximum_frame_bytes.max(32 * 1024),
             Duration::from_secs(5),
             Duration::from_secs(5),
             Duration::from_secs(10),
@@ -1834,6 +1848,28 @@ mod tests {
         assert!(second_drain.operations_drained);
         assert_eq!(first_drain.remaining_operations, 0);
         assert_eq!(second_drain.remaining_operations, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn send_frame_waits_for_peer_ack_before_connection_drop() {
+        let (client_endpoint, server_endpoint) = endpoint_pair_with_max_frame(512 * 1024);
+        let (client, accepted) = tokio::join!(
+            client_endpoint.connect(server_endpoint.config.local_identity.member(),),
+            server_endpoint.accept(),
+        );
+        let client = client.expect("client authentication");
+        let server = accepted.expect("server accept").expect("server authentication");
+        let response = vec![0x5a; 512 * 1024];
+        let server_task = tokio::spawn(async move {
+            assert_eq!(server.receive_frame().await.expect("request"), b"request");
+            server.send_frame(&response).await.expect("response delivery");
+            response
+        });
+
+        client.send_frame(b"request").await.expect("request delivery");
+        let received = client.receive_frame().await.expect("response delivery");
+        assert_eq!(received.len(), 512 * 1024);
+        assert_eq!(received, server_task.await.expect("server task"));
     }
     async fn rejects_malformed_frames(
         outbound: &super::ProductionConnection,

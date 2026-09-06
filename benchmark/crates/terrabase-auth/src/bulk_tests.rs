@@ -520,7 +520,10 @@ fn signed_zero_is_canonical_for_unique_indexes_in_direct_and_transaction_updates
         ),
         Outcome::UniqueConflict
     );
-    assert_eq!(store.read_record("user", "b").unwrap().unwrap()["profile"], json!({"counter": 1.0}));
+    assert_eq!(
+        store.read_record("user", "b").unwrap().unwrap()["profile"],
+        json!({"counter": 1.0})
+    );
 
     assert!(matches!(
         apply_entry(
@@ -556,5 +559,8 @@ fn signed_zero_is_canonical_for_unique_indexes_in_direct_and_transaction_updates
         ),
         Outcome::TransactionConflict
     );
-    assert_eq!(store.read_record("user", "b").unwrap().unwrap()["profile"], json!({"counter": 1.0}));
+    assert_eq!(
+        store.read_record("user", "b").unwrap().unwrap()["profile"],
+        json!({"counter": 1.0})
+    );
 }

@@ -88,7 +88,7 @@ impl AuthAuthority {
         self.raft.is_initialized().await.map_err(|_| AuthorityError::Unavailable)
     }
 
-    /// Submit a stable conditional command to consensus; local followers refuse.
+    /// Submit a stable conditional command to the elected admitted leader.
     pub async fn mutate(&self, command: Command) -> Result<Outcome, AuthorityError> {
         tokio::time::timeout(self.deadline, async { self.mutate_routed(command).await })
             .await
@@ -108,6 +108,12 @@ impl AuthAuthority {
     }
 
     pub(crate) async fn mutate_local(&self, command: Command) -> Result<Outcome, AuthorityError> {
+        tokio::time::timeout(self.deadline, self.mutate_local_inner(command))
+            .await
+            .map_err(|_| AuthorityError::Deadline)?
+    }
+
+    async fn mutate_local_inner(&self, command: Command) -> Result<Outcome, AuthorityError> {
         let response =
             self.raft.client_write(command).await.map_err(|_| AuthorityError::Unavailable)?;
         // The admitted group has two independently durable SQLite voters per Region.
@@ -189,6 +195,15 @@ impl AuthAuthority {
     }
 
     pub(crate) async fn query_local(&self, action: Action) -> Result<Outcome, AuthorityError> {
+        if !matches!(action, Action::Find { .. } | Action::Count { .. }) {
+            return Err(AuthorityError::InvalidConfiguration);
+        }
+        tokio::time::timeout(self.deadline, self.query_local_inner(action))
+            .await
+            .map_err(|_| AuthorityError::Deadline)?
+    }
+
+    async fn query_local_inner(&self, action: Action) -> Result<Outcome, AuthorityError> {
         self.raft.ensure_linearizable().await.map_err(|_| AuthorityError::Unavailable)?;
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || store.query(&action))

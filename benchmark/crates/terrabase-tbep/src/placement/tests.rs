@@ -45,7 +45,7 @@ impl Fixture {
             &member,
             1,
             1,
-                [(scope, local_region, selected_regions)],
+            [(scope, local_region, selected_regions)],
         )
         .expect("boundary");
         let request = pb::PlacementStageRequest {

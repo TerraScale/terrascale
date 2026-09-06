@@ -164,6 +164,7 @@ impl SqliteStore {
 
     /// Read local applied state. Callers must first confirm Raft's linearizable barrier.
     /// This method does not itself grant authority to return the record to a client.
+    #[cfg(test)]
     pub(crate) fn read_record(&self, model: &str, id: &str) -> Result<Option<Record>> {
         read_record(&*self.lock()?, model, id)
     }

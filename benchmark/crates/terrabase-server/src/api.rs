@@ -4423,7 +4423,7 @@ mod tests {
             .await
             .expect("answers");
         assert_eq!(response.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(response.into_body(), 65_536).await.expect("body");
+        let body = axum::body::to_bytes(response.into_body(), 1_048_576).await.expect("body");
         assert!(
             body.windows(b"@scalar/api-reference".len())
                 .any(|part| { part == b"@scalar/api-reference" })
@@ -4612,7 +4612,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(operation_count, 48, "registered route count changed");
+        assert_eq!(operation_count, 64, "registered route count changed");
     }
 
     #[test]
