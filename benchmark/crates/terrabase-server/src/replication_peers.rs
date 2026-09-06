@@ -80,7 +80,7 @@ pub enum PhysicalDriver {
         /// Persistent writer tail.
         writer: WalWriterDriver,
         /// Captured physical files.
-        source: WalSnapshotSource,
+        source: Box<WalSnapshotSource>,
     },
     /// An empty physical seat awaiting an authenticated snapshot.
     BootstrapFollower(Box<SnapshotReceiver>),
@@ -938,7 +938,7 @@ async fn session(
                                 if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), lane.scope)) { facts.physical = None; facts.readiness = None; facts.physical_caught_up = false; }
                                 let Some(PhysicalDriver::BootstrapWriter { writer, source }) = lane.physical.as_mut() else { return Err("snapshot replacement lacks source authorization".into()); };
                                 let parent = source.staging_parent().to_owned();
-                                *source = writer.refresh_snapshot(&parent).await.map_err(failure)?;
+                                **source = writer.refresh_snapshot(&parent).await.map_err(failure)?;
                                 connection.send_frame(&source.manifest().encode().map_err(failure)?).await.map_err(failure)?;
                             },
                             WalCaptureStep::UpToDate => {
@@ -1087,6 +1087,7 @@ mod tests {
     #[test]
     fn physical_assignment_does_not_embed_snapshot_receive_buffers() {
         assert!(std::mem::size_of::<PhysicalDriver>() < std::mem::size_of::<SnapshotReceiver>());
+        assert!(std::mem::size_of::<PhysicalDriver>() < std::mem::size_of::<WalSnapshotSource>());
     }
 
     #[test]

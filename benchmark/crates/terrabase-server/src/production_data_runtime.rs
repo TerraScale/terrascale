@@ -379,7 +379,7 @@ pub async fn build_peer_databases(
             .map_err(failure)?;
             PhysicalDriver::BootstrapWriter {
                 writer: WalWriterDriver::new(binding, lease, tail),
-                source: snapshot,
+                source: Box::new(snapshot),
             }
         } else {
             let mut receiver =

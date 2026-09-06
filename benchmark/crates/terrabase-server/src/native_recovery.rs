@@ -1,13 +1,15 @@
 //! Durable native recovery-point operations bound to the running member fleet.
 
+use crate::admitted_databases::AdmittedDatabaseRegistry;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tokio::sync::Notify;
 use terrabase::backup::worker::NativeBackupFleet;
 use terrabase_tbep::member_host::MemberHost;
-use crate::admitted_databases::AdmittedDatabaseRegistry;
+use tokio::sync::Notify;
+
+mod admission;
 
 /// Finite bounds for the durable recovery ledger.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,13 +23,22 @@ pub struct NativeRecoveryLimits {
 impl NativeRecoveryLimits {
     /// Validates finite bounds accepted by the worker.
     pub fn validate(self) -> Result<Self, NativeRecoveryError> {
-        if !(1..=10_000).contains(&self.pending_operations) || self.pending_operations > self.retained_operations || self.retained_operations > 10_000 { return Err(NativeRecoveryError::InvalidRequest); }
+        if !(1..=10_000).contains(&self.pending_operations)
+            || self.pending_operations > self.retained_operations
+            || self.retained_operations > 10_000
+        {
+            return Err(NativeRecoveryError::InvalidRequest);
+        }
         Ok(self)
     }
 }
 
 /// Owner handle for the single serial recovery worker.
-pub struct NativeRecoveryWorker { runtime: Arc<NativeRecoveryRuntime>, stop: tokio::sync::oneshot::Sender<()>, join: tokio::task::JoinHandle<()> }
+pub struct NativeRecoveryWorker {
+    runtime: Arc<NativeRecoveryRuntime>,
+    stop: tokio::sync::oneshot::Sender<()>,
+    join: tokio::task::JoinHandle<()>,
+}
 
 impl NativeRecoveryWorker {
     /// Signals the worker and waits for its owned task to finish.
@@ -130,6 +141,8 @@ impl NativeRecoveryRuntime {
         limits: NativeRecoveryLimits,
     ) -> Result<(Arc<Self>, NativeRecoveryWorker), NativeRecoveryError> {
         let limits = limits.validate()?;
+        let executor =
+            tokio::runtime::Handle::try_current().map_err(|_| NativeRecoveryError::Unavailable)?;
         crate::export_api::ensure_no_symlink_components(root)
             .map_err(|_| NativeRecoveryError::Unavailable)?;
         std::fs::create_dir_all(root).map_err(|_| NativeRecoveryError::Unavailable)?;
@@ -149,26 +162,34 @@ impl NativeRecoveryRuntime {
             ) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS native_recovery_source ON native_recovery_operations(source_database_id,operation_id);")
             .map_err(|_| NativeRecoveryError::Unavailable)?;
-        let mut info = connection.prepare("PRAGMA table_info(native_recovery_operations)").map_err(|_| NativeRecoveryError::Unavailable)?;
-        let rows = info.query_map([], |row| row.get::<_, String>(1)).map_err(|_| NativeRecoveryError::Unavailable)?;
-        let has_phase = rows.filter_map(Result::ok).any(|name| name == "phase");
-        drop(info);
-        if !has_phase { connection.execute("ALTER TABLE native_recovery_operations ADD COLUMN phase TEXT NOT NULL DEFAULT 'accepted'", []).map_err(|_| NativeRecoveryError::Unavailable)?; }
+        // Reject unsupported ledgers without inventing execution phases for old rows.
+        connection
+            .prepare("SELECT operation_id, source_database_id, phase, record FROM native_recovery_operations LIMIT 0")
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
         for parent in root.ancestors().filter(|path| !path.as_os_str().is_empty()) {
             std::fs::File::open(parent)
                 .and_then(|file| file.sync_all())
                 .map_err(|_| NativeRecoveryError::Unavailable)?;
         }
-        let runtime = Arc::new(Self { fleet, operations: Mutex::new(connection), registry, limits, lifecycle: Mutex::new(false), notify: Notify::new() });
+        let runtime = Arc::new(Self {
+            fleet,
+            operations: Mutex::new(connection),
+            registry,
+            limits,
+            lifecycle: Mutex::new(false),
+            notify: Notify::new(),
+        });
         let (stop, mut stopped) = tokio::sync::oneshot::channel();
         let worker_runtime = Arc::clone(&runtime);
-        let join = tokio::spawn(async move {
+        let join = executor.spawn(async move {
             loop {
                 tokio::select! {
                     _ = &mut stopped => break,
                     _ = worker_runtime.notify.notified() => {}
                 }
-                if worker_runtime.process_pending().await.is_err() { break; }
+                if worker_runtime.process_pending().await.is_err() {
+                    break;
+                }
             }
         });
         runtime.notify.notify_one();
@@ -193,13 +214,15 @@ impl NativeRecoveryRuntime {
         {
             return Err(NativeRecoveryError::InvalidRequest);
         }
-        if *self.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? {
-            return Err(NativeRecoveryError::Unavailable);
-        }
-        let admitted = self.registry.resolve(&database).map_err(|_| NativeRecoveryError::Unavailable)?.ok_or(NativeRecoveryError::InvalidRequest)?;
+        let admitted = self
+            .registry
+            .resolve(&database)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .ok_or(NativeRecoveryError::InvalidRequest)?;
         let source = admitted.host.engine().database_id().to_text();
-        if source != database { return Err(NativeRecoveryError::InvalidRequest); }
-        let placement = admitted.record.regions.clone();
+        if source != database {
+            return Err(NativeRecoveryError::InvalidRequest);
+        }
         let mut digest = blake3::Hasher::new();
         digest.update(b"terrabase/native-recovery-operation/v1\0");
         for value in [&source, &idempotency_key] {
@@ -210,25 +233,28 @@ impl NativeRecoveryRuntime {
         let state = tokio::task::spawn_blocking({
             let runtime = Arc::clone(self);
             move || {
-            let proposed = NativeRecoveryOperation { operation_id:operation_id.clone(), source_database_id:source.clone(),
-                phase: NativeRecoveryPhase::Accepted, facts:None,error:None };
-            let bytes = serde_json::to_vec(&proposed).map_err(|_| NativeRecoveryError::Unavailable)?;
-            let connection = runtime.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-            if let Some(existing) = connection.query_row("SELECT record FROM native_recovery_operations WHERE operation_id=?1 AND source_database_id=?2", params![operation_id, source], |row| row.get::<_, Vec<u8>>(0)).optional().map_err(|_| NativeRecoveryError::Unavailable)? {
-                return serde_json::from_slice(&existing).map_err(|_| NativeRecoveryError::Unavailable);
+                let proposed = NativeRecoveryOperation {
+                    operation_id: operation_id.clone(),
+                    source_database_id: source.clone(),
+                    phase: NativeRecoveryPhase::Accepted,
+                    facts: None,
+                    error: None,
+                };
+                let _lifecycle =
+                    runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+                if *_lifecycle {
+                    return Err(NativeRecoveryError::Unavailable);
+                }
+                let mut connection =
+                    runtime.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+                let admitted =
+                    admission::admit_operation(&mut connection, runtime.limits, proposed)?;
+                runtime.notify.notify_one();
+                Ok(admitted)
             }
-            let pending: i64 = connection.query_row("SELECT count(*) FROM native_recovery_operations WHERE phase IN ('accepted','capturing','measuring')", [], |row| row.get(0)).map_err(|_| NativeRecoveryError::Unavailable)?;
-            let total: i64 = connection.query_row("SELECT count(*) FROM native_recovery_operations", [], |row| row.get(0)).map_err(|_| NativeRecoveryError::Unavailable)?;
-            if total >= runtime.limits.retained_operations as i64 { connection.execute("DELETE FROM native_recovery_operations WHERE phase IN ('complete','failed')", []).map_err(|_| NativeRecoveryError::Unavailable)?; }
-            let total_after: i64 = connection.query_row("SELECT count(*) FROM native_recovery_operations", [], |row| row.get(0)).map_err(|_| NativeRecoveryError::Unavailable)?;
-            if pending >= runtime.limits.pending_operations as i64 || total_after >= runtime.limits.retained_operations as i64 { return Err(NativeRecoveryError::Unavailable); }
-            connection.execute("INSERT INTO native_recovery_operations(operation_id,source_database_id,phase,record) VALUES(?1,?2,'accepted',?3)",params![operation_id,source,bytes]).map_err(|_| NativeRecoveryError::Unavailable)?;
-            drop(connection);
-            let state = runtime.status(&source,&operation_id)?.ok_or(NativeRecoveryError::Unavailable)?;
-            Ok(state)
-        }}).await.map_err(|_| NativeRecoveryError::Unavailable)??;
-        self.notify.notify_one();
-        let _ = placement;
+        })
+        .await
+        .map_err(|_| NativeRecoveryError::Unavailable)??;
         Ok(state)
     }
 
@@ -252,24 +278,57 @@ impl NativeRecoveryRuntime {
 
     async fn process_pending(self: &Arc<Self>) -> Result<(), NativeRecoveryError> {
         let pending = {
-            let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            let connection =
+                self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
             let mut statement = connection.prepare("SELECT source_database_id, operation_id, phase, record FROM native_recovery_operations ORDER BY operation_id").map_err(|_| NativeRecoveryError::Unavailable)?;
-            let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Vec<u8>>(3)?))).map_err(|_| NativeRecoveryError::Unavailable)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Vec<u8>>(3)?,
+                    ))
+                })
+                .map_err(|_| NativeRecoveryError::Unavailable)?;
             let mut found = None;
             for row in rows {
-                let (source, operation, phase, bytes) = row.map_err(|_| NativeRecoveryError::Unavailable)?;
-                let state: NativeRecoveryOperation = serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::Unavailable)?;
-                if matches!(phase.as_str(), "accepted" | "measuring") { found = Some((source, operation, state)); break; }
+                let (source, operation, phase, bytes) =
+                    row.map_err(|_| NativeRecoveryError::Unavailable)?;
+                let state: NativeRecoveryOperation =
+                    serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::Unavailable)?;
+                if matches!(phase.as_str(), "accepted" | "measuring") {
+                    found = Some((source, operation, state));
+                    break;
+                }
             }
             found
         };
-        let Some((source, operation, state)) = pending else { return Ok(()); };
-        let admitted = self.registry.resolve(&source).map_err(|_| NativeRecoveryError::Unavailable)?.ok_or(NativeRecoveryError::Unavailable)?;
-        if admitted.host.engine().database_id().to_text() != source { return Err(NativeRecoveryError::VerificationFailed); }
+        let Some((source, operation, state)) = pending else {
+            return Ok(());
+        };
+        let admitted = self
+            .registry
+            .resolve(&source)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .ok_or(NativeRecoveryError::Unavailable)?;
+        if admitted.host.engine().database_id().to_text() != source {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
         let placement = admitted.record.regions.clone();
         let runtime = Arc::clone(self);
-        let result = tokio::task::spawn_blocking(move || runtime.run_capture(&admitted.host, placement, &source, &operation)).await.map_err(|_| NativeRecoveryError::Unavailable)?;
-        if result.is_err() { let mut failed = state; failed.phase = NativeRecoveryPhase::Failed; failed.error = Some("native recovery verification failed; retry the existing operation".into()); self.save(&failed)?; }
+        let result = tokio::task::spawn_blocking(move || {
+            runtime.run_capture(&admitted.host, placement, &source, &operation)
+        })
+        .await
+        .map_err(|_| NativeRecoveryError::Unavailable)?;
+        if result.is_err() {
+            let mut failed = state;
+            failed.phase = NativeRecoveryPhase::Failed;
+            failed.error =
+                Some("native recovery verification failed; retry the existing operation".into());
+            self.save(&failed)?;
+        }
         self.notify.notify_one();
         Ok(())
     }
@@ -284,7 +343,13 @@ impl NativeRecoveryRuntime {
             .map_err(|_| NativeRecoveryError::Unavailable)?
             .execute(
                 "UPDATE native_recovery_operations SET phase=?2, record=?3 WHERE operation_id=?1",
-                params![operation.operation_id, serde_json::to_string(&operation.phase).map_err(|_| NativeRecoveryError::Unavailable)?.trim_matches('"'), bytes],
+                params![
+                    operation.operation_id,
+                    serde_json::to_string(&operation.phase)
+                        .map_err(|_| NativeRecoveryError::Unavailable)?
+                        .trim_matches('"'),
+                    bytes
+                ],
             )
             .map_err(|_| NativeRecoveryError::Unavailable)?;
         Ok(())
