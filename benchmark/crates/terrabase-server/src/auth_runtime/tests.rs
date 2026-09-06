@@ -927,7 +927,9 @@ async fn admitted_http_router_serves_external_node_consumer() {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
         let mut child = process.spawn().map_err(|error| error.to_string())?;
-        let deadline = Instant::now() + Duration::from_secs(180);
+        // The maintained suites perform thousands of encrypted quorum writes,
+        // including schema provisioning and cleanup between cases.
+        let deadline = Instant::now() + Duration::from_secs(15 * 60);
         loop {
             match child.try_wait() {
                 Err(error) => {
@@ -943,7 +945,7 @@ async fn admitted_http_router_serves_external_node_consumer() {
                         kill_process_group(Pid::from_raw(child.id() as i32).unwrap(), Signal::KILL);
                     let _ = child.kill();
                     let _ = child.wait();
-                    break Err("external auth consumer exceeded 180 seconds".into());
+                    break Err("external auth consumer exceeded 15 minutes".into());
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(100)),
             }
