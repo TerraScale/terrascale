@@ -60,13 +60,43 @@ fn scalar(value: &Value, mode: Mode) -> Value {
         value.clone()
     }
 }
+
+fn compare_numbers(left: &serde_json::Number, right: &serde_json::Number) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let integer = |value: &serde_json::Number| {
+        value.as_i64().map(i128::from).or_else(|| value.as_u64().map(i128::from))
+    };
+    let integer_float = |integer: i128, float: f64| {
+        if float < i64::MIN as f64 {
+            return Ordering::Greater;
+        }
+        // u64::MAX rounds up to exactly 2^64 as f64.
+        if float >= u64::MAX as f64 {
+            return Ordering::Less;
+        }
+        match integer.cmp(&(float as i128)) {
+            Ordering::Equal => 0.0_f64.partial_cmp(&float.fract()).expect("finite JSON number"),
+            order => order,
+        }
+    };
+    match (integer(left), integer(right)) {
+        (Some(left), Some(right)) => left.cmp(&right),
+        (Some(left), None) => integer_float(left, right.as_f64().expect("JSON number")),
+        (None, Some(right)) => integer_float(right, left.as_f64().expect("JSON number")).reverse(),
+        (None, None) => left
+            .as_f64()
+            .expect("JSON number")
+            .partial_cmp(&right.as_f64().expect("JSON number"))
+            .expect("finite JSON numbers"),
+    }
+}
+
 fn one(record: &Record, predicate: &Predicate) -> bool {
     let value = scalar(record.get(&predicate.field).unwrap_or(&Value::Null), predicate.mode);
     let expected = scalar(&predicate.value, predicate.mode);
     let ordering = match (&value, &expected) {
-        (Value::Number(a), Value::Number(b)) => {
-            a.as_f64().zip(b.as_f64()).and_then(|(a, b)| a.partial_cmp(&b))
-        }
+        (Value::Number(a), Value::Number(b)) => Some(compare_numbers(a, b)),
         (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
         _ => None,
     };
@@ -110,4 +140,40 @@ pub(crate) fn matches(record: &Record, predicates: &[Predicate]) -> bool {
         });
     }
     result.unwrap_or(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn numeric_predicates_preserve_integer_precision_and_fractional_order() {
+        for (lower, upper) in [
+            (json!(9_007_199_254_740_992_u64), json!(9_007_199_254_740_993_u64)),
+            (json!(u64::MAX - 1), json!(u64::MAX)),
+            (json!(i64::MIN), json!(i64::MIN + 1)),
+            (json!(-1), json!(u64::MAX)),
+            (json!(9_007_199_254_740_992.0), json!(9_007_199_254_740_993_u64)),
+            (json!(u64::MAX), json!(18_446_744_073_709_551_616.0)),
+            (json!(-1.5), json!(-1)),
+            (json!(1), json!(1.5)),
+        ] {
+            let predicate = |value, operator| Predicate {
+                field: "counter".into(),
+                value,
+                operator,
+                connector: Connector::AND,
+                mode: Mode::Sensitive,
+            };
+            let record = Record::from([("counter".into(), lower.clone())]);
+            assert!(
+                matches(&record, &[predicate(upper.clone(), Operator::Lt)]),
+                "{lower} < {upper}"
+            );
+            assert!(!matches(&record, &[predicate(upper.clone(), Operator::Gte)]));
+            let record = Record::from([("counter".into(), upper)]);
+            assert!(matches(&record, &[predicate(lower, Operator::Gt)]));
+        }
+    }
 }

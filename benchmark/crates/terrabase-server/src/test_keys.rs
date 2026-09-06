@@ -30,7 +30,7 @@ pub(crate) fn storage_keys(
     let listener = UnixListener::bind(&socket).unwrap();
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o660)).unwrap();
     let stat = std::fs::metadata(&socket).unwrap();
-    let provider = OciVaultKeyDelivery::new(socket, stat.uid(), stat.gid()).unwrap();
+    let provider = OciVaultKeyDelivery::new(socket.clone(), stat.uid(), stat.gid()).unwrap();
     let version = DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap();
     let metadata = KeyVersionMetadata::new(
         KeyScope::new_with_project(
@@ -91,6 +91,9 @@ pub(crate) fn storage_keys_with_provider(
 #[cfg(target_os = "linux")]
 pub(crate) struct KeyDeliveryFixture {
     pub(crate) provider: OciVaultKeyDelivery,
+    pub(crate) socket: std::path::PathBuf,
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
     directory: std::path::PathBuf,
     stop: Arc<AtomicBool>,
     server: Option<std::thread::JoinHandle<()>>,
@@ -123,7 +126,7 @@ pub(crate) fn key_delivery() -> KeyDeliveryFixture {
     listener.set_nonblocking(true).unwrap();
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o660)).unwrap();
     let stat = std::fs::metadata(&socket).unwrap();
-    let provider = OciVaultKeyDelivery::new(socket, stat.uid(), stat.gid()).unwrap();
+    let provider = OciVaultKeyDelivery::new(socket.clone(), stat.uid(), stat.gid()).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let server_stop = stop.clone();
     let server = std::thread::spawn(move || {
@@ -155,5 +158,13 @@ pub(crate) fn key_delivery() -> KeyDeliveryFixture {
             let _ = stream.write_all(&response);
         }
     });
-    KeyDeliveryFixture { provider, directory, stop, server: Some(server) }
+    KeyDeliveryFixture {
+        provider,
+        socket,
+        uid: stat.uid(),
+        gid: stat.gid(),
+        directory,
+        stop,
+        server: Some(server),
+    }
 }

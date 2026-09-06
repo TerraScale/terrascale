@@ -49,8 +49,11 @@ fn advance(transaction: &Transaction<'_>) -> Result<()> {
     )
 }
 fn mutates(action: &Action, outcome: &Outcome) -> bool {
-    !matches!(action, Action::Find { .. })
-        && matches!(outcome, Outcome::Applied | Outcome::Record { .. })
+    if matches!(action, Action::Find { .. } | Action::Count { .. }) {
+        return false;
+    }
+    matches!(outcome, Outcome::Applied | Outcome::Record { .. })
+        || matches!(outcome, Outcome::Count { count } if *count > 0)
 }
 fn replay(transaction: &Transaction<'_>, workspace: &Workspace) -> Result<()> {
     for (command, expected) in &workspace.commands {

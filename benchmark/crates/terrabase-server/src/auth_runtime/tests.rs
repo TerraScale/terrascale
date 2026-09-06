@@ -5,6 +5,126 @@ use axum::http::header::CACHE_CONTROL;
 use http_body_util::BodyExt;
 use terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapGrant;
 
+// The transport crate intentionally keeps its certificate fixture private to
+// that crate. Keep this server test fixture local so the HTTP test exercises
+// the same public production constructors and mTLS boundary.
+#[cfg(target_os = "linux")]
+mod admitted_fixture {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use rcgen::{BasicConstraints, Certificate, CertificateParams, ExtendedKeyUsagePurpose, Ia5String, IsCa, KeyPair, KeyUsagePurpose, SanType};
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+    use std::path::PathBuf;
+    use std::time::Duration;
+    use terrabase::encryption::{DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata, OciVaultDatabaseKeys};
+    use terrabase::identity::{ClusterUlid, DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid, Ulid};
+    use terrabase::member::EnvironmentName;
+    use terrabase::regions::RegionCode;
+    use terrabase_auth::{AuthAuthority, AuthNetwork, SqliteStore};
+    use terrabase_cluster::production::{ProductionPeerAdmission, ProductionQuicEndpoint, ProductionRegion, ProductionTlsMaterial, ProductionTransportConfig, ProductionTransportLimits};
+    use crate::config::{DatabaseQuotas, ProductionConfig, ProductionDatabase, ProductionEnvironment, ProductionKeys, ProductionPlacement, ProductionTransport, PublicApiConfig, ReleaseBinding};
+    use terrabase_tbep::auth_bootstrap::{AuthBootstrapBoundary, AuthBootstrapJournal};
+    use terrabase_tbep::proto::terrabase::v1::{AuthGroupBootstrapGrant, AuthGroupVoter};
+    use tower::ServiceExt;
+
+    pub struct Fixture {
+        pub runtime: Arc<AuthRuntime>,
+        pub database: String,
+        pub key: &'static str,
+        pub group: String,
+        pub remote: AuthAuthority,
+        pub remote_endpoint: Arc<ProductionQuicEndpoint>,
+        pub local_endpoint: Arc<ProductionQuicEndpoint>,
+        pub local_receive: tokio::task::JoinHandle<()>,
+        pub remote_receive: tokio::task::JoinHandle<()>,
+        pub root: PathBuf,
+        pub keys: crate::test_keys::KeyDeliveryFixture,
+    }
+
+    fn limits() -> ProductionTransportLimits {
+        ProductionTransportLimits::try_new(4096, 8, 8, 32 * 1024, Duration::from_secs(5), Duration::from_secs(5), Duration::from_secs(10), Duration::from_secs(5)).unwrap()
+    }
+
+    fn member_tls(identity: &terrabase_cluster::production::MemberWorkloadIdentity, name: &str, issuer: &Certificate, issuer_key: &KeyPair, anchor: &CertificateDer<'static>) -> ProductionTlsMaterial {
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(vec![name.to_owned()]).unwrap();
+        params.subject_alt_names.push(SanType::URI(Ia5String::try_from(identity.as_str()).unwrap()));
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
+        let cert = params.signed_by(&key, issuer, issuer_key).unwrap();
+        ProductionTlsMaterial::try_new(vec![CertificateDer::from(cert.der().to_vec())], PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())), vec![anchor.clone()]).unwrap()
+    }
+
+    fn endpoints(first: &terrabase_cluster::production::MemberWorkloadIdentity, second: &terrabase_cluster::production::MemberWorkloadIdentity) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
+        let a = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let b = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let aa = a.local_addr().unwrap(); let bb = b.local_addr().unwrap(); drop((a, b));
+        let issuer_key = KeyPair::generate().unwrap();
+        let mut issuer_params = CertificateParams::new(Vec::new()).unwrap();
+        issuer_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        issuer_params.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyCertSign];
+        let issuer = issuer_params.self_signed(&issuer_key).unwrap();
+        let anchor = CertificateDer::from(issuer.der().to_vec());
+        let atls = member_tls(first, "member-a.internal", &issuer, &issuer_key, &anchor);
+        let btls = member_tls(second, "member-b.internal", &issuer, &issuer_key, &anchor);
+        let ac = ProductionTransportConfig::try_new(aa, first.clone(), ProductionRegion::Gru, 1, 1, vec![ProductionPeerAdmission::try_new(second.clone(), ProductionRegion::Gru, bb, "member-b.internal").unwrap()], limits()).unwrap();
+        let bc = ProductionTransportConfig::try_new(bb, second.clone(), ProductionRegion::Gru, 1, 1, vec![ProductionPeerAdmission::try_new(first.clone(), ProductionRegion::Gru, aa, "member-a.internal").unwrap()], limits()).unwrap();
+        (ProductionQuicEndpoint::bind(ac, atls).unwrap(), ProductionQuicEndpoint::bind(bc, btls).unwrap())
+    }
+
+    fn production_config(scope: (TenantUlid, ProjectUlid, DatabaseUlid), member: MemberUlid, peer: MemberUlid, root: &PathBuf, keys: &crate::test_keys::KeyDeliveryFixture) -> ProductionConfig {
+        let (tenant, project, database) = scope;
+        let environment = EnvironmentName::try_new("production").unwrap();
+        let cluster = ClusterUlid::generate();
+        ProductionConfig {
+            environment: ProductionEnvironment { name: environment, cluster, member },
+            databases: vec![ProductionDatabase { tenant, project, database, region: RegionCode::GRU, selected_regions: BTreeSet::from([RegionCode::GRU]), location: root.join("database"), policy_journal: root.join("policy.sqlite"), backup_root: root.join("backup"), encryption_provider: terrabase::encryption::KeyProviderIdentity::OciVault, encryption_key: DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(), quotas: DatabaseQuotas { max_storage_bytes: 1 << 30, max_documents: 1000, max_inflight: 16 }, enabled: true }],
+            placement: ProductionPlacement { generation: 1, epoch: 1, regions: BTreeMap::from([(RegionCode::GRU, [member, peer])]) },
+            transport: ProductionTransport { max_inflight: 16, credential_rotation: None, tbep_listen: "127.0.0.1:0".parse().unwrap(), quic_listen: "127.0.0.1:0".parse().unwrap(), metrics_listen: "127.0.0.1:0".parse().unwrap(), allow_wildcard_tbep: false, allow_wildcard_quic: false, allow_wildcard_metrics: false, server_certificate: root.join("server.pem"), server_private_key: root.join("server.key"), client_ca: root.join("ca.pem"), peers: vec![] },
+            release: ReleaseBinding { release: "test".into(), capabilities: BTreeSet::new() }, control: None,
+            keys: Some(ProductionKeys { socket: keys.socket.clone(), orchestrator_uid: keys.uid, socket_gid: keys.gid }), member_admission: None,
+        }
+    }
+
+    pub async fn create() -> Fixture {
+        let root = std::env::temp_dir().join(format!("terrabase-auth-http-{}", Ulid::generate())); std::fs::create_dir_all(&root).unwrap();
+        let tenant = TenantUlid::generate(); let project = ProjectUlid::generate(); let database = DatabaseUlid::generate();
+        let first = MemberUlid::generate(); let second = MemberUlid::generate();
+        let first_identity = terrabase_cluster::production::MemberWorkloadIdentity::try_new("production", "cluster", &first.to_text()).unwrap();
+        let second_identity = terrabase_cluster::production::MemberWorkloadIdentity::try_new("production", "cluster", &second.to_text()).unwrap();
+        let (local, remote_endpoint) = endpoints(&first_identity, &second_identity); let local = Arc::new(local); let remote_endpoint = Arc::new(remote_endpoint);
+        let keys = crate::test_keys::key_delivery();
+        let group = Ulid::generate().to_string();
+        let boundary = AuthBootstrapBoundary::new("production", "cluster", &first.to_text(), BTreeSet::from([terrabase_cluster::production::DatabaseRouteScope::new(tenant, project, database)]), BTreeMap::from([(first.to_text(), "GRU".into()), (second.to_text(), "GRU".into())])).unwrap();
+        let journal = Arc::new(AuthBootstrapJournal::open(&root.join("auth-bootstrap.sqlite"), boundary).unwrap());
+        let local_incarnation = journal.identity().unwrap().storage_incarnation;
+        let grant = AuthGroupBootstrapGrant { environment: "production".into(), cluster: "cluster".into(), group_id: group.clone(), tenant: tenant.to_text(), project: project.to_text(), database: database.to_text(), generation: 1, regions: vec!["GRU".into()], voters: vec![AuthGroupVoter { node_id: 1, member: first.to_text(), region: "GRU".into(), spiffe_uri: first_identity.as_str().into(), storage_incarnation: local_incarnation }, AuthGroupVoter { node_id: 2, member: second.to_text(), region: "GRU".into(), spiffe_uri: second_identity.as_str().into(), storage_incarnation: Ulid::generate().to_string() }], authority_revision: 1, genesis_node: 1 };
+        journal.bootstrap("test", terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapRequest { operation_id: Ulid::generate().to_string(), grant: Some(grant) }).unwrap();
+        let scope = terrabase::member::DatabaseScope::new("production", tenant, project, database, RegionCode::GRU).unwrap();
+        let source = OciVaultDatabaseKeys::new(keys.provider.clone(), KeyVersionMetadata::new(KeyScope::new_with_project("production", tenant, project, database, KeyPurpose::Data).unwrap(), DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap()), RegionCode::GRU).unwrap();
+        let remote_store = SqliteStore::open_encrypted(&root.join("remote.sqlite"), &group, Arc::new(source), true).unwrap();
+        let voters = BTreeMap::from([(1, first_identity.member().clone()), (2, second_identity.member().clone())]);
+        let placement = BTreeSet::from([ProductionRegion::Gru]);
+        let remote_network = AuthNetwork::new(Arc::clone(&remote_endpoint), &group, voters.clone(), &placement).unwrap();
+        let remote = AuthAuthority::recover_admitted(remote_store, remote_network.clone(), terrabase_auth::consensus_config(&group), Duration::from_secs(10)).await.unwrap();
+        let remote_for_task = remote.clone(); let remote_network_for_task = remote_network.clone(); let remote_listener = Arc::clone(&remote_endpoint);
+        let remote_receive = tokio::spawn(async move { while let Ok(Some(connection)) = remote_listener.accept().await { let authority = remote_for_task.clone(); let network = remote_network_for_task.clone(); tokio::spawn(async move { let _ = network.receive(&connection, &authority).await; }); } });
+        let key_path = root.join("bootstrap.key"); std::fs::write(&key_path, "test-bootstrap-key-01234567890123456789").unwrap();
+        let public = PublicApiConfig { lifecycle_publication: None, billing_closure: None, credential_rotation: None, provisioning: None, identity: None, listen: "127.0.0.1:0".parse().unwrap(), data_root: root.clone(), bootstrap_key_file: Some(key_path), origin_proof_key_file: None, origin_proof_previous_key_file: None, capability_key_file: None, capability_previous_key_file: None };
+        let production = production_config((tenant, project, database), first, second, &root, &keys);
+        let runtime = AuthRuntime::new(Arc::clone(&local), Arc::clone(&journal), production, &public).unwrap();
+        runtime.reconcile().await.unwrap();
+        let local_for_task = Arc::clone(&runtime); let local_receive = tokio::spawn(async move { let _ = local_for_task.receive().await; });
+        let _ = scope;
+        Fixture { runtime, database: database.to_text(), key: "test-bootstrap-key-01234567890123456789", group, remote, remote_endpoint, local_endpoint: local, local_receive, remote_receive, root, keys }
+    }
+
+    pub async fn request(runtime: &Arc<AuthRuntime>, request: Request<Body>) -> (StatusCode, serde_json::Value, axum::http::HeaderMap) {
+        let response = router(Arc::clone(runtime)).oneshot(request).await.unwrap(); let status = response.status(); let headers = response.headers().clone(); let body = response.into_body().collect().await.unwrap().to_bytes(); let json = serde_json::from_slice(&body).unwrap(); (status, json, headers)
+    }
+}
+
 #[test]
 fn auth_result_keeps_transaction_identity_and_camel_case_shape() {
     let mut result = AuthResult::record(None, true);
@@ -51,4 +171,41 @@ fn openapi_registers_transactional_record_get() {
         .get("/api/v1/databases/{database}/auth/records/{model}/{id}")
         .expect("transactional record GET is published");
     assert!(path.get.is_some());
+}
+
+#[cfg(all(target_os = "linux", feature = "never"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
+    let fixture = admitted_fixture::create().await;
+    let auth = format!("Bearer {}", fixture.key);
+    let begin = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/transactions/begin", fixture.database)).header("authorization", &auth).header("idempotency-key", "begin-1").header("content-type", "application/json").body(Body::from(r#"{"transactionId":"http-tx"}"#)).unwrap()).await;
+    assert_eq!(begin.0, StatusCode::OK);
+    let transaction = begin.1["transactionId"].as_str().unwrap().to_owned();
+    let insert = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/insertUnique", fixture.database)).header("authorization", &auth).header("idempotency-key", "insert-1").header("x-terrascale-auth-transaction", &transaction).header("content-type", "application/json").body(Body::from(r#"{"model":"user","record":{"id":"u1","name":"before"}}"#)).unwrap()).await;
+    assert_eq!(insert.0, StatusCode::OK);
+    let staged = admitted_fixture::request(&fixture.runtime, Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database)).header("authorization", &auth).header("idempotency-key", "read-1").header("x-terrascale-auth-transaction", &transaction).body(Body::empty()).unwrap()).await;
+    assert_eq!(staged.0, StatusCode::OK);
+    assert_eq!(staged.1["matched"], true);
+    assert_eq!(staged.1["record"]["name"], "before");
+    assert_eq!(staged.2["cache-control"], "no-store");
+    assert_eq!(staged.2["x-terrascale-placement"], "GRU");
+    let ordinary_before_commit = admitted_fixture::request(&fixture.runtime, Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database)).header("authorization", &auth).body(Body::empty()).unwrap()).await;
+    assert_eq!(ordinary_before_commit.0, StatusCode::OK);
+    assert_eq!(ordinary_before_commit.1["matched"], false);
+    let missing_transaction_key = admitted_fixture::request(&fixture.runtime, Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database)).header("authorization", &auth).header("x-terrascale-auth-transaction", &transaction).body(Body::empty()).unwrap()).await;
+    assert_eq!(missing_transaction_key.0, StatusCode::BAD_REQUEST);
+    assert_eq!(missing_transaction_key.1["error"]["code"], "idempotency_key_required");
+    let commit = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/transactions/commit", fixture.database)).header("authorization", &auth).header("idempotency-key", "commit-1").header("content-type", "application/json").body(Body::from(format!(r#"{{"transactionId":"{transaction}"}}"#))).unwrap()).await;
+    assert_eq!(commit.0, StatusCode::OK);
+    let ordinary_after_commit = admitted_fixture::request(&fixture.runtime, Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database)).header("authorization", &auth).body(Body::empty()).unwrap()).await;
+    assert_eq!(ordinary_after_commit.0, StatusCode::OK);
+    assert_eq!(ordinary_after_commit.1["record"]["id"], "u1");
+    fixture.runtime.shutdown().await;
+    fixture.local_receive.abort();
+    fixture.remote_receive.abort();
+    fixture.remote.shutdown().await.unwrap();
+    drop(fixture.local_endpoint);
+    drop(fixture.remote_endpoint);
+    let _ = std::fs::remove_dir_all(fixture.root);
+    drop(fixture.keys);
 }

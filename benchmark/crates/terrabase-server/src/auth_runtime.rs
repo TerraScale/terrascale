@@ -346,6 +346,54 @@ struct UniqueIndex {
     model: String,
     fields: Vec<String>,
 }
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PredicateInput {
+    field: String,
+    value: serde_json::Value,
+    #[serde(default)]
+    operator: Option<String>,
+    #[serde(default)]
+    connector: Option<String>,
+    #[serde(default)]
+    mode: Option<String>,
+}
+impl PredicateInput {
+    fn into_predicate(self) -> Result<terrabase_auth::Predicate, Response> {
+        serde_json::from_value(serde_json::json!({
+            "field": self.field,
+            "value": self.value,
+            "operator": self.operator.unwrap_or_else(|| "eq".into()),
+            "connector": self.connector.unwrap_or_else(|| "AND".into()),
+            "mode": self.mode.unwrap_or_else(|| "sensitive".into()),
+        }))
+        .map_err(|_| error(StatusCode::BAD_REQUEST, "invalid_auth_operation"))
+    }
+}
+type PredicateInputs = Vec<PredicateInput>;
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PredicateUpdate {
+    model: String,
+    predicates: PredicateInputs,
+    update: BTreeMap<String, serde_json::Value>,
+}
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PredicateOnly {
+    model: String,
+    predicates: PredicateInputs,
+}
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct Increment {
+    model: String,
+    predicates: PredicateInputs,
+    #[schema(value_type = BTreeMap<String, f64>)]
+    increment: BTreeMap<String, serde_json::Number>,
+    #[serde(default)]
+    set: BTreeMap<String, serde_json::Value>,
+}
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 struct AuthResult {
@@ -354,13 +402,22 @@ struct AuthResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     records: Option<Vec<BTreeMap<String, serde_json::Value>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     transaction_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     expires_at_ms: Option<u64>,
 }
 impl AuthResult {
     fn record(record: Option<BTreeMap<String, serde_json::Value>>, matched: bool) -> Self {
-        Self { record, matched, records: None, transaction_id: None, expires_at_ms: None }
+        Self {
+            record,
+            matched,
+            records: None,
+            count: None,
+            transaction_id: None,
+            expires_at_ms: None,
+        }
     }
 }
 
@@ -414,6 +471,11 @@ async fn mutation(
             result.records = Some(records);
             Json(result).into_response()
         }
+        Ok(Outcome::Count { count }) => {
+            let mut result = AuthResult::record(None, true);
+            result.count = Some(count);
+            Json(result).into_response()
+        }
         Ok(Outcome::Transaction { transaction_id, expires_at_ms }) => {
             let mut result = AuthResult::record(None, true);
             result.transaction_id = Some(transaction_id);
@@ -441,7 +503,81 @@ fn placement_response(mut response: Response, grant: &AuthGroupBootstrapGrant) -
     response
 }
 
-#[utoipa::path(post,path="/api/v1/databases/{database}/auth/insertUnique",request_body=UniqueInsert,params(("database"=String,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=AuthResult),(status=409,description="Unique or idempotency conflict"),(status=503,description="Authority unavailable or uncertain result")))]
+fn predicates(inputs: PredicateInputs) -> Result<Vec<terrabase_auth::Predicate>, Response> {
+    inputs.into_iter().map(PredicateInput::into_predicate).collect()
+}
+
+async fn query(
+    runtime: &AuthRuntime,
+    database: &str,
+    headers: &HeaderMap,
+    action: Action,
+) -> Response {
+    let domain = match runtime.domain(database, headers, Verbs::READ) {
+        Ok(domain) => domain,
+        Err(response) => return response,
+    };
+    let result = if let Some(transaction) = headers.get("x-terrascale-auth-transaction") {
+        let Ok(transaction) = transaction.to_str() else {
+            return placement_response(
+                error(StatusCode::BAD_REQUEST, "invalid_transaction_identity"),
+                &domain.grant,
+            );
+        };
+        if transaction.is_empty() || transaction.len() > 128 {
+            return placement_response(
+                error(StatusCode::BAD_REQUEST, "invalid_transaction_identity"),
+                &domain.grant,
+            );
+        }
+        let Some(key) = headers
+            .get("idempotency-key")
+            .and_then(|value| value.to_str().ok())
+            .filter(|key| !key.is_empty() && key.len() <= 256)
+        else {
+            return placement_response(
+                error(StatusCode::BAD_REQUEST, "idempotency_key_required"),
+                &domain.grant,
+            );
+        };
+        domain
+            .authority
+            .mutate(Command {
+                idempotency_key: key.into(),
+                observed_at_ms: now_ms(),
+                action: Action::TransactionOperation {
+                    transaction_id: transaction.into(),
+                    action: Box::new(action),
+                },
+            })
+            .await
+    } else {
+        domain.authority.query(action).await
+    };
+    let response = match result {
+        Ok(Outcome::Records { records }) => {
+            let mut result = AuthResult::record(None, true);
+            result.records = Some(records);
+            Json(result).into_response()
+        }
+        Ok(Outcome::Count { count }) => {
+            let mut result = AuthResult::record(None, true);
+            result.count = Some(count);
+            Json(result).into_response()
+        }
+        Ok(Outcome::TransactionConflict) => error(StatusCode::CONFLICT, "transaction_conflict"),
+        Ok(Outcome::IdempotencyConflict) => error(StatusCode::CONFLICT, "idempotency_conflict"),
+        Ok(Outcome::Invalid { .. }) => error(StatusCode::BAD_REQUEST, "invalid_auth_operation"),
+        Err(AuthorityError::Deadline) => {
+            error(StatusCode::SERVICE_UNAVAILABLE, "auth_outcome_unknown")
+        }
+        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"),
+        Ok(_) => error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"),
+    };
+    placement_response(response, &domain.grant)
+}
+
+#[utoipa::path(post,path="/api/v1/databases/{database}/auth/insertUnique",request_body=UniqueInsert,params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header,description="Optional active transaction identity; at most 128 bytes")),responses((status=200,body=AuthResult),(status=409,description="Unique or idempotency conflict"),(status=503,description="Authority unavailable or uncertain result")))]
 async fn insert_unique(
     State(runtime): State<Arc<AuthRuntime>>,
     Path(database): Path<String>,
@@ -456,7 +592,7 @@ async fn insert_unique(
     )
     .await
 }
-#[utoipa::path(post,path="/api/v1/databases/{database}/auth/compareAndSwap",request_body=ConditionalUpdate,params(("database"=String,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=AuthResult),(status=409,description="Unique or idempotency conflict"),(status=503,description="Authority unavailable or uncertain result")))]
+#[utoipa::path(post,path="/api/v1/databases/{database}/auth/compareAndSwap",request_body=ConditionalUpdate,params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header,description="Optional active transaction identity; at most 128 bytes")),responses((status=200,body=AuthResult),(status=409,description="Unique or idempotency conflict"),(status=503,description="Authority unavailable or uncertain result")))]
 async fn compare_and_swap(
     State(runtime): State<Arc<AuthRuntime>>,
     Path(database): Path<String>,
@@ -476,7 +612,7 @@ async fn compare_and_swap(
     )
     .await
 }
-#[utoipa::path(post,path="/api/v1/databases/{database}/auth/consumeOne",request_body=Consume,params(("database"=String,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=AuthResult),(status=409,description="Idempotency conflict"),(status=503,description="Authority unavailable or uncertain result")))]
+#[utoipa::path(post,path="/api/v1/databases/{database}/auth/consumeOne",request_body=Consume,params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header,description="Optional active transaction identity; at most 128 bytes")),responses((status=200,body=AuthResult),(status=409,description="Idempotency conflict"),(status=503,description="Authority unavailable or uncertain result")))]
 async fn consume_one(
     State(runtime): State<Arc<AuthRuntime>>,
     Path(database): Path<String>,
@@ -491,7 +627,7 @@ async fn consume_one(
     )
     .await
 }
-#[utoipa::path(post,path="/api/v1/databases/{database}/auth/index",request_body=UniqueIndex,params(("database"=String,Path),("Idempotency-Key"=String,Header)),responses((status=200,body=AuthResult),(status=409,description="Existing records violate uniqueness"),(status=503,description="Authority unavailable or uncertain result")))]
+#[utoipa::path(post,path="/api/v1/databases/{database}/auth/index",request_body=UniqueIndex,params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header,description="Optional active transaction identity; at most 128 bytes")),responses((status=200,body=AuthResult),(status=409,description="Existing records violate uniqueness"),(status=503,description="Authority unavailable or uncertain result")))]
 async fn index(
     State(runtime): State<Arc<AuthRuntime>>,
     Path(database): Path<String>,
@@ -505,6 +641,128 @@ async fn index(
         Action::CreateUniqueIndex { model: input.model, fields: input.fields },
     )
     .await
+}
+#[utoipa::path(post, path="/api/v1/databases/{database}/auth/updateOne", request_body=PredicateUpdate, params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)), responses((status=200,body=AuthResult),(status=503,description="Authority unavailable or uncertain result")))]
+async fn update_one(
+    State(runtime): State<Arc<AuthRuntime>>,
+    Path(database): Path<String>,
+    headers: HeaderMap,
+    Json(input): Json<PredicateUpdate>,
+) -> Response {
+    let predicates = match predicates(input.predicates) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    mutation(
+        &runtime,
+        &database,
+        &headers,
+        Action::UpdateOne { model: input.model, predicates, update: input.update },
+    )
+    .await
+}
+#[utoipa::path(post, path="/api/v1/databases/{database}/auth/updateMany", request_body=PredicateUpdate, params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)), responses((status=200,body=AuthResult),(status=503,description="Authority unavailable or uncertain result")))]
+async fn update_many(
+    State(runtime): State<Arc<AuthRuntime>>,
+    Path(database): Path<String>,
+    headers: HeaderMap,
+    Json(input): Json<PredicateUpdate>,
+) -> Response {
+    let predicates = match predicates(input.predicates) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    mutation(
+        &runtime,
+        &database,
+        &headers,
+        Action::UpdateMany { model: input.model, predicates, update: input.update },
+    )
+    .await
+}
+#[utoipa::path(post, path="/api/v1/databases/{database}/auth/deleteOne", request_body=PredicateOnly, params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)), responses((status=200,body=AuthResult),(status=503,description="Authority unavailable or uncertain result")))]
+async fn delete_one(
+    State(runtime): State<Arc<AuthRuntime>>,
+    Path(database): Path<String>,
+    headers: HeaderMap,
+    Json(input): Json<PredicateOnly>,
+) -> Response {
+    let predicates = match predicates(input.predicates) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    mutation(&runtime, &database, &headers, Action::DeleteOne { model: input.model, predicates })
+        .await
+}
+#[utoipa::path(post, path="/api/v1/databases/{database}/auth/deleteMany", request_body=PredicateOnly, params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)), responses((status=200,body=AuthResult),(status=503,description="Authority unavailable or uncertain result")))]
+async fn delete_many(
+    State(runtime): State<Arc<AuthRuntime>>,
+    Path(database): Path<String>,
+    headers: HeaderMap,
+    Json(input): Json<PredicateOnly>,
+) -> Response {
+    let predicates = match predicates(input.predicates) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    mutation(&runtime, &database, &headers, Action::DeleteMany { model: input.model, predicates })
+        .await
+}
+#[utoipa::path(post, path="/api/v1/databases/{database}/auth/incrementOne", request_body=Increment, params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)), responses((status=200,body=AuthResult),(status=503,description="Authority unavailable or uncertain result")))]
+async fn increment_one(
+    State(runtime): State<Arc<AuthRuntime>>,
+    Path(database): Path<String>,
+    headers: HeaderMap,
+    Json(input): Json<Increment>,
+) -> Response {
+    let predicates = match predicates(input.predicates) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    mutation(
+        &runtime,
+        &database,
+        &headers,
+        Action::IncrementOne {
+            model: input.model,
+            predicates,
+            increment: input.increment,
+            set: input.set,
+        },
+    )
+    .await
+}
+#[utoipa::path(post, path="/api/v1/databases/{database}/auth/consumeMatching", request_body=PredicateOnly, params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)), responses((status=200,body=AuthResult),(status=503,description="Authority unavailable or uncertain result")))]
+async fn consume_matching(
+    State(runtime): State<Arc<AuthRuntime>>,
+    Path(database): Path<String>,
+    headers: HeaderMap,
+    Json(input): Json<PredicateOnly>,
+) -> Response {
+    let predicates = match predicates(input.predicates) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    mutation(
+        &runtime,
+        &database,
+        &headers,
+        Action::ConsumeMatching { model: input.model, predicates },
+    )
+    .await
+}
+#[utoipa::path(post, path="/api/v1/databases/{database}/auth/count", request_body=PredicateOnly, params(("database"=String,Path),("Idempotency-Key"=Option<String>,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)), responses((status=200,body=AuthResult),(status=503,description="Authority unavailable")))]
+async fn count(
+    State(runtime): State<Arc<AuthRuntime>>,
+    Path(database): Path<String>,
+    headers: HeaderMap,
+    Json(input): Json<PredicateOnly>,
+) -> Response {
+    let predicates = match predicates(input.predicates) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    query(&runtime, &database, &headers, Action::Count { model: input.model, predicates }).await
 }
 #[utoipa::path(get,path="/api/v1/databases/{database}/auth/records/{model}/{id}",params(("database"=String,Path),("model"=String,Path),("id"=String,Path),("Idempotency-Key"=Option<String>,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)),responses((status=200,body=AuthResult),(status=503,description="Quorum-confirmed read unavailable")))]
 async fn find_one(
@@ -590,6 +848,13 @@ pub fn routes() -> utoipa_axum::router::OpenApiRouter<Arc<AuthRuntime>> {
         .routes(routes!(compare_and_swap))
         .routes(routes!(consume_one))
         .routes(routes!(index))
+        .routes(routes!(update_one))
+        .routes(routes!(update_many))
+        .routes(routes!(delete_one))
+        .routes(routes!(delete_many))
+        .routes(routes!(increment_one))
+        .routes(routes!(consume_matching))
+        .routes(routes!(count))
         .routes(routes!(find_one))
         .routes(routes!(find_page))
         .routes(routes!(begin_transaction))
@@ -615,34 +880,34 @@ mod tests;
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct TransactionIdentity {
+    /// Begin accepts a label of at most 100 UTF-8 bytes. Commit and rollback
+    /// require the returned canonical identity, which is at most 128 bytes.
     transaction_id: String,
 }
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PageQuery {
     model: String,
-    #[schema(value_type=Vec<serde_json::Value>)]
-    predicates: Vec<terrabase_auth::Predicate>,
+    predicates: PredicateInputs,
     offset: u32,
     limit: u32,
 }
-#[utoipa::path(post,path="/api/v1/databases/{database}/auth/findPage",request_body=PageQuery,params(("database"=String,Path),("Idempotency-Key"=String,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)),responses((status=200,body=AuthResult),(status=503,description="Authority unavailable")))]
+#[utoipa::path(post,path="/api/v1/databases/{database}/auth/findPage",request_body=PageQuery,params(("database"=String,Path),("Idempotency-Key"=Option<String>,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)),responses((status=200,body=AuthResult),(status=503,description="Authority unavailable")))]
 async fn find_page(
     State(runtime): State<Arc<AuthRuntime>>,
     Path(database): Path<String>,
     headers: HeaderMap,
     Json(input): Json<PageQuery>,
 ) -> Response {
-    mutation(
+    let predicates = match predicates(input.predicates) {
+        Ok(predicates) => predicates,
+        Err(response) => return response,
+    };
+    query(
         &runtime,
         &database,
         &headers,
-        Action::Find {
-            model: input.model,
-            predicates: input.predicates,
-            offset: input.offset,
-            limit: input.limit,
-        },
+        Action::Find { model: input.model, predicates, offset: input.offset, limit: input.limit },
     )
     .await
 }

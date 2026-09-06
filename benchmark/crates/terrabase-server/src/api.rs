@@ -1208,7 +1208,8 @@ pub fn router(state: Arc<ApiState>) -> Router {
     let openapi_document = full_openapi_document();
     let openapi_json =
         Arc::new(enrich_openapi(openapi_document.to_json().expect("OpenAPI must serialize")));
-    let scalar_document = serde_json::from_str(&openapi_json).expect("OpenAPI must deserialize");
+    let scalar_document: utoipa::openapi::OpenApi =
+        serde_json::from_str(&openapi_json).expect("OpenAPI must deserialize");
     router
         .route("/api/v1/openapi.json", get(openapi))
         .merge(Scalar::with_url("/scalar", scalar_document))
@@ -4465,6 +4466,52 @@ mod tests {
                 .get("/api/v1/databases/{database}/auth/records/{model}/{id}")
                 .and_then(|path| path.get("get"))
                 .is_some()
+        );
+        for path in [
+            "/api/v1/databases/{database}/auth/insertUnique",
+            "/api/v1/databases/{database}/auth/compareAndSwap",
+            "/api/v1/databases/{database}/auth/consumeOne",
+            "/api/v1/databases/{database}/auth/index",
+            "/api/v1/databases/{database}/auth/findPage",
+            "/api/v1/databases/{database}/auth/transactions/begin",
+            "/api/v1/databases/{database}/auth/transactions/commit",
+            "/api/v1/databases/{database}/auth/transactions/rollback",
+            "/api/v1/databases/{database}/auth/updateOne",
+            "/api/v1/databases/{database}/auth/updateMany",
+            "/api/v1/databases/{database}/auth/deleteOne",
+            "/api/v1/databases/{database}/auth/deleteMany",
+            "/api/v1/databases/{database}/auth/incrementOne",
+            "/api/v1/databases/{database}/auth/consumeMatching",
+            "/api/v1/databases/{database}/auth/count",
+        ] {
+            assert!(document["paths"].get(path).is_some(), "auth route is published: {path}");
+        }
+        for schema in [
+            "AuthResult",
+            "UniqueInsert",
+            "ConditionalUpdate",
+            "Consume",
+            "UniqueIndex",
+            "PageQuery",
+            "TransactionIdentity",
+            "PredicateInput",
+            "PredicateUpdate",
+            "PredicateOnly",
+            "Increment",
+        ] {
+            assert!(schemas.contains_key(schema), "auth schema is published: {schema}");
+        }
+        let insert_parameters = document["paths"]["/api/v1/databases/{database}/auth/insertUnique"]
+            ["post"]["parameters"]
+            .as_array()
+            .expect("insert parameters");
+        assert!(insert_parameters.iter().any(|parameter| {
+            parameter["name"] == "X-TerraScale-Auth-Transaction" && parameter["required"] == false
+        }));
+        assert!(
+            schemas["TransactionIdentity"]["properties"]["transactionId"]["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("100 UTF-8 bytes"))
         );
         assert_eq!(schemas["ReactiveEnvelope"]["minItems"], 7);
         assert!(!schemas.contains_key("ReactivePollRequest"));

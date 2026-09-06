@@ -43,6 +43,9 @@ fn user(id: &str, email: &str) -> Record {
 fn expected(version: u64) -> Record {
     serde_json::from_value(json!({"version":version})).unwrap()
 }
+fn predicate(field: &str, value: serde_json::Value) -> Predicate {
+    serde_json::from_value(json!({"field":field,"value":value})).unwrap()
+}
 async fn apply(store: &mut SqliteStore, index: u64, command: Command) -> Outcome {
     store
         .apply([Entry {
@@ -141,6 +144,176 @@ async fn atomic_unique_cas_consume_replay_survive_reopen_and_snapshot() {
     assert_eq!(apply(&mut restored, 10, consume).await, consumed);
     assert!(restored.read_record("user", "a").unwrap().is_none());
     assert!(SqliteStore::open(&path, "different-group").is_err());
+}
+
+#[tokio::test]
+async fn bulk_predicate_operations_are_deterministic_atomic_and_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
+    for (index, email) in [(1, "a@test"), (2, "b@test"), (3, "c@test")] {
+        assert!(matches!(
+            apply(
+                &mut store,
+                index,
+                command(
+                    &format!("insert-{index}"),
+                    Action::InsertUnique {
+                        model: "user".into(),
+                        record: user(&index.to_string(), email)
+                    }
+                )
+            )
+            .await,
+            Outcome::Record { .. }
+        ));
+    }
+    let all = vec![];
+    assert_eq!(
+        apply(
+            &mut store,
+            4,
+            command("count", Action::Count { model: "user".into(), predicates: all.clone() })
+        )
+        .await,
+        Outcome::Count { count: 3 }
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            5,
+            command(
+                "update-many",
+                Action::UpdateMany {
+                    model: "user".into(),
+                    predicates: vec![predicate("version", json!(1))],
+                    update: expected(2)
+                }
+            )
+        )
+        .await,
+        Outcome::Count { count: 3 }
+    );
+    let increment = BTreeMap::from([("version".into(), serde_json::Number::from(3))]);
+    let updated = apply(
+        &mut store,
+        6,
+        command(
+            "increment",
+            Action::IncrementOne {
+                model: "user".into(),
+                predicates: all.clone(),
+                increment,
+                set: Record::new(),
+            },
+        ),
+    )
+    .await;
+    assert!(
+        matches!(updated, Outcome::Record { record } if record["id"] == "1" && record["version"] == 5)
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            7,
+            command(
+                "delete-one",
+                Action::DeleteOne { model: "user".into(), predicates: all.clone() }
+            )
+        )
+        .await,
+        Outcome::Count { count: 1 }
+    );
+    assert!(store.read_record("user", "1").unwrap().is_none());
+    assert_eq!(
+        apply(
+            &mut store,
+            8,
+            command(
+                "delete-many",
+                Action::DeleteMany {
+                    model: "user".into(),
+                    predicates: vec![predicate("version", json!(2))]
+                }
+            )
+        )
+        .await,
+        Outcome::Count { count: 2 }
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            9,
+            command("count-retry", Action::Count { model: "user".into(), predicates: all })
+        )
+        .await,
+        Outcome::Count { count: 0 }
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            10,
+            command(
+                "count-retry",
+                Action::Count {
+                    model: "user".into(),
+                    predicates: vec![predicate("id", json!("different"))]
+                }
+            )
+        )
+        .await,
+        Outcome::IdempotencyConflict
+    );
+}
+
+#[tokio::test]
+async fn update_many_unique_conflict_is_atomic_and_consume_matching_uses_lowest_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
+    apply(
+        &mut store,
+        1,
+        command(
+            "index",
+            Action::CreateUniqueIndex { model: "user".into(), fields: vec!["email".into()] },
+        ),
+    )
+    .await;
+    for (index, id, email) in [(2, "a", "a@test"), (3, "b", "b@test")] {
+        apply(
+            &mut store,
+            index,
+            command(
+                &format!("insert-{id}"),
+                Action::InsertUnique { model: "user".into(), record: user(id, email) },
+            ),
+        )
+        .await;
+    }
+    assert_eq!(
+        apply(
+            &mut store,
+            4,
+            command(
+                "conflicting-update",
+                Action::UpdateMany {
+                    model: "user".into(),
+                    predicates: vec![],
+                    update: serde_json::from_value(json!({"email":"same@test"})).unwrap()
+                }
+            )
+        )
+        .await,
+        Outcome::UniqueConflict
+    );
+    assert_eq!(store.read_record("user", "a").unwrap().unwrap()["email"], "a@test");
+    assert_eq!(store.read_record("user", "b").unwrap().unwrap()["email"], "b@test");
+    let consumed = apply(
+        &mut store,
+        5,
+        command("consume", Action::ConsumeMatching { model: "user".into(), predicates: vec![] }),
+    )
+    .await;
+    assert!(matches!(consumed, Outcome::Record { record } if record["id"] == "a"));
 }
 
 // Protocol fault injection beneath actual OpenRaft members and real SQLite stores.
@@ -300,6 +473,21 @@ async fn real_raft_rejects_partitioned_leader_and_serializes_competing_auth_writ
     }
     assert_eq!(winning_ids.len(), 1);
     let id = winning_ids.pop().unwrap();
+    assert_eq!(
+        nodes[current]
+            .query(Action::Count { model: "user".into(), predicates: vec![] })
+            .await
+            .unwrap(),
+        Outcome::Count { count: 1 }
+    );
+    let Outcome::Records { records } = nodes[current]
+        .query(Action::Find { model: "user".into(), predicates: vec![], offset: 0, limit: 1 })
+        .await
+        .unwrap()
+    else {
+        panic!("quorum query returns records")
+    };
+    assert_eq!(records[0]["id"], id);
     for consume in [false, true] {
         let mut tasks = Vec::new();
         for i in 0..12 {
@@ -329,6 +517,18 @@ async fn real_raft_rejects_partitioned_leader_and_serializes_competing_auth_writ
     }
     *network.isolated.lock().unwrap() = Some(current as u64 + 1);
     assert!(nodes[current].find_one("user".into(), "0".into()).await.is_err());
+    assert!(
+        nodes[current]
+            .query(Action::Count { model: "user".into(), predicates: vec![] })
+            .await
+            .is_err()
+    );
+    assert!(
+        nodes[current]
+            .query(Action::Find { model: "user".into(), predicates: vec![], offset: 0, limit: 1 })
+            .await
+            .is_err()
+    );
     assert!(
         nodes[current]
             .mutate(command(

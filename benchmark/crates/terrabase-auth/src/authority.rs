@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use openraft::{BasicNode, Config, Raft, RaftNetworkFactory};
 
-use crate::{Command, Outcome, Record, SqliteStore, TypeConfig};
+use crate::{Action, Command, Outcome, Record, SqliteStore, TypeConfig};
 
 /// Consensus-backed admission for strict auth operations.
 /// There is no local read or local write fallback.
@@ -137,6 +137,24 @@ impl AuthAuthority {
             .await
             .map_err(|_| AuthorityError::Unavailable)?
             .map_err(|_| AuthorityError::Unavailable)
+    }
+
+    /// Execute a read-only predicate query after a quorum-confirmed applied barrier.
+    /// Transactional reads use `mutate` to observe their replicated workspace.
+    pub async fn query(&self, action: Action) -> Result<Outcome, AuthorityError> {
+        if !matches!(action, Action::Find { .. } | Action::Count { .. }) {
+            return Err(AuthorityError::InvalidConfiguration);
+        }
+        tokio::time::timeout(self.deadline, async {
+            self.raft.ensure_linearizable().await.map_err(|_| AuthorityError::Unavailable)?;
+            let store = self.store.clone();
+            tokio::task::spawn_blocking(move || store.query(&action))
+                .await
+                .map_err(|_| AuthorityError::Unavailable)?
+                .map_err(|_| AuthorityError::Unavailable)
+        })
+        .await
+        .map_err(|_| AuthorityError::Deadline)?
     }
 
     /// The consensus RPC receiver for an authenticated transport dispatcher.

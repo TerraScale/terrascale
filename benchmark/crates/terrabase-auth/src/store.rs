@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::io::Cursor;
 use std::ops::RangeBounds;
@@ -12,7 +13,7 @@ use openraft::{
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{Action, Command, Outcome, Record, TypeConfig};
+use crate::{Action, Command, Outcome, Predicate, Record, TypeConfig};
 
 type Result<T> = std::result::Result<T, StorageError<u64>>;
 
@@ -166,6 +167,15 @@ impl SqliteStore {
     pub(crate) fn read_record(&self, model: &str, id: &str) -> Result<Option<Record>> {
         read_record(&*self.lock()?, model, id)
     }
+
+    pub(crate) fn query(&self, action: &Action) -> Result<Outcome> {
+        if !matches!(action, Action::Find { .. } | Action::Count { .. }) {
+            return Ok(invalid("auth query action required"));
+        }
+        let mut connection = self.lock()?;
+        let transaction = connection.transaction().map_err(storage)?;
+        execute_action(&transaction, action)
+    }
 }
 
 fn read_record(connection: &Connection, model: &str, id: &str) -> Result<Option<Record>> {
@@ -205,7 +215,24 @@ fn matches(record: &Record, expected: &Record) -> bool {
 }
 
 fn index_value(record: &Record, fields: &[String]) -> Option<Vec<serde_json::Value>> {
-    fields.iter().map(|field| record.get(field).filter(|value| !value.is_null()).cloned()).collect()
+    fn normalize(value: &mut serde_json::Value) {
+        use serde_json::Value;
+        match value {
+            Value::Number(number) if number.is_f64() && number.as_f64() == Some(0.0) => {
+                *number = serde_json::Number::from_f64(0.0).expect("finite zero");
+            }
+            Value::Array(values) => values.iter_mut().for_each(normalize),
+            Value::Object(values) => values.values_mut().for_each(normalize),
+            _ => {}
+        }
+    }
+    fields.iter().map(|field| {
+        let mut value = record.get(field).filter(|value| !value.is_null())?.clone();
+        // Value equality treats signed float zero equally. Serialized index
+        // keys must preserve that equality, including inside arrays/objects.
+        normalize(&mut value);
+        Some(value)
+    }).collect()
 }
 
 fn conflicts(connection: &Connection, model: &str, id: &str, record: &Record) -> Result<bool> {
@@ -241,13 +268,34 @@ fn matching_records(
     connection: &Connection,
     model: &str,
     predicates: &[Predicate],
-) -> Result<Vec<(String, Record)>> {
+    limit: usize,
+) -> Result<Option<Vec<(String, Record)>>> {
     if predicates.len() > 64 {
-        return Err(storage("predicate bound exceeded"));
+        return Ok(None);
     }
-    records(connection, model).map(|rows| {
-        rows.into_iter().filter(|(_, record)| crate::query::matches(record, predicates)).collect()
-    })
+    let mut statement = connection
+        .prepare("SELECT id,body FROM auth_records WHERE model=?1 ORDER BY id")
+        .map_err(storage)?;
+    let rows = statement
+        .query_map([model], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))
+        .map_err(storage)?;
+    let mut matches = Vec::new();
+    let mut matched_bytes = 0usize;
+    for row in rows {
+        let (id, body) = row.map_err(storage)?;
+        let record: Record = decode(&body)?;
+        if crate::query::matches(&record, predicates) {
+            if body.len() > MAX_MUTATION_BYTES - matched_bytes || matches.len() >= limit {
+                return Ok(None);
+            }
+            matched_bytes += body.len();
+            matches.push((id, record));
+            if limit == 1 {
+                return Ok(Some(matches));
+            }
+        }
+    }
+    Ok(Some(matches))
 }
 
 fn validate_final_records(
@@ -255,49 +303,41 @@ fn validate_final_records(
     model: &str,
     replacements: &BTreeMap<String, Record>,
 ) -> Result<bool> {
-    let mut final_records = records(connection, model)?;
-    for (id, record) in &mut final_records {
-        if let Some(replacement) = replacements.get(id) {
-            *record = replacement.clone();
-        }
-    }
-    for (id, record) in replacements {
-        if !final_records.iter().any(|(existing, _)| existing == id) {
-            final_records.push((id.clone(), record.clone()));
-        }
-    }
-    let mut statement = connection
-        .prepare("SELECT fields FROM auth_indexes WHERE model=?1")
-        .map_err(storage)?;
-    let indexes: Vec<Vec<String>> = statement
-        .query_map([model], |row| row.get::<_, Vec<u8>>(0))
-        .map_err(storage)?
-        .map(|row| decode(&row.map_err(storage)?))
-        .collect::<Result<_>>()?;
+    let mut statement =
+        connection.prepare("SELECT fields FROM auth_indexes WHERE model=?1").map_err(storage)?;
+    let indexes = statement.query_map([model], |row| row.get::<_, Vec<u8>>(0)).map_err(storage)?;
     for fields in indexes {
+        let fields: Vec<String> = decode(&fields.map_err(storage)?)?;
         let mut seen = std::collections::BTreeSet::new();
-        for (_, record) in &final_records {
+        for record in replacements.values() {
             if let Some(value) = index_value(record, &fields) {
                 if !seen.insert(encode(&value)?) {
                     return Ok(true);
                 }
             }
         }
+        // Unchanged rows already satisfy this index. Compare only against the
+        // bounded replacement keys, without loading the entire model into RAM.
+        let mut rows = connection
+            .prepare("SELECT id,body FROM auth_records WHERE model=?1 ORDER BY id")
+            .map_err(storage)?;
+        let rows = rows
+            .query_map([model], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))
+            .map_err(storage)?;
+        for row in rows {
+            let (id, body) = row.map_err(storage)?;
+            if replacements.contains_key(&id) {
+                continue;
+            }
+            let record: Record = decode(&body)?;
+            if let Some(value) = index_value(&record, &fields)
+                && seen.contains(&encode(&value)?)
+            {
+                return Ok(true);
+            }
+        }
     }
     Ok(false)
-}
-
-fn validate_mutation_size(records: &[(String, Record)]) -> Result<()> {
-    if records.len() > MAX_MUTATION_ROWS {
-        return Err(storage("mutation row bound exceeded"));
-    }
-    let bytes = records.iter().try_fold(0usize, |total, (_, record)| {
-        total.checked_add(encode(record)?.len()).ok_or_else(|| storage("mutation byte bound exceeded"))
-    })?;
-    if bytes > MAX_MUTATION_BYTES {
-        return Err(storage("mutation byte bound exceeded"));
-    }
-    Ok(())
 }
 
 fn invalid(reason: &str) -> Outcome {
@@ -353,6 +393,13 @@ fn execute_action(transaction: &Transaction<'_>, action: &Action) -> Result<Outc
         | Action::InsertUnique { model, .. }
         | Action::CompareAndSwap { model, .. }
         | Action::ConsumeOne { model, .. }
+        | Action::UpdateOne { model, .. }
+        | Action::UpdateMany { model, .. }
+        | Action::DeleteOne { model, .. }
+        | Action::DeleteMany { model, .. }
+        | Action::IncrementOne { model, .. }
+        | Action::ConsumeMatching { model, .. }
+        | Action::Count { model, .. }
         | Action::Find { model, .. } => model,
         _ => return Ok(invalid("nested transaction command is forbidden")),
     };
@@ -395,6 +442,24 @@ fn execute_action(transaction: &Transaction<'_>, action: &Action) -> Result<Outc
                 result.push(record);
             }
             Ok(Outcome::Records { records: result })
+        }
+        Action::Count { predicates, .. } => {
+            if predicates.len() > 64 {
+                return Ok(invalid("query predicate bound exceeded"));
+            }
+            let mut count = 0u64;
+            let mut statement = transaction
+                .prepare("SELECT body FROM auth_records WHERE model=?1 ORDER BY id")
+                .map_err(storage)?;
+            let rows =
+                statement.query_map([model], |row| row.get::<_, Vec<u8>>(0)).map_err(storage)?;
+            for row in rows {
+                let record: Record = decode(&row.map_err(storage)?)?;
+                if crate::query::matches(&record, predicates) {
+                    count = count.checked_add(1).ok_or_else(|| storage("count exhausted"))?;
+                }
+            }
+            Ok(Outcome::Count { count })
         }
         Action::CreateUniqueIndex { fields, .. } => {
             if fields.is_empty()
@@ -475,6 +540,196 @@ fn execute_action(transaction: &Transaction<'_>, action: &Action) -> Result<Outc
             };
             transaction
                 .execute("DELETE FROM auth_records WHERE model=?1 AND id=?2", params![model, id])
+                .map_err(storage)?;
+            Ok(Outcome::Record { record })
+        }
+        Action::UpdateOne { predicates, update, .. } => {
+            if update.contains_key("id") || predicates.len() > 64 {
+                return Ok(invalid("invalid update predicates or id"));
+            }
+            let Some(rows) = matching_records(transaction, model, predicates, 1)? else {
+                return Ok(invalid("mutation row bound exceeded"));
+            };
+            let Some((id, mut record)) = rows.into_iter().next() else {
+                return Ok(Outcome::NotMatched);
+            };
+            record.extend(update.clone());
+            if encode(&record)?.len() > MAX_MUTATION_BYTES
+                || validate_final_records(
+                    transaction,
+                    model,
+                    &BTreeMap::from([(id.clone(), record.clone())]),
+                )?
+            {
+                return Ok(if encode(&record)?.len() > MAX_MUTATION_BYTES {
+                    invalid("record exceeds 1 MiB")
+                } else {
+                    Outcome::UniqueConflict
+                });
+            }
+            transaction
+                .execute(
+                    "UPDATE auth_records SET body=?3 WHERE model=?1 AND id=?2",
+                    params![model, id, encode(&record)?],
+                )
+                .map_err(storage)?;
+            Ok(Outcome::Record { record })
+        }
+        Action::UpdateMany { predicates, update, .. } => {
+            if update.contains_key("id") || predicates.len() > 64 {
+                return Ok(invalid("invalid update predicates or id"));
+            }
+            let Some(rows) = matching_records(transaction, model, predicates, MAX_MUTATION_ROWS)?
+            else {
+                return Ok(invalid("mutation row bound exceeded"));
+            };
+            let mut replacements = BTreeMap::new();
+            let mut bytes = 0usize;
+            for (id, mut record) in rows {
+                record.extend(update.clone());
+                let size = encode(&record)?.len();
+                if size > MAX_MUTATION_BYTES - bytes {
+                    return Ok(invalid("mutation byte bound exceeded"));
+                }
+                bytes += size;
+                replacements.insert(id, record);
+            }
+            if validate_final_records(transaction, model, &replacements)? {
+                return Ok(Outcome::UniqueConflict);
+            }
+            let count = replacements.len() as u64;
+            for (id, record) in replacements {
+                transaction
+                    .execute(
+                        "UPDATE auth_records SET body=?3 WHERE model=?1 AND id=?2",
+                        params![model, id, encode(&record)?],
+                    )
+                    .map_err(storage)?;
+            }
+            Ok(Outcome::Count { count })
+        }
+        Action::DeleteOne { predicates, .. } => {
+            if predicates.len() > 64 {
+                return Ok(invalid("query predicate bound exceeded"));
+            }
+            let Some(rows) = matching_records(transaction, model, predicates, 1)? else {
+                return Ok(invalid("mutation row bound exceeded"));
+            };
+            let Some((id, _)) = rows.into_iter().next() else {
+                return Ok(Outcome::Count { count: 0 });
+            };
+            transaction
+                .execute("DELETE FROM auth_records WHERE model=?1 AND id=?2", params![model, id])
+                .map_err(storage)?;
+            Ok(Outcome::Count { count: 1 })
+        }
+        Action::DeleteMany { predicates, .. } => {
+            if predicates.len() > 64 {
+                return Ok(invalid("query predicate bound exceeded"));
+            }
+            let Some(rows) = matching_records(transaction, model, predicates, MAX_MUTATION_ROWS)?
+            else {
+                return Ok(invalid("mutation row bound exceeded"));
+            };
+            for (id, _) in &rows {
+                transaction
+                    .execute(
+                        "DELETE FROM auth_records WHERE model=?1 AND id=?2",
+                        params![model, id],
+                    )
+                    .map_err(storage)?;
+            }
+            Ok(Outcome::Count { count: rows.len() as u64 })
+        }
+        Action::ConsumeMatching { predicates, .. } => {
+            if predicates.len() > 64 {
+                return Ok(invalid("query predicate bound exceeded"));
+            }
+            let Some(rows) = matching_records(transaction, model, predicates, 1)? else {
+                return Ok(invalid("mutation row bound exceeded"));
+            };
+            let Some((id, record)) = rows.into_iter().next() else {
+                return Ok(Outcome::NotMatched);
+            };
+            transaction
+                .execute("DELETE FROM auth_records WHERE model=?1 AND id=?2", params![model, id])
+                .map_err(storage)?;
+            Ok(Outcome::Record { record })
+        }
+        Action::IncrementOne { predicates, increment, set, .. } => {
+            if predicates.len() > 64
+                || set.contains_key("id")
+                || increment.keys().any(|field| field == "id")
+                || increment.keys().any(|field| set.contains_key(field))
+            {
+                return Ok(invalid("invalid increment fields"));
+            }
+            let Some(rows) = matching_records(transaction, model, predicates, 1)? else {
+                return Ok(invalid("mutation row bound exceeded"));
+            };
+            let Some((id, mut record)) = rows.into_iter().next() else {
+                return Ok(Outcome::NotMatched);
+            };
+            record.extend(set.clone());
+            for (field, amount) in increment {
+                let Some(serde_json::Value::Number(current)) = record.get(field) else {
+                    return Ok(invalid("increment field is not numeric"));
+                };
+                let value = if let (Some(a), Some(b)) = (
+                    current.as_i64().map(i128::from).or_else(|| current.as_u64().map(i128::from)),
+                    amount.as_i64().map(i128::from).or_else(|| amount.as_u64().map(i128::from)),
+                ) {
+                    let sum = a + b;
+                    if sum < i128::from(i64::MIN) || sum > i128::from(u64::MAX) {
+                        return Ok(invalid("increment overflow"));
+                    }
+                    if sum < 0 {
+                        serde_json::Number::from(sum as i64)
+                    } else {
+                        serde_json::Number::from(sum as u64)
+                    }
+                } else {
+                    // Mixed floating-point arithmetic may not silently discard
+                    // the low bits of an exact integer counter.
+                    for number in [current, amount] {
+                        let integer = number
+                            .as_i64()
+                            .map(i128::from)
+                            .or_else(|| number.as_u64().map(i128::from));
+                        if integer.is_some_and(|value| value.abs() > 9_007_199_254_740_992) {
+                            return Ok(invalid(
+                                "integer cannot be represented exactly for floating-point increment",
+                            ));
+                        }
+                    }
+                    let Some(current) = current.as_f64() else {
+                        return Ok(invalid("increment field is not numeric"));
+                    };
+                    let Some(amount) = amount.as_f64() else {
+                        return Ok(invalid("increment is not numeric"));
+                    };
+                    let Some(value) = serde_json::Number::from_f64(current + amount) else {
+                        return Ok(invalid("increment overflow"));
+                    };
+                    value
+                };
+                record.insert(field.clone(), serde_json::Value::Number(value));
+            }
+            if encode(&record)?.len() > MAX_MUTATION_BYTES {
+                return Ok(invalid("record exceeds 1 MiB"));
+            }
+            if validate_final_records(
+                transaction,
+                model,
+                &BTreeMap::from([(id.clone(), record.clone())]),
+            )? {
+                return Ok(Outcome::UniqueConflict);
+            }
+            transaction
+                .execute(
+                    "UPDATE auth_records SET body=?3 WHERE model=?1 AND id=?2",
+                    params![model, id, encode(&record)?],
+                )
                 .map_err(storage)?;
             Ok(Outcome::Record { record })
         }
