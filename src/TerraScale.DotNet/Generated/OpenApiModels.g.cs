@@ -6,164 +6,492 @@ namespace TerraScale.DotNet.Generated;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
+public sealed record ArtifactFact(
+    [property: JsonPropertyName("checksum"), JsonRequired] string Checksum,
+    [property: JsonPropertyName("length"), JsonRequired] ulong Length,
+    [property: JsonPropertyName("path"), JsonRequired] string Path
+);
+
 public sealed record AttachViewRequest(
-    [property: JsonPropertyName("checkpoint")] string? Checkpoint,
-    [property: JsonPropertyName("databaseId")] string DatabaseId,
-    [property: JsonPropertyName("entitlement_epoch")] long? EntitlementEpoch,
-    [property: JsonPropertyName("parameters")] string? Parameters,
-    [property: JsonPropertyName("statement")] string Statement,
-    [property: JsonPropertyName("subscription")] string? Subscription
+    [property: JsonPropertyName("checkpoint"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Checkpoint,
+    [property: JsonPropertyName("databaseId"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("entitlement_epoch"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? EntitlementEpoch,
+    [property: JsonPropertyName("parameters"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Parameters,
+    [property: JsonPropertyName("statement"), JsonRequired] string Statement,
+    [property: JsonPropertyName("subscription"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Subscription
 );
 
 public sealed record AttachViewResponse(
-    [property: JsonPropertyName("capability")] string Capability,
-    [property: JsonPropertyName("capability_header")] string CapabilityHeader,
-    [property: JsonPropertyName("checkpoint")] string Checkpoint,
-    [property: JsonPropertyName("generation")] long Generation,
-    [property: JsonPropertyName("log")] string Log,
-    [property: JsonPropertyName("offset")] long Offset,
-    [property: JsonPropertyName("snapshot_chunks")] IReadOnlyList<string> SnapshotChunks,
-    [property: JsonPropertyName("view")] string View
+    [property: JsonPropertyName("capability"), JsonRequired] string Capability,
+    [property: JsonPropertyName("capability_header"), JsonRequired] string CapabilityHeader,
+    [property: JsonPropertyName("checkpoint"), JsonRequired] string Checkpoint,
+    [property: JsonPropertyName("generation"), JsonRequired] long Generation,
+    [property: JsonPropertyName("log"), JsonRequired] string Log,
+    [property: JsonPropertyName("offset"), JsonRequired] long Offset,
+    [property: JsonPropertyName("snapshot_chunks"), JsonRequired] IReadOnlyList<string> SnapshotChunks,
+    [property: JsonPropertyName("view"), JsonRequired] string View
+);
+
+public sealed record AuthResult(
+    [property: JsonPropertyName("count"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Count,
+    [property: JsonPropertyName("expiresAtMs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ExpiresAtMs,
+    [property: JsonPropertyName("matched"), JsonRequired] bool Matched,
+    [property: JsonPropertyName("record"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, JsonElement>? Record,
+    [property: JsonPropertyName("records"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<IReadOnlyDictionary<string, JsonElement>>? Records,
+    [property: JsonPropertyName("transactionId"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TransactionId
 );
 
 public sealed record BackupStatusResponse(
-    [property: JsonPropertyName("ready")] bool Ready,
-    [property: JsonPropertyName("streaming")] bool Streaming
+    [property: JsonPropertyName("ready"), JsonRequired] bool Ready,
+    [property: JsonPropertyName("streaming"), JsonRequired] bool Streaming
 );
 
 public sealed record BatchRequest(
-    [property: JsonPropertyName("operations")] IReadOnlyList<BatchRequestOperations> Operations
+    [property: JsonPropertyName("operations"), JsonRequired] IReadOnlyList<BatchRequestOperations> Operations
 );
 
 public sealed record BatchResponse(
-    [property: JsonPropertyName("committed")] long Committed,
-    [property: JsonPropertyName("count")] int Count
+    [property: JsonPropertyName("committed"), JsonRequired] long Committed,
+    [property: JsonPropertyName("count"), JsonRequired] int Count
 );
 
 public sealed record BranchListResponse(
-    [property: JsonPropertyName("branches")] IReadOnlyList<DatabaseRecord> Branches
+    [property: JsonPropertyName("branches"), JsonRequired] IReadOnlyList<DatabaseRecord> Branches
+);
+
+public sealed record CollectionSchema(
+    [property: JsonPropertyName("fields"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<FieldDescriptor>? Fields,
+    [property: JsonPropertyName("fts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Fts,
+    [property: JsonPropertyName("historyRetentionDays"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? HistoryRetentionDays,
+    [property: JsonPropertyName("indexes"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<SchemaIndexDescriptor>? Indexes,
+    [property: JsonPropertyName("mergePolicy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? MergePolicy,
+    [property: JsonPropertyName("name"), JsonRequired] string Name,
+    [property: JsonPropertyName("renames"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<FieldRename>? Renames,
+    [property: JsonPropertyName("ttl"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Ttl,
+    [property: JsonPropertyName("version"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Version
 );
 
 public sealed record CollectionsResponse(
-    [property: JsonPropertyName("collections")] IReadOnlyList<string> Collections
+    [property: JsonPropertyName("collections"), JsonRequired] IReadOnlyList<string> Collections
+);
+
+public sealed record ConditionalUpdate(
+    [property: JsonPropertyName("expected"), JsonRequired] IReadOnlyDictionary<string, JsonElement> Expected,
+    [property: JsonPropertyName("id"), JsonRequired] string Id,
+    [property: JsonPropertyName("model"), JsonRequired] string Model,
+    [property: JsonPropertyName("update"), JsonRequired] IReadOnlyDictionary<string, JsonElement> Update
+);
+
+public sealed record Consume(
+    [property: JsonPropertyName("expected"), JsonRequired] IReadOnlyDictionary<string, JsonElement> Expected,
+    [property: JsonPropertyName("id"), JsonRequired] string Id,
+    [property: JsonPropertyName("model"), JsonRequired] string Model
+);
+
+public sealed record CoordinatorRecommendation(
+    [property: JsonPropertyName("candidate_id"), JsonRequired] string CandidateId,
+    [property: JsonPropertyName("collection"), JsonRequired] string Collection,
+    [property: JsonPropertyName("fields"), JsonRequired] IReadOnlyList<string> Fields,
+    [property: JsonPropertyName("generation"), JsonRequired] ulong Generation,
+    [property: JsonPropertyName("maintenance_cost"), JsonRequired] ulong MaintenanceCost,
+    [property: JsonPropertyName("needs_descriptor"), JsonRequired] bool NeedsDescriptor,
+    [property: JsonPropertyName("score"), JsonRequired] double Score
 );
 
 public sealed record CreateDatabaseRequest(
-    [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("placement")] IReadOnlyList<string> Placement,
-    [property: JsonPropertyName("residency")] string? Residency
+    [property: JsonPropertyName("name"), JsonRequired] string Name,
+    [property: JsonPropertyName("operation_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OperationId,
+    [property: JsonPropertyName("placement"), JsonRequired] IReadOnlyList<string> Placement,
+    [property: JsonPropertyName("residency"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Residency
+);
+
+public sealed record CreateExport(
+    [property: JsonPropertyName("idempotency_key"), JsonRequired] string IdempotencyKey
 );
 
 public sealed record CreateIndexRequest(
-    [property: JsonPropertyName("field")] string Field
+    [property: JsonPropertyName("field"), JsonRequired] string Field
+);
+
+public sealed record CreateWebhook(
+    [property: JsonPropertyName("endpoint"), JsonRequired] string Endpoint
+);
+
+public sealed record DatabaseIdentity(
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("placement"), JsonRequired] IReadOnlyList<string> Placement
 );
 
 public sealed record DatabaseListResponse(
-    [property: JsonPropertyName("databases")] IReadOnlyList<DatabaseRecord> Databases
+    [property: JsonPropertyName("databases"), JsonRequired] IReadOnlyList<DatabaseRecord> Databases
 );
 
 public sealed record DatabaseRecord(
-    [property: JsonPropertyName("created_at")] long CreatedAt,
-    [property: JsonPropertyName("deleted")] bool Deleted,
-    [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("parent")] string? Parent,
-    [property: JsonPropertyName("placement")] string Placement,
-    [property: JsonPropertyName("residency")] string Residency
+    [property: JsonPropertyName("created_at"), JsonRequired] long CreatedAt,
+    [property: JsonPropertyName("deleted"), JsonRequired] bool Deleted,
+    [property: JsonPropertyName("name"), JsonRequired] string Name,
+    [property: JsonPropertyName("parent"), JsonRequired] string? Parent,
+    [property: JsonPropertyName("placement"), JsonRequired] string Placement,
+    [property: JsonPropertyName("residency"), JsonRequired] string Residency
+);
+
+public sealed record DeliveryLog(
+    [property: JsonPropertyName("deliveries"), JsonRequired] IReadOnlyList<DeliveryRecord> Deliveries
+);
+
+public sealed record DeliveryRecord(
+    [property: JsonPropertyName("attempts"), JsonRequired] int Attempts,
+    [property: JsonPropertyName("delivered"), JsonRequired] bool Delivered,
+    [property: JsonPropertyName("event_id"), JsonRequired] string EventId,
+    [property: JsonPropertyName("id"), JsonRequired] string Id,
+    [property: JsonPropertyName("next_attempt_at"), JsonRequired] long NextAttemptAt,
+    [property: JsonPropertyName("retry_started_at"), JsonRequired] long RetryStartedAt,
+    [property: JsonPropertyName("revision"), JsonRequired] long Revision,
+    [property: JsonPropertyName("status"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Status,
+    [property: JsonPropertyName("terminal"), JsonRequired] bool Terminal,
+    [property: JsonPropertyName("write_index"), JsonRequired] int WriteIndex
+);
+
+public sealed record DevelopmentFaultRequest(
+    [property: JsonPropertyName("confirmBranch"), JsonRequired] string ConfirmBranch,
+    [property: JsonPropertyName("delayMs"), JsonRequired] long DelayMs,
+    [property: JsonPropertyName("durationMs"), JsonRequired] long DurationMs,
+    [property: JsonPropertyName("fault"), JsonRequired] string Fault,
+    [property: JsonPropertyName("maxOperations"), JsonRequired] int MaxOperations
+);
+
+public sealed record DevelopmentFaultResponse(
+    [property: JsonPropertyName("active"), JsonRequired] bool Active,
+    [property: JsonPropertyName("expiresAtMillis"), JsonRequired] long ExpiresAtMillis
+);
+
+public sealed record DevelopmentLogEntry(
+    [property: JsonPropertyName("action"), JsonRequired] string Action,
+    [property: JsonPropertyName("atMillis"), JsonRequired] long AtMillis,
+    [property: JsonPropertyName("sequence"), JsonRequired] long Sequence
+);
+
+public sealed record DevelopmentLogResponse(
+    [property: JsonPropertyName("entries"), JsonRequired] IReadOnlyList<DevelopmentLogEntry> Entries,
+    [property: JsonPropertyName("truncated"), JsonRequired] bool Truncated
 );
 
 public sealed record DocumentWriteResponse(
-    [property: JsonPropertyName("revision")] string Revision
+    [property: JsonPropertyName("revision"), JsonRequired] string Revision
 );
 
 public sealed record DocumentsResponse(
-    [property: JsonPropertyName("documents")] IReadOnlyList<DocumentsResponseDocuments> Documents
+    [property: JsonPropertyName("documents"), JsonRequired] IReadOnlyList<DocumentsResponseDocuments> Documents
 );
 
 public sealed record ErrorResponse(
-    [property: JsonPropertyName("error")] ErrorResponseError Error
+    [property: JsonPropertyName("error"), JsonRequired] ErrorResponseError Error
+);
+
+public sealed record ExportAccepted(
+    [property: JsonPropertyName("job_id"), JsonRequired] string JobId,
+    [property: JsonPropertyName("resume_cursor"), JsonRequired] string ResumeCursor,
+    [property: JsonPropertyName("status_path"), JsonRequired] string StatusPath
+);
+
+public sealed record ExportList(
+    [property: JsonPropertyName("exports"), JsonRequired] IReadOnlyList<ExportStatus> Exports,
+    [property: JsonPropertyName("next_cursor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NextCursor
+);
+
+public sealed record ExportStatus(
+    [property: JsonPropertyName("cancellation"), JsonRequired] string Cancellation,
+    [property: JsonPropertyName("created_at_millis"), JsonRequired] ulong CreatedAtMillis,
+    [property: JsonPropertyName("error"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Error,
+    [property: JsonPropertyName("estimated_records"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ulong? EstimatedRecords,
+    [property: JsonPropertyName("job_id"), JsonRequired] string JobId,
+    [property: JsonPropertyName("manifest"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Manifest,
+    [property: JsonPropertyName("pages"), JsonRequired] ulong Pages,
+    [property: JsonPropertyName("phase"), JsonRequired] string Phase,
+    [property: JsonPropertyName("progress_basis_points"), JsonRequired] int ProgressBasisPoints,
+    [property: JsonPropertyName("records"), JsonRequired] ulong Records,
+    [property: JsonPropertyName("resume_cursor"), JsonRequired] string ResumeCursor,
+    [property: JsonPropertyName("status"), JsonRequired] string Status
+);
+
+public sealed record FieldDescriptor(
+    [property: JsonPropertyName("fts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Fts,
+    [property: JsonPropertyName("indexed"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Indexed,
+    [property: JsonPropertyName("mergePolicy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? MergePolicy,
+    [property: JsonPropertyName("name"), JsonRequired] string Name,
+    [property: JsonPropertyName("required"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Required,
+    [property: JsonPropertyName("type"), JsonRequired] string Type,
+    [property: JsonPropertyName("unique"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Unique
+);
+
+public sealed record FieldRename(
+    [property: JsonPropertyName("from"), JsonRequired] string From,
+    [property: JsonPropertyName("to"), JsonRequired] string To
+);
+
+public sealed record FtsDescriptor(
+    [property: JsonPropertyName("fields"), JsonRequired] IReadOnlyList<string> Fields
 );
 
 public sealed record HealthResponse(
-    [property: JsonPropertyName("healthy")] bool Healthy,
-    [property: JsonPropertyName("region")] string Region
+    [property: JsonPropertyName("healthy"), JsonRequired] bool Healthy,
+    [property: JsonPropertyName("region"), JsonRequired] string Region
 );
 
 public sealed record HistoryResponse(
-    [property: JsonPropertyName("history")] IReadOnlyList<HistoryResponseHistory> History
+    [property: JsonPropertyName("history"), JsonRequired] IReadOnlyList<HistoryResponseHistory> History
+);
+
+public sealed record Increment(
+    [property: JsonPropertyName("increment"), JsonRequired] IReadOnlyDictionary<string, double> Increment,
+    [property: JsonPropertyName("model"), JsonRequired] string Model,
+    [property: JsonPropertyName("predicates"), JsonRequired] IReadOnlyList<PredicateInput> Predicates,
+    [property: JsonPropertyName("set"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, JsonElement>? Set
 );
 
 public sealed record IndexCreatedResponse(
-    [property: JsonPropertyName("field")] string Field,
-    [property: JsonPropertyName("state")] string State
+    [property: JsonPropertyName("field"), JsonRequired] string Field,
+    [property: JsonPropertyName("state"), JsonRequired] string State
 );
 
 public sealed record IndexDescriptor(
-    [property: JsonPropertyName("backfill_remaining")] long BackfillRemaining,
-    [property: JsonPropertyName("field")] string Field,
-    [property: JsonPropertyName("state")] string State
+    [property: JsonPropertyName("backfill_remaining"), JsonRequired] long BackfillRemaining,
+    [property: JsonPropertyName("field"), JsonRequired] string Field,
+    [property: JsonPropertyName("state"), JsonRequired] string State
 );
 
 public sealed record IndexListResponse(
-    [property: JsonPropertyName("indexes")] IReadOnlyList<IndexDescriptor> Indexes
+    [property: JsonPropertyName("indexes"), JsonRequired] IReadOnlyList<IndexDescriptor> Indexes
+);
+
+public sealed record MeterTotal(
+    [property: JsonPropertyName("meter"), JsonRequired] string Meter,
+    [property: JsonPropertyName("units"), JsonRequired] string Units
+);
+
+public sealed record MigrationStatus(
+    [property: JsonPropertyName("completed"), JsonRequired] ulong Completed,
+    [property: JsonPropertyName("message"), JsonRequired] string Message,
+    [property: JsonPropertyName("next_cursor"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NextCursor,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
+    [property: JsonPropertyName("state"), JsonRequired] string State,
+    [property: JsonPropertyName("steps"), JsonRequired] IReadOnlyList<MigrationStep> Steps,
+    [property: JsonPropertyName("total"), JsonRequired] ulong Total
+);
+
+public sealed record MigrationStep(
+    [property: JsonPropertyName("from"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? From,
+    [property: JsonPropertyName("index"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Index,
+    [property: JsonPropertyName("kind"), JsonRequired] string Kind,
+    [property: JsonPropertyName("to"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? To
+);
+
+public sealed record PageJoin(
+    [property: JsonPropertyName("fromField"), JsonRequired] string FromField,
+    [property: JsonPropertyName("limit"), JsonRequired] int Limit,
+    [property: JsonPropertyName("model"), JsonRequired] string Model,
+    [property: JsonPropertyName("outputField"), JsonRequired] string OutputField,
+    [property: JsonPropertyName("relation"), JsonRequired] string Relation,
+    [property: JsonPropertyName("toField"), JsonRequired] string ToField
+);
+
+public sealed record PageQuery(
+    [property: JsonPropertyName("joins"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<PageJoin>? Joins,
+    [property: JsonPropertyName("limit"), JsonRequired] int Limit,
+    [property: JsonPropertyName("model"), JsonRequired] string Model,
+    [property: JsonPropertyName("offset"), JsonRequired] int Offset,
+    [property: JsonPropertyName("predicates"), JsonRequired] IReadOnlyList<PredicateInput> Predicates,
+    [property: JsonPropertyName("select"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Select,
+    [property: JsonPropertyName("sortBy"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? SortBy
+);
+
+public sealed record PageSort(
+    [property: JsonPropertyName("direction"), JsonRequired] string Direction,
+    [property: JsonPropertyName("field"), JsonRequired] string Field
+);
+
+public sealed record PredicateInput(
+    [property: JsonPropertyName("connector"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Connector,
+    [property: JsonPropertyName("field"), JsonRequired] string Field,
+    [property: JsonPropertyName("mode"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Mode,
+    [property: JsonPropertyName("operator"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Operator,
+    [property: JsonPropertyName("value"), JsonRequired] JsonElement Value
+);
+
+public sealed record PredicateOnly(
+    [property: JsonPropertyName("model"), JsonRequired] string Model,
+    [property: JsonPropertyName("predicates"), JsonRequired] IReadOnlyList<PredicateInput> Predicates
+);
+
+public sealed record PredicateUpdate(
+    [property: JsonPropertyName("model"), JsonRequired] string Model,
+    [property: JsonPropertyName("predicates"), JsonRequired] IReadOnlyList<PredicateInput> Predicates,
+    [property: JsonPropertyName("update"), JsonRequired] IReadOnlyDictionary<string, JsonElement> Update
+);
+
+public sealed record ProvisioningOperation(
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("environment"), JsonRequired] string Environment,
+    [property: JsonPropertyName("key_version"), JsonRequired] string KeyVersion,
+    [property: JsonPropertyName("name"), JsonRequired] string Name,
+    [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
+    [property: JsonPropertyName("parent_database_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ParentDatabaseId,
+    [property: JsonPropertyName("project_id"), JsonRequired] string ProjectId,
+    [property: JsonPropertyName("regions"), JsonRequired] IReadOnlyList<string> Regions,
+    [property: JsonPropertyName("residency"), JsonRequired] string Residency,
+    [property: JsonPropertyName("state"), JsonRequired] string State,
+    [property: JsonPropertyName("tenant_id"), JsonRequired] string TenantId
+);
+
+public sealed record ReadAttribution(
+    [property: JsonPropertyName("total_reads"), JsonRequired] ulong TotalReads
+);
+
+public sealed record RecommendationList(
+    [property: JsonPropertyName("generation"), JsonRequired] ulong Generation,
+    [property: JsonPropertyName("recommendations"), JsonRequired] IReadOnlyList<CoordinatorRecommendation> Recommendations,
+    [property: JsonPropertyName("truncated"), JsonRequired] bool Truncated
 );
 
 public sealed record RestoreRequest(
-    [property: JsonPropertyName("at")] long? At,
-    [property: JsonPropertyName("name")] string Name
+    [property: JsonPropertyName("at"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? At,
+    [property: JsonPropertyName("name"), JsonRequired] string Name
+);
+
+public sealed record ResumeExport(
+    [property: JsonPropertyName("resume_cursor"), JsonRequired] string ResumeCursor
+);
+
+public sealed record RotateWebhookSecret(
+    [property: JsonPropertyName("overlap_seconds"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? OverlapSeconds
+);
+
+public sealed record SchemaDocument(
+    [property: JsonPropertyName("generation"), JsonRequired] ulong Generation,
+    [property: JsonPropertyName("identity"), JsonRequired] DatabaseIdentity Identity,
+    [property: JsonPropertyName("migration"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Migration,
+    [property: JsonPropertyName("schema"), JsonRequired] CollectionSchema Schema,
+    [property: JsonPropertyName("schema_version"), JsonRequired] ulong SchemaVersion,
+    [property: JsonPropertyName("target"), JsonRequired] SchemaTarget Target
+);
+
+public sealed record SchemaIndexDescriptor(
+    [property: JsonPropertyName("fields"), JsonRequired] IReadOnlyList<string> Fields,
+    [property: JsonPropertyName("kind"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Kind,
+    [property: JsonPropertyName("name"), JsonRequired] string Name,
+    [property: JsonPropertyName("unique"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Unique
+);
+
+public sealed record SchemaTarget(
+    [property: JsonPropertyName("branch"), JsonRequired] string Branch,
+    [property: JsonPropertyName("collection"), JsonRequired] string Collection,
+    [property: JsonPropertyName("database"), JsonRequired] string Database
 );
 
 public sealed record SqlExplainResponse(
-    [property: JsonPropertyName("access")] string Access,
-    [property: JsonPropertyName("collection")] string? Collection,
-    [property: JsonPropertyName("dialect")] string Dialect,
-    [property: JsonPropertyName("order")] IReadOnlyList<SqlExplainResponseOrder> Order
+    [property: JsonPropertyName("access"), JsonRequired] string Access,
+    [property: JsonPropertyName("collection"), JsonRequired] string? Collection,
+    [property: JsonPropertyName("dialect"), JsonRequired] string Dialect,
+    [property: JsonPropertyName("order"), JsonRequired] IReadOnlyList<SqlExplainResponseOrder> Order
 );
 
 public sealed record SqlRequest(
-    [property: JsonPropertyName("cancelled")] bool? Cancelled,
-    [property: JsonPropertyName("explain")] bool? Explain,
-    [property: JsonPropertyName("parameters")] IReadOnlyDictionary<string, JsonElement>? Parameters,
-    [property: JsonPropertyName("sql")] string Sql,
-    [property: JsonPropertyName("timeout_ms")] int? TimeoutMs
+    [property: JsonPropertyName("cancelled"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Cancelled,
+    [property: JsonPropertyName("explain"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Explain,
+    [property: JsonPropertyName("parameters"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, JsonElement>? Parameters,
+    [property: JsonPropertyName("sql"), JsonRequired] string Sql,
+    [property: JsonPropertyName("timeout_ms"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? TimeoutMs
 );
 
 public sealed record SqlResponse(
-    [property: JsonPropertyName("matched")] long Matched,
-    [property: JsonPropertyName("rows")] IReadOnlyList<SqlResponseRows> Rows
+    [property: JsonPropertyName("matched"), JsonRequired] long Matched,
+    [property: JsonPropertyName("rows"), JsonRequired] IReadOnlyList<SqlResponseRows> Rows
+);
+
+public sealed record TransactionIdentity(
+    [property: JsonPropertyName("transactionId"), JsonRequired] string TransactionId
+);
+
+public sealed record TtlDescriptor(
+    [property: JsonPropertyName("field"), JsonRequired] string Field
+);
+
+public sealed record UniqueIndex(
+    [property: JsonPropertyName("fields"), JsonRequired] IReadOnlyList<string> Fields,
+    [property: JsonPropertyName("model"), JsonRequired] string Model
+);
+
+public sealed record UniqueInsert(
+    [property: JsonPropertyName("model"), JsonRequired] string Model,
+    [property: JsonPropertyName("record"), JsonRequired] IReadOnlyDictionary<string, JsonElement> Record
+);
+
+public sealed record UsageSummary(
+    [property: JsonPropertyName("database_id"), JsonRequired] string DatabaseId,
+    [property: JsonPropertyName("meters"), JsonRequired] IReadOnlyList<MeterTotal> Meters,
+    [property: JsonPropertyName("reads"), JsonRequired] ReadAttribution Reads,
+    [property: JsonPropertyName("snapshot_sequence"), JsonRequired] ulong SnapshotSequence,
+    [property: JsonPropertyName("storage_complete_through_millis"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ulong? StorageCompleteThroughMillis,
+    [property: JsonPropertyName("tenant_id"), JsonRequired] string TenantId
+);
+
+public sealed record WebhookEndpoint(
+    [property: JsonPropertyName("created_at"), JsonRequired] long CreatedAt,
+    [property: JsonPropertyName("deleted"), JsonRequired] bool Deleted,
+    [property: JsonPropertyName("endpoint"), JsonRequired] string Endpoint,
+    [property: JsonPropertyName("id"), JsonRequired] string Id
+);
+
+public sealed record WebhookList(
+    [property: JsonPropertyName("webhooks"), JsonRequired] IReadOnlyList<WebhookEndpoint> Webhooks
 );
 
 public sealed record BatchRequestOperations(
-    [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("op")] string Op,
-    [property: JsonPropertyName("value")] JsonElement? Value
+    [property: JsonPropertyName("id"), JsonRequired] string Id,
+    [property: JsonPropertyName("op"), JsonRequired] string Op,
+    [property: JsonPropertyName("value"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Value
 );
 
+public sealed record ConditionalUpdateExpected;
+
+public sealed record ConditionalUpdateUpdate;
+
+public sealed record ConsumeExpected;
+
 public sealed record DocumentsResponseDocuments(
-    [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("value")] JsonElement Value,
-    [property: JsonPropertyName("version")] long Version
+    [property: JsonPropertyName("id"), JsonRequired] string Id,
+    [property: JsonPropertyName("value"), JsonRequired] JsonElement Value,
+    [property: JsonPropertyName("version"), JsonRequired] long Version
 );
 
 public sealed record ErrorResponseError(
-    [property: JsonPropertyName("code")] string Code,
-    [property: JsonPropertyName("fix")] string Fix,
-    [property: JsonPropertyName("message")] string Message
+    [property: JsonPropertyName("code"), JsonRequired] string Code,
+    [property: JsonPropertyName("fix"), JsonRequired] string Fix,
+    [property: JsonPropertyName("message"), JsonRequired] string Message
 );
 
 public sealed record HistoryResponseHistory(
-    [property: JsonPropertyName("deleted")] bool Deleted,
-    [property: JsonPropertyName("revision")] string Revision
+    [property: JsonPropertyName("deleted"), JsonRequired] bool Deleted,
+    [property: JsonPropertyName("revision"), JsonRequired] string Revision
 );
 
+public sealed record IncrementIncrement;
+
+public sealed record IncrementSet;
+
+public sealed record PredicateUpdateUpdate;
+
 public sealed record SqlExplainResponseOrder(
-    [property: JsonPropertyName("direction")] string Direction,
-    [property: JsonPropertyName("field")] string Field
+    [property: JsonPropertyName("direction"), JsonRequired] string Direction,
+    [property: JsonPropertyName("field"), JsonRequired] string Field
 );
 
 public sealed record SqlRequestParameters;
 
 public sealed record SqlResponseRows(
-    [property: JsonPropertyName("id")] string Id,
-    [property: JsonPropertyName("value")] JsonElement Value
+    [property: JsonPropertyName("id"), JsonRequired] string Id,
+    [property: JsonPropertyName("value"), JsonRequired] JsonElement Value
 );
+
+public sealed record UniqueInsertRecord;
 
