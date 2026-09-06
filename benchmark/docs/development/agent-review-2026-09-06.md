@@ -718,3 +718,33 @@ grandchild schema/document preservation, retries, and wrong-owner key rejection.
 All seven ULID tests passed (`64276`), preserving strict parser and generation
 behavior. The latest test-helper extractions still require the broader runtime
 checks below; these local checks do not qualify production branch delivery.
+
+The engine all-target Clippy selection passed with warnings denied (`99978`).
+Broader backup verification then exposed timestamp-sensitive fixtures and a
+scheduler defect: historical protection could skip an unacknowledged newly
+staged root. The scheduler now requires both the protected sequence and durable
+provider upload acknowledgments to match before skipping work. Review rejected
+backdating new backups to the last write; defaults retain wall-clock capture,
+while retry tests preserve their explicit capture timestamp. All 48 backup tests
+passed after these corrections (`67504`), including idle/empty retention and
+native provider retention.
+
+The broader engine selection passed 141 tests with one TTL fixture failure
+(`63061`). Its encrypted fixture now activates real writer authority, and the
+schema convergence fixture explicitly rejects progress before its causal
+predecessor, then retries after admission. TTL backfill counts retained expiry
+tombstones produced by shutdown; removing a descriptor does not resurrect them.
+The final targeted TTL regression passed (`3314`). A full engine-suite success
+is not inferred by combining these runs. Workspace `make check` (`76254`) passed formatting and reported no remaining
+engine or simulation lint errors, then stopped on TBEP's remaining diagnostics:
+30 library and 36 test-build errors, mostly documentation, bounded function
+extractions, imports and conversions. Exact log:
+`/tmp/terrascale-reviewed-workspace-check-2.log`. No complete-check success or
+production readiness is claimed. The simulation now uses a named causal ordering
+helper and no longer retains its unused synthetic frontier encoder; it applies
+the original persisted publication context.
+
+The final complete engine test selection passed all 142 tests (`33453`),
+including the final TTL, causal retry, encrypted ownership and native branch
+fixtures. Together with the separately verified 48 backup tests, this qualifies
+the reviewed local behavior, not the pending workspace or production gates.

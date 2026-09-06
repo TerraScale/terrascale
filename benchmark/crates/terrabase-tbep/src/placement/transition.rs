@@ -272,11 +272,12 @@ fn verify(signed: &Signed, pins: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>, 
 }
 
 pub(super) fn hash(bytes: &[u8]) -> String {
-    digest::digest(&digest::SHA256, bytes)
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    use std::fmt::Write as _;
+    let mut output = String::with_capacity(64);
+    for byte in digest::digest(&digest::SHA256, bytes).as_ref() {
+        write!(output, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    output
 }
 fn valid_hash(value: &str) -> bool {
     value.len() == 64

@@ -348,13 +348,24 @@ mod bundle_tests {
         let loser_scope = loser.scope_for(&TenantId::try_new("tenant").unwrap());
         let progress =
             loser.replication_publications(&loser_scope, 0, 10).unwrap().pop().unwrap().1;
-        for (target, groups) in [
-            (&x, vec![&a_initial, &b_initial, &progress]),
-            (&y, vec![&progress, &b_initial, &a_initial]),
+        for (target, groups, progress_first) in [
+            (&x, vec![&a_initial, &b_initial, &progress], false),
+            (&y, vec![&progress, &b_initial, &a_initial], true),
         ] {
             let scope = target.scope_for(&TenantId::try_new("tenant").unwrap());
-            for group in groups {
+            for (index, group) in groups.into_iter().enumerate() {
+                if progress_first && index == 0 {
+                    assert!(matches!(
+                        target.apply_replicated_publication(&scope, group),
+                        Err(EngineError::Conflict)
+                    ));
+                    assert_eq!(target.schema_metadata_load("db", "main", "users").unwrap(), None);
+                    continue;
+                }
                 target.apply_replicated_publication(&scope, group).unwrap();
+            }
+            if progress_first {
+                target.apply_replicated_publication(&scope, &progress).unwrap();
             }
             let expected = if a_wins { b"a".as_slice() } else { b"b".as_slice() };
             assert_eq!(

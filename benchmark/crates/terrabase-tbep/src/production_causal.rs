@@ -337,11 +337,14 @@ impl CausalDriver {
     /// Validates a socket frame's database, placement, peer and exact receipt.
     /// # Errors
     /// Refuses unrelated or malformed frames and failed/dependency-blocked applies.
+    /// # Panics
+    /// Internal reassembly invariants panic if assembly state is concurrently
+    /// corrupted, which cannot occur through this single-driver API.
     pub fn receive_frame(
         &mut self,
         engine: &Engine,
         bytes: &[u8],
-        _now_ms: u64,
+        now_ms: u64,
     ) -> Result<CausalReceive, HostingError> {
         if bytes.len() > 65 * 1024 * 1024 {
             return Err(refused("causal frame exceeds publication bound"));
@@ -351,67 +354,7 @@ impl CausalDriver {
             .ok_or_else(|| refused("causal frame scope or placement mismatch"))?;
         let (&kind, mut body) = body.split_first().ok_or_else(|| refused("empty causal frame"))?;
         if kind == 2 {
-            let total = usize::try_from(take_u64(&mut body)?).map_err(failure)?;
-            let offset = usize::try_from(take_u64(&mut body)?).map_err(failure)?;
-            let hash: [u8; 32] = body
-                .get(..32)
-                .ok_or_else(|| refused("truncated fragment hash"))?
-                .try_into()
-                .map_err(failure)?;
-            body = &body[32..];
-            let chunk_hash = body.get(..32).ok_or_else(|| refused("truncated chunk hash"))?;
-            body = &body[32..];
-            if blake3::hash(body).as_bytes() != chunk_hash
-                || total > 65 * 1024 * 1024
-                || total == 0
-                || offset % CHUNK != 0
-                || body.len() != CHUNK.min(total.saturating_sub(offset))
-                || offset >= total
-            {
-                return Err(refused("invalid causal fragment"));
-            }
-            if self
-                .assembly
-                .as_ref()
-                .is_some_and(|a| _now_ms.saturating_sub(a.last_activity) > 30_000)
-            {
-                self.assembly = None;
-            }
-            if self.assembly.as_ref().is_some_and(|a| a.hash != hash) {
-                return Err(refused("causal reassembly occupied"));
-            }
-            if self.assembly.is_none() {
-                let reservation = Reservation::acquire(total)?;
-                self.assembly = Some(Assembly {
-                    _reservation: reservation,
-                    hash,
-                    bytes: vec![0; total],
-                    total,
-                    received: 0,
-                    last_activity: _now_ms,
-                    chunks: std::collections::BTreeSet::new(),
-                });
-            }
-            let assembly = self.assembly.as_mut().expect("assembly exists");
-            assembly.last_activity = _now_ms;
-            if assembly.total != total {
-                return Err(refused("causal fragment total mismatch"));
-            }
-            if assembly.chunks.insert(offset) {
-                assembly.bytes[offset..offset + body.len()].copy_from_slice(body);
-                assembly.received += body.len();
-            }
-            if assembly.received != total {
-                return Ok(CausalReceive::Fragment);
-            }
-            let assembly = self.assembly.take().expect("assembly exists");
-            if blake3::hash(&assembly.bytes).as_bytes() != &assembly.hash {
-                return Err(refused("causal assembly hash mismatch"));
-            }
-            if assembly.bytes.get(self.prefix.len()) != Some(&1) {
-                return Err(refused("assembled causal content is not a publication"));
-            }
-            return self.receive_frame(engine, &assembly.bytes, _now_ms);
+            return self.receive_fragment(engine, &mut body, now_ms);
         }
         if kind == 1 {
             let message_id = take_u64(&mut body)?;
@@ -515,6 +458,71 @@ impl CausalDriver {
             }
             _ => Err(refused("unsupported causal frame kind")),
         }
+    }
+
+    fn receive_fragment(
+        &mut self,
+        engine: &Engine,
+        body: &mut &[u8],
+        now_ms: u64,
+    ) -> Result<CausalReceive, HostingError> {
+        let total = usize::try_from(take_u64(body)?).map_err(failure)?;
+        let offset = usize::try_from(take_u64(body)?).map_err(failure)?;
+        let hash: [u8; 32] = body
+            .get(..32)
+            .ok_or_else(|| refused("truncated fragment hash"))?
+            .try_into()
+            .map_err(failure)?;
+        *body = &body[32..];
+        let chunk_hash = body.get(..32).ok_or_else(|| refused("truncated chunk hash"))?;
+        *body = &body[32..];
+        if blake3::hash(body).as_bytes() != chunk_hash
+            || total > 65 * 1024 * 1024
+            || total == 0
+            || offset % CHUNK != 0
+            || body.len() != CHUNK.min(total.saturating_sub(offset))
+            || offset >= total
+        {
+            return Err(refused("invalid causal fragment"));
+        }
+        if self.assembly.as_ref().is_some_and(|a| now_ms.saturating_sub(a.last_activity) > 30_000) {
+            self.assembly = None;
+        }
+        if self.assembly.as_ref().is_some_and(|a| a.hash != hash) {
+            return Err(refused("causal reassembly occupied"));
+        }
+        if self.assembly.is_none() {
+            let reservation = Reservation::acquire(total)?;
+            self.assembly = Some(Assembly {
+                _reservation: reservation,
+                hash,
+                bytes: vec![0; total],
+                total,
+                received: 0,
+                last_activity: now_ms,
+                chunks: std::collections::BTreeSet::new(),
+            });
+        }
+        let assembly = self.assembly.as_mut().expect("assembly exists");
+        assembly.last_activity = now_ms;
+        if assembly.total != total {
+            return Err(refused("causal fragment total mismatch"));
+        }
+        if assembly.chunks.insert(offset) {
+            assembly.bytes[offset..offset + body.len()].copy_from_slice(body);
+            assembly.received += body.len();
+        }
+        if assembly.received != total {
+            return Ok(CausalReceive::Fragment);
+        }
+        let assembly = self.assembly.take().expect("assembly exists");
+        if blake3::hash(&assembly.bytes).as_bytes() != &assembly.hash {
+            return Err(refused("causal assembly hash mismatch"));
+        }
+        if assembly.bytes.get(self.prefix.len()) != Some(&1) {
+            return Err(refused("assembled causal content is not a publication"));
+        }
+        self.receive_frame(engine, &assembly.bytes, now_ms)
     }
 }
 
@@ -680,13 +688,7 @@ mod tests {
         }
         assert!(frames.len() > 1);
         assert_eq!(sender.outbound_frame(&source, RETRY_MS).unwrap().unwrap(), frame);
-        let mut wrong_database = frame.clone();
-        wrong_database[12] ^= 1;
-        assert!(receiver.receive_frame(&target, &wrong_database, 0).is_err());
-        let mut damaged = frames[1].clone();
-        let last = damaged.len() - 1;
-        damaged[last] ^= 1;
-        assert!(receiver.receive_frame(&target, &damaged, 0).is_err());
+        assert_rejects_invalid_frames(&mut receiver, &target, &frame, &frames[1]);
         let mut receipt = None;
         for chunk in frames.iter().rev() {
             match receiver.receive_frame(&target, chunk, 0).unwrap() {
@@ -705,8 +707,9 @@ mod tests {
             }
         }
         let receipt = receipt.expect("complete group applied");
-        let received = target.replication_publications(&target.scope_for(&tenant), 0, 1).unwrap();
-        assert_eq!(received[0].1.records.len(), 2);
+        let applied_publications =
+            target.replication_publications(&target.scope_for(&tenant), 0, 1).unwrap();
+        assert_eq!(applied_publications[0].1.records.len(), 2);
         assert!(sender.durable_peer_frontier().is_empty());
         assert!(matches!(
             sender.receive_frame(&source, &receipt, 0).unwrap(),
@@ -719,5 +722,20 @@ mod tests {
         drop(source);
         drop(target);
         std::fs::remove_dir_all(path).unwrap();
+    }
+
+    fn assert_rejects_invalid_frames(
+        receiver: &mut CausalDriver,
+        target: &Engine,
+        frame: &[u8],
+        damaged_frame: &[u8],
+    ) {
+        let mut wrong_database = frame.to_vec();
+        wrong_database[12] ^= 1;
+        assert!(receiver.receive_frame(target, &wrong_database, 0).is_err());
+        let mut damaged = damaged_frame.to_vec();
+        let last = damaged.len() - 1;
+        damaged[last] ^= 1;
+        assert!(receiver.receive_frame(target, &damaged, 0).is_err());
     }
 }

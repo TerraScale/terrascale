@@ -292,7 +292,62 @@ fn insert_declaration(
     Ok(())
 }
 
-/// One SQLite journal of pending control intent and durable retry receipts.
+fn candidate_declarations(
+    boundary: &PlacementBoundary,
+    transaction: &rusqlite::Transaction<'_>,
+    proposal: &mut pb::PlacementProposal,
+    declarations: &[pb::PlacementDatabaseDeclaration],
+) -> Result<(DeclarationCatalog, DeclarationCatalog), PlacementError> {
+    let durable = read_declarations(transaction)?;
+    let mut candidate = durable.clone();
+    let mut provided = BTreeSet::new();
+    let mut represented = BTreeSet::new();
+    for assignment in &proposal.assignments {
+        represented.insert(
+            DatabaseRouteScope::try_new(
+                &assignment.tenant,
+                &assignment.project,
+                &assignment.database,
+            )
+            .map_err(|_| PlacementError::Invalid)?,
+        );
+    }
+    for declaration in declarations {
+        let scope = DatabaseRouteScope::try_new(
+            &declaration.tenant,
+            &declaration.project,
+            &declaration.database,
+        )
+        .map_err(|_| PlacementError::Invalid)?;
+        let selected: BTreeSet<_> = declaration.selected_regions.iter().cloned().collect();
+        if !provided.insert(scope.database())
+            || !represented.contains(&scope)
+            || selected.is_empty()
+            || selected.len() > 3
+            || selected.len() != declaration.selected_regions.len()
+            || selected.iter().any(|region| RegionCatalog::production().parse(region).is_err())
+        {
+            return Err(PlacementError::Invalid);
+        }
+        if let Some((_, existing)) = candidate.get(&scope) {
+            if existing != &selected {
+                return Err(PlacementError::Conflict);
+            }
+        } else {
+            if candidate.len() >= 1024
+                || candidate.keys().any(|existing| existing.database() == scope.database())
+            {
+                return Err(PlacementError::Conflict);
+            }
+            candidate.insert(scope, (None, selected));
+        }
+    }
+    // Declarations supply missing control metadata, never local admission.
+    boundary.canonicalize_with(proposal, false, &candidate)?;
+    Ok((durable, candidate))
+}
+
+/// One `SQLite` journal of pending control intent and durable retry receipts.
 /// No API on this type can mark a proposal admitted or a database writable.
 pub struct PlacementJournal {
     connection: Mutex<Connection>,
@@ -301,7 +356,7 @@ pub struct PlacementJournal {
 }
 
 impl PlacementJournal {
-    /// Opens an owner-private SQLite journal and checks its persisted identity.
+    /// Opens an owner-private `SQLite` journal and checks its persisted identity.
     /// The parent directory must already exist with mode 0700.
     ///
     /// # Errors
@@ -426,7 +481,7 @@ impl PlacementJournal {
                     {
                         return Err(PlacementError::Storage);
                     }
-                    *selected_regions = persisted.clone();
+                    selected_regions.clone_from(persisted);
                 }
                 if selected_regions.is_empty()
                     || local_region
@@ -505,53 +560,8 @@ impl PlacementJournal {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| PlacementError::Storage)?;
-        let durable = read_declarations(&transaction)?;
-        let mut candidate = durable.clone();
-        let mut provided = BTreeSet::new();
-        let mut represented = BTreeSet::new();
-        for assignment in &proposal.assignments {
-            represented.insert(
-                DatabaseRouteScope::try_new(
-                    &assignment.tenant,
-                    &assignment.project,
-                    &assignment.database,
-                )
-                .map_err(|_| PlacementError::Invalid)?,
-            );
-        }
-        for declaration in &request.declarations {
-            let scope = DatabaseRouteScope::try_new(
-                &declaration.tenant,
-                &declaration.project,
-                &declaration.database,
-            )
-            .map_err(|_| PlacementError::Invalid)?;
-            let selected: BTreeSet<_> = declaration.selected_regions.iter().cloned().collect();
-            if !provided.insert(scope.database())
-                || !represented.contains(&scope)
-                || selected.is_empty()
-                || selected.len() > 3
-                || selected.len() != declaration.selected_regions.len()
-                || selected.iter().any(|region| RegionCatalog::production().parse(region).is_err())
-            {
-                return Err(PlacementError::Invalid);
-            }
-            if let Some((_, existing)) = candidate.get(&scope) {
-                if existing != &selected {
-                    return Err(PlacementError::Conflict);
-                }
-            } else {
-                if candidate.len() >= 1024
-                    || candidate.keys().any(|existing| existing.database() == scope.database())
-                {
-                    return Err(PlacementError::Conflict);
-                }
-                candidate.insert(scope, (None, selected));
-            }
-        }
-        // Declarations are redundant with the exact represented owner/residency
-        // sets. They supply missing control metadata, never a local admission.
-        self.boundary.canonicalize_with(proposal, false, &candidate)?;
+        let (durable, candidate) =
+            candidate_declarations(&self.boundary, &transaction, proposal, &request.declarations)?;
         let encoded = proposal.encode_to_vec();
         let retained: Option<(u64, String, i64, Vec<u8>)> = transaction.query_row(
             "SELECT revision,principal,expected_revision,proposal FROM proposals WHERE operation=?1", [operation],
@@ -788,7 +798,7 @@ impl PlacementJournal {
         }
         self.match_proposal(&transaction, request.proposal_revision, &verified)?;
         verified.follows(chain.last().map(|(_, _, prior)| prior))?;
-        if chain.len() >= MAX_PLACEMENT_PROPOSALS as usize {
+        if chain.len() >= usize::try_from(MAX_PLACEMENT_PROPOSALS).unwrap_or(usize::MAX) {
             return Err(PlacementError::Exhausted);
         }
         transaction
@@ -838,7 +848,8 @@ impl PlacementJournal {
             let revision = u64::try_from(revision).map_err(|_| PlacementError::Storage)?;
             let bytes: Vec<u8> = row.get(2).map_err(|_| PlacementError::Storage)?;
             let digest: String = row.get(3).map_err(|_| PlacementError::Storage)?;
-            if chain.len() >= MAX_PLACEMENT_PROPOSALS as usize || sequence != chain.len() as u64 + 1
+            if chain.len() >= usize::try_from(MAX_PLACEMENT_PROPOSALS).unwrap_or(usize::MAX)
+                || sequence != u64::try_from(chain.len()).unwrap_or(u64::MAX) + 1
             {
                 return Err(PlacementError::Storage);
             }

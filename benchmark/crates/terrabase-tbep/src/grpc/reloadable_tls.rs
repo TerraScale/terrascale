@@ -1,4 +1,5 @@
 //! Live TBEP mTLS credentials and bounded authenticated connection lifetimes.
+use rustls_pki_types::{CertificateDer, pem::PemObject};
 use std::{
     io,
     pin::Pin,
@@ -60,7 +61,6 @@ impl ReloadableTls {
         if expires_at <= now() {
             return Err(io::Error::other("expired TLS material"));
         }
-        use rustls_pki_types::{CertificateDer, pem::PemObject};
         let der = CertificateDer::pem_slice_iter(certificate.as_bytes())
             .next()
             .ok_or_else(|| io::Error::other("missing TLS certificate"))?

@@ -1206,13 +1206,11 @@ fn repeated_backup_at_the_same_boundary_is_idempotent() {
     ));
 
     let capture_unix_millis = capture_now();
-    let plan = || {
-        BackupPlan::local_test_full_plaintext().with_capture_unix_millis(capture_unix_millis)
-    };
+    let plan =
+        || BackupPlan::local_test_full_plaintext().with_capture_unix_millis(capture_unix_millis);
     let first = run_backup(&engine, plan(), &first_destination).expect("first run");
     let second = run_backup(&engine, plan(), &first_destination).expect("same destination");
-    let elsewhere =
-        run_backup(&engine, plan(), &second_destination).expect("other destination");
+    let elsewhere = run_backup(&engine, plan(), &second_destination).expect("other destination");
 
     assert_eq!(
         first.manifest().identity(),
@@ -1235,6 +1233,19 @@ fn repeated_backup_at_the_same_boundary_is_idempotent() {
         })
         .count();
     assert_eq!(points, 1);
+}
+
+#[test]
+fn idle_empty_backup_uses_current_capture_time_for_retention() {
+    let (_dir, engine) = open_engine("idle-empty-capture");
+    let destination = location("idle-empty-capture-archive");
+    let before = capture_now();
+    let result = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
+        .expect("empty backup runs");
+    let after = capture_now();
+    assert!(result.manifest().captured_unix_millis() >= before);
+    assert!(result.manifest().captured_unix_millis() <= after);
+    assert!(result.manifest().retain_until_unix_millis() > after);
 }
 
 /// Counts the `rp-` directories one destination holds.

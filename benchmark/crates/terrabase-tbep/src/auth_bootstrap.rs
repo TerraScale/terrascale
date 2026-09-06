@@ -117,7 +117,7 @@ impl AuthBootstrapBoundary {
     }
 }
 
-/// Owner-private SQLite journal of immutable, explicit auth genesis grants.
+/// Owner-private `SQLite` journal of immutable, explicit auth genesis grants.
 /// A new storage incarnation cannot accept a replay of a lost disk's grant.
 pub struct AuthBootstrapJournal {
     connection: Mutex<Connection>,

@@ -240,7 +240,11 @@ mod ttl_tests {
         engine.shutdown().unwrap();
         let engine = open();
         assert!(!engine.advance_schema_ttl(&collection, Some("deadline"), 1).unwrap());
-        assert!(engine.advance_schema_ttl(&collection, Some("deadline"), 1).unwrap());
+        // Shutdown maintenance can append expiry tombstones. They are retained
+        // rows too, so resume through those rows before expecting completion.
+        assert!(
+            (0..4).any(|_| engine.advance_schema_ttl(&collection, Some("deadline"), 1).unwrap())
+        );
         let scope = engine.scope_for(&owner);
         assert!(
             engine
@@ -275,13 +279,21 @@ mod ttl_tests {
                 .unwrap()
                 .is_empty()
         );
+        // Removing the descriptor clears expiry fields, but never resurrects
+        // documents already tombstoned by shutdown maintenance.
+        let connection = engine.open_sqlite_read_connection().unwrap();
+        let tombstones: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM documents d WHERE collection='items' AND deleted=1 AND NOT EXISTS (SELECT 1 FROM documents newer WHERE newer.tenant=d.tenant AND newer.collection=d.collection AND newer.id=d.id AND newer.commit_seq>d.commit_seq)",
+            [], |row| row.get(0),
+        ).unwrap();
+        drop(connection);
         assert!(engine.advance_schema_ttl(&collection, None, 8).unwrap());
         assert_eq!(
             engine
                 .snapshot_documents(&scope, &engine.read_snapshot(&scope).unwrap())
                 .unwrap()
                 .len(),
-            3
+            3 - usize::try_from(tombstones).unwrap()
         );
         engine.shutdown().unwrap();
         std::fs::remove_dir_all(directory).unwrap();

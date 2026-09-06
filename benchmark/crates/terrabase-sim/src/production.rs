@@ -1120,20 +1120,7 @@ impl ReplicationEngine for ProductionWorld {
         // apply path with the original persisted context. A stable
         // `(origin, seq)` tie-break makes every supplied permutation exercise
         // the same admissible causal order.
-        let mut frontier = Frontier::new();
-        let mut remaining = rows.iter().collect::<Vec<_>>();
-        let mut ordered = Vec::with_capacity(remaining.len());
-        while !remaining.is_empty() {
-            let candidate = remaining
-                .iter()
-                .enumerate()
-                .filter(|(_, row)| frontier.covers(&row.context))
-                .min_by_key(|(_, row)| (row.origin, row.seq))
-                .map_or(0, |(index, _)| index);
-            let row = remaining.swap_remove(candidate);
-            frontier.advance(row.origin, row.seq);
-            ordered.push(row);
-        }
+        let ordered = causal_permutation(rows);
         for row in ordered {
             let Some(publication) = self.publications.get(&row.id()) else { return 0 };
             if engine.apply_replicated_publication(&scope, publication).is_err() {
@@ -1326,33 +1313,22 @@ fn row_commit(row: &JournalRow) -> Vec<u8> {
     format!("sim-r{}-{}", row.origin.index(), row.seq).into_bytes()
 }
 
-/// Encodes a simulation frontier in the engine's stable versioned dotted
-/// context format (`merge::DocumentContext::to_bytes`): version byte `1`,
-/// entry count, then `(origin_len, origin, sequence)` triples sorted by
-/// origin string. Empty frontiers use the legacy empty form.
-fn encode_frontier_context(frontier: &Frontier) -> Vec<u8> {
-    let mut entries: Vec<(String, u64)> = frontier
-        .entries()
-        .filter(|(_, sequence)| *sequence != 0)
-        .map(|(origin, sequence)| (format!("region-{}", origin.index()), sequence))
-        .collect();
-    if entries.is_empty() {
-        return Vec::new();
+fn causal_permutation(rows: &[JournalRow]) -> Vec<&JournalRow> {
+    let mut frontier = Frontier::new();
+    let mut remaining = rows.iter().collect::<Vec<_>>();
+    let mut ordered = Vec::with_capacity(remaining.len());
+    while !remaining.is_empty() {
+        let candidate = remaining
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| frontier.covers(&row.context))
+            .min_by_key(|(_, row)| (row.origin, row.seq))
+            .map_or(0, |(index, _)| index);
+        let row = remaining.swap_remove(candidate);
+        frontier.advance(row.origin, row.seq);
+        ordered.push(row);
     }
-    entries.sort_by(|left, right| left.0.cmp(&right.0));
-    let mut bytes = Vec::with_capacity(5 + entries.len() * 20);
-    bytes.push(1);
-    bytes.extend_from_slice(
-        &u32::try_from(entries.len()).expect("simulation Region count fits u32").to_le_bytes(),
-    );
-    for (origin, sequence) in &entries {
-        bytes.extend_from_slice(
-            &u32::try_from(origin.len()).expect("formatted Region identity fits u32").to_le_bytes(),
-        );
-        bytes.extend_from_slice(origin.as_bytes());
-        bytes.extend_from_slice(&sequence.to_le_bytes());
-    }
-    bytes
+    ordered
 }
 
 /// Capability token used by the deterministic cache seam.

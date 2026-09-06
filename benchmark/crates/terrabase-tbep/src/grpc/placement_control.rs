@@ -130,7 +130,7 @@ impl PlacementControlServer {
         self.draining.store(true, Ordering::Release);
     }
 
-    /// Waits for every dispatched SQLite transaction, including cancelled RPCs.
+    /// Waits for every dispatched `SQLite` transaction, including cancelled RPCs.
     ///
     /// # Errors
     /// Returns timeout if a durable transaction has not finished by the deadline.
@@ -235,7 +235,7 @@ impl PlacementControlListener {
     }
 
     /// Runs only placement control RPCs until shutdown. TLS handshakes, messages,
-    /// requests, and SQLite work remain independently bounded.
+    /// requests, and `SQLite` work remain independently bounded.
     ///
     /// # Errors
     /// Returns a listener, TLS, or HTTP/2 serving error.

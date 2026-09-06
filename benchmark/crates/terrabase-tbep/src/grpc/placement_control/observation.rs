@@ -1,6 +1,9 @@
 //! Read-only observation of the pending host's actual control lifecycle.
 
-use super::*;
+use super::{
+    Arc, Code, Ordering, PlacementControlServer, Request, Response, Status,
+    authenticate_gateway_certificate, control_status, pb,
+};
 use pb::maintenance_service_server::MaintenanceService;
 
 impl PlacementControlServer {

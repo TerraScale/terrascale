@@ -436,6 +436,32 @@ fn authenticate_gateway_certificate(principal: &str, leaf: &[u8]) -> Result<(), 
     Ok(())
 }
 
+fn tls_incoming(
+    listener: tokio::net::TcpListener,
+    tls_acceptor: reloadable_tls::ReloadableTls,
+    handshake_timeout: std::time::Duration,
+    handshake_limit: usize,
+) -> impl futures_util::Stream<
+    Item = std::io::Result<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>,
+> {
+    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener).map(move |accepted| {
+        let acceptor = tls_acceptor.clone();
+        async move {
+            let stream = accepted?;
+            stream.set_nodelay(true)?;
+            match tokio::time::timeout(handshake_timeout, acceptor.accept(stream)).await {
+                Ok(Ok(stream)) => Ok(stream),
+                Ok(Err(error)) => Err(std::io::Error::other(error)),
+                Err(_) => Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "the TLS handshake exceeded its configured deadline",
+                )),
+            }
+        }
+    });
+    futures_util::StreamExt::buffer_unordered(incoming, handshake_limit)
+}
+
 impl TbepGrpcServer {
     /// Binds read-only complete admitted-runtime catchup evidence.
     #[must_use]
@@ -710,6 +736,9 @@ impl TbepGrpcServer {
     ///
     /// # Errors
     /// Returns invalid binding, missing principals, or listener startup failure.
+    ///
+    /// # Panics
+    /// Panics only if the dedicated serving runtime cannot be initialized.
     pub fn serve_tls_reloadable(
         self: &Arc<Self>,
         address: SocketAddr,
@@ -768,43 +797,12 @@ impl TbepGrpcServer {
                         }
                     };
                     let _ = addr_tx.send(Ok(local));
-                    // `then` would serialize handshakes: a client that sends
-                    // only a TCP preface could hold the accept loop until the
-                    // timeout and starve every well-behaved client behind it.
-                    // `buffer_unordered` keeps at most the configured number
-                    // of handshake futures alive while continuing to poll the
-                    // listener whenever a slot is available.  The bound is
-                    // deliberately the same admission ceiling used by host
-                    // work, so this path cannot become an unbounded task or
-                    // socket queue.
-                    let handshake_limit = server.config.max_inflight();
-                    let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener).map(
-                        move |accepted| {
-                            let acceptor = tls_acceptor.clone();
-                            async move {
-                                let stream = accepted?;
-                                // Request/response RPCs stall behind Nagle
-                                // coalescing plus the peer's delayed ACK when
-                                // a response splits across segments — tens of
-                                // milliseconds on every small call. Latency
-                                // beats segment efficiency on every path this
-                                // service serves, so small writes go out now.
-                                stream.set_nodelay(true)?;
-                                match tokio::time::timeout(startup_timeout, acceptor.accept(stream))
-                                    .await
-                                {
-                                    Ok(Ok(stream)) => Ok(stream),
-                                    Ok(Err(error)) => Err(std::io::Error::other(error)),
-                                    Err(_) => Err(std::io::Error::new(
-                                        std::io::ErrorKind::TimedOut,
-                                        "the TLS handshake exceeded its configured deadline",
-                                    )),
-                                }
-                            }
-                        },
+                    let incoming = tls_incoming(
+                        listener,
+                        tls_acceptor,
+                        startup_timeout,
+                        server.config.max_inflight(),
                     );
-                    let incoming =
-                        futures_util::StreamExt::buffer_unordered(incoming, handshake_limit);
                     routes
                         .serve_with_incoming_shutdown(incoming, async {
                             let _ = signal.await;

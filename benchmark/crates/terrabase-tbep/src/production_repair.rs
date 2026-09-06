@@ -114,7 +114,7 @@ fn validate_encoded_bound(mut bytes: &[u8]) -> Result<(), HostingError> {
 }
 
 /// Bounded metadata for a durable, versioned publication-summary cut.
-/// Publication hashes and hierarchical fingerprints remain in SQLite.
+/// Publication hashes and hierarchical fingerprints remain in `SQLite`.
 #[derive(Clone, Default)]
 pub struct PublicationIndex {
     table: RangeSummaryTable,
@@ -209,7 +209,7 @@ impl PublicationIndex {
     fn summary(&self, engine: &Engine, range: &JournalRange) -> Result<Entry, HostingError> {
         let last = range.last().min(self.frontier.get(range.origin()).copied().unwrap_or(0));
         let fingerprint = if last < range.first() {
-            Default::default()
+            terrabase_replication_core::anti_entropy::RangeFingerprint::default()
         } else {
             let cut = self.cut.as_ref().ok_or_else(|| refused("uncaptured repair index"))?;
             let tenant = self.tenant.as_ref().ok_or_else(|| refused("unbound repair index"))?;
@@ -650,230 +650,13 @@ impl RepairDriver {
         bytes: &[u8],
     ) -> Result<RepairReceive, HostingError> {
         index.require_scope(&self.scope)?;
-        if bytes.len() > MAX_BYTES {
-            return Err(refused("repair wire byte bound exceeded"));
-        }
-        let body = bytes
-            .strip_prefix(self.prefix.as_slice())
-            .ok_or_else(|| refused("repair scope or epoch mismatch"))?;
-        validate_encoded_bound(body)?;
-        let frame = Frame::decode(body).map_err(failure)?;
-        if frame.source != self.peer.as_str()
-            || frame.target != self.local.as_str()
-            || frame.id == 0
-            || frame.entries.len() > MAX_ROWS
-            || frame.baseline.len() > 32
-        {
-            return Err(refused("repair identity or entry bound mismatch"));
-        }
-        if frame.entries.iter().any(|entry| {
-            entry.origin.is_empty() || entry.origin.len() > 1024 || entry.hash.len() > 32
-        }) {
-            return Err(refused("invalid repair entry"));
-        }
+        let frame = self.decode_frame(bytes)?;
         let mut result = RepairReceive::default();
         match frame.kind {
-            1 => {
-                if frame.entries.len() > MAX_ORIGINS || index.floors.len() > MAX_ORIGINS {
-                    return Err(refused("invalid repair catalog"));
-                }
-                if self.source_cut.as_ref().is_some_and(|(id, _)| frame.cut == 0 && frame.id < *id)
-                {
-                    return Ok(result);
-                }
-                if frame.cut == 0 && self.source_cut.as_ref().is_none_or(|(id, _)| *id != frame.id)
-                {
-                    let frontier = if frame.baseline.is_empty() {
-                        if !frame.entries.is_empty() {
-                            return Err(refused("common cut lacks baseline binding"));
-                        }
-                        self.desired_cut
-                            .as_ref()
-                            .map_or_else(|| index.frontier.clone(), |cut| cut.frontier.clone())
-                    } else {
-                        if frame.baseline.len() != 32 {
-                            return Err(refused("invalid common cut baseline"));
-                        }
-                        let mut frontier = BTreeMap::new();
-                        for entry in &frame.entries {
-                            let root = index.table.root(&entry.origin).map_err(failure)?;
-                            if entry.first != 1
-                                || entry.level != u32::from(root.level())
-                                || entry.hash.len() != 16
-                                || entry.floor != 1
-                                || frontier.insert(entry.origin.clone(), entry.cutoff).is_some()
-                            {
-                                return Err(refused("invalid requested common cut"));
-                            }
-                        }
-                        frontier
-                    };
-                    let mut frozen = index.at_frontier(&frontier);
-                    // Preserve requested bounds even when the local source currently lacks rows.
-                    frozen.frontier = frontier;
-                    frozen.floors =
-                        frozen.frontier.keys().map(|origin| (origin.clone(), 1)).collect();
-                    self.source_cut = Some((frame.id, frozen));
-                }
-                let (cut_id, frozen) =
-                    self.source_cut.as_ref().ok_or_else(|| refused("unknown repair source cut"))?;
-                if frame.cut != 0 && frame.cut != *cut_id {
-                    return Err(refused("expired repair source cut"));
-                }
-                let frontier = frozen.frontier.clone();
-                let mut entries = Vec::new();
-                for (origin, floor) in &frozen.floors {
-                    let root = frozen.table.root(origin).map_err(failure)?;
-                    let mut entry = frozen.summary(engine, &root)?;
-                    entry.floor = *floor;
-                    entry.cutoff = frontier.get(origin).copied().unwrap_or(0);
-                    entries.push(entry);
-                }
-                let mut response = self.frame(frame.id, 2, entries);
-                response.cut = *cut_id;
-                response.baseline = frozen.baseline.to_vec();
-                result.frames.push(self.encode(&response)?);
-            }
-            3 => {
-                let (cut_id, index) =
-                    self.source_cut.as_ref().ok_or_else(|| refused("missing source repair cut"))?;
-                if frame.cut < *cut_id {
-                    return Ok(result);
-                }
-                if *cut_id != frame.cut {
-                    return Err(refused("wrong source repair cut"));
-                }
-                if frame.entries.len() != 1 {
-                    return Err(refused("invalid repair range request"));
-                }
-                let entry = &frame.entries[0];
-                if entry.hash.len() != 16 {
-                    return Err(refused("invalid repair fingerprint"));
-                }
-                let range = index.range(entry)?;
-                let local = index.summary(engine, &range)?;
-                let (kind, entries) = if local.count == entry.count && local.hash == entry.hash {
-                    (4, vec![local])
-                } else if range.level() == 0 {
-                    let rows = index
-                        .leaf_rows(engine, &range)?
-                        .into_iter()
-                        .map(|row| Entry {
-                            origin: row.id.origin().to_owned(),
-                            level: 0,
-                            first: row.id.sequence(),
-                            count: 1,
-                            hash: row.row_hash.to_vec(),
-                            floor: 0,
-                            cutoff: 0,
-                        })
-                        .collect();
-                    (6, rows)
-                } else {
-                    (5, index.children(engine, &range)?)
-                };
-                let mut response = self.frame(frame.id, kind, entries);
-                response.cut = frame.cut;
-                result.frames.push(self.encode(&response)?);
-            }
-            7 => {
-                if frame.entries.len() > MAX_REPAIRS {
-                    return Err(refused("repair publication request budget exceeded"));
-                }
-                let mut unique = BTreeSet::new();
-                for entry in &frame.entries {
-                    let id = JournalRowId::new(&entry.origin, entry.first).map_err(failure)?;
-                    if !unique.insert(id.clone()) || entry.hash.len() != 32 {
-                        return Err(refused("invalid repair publication request"));
-                    }
-                    let groups =
-                        index.publications(engine, id.origin(), id.sequence(), id.sequence())?;
-                    match groups.first() {
-                        Some(group)
-                            if group.fingerprint().map_err(failure)?.as_slice() == entry.hash =>
-                        {
-                            result.requested.push((entry.origin.clone(), entry.first))
-                        }
-                        None => result.needs_snapshot = true,
-                        _ => return Err(refused("requested publication hash mismatch")),
-                    }
-                }
-            }
-            2 | 4 | 5 | 6 => {
-                // Old duplicates and reordered responses cannot consume a newer request.
-                let Some((pending, _)) = &self.pending else {
-                    return Ok(result);
-                };
-                if frame.id < pending.id {
-                    return Ok(result);
-                }
-                if frame.id != pending.id {
-                    return Err(refused("uncorrelated repair response"));
-                }
-                let pending = pending.clone();
-                match frame.kind {
-                    2 => self.receive_catalog(engine, index, &pending, &frame, &mut result)?,
-                    4 | 5 | 6 => {
-                        let cut = self
-                            .comparison
-                            .as_ref()
-                            .ok_or_else(|| refused("missing comparison cut"))?;
-                        if frame.cut != cut.id {
-                            return Err(refused("wrong comparison cut"));
-                        }
-                        let view = index.at_frontier(&cut.frontier);
-                        let index = &view;
-                        if pending.kind != 3 || pending.entries.len() != 1 {
-                            return Err(refused("unexpected repair range response"));
-                        }
-                        let range = index.range(&pending.entries[0])?;
-                        match frame.kind {
-                            4 => {
-                                if frame.entries != pending.entries {
-                                    return Err(refused("unproved equal range"));
-                                }
-                            }
-                            5 => {
-                                if range.level() == 0 || frame.entries.len() > 64 {
-                                    return Err(refused("invalid repair refinement"));
-                                }
-                                let mut children = BTreeMap::new();
-                                for entry in &frame.entries {
-                                    let child = index.range(entry)?;
-                                    if child.origin() != range.origin()
-                                        || child.level() + 1 != range.level()
-                                        || child.first() < range.first()
-                                        || child.last() > range.last()
-                                        || entry.hash.len() != 16
-                                        || children.insert(child.first(), entry.clone()).is_some()
-                                    {
-                                        return Err(refused(
-                                            "repair child outside requested range",
-                                        ));
-                                    }
-                                }
-                                for child in index.children(engine, &range)? {
-                                    children.entry(child.first).or_insert(Entry {
-                                        count: 0,
-                                        hash: vec![0; 16],
-                                        ..child
-                                    });
-                                }
-                                for remote in children.values() {
-                                    let local = index.summary(engine, &index.range(remote)?)?;
-                                    if local.count != remote.count || local.hash != remote.hash {
-                                        self.work.push_back(local);
-                                    }
-                                }
-                            }
-                            6 => self.compare_leaf(engine, index, &range, &frame, &mut result)?,
-                            _ => unreachable!(),
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-                self.pending = None;
-            }
+            1 => self.receive_catalog_request(engine, index, &frame, &mut result)?,
+            3 => self.receive_range_request(engine, index, &frame, &mut result)?,
+            7 => self.receive_publication_request(engine, index, &frame, &mut result)?,
+            2 | 4..=6 => self.receive_response(engine, index, &frame, &mut result)?,
             _ => return Err(refused("unsupported repair message")),
         }
         if !result.requested.is_empty() && matches!(frame.kind, 6) {
@@ -899,6 +682,30 @@ impl RepairDriver {
         }
         Ok(result)
     }
+    fn decode_frame(&self, bytes: &[u8]) -> Result<Frame, HostingError> {
+        if bytes.len() > MAX_BYTES {
+            return Err(refused("repair wire byte bound exceeded"));
+        }
+        let body = bytes
+            .strip_prefix(self.prefix.as_slice())
+            .ok_or_else(|| refused("repair scope or epoch mismatch"))?;
+        validate_encoded_bound(body)?;
+        let frame = Frame::decode(body).map_err(failure)?;
+        if frame.source != self.peer.as_str()
+            || frame.target != self.local.as_str()
+            || frame.id == 0
+            || frame.entries.len() > MAX_ROWS
+            || frame.baseline.len() > 32
+        {
+            return Err(refused("repair identity or entry bound mismatch"));
+        }
+        if frame.entries.iter().any(|entry| {
+            entry.origin.is_empty() || entry.origin.len() > 1024 || entry.hash.len() > 32
+        }) {
+            return Err(refused("invalid repair entry"));
+        }
+        Ok(frame)
+    }
     fn receive_catalog(
         &mut self,
         engine: &Engine,
@@ -920,10 +727,10 @@ impl RepairDriver {
             self.verified = None;
             return Ok(());
         }
-        if let Some(previous) = &self.comparison {
-            if previous.id != frame.cut || previous.roots != frame.entries {
-                return Err(refused("source changed immutable repair cut"));
-            }
+        if let Some(previous) = &self.comparison
+            && (previous.id != frame.cut || previous.roots != frame.entries)
+        {
+            return Err(refused("source changed immutable repair cut"));
         }
         let mut frontier = BTreeMap::new();
         for entry in &frame.entries {

@@ -334,7 +334,7 @@ fn invalid_roles_residency_scope_and_environment_are_rejected_before_write() {
             1 => proposal.assignments[0].region = "FRA".into(),
             2 => {
                 proposal.assignments[0].writer_member =
-                    proposal.assignments[0].follower_member.clone()
+                    proposal.assignments[0].follower_member.clone();
             }
             3 => proposal.assignments[0].database = DatabaseUlid::generate().to_text(),
             4 => proposal.regions[0].members[1] = proposal.regions[0].members[0].clone(),

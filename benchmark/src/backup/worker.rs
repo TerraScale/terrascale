@@ -694,7 +694,13 @@ async fn sync_stream(
     let root_due = chain
         .first()
         .is_none_or(|root| now.saturating_sub(root.captured_unix_millis()) >= 86_400_000);
-    if stream.health.protected && base == Some(high_water) && !root_due {
+    let destinations_acknowledge_points = destinations_acknowledge_points(stream, &points, limits)?;
+    if stream.health.protected
+        && stream.health.protected_sequence == high_water.get()
+        && base == Some(high_water)
+        && !root_due
+        && destinations_acknowledge_points
+    {
         return Ok(());
     }
     let mut captured_boundary = base.unwrap_or_default();
@@ -786,6 +792,32 @@ async fn upload_destinations(
         failed |= !succeeded;
     }
     Ok(failed)
+}
+
+fn destinations_acknowledge_points(
+    stream: &Stream,
+    points: &[PathBuf],
+    limits: FleetLimits,
+) -> Result<bool, FleetError> {
+    for (provider, _) in &stream.config.destinations {
+        let journal = stream.config.staging.join(match provider {
+            Provider::Oci => "uploaded-oci",
+            Provider::Tigris => "uploaded-tigris",
+        });
+        let acknowledged = read_upload_journal(
+            &journal,
+            &stream.config.policy_revision,
+            limits.points_per_stream,
+        )?;
+        for point in points {
+            let name =
+                point.file_name().and_then(|name| name.to_str()).ok_or(FleetError::Capture)?;
+            if !acknowledged.contains(name) {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
 }
 
 async fn enforce_retention(
@@ -1203,10 +1235,6 @@ mod tests {
             staging,
         )
         .unwrap();
-        // The full root was captured outside `sync_once`; mark the stream as
-        // unprotected so the scheduler adopts and uploads this newly staged
-        // root instead of treating the previous protected state as current.
-        fleet.streams.get_mut(&identity).unwrap().health.protected = false;
         fleet.streams.get_mut(&identity).unwrap().due = Instant::now();
         assert!(fleet.sync_once().await.is_empty());
         enforce_retention_at(

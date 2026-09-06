@@ -234,7 +234,7 @@ fn wire_usage_fact(
 
 /// The TBEP host backed by one durable Engine.
 enum HostEngine {
-    Local(Engine),
+    Local(Box<Engine>),
     Admitted(Arc<terrabase::member::DatabaseLease>),
 }
 
@@ -290,7 +290,7 @@ impl EngineHost {
         )
         .map_err(|_| HostingError::EngineFailure("engine open refused".into()))?;
         Ok(Self {
-            engine: HostEngine::Local(engine),
+            engine: HostEngine::Local(Box::new(engine)),
             location: location.to_path_buf(),
             tenant: tenant.to_owned(),
             project: project.to_owned(),

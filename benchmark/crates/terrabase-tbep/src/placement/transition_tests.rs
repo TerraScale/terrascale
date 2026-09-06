@@ -161,7 +161,7 @@ fn authenticated_wrong_tuple_digest_genesis_and_signer_never_admit() {
             1 => changed["request"]["epoch"] = json!(2),
             2 => {
                 changed["request"]["members"][0]["placement_digest"] =
-                    json!(hash(b"wrong proposal"))
+                    json!(hash(b"wrong proposal"));
             }
             3 => changed["request"]["scope_id"] = json!("production/wrong-cluster"),
             _ => changed["request_digest"] = json!(hash(b"wrong digest")),

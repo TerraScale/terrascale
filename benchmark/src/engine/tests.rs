@@ -2987,6 +2987,7 @@ fn encrypted_owner_reopen_and_wrong_key_fail_closed() {
     assert!(matches!(Engine::open(config.clone()), Err(EngineOpenError::InvalidConfig)));
     let engine =
         Engine::open(config.clone().with_storage_keys(test_storage_keys(&owner, 91))).unwrap();
+    engine.activate_origin_epoch(1).unwrap();
     let scope = engine.scope_for(&tenant);
     let snapshot = engine.read_snapshot(&scope).unwrap();
     let mut transaction = engine.begin(&scope, snapshot, operation("encrypted-write")).unwrap();
