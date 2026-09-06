@@ -8,10 +8,8 @@ use std::sync::{Arc, Mutex};
 /// boundary and cannot detect DNS rebinding regressions.
 #[test]
 fn native_delivery_re_resolves_and_rejects_private_retry_target() {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("runtime");
+    let runtime =
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
     let answers = Arc::new(Mutex::new(vec![
         vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))],
         vec![IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))],

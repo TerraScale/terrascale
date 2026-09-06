@@ -596,6 +596,54 @@ pub struct ApiState {
     pub exports: Option<Arc<crate::export_api::ExportRuntime>>,
 }
 
+impl ApiState {
+    /// Builds serving state from the already-composed production owners.
+    ///
+    /// The constructor intentionally accepts every mutable owner explicitly;
+    /// it never opens a second catalog, engine, backup fleet, or credential
+    /// store while assembling the public API.
+    #[allow(clippy::too_many_arguments, reason = "production ownership is explicit")]
+    pub fn production(
+        region: RegionCode,
+        metrics: Arc<MetricsRegistry>,
+        admitted_databases: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+        replication_progress: Arc<crate::replication_runtime::ReplicationProgress>,
+        scope: (String, String),
+        backups: Arc<crate::backup::BackupStreams>,
+        backup_root: std::path::PathBuf,
+        timetravel: Arc<crate::backup::TimeTravelCache>,
+        guards: Arc<crate::guards::AbuseGuards>,
+        origin_proof_keys: Arc<crate::reactive_api::OriginProofKeyRing>,
+        capability_keys: Arc<crate::reactive_api::CapabilityKeyRing>,
+        keys: Option<Arc<crate::api_keys::KeyStore>>,
+        delegated_identity: Option<Arc<crate::delegated_identity::IdentityVerifier>>,
+        webhook_keys: Option<Arc<dyn crate::webhook_api::WebhookKeyLeases>>,
+        exports: Option<Arc<crate::export_api::ExportRuntime>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            admitted_databases: Some(admitted_databases),
+            replication_progress: Some(replication_progress),
+            development: Arc::default(),
+            provisioning: None,
+            region,
+            metrics,
+            keys,
+            delegated_identity,
+            control: None,
+            catalog: None,
+            scope,
+            backups,
+            backup_root,
+            timetravel,
+            guards,
+            origin_proof_keys,
+            capability_keys,
+            webhook_keys,
+            exports,
+        })
+    }
+}
+
 /// The served route table as an `OpenAPI` router: the single source of both
 /// the running axum router and the published contract document, so the two
 /// can never drift apart.
@@ -1386,7 +1434,7 @@ async fn authenticate(
     if let Some(scope) = verified_project {
         request.extensions_mut().insert(scope);
     }
-    let admitted = Ok(principal);
+    let admitted: Result<crate::api_keys::Principal, ApiError> = Ok(principal);
     match admitted {
         Ok(principal) => {
             let verb = required_verb(request.method(), request.uri().path());

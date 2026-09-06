@@ -52,11 +52,12 @@ async fn production_tick_completes_large_descriptor_without_schema_record() {
     let mut partial = false;
     for _ in 0..20 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        partial = engine
-            .index_descriptors()
-            .unwrap()
-            .into_iter()
-            .any(|descriptor| descriptor.collection == "orders" && descriptor.field == "account" && descriptor.backfill_remaining < ROWS as u64 && !descriptor.active);
+        partial = engine.index_descriptors().unwrap().into_iter().any(|descriptor| {
+            descriptor.collection == "orders"
+                && descriptor.field == "account"
+                && descriptor.backfill_remaining < ROWS as u64
+                && !descriptor.active
+        });
         if partial {
             break;
         }
@@ -71,12 +72,9 @@ async fn production_tick_completes_large_descriptor_without_schema_record() {
     let mut active = false;
     for _ in 0..20 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        active = reopened
-            .engine()
-            .index_descriptors()
-            .unwrap()
-            .into_iter()
-            .any(|descriptor| descriptor.collection == "orders" && descriptor.field == "account" && descriptor.active);
+        active = reopened.engine().index_descriptors().unwrap().into_iter().any(|descriptor| {
+            descriptor.collection == "orders" && descriptor.field == "account" && descriptor.active
+        });
         if active {
             break;
         }

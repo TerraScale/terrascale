@@ -4,7 +4,7 @@ use crate::replication_proof::{ReadinessCutFrame, VerifiedReadinessCut};
 use crate::replication_runtime::ReplicationProgress;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use terrabase_cluster::production::{DatabaseRouteScope, ProductionMemberRuntime};
 use terrabase_cluster::wal_driver::{
@@ -150,6 +150,8 @@ pub struct PeerDatabase {
 pub struct PeerFacts {
     /// An authenticated session is currently active.
     pub connected: bool,
+    /// Owner token of the worker that published this observation.
+    pub session_id: u64,
     /// Start of this authenticated session, stable across periodic comparisons.
     pub session_started: Option<std::time::Instant>,
     /// Region authenticated by the live peer connection.
@@ -232,7 +234,7 @@ impl ReplicationPeers {
         let validated = validate_peer_lanes(&runtime, peers)?;
         let observations: PeerObservations = Arc::default();
         for (id, lanes) in &validated {
-            observe(&observations, id.as_str(), lanes, false);
+            observe(&observations, id.as_str(), lanes, false, 0);
         }
         let mut admitted = std::collections::BTreeSet::new();
         let mut by_peer: BTreeMap<_, _> = validated
@@ -408,7 +410,7 @@ impl ReplicationPeers {
         // No await occurs after the admission commit, so cancellation cannot
         // interrupt delivery between peer queues.
         for ((peer, lanes), reservation) in peers.into_iter().zip(reservations) {
-            observe(&self.observations, &peer, &lanes, false);
+            observe(&self.observations, &peer, &lanes, false, 0);
             reservation.send(PeerCommand::Add(lanes));
         }
         drop(admitted);
@@ -555,13 +557,14 @@ fn spawn_peer_owner(
         let mut workers = tokio::task::JoinSet::new();
         let mut incoming = BTreeMap::new();
         for (id, lanes, new_lanes) in validated {
+            let worker_id = NEXT_WORKER_ID.fetch_add(1, Ordering::Relaxed);
             let (sender, receiver) = mpsc::channel(1);
             incoming.insert(id.as_str().to_owned(), sender);
             workers.spawn(peer_worker(PeerWorkerContext {
                 runtime: runtime.clone(), progress: progress.clone(), id: id.clone(), lanes,
                 incoming: receiver, stopped: stopped.clone(), observations: worker_observations.clone(),
-                new_lanes: PeerInbox { receiver: Some(new_lanes), peer: id.as_str().to_owned(), live_workers: worker_lifecycle.clone(), progress: progress.clone(), observations: worker_observations.clone(), retirement: None },
-                cuts: worker_cuts.clone(),
+                new_lanes: PeerInbox { receiver: Some(new_lanes), peer: id.as_str().to_owned(), worker_id, live_workers: worker_lifecycle.clone(), progress: progress.clone(), observations: worker_observations.clone(), retirement: None },
+                cuts: worker_cuts.clone(), worker_id,
             }));
         }
         let incoming = Arc::new(incoming);
@@ -645,7 +648,10 @@ struct PeerWorkerContext {
     observations: PeerObservations,
     new_lanes: PeerInbox,
     cuts: Arc<ReplicationCuts>,
+    worker_id: u64,
 }
+
+static NEXT_WORKER_ID: AtomicU64 = AtomicU64::new(1);
 
 async fn peer_worker(context: PeerWorkerContext) {
     let PeerWorkerContext {
@@ -658,6 +664,7 @@ async fn peer_worker(context: PeerWorkerContext) {
         observations,
         mut new_lanes,
         cuts,
+        worker_id,
     } = context;
     let endpoint = runtime.transport();
     let dial = endpoint.config().local_identity().member().as_str() < id.as_str();
@@ -684,7 +691,7 @@ async fn peer_worker(context: PeerWorkerContext) {
             if dial && connection.send_frame(PEER_HELLO).await.is_err() {
                 continue;
             }
-            observe(&observations, id.as_str(), &lanes, true);
+            observe(&observations, id.as_str(), &lanes, true, worker_id);
             let session_result = session(
                 connection,
                 &mut lanes,
@@ -702,7 +709,7 @@ async fn peer_worker(context: PeerWorkerContext) {
                 retirement_park(&mut new_lanes, &mut stopped, &mut lanes).await;
                 return;
             }
-            observe(&observations, id.as_str(), &lanes, false);
+            observe(&observations, id.as_str(), &lanes, false, worker_id);
         } else if !dial {
             return;
         }
@@ -1128,13 +1135,27 @@ fn frame_scope(bytes: &[u8]) -> Result<DatabaseRouteScope, String> {
     }
 }
 
-fn observe(observations: &PeerObservations, peer: &str, lanes: &[PeerDatabase], connected: bool) {
+fn observe(
+    observations: &PeerObservations,
+    peer: &str,
+    lanes: &[PeerDatabase],
+    connected: bool,
+    session_id: u64,
+) {
     if let Ok(mut facts) = observations.lock() {
         for lane in lanes {
+            if !connected
+                && facts
+                    .get(&(peer.to_owned(), lane.scope))
+                    .is_some_and(|current| current.connected && current.session_id != session_id)
+            {
+                continue;
+            }
             facts.insert(
                 (peer.to_owned(), lane.scope),
                 PeerFacts {
                     connected,
+                    session_id,
                     session_started: connected.then(std::time::Instant::now),
                     ..PeerFacts::default()
                 },
@@ -1327,6 +1348,7 @@ enum PeerCommand {
 struct PeerInbox {
     receiver: Option<mpsc::Receiver<PeerCommand>>,
     peer: String,
+    worker_id: u64,
     live_workers: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
     progress: Arc<ReplicationProgress>,
     observations: PeerObservations,
@@ -1350,12 +1372,13 @@ impl Drop for PeerInbox {
             // A replacement authenticated session may have published fresh
             // evidence before this stale inbox is dropped. Its cleanup must
             // not revoke that newer session's receipts.
-            let replacement_live =
-                observations.iter().any(|((peer, _), facts)| peer == &self.peer && facts.connected);
+            let replacement_live = observations.iter().any(|((peer, _), facts)| {
+                peer == &self.peer && facts.connected && facts.session_id != self.worker_id
+            });
             if !replacement_live {
                 self.progress.fence_peer(&self.peer);
                 for ((peer, _), facts) in observations.iter_mut() {
-                    if peer == &self.peer {
+                    if peer == &self.peer && facts.session_id == self.worker_id {
                         *facts = PeerFacts::default();
                     }
                 }
@@ -1363,6 +1386,7 @@ impl Drop for PeerInbox {
         }
     }
 }
+
 fn apply_command(
     command: PeerCommand,
     lanes: &mut Vec<PeerDatabase>,
@@ -1446,5 +1470,27 @@ mod tests {
         assert!(!accepts_peer_frame(ProductionConnectionClass::Replication, b"auth-frame"));
         assert!(accepts_peer_frame(ProductionConnectionClass::AuthClient, b"auth-frame"));
         assert!(accepts_peer_frame(ProductionConnectionClass::AuthConsensus, b"auth-frame"));
+    }
+
+    #[test]
+    fn stale_worker_cannot_clear_newer_connected_observation() {
+        let scope = DatabaseRouteScope::try_new(
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        )
+        .unwrap();
+        let observations: PeerObservations = Arc::default();
+        observations.lock().unwrap().insert(
+            ("peer".into(), scope),
+            PeerFacts { connected: true, session_id: 2, ..PeerFacts::default() },
+        );
+        let facts = observations.lock().unwrap();
+        assert!(facts.iter().any(|((peer, _), facts)| {
+            peer == "peer" && facts.connected && facts.session_id != 1
+        }));
+        assert!(!facts.iter().any(|((peer, _), facts)| {
+            peer == "peer" && facts.connected && facts.session_id != 2
+        }));
     }
 }

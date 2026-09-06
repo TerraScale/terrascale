@@ -16,9 +16,13 @@ mod prepared_tests;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+/// Signed transition receipt envelope exchanged by placement control callers.
 pub struct Signed {
+    /// Identifier of the public key used to verify `signature`.
     pub key_id: String,
+    /// Base64 encoded canonical receipt payload.
     pub payload: String,
+    /// Base64 encoded Ed25519 signature over the domain separated payload.
     pub signature: String,
 }
 

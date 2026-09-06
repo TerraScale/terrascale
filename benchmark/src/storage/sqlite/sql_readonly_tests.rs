@@ -2,9 +2,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{
-    engine::{Engine, EngineConfig},
-};
+use crate::engine::{Engine, EngineConfig};
 
 fn location(tag: &str) -> std::path::PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);

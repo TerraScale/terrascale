@@ -40,7 +40,12 @@ pub fn destination_from_config(
         provider: config.provider,
         endpoint: config.endpoint.clone(),
         signing_region: config.signing_region.clone(),
-        database_region: database_region.as_str().to_owned(),
+        database_region: match config.provider {
+            terrabase::backup::object_store::Provider::Oci => config.signing_region.clone(),
+            terrabase::backup::object_store::Provider::Tigris => {
+                database_region.as_str().to_owned()
+            }
+        },
         bucket: config.bucket.clone(),
         verified_geography: config.verified_geography.clone(),
         permitted_geographies: config.permitted_geographies.clone(),

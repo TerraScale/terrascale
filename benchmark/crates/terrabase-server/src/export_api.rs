@@ -915,7 +915,7 @@ impl ExportService {
         }
         let _ = self.decode_resume_cursor(job_id, token)?;
         if state.status == JobStatus::Complete {
-            return self.public_status(state);
+            return self.public_status(&state);
         }
         // A cancellation observer may still be publishing its terminal state.
         // Hold the durable worker lease and check the local reservation before
@@ -932,7 +932,7 @@ impl ExportService {
             return Err(ExportError::IdempotencyConflict);
         }
         if state.status == JobStatus::Complete {
-            return self.public_status(state);
+            return self.public_status(&state);
         }
         match self.store.clear_cancel(job_id) {
             Ok(()) | Err(ExportError::DependencyUnavailable) => (),
@@ -1370,7 +1370,15 @@ fn encode_page(records: &[ExportRecord]) -> Result<(Vec<u8>, Vec<u8>), ExportErr
                         "document exceeds page bound",
                     )));
                 }
-                append_json_line(&mut documents, collection, id, *version, canonical_json, None, None)?;
+                append_json_line(
+                    &mut documents,
+                    collection,
+                    id,
+                    *version,
+                    canonical_json,
+                    None,
+                    None,
+                )?;
             }
             ExportRecord::History {
                 collection,

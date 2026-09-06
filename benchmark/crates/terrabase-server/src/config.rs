@@ -229,6 +229,8 @@ pub struct ProductionControl {
     pub observer_principals: BTreeSet<String>,
     /// Explicit pinned signed-transition authorities; absent denies acceptance.
     pub transition: Option<ProductionTransitionTrust>,
+    /// Optional owner-private signing key reference for placement receipts.
+    pub receipt_signing_key_file: Option<PathBuf>,
 }
 
 /// Public signing pins for membership acceptance and old-epoch fences.
@@ -582,6 +584,8 @@ struct FileProductionControl {
     #[serde(default)]
     observer_principals: Vec<String>,
     transition: Option<ProductionTransitionTrust>,
+    #[serde(default)]
+    receipt_signing_key_file: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -1000,7 +1004,11 @@ impl ServerConfig {
                             || destination.max_artifact_bytes > 256 * 1024 * 1024
                             || destination.max_point_bytes < destination.max_artifact_bytes
                             || (provider == Provider::Oci
-                                && destination.signing_region != region.as_str())
+                                && (destination.signing_region != oci_region_name(region)
+                                    || !destination.endpoint.ends_with(&format!(
+                                        ".compat.objectstorage.{}.oraclecloud.com",
+                                        oci_region_name(region)
+                                    ))))
                         {
                             return Err(ConfigError::InvalidProductionBoundary);
                         }
@@ -1068,6 +1076,10 @@ impl ServerConfig {
                 let proposal_journal = production_path(&control.proposal_journal)?;
                 let principals = control_principals(control.orchestrator_principals)?;
                 let observers = control_principals(control.observer_principals)?;
+                let receipt_signing_key_file = control
+                    .receipt_signing_key_file
+                    .map(|path| production_path(&path))
+                    .transpose()?;
                 if (principals.is_empty() && observers.is_empty())
                     || !principals.is_disjoint(&observers)
                 {
@@ -1095,11 +1107,15 @@ impl ServerConfig {
                     }
                 }
                 paths.push(proposal_journal.clone());
+                if let Some(path) = &receipt_signing_key_file {
+                    paths.push(path.clone());
+                }
                 Ok(ProductionControl {
                     proposal_journal,
                     orchestrator_principals: principals,
                     observer_principals: observers,
                     transition: control.transition,
+                    receipt_signing_key_file,
                 })
             })
             .transpose()?;
@@ -1240,6 +1256,15 @@ fn parse_region(value: &str) -> Result<RegionCode, ConfigError> {
     terrabase::regions::RegionCatalog::production()
         .parse(value)
         .map_err(|_| ConfigError::InvalidRegion)
+}
+
+fn oci_region_name(region: RegionCode) -> &'static str {
+    match region.as_str() {
+        "GRU" => "sa-saopaulo-1",
+        "SFO" => "us-sanjose-1",
+        "FRA" => "eu-frankfurt-1",
+        _ => "",
+    }
 }
 
 /// Parses the static replication peer list (`SHORT_GOAL` section 1) against
@@ -1854,7 +1879,7 @@ enabled = true
 [databases.backup]
 policy_revision = "backup-policy-1"
 retention_days = 7
-destinations = [{ provider = "oci", endpoint = "https://objectstorage.GRU.compat.objectstorage.GRU.oraclecloud.com", signing_region = "GRU", bucket = "backup-a", verified_geography = "br", permitted_geographies = ["br"], placement_revision = "placement-4", access_key_file = "/run/secrets/backup-access", secret_key_file = "/run/secrets/backup-secret", max_artifact_bytes = 1048576, max_point_bytes = 16777216 }]
+destinations = [{ provider = "oci", endpoint = "https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com", signing_region = "sa-saopaulo-1", bucket = "backup-a", verified_geography = "br", permitted_geographies = ["br"], placement_revision = "placement-4", access_key_file = "/run/secrets/backup-access", secret_key_file = "/run/secrets/backup-secret", max_artifact_bytes = 1048576, max_point_bytes = 16777216 }]
 
 [placement]
 generation = 4

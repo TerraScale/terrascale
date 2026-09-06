@@ -50,11 +50,22 @@ impl NativeRecoveryWorker {
     pub async fn shutdown(self) -> Result<(), NativeRecoveryError> {
         *self.runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? = true;
         let _ = self.stop.send(());
-        let deadline = self.join.await.map_err(|_| NativeRecoveryError::Unavailable)?;
+        let deadline =
+            match tokio::time::timeout(std::time::Duration::from_secs(5), self.join).await {
+                Ok(result) => result.map_err(|_| NativeRecoveryError::Unavailable)?,
+                Err(_) => {
+                    // An uncancellable provider call may still own its Member lease.
+                    // Do not rewrite its durable state while that call is running.
+                    *self
+                        .runtime
+                        .worker_error
+                        .lock()
+                        .map_err(|_| NativeRecoveryError::Unavailable)? =
+                        Some(NativeRecoveryError::Unavailable);
+                    return Err(NativeRecoveryError::Unavailable);
+                }
+            };
         if deadline {
-            let connection =
-                self.runtime.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-            persistence::fail_pending(&connection)?;
             *self.runtime.worker_error.lock().map_err(|_| NativeRecoveryError::Unavailable)? =
                 Some(NativeRecoveryError::Unavailable);
         }
@@ -224,7 +235,7 @@ impl NativeRecoveryRuntime {
                     result
                 }
             })
-            .await;
+            .await
         });
         runtime.notify.notify_one();
         Ok((runtime.clone(), NativeRecoveryWorker { runtime, stop, join }))

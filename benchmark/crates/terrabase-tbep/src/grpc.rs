@@ -958,7 +958,7 @@ fn serve_routes(
                 .max_encoding_message_size(message_bytes),
         )
         .add_service(
-            UsageServiceServer::new(server)
+            UsageServiceServer::new(Arc::clone(&server))
                 .max_decoding_message_size(message_bytes)
                 .max_encoding_message_size(message_bytes),
         )

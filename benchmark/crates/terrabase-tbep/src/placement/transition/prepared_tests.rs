@@ -79,24 +79,19 @@ fn transition_receipt_signer_binds_member_and_frontier() {
     let prepared = prepared(&trust, &prior, request, 2, 2).unwrap();
     let der = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
     let signer = TransitionReceiptSigner::from_pkcs8("member-1".into(), der.as_ref()).unwrap();
-    let receipt = signer
-        .sign_old_epoch_fenced(&prepared, "member-1", &"a".repeat(64))
-        .unwrap();
+    let receipt = signer.sign_old_epoch_fenced(&prepared, "member-1", &"a".repeat(64)).unwrap();
     let envelope: Signed = serde_json::from_slice(&receipt).unwrap();
-    let payload = verify(&envelope, &BTreeMap::from([(
-        "member-1".into(),
-        Ed25519KeyPair::from_pkcs8(der.as_ref())
-            .unwrap()
-            .public_key()
-            .as_ref()
-            .to_vec(),
-    )]))
+    let payload = verify(
+        &envelope,
+        &BTreeMap::from([(
+            "member-1".into(),
+            Ed25519KeyPair::from_pkcs8(der.as_ref()).unwrap().public_key().as_ref().to_vec(),
+        )]),
+    )
     .unwrap();
     let decoded: FenceReceipt = serde_json::from_slice(&payload).unwrap();
     assert_eq!(decoded.request_digest, prepared.request_digest());
-    assert!(signer
-        .sign_old_epoch_fenced(&prepared, "other", &"a".repeat(64))
-        .is_err());
+    assert!(signer.sign_old_epoch_fenced(&prepared, "other", &"a".repeat(64)).is_err());
     assert!(signer.sign_old_epoch_fenced(&prepared, "member-1", "bad").is_err());
 }
 

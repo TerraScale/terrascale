@@ -18,6 +18,11 @@ where
     let mut deadline = None;
     let mut backoff = Duration::from_millis(25);
     loop {
+        if let Some(until) = deadline
+            && tokio::time::Instant::now() >= until
+        {
+            return true;
+        }
         if !stopping {
             tokio::select! {
                 _ = &mut stop => {

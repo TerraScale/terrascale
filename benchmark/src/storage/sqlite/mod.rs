@@ -111,12 +111,12 @@ mod schema_indexes;
 mod schema_metadata;
 mod schema_ttl;
 mod shadow;
+#[cfg(test)]
+mod sql_readonly_tests;
 mod storage_closure;
 mod storage_intervals;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod sql_readonly_tests;
 pub(crate) mod usage_seal;
 mod webhook_metadata;
 mod write_usage;

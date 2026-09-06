@@ -126,17 +126,17 @@ impl HttpsTransport for NativeHttpsTransport {
             // Keep the permit inside the resolver work, not the waiting caller.
             let _permit = permit;
             let result = resolver(host, port).and_then(|addresses| {
-                    let mut ips = Vec::new();
-                    for address in addresses.into_iter().take(MAX_ADDRESSES + 1) {
-                        ips.push(address);
-                    }
-                    if ips.is_empty() || ips.len() > MAX_ADDRESSES {
-                        return Err(DeliveryError::TargetRejected);
-                    }
-                    ips.sort_unstable();
-                    ips.dedup();
-                    Ok(ips)
-                });
+                let mut ips = Vec::new();
+                for address in addresses.into_iter().take(MAX_ADDRESSES + 1) {
+                    ips.push(address);
+                }
+                if ips.is_empty() || ips.len() > MAX_ADDRESSES {
+                    return Err(DeliveryError::TargetRejected);
+                }
+                ips.sort_unstable();
+                ips.dedup();
+                Ok(ips)
+            });
             let _ = sender.send(result);
         });
         receiver.recv_timeout(self.timeout).map_err(|_| DeliveryError::Retryable)?

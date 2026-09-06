@@ -129,6 +129,7 @@ impl ShardSplit {
         &self.split_key
     }
 
+    /// Returns the inclusive lower bound of the moved range, when bounded.
     #[must_use]
     pub fn lower(&self) -> Option<&[u8]> {
         self.lower.as_deref()

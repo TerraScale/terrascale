@@ -64,6 +64,8 @@ pub mod production_lifecycle_control;
 
 /// Shared production composition for the native backup fleet.
 pub mod native_backup_runtime;
+#[cfg(test)]
+mod native_backup_runtime_tests;
 pub mod native_recovery;
 /// Signed verified native recovery facts for scoped control consumers.
 pub mod native_recovery_receipt;

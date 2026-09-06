@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use terrabase_cluster::production::DatabaseRouteScope;
-use terrabase_tbep::grpc::PlacementDataControl;
+use terrabase_tbep::grpc::placement_control::PlacementDataControl;
 use terrabase_tbep::placement::transition::TransitionReceiptSigner;
 use terrabase_tbep::{placement::PlacementJournal, proto::terrabase::v1 as pb};
 
@@ -36,7 +36,9 @@ impl ProductionPlacementDataControl {
         Self { runtime, lifecycle, registry, journal, signer, readiness_signer, member_identity }
     }
 
-    fn frontier_digest(frontiers: &RetiredReplicationFrontiers) -> String {
+    fn frontier_digest(
+        frontiers: &RetiredReplicationFrontiers,
+    ) -> Result<String, terrabase_tbep::placement::PlacementError> {
         let mut value = serde_json::Map::new();
         value.insert(
             "prepared".into(),
@@ -60,7 +62,11 @@ impl ProductionPlacementDataControl {
                 )
             })
             .collect::<std::collections::BTreeMap<_, _>>();
-        value.insert("writers".into(), serde_json::to_value(writers).expect("BTreeMap JSON"));
+        value.insert(
+            "writers".into(),
+            serde_json::to_value(writers)
+                .map_err(|_| terrabase_tbep::placement::PlacementError::Storage)?,
+        );
         let peers = frontiers
             .peers()
             .iter()
@@ -86,8 +92,27 @@ impl ProductionPlacementDataControl {
                 )
             })
             .collect::<std::collections::BTreeMap<_, _>>();
-        value.insert("peers".into(), serde_json::to_value(peers).expect("BTreeMap JSON"));
-        blake3::hash(&serde_json::to_vec(&value).expect("frontier JSON")).to_hex().to_string()
+        let peers = peers
+            .into_iter()
+            .map(|((peer, scope), evidence)| {
+                serde_json::json!({
+                    "peer": peer,
+                    "scope": scope,
+                    "evidence": evidence,
+                })
+            })
+            .collect::<Vec<_>>();
+        value.insert(
+            "peers".into(),
+            serde_json::to_value(peers)
+                .map_err(|_| terrabase_tbep::placement::PlacementError::Storage)?,
+        );
+        Ok(blake3::hash(
+            &serde_json::to_vec(&value)
+                .map_err(|_| terrabase_tbep::placement::PlacementError::Storage)?,
+        )
+        .to_hex()
+        .to_string())
     }
 
     fn scope(
@@ -114,7 +139,7 @@ impl PlacementDataControl for ProductionPlacementDataControl {
         if accepted.proof_digest != verified.previous_proof_digest() {
             return Err(terrabase_tbep::placement::PlacementError::Conflict);
         }
-        let digest = Self::frontier_digest(&frontiers);
+        let digest = Self::frontier_digest(&frontiers)?;
         self.signer.sign_old_epoch_fenced(&verified, &self.member_identity, &digest)
     }
 
@@ -154,6 +179,11 @@ impl PlacementDataControl for ProductionPlacementDataControl {
             .get()
             .map(|data| data.observations())
             .ok_or(terrabase_tbep::placement::PlacementError::Conflict)?;
+        let progress = self
+            .lifecycle
+            .get()
+            .map(|data| data.progress())
+            .ok_or(terrabase_tbep::placement::PlacementError::Conflict)?;
         let binding = replication_proof::ReadinessBinding {
             environment: self
                 .runtime
@@ -176,7 +206,7 @@ impl PlacementDataControl for ProductionPlacementDataControl {
             &binding,
             &nonce,
             &self.readiness_signer,
-            &self.lifecycle.progress(),
+            &progress,
             &observations,
         )
         .map_err(|_| terrabase_tbep::placement::PlacementError::Conflict)

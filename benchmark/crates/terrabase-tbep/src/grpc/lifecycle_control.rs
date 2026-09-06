@@ -42,28 +42,28 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch_unavailable(request)
+        self.dispatch_unavailable(request).await
     }
 
     async fn verify_snapshot_placement(
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch_unavailable(request)
+        self.dispatch_unavailable(request).await
     }
 
     async fn close_database(
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch_unavailable(request)
+        self.dispatch_unavailable(request).await
     }
 
     async fn stop_native_backup(
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch_unavailable(request)
+        self.dispatch_unavailable(request).await
     }
 
     async fn reactivate(
@@ -82,7 +82,7 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch_unavailable(request)
+        self.dispatch_unavailable(request).await
     }
 }
 

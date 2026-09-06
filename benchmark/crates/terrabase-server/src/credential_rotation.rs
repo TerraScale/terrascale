@@ -640,7 +640,14 @@ mod tests {
             ))
             .unwrap(),
         );
-        verify_origin_proof(&headers, &Method::GET, &uri, ring, time, terrabase::regions::RegionCode::GRU)
+        verify_origin_proof(
+            &headers,
+            &Method::GET,
+            &uri,
+            ring,
+            time,
+            terrabase::regions::RegionCode::GRU,
+        )
     }
     #[tokio::test]
     async fn durable_rotation_changes_actual_verification_and_rejects_replays() {

@@ -1118,6 +1118,7 @@ pub(crate) struct StorageState {
 /// let engine = terrabase::engine::Engine::ephemeral();
 /// ```
 pub struct Engine {
+    location: PathBuf,
     storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
     identity: u128,
     durable_owner: crate::storage::DatabaseOwner,
@@ -1338,6 +1339,7 @@ impl Engine {
         indexes.set_lifecycle_thresholds(config.lifecycle_thresholds());
         let index_subscription = subscriptions.subscribe(indexes.sink());
         Ok(Self {
+            location,
             storage_keys: config.storage_keys.clone(),
             identity: EngineIdentity::next().0,
             durable_owner: owner,
@@ -1368,6 +1370,10 @@ impl Engine {
     #[must_use]
     pub fn database_id(&self) -> crate::identity::DatabaseUlid {
         self.durable_owner.database()
+    }
+
+    pub(crate) fn location(&self) -> &std::path::Path {
+        &self.location
     }
 
     /// Whether logical tenant scopes are restricted to this durable production owner.

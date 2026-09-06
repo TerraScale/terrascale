@@ -249,7 +249,7 @@ impl AuthRuntime {
         let journal = Arc::clone(&self.journal);
         let keys = self.production.keys.clone().ok_or("auth key delivery missing")?;
         let environment = self.production.environment.name.as_str().to_owned();
-        tokio::task::spawn_blocking(move || {
+        Ok(tokio::task::spawn_blocking(move || {
             use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
             use terrabase::encryption::{OciVaultDatabaseKeys, OciVaultKeyDelivery};
             let provider =
@@ -283,7 +283,7 @@ impl AuthRuntime {
             .map_err(|_| "auth encrypted state unavailable or identity mismatch")
         })
         .await
-        .map_err(|_| "auth state worker unavailable")??
+        .map_err(|_| "auth state worker unavailable")??)
     }
 
     /// Serve authenticated connections when this runtime owns the member accept loop.

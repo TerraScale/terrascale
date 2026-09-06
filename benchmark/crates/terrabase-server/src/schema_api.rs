@@ -1236,7 +1236,7 @@ impl SchemaService {
         let mut idempotency =
             current.as_ref().map_or_else(BTreeMap::new, |record| record.idempotency.clone());
         idempotency.insert(
-            request.idempotency_key,
+            request.idempotency_key.clone(),
             IdempotencyRecord { digest, response: document.clone() },
         );
         trim_idempotency(&mut idempotency);
@@ -1247,7 +1247,7 @@ impl SchemaService {
         validate_target(&request.target)?;
         validate_identity(&request.identity)?;
         validate_idempotency_key(&request.idempotency_key)?;
-        let schema = normalize_schema(request.schema)?;
+        let schema = normalize_schema(request.schema.clone())?;
         if schema.name != request.target.collection {
             return Err(SchemaError::invalid(format!(
                 "schema collection '{}' does not match target '{}'",

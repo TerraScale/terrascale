@@ -173,7 +173,13 @@ pub fn verify_origin_proof(
     let target = uri
         .path_and_query()
         .map_or_else(|| uri.path().to_owned(), |value| value.as_str().to_owned());
-    let message = format!("v1.{}.{}.{}.{}", method.as_str().to_ascii_uppercase(), target, bucket, region.as_str());
+    let message = format!(
+        "v1.{}.{}.{}.{}",
+        method.as_str().to_ascii_uppercase(),
+        target,
+        bucket,
+        region.as_str()
+    );
     let presented = fields[3].as_bytes();
     if !presented.iter().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
         return false;
@@ -2146,8 +2152,14 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             ORIGIN_PROOF_HEADER,
-            HeaderValue::from_str(&origin_proof_for(&Method::GET, target, bucket, current, terrabase::regions::RegionCode::GRU))
-                .expect("proof header"),
+            HeaderValue::from_str(&origin_proof_for(
+                &Method::GET,
+                target,
+                bucket,
+                current,
+                terrabase::regions::RegionCode::GRU,
+            ))
+            .expect("proof header"),
         );
         assert!(verify_origin_proof(
             &headers,

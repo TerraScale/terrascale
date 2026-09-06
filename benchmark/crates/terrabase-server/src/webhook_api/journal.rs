@@ -1,8 +1,8 @@
 //! Retained document events and exact checkpoints for webhook delivery.
 
 use super::{
-    ChangeCheckpoint, DeliveryRecord, MetadataValue, Publication, StorageError, TenantScope,
-    WebhookEngine, WebhookError, WebhookJournal, unsigned_from_value, unsigned_value,
+    ChangeCheckpoint, DeliveryRecord, MAX_JOURNAL_PAGE, MetadataValue, Publication, StorageError,
+    TenantScope, WebhookEngine, WebhookError, WebhookJournal, unsigned_from_value, unsigned_value,
     webhook_engine_scope,
 };
 use std::collections::BTreeMap;
