@@ -45,6 +45,9 @@ fn meta<T: DeserializeOwned>(connection: &Connection, key: &str) -> Result<Optio
     bytes.map(|bytes| decode(&bytes)).transpose()
 }
 
+const LOG_RANGE_QUERY: &str =
+    "SELECT log_index,entry FROM raft_log WHERE log_index>=?1 AND log_index<=?2 ORDER BY log_index";
+
 fn set_meta<T: Serialize>(connection: &Connection, key: &str, value: &T) -> Result<()> {
     connection.execute("INSERT INTO metadata(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, encode(value)?]).map_err(storage)?;
     Ok(())
@@ -118,6 +121,30 @@ impl SqliteStore {
     #[cfg(test)]
     pub(crate) fn open(path: &Path, group_identity: &str) -> Result<Self> {
         Self::from_connection(Connection::open(path).map_err(storage)?, group_identity, true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_raw_log_for_test(&self, index: u64, bytes: &[u8]) -> Result<()> {
+        self.lock()?
+            .execute(
+                "INSERT INTO raft_log(log_index,entry) VALUES(?1,?2)",
+                params![index_key(index), bytes],
+            )
+            .map_err(storage)?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn explain_log_range_for_test(&self) -> Result<Vec<String>> {
+        let connection = self.lock()?;
+        let mut statement = connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {LOG_RANGE_QUERY}"))
+            .map_err(storage)?;
+        statement
+            .query_map(params![index_key(1), index_key(2)], |row| row.get(3))
+            .map_err(storage)?
+            .map(|row| row.map_err(storage))
+            .collect()
     }
 
     fn from_connection(
@@ -917,16 +944,38 @@ impl RaftLogReader<TypeConfig> for SqliteStore {
         &mut self,
         range: R,
     ) -> Result<Vec<Entry<TypeConfig>>> {
+        let _timing = Timer::new("store.log_read");
+        let lower = match range.start_bound() {
+            std::ops::Bound::Included(index) => Some(*index),
+            std::ops::Bound::Excluded(index) => index.checked_add(1),
+            std::ops::Bound::Unbounded => Some(0),
+        };
+        let upper = match range.end_bound() {
+            std::ops::Bound::Included(index) => Some(*index),
+            std::ops::Bound::Excluded(index) => index.checked_sub(1),
+            std::ops::Bound::Unbounded => Some(u64::MAX),
+        };
+        let (Some(lower), Some(upper)) = (lower, upper) else {
+            return Ok(Vec::new());
+        };
+        if lower > upper {
+            return Ok(Vec::new());
+        }
         let connection = self.lock()?;
-        let mut statement =
-            connection.prepare("SELECT entry FROM raft_log ORDER BY log_index").map_err(storage)?;
-        let rows = statement.query_map([], |row| row.get::<_, Vec<u8>>(0)).map_err(storage)?;
+        let mut statement = connection.prepare(LOG_RANGE_QUERY).map_err(storage)?;
+        let rows = statement
+            .query_map(params![index_key(lower), index_key(upper)], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(storage)?;
         let mut entries = Vec::new();
         for row in rows {
-            let entry: Entry<TypeConfig> = decode(&row.map_err(storage)?)?;
-            if range.contains(&entry.log_id.index) {
-                entries.push(entry);
+            let (key, bytes) = row.map_err(storage)?;
+            let entry: Entry<TypeConfig> = decode(&bytes)?;
+            if key != index_key(entry.log_id.index) {
+                return Err(storage("raft log index does not match entry"));
             }
+            entries.push(entry);
         }
         Ok(entries)
     }
@@ -968,6 +1017,7 @@ impl RaftLogStorage<TypeConfig> for SqliteStore {
         I: IntoIterator<Item = Entry<TypeConfig>> + Send,
         I::IntoIter: Send,
     {
+        let _timing = Timer::new("store.append");
         {
             let mut connection = self.lock()?;
             let transaction = connection.transaction().map_err(storage)?;

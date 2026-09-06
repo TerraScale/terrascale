@@ -114,8 +114,11 @@ impl AuthAuthority {
     }
 
     async fn mutate_local_inner(&self, command: Command) -> Result<Outcome, AuthorityError> {
-        let response =
-            self.raft.client_write(command).await.map_err(|_| AuthorityError::Unavailable)?;
+        let response = {
+            let _timing = crate::diagnostics::Timer::new("authority.client_write");
+            self.raft.client_write(command).await.map_err(|_| AuthorityError::Unavailable)?
+        };
+        let _timing = crate::diagnostics::Timer::new("authority.durability_wait");
         // The admitted group has two independently durable SQLite voters per Region.
         // A majority alone need not include both regional seats. Require every voter
         // to durably append the committed entry before acknowledging auth success.
@@ -207,12 +210,14 @@ impl AuthAuthority {
     }
 
     async fn query_local_inner(&self, action: Action) -> Result<Outcome, AuthorityError> {
+        let barrier_timing = crate::diagnostics::Timer::new("authority.read_barrier");
         self.raft.ensure_linearizable().await.map_err(|error| {
             if std::env::var_os("TERRASCALE_AUTH_DIAGNOSTICS").is_some() {
                 eprintln!("[auth authority diagnostics] linearizable barrier failed: {error:?}");
             }
             AuthorityError::Unavailable
         })?;
+        drop(barrier_timing);
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || store.query(&action))
             .await

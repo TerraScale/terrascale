@@ -21,6 +21,8 @@ mod bulk_tests;
 #[cfg(test)]
 mod join_tests;
 #[cfg(test)]
+mod log_range_tests;
+#[cfg(test)]
 mod predicate_tests;
 #[cfg(test)]
 mod tests;

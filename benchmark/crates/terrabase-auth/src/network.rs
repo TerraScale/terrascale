@@ -249,6 +249,7 @@ impl AuthNetwork {
         request: Request,
         deadline: Duration,
     ) -> Result<Outcome, AuthorityError> {
+        let _timing = crate::diagnostics::Timer::new("network.forwarded_client");
         let member = self.voters.get(&target).ok_or(AuthorityError::Unavailable)?;
         let bytes = encode(&Envelope {
             protocol: "terrabase.auth.raft.v1".into(),
@@ -328,6 +329,7 @@ impl AuthPeer {
         request: Request,
         option: RPCOption,
     ) -> Result<T, RPCError<u64, BasicNode, E>> {
+        let _timing = crate::diagnostics::Timer::new("network.consensus_rpc");
         let transport_error = || {
             RPCError::Network(NetworkError::new(&std::io::Error::other(
                 "auth consensus peer unavailable",
