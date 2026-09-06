@@ -7,6 +7,13 @@
 
 #![allow(clippy::missing_errors_doc)]
 
+mod storage_closure;
+pub use storage_closure::StorageUsageClosure;
+
+mod placement;
+
+pub use placement::UsagePlacement;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -2022,10 +2029,9 @@ pub fn storage_byte_seconds(
 
 /// Computes storage byte-seconds for current rows and retained history rows.
 ///
-/// D-16 charges both sets of logical bytes. TTL-aware callers pass the TTL (or
-/// history-retention) boundary as each row's `end_millis`; expired bytes are
-/// therefore absent from the measured interval immediately, before a cleanup
-/// tombstone is written. Each tuple is `(logical_bytes, start_millis,
+/// D-16 charges both sets of logical bytes until their retention boundary.
+/// TTL changes visibility; retained recoverable history remains billed.
+/// Each tuple is `(logical_bytes, start_millis,
 /// end_millis)` and all rows are multiplied by the selected Region count.
 pub fn storage_byte_seconds_current_and_history(
     current: &[(u64, u64, u64)],
@@ -2055,10 +2061,9 @@ pub fn storage_byte_seconds_current_and_history(
 /// One logical revision contributing to storage billing.
 ///
 /// `retained_until_millis` is the history/pruner boundary and
-/// `ttl_expires_at_millis` is the document TTL boundary. Both are exclusive;
-/// the earlier boundary wins. A current document has no history boundary,
-/// while a retained history row has one. Expired rows contribute zero and are
-/// deliberately not represented by a billed tombstone.
+/// `ttl_expires_at_millis` is visibility metadata, not a storage deletion.
+/// Current and historical revisions accrue exactly once until their retention
+/// boundary, including after TTL expiry while they remain recoverable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StorageRevision {
     revision_id: UsageFactId,
@@ -2070,8 +2075,8 @@ pub struct StorageRevision {
 }
 
 impl StorageRevision {
-    /// Creates a current-document observation. `ttl_expires_at_millis`, when
-    /// present, stops billing at expiry even if cleanup has not run yet.
+    /// Creates a retained current-document observation. TTL records visibility
+    /// expiry; retained bytes continue accruing until the retention boundary.
     pub fn current(
         revision_id: UsageFactId,
         logical_bytes: u64,
@@ -2174,9 +2179,6 @@ impl StorageRevision {
         if let Some(boundary) = self.retained_until_millis {
             end = end.min(boundary);
         }
-        if let Some(boundary) = self.ttl_expires_at_millis {
-            end = end.min(boundary);
-        }
         if end <= self.retained_from_millis {
             return Ok(0);
         }
@@ -2186,7 +2188,7 @@ impl StorageRevision {
     }
 }
 
-/// Computes one TTL-aware logical storage rollup over current documents and
+/// Computes one retention-aware logical storage rollup over current documents and
 /// retained history. Region multiplication is applied exactly once after all
 /// revisions have been deduplicated and their boundaries applied.
 pub fn storage_byte_seconds_for_revisions(
@@ -2255,7 +2257,7 @@ impl StorageRollupFact {
         self.selected_regions
     }
 
-    /// TTL-aware logical byte-seconds across selected Regions.
+    /// Retained logical byte-seconds across selected Regions.
     #[must_use]
     pub const fn byte_seconds(&self) -> u128 {
         self.byte_seconds

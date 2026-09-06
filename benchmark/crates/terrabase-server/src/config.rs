@@ -171,6 +171,8 @@ pub struct ProductionKeys {
     pub socket: PathBuf,
     /// Required orchestrator peer UID, checked on every key-delivery connection.
     pub orchestrator_uid: u32,
+    /// Dedicated socket group; it grants traversal, never peer authorization.
+    pub socket_gid: u32,
 }
 
 /// One RF=2 placement generation.
@@ -210,9 +212,23 @@ pub struct PublicProvisioningConfig {
     pub environment: String,
 }
 
+/// Private host-local credential rotation control endpoint.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialRotationConfig {
+    /// Private Unix control socket path.
+    pub socket: PathBuf,
+    /// Durable private staged/active state and replay receipt file.
+    pub state_file: PathBuf,
+    /// Private file containing the control bearer token.
+    pub token_file: PathBuf,
+}
+
 /// The resolved public `/api/v1` listener configuration.
 #[derive(Clone, Debug)]
 pub struct PublicApiConfig {
+    /// Optional authenticated local key rotation receiver.
+    pub credential_rotation: Option<CredentialRotationConfig>,
     /// Optional durable provisioning authority; no implicit endpoint.
     pub provisioning: Option<PublicProvisioningConfig>,
     /// Optional live product identity authority; no defaults or local fallback.
@@ -386,6 +402,8 @@ struct FileObservability {
 #[serde(deny_unknown_fields)]
 struct FilePublicApi {
     #[serde(default)]
+    credential_rotation: Option<CredentialRotationConfig>,
+    #[serde(default)]
     provisioning: Option<PublicProvisioningConfig>,
     #[serde(default)]
     identity: Option<PublicIdentityConfig>,
@@ -432,6 +450,7 @@ struct FileProductionConfig {
 struct FileProductionKeys {
     socket: PathBuf,
     orchestrator_uid: u32,
+    socket_gid: u32,
 }
 
 #[derive(Deserialize)]
@@ -836,7 +855,11 @@ impl ServerConfig {
             .map(|keys| {
                 let socket = production_path(&keys.socket)?;
                 paths.push(socket.clone());
-                Ok(ProductionKeys { socket, orchestrator_uid: keys.orchestrator_uid })
+                Ok(ProductionKeys {
+                    socket,
+                    orchestrator_uid: keys.orchestrator_uid,
+                    socket_gid: keys.socket_gid,
+                })
             })
             .transpose()?;
         let production = ProductionConfig {
@@ -1272,18 +1295,27 @@ fn parse_public_api(
     }
     if let Some(provisioning) = &section.provisioning {
         absolute(&provisioning.socket)?;
-        if provisioning.environment.is_empty() || provisioning.environment.len() > 128
-            || !provisioning.environment.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_')) {
+        if provisioning.environment.is_empty()
+            || provisioning.environment.len() > 128
+            || !provisioning
+                .environment
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+        {
             return Err(ConfigError::InvalidProvisioningAuthority);
         }
     }
     if let Some(identity) = &section.identity {
         absolute(&identity.service_key_file)?;
         for endpoint in [&identity.endpoint, &identity.issuer, &identity.audience] {
-            let uri: axum::http::Uri = endpoint.parse().map_err(|_| ConfigError::InvalidIdentityAuthority)?;
-            if uri.scheme_str() != Some("https") || uri.host().is_none()
+            let uri: axum::http::Uri =
+                endpoint.parse().map_err(|_| ConfigError::InvalidIdentityAuthority)?;
+            if uri.scheme_str() != Some("https")
+                || uri.host().is_none()
                 || uri.authority().is_none_or(|value| value.as_str().contains('@'))
-                || uri.query().is_some() || endpoint.contains('#') {
+                || uri.query().is_some()
+                || endpoint.contains('#')
+            {
                 return Err(ConfigError::InvalidIdentityAuthority);
             }
         }
@@ -1295,7 +1327,19 @@ fn parse_public_api(
         terrabase::regions::RegionCode::from_text(region)
             .map_err(|_| ConfigError::InvalidRegion)?;
     }
+    if let Some(rotation) = &section.credential_rotation {
+        absolute(&rotation.socket)?;
+        absolute(&rotation.state_file)?;
+        absolute(&rotation.token_file)?;
+        if rotation.socket == rotation.state_file
+            || rotation.socket == rotation.token_file
+            || rotation.state_file == rotation.token_file
+        {
+            return Err(ConfigError::InvalidBound);
+        }
+    }
     Ok(Some(PublicApiConfig {
+        credential_rotation: section.credential_rotation.clone(),
         provisioning: section.provisioning.clone(),
         identity: section.identity.clone(),
         listen,
@@ -1547,6 +1591,7 @@ orchestrator_principals = ["spiffe://terrascale.tech/prod/orchestrator/gru-1"]
 [keys]
 socket = "/run/terrabase-keys/provider.sock"
 orchestrator_uid = 1234
+socket_gid = 1236
 "#;
         let config = ServerConfig::parse(&(production_valid() + suffix)).expect("control policy");
         let production = config.production.unwrap();
@@ -1670,6 +1715,29 @@ address = "0.0.0.0:7202"
             ServerConfig::parse(&local_endpoint),
             Err(ConfigError::InvalidTransportBinding)
         ));
+    }
+
+    #[test]
+    fn provisioning_authority_requires_explicit_valid_binding() {
+        let input = format!(
+            "{}\n[public_api]\nlisten = \"127.0.0.1:8443\"\ndata_root = \"/var/lib/terrabase/public\"\n[public_api.provisioning]\nsocket = \"/run/terrabase/authority.sock\"\nauthority_uid = 1234\nenvironment = \"production\"\n",
+            valid()
+        );
+        let parsed = ServerConfig::parse(&input).expect("explicit provisioning config");
+        let authority = parsed.public_api.expect("public").provisioning.expect("authority");
+        assert_eq!(authority.authority_uid, 1234);
+        assert_eq!(authority.environment, "production");
+        assert!(ServerConfig::parse(&input.replace("authority_uid = 1234\n", "")).is_err());
+        assert!(
+            ServerConfig::parse(&input.replace("/run/terrabase/authority.sock", "relative.sock"))
+                .is_err()
+        );
+        assert!(
+            ServerConfig::parse(
+                &input.replace("environment = \"production\"", "environment = \"\"")
+            )
+            .is_err()
+        );
     }
 
     #[test]

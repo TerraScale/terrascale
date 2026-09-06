@@ -6,19 +6,26 @@ use hyper_util::rt::TokioIo;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, time::Duration};
 
-/// Pinned local authority and server-owned tenant identity.
+/// Pinned local authority and deployment environment; tenant scope is verified per request.
 pub struct ProvisioningClient {
     socket: PathBuf,
     authority_uid: u32,
     environment: String,
-    tenant_id: String,
-    project_id: String,
     permits: tokio::sync::Semaphore,
 }
 
 /// An unavailable authority or an invalid request/response.
-#[derive(Debug)]
-pub struct ProvisioningError;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProvisioningError {
+    /// The request does not satisfy the authority policy.
+    InvalidRequest,
+    /// An immutable database or operation identity conflicts with durable state.
+    Conflict,
+    /// The authority denied admission.
+    Forbidden,
+    /// A trustworthy authority result could not be obtained.
+    Unavailable,
+}
 
 /// The durable authority result. Creation only acknowledges pending work.
 #[derive(Deserialize, Serialize, utoipa::ToSchema)]
@@ -46,7 +53,7 @@ pub struct ProvisioningOperation {
 }
 
 impl ProvisioningClient {
-    /// Pins the local authority UID and deployment-owned identity.
+    /// Pins the local authority UID and deployment-owned environment.
     ///
     /// # Errors
     /// Rejects relative sockets and missing identity.
@@ -54,22 +61,11 @@ impl ProvisioningClient {
         socket: PathBuf,
         authority_uid: u32,
         environment: String,
-        tenant_id: String,
-        project_id: String,
     ) -> Result<Self, ProvisioningError> {
-        if !socket.is_absolute()
-            || [&environment, &tenant_id, &project_id].iter().any(|s| s.is_empty())
-        {
-            return Err(ProvisioningError);
+        if !socket.is_absolute() || environment.is_empty() {
+            return Err(ProvisioningError::Unavailable);
         }
-        Ok(Self {
-            socket,
-            authority_uid,
-            environment,
-            tenant_id,
-            project_id,
-            permits: tokio::sync::Semaphore::new(32),
-        })
+        Ok(Self { socket, authority_uid, environment, permits: tokio::sync::Semaphore::new(32) })
     }
 
     /// Submits an idempotent create to the durable GRU authority pipeline.
@@ -78,28 +74,29 @@ impl ProvisioningClient {
     /// Fails closed on peer mismatch, timeout, refusal, or inconsistent identity.
     pub async fn create(
         &self,
+        scope: &crate::delegated_identity::VerifiedProjectScope,
         name: &str,
         regions: &[String],
         residency: &str,
         operation_id: &str,
     ) -> Result<ProvisioningOperation, ProvisioningError> {
         if name.is_empty() || !valid_operation_id(operation_id) || regions.is_empty() {
-            return Err(ProvisioningError);
+            return Err(ProvisioningError::InvalidRequest);
         }
-        let _permit = self.permits.try_acquire().map_err(|_| ProvisioningError)?;
+        let _permit = self.permits.try_acquire().map_err(|_| ProvisioningError::Unavailable)?;
         let body = serde_json::to_vec(&serde_json::json!({"environment":self.environment,
-            "tenant_id":self.tenant_id,"project_id":self.project_id,"name":name,
+            "tenant_id":scope.tenant_id,"project_id":scope.project_id,"name":name,
             "regions":regions,"residency":residency,"operation_id":operation_id}))
-        .map_err(|_| ProvisioningError)?;
+        .map_err(|_| ProvisioningError::Unavailable)?;
         let result = tokio::time::timeout(
             Duration::from_secs(10),
             self.exchange("/internal/v1/databases/create", body, hyper::StatusCode::ACCEPTED),
         )
         .await
-        .map_err(|_| ProvisioningError)??;
+        .map_err(|_| ProvisioningError::Unavailable)??;
         if result.environment != self.environment
-            || result.tenant_id != self.tenant_id
-            || result.project_id != self.project_id
+            || result.tenant_id != scope.tenant_id
+            || result.project_id != scope.project_id
             || result.name != name
             || result.operation_id != operation_id
             || result.regions != regions
@@ -108,41 +105,42 @@ impl ProvisioningClient {
             || !canonical_ulid(&result.database_id)
             || !matches!(result.state.as_str(), "accepted" | "pending")
         {
-            return Err(ProvisioningError);
+            return Err(ProvisioningError::Unavailable);
         }
         Ok(result)
     }
 
-    /// Looks up a durable operation within the pinned tenant/project scope.
+    /// Looks up a durable operation within the verified request tenant/project scope.
     ///
     /// # Errors
     /// Rejects unavailable authorities and inconsistent or malformed responses.
     pub async fn status(
         &self,
+        scope: &crate::delegated_identity::VerifiedProjectScope,
         operation_id: &str,
     ) -> Result<ProvisioningOperation, ProvisioningError> {
         if !valid_operation_id(operation_id) {
-            return Err(ProvisioningError);
+            return Err(ProvisioningError::InvalidRequest);
         }
-        let _permit = self.permits.try_acquire().map_err(|_| ProvisioningError)?;
+        let _permit = self.permits.try_acquire().map_err(|_| ProvisioningError::Unavailable)?;
         let body = serde_json::to_vec(&serde_json::json!({"environment":self.environment,
-            "tenant_id":self.tenant_id,"project_id":self.project_id,"operation_id":operation_id}))
-        .map_err(|_| ProvisioningError)?;
+            "tenant_id":scope.tenant_id,"project_id":scope.project_id,"operation_id":operation_id}))
+        .map_err(|_| ProvisioningError::Unavailable)?;
         let result = tokio::time::timeout(
             Duration::from_secs(10),
             self.exchange("/internal/v1/databases/status", body, hyper::StatusCode::OK),
         )
         .await
-        .map_err(|_| ProvisioningError)??;
+        .map_err(|_| ProvisioningError::Unavailable)??;
         if result.environment != self.environment
-            || result.tenant_id != self.tenant_id
-            || result.project_id != self.project_id
+            || result.tenant_id != scope.tenant_id
+            || result.project_id != scope.project_id
             || result.operation_id != operation_id
             || !canonical_ulid(&result.database_id)
             || !canonical_ulid(&result.key_version)
             || !matches!(result.state.as_str(), "accepted" | "pending" | "ready" | "failed")
         {
-            return Err(ProvisioningError);
+            return Err(ProvisioningError::Unavailable);
         }
         Ok(result)
     }
@@ -153,35 +151,44 @@ impl ProvisioningClient {
         body: Vec<u8>,
         status: hyper::StatusCode,
     ) -> Result<ProvisioningOperation, ProvisioningError> {
-        let stream =
-            tokio::net::UnixStream::connect(&self.socket).await.map_err(|_| ProvisioningError)?;
-        if stream.peer_cred().map_err(|_| ProvisioningError)?.uid() != self.authority_uid {
-            return Err(ProvisioningError);
+        let stream = tokio::net::UnixStream::connect(&self.socket)
+            .await
+            .map_err(|_| ProvisioningError::Unavailable)?;
+        if stream.peer_cred().map_err(|_| ProvisioningError::Unavailable)?.uid()
+            != self.authority_uid
+        {
+            return Err(ProvisioningError::Unavailable);
         }
         let (mut sender, connection) = hyper::client::conn::http1::Builder::new()
             .max_headers(32)
             .max_buf_size(16 * 1024)
             .handshake(TokioIo::new(stream))
             .await
-            .map_err(|_| ProvisioningError)?;
+            .map_err(|_| ProvisioningError::Unavailable)?;
         let request = hyper::Request::builder()
             .method("POST")
             .uri(path)
             .header("host", "localhost")
             .header("content-type", "application/json")
             .body(Full::new(Bytes::from(body)))
-            .map_err(|_| ProvisioningError)?;
+            .map_err(|_| ProvisioningError::Unavailable)?;
         let response = async {
-            let response = sender.send_request(request).await.map_err(|_| ProvisioningError)?;
+            let response =
+                sender.send_request(request).await.map_err(|_| ProvisioningError::Unavailable)?;
             if response.status() != status {
-                return Err(ProvisioningError);
+                return Err(match response.status() {
+                    hyper::StatusCode::BAD_REQUEST => ProvisioningError::InvalidRequest,
+                    hyper::StatusCode::CONFLICT => ProvisioningError::Conflict,
+                    hyper::StatusCode::FORBIDDEN => ProvisioningError::Forbidden,
+                    _ => ProvisioningError::Unavailable,
+                });
             }
             let bytes = Limited::new(response.into_body(), 16 * 1024)
                 .collect()
                 .await
-                .map_err(|_| ProvisioningError)?
+                .map_err(|_| ProvisioningError::Unavailable)?
                 .to_bytes();
-            serde_json::from_slice(&bytes).map_err(|_| ProvisioningError)
+            serde_json::from_slice(&bytes).map_err(|_| ProvisioningError::Unavailable)
         };
         tokio::pin!(response, connection);
         tokio::select! { biased; result = &mut response => result, _ = &mut connection => response.await }
@@ -205,10 +212,64 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn preserves_authority_failure_class_without_reading_error_details() {
+        for (status, expected) in [
+            (400, ProvisioningError::InvalidRequest),
+            (409, ProvisioningError::Conflict),
+            (403, ProvisioningError::Forbidden),
+            (500, ProvisioningError::Unavailable),
+        ] {
+            let path = std::env::temp_dir()
+                .join(format!("tb-create-error-{}-{status}.sock", std::process::id()));
+            let listener = tokio::net::UnixListener::bind(&path).expect("bind");
+            let probe = tokio::net::UnixStream::connect(&path).await.expect("probe");
+            let uid = probe.peer_cred().expect("credentials").uid();
+            let _ = listener.accept().await.expect("probe accept");
+            drop(probe);
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(
+                        TokioIo::new(stream),
+                        hyper::service::service_fn(
+                            move |_request: hyper::Request<hyper::body::Incoming>| async move {
+                                Ok::<_, std::convert::Infallible>(
+                                    hyper::Response::builder()
+                                        .status(status)
+                                        .body(Full::new(Bytes::from_static(
+                                            b"private authority diagnostics",
+                                        )))
+                                        .expect("response"),
+                                )
+                            },
+                        ),
+                    )
+                    .await;
+            });
+            let client =
+                ProvisioningClient::new(path.clone(), uid, "production".into()).expect("client");
+            let scope = crate::delegated_identity::VerifiedProjectScope {
+                tenant_id: "tenant".into(),
+                project_id: "project".into(),
+            };
+            assert_eq!(client.status(&scope, "op").await.err(), Some(expected));
+            server.await.expect("server");
+            std::fs::remove_file(path).expect("cleanup");
+        }
+    }
+
+    #[tokio::test]
     async fn accepts_durable_pending_but_rejects_ready() {
-        for state in ["pending", "ready"] {
-            let path =
-                std::env::temp_dir().join(format!("tb-create-{}-{state}.sock", std::process::id()));
+        for (state, polling, response_tenant) in [
+            ("pending", false, "tenant"),
+            ("ready", false, "tenant"),
+            ("ready", true, "tenant"),
+            ("pending", true, "other-tenant"),
+        ] {
+            let path = std::env::temp_dir().join(format!(
+                "tb-create-{}-{state}-{polling}-{response_tenant}.sock",
+                std::process::id()
+            ));
             let listener = tokio::net::UnixListener::bind(&path).expect("bind");
             let probe = tokio::net::UnixStream::connect(&path).await.expect("probe");
             let uid = probe.peer_cred().expect("credentials").uid();
@@ -218,26 +279,31 @@ mod tests {
                 let (stream, _) = listener.accept().await.expect("accept");
                 hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(stream),
                     hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| async move {
-                        assert_eq!(request.uri().path(), "/internal/v1/databases/create");
+                        assert_eq!(request.uri().path(), if polling { "/internal/v1/databases/status" } else { "/internal/v1/databases/create" });
                         let bytes = request.into_body().collect().await.expect("body").to_bytes();
                         let request: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
                         assert_eq!(request["tenant_id"], "tenant");
                         assert_eq!(request["environment"], "production");
-                        Ok::<_, std::convert::Infallible>(hyper::Response::builder().status(202).body(Full::new(Bytes::from(
-                            serde_json::json!({"environment":"production", "tenant_id":"tenant", "project_id":"project", "operation_id":"op", "database_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV", "key_version":"01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                        Ok::<_, std::convert::Infallible>(hyper::Response::builder().status(if polling { 200 } else { 202 }).body(Full::new(Bytes::from(
+                            serde_json::json!({"environment":"production", "tenant_id":response_tenant, "project_id":"project", "operation_id":"op", "database_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV", "key_version":"01ARZ3NDEKTSV4RRFFQ69G5FAW",
                             "name":"db","regions":["GRU"],"residency":"BR","state":state}).to_string()))).expect("response"))
                     })).await.expect("serve");
             });
-            let client = ProvisioningClient::new(
-                path.clone(),
-                uid,
-                "production".into(),
-                "tenant".into(),
-                "project".into(),
-            )
-            .expect("client");
-            let result = client.create("db", &["GRU".into()], "BR", "op").await;
-            assert_eq!(result.is_ok(), state == "pending");
+            let client =
+                ProvisioningClient::new(path.clone(), uid, "production".into()).expect("client");
+            let scope = crate::delegated_identity::VerifiedProjectScope {
+                tenant_id: "tenant".into(),
+                project_id: "project".into(),
+            };
+            let result = if polling {
+                client.status(&scope, "op").await
+            } else {
+                client.create(&scope, "db", &["GRU".into()], "BR", "op").await
+            };
+            assert_eq!(
+                result.is_ok(),
+                response_tenant == "tenant" && (polling || state == "pending")
+            );
             server.await.expect("server");
             std::fs::remove_file(path).expect("cleanup");
         }

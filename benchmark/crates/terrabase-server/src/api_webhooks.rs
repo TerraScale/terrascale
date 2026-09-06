@@ -49,6 +49,8 @@ async fn resolve(
     state: Arc<ApiState>,
     name: String,
 ) -> Result<(Arc<WebhookService>, TenantScope), Response> {
+    check_read_guard(&state, &name, terrabase::observability::Operation::Other)
+        .map_err(IntoResponse::into_response)?;
     tokio::task::spawn_blocking(move || service(&state, &name))
         .await
         .unwrap_or_else(|_| Err(unavailable()))
@@ -142,7 +144,13 @@ pub(super) async fn create_webhook(
         Err(response) => return response,
     };
     let operation = match headers.get("idempotency-key") {
-        Some(value) => match value.to_str() { Ok(value) => Some(value.to_owned()), Err(_) => return webhook::WebhookError::invalid_request("invalid webhook idempotency key").into_response() },
+        Some(value) => match value.to_str() {
+            Ok(value) => Some(value.to_owned()),
+            Err(_) => {
+                return webhook::WebhookError::invalid_request("invalid webhook idempotency key")
+                    .into_response();
+            }
+        },
         None => None,
     };
     blocking(move || match service.create_with_secret(&scope, &input, operation.as_deref()) {
@@ -325,6 +333,20 @@ mod tests {
                     serde_json::json!({"webhooks":[]})
                 );
             }
+        }
+        for path in [
+            "webhooks",
+            "webhooks/endpoint/rotate-secret",
+            "webhooks/endpoint/deliveries/event/replay",
+        ] {
+            let request = axum::http::Request::post(format!(
+                "http://{address}/api/v1/databases/hooks/{path}"
+            ))
+            .header("authorization", "Bearer tskey_collection_abcdefghijklmnop")
+            .body(http_body_util::Empty::new())
+            .expect("request");
+            let response = client.request(request).await.expect("response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
         }
         server.abort();
     }

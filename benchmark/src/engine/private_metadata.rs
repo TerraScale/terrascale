@@ -94,8 +94,6 @@ impl Transaction<'_> {
 mod tests {
     use super::*;
     use crate::engine::{CommitError, CommitOutcome, Engine, EngineConfig};
-    use crate::families::state::ValidationRecord;
-    use crate::families::{SchemaDefinition, SchemaRule, SchemaVersion};
     use crate::types::{
         CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
         TenantId, TenantScope,
@@ -120,14 +118,18 @@ mod tests {
             .unwrap()
     }
     fn value() -> DocumentValue {
-        ValidationRecord {
-            schema: SchemaDefinition::try_new(
-                SchemaVersion::try_new(1).unwrap(),
-                vec![SchemaRule::Required { field: "name".into() }],
-            )
-            .unwrap(),
-        }
-        .encode()
+        DocumentValue::Object(std::collections::BTreeMap::from([
+            ("version".into(), DocumentValue::Integer(1)),
+            (
+                "rules".into(),
+                DocumentValue::Array(vec![DocumentValue::Object(
+                    std::collections::BTreeMap::from([
+                        ("rule".into(), DocumentValue::String("required".into())),
+                        ("field".into(), DocumentValue::String("name".into())),
+                    ]),
+                )]),
+            ),
+        ]))
     }
     fn document(id: &str) -> Document {
         Document::new(

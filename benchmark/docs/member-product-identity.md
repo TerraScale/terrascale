@@ -28,13 +28,24 @@ every binding, requires the explicit `database:read`, `database:write`, or
 `database:admin` scope for the action, and rejects expired credentials. It creates
 a principal restricted to exactly the requested database, collection, and verb.
 
-This wiring currently uses the member's fixed authoritative serving tenant/project.
-Delegated credentials cannot use global routes without a database target, including
-database creation/listing and reactive view attachment. Multi-tenant deployment
-requires admitted ownership routing before this restriction can be lifted. The
-identity producer also requires consensus-backed identity storage to preserve
-live revocation and permission reductions across partitions; a local or stale
-replica does not satisfy that requirement.
+Database routes currently use the member's fixed authoritative serving tenant/project.
+Project provisioning (`POST /api/v1/databases`) and operation status
+(`GET /api/v1/operations/{id}`) support dynamic project administration. Clients
+supply canonical ULIDs in `X-TerraScale-Tenant-Id` and `X-TerraScale-Project-Id`.
+These are selectors, never authority: the producer must read the persisted project,
+prove its organization ownership, and verify current owner/admin membership plus
+an explicit `database:admin` credential scope. Its internal request binds
+`databaseId: "*"`, `action: "admin"`, and no collection. Any database/collection
+credential narrowing denies this operation. Only the verified result produces
+a `VerifiedProjectScope` extension for the provisioning handler. Static member
+admin keys retain their configured serving scope and cannot select other projects.
+
+Other global routes, including database listing and reactive view attachment,
+remain denied for delegated credentials. Multi-tenant document serving requires
+admitted ownership routing before its fixed mapping can be lifted. The identity
+producer also requires consensus-backed identity storage to preserve live
+revocation and permission reductions across partitions; a local or stale replica
+does not satisfy that requirement.
 
 The focused `cargo test -p terrabase-server --lib delegated_identity` suite covers
 native TLS, untrusted certificates, hostname mismatch, live revocation, permission

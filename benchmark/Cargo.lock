@@ -2572,6 +2572,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "terrabase",
  "terrabase-member-transport",
  "tokio",
 ]
@@ -2587,6 +2588,7 @@ dependencies = [
 name = "terrabase-cluster"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2638,11 +2640,13 @@ dependencies = [
  "rcgen",
  "rmp",
  "rusqlite",
+ "rustix",
  "rustls",
  "serde",
  "serde_json",
  "terrabase",
  "terrabase-cluster",
+ "terrabase-member-transport",
  "terrabase-sync-core",
  "terrabase-tbep",
  "tokio",
@@ -2656,6 +2660,7 @@ dependencies = [
  "utoipa-axum",
  "utoipa-scalar",
  "webpki-roots",
+ "zeroize",
 ]
 
 [[package]]
@@ -2678,14 +2683,18 @@ version = "0.1.0"
 name = "terrabase-tbep"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "blake3",
  "futures-util",
  "hyper-util",
  "prost",
  "protox",
  "rcgen",
+ "ring",
  "rusqlite",
  "rustls-pki-types",
+ "serde",
+ "serde_json",
  "terrabase",
  "terrabase-cluster",
  "terrabase-member-transport",

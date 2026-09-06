@@ -18,7 +18,11 @@ pub(super) async fn database_usage(
     if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
         return error.into_response();
     }
-    match crate::usage_api::engine_summary(host.engine()) {
+    let scope = match document_scope(host.engine()) {
+        Ok(scope) => scope,
+        Err(()) => return ApiError::control_unavailable().into_response(),
+    };
+    match crate::usage_api::engine_summary(host.engine(), &scope) {
         Ok(summary) => accounted_json(&state, &name, &summary),
         Err(error) => usage_error(error).into_response(),
     }
@@ -78,7 +82,7 @@ pub(super) async fn index_recommendations(
     if let Err(error) = check_read_guard(&state, &name, terrabase::observability::Operation::Read) {
         return error.into_response();
     }
-    let scope = match IndexScope::try_new(&state.scope.0, &name, Some(collection)) {
+    let scope = match IndexScope::try_new(host.tenant(), &name, Some(collection)) {
         Ok(scope) => scope,
         Err(error) => return index_error(error).into_response(),
     };

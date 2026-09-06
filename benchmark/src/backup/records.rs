@@ -55,6 +55,10 @@ pub(crate) enum Record {
     Document {
         /// The owning tenant.
         tenant: TenantId,
+        /// Original transaction sequence; all writes in a commit share this boundary.
+        sequence: u64,
+        /// Durable monotonic commit clock in Unix milliseconds.
+        committed_unix_millis: u64,
         /// The published document.
         document: Document,
         /// The local durability the commit that published this form achieved.
@@ -64,6 +68,10 @@ pub(crate) enum Record {
     Delete {
         /// The owning tenant.
         tenant: TenantId,
+        /// Original transaction sequence; all writes in a commit share this boundary.
+        sequence: u64,
+        /// Durable monotonic commit clock in Unix milliseconds.
+        committed_unix_millis: u64,
         /// The deleted key's collection, or `None` when nothing existed.
         collection: Option<String>,
         /// The deleted document's identifier.
@@ -80,19 +88,23 @@ pub(crate) enum Record {
 pub(crate) fn encode_into(buffer: &mut Vec<u8>, record: &Record) {
     buffer.reserve(16);
     match record {
-        Record::Document { tenant, document, durability } => {
+        Record::Document { tenant, document, durability, sequence, committed_unix_millis } => {
             buffer.push(TAG_DOCUMENT);
             encode_tenant(buffer, tenant);
             encode_durability(buffer, *durability);
+            encode_u64(buffer, *sequence);
+            encode_u64(buffer, *committed_unix_millis);
             encode_identifier(buffer, document.id().as_str());
             encode_identifier(buffer, document.collection().as_str());
             encode_value(buffer, document.value());
             encode_u64(buffer, document.metadata().version());
         }
-        Record::Delete { tenant, collection, id, version_at_delete, durability } => {
+        Record::Delete { tenant, collection, id, version_at_delete, durability, sequence, committed_unix_millis } => {
             buffer.push(TAG_DELETE);
             encode_tenant(buffer, tenant);
             encode_durability(buffer, *durability);
+            encode_u64(buffer, *sequence);
+            encode_u64(buffer, *committed_unix_millis);
             match collection {
                 Some(name) => {
                     buffer.push(1);

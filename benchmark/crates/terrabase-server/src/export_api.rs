@@ -30,7 +30,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::body::Body;
 use axum::http::{Response as HttpResponse, StatusCode, header};
 use serde::{Deserialize, Serialize};
-use terrabase::encryption::ArtifactCipher;
 use terrabase::regions::RegionCode;
 
 /// Current logical export bundle format.  It is part of the on-disk contract.
@@ -462,6 +461,14 @@ impl ExportJobLease for ActiveJob {}
 
 /// Durable state store seam.
 pub trait ExportStore: Send + Sync + 'static {
+    /// Reads only the compact public progress projection, without snapshot metadata.
+    ///
+    /// # Errors
+    /// Returns a durable read error or `DependencyUnavailable` when unsupported.
+    fn progress(&self, _job_id: &str) -> Result<Option<ExportStatus>, ExportError> {
+        Err(ExportError::DependencyUnavailable)
+    }
+
     /// Lists durable jobs in ascending identity order, exclusively after `after`.
     ///
     /// # Errors
@@ -761,6 +768,20 @@ impl ExportService {
     ///
     /// Returns a store read or invalid durable-state error.
     pub fn status(&self, job_id: &str) -> Result<Option<ExportStatus>, ExportError> {
+        match self.store.progress(job_id) {
+            Ok(Some(mut progress)) => {
+                if progress.job_id != job_id {
+                    return Err(ExportError::IdempotencyConflict);
+                }
+                progress.error = progress
+                    .error
+                    .map(|_| "export failed; retry with the latest resume cursor".into());
+                return Ok(Some(progress));
+            }
+            Ok(None) => return Ok(None),
+            Err(ExportError::DependencyUnavailable) => (),
+            Err(error) => return Err(error),
+        }
         let Some(state) = self.store.load(job_id)? else { return Ok(None) };
         self.public_status(state).map(Some)
     }
@@ -777,32 +798,7 @@ impl ExportService {
                 Err(error) => return Err(error),
             },
         };
-        let progress_basis_points = match state.status {
-            JobStatus::Complete => 10_000,
-            _ => state
-                .snapshot
-                .estimated_records
-                .filter(|estimate| *estimate > 0)
-                .map_or(0, |estimate| {
-                    ((state.records.saturating_mul(10_000) / estimate).min(9_999)) as u16
-                }),
-        };
-        Ok(ExportStatus {
-            job_id: state.job_id,
-            status: state.status,
-            phase: state.phase,
-            created_at_millis: state.snapshot.captured_at_millis,
-            cancellation,
-            pages: state.pages,
-            records: state.records,
-            estimated_records: state.snapshot.estimated_records,
-            progress_basis_points,
-            resume_cursor: state.resume_cursor,
-            manifest: state.manifest,
-            // Older records may contain raw provider errors. Never reflect
-            // those persisted diagnostics through the public status route.
-            error: state.error.map(|_| "export failed; retry with the latest resume cursor".into()),
-        })
+        status_from_state(&state, cancellation)
     }
 
     /// Reads a job's durable control record on the blocking pool.
@@ -909,13 +905,35 @@ impl ExportService {
             return Err(ExportError::InvalidRequest("resume cursor is stale"));
         }
         let _ = self.decode_resume_cursor(job_id, token)?;
-        if state.status != JobStatus::Complete {
-            match self.store.clear_cancel(job_id) {
-                Ok(()) | Err(ExportError::DependencyUnavailable) => (),
-                Err(error) => return Err(error),
-            }
-            self.spawn_worker(job_id)?;
+        if state.status == JobStatus::Complete {
+            return self.public_status(state);
         }
+        // A cancellation observer may still be publishing its terminal state.
+        // Hold the durable worker lease and check the local reservation before
+        // clearing its flag, so no accepted resume intent can be overwritten.
+        let lease = self.store.acquire_job(job_id)?.ok_or(ExportError::IdempotencyConflict)?;
+        if self.active_jobs.lock().map_err(|_| ExportError::DependencyUnavailable)?.contains(job_id)
+        {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        let mut state =
+            self.store.load(job_id)?.ok_or(ExportError::InvalidRequest("unknown job"))?;
+        validate_state(&state)?;
+        if state.resume_cursor != token {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        if state.status == JobStatus::Complete {
+            return self.public_status(state);
+        }
+        match self.store.clear_cancel(job_id) {
+            Ok(()) | Err(ExportError::DependencyUnavailable) => (),
+            Err(error) => return Err(error),
+        }
+        state.status = JobStatus::Accepted;
+        state.error = None;
+        self.store.save(&state)?;
+        drop(lease);
+        self.spawn_worker(job_id)?;
         self.status(job_id)?.ok_or(ExportError::InvalidRequest("unknown job"))
     }
 
@@ -970,6 +988,43 @@ impl ExportService {
     fn cursor(&self, job_id: &str, phase: ExportPhase, source_cursor: Option<&[u8]>) -> String {
         encode_cursor(&self.cursor_key, job_id, phase, source_cursor)
     }
+}
+
+/// Projects durable state into bounded public progress without cloning snapshot metadata.
+pub(crate) fn status_from_state(
+    state: &ExportJobState,
+    cancellation: ExportCancellation,
+) -> Result<ExportStatus, ExportError> {
+    validate_state(state)?;
+    let progress_basis_points = match state.status {
+        JobStatus::Complete => 10_000,
+        _ => state
+            .snapshot
+            .estimated_records
+            .filter(|estimate| *estimate > 0)
+            .map_or(0, |estimate| {
+                ((state.records.saturating_mul(10_000) / estimate).min(9_999)) as u16
+            }),
+    };
+    Ok(ExportStatus {
+        job_id: state.job_id.clone(),
+        status: state.status.clone(),
+        phase: state.phase,
+        created_at_millis: state.snapshot.captured_at_millis,
+        cancellation,
+        pages: state.pages,
+        records: state.records,
+        estimated_records: state.snapshot.estimated_records,
+        progress_basis_points,
+        resume_cursor: state.resume_cursor.clone(),
+        manifest: state.manifest.clone(),
+        // Older records may contain raw provider errors. Never reflect
+        // those persisted diagnostics through the public status route.
+        error: state
+            .error
+            .as_ref()
+            .map(|_| "export failed; retry with the latest resume cursor".into()),
+    })
 }
 
 struct Worker {
@@ -1118,6 +1173,11 @@ impl Worker {
             }
             if state.phase == ExportPhase::Done {
                 break;
+            }
+            // Match the artifact provider recovery bound: an export must
+            // never publish a bundle too large to reopen after a restart.
+            if facts.len() >= MAX_PAGE_RECORDS.saturating_mul(4).saturating_sub(2) {
+                return Err(ExportError::InvalidRequest("export artifact member limit exceeded"));
             }
             let page = self
                 .source
@@ -1848,35 +1908,6 @@ impl ExportStore for MemoryExportStore {
     }
 }
 
-/// A local encrypted artifact port backed by [`ArtifactCipher`].
-pub struct EncryptedFileArtifactPort {
-    root: PathBuf,
-    attestation: EncryptionAttestation,
-    cipher: Arc<Mutex<ArtifactCipher>>,
-}
-
-impl EncryptedFileArtifactPort {
-    /// Constructs a file port.  The caller must provide a cipher bound to the
-    /// database export artifact context; no plaintext fallback exists.
-    ///
-    /// # Errors
-    ///
-    /// Returns `EncryptionUnavailable` if the encryption attestation is invalid.
-    pub fn new(
-        root: impl Into<PathBuf>,
-        cipher: ArtifactCipher,
-        attestation: EncryptionAttestation,
-    ) -> Result<Self, ExportError> {
-        attestation.validate()?;
-        Ok(Self { root: root.into(), attestation, cipher: Arc::new(Mutex::new(cipher)) })
-    }
-}
-
-struct EncryptedFileWriter {
-    directory: PathBuf,
-    cipher: Arc<Mutex<ArtifactCipher>>,
-}
-
 /// Publishes immutable bytes without replacing a concurrent winner.
 pub(crate) fn publish_artifact(path: &Path, bytes: &[u8]) -> Result<bool, ExportError> {
     let parent = path.parent().ok_or(ExportError::DestinationUnavailable)?;
@@ -1916,155 +1947,6 @@ pub(crate) fn sync_directory_ancestors(directory: &Path) -> io::Result<()> {
         File::open(ancestor)?.sync_all()?;
     }
     Ok(())
-}
-
-impl EncryptedFileWriter {
-    fn verify_member(&self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError> {
-        let target = self.directory.join(path);
-        ensure_no_symlink_components(&target)?;
-        let encrypted = fs::read(&target).map_err(|error| ExportError::Io(error.to_string()))?;
-        let cipher =
-            self.cipher.lock().map_err(|_| ExportError::Io("cipher lock poisoned".into()))?;
-        if cipher.open(&encrypted).map_err(|_| ExportError::IdempotencyConflict)? != plaintext {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        sync_directory_ancestors(target.parent().ok_or(ExportError::DestinationUnavailable)?)
-            .map_err(|error| ExportError::Io(error.to_string()))?;
-        Ok(fact(path, &encrypted))
-    }
-}
-
-impl ArtifactWriter for EncryptedFileWriter {
-    fn put(&mut self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError> {
-        if !safe_member_path(path) || plaintext.len() > MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) {
-            return Err(ExportError::InvalidRequest("artifact member is unsafe or too large"));
-        }
-        let target = self.directory.join(path);
-        ensure_no_symlink_components(&target)?;
-        match fs::symlink_metadata(&target) {
-            Ok(_) => return self.verify_member(path, plaintext),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(ExportError::Io(error.to_string())),
-        }
-        let encrypted = self
-            .cipher
-            .lock()
-            .map_err(|_| ExportError::Io("cipher lock poisoned".into()))?
-            .seal(plaintext)
-            .map_err(|error| ExportError::Io(error.to_string()))?;
-        if publish_artifact(&target, &encrypted)? {
-            Ok(fact(path, &encrypted))
-        } else {
-            self.verify_member(path, plaintext)
-        }
-    }
-
-    fn existing_facts(&mut self) -> Result<Vec<ArtifactFact>, ExportError> {
-        let mut pending = vec![self.directory.clone()];
-        let mut facts = Vec::new();
-        let cipher =
-            self.cipher.lock().map_err(|_| ExportError::Io("cipher lock poisoned".into()))?;
-        while let Some(directory) = pending.pop() {
-            let entries =
-                fs::read_dir(&directory).map_err(|error| ExportError::Io(error.to_string()))?;
-            for entry in entries {
-                let entry = entry.map_err(|error| ExportError::Io(error.to_string()))?;
-                let file_type =
-                    entry.file_type().map_err(|error| ExportError::Io(error.to_string()))?;
-                if file_type.is_symlink() {
-                    return Err(ExportError::DestinationUnavailable);
-                }
-                let path = entry.path();
-                if file_type.is_dir() {
-                    pending.push(path);
-                    continue;
-                }
-                if !file_type.is_file() || path.file_name().is_some_and(|name| name == "COMMITTED")
-                {
-                    continue;
-                }
-                let relative = path
-                    .strip_prefix(&self.directory)
-                    .map_err(|_| ExportError::DestinationUnavailable)?;
-                let member = relative.to_str().ok_or(ExportError::DestinationUnavailable)?;
-                // Publication temporaries use this exact, case-sensitive suffix.
-                #[allow(clippy::case_sensitive_file_extension_comparisons)]
-                if member.ends_with(".part") || !safe_member_path(member) {
-                    continue;
-                }
-                let encrypted =
-                    fs::read(&path).map_err(|error| ExportError::Io(error.to_string()))?;
-                if encrypted.len() > MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) {
-                    return Err(ExportError::DestinationUnavailable);
-                }
-                cipher.open(&encrypted).map_err(|_| ExportError::IdempotencyConflict)?;
-                facts.push(fact(member, &encrypted));
-                if facts.len() > MAX_PAGE_RECORDS.saturating_mul(4) {
-                    return Err(ExportError::DestinationUnavailable);
-                }
-            }
-        }
-        facts.sort_by(|left, right| left.path.cmp(&right.path));
-        Ok(facts)
-    }
-
-    fn commit(self: Box<Self>, manifest: &ArtifactFact) -> Result<(), ExportError> {
-        if manifest.path != "manifest.json" {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        let manifest_path = self.directory.join(&manifest.path);
-        ensure_no_symlink_components(&manifest_path)?;
-        let encrypted =
-            fs::read(&manifest_path).map_err(|error| ExportError::Io(error.to_string()))?;
-        if fact(&manifest.path, &encrypted) != *manifest {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        self.cipher
-            .lock()
-            .map_err(|_| ExportError::Io("cipher lock poisoned".into()))?
-            .open(&encrypted)
-            .map_err(|_| ExportError::IdempotencyConflict)?;
-        let marker = self.directory.join("COMMITTED");
-        ensure_no_symlink_components(&marker)?;
-        let bytes = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
-        if !publish_artifact(&marker, bytes.as_bytes())?
-            && fs::read(&marker).map_err(|error| ExportError::Io(error.to_string()))?
-                != bytes.as_bytes()
-        {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        Ok(())
-    }
-}
-
-impl ArtifactPort for EncryptedFileArtifactPort {
-    fn attestation(&self) -> Option<EncryptionAttestation> {
-        Some(self.attestation.clone())
-    }
-
-    fn open(
-        &self,
-        job_id: &str,
-        database: &str,
-        destination: &ExportDestination,
-        placement: &PlacementLock,
-    ) -> Result<Box<dyn ArtifactWriter>, ExportError> {
-        if !placement.allows(destination.region()) || job_id.is_empty() || database.is_empty() {
-            return Err(ExportError::PlacementMismatch);
-        }
-        let ExportDestination::File { root, .. } = destination else {
-            return Err(ExportError::DestinationUnavailable);
-        };
-        if root != &self.root {
-            return Err(ExportError::DestinationUnavailable);
-        }
-        ensure_no_symlink_components(root)?;
-        let directory = self.root.join(database).join(job_id);
-        ensure_no_symlink_components(&self.root.join(database))?;
-        fs::create_dir_all(&directory).map_err(|error| ExportError::Io(error.to_string()))?;
-        ensure_no_symlink_components(&directory)?;
-        Ok(Box::new(EncryptedFileWriter { directory, cipher: Arc::clone(&self.cipher) }))
-    }
 }
 
 pub(crate) fn ensure_no_symlink_components(path: &Path) -> Result<(), ExportError> {
@@ -2108,6 +1990,7 @@ pub(crate) fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Http
         Ok(bytes) => HttpResponse::builder()
             .status(status)
             .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CACHE_CONTROL, "private, no-store")
             .body(Body::from(bytes))
             .expect("valid response"),
         Err(_) => http_error(StatusCode::INTERNAL_SERVER_ERROR, "export response encoding failed"),
@@ -2120,6 +2003,7 @@ fn http_error(status: StatusCode, message: &str) -> HttpResponse<Body> {
     HttpResponse::builder()
         .status(status)
         .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CACHE_CONTROL, "private, no-store")
         .body(Body::from(body))
         .expect("valid response")
 }
@@ -2328,7 +2212,6 @@ mod tests {
 
     #[test]
     fn failed_export_resumes_without_losing_persisted_pages() {
-        use terrabase::encryption::{Compression, DatabaseKey, EncryptionContext, ProviderMode};
         let root = std::env::temp_dir().join(format!(
             "terrabase-export-resume-{}",
             terrabase::identity::DatabaseUlid::generate()
@@ -2347,28 +2230,8 @@ mod tests {
         let source = Arc::new(Source { pages: Mutex::new(vec![page("first", false)]) });
         let store = Arc::new(MemoryExportStore::default());
         store.create(&state).expect("admit");
-        let context = EncryptionContext::new(
-            "local",
-            "tenant",
-            "db",
-            "export",
-            "job",
-            "v1",
-            1,
-            Compression::None,
-        )
-        .expect("encryption context");
-        let cipher =
-            ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes([7; 32]), context)
-                .expect("cipher");
-        let port = Arc::new(
-            EncryptedFileArtifactPort::new(
-                root.join("artifacts"),
-                cipher,
-                EncryptionAttestation { provider: "local-file".into(), key_version: "v1".into() },
-            )
-            .expect("artifact port"),
-        );
+        let port = crate::export_local::local_artifacts(&root.join("artifacts"), "db-1", "tenant")
+            .expect("artifact port");
         let worker = Worker {
             stop_requested: Arc::new(AtomicBool::new(false)),
             source: source.clone(),
@@ -2768,3 +2631,7 @@ mod tests {
         let _ = service;
     }
 }
+
+#[cfg(test)]
+#[path = "export_cancel_tests.rs"]
+mod cancellation_tests;

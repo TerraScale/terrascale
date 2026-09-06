@@ -25,7 +25,15 @@ mod metadata;
 mod patch;
 mod physical_restore;
 mod private_metadata;
+mod usage_placement;
+#[cfg(test)]
+mod usage_placement_tests;
+mod replication_outbox;
+mod replicated_publication;
+mod storage_usage;
+pub use replicated_publication::ReplicatedPublication;
 mod replication_dependencies;
+mod schema_indexes;
 mod schema_metadata;
 mod webhook_metadata;
 
@@ -502,6 +510,7 @@ pub struct EngineConfig {
     owner: Option<crate::storage::DatabaseOwner>,
     replication_origin: Option<RegionId>,
     replication_clock: Arc<dyn ReplicationClock>,
+    storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
 }
 
 impl EngineConfig {
@@ -532,6 +541,7 @@ impl EngineConfig {
             owner: None,
             replication_origin: None,
             replication_clock: Arc::new(SystemReplicationClock),
+            storage_keys: None,
         })
     }
 
@@ -543,6 +553,18 @@ impl EngineConfig {
     #[must_use]
     pub fn with_owner(mut self, owner: crate::storage::DatabaseOwner) -> Self {
         self.owner = Some(owner);
+        self
+    }
+
+    /// Opens SQLite, WAL and rollback journals through authenticated encrypted
+    /// storage with renewable, owner-bound key leases. Production owners must
+    /// supply this source; plaintext locations are never adopted or converted.
+    #[must_use]
+    pub fn with_storage_keys(
+        mut self,
+        keys: Arc<dyn crate::encryption::DatabaseKeySource>,
+    ) -> Self {
+        self.storage_keys = Some(keys);
         self
     }
 
@@ -1138,6 +1160,24 @@ impl Engine {
         if location.as_os_str().is_empty() {
             return Err(EngineOpenError::InvalidConfig);
         }
+        match (&config.owner, &config.storage_keys) {
+            (Some(owner), Some(keys)) => {
+                let lease =
+                    keys.current_lease().map_err(|_| EngineOpenError::StorageUnavailable)?;
+                let scope = lease.metadata().scope();
+                if lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
+                    || scope.purpose() != crate::encryption::KeyPurpose::Data
+                    || scope.environment() != owner.environment().as_str()
+                    || scope.tenant() != owner.tenant()
+                    || scope.project() != Some(owner.project())
+                    || scope.database() != owner.database()
+                {
+                    return Err(EngineOpenError::InvalidConfig);
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => return Err(EngineOpenError::InvalidConfig),
+            (None, None) => {}
+        }
         let owner = crate::storage::load_or_create(
             &location,
             config.owner.as_ref(),
@@ -1157,14 +1197,11 @@ impl Engine {
             | crate::storage::OwnershipError::ModeMismatch => EngineOpenError::FormatMismatch,
         })?;
         let metrics = Arc::new(MetricsRegistry::new());
-        // The storage is `SQLite` and only `SQLite` (D-27/D-42): one
-        // WAL-mode database file per location. Owner-scoped (production)
-        // locations open with the ownership tuple enforced but without
-        // encryption at rest until M2-1 lands the per-database key on this
-        // substrate.
-        let storage: Box<dyn storage::StoragePort> = storage::SqliteStorage::open_with_origin(
+        // Production owners use the authenticated VFS for every connection.
+        let storage: Box<dyn storage::StoragePort> = storage::SqliteStorage::open_with_keys(
             &location,
             config.replication_origin.as_ref().map(RegionId::as_str),
+            config.storage_keys.clone(),
         )
         .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
         .map_err(|_| EngineOpenError::StorageUnavailable)?;
@@ -1232,6 +1269,10 @@ impl Engine {
     pub fn database_id(&self) -> crate::identity::DatabaseUlid {
         self.durable_owner.database()
     }
+
+    /// Whether logical tenant scopes are restricted to this durable production owner.
+    #[must_use]
+    pub const fn owner_scope_enforced(&self) -> bool { self.owner_scope_enforced }
 
     /// Returns the complete durable owner tuple recovered from this location.
     #[must_use]
@@ -1914,8 +1955,10 @@ impl Engine {
             snapshot_sequence,
             operation,
             usage_admission: None,
+            expected_uniform_context: None,
             merge_conflict: None,
             replication_fingerprint: None,
+            replication_publication: None,
             writes: Vec::new(),
             metadata: Vec::new(),
             schema_envelopes: Vec::new(),
@@ -4190,8 +4233,10 @@ pub struct Transaction<'engine> {
     snapshot_sequence: StorageSequence,
     operation: OperationId,
     usage_admission: Option<UsageAdmissionContext>,
+    expected_uniform_context: Option<Vec<u8>>,
     merge_conflict: Option<(CollectionName, DocumentId, storage::MergeConflictEntry)>,
     replication_fingerprint: Option<[u8; 32]>,
+    replication_publication: Option<storage::ReplicationPublicationIntent>,
     writes: Vec<StagedWrite>,
     metadata: Vec<storage::PrivateMetadataWrite>,
     schema_envelopes: Vec<storage::SchemaEnvelopeWrite>,
@@ -4204,6 +4249,35 @@ impl Drop for Transaction<'_> {
 }
 
 impl Transaction<'_> {
+    /// Requires this write's causal context to remain exactly the frontier
+    /// already proven uniform across its selected Regions. Storage compares it
+    /// atomically before any new mutation; committed idempotent retries still
+    /// replay their durable receipt. A changed frontier returns a conflict so
+    /// the caller can obtain a new uniform cut and retry safely.
+    ///
+    /// # Errors
+    ///
+    /// Returns InvalidDocument for malformed or unbounded frontier entries.
+    pub fn require_uniform_context(
+        &mut self,
+        frontier: std::collections::BTreeMap<String, u64>,
+    ) -> Result<(), EngineError> {
+        if frontier.len() > 1024
+            || frontier.iter().any(|(origin, sequence)| {
+                origin.is_empty()
+                    || origin.len() > 1024
+                    || origin.chars().any(char::is_control)
+                    || *sequence == 0
+                    || *sequence > i64::MAX as u64
+            })
+        {
+            return Err(EngineError::InvalidDocument);
+        }
+        self.expected_uniform_context =
+            Some(merge::encode_context(&merge::DocumentContext::from_frontier(frontier)));
+        Ok(())
+    }
+
     /// Attaches trusted admitted-request accounting to this origin mutation.
     ///
     /// The stable request identity must equal the transaction operation
@@ -4500,13 +4574,14 @@ impl Transaction<'_> {
         // An origin commit stamps the replication clock (the hybrid
         // logical clock the deterministic merge compares); a replicated
         // intent carries its source stamp on the staged variant.
-        let replicated = writes.iter().any(|write| {
-            matches!(
-                write,
-                storage::StagedWrite::ReplicatedPut { .. }
-                    | storage::StagedWrite::ReplicatedDelete { .. }
-            )
-        });
+        let replicated = self.replication_publication.is_some()
+            || writes.iter().any(|write| {
+                matches!(
+                    write,
+                    storage::StagedWrite::ReplicatedPut { .. }
+                        | storage::StagedWrite::ReplicatedDelete { .. }
+                )
+            });
         if !replicated
             && (!writes.is_empty() || !metadata.is_empty() || !schema_envelopes.is_empty())
             && self.engine.admit_origin_clock().is_err()
@@ -4521,8 +4596,10 @@ impl Transaction<'_> {
             snapshot_sequence: self.snapshot_sequence,
             durability,
             usage_admission,
+            expected_uniform_context: self.expected_uniform_context.take(),
             merge_conflict: self.merge_conflict.clone(),
             replication_fingerprint: self.replication_fingerprint,
+            replication_publication: self.replication_publication.take(),
             hlc,
             writes,
             metadata,

@@ -226,7 +226,7 @@ pub(super) async fn development_logs(
         Ok(v) => v,
         Err(e) => return e.into_response(),
     };
-    let tenant = match terrabase::types::TenantId::try_new(&state.scope.0) {
+    let tenant = match terrabase::types::TenantId::try_new(host.tenant()) {
         Ok(v) => v,
         Err(_) => return ApiError::storage_failure().into_response(),
     };

@@ -473,6 +473,7 @@ pub(crate) fn transaction_digest(
     push_u64(&mut bytes, document_digest);
     let mut ordered: Vec<_> = metadata.iter().collect();
     ordered.sort_by(|a, b| a.key.cmp(&b.key));
+    push_u32(&mut bytes, ordered.len() as u32);
     for record in ordered {
         push_str(&mut bytes, &record.key);
         push_u8(&mut bytes, u8::from(record.value.is_some()));
@@ -498,4 +499,91 @@ pub(crate) fn transaction_digest(
         bytes.extend_from_slice(&envelope.replacement);
     }
     fnv1a(&bytes)
+}
+
+/// Encodes the private portion of a retained causal transaction group.
+pub(crate) fn encode_private_changes(
+    metadata: &[super::intent::PrivateMetadataWrite],
+    schemas: &[super::intent::SchemaEnvelopeWrite],
+) -> Vec<u8> {
+    let mut bytes = vec![1];
+    push_u32(&mut bytes, metadata.len() as u32);
+    for change in metadata {
+        push_str(&mut bytes, &change.key);
+        push_u8(&mut bytes, u8::from(change.value.is_some()));
+        if let Some(value) = &change.value {
+            encode_value(&mut bytes, value, 0);
+        }
+    }
+    push_u32(&mut bytes, schemas.len() as u32);
+    for schema in schemas {
+        push_str(&mut bytes, &schema.database);
+        push_str(&mut bytes, &schema.branch);
+        push_str(&mut bytes, &schema.collection);
+        push_u32(&mut bytes, schema.replacement.len() as u32);
+        bytes.extend_from_slice(&schema.replacement);
+    }
+    bytes
+}
+
+/// Decodes bounded private changes for atomic replicated publication application.
+pub(crate) fn decode_private_changes(
+    bytes: &[u8],
+) -> Option<(Vec<super::intent::PrivateMetadataWrite>, Vec<super::intent::SchemaEnvelopeWrite>)> {
+    if bytes.len() > 64 * 1024 * 1024 {
+        return None;
+    }
+    let mut reader = Reader::new(bytes);
+    if reader.read_u8()? != 1 {
+        return None;
+    }
+    let count = reader.read_u32()?;
+    if count > 1024 {
+        return None;
+    }
+    let mut metadata = Vec::new();
+    let mut keys = std::collections::BTreeSet::new();
+    for _ in 0..count {
+        let key = reader.read_string()?;
+        if key.is_empty() || key.len() > 4096 || !keys.insert(key.clone()) {
+            return None;
+        }
+        let value = match reader.read_u8()? {
+            0 => None,
+            1 => Some(decode_value(&mut reader, 0)?),
+            _ => return None,
+        };
+        metadata.push(super::intent::PrivateMetadataWrite { key, value });
+    }
+    let count = reader.read_u32()?;
+    if count > 1024 {
+        return None;
+    }
+    let mut schemas = Vec::new();
+    let mut targets = std::collections::BTreeSet::new();
+    for _ in 0..count {
+        let database = reader.read_string()?;
+        let branch = reader.read_string()?;
+        let collection = reader.read_string()?;
+        if [&database, &branch, &collection]
+            .iter()
+            .any(|value| value.is_empty() || value.len() > 255)
+            || !targets.insert((database.clone(), branch.clone(), collection.clone()))
+        {
+            return None;
+        }
+        let length = reader.read_u32()? as usize;
+        if length > 16 * 1024 * 1024 {
+            return None;
+        }
+        let replacement = reader.take(length)?.to_vec();
+        schemas.push(super::intent::SchemaEnvelopeWrite {
+            database,
+            branch,
+            collection,
+            replacement,
+            expected: None,
+        });
+    }
+    (reader.remaining() == 0).then_some((metadata, schemas))
 }

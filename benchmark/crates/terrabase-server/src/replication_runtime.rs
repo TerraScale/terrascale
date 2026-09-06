@@ -23,6 +23,7 @@ pub enum ReplicationWaitError {
 struct DatabaseProgress {
     selected: BTreeSet<String>,
     regional_sequence: u64,
+    regional_observed: bool,
     regions: BTreeMap<String, BTreeMap<String, u64>>,
     fenced: bool,
 }
@@ -37,6 +38,17 @@ pub struct ReplicationProgress {
     changed: watch::Sender<u64>,
 }
 
+/// Conservative receipt evidence captured after the transport drain barrier.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReplicationBoundary {
+    /// SQLite sequence verified on the physical follower.
+    pub regional_sequence: u64,
+    /// Distinguishes an observed empty physical prefix from default zero state.
+    pub regional_observed: bool,
+    /// Contiguous origin frontiers verified in each selected Region.
+    pub regions: BTreeMap<String, BTreeMap<String, u64>>,
+}
+
 impl Default for ReplicationProgress {
     fn default() -> Self {
         Self { databases: Mutex::new(BTreeMap::new()), changed: watch::channel(0).0 }
@@ -44,6 +56,43 @@ impl Default for ReplicationProgress {
 }
 
 impl ReplicationProgress {
+    /// Reads receipt evidence for a transition signer after workers have drained.
+    /// This value alone does not prove fencing: the signer must durably fence
+    /// the epoch and stop all old assignment workers before issuing a grant.
+    ///
+    /// # Errors
+    /// Refuses poisoned evidence; no missing database is invented.
+    pub fn boundaries(
+        &self,
+    ) -> Result<BTreeMap<DatabaseRouteScope, ReplicationBoundary>, ReplicationWaitError> {
+        let databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
+        Ok(databases
+            .iter()
+            .map(|(scope, progress)| {
+                (
+                    *scope,
+                    ReplicationBoundary {
+                regional_sequence: progress.regional_sequence,
+                regional_observed: progress.regional_observed,
+                        regions: progress.regions.clone(),
+                    },
+                )
+            })
+            .collect())
+    }
+
+    /// Returns live measured evidence, excluding fenced assignments.
+    ///
+    /// # Errors
+    /// Refuses poisoned state rather than reporting healthy progress.
+    pub fn active_boundaries(&self) -> Result<BTreeMap<DatabaseRouteScope, ReplicationBoundary>, ReplicationWaitError> {
+        let databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
+        Ok(databases.iter().filter(|(_, progress)| !progress.fenced).map(|(scope, progress)| (*scope, ReplicationBoundary {
+            regional_sequence: progress.regional_sequence,
+            regional_observed: progress.regional_observed,
+            regions: progress.regions.clone(),
+        })).collect())
+    }
     /// Registers immutable selected Regions from an accepted assignment.
     ///
     /// # Errors
@@ -53,16 +102,30 @@ impl ReplicationProgress {
         scope: DatabaseRouteScope,
         selected: BTreeSet<String>,
     ) -> Result<(), ReplicationWaitError> {
-        if selected.is_empty() || selected.len() > 20 || selected.iter().any(String::is_empty) {
+        if selected.is_empty()
+            || selected.len() > 20
+            || selected.iter().any(|region| {
+                region.is_empty()
+                    || region.len() > 32
+                    || !region.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            })
+        {
             return Err(ReplicationWaitError::NotAdmitted);
         }
         let mut databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
-        if databases.contains_key(&scope) {
+        if databases.contains_key(&scope) || databases.len() >= terrabase::member::MAX_DATABASES {
             return Err(ReplicationWaitError::NotAdmitted);
         }
-        databases.insert(scope, DatabaseProgress {
-            selected, regional_sequence: 0, regions: BTreeMap::new(), fenced: false,
-        });
+        databases.insert(
+            scope,
+            DatabaseProgress {
+                selected,
+                regional_sequence: 0,
+                regional_observed: false,
+                regions: BTreeMap::new(),
+                fenced: false,
+            },
+        );
         Ok(())
     }
 
@@ -74,6 +137,7 @@ impl ReplicationProgress {
             && !progress.fenced
         {
             progress.regional_sequence = progress.regional_sequence.max(sequence);
+            progress.regional_observed = true;
             self.changed.send_modify(|generation| *generation = generation.wrapping_add(1));
         }
     }
@@ -88,10 +152,14 @@ impl ReplicationProgress {
     ) -> Result<(), ReplicationWaitError> {
         let mut databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
         let progress = databases.get_mut(&scope).ok_or(ReplicationWaitError::NotAdmitted)?;
-        if progress.fenced { return Err(ReplicationWaitError::Fenced); }
+        if progress.fenced {
+            return Err(ReplicationWaitError::Fenced);
+        }
         if !progress.selected.contains(region)
             || frontier.keys().any(|origin| !progress.selected.contains(origin))
-        { return Err(ReplicationWaitError::NotAdmitted); }
+        {
+            return Err(ReplicationWaitError::NotAdmitted);
+        }
         let observed = progress.regions.entry(region.to_owned()).or_default();
         for (origin, sequence) in frontier {
             let previous = observed.entry(origin.clone()).or_default();
@@ -104,7 +172,19 @@ impl ReplicationProgress {
     /// Permanently fences all progress and wakes pending requests.
     pub fn fence(&self) {
         if let Ok(mut databases) = self.databases.lock() {
-            for progress in databases.values_mut() { progress.fenced = true; }
+            for progress in databases.values_mut() {
+                progress.fenced = true;
+            }
+        }
+        self.changed.send_modify(|generation| *generation = generation.wrapping_add(1));
+    }
+
+    /// Permanently revokes one database assignment and wakes its pending waits.
+    pub fn fence_database(&self, scope: DatabaseRouteScope) {
+        if let Ok(mut databases) = self.databases.lock()
+            && let Some(progress) = databases.get_mut(&scope)
+        {
+            progress.fenced = true;
         }
         self.changed.send_modify(|generation| *generation = generation.wrapping_add(1));
     }
@@ -114,9 +194,26 @@ impl ReplicationProgress {
     /// # Errors
     /// Returns an admission, fencing, or bounded timeout error.
     pub async fn wait_regional(
-        &self, scope: DatabaseRouteScope, sequence: u64, timeout: Duration,
+        &self,
+        scope: DatabaseRouteScope,
+        sequence: u64,
+        timeout: Duration,
     ) -> Result<(), ReplicationWaitError> {
         self.wait(scope, timeout, |progress| Ok(progress.regional_sequence >= sequence)).await
+    }
+
+    /// Tests a pending transport receipt without blocking another database lane.
+    pub(crate) fn regional_covers(
+        &self,
+        scope: DatabaseRouteScope,
+        sequence: u64,
+    ) -> Result<bool, ReplicationWaitError> {
+        let databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
+        let progress = databases.get(&scope).ok_or(ReplicationWaitError::NotAdmitted)?;
+        if progress.fenced {
+            return Err(ReplicationWaitError::Fenced);
+        }
+        Ok(progress.regional_sequence >= sequence)
     }
 
     /// Waits until every selected Region durably covers an origin sequence.
@@ -124,7 +221,11 @@ impl ReplicationProgress {
     /// # Errors
     /// Returns an admission, selection, fencing, or bounded timeout error.
     pub async fn wait_global(
-        &self, scope: DatabaseRouteScope, origin: &str, sequence: u64, timeout: Duration,
+        &self,
+        scope: DatabaseRouteScope,
+        origin: &str,
+        sequence: u64,
+        timeout: Duration,
     ) -> Result<(), ReplicationWaitError> {
         self.wait_uniform(scope, &BTreeMap::from([(origin.to_owned(), sequence)]), timeout).await
     }
@@ -134,22 +235,37 @@ impl ReplicationProgress {
     /// # Errors
     /// Returns an admission, selection, fencing, or bounded timeout error.
     pub async fn wait_uniform(
-        &self, scope: DatabaseRouteScope, frontier: &BTreeMap<String, u64>, timeout: Duration,
+        &self,
+        scope: DatabaseRouteScope,
+        frontier: &BTreeMap<String, u64>,
+        timeout: Duration,
     ) -> Result<(), ReplicationWaitError> {
         self.wait(scope, timeout, |progress| {
-            if progress.selected.len() < 2 { return Err(ReplicationWaitError::InsufficientRegions); }
+            if progress.selected.len() < 2 {
+                return Err(ReplicationWaitError::InsufficientRegions);
+            }
             if frontier.keys().any(|origin| !progress.selected.contains(origin)) {
                 return Err(ReplicationWaitError::NotAdmitted);
             }
-            Ok(progress.selected.iter().all(|region| frontier.iter().all(|(origin, needed)| {
-                progress.regions.get(region).and_then(|seen| seen.get(origin)).copied()
-                    .unwrap_or(0) >= *needed
-            })))
-        }).await
+            Ok(progress.selected.iter().all(|region| {
+                frontier.iter().all(|(origin, needed)| {
+                    progress
+                        .regions
+                        .get(region)
+                        .and_then(|seen| seen.get(origin))
+                        .copied()
+                        .unwrap_or(0)
+                        >= *needed
+                })
+            }))
+        })
+        .await
     }
 
     async fn wait(
-        &self, scope: DatabaseRouteScope, timeout: Duration,
+        &self,
+        scope: DatabaseRouteScope,
+        timeout: Duration,
         satisfied: impl Fn(&DatabaseProgress) -> Result<bool, ReplicationWaitError>,
     ) -> Result<(), ReplicationWaitError> {
         let mut changed = self.changed.subscribe();
@@ -158,12 +274,91 @@ impl ReplicationProgress {
             {
                 let databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
                 let progress = databases.get(&scope).ok_or(ReplicationWaitError::NotAdmitted)?;
-                if progress.fenced { return Err(ReplicationWaitError::Fenced); }
-                if satisfied(progress)? { return Ok(()); }
+                if progress.fenced {
+                    return Err(ReplicationWaitError::Fenced);
+                }
+                if satisfied(progress)? {
+                    return Ok(());
+                }
             }
-            tokio::time::timeout_at(deadline, changed.changed()).await
+            tokio::time::timeout_at(deadline, changed.changed())
+                .await
                 .map_err(|_| ReplicationWaitError::Timeout)?
                 .map_err(|_| ReplicationWaitError::Fenced)?;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn scope() -> DatabaseRouteScope {
+        DatabaseRouteScope::try_new(
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn global_wait_requires_every_selected_region_and_dependency() {
+        let progress = Arc::new(ReplicationProgress::default());
+        progress.admit(scope(), BTreeSet::from(["gru".into(), "sfo".into()])).unwrap();
+        let required = BTreeMap::from([("gru".into(), 3), ("sfo".into(), 2)]);
+        progress.advance_region(scope(), "gru", &required).unwrap();
+        progress.advance_region(scope(), "sfo", &BTreeMap::from([("gru".into(), 3)])).unwrap();
+        assert_eq!(
+            progress.wait_uniform(scope(), &required, Duration::ZERO).await,
+            Err(ReplicationWaitError::Timeout)
+        );
+        let waiter = {
+            let progress = progress.clone();
+            let required = required.clone();
+            tokio::spawn(async move {
+                progress.wait_uniform(scope(), &required, Duration::from_secs(1)).await
+            })
+        };
+        progress.advance_region(scope(), "sfo", &BTreeMap::from([("sfo".into(), 2)])).unwrap();
+        assert_eq!(waiter.await.unwrap(), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn fencing_is_permanent_and_wakes_waiters() {
+        let progress = Arc::new(ReplicationProgress::default());
+        progress.admit(scope(), BTreeSet::from(["gru".into()])).unwrap();
+        let waiter = {
+            let progress = progress.clone();
+            tokio::spawn(
+                async move { progress.wait_regional(scope(), 5, Duration::from_secs(1)).await },
+            )
+        };
+        progress.fence();
+        progress.advance_regional(scope(), 100);
+        assert_eq!(waiter.await.unwrap(), Err(ReplicationWaitError::Fenced));
+        assert_eq!(
+            progress.admit(scope(), BTreeSet::from(["gru".into()])),
+            Err(ReplicationWaitError::NotAdmitted)
+        );
+    }
+
+    #[tokio::test]
+    async fn restart_does_not_reconstruct_receipts_from_configuration() {
+        let progress = ReplicationProgress::default();
+        progress.admit(scope(), BTreeSet::from(["gru".into()])).unwrap();
+        assert_eq!(
+            progress.wait_regional(scope(), 1, Duration::ZERO).await,
+            Err(ReplicationWaitError::Timeout)
+        );
+        assert_eq!(
+            progress.wait_uniform(scope(), &BTreeMap::new(), Duration::ZERO).await,
+            Err(ReplicationWaitError::InsufficientRegions)
+        );
+        assert_eq!(
+            progress.advance_region(scope(), "fra", &BTreeMap::new()),
+            Err(ReplicationWaitError::NotAdmitted)
+        );
     }
 }

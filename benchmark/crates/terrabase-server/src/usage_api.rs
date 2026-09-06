@@ -783,14 +783,16 @@ pub struct UsageSummary {
 ///
 /// # Errors
 /// Returns typed source failures or rejects facts outside the Engine owner tuple.
-pub fn engine_summary(engine: &Engine) -> Result<UsageSummary, UsageApiError> {
-    let owner = engine.database_owner();
-    let tenant = owner.tenant().to_text();
-    let project = owner.project().to_text();
-    let database = owner.database().to_text();
-    let tenant_id = TenantId::try_new(&tenant)
-        .map_err(|_| UsageApiError::InvalidScope { field: "tenant_id" })?;
-    let scope = engine.scope_for(&tenant_id);
+pub fn engine_summary(engine: &Engine, scope: &terrabase::TenantScope) -> Result<UsageSummary, UsageApiError> {
+    let binding = engine.usage_placement(scope).map_err(map_engine_usage_error).map_err(map_source_error)?
+        .ok_or_else(|| UsageApiError::SourceUnavailable {
+            retryable: false,
+            detail: "the database has no accepted usage placement binding".into(),
+        })?;
+    let tenant = binding.scope.tenant_id().as_str().to_owned();
+    let project = binding.scope.project_id().as_str().to_owned();
+    let database = binding.scope.database_id().as_str().to_owned();
+    let region = *binding.scope.region_id();
     let mut continuation = None;
     let mut snapshot = None;
     let mut totals = UsageTotals::zero();
@@ -818,7 +820,7 @@ pub fn engine_summary(engine: &Engine) -> Result<UsageSummary, UsageApiError> {
             if binding.tenant_id().as_str() != tenant
                 || binding.project_id().as_str() != project
                 || binding.database_id().as_str() != database
-                || *binding.region_id() != owner.region()
+                || *binding.region_id() != region
                 || durable.sequence() == 0
                 || durable.sequence() > high_water
             {

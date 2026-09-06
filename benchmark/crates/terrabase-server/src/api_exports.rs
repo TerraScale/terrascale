@@ -451,3 +451,7 @@ pub(super) async fn cancel_export(
         Err(error) => export_error(&error).into_response(),
     }
 }
+
+#[cfg(test)]
+#[path = "api_export_lifecycle_tests.rs"]
+mod lifecycle_tests;

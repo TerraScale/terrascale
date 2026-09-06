@@ -92,13 +92,26 @@ impl SqliteStore {
         Ok(())
     }
 
-    /// Open persistent state belonging to exactly one database consensus group.
-    /// A different identity at an existing path is refused before any serving.
-    pub fn open(path: &Path, group_identity: &str) -> Result<Self> {
-        if group_identity.is_empty() || group_identity.len() > 512 {
-            return Err(storage("invalid auth group identity"));
+    /// Open encrypted persistent auth state using an explicitly authorized database key.
+    /// No plaintext production constructor is exposed. Existing empty/missing storage
+    /// may be created only with the one-time permission reserved by bootstrap control.
+    pub fn open_encrypted(path:&Path,group_identity:&str,keys:Arc<dyn terrabase::encryption::DatabaseKeySource>,allow_create:bool)->Result<Self> {
+        if !allow_create && !path.is_file() { return Err(storage("auth state missing after bootstrap reservation")); }
+        let connection=terrabase::storage::open_encrypted_sqlite(path,keys).map_err(storage)?;
+        Self::from_connection(connection,group_identity,allow_create)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open(path:&Path,group_identity:&str)->Result<Self> {
+        Self::from_connection(Connection::open(path).map_err(storage)?,group_identity,true)
+    }
+
+    fn from_connection(connection:Connection,group_identity:&str,allow_create:bool)->Result<Self> {
+        if group_identity.is_empty() || group_identity.len()>512 { return Err(storage("invalid auth group identity")); }
+        if !allow_create {
+            let stored:Option<String>=meta(&connection,"group_identity")?;
+            if stored.as_deref()!=Some(group_identity) { return Err(storage("auth state identity missing or changed")); }
         }
-        let connection = Connection::open(path).map_err(storage)?;
         connection.busy_timeout(std::time::Duration::from_secs(5)).map_err(storage)?;
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA locking_mode=EXCLUSIVE;
             CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY,value BLOB NOT NULL);

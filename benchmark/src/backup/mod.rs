@@ -1086,6 +1086,12 @@ fn execute(
     let tenants = selected_tenants(engine, &mut state, plan)?;
     writer.set_byte_limit(plan.archive_byte_limit);
     let boundary = resolve_boundary(engine, &mut state, plan, destination)?;
+    let boundary_unix_millis = engine.backup_boundary_unix_millis(boundary)
+        .map_err(|_| BackupError::SourceUnavailable)?;
+    let captured_unix_millis = u64::try_from(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).map_err(|_| BackupError::SourceUnavailable)?.as_millis())
+        .map_err(|_| BackupError::SourceUnavailable)?;
+    if captured_unix_millis < boundary_unix_millis { return Err(BackupError::SourceUnavailable); }
     // Bind the complete selected scope even when a tenant contributes no
     // records to this particular range. Object-store chain planners use the
     // manifest scope to detect a requested tenant that is absent from the
@@ -1126,6 +1132,8 @@ fn execute(
         tenant_counts,
         boundary,
         plan.kind,
+        boundary_unix_millis,
+        captured_unix_millis,
         engine.database_id().to_text(),
         destination,
         staging,
@@ -1331,6 +1339,8 @@ fn seal_run(
     tenant_counts: BTreeMap<TenantId, (u64, u64)>,
     boundary: StorageSequence,
     kind: BackupKind,
+    boundary_unix_millis: u64,
+    captured_unix_millis: u64,
     database_id: String,
     destination: &Path,
     staging: &StagingDir,
@@ -1356,6 +1366,8 @@ fn seal_run(
         partition_id: "partition-000000".to_owned(),
         kind,
         boundary,
+        boundary_unix_millis,
+        captured_unix_millis,
         documents: state.documents,
         family_records: state.family_records,
         deletes: state.deletes,
@@ -1415,6 +1427,8 @@ fn archive_commit(
                 writer
                     .write(&Record::Document {
                         tenant: commit.tenant().clone(),
+                        sequence: commit.sequence().get(),
+                        committed_unix_millis: commit.committed_unix_millis(),
                         document: document.clone(),
                         durability: commit.durability(),
                     })
@@ -1432,6 +1446,8 @@ fn archive_commit(
                 writer
                     .write(&Record::Delete {
                         tenant: commit.tenant().clone(),
+                        sequence: commit.sequence().get(),
+                        committed_unix_millis: commit.committed_unix_millis(),
                         collection: collection.as_ref().map(|name| name.as_str().to_owned()),
                         id: id.as_str().to_owned(),
                         version_at_delete: *version_at_delete,
@@ -1740,6 +1756,9 @@ pub(crate) fn validate_chain_frontier(chain: &[BackupManifest]) -> Result<(), Ba
         let Some(base) = current.base_sequence() else {
             return Err(BackupError::ChainIncomplete);
         };
+        if current.boundary_unix_millis() < previous.boundary_unix_millis() {
+            return Err(BackupError::ManifestInvalid);
+        }
         if base != previous.boundary_sequence() || current.boundary_sequence().get() < base.get() {
             return Err(BackupError::ChainIncomplete);
         }

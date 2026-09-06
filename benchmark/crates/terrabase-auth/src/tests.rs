@@ -239,6 +239,13 @@ async fn real_raft_rejects_partitioned_leader_and_serializes_competing_auth_writ
     let mut nodes = Vec::new();
     for id in 1..=3 {
         let store = SqliteStore::open(&dir.path().join(format!("{id}.sqlite")), "group").unwrap();
+        store
+            .bind_admission(
+                "group",
+                id,
+                &(1..=3).map(|id| (id, BasicNode { addr: id.to_string() })).collect(),
+            )
+            .unwrap();
         let config = Config {
             cluster_name: "auth-test".into(),
             heartbeat_interval: 30,

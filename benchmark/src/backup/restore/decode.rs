@@ -174,6 +174,8 @@ impl<R: Read> FrameCursor<'_, R> {
         let tag = self.read_u8()?;
         let tenant = self.read_tenant()?;
         let durability = self.read_durability()?;
+        let sequence = self.read_u64()?;
+        let committed_unix_millis = self.read_u64()?;
         match tag {
             TAG_DOCUMENT => {
                 let id = self.read_identifier()?;
@@ -185,7 +187,7 @@ impl<R: Read> FrameCursor<'_, R> {
                     .map_err(|_| BackupError::ChecksumMismatch)?;
                 let mut document = Document::new(id, collection, value);
                 document.set_version(version);
-                Ok(Record::Document { tenant, document, durability })
+                Ok(Record::Document { tenant, document, durability, sequence, committed_unix_millis })
             }
             TAG_DELETE => {
                 let collection = match self.read_u8()? {
@@ -195,7 +197,7 @@ impl<R: Read> FrameCursor<'_, R> {
                 };
                 let id = self.read_identifier()?;
                 let version_at_delete = self.read_u64()?;
-                Ok(Record::Delete { tenant, collection, id, version_at_delete, durability })
+                Ok(Record::Delete { tenant, collection, id, version_at_delete, durability, sequence, committed_unix_millis })
             }
             _ => Err(BackupError::ChecksumMismatch),
         }

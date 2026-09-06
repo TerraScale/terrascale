@@ -28,6 +28,7 @@ const SUCCESS_BYTES: u32 = 68;
 pub struct OciVaultKeyDelivery {
     socket: PathBuf,
     orchestrator_uid: u32,
+    socket_gid: u32,
 }
 
 impl fmt::Debug for OciVaultKeyDelivery {
@@ -41,8 +42,12 @@ impl OciVaultKeyDelivery {
     ///
     /// # Errors
     /// Returns a redacted refusal for absent, unsafe, or inaccessible paths.
-    pub fn new(socket: PathBuf, orchestrator_uid: u32) -> Result<Self, EncryptionError> {
-        let provider = Self { socket, orchestrator_uid };
+    pub fn new(
+        socket: PathBuf,
+        orchestrator_uid: u32,
+        socket_gid: u32,
+    ) -> Result<Self, EncryptionError> {
+        let provider = Self { socket, orchestrator_uid, socket_gid };
         provider.validate_path()?;
         Ok(provider)
     }
@@ -116,16 +121,8 @@ impl OciVaultKeyDelivery {
         // Read directly into locked memory: no plaintext response buffer.
         let mut key = DatabaseKey::locked()?;
         stream.read_exact(key.material_mut()).map_err(unavailable)?;
-        let remaining = duration
-            .checked_sub(started.elapsed())
-            .filter(|duration| !duration.is_zero())
-            .ok_or(EncryptionError::KeyLeaseExpired)?;
-        DatabaseKeyLease::from_adapter(
-            metadata.clone(),
-            key,
-            remaining,
-            KeyProviderIdentity::OciVault,
-        )
+        let expires_at = started.checked_add(duration).ok_or(EncryptionError::InvalidKeyLease)?;
+        DatabaseKeyLease::from_adapter_until(metadata.clone(), key, expires_at)
     }
 
     fn validate_path(&self) -> Result<(), EncryptionError> {
@@ -138,7 +135,7 @@ impl OciVaultKeyDelivery {
                 Component::RootDir | Component::Normal(_) => path.push(component),
                 _ => return Err(EncryptionError::ProductionProviderUnavailable),
             }
-            validate_component(&path, &self.socket, self.orchestrator_uid)?;
+            validate_component(&path, &self.socket, self.orchestrator_uid, self.socket_gid)?;
         }
         Ok(())
     }
@@ -214,7 +211,12 @@ impl DatabaseKeySource for OciVaultDatabaseKeys {
     }
 }
 
-fn validate_component(path: &Path, socket: &Path, uid: u32) -> Result<(), EncryptionError> {
+fn validate_component(
+    path: &Path,
+    socket: &Path,
+    uid: u32,
+    gid: u32,
+) -> Result<(), EncryptionError> {
     let metadata = fs::symlink_metadata(path).map_err(unavailable)?;
     if metadata.file_type().is_symlink() {
         return Err(EncryptionError::ProductionProviderUnavailable);
@@ -222,13 +224,14 @@ fn validate_component(path: &Path, socket: &Path, uid: u32) -> Result<(), Encryp
     if path == socket {
         if !metadata.file_type().is_socket()
             || metadata.uid() != uid
-            || metadata.mode() & 0o077 != 0
+            || metadata.gid() != gid
+            || metadata.mode() & 0o777 != 0o660
         {
             return Err(EncryptionError::ProductionProviderUnavailable);
         }
     } else if !metadata.is_dir()
         || (socket.parent() == Some(path)
-            && (metadata.uid() != uid || metadata.mode() & 0o077 != 0))
+            && (metadata.uid() != uid || metadata.gid() != gid || metadata.mode() & 0o777 != 0o710))
         || (metadata.uid() != 0 && metadata.uid() != uid)
         || metadata.mode() & 0o022 != 0
     {
@@ -265,19 +268,23 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir_all(&directory).unwrap();
-            fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o710)).unwrap();
             Self { socket: directory.join("lease.sock"), directory }
         }
 
         fn listen(&self) -> UnixListener {
             let listener = UnixListener::bind(&self.socket).unwrap();
-            fs::set_permissions(&self.socket, fs::Permissions::from_mode(0o600)).unwrap();
+            fs::set_permissions(&self.socket, fs::Permissions::from_mode(0o660)).unwrap();
             listener
         }
 
         fn provider(&self) -> OciVaultKeyDelivery {
-            OciVaultKeyDelivery::new(self.socket.clone(), rustix::process::geteuid().as_raw())
-                .unwrap()
+            OciVaultKeyDelivery::new(
+                self.socket.clone(),
+                rustix::process::geteuid().as_raw(),
+                rustix::process::getegid().as_raw(),
+            )
+            .unwrap()
         }
     }
 
@@ -355,19 +362,31 @@ mod tests {
     #[test]
     fn missing_unsafe_and_wrong_uid_sockets_fail_without_key_generation() {
         let fixture = SocketFixture::new();
-        assert!(OciVaultKeyDelivery::new(fixture.socket.clone(), 0).is_err());
+        assert!(
+            OciVaultKeyDelivery::new(
+                fixture.socket.clone(),
+                0,
+                rustix::process::getegid().as_raw()
+            )
+            .is_err()
+        );
         let _listener = fixture.listen();
         assert!(
             OciVaultKeyDelivery::new(
                 fixture.socket.clone(),
-                rustix::process::geteuid().as_raw().wrapping_add(1)
+                rustix::process::geteuid().as_raw().wrapping_add(1),
+                rustix::process::getegid().as_raw()
             )
             .is_err()
         );
         fs::set_permissions(&fixture.socket, fs::Permissions::from_mode(0o666)).unwrap();
         assert!(
-            OciVaultKeyDelivery::new(fixture.socket.clone(), rustix::process::geteuid().as_raw())
-                .is_err()
+            OciVaultKeyDelivery::new(
+                fixture.socket.clone(),
+                rustix::process::geteuid().as_raw(),
+                rustix::process::getegid().as_raw()
+            )
+            .is_err()
         );
     }
 

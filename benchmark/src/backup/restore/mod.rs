@@ -1512,8 +1512,10 @@ impl Replay {
             // It must never mint admitted-request usage without authenticated
             // serving-boundary facts.
             usage_admission: None,
+            expected_uniform_context: None,
             merge_conflict: None,
             replication_fingerprint: None,
+            replication_publication: None,
             hlc: 0,
             metadata: Vec::new(),
             schema_envelopes: Vec::new(),

@@ -111,3 +111,82 @@ pub(super) fn stage_envelopes(
     }
     Ok(())
 }
+
+/// Applies each causally newer private control, then deterministic concurrent winner.
+pub(super) fn stage_controls(
+    connection: &Connection,
+    intent: &crate::storage::CommitIntent,
+    provenance: &crate::storage::JournalProvenance,
+    sequence: u64,
+) -> Result<(), ()> {
+    for write in &intent.metadata {
+        let key = format!("metadata:{}", write.key);
+        if intent.replication_publication.is_none()
+            || incoming_control_wins(connection, &intent.tenant, &key, provenance)?
+        {
+            stage_metadata(connection, &intent.tenant, std::slice::from_ref(write), sequence)?;
+            record_control_version(connection, &intent.tenant, &key, provenance)?;
+        }
+    }
+    for write in &intent.schema_envelopes {
+        let key = format!(
+            "schema:{}:{}:{}:{}:{}:{}",
+            write.database.len(),
+            write.database,
+            write.branch.len(),
+            write.branch,
+            write.collection.len(),
+            write.collection
+        );
+        if intent.replication_publication.is_none()
+            || incoming_control_wins(connection, &intent.tenant, &key, provenance)?
+        {
+            stage_envelopes(connection, std::slice::from_ref(write))?;
+            record_control_version(connection, &intent.tenant, &key, provenance)?;
+        }
+    }
+    Ok(())
+}
+
+fn incoming_control_wins(
+    connection: &Connection,
+    tenant: &TenantId,
+    key: &str,
+    incoming: &crate::storage::JournalProvenance,
+) -> Result<bool, ()> {
+    let current: Option<(String,i64,i64,Vec<u8>)> = connection.query_row(
+        "SELECT origin, origin_seq, hlc, context FROM private_control_versions WHERE tenant = ?1 AND control_key = ?2",
+        params![tenant.as_str(),key], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+    ).optional().map_err(|_| ())?;
+    let Some((origin, sequence, hlc, context)) = current else {
+        return Ok(true);
+    };
+    let sequence = u64::try_from(sequence).map_err(|_| ())?;
+    let incoming_context = crate::engine::merge::decode_context(incoming.context()).ok_or(())?;
+    let current_context = crate::engine::merge::decode_context(&context).ok_or(())?;
+    if incoming_context.contains(&crate::engine::merge::DocumentDot::new(origin.clone(), sequence))
+    {
+        return Ok(true);
+    }
+    if current_context.contains(&crate::engine::merge::DocumentDot::new(
+        incoming.origin().to_owned(),
+        incoming.origin_sequence(),
+    )) {
+        return Ok(false);
+    }
+    Ok((incoming.hlc(), incoming.origin())
+        > (u64::from_le_bytes(hlc.to_le_bytes()), origin.as_str()))
+}
+
+fn record_control_version(
+    connection: &Connection,
+    tenant: &TenantId,
+    key: &str,
+    provenance: &crate::storage::JournalProvenance,
+) -> Result<(), ()> {
+    connection.execute(
+        "INSERT INTO private_control_versions (tenant,control_key,origin,origin_seq,hlc,context) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(tenant,control_key) DO UPDATE SET origin=excluded.origin,origin_seq=excluded.origin_seq,hlc=excluded.hlc,context=excluded.context",
+        params![tenant.as_str(),key,provenance.origin(),provenance.origin_sequence() as i64,provenance.hlc() as i64,provenance.context()],
+    ).map_err(|_| ())?;
+    Ok(())
+}

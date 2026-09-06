@@ -15,5 +15,7 @@ pub mod wal_follower;
 pub mod wal_quic;
 /// Authorized regional physical replication bindings.
 pub mod wal_route;
+/// Bounded authenticated physical snapshot transfer for initial RF=2 bootstrap.
+pub mod wal_snapshot;
 /// Database-scoped physical WAL wire protocol.
 pub mod wal_wire;

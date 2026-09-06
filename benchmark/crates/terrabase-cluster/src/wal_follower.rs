@@ -84,9 +84,10 @@
 //! appended, and the engine serves the file. `tests/wal_follower.rs`
 //! pins exactly that.
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
+use terrabase::storage::{create_physical_file, open_physical_file, PhysicalFile};
 
 /// The engine's `SQLite` database file name inside a durable location.
 const DATABASE_FILE: &str = "terrabase.sqlite3";
@@ -334,7 +335,7 @@ impl WalTail {
         engine
             .with_quiescent_wal(|location| {
                 if let Some(expected) = checkpoint.header {
-                    let mut file = File::open(location.join(wal_file_name()))?;
+                    let mut file = open_physical_file(&location.join(wal_file_name()))?;
                     let mut bytes = [0; WAL_HEADER_BYTES];
                     file.read_exact(&mut bytes)?;
                     let header = WalHeader::parse(&bytes)?;
@@ -484,7 +485,7 @@ impl WalTail {
         if let Some(batch) = &self.pending {
             return Ok(WalTailStep::Frames(batch.clone()));
         }
-        match File::open(self.location.join(wal_file_name())) {
+        match open_physical_file(&self.location.join(wal_file_name())) {
             Ok(mut file) => self.poll_reader(&mut file),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 Ok(if self.header.is_some() {
@@ -634,6 +635,7 @@ pub struct WalFollower {
     chain: (u32, u32),
     /// The committed prefix (frame count through the last commit frame).
     committed_through: Option<usize>,
+    last_commit: Option<(usize, (u32, u32))>,
 }
 
 /// The follower's acknowledgement of one applied batch: the durable
@@ -652,19 +654,14 @@ pub struct FollowerAck {
 
 impl WalFollower {
     /// Captures only progress that has completed the follower's sync operation.
-    ///
-    /// # Errors
-    /// Returns an I/O or checksum error when durable progress cannot be read.
-    pub fn checkpoint(&self) -> Result<WalCheckpoint, WalFollowerError> {
-        let committed = open_wal(&self.location)?
-            .as_mut()
-            .map_or_else(|| Ok(WalCheckpoint::default()), |file| scan_wal(file, true))?;
-        Ok(WalCheckpoint {
+    #[must_use]
+    pub fn checkpoint(&self) -> WalCheckpoint {
+        WalCheckpoint {
             header: self.header,
             shipped: self.applied,
             chain: self.chain,
-            last_commit: committed.last_commit,
-        })
+            last_commit: self.last_commit,
+        }
     }
     /// Bootstraps from a live engine while its commits and checkpoints pause.
     /// The destination has the same fresh-location requirements as [`Self::bootstrap`].
@@ -701,12 +698,12 @@ impl WalFollower {
             .map_or_else(|| Ok(WalCheckpoint::default()), |file| scan_wal(file, true))?;
         verify_snapshot(location)?;
         if let Some(header) = checkpoint.header {
-            let file = OpenOptions::new().write(true).open(location.join(wal_file_name()))?;
+            let file = open_physical_file(&location.join(wal_file_name()))?;
             let prefix_bytes = header.frame_range(0, checkpoint.shipped).end;
             file.set_len(u64::try_from(prefix_bytes).map_err(|_| WalFollowerError::FrameIo)?)?;
             file.sync_all()?;
         }
-        File::open(location.join(DATABASE_FILE))?.sync_all()?;
+        open_physical_file(&location.join(DATABASE_FILE))?.sync_all()?;
         match File::open(location.join(OWNER_FILE)) {
             Ok(file) => file.sync_all()?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -719,6 +716,7 @@ impl WalFollower {
             applied: checkpoint.shipped,
             chain: checkpoint.chain,
             committed_through: checkpoint.last_commit.map(|(frame, _)| frame),
+            last_commit: checkpoint.last_commit,
         };
         Ok((state, checkpoint))
     }
@@ -779,6 +777,7 @@ impl WalFollower {
             applied: checkpoint.shipped,
             chain: checkpoint.chain,
             committed_through: checkpoint.last_commit.map(|(frame, _)| frame),
+            last_commit: checkpoint.last_commit,
         };
         copy_location_file(writer, follower, DATABASE_FILE)?;
         copy_location_file_optional(writer, follower, OWNER_FILE)?;
@@ -786,7 +785,8 @@ impl WalFollower {
             let mut source = wal.expect("a parsed header has an open file");
             source.rewind()?;
             let length = header.frame_range(0, checkpoint.shipped).end as u64;
-            let mut target = File::create(follower.join(wal_file_name()))?;
+            let mut target = create_physical_file(&follower.join(wal_file_name()))?;
+            target.set_len(0)?;
             let copied = std::io::copy(&mut source.take(length), &mut target)?;
             if copied != length {
                 return Err(WalFollowerError::FrameIo);
@@ -841,6 +841,7 @@ impl WalFollower {
         self.applied = 0;
         self.chain = (0, 0);
         self.committed_through = None;
+        self.last_commit = None;
         Ok(())
     }
 
@@ -935,17 +936,19 @@ impl WalFollower {
         // advances only after every durability operation succeeds, so an I/O
         // failure can be retried at the same offset.
         let fresh = self.header.is_none();
-        let mut wal_file = OpenOptions::new()
-            .write(true)
-            .create(fresh)
-            .truncate(fresh)
-            .open(self.location.join(wal_file_name()))?;
+        let mut wal_file = if fresh {
+            let file = create_physical_file(&self.location.join(wal_file_name()))?;
+            file.set_len(0)?;
+            file
+        } else {
+            open_physical_file(&self.location.join(wal_file_name()))?
+        };
         if fresh {
             wal_file.write_all(&batch.header)?;
         }
         wal_file.seek(std::io::SeekFrom::Start(offset))?;
         wal_file.write_all(&batch.bytes)?;
-        wal_file.sync_data()?;
+        wal_file.sync_all()?;
         if fresh {
             sync_directory(&self.location)?;
         }
@@ -953,6 +956,9 @@ impl WalFollower {
         self.applied = batch_end;
         self.chain = chain;
         self.committed_through = batch_commit.or(self.committed_through);
+        if let Some(frame) = batch_commit {
+            self.last_commit = Some((frame, frames[frame - batch.from_frame - 1].checksum));
+        }
         Ok(FollowerAck {
             header,
             applied: self.applied,
@@ -964,7 +970,7 @@ impl WalFollower {
 
     /// A retransmission must contain the exact bytes already made durable.
     fn reack(&self, batch: &WalFrames, offset: u64) -> Result<FollowerAck, WalFollowerError> {
-        let mut file = File::open(self.location.join(wal_file_name()))?;
+        let mut file = open_physical_file(&self.location.join(wal_file_name()))?;
         file.seek(std::io::SeekFrom::Start(offset))?;
         let mut stored = vec![0; batch.bytes.len()];
         file.read_exact(&mut stored)?;
@@ -1055,10 +1061,11 @@ fn wal_file_name() -> String {
 /// bytes: the ownership record is refused unless it stays `0600`.
 fn copy_location_file(writer: &Path, follower: &Path, name: &str) -> Result<(), WalFollowerError> {
     let permissions = std::fs::metadata(writer.join(name))?.permissions();
-    let mut source = File::open(writer.join(name))?;
-    let mut target = File::create(follower.join(name))?;
+    let mut source = open_physical_file(&writer.join(name))?;
+    let mut target = create_physical_file(&follower.join(name))?;
+    target.set_len(0)?;
     std::io::copy(&mut source, &mut target)?;
-    target.set_permissions(permissions)?;
+    std::fs::set_permissions(follower.join(name), permissions)?;
     target.sync_all()?;
     Ok(())
 }
@@ -1077,8 +1084,8 @@ fn copy_location_file_optional(
     }
 }
 
-fn open_wal(location: &Path) -> Result<Option<File>, WalFollowerError> {
-    match File::open(location.join(wal_file_name())) {
+fn open_wal(location: &Path) -> Result<Option<PhysicalFile>, WalFollowerError> {
+    match open_physical_file(&location.join(wal_file_name())) {
         Ok(file) => Ok(Some(file)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),

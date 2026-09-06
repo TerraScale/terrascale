@@ -146,6 +146,10 @@ pub(crate) struct ManifestFacts {
     pub(crate) kind: BackupKind,
     /// The storage-sequence boundary the recovery point covers.
     pub(crate) boundary: StorageSequence,
+    /// Durable timestamp of the included commit boundary.
+    pub(crate) boundary_unix_millis: u64,
+    /// Wall clock when the source boundary was captured.
+    pub(crate) captured_unix_millis: u64,
     /// The archived user-document count.
     pub(crate) documents: u64,
     /// The archived family-record count.
@@ -175,6 +179,8 @@ pub struct BackupManifest {
     identity: String,
     kind: BackupKind,
     boundary: StorageSequence,
+    boundary_unix_millis: u64,
+    captured_unix_millis: u64,
     documents: u64,
     family_records: u64,
     deletes: u64,
@@ -193,6 +199,8 @@ impl BackupManifest {
             partition_id,
             kind,
             boundary,
+            boundary_unix_millis,
+            captured_unix_millis,
             documents,
             family_records,
             deletes,
@@ -209,6 +217,8 @@ impl BackupManifest {
             identity: String::new(),
             kind,
             boundary,
+            boundary_unix_millis,
+            captured_unix_millis,
             documents,
             family_records,
             deletes,
@@ -258,6 +268,18 @@ impl BackupManifest {
     #[must_use]
     pub fn boundary_sequence(&self) -> StorageSequence {
         self.boundary
+    }
+
+    /// Returns the durable commit clock at this point's boundary, in Unix milliseconds.
+    #[must_use]
+    pub fn boundary_unix_millis(&self) -> u64 {
+        self.boundary_unix_millis
+    }
+
+    /// Returns the wall clock when this backup captured its source boundary.
+    #[must_use]
+    pub fn captured_unix_millis(&self) -> u64 {
+        self.captured_unix_millis
     }
 
     /// Returns the base boundary an incremental manifest builds on, or
@@ -364,6 +386,8 @@ impl BackupManifest {
         lines.push(format!("partition {}", self.partition_id));
         lines.push(format!("tenant_scope {}", self.tenant_scope));
         lines.push(format!("boundary {}", self.boundary.get()));
+        lines.push(format!("boundary_unix_millis {}", self.boundary_unix_millis));
+        lines.push(format!("captured_unix_millis {}", self.captured_unix_millis));
         lines.push(format!("documents {}", self.documents));
         lines.push(format!("family_records {}", self.family_records));
         lines.push(format!("deletes {}", self.deletes));
@@ -423,6 +447,9 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
     let partition_id = parse_partition_id(lines.next().ok_or_else(invalid)?)?;
     let tenant_scope = parse_digest(lines.next().ok_or_else(invalid)?, "tenant_scope")?;
     let boundary = parse_number(lines.next().ok_or_else(invalid)?, "boundary")?;
+    let boundary_unix_millis = parse_number(lines.next().ok_or_else(invalid)?, "boundary_unix_millis")?;
+    let captured_unix_millis = parse_number(lines.next().ok_or_else(invalid)?, "captured_unix_millis")?;
+    if captured_unix_millis < boundary_unix_millis { return Err(invalid()); }
     let documents = parse_number(lines.next().ok_or_else(invalid)?, "documents")?;
     let family_records = parse_number(lines.next().ok_or_else(invalid)?, "family_records")?;
     let deletes = parse_number(lines.next().ok_or_else(invalid)?, "deletes")?;
@@ -498,6 +525,8 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
         identity: identity.to_owned(),
         kind,
         boundary: StorageSequence::new(boundary),
+        boundary_unix_millis,
+        captured_unix_millis,
         documents,
         family_records,
         deletes,
@@ -674,6 +703,8 @@ mod tests {
             partition_id: "partition-000000".to_owned(),
             kind: BackupKind::Full,
             boundary: StorageSequence::new(7),
+            boundary_unix_millis: 700,
+            captured_unix_millis: 800,
             documents: 1,
             family_records: 0,
             deletes: 0,

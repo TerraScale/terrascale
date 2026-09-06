@@ -364,7 +364,7 @@ fn group_commit_retries_are_idempotent_and_reconcile_from_journal() {
 }
 
 #[test]
-fn storage_byte_seconds_include_current_and_history_and_are_ttl_bounded() {
+fn storage_byte_seconds_include_current_and_history_retention() {
     let current = [(10_u64, 0_u64, 2_000_u64)];
     let history = [(5_u64, 500_u64, 1_500_u64)];
     assert_eq!(storage_byte_seconds_current_and_history(&current, &history, 2), Ok(50));
@@ -378,7 +378,7 @@ fn storage_byte_seconds_include_current_and_history_and_are_ttl_bounded() {
 }
 
 #[test]
-fn storage_rollup_applies_ttl_history_and_regions_once_and_reconciles_retries() {
+fn storage_rollup_keeps_expired_history_and_applies_regions_once() {
     let current =
         StorageRevision::current(UsageFactId::try_new("current").expect("id"), 10, 1, Some(5_001))
             .expect("current");
@@ -392,7 +392,7 @@ fn storage_rollup_applies_ttl_history_and_regions_once_and_reconciles_retries() 
     .expect("history");
     assert_eq!(
         storage_byte_seconds_for_revisions(&[current.clone(), history.clone()], 2, 10_001),
-        Ok(180)
+        Ok(280)
     );
     let expired = StorageRevision::current(
         UsageFactId::try_new("expired").expect("id"),
@@ -401,7 +401,7 @@ fn storage_rollup_applies_ttl_history_and_regions_once_and_reconciles_retries() 
         Some(5_000),
     )
     .expect("expired");
-    assert_eq!(storage_byte_seconds_for_revisions(&[expired], 3, 10_000), Ok(0));
+    assert_eq!(storage_byte_seconds_for_revisions(&[expired], 3, 10_000), Ok(1500));
 
     let row_a = JournalStorageFact::try_new("db-a", 7, current, 2).expect("row");
     let row_b = JournalStorageFact::try_new("db-a", 8, history, 2).expect("row");
@@ -410,7 +410,7 @@ fn storage_rollup_applies_ttl_history_and_regions_once_and_reconciles_retries() 
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].seq_hi(), 8);
     assert_eq!(result[0].selected_regions(), 2);
-    assert_eq!(result[0].byte_seconds(), 180);
+    assert_eq!(result[0].byte_seconds(), 280);
 }
 
 #[test]

@@ -61,94 +61,80 @@ pub struct OriginProofVerified;
 /// routers; production composition must inject real key material.
 #[derive(Clone, Debug)]
 pub struct OriginProofKeyRing {
-    current: Vec<u8>,
-    previous: Option<Vec<u8>>,
+    pub(crate) live: Arc<std::sync::RwLock<crate::credential_rotation::LiveKeys>>,
 }
 
-/// Current and previous keys used to mint and verify view capabilities.
-/// Production composition injects this ring; the conformance constructor is
-/// retained solely for deterministic contract fixtures.
+/// Live current and previous view capability keys.
 #[derive(Clone, Debug)]
 pub struct CapabilityKeyRing {
-    current: Vec<u8>,
-    previous: Option<Vec<u8>>,
+    pub(crate) live: Arc<std::sync::RwLock<crate::credential_rotation::LiveKeys>>,
 }
 
 impl CapabilityKeyRing {
     /// Builds a validated capability key ring.
     pub fn new(current: impl AsRef<[u8]>, previous: Option<impl AsRef<[u8]>>) -> Option<Self> {
-        let current = current.as_ref();
-        if current.len() < 16 || current.len() > 4096 {
-            return None;
-        }
-        let previous = previous.map(|key| key.as_ref().to_vec());
-        if previous
-            .as_ref()
-            .is_some_and(|key| key.len() < 16 || key.len() > 4096 || key.as_slice() == current)
-        {
-            return None;
-        }
-        Some(Self { current: current.to_vec(), previous })
+        let keys = crate::credential_rotation::KeyMaterial::new(
+            current.as_ref(),
+            previous.as_ref().map(AsRef::as_ref),
+        )?;
+        Some(Self {
+            live: Arc::new(std::sync::RwLock::new(crate::credential_rotation::LiveKeys::single(
+                keys,
+            ))),
+        })
     }
-
-    /// Deterministic ring used by old conformance fixture generation.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the compiled conformance key violates the key length limits.
+    /// Deterministic ring used by conformance fixtures.
     #[must_use]
     pub fn conformance() -> Self {
         Self::new(CONFORMANCE_CAPABILITY_KEY, None::<&[u8]>).expect("conformance key is valid")
     }
-
-    /// Explicit disabled ring used until production key material is loaded.
+    /// Explicit disabled ring.
     #[must_use]
-    pub const fn disabled() -> Self {
-        Self { current: Vec::new(), previous: None }
+    pub fn disabled() -> Self {
+        Self {
+            live: Arc::new(std::sync::RwLock::new(crate::credential_rotation::LiveKeys::default())),
+        }
     }
-
     fn issuer(&self) -> Option<ViewCapabilityIssuer> {
-        ViewCapabilityIssuer::new(&self.current).ok()
+        let live = self.live.read().ok()?;
+        let keys = live.capability.usable()?;
+        ViewCapabilityIssuer::new(&keys.current).ok()
     }
-
     fn verifier(&self) -> Option<ViewCapabilityVerifier> {
-        match self.previous.as_deref() {
-            Some(previous) => ViewCapabilityVerifier::with_previous(&self.current, previous).ok(),
-            None => ViewCapabilityVerifier::new(&self.current).ok(),
+        let live = self.live.read().ok()?;
+        let keys = live.capability.usable()?;
+        match keys.previous_key() {
+            Some(previous) => ViewCapabilityVerifier::with_previous(&keys.current, previous).ok(),
+            None => ViewCapabilityVerifier::new(&keys.current).ok(),
         }
     }
 }
-
 impl Default for CapabilityKeyRing {
     fn default() -> Self {
         Self::disabled()
     }
 }
-
 impl OriginProofKeyRing {
-    /// Builds a key ring. Keys must have at least 16 bytes of entropy.
+    /// Builds a validated origin proof key ring.
     pub fn new(current: impl AsRef<[u8]>, previous: Option<impl AsRef<[u8]>>) -> Option<Self> {
-        let current = current.as_ref();
-        if current.len() < 16 || current.len() > 4096 {
-            return None;
-        }
-        let previous = previous.map(|key| key.as_ref().to_vec());
-        if previous
-            .as_ref()
-            .is_some_and(|key| key.len() < 16 || key.len() > 4096 || key.as_slice() == current)
-        {
-            return None;
-        }
-        Some(Self { current: current.to_vec(), previous })
+        let keys = crate::credential_rotation::KeyMaterial::new(
+            current.as_ref(),
+            previous.as_ref().map(AsRef::as_ref),
+        )?;
+        Some(Self {
+            live: Arc::new(std::sync::RwLock::new(crate::credential_rotation::LiveKeys::single(
+                keys,
+            ))),
+        })
     }
-
-    /// The disabled ring used by local development and unit-test fixtures.
+    /// Explicit disabled ring.
     #[must_use]
-    pub const fn disabled() -> Self {
-        Self { current: Vec::new(), previous: None }
+    pub fn disabled() -> Self {
+        Self {
+            live: Arc::new(std::sync::RwLock::new(crate::credential_rotation::LiveKeys::default())),
+        }
     }
 }
-
 impl Default for OriginProofKeyRing {
     fn default() -> Self {
         Self::disabled()
@@ -190,8 +176,9 @@ pub fn verify_origin_proof(
     let valid = |key: &[u8]| {
         constant_time_equal(hmac_sha256_hex(key, message.as_bytes()).as_bytes(), presented)
     };
-    (!keys.current.is_empty() && valid(&keys.current))
-        || keys.previous.as_deref().is_some_and(valid)
+    let Ok(live) = keys.live.read() else { return false };
+    let Some(keys) = live.origin.usable() else { return false };
+    (!keys.current.is_empty() && valid(&keys.current)) || keys.previous_key().is_some_and(valid)
 }
 
 /// Mints an origin proof for integration tests and edge conformance tools.
@@ -978,7 +965,9 @@ pub async fn attach_view(
     ) {
         return error.into_response();
     }
-    let scope = format!("{}:{}:{}", state.scope.0, state.scope.1, request.database_id);
+    let owner = crate::api::database_owner_scope(&state, &request.database_id);
+    let (tenant, project) = match owner { Ok(owner) => owner, Err(error) => return error.into_response() };
+    let scope = format!("{tenant}:{project}:{}", request.database_id);
     let materialization = match prepare_view(&state, &host, &request, &scope, Some(&principal)) {
         Ok(materialization) => materialization,
         Err(error) => return error.into_response(),
@@ -1318,7 +1307,7 @@ fn prepare_view(
             placement: None,
         });
     }
-    let tenant = terrabase::types::TenantId::try_new(&state.scope.0)
+    let tenant = terrabase::types::TenantId::try_new(host.tenant())
         .map_err(|_| ApiError::storage_failure())?;
     let incremental = incremental::SqlMaterializer::for_plan(&plan)?;
     let mut identity = Vec::new();

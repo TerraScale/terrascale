@@ -6,12 +6,14 @@
 //! database or protocol implementation of its own.
 
 pub mod admission;
+pub mod admitted_databases;
 pub mod api;
 pub mod api_keys;
 pub mod backup;
 pub mod byo_jwt;
 pub mod config;
 pub mod control;
+pub mod credential_rotation;
 pub mod delegated_identity;
 pub mod export_api;
 pub mod export_store;
@@ -39,3 +41,6 @@ pub use view_capability::{
     EXPIRY_BUCKET_SECONDS, VIEW_CAPABILITY_HEADER, ViewCapability, ViewCapabilityClaims,
     ViewCapabilityIssuer, ViewCapabilityVerifier,
 };
+
+/// Authenticated production replication peer workers.
+pub mod replication_peers;

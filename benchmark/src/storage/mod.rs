@@ -16,6 +16,8 @@ mod invisible;
 mod ownership;
 mod shadow;
 mod sqlite;
+mod physical_file;
+pub use physical_file::{EncryptedStorage, PhysicalFile, open_physical_file, create_physical_file, open_encrypted_sqlite, open_physical_sqlite};
 
 pub use invisible::{InvisibleColumnKind, InvisibleIndexColumn, InvisibleIndexProgress};
 pub use shadow::{
@@ -623,6 +625,16 @@ pub(crate) struct AppliedFrontierEntry {
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
+    fn configure_usage_placement(&mut self, _placement: &crate::usage::UsagePlacement) -> Result<(), ()> { Err(()) }
+    fn usage_placement(&self, _tenant: &TenantId) -> Result<Option<crate::usage::UsagePlacement>, ()> { Ok(None) }
+
+    /// Reads complete retained source groups, including their original private controls.
+    fn replication_publications(
+        &self,
+        tenant: &TenantId,
+        after: u64,
+        limit: u32,
+    ) -> Result<Vec<(u64, crate::engine::ReplicatedPublication)>, ()>;
     /// Reads private control state at the transaction's immutable snapshot.
     fn private_metadata_at(
         &self,
@@ -719,6 +731,24 @@ pub(crate) trait StoragePort: Send {
         tenant: &TenantId,
         fact: UsageFact,
     ) -> Result<(DurableUsageFact, bool), UsageStorageError>;
+
+    /// Freezes a trusted completed storage interval from durable logical bytes.
+    fn close_storage_usage(
+        &mut self,
+        _tenant: &TenantId,
+        _window: MeasurementWindow,
+    ) -> Result<crate::usage::StorageUsageClosure, UsageStorageError> {
+        Err(UsageStorageError::Unavailable)
+    }
+
+    /// Stops all future customer storage accrual at accepted database deletion.
+    fn stop_storage_usage(
+        &mut self,
+        _tenant: &TenantId,
+        _at_millis: u64,
+    ) -> Result<(), UsageStorageError> {
+        Err(UsageStorageError::Unavailable)
+    }
 
     /// Returns at most `limit` tenant facts at or below the fixed snapshot,
     /// ordered strictly after the optional continuation position. The Engine
@@ -930,6 +960,28 @@ pub(crate) trait StoragePort: Send {
         Err(())
     }
 
+    /// Installs one canonical compound index; false means backfill is pending.
+    fn register_schema_index(
+        &mut self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _name: &str,
+        _fields: &[String],
+        _unique: bool,
+    ) -> Result<bool, ()> {
+        Err(())
+    }
+
+    /// Removes a canonical index and its Region uniqueness constraint.
+    fn remove_schema_index(
+        &mut self,
+        _tenant: &TenantId,
+        _collection: &CollectionName,
+        _name: &str,
+    ) -> Result<(), ()> {
+        Err(())
+    }
+
     /// Registers one extracted index column descriptor (D-31/D-42): the
     /// named field of the named collection gains stored columns written by
     /// the Rust write path from the next commit on, and existing rows are
@@ -998,6 +1050,20 @@ pub(crate) trait StoragePort: Send {
         Ok(Vec::new())
     }
 
+    /// Applies a collection TTL descriptor and advances its durable bounded backfill.
+    /// Returns true only once all retained rows have the declared expiry metadata.
+    ///
+    /// # Errors
+    /// Returns a durable storage failure or invalid batch refusal.
+    fn advance_schema_ttl(
+        &mut self,
+        _collection: &CollectionName,
+        _field: Option<&str>,
+        _batch: u32,
+    ) -> Result<bool, ()> {
+        Err(())
+    }
+
     /// Registers one full-text descriptor (S-02 slice D, D-39): the named
     /// field of the named collection gains FTS5 rows written by the Rust
     /// write path from the next commit on, backfilled inline inside the
@@ -1019,6 +1085,14 @@ pub(crate) trait StoragePort: Send {
         _field: &str,
     ) -> Result<DescriptorRegistration, IndexDescriptorError> {
         Err(IndexDescriptorError::Storage)
+    }
+
+    /// Retires a full-text descriptor and its maintained term rows.
+    ///
+    /// # Errors
+    /// Returns a durable storage failure.
+    fn remove_schema_fts(&mut self, _collection: &CollectionName, _field: &str) -> Result<(), ()> {
+        Err(())
     }
 
     /// Reports one field's text-descriptor state without registering
@@ -1542,5 +1616,7 @@ pub(crate) use codec::{document_fingerprint, write_set_digest};
 /// Reports whether one document is inside the codec's structural limits.
 pub(crate) use codec::document_within_limits;
 
-pub(crate) use codec::{encode_private_value, transaction_digest};
+pub(crate) use codec::{decode_private_changes, encode_private_value, transaction_digest};
 pub(crate) use intent::{PrivateMetadataWrite, SchemaEnvelopeWrite};
+
+pub(crate) use intent::ReplicationPublicationIntent;

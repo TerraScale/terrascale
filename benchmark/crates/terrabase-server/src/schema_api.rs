@@ -647,7 +647,7 @@ pub enum MigrationState {
 /// One bounded migration step.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MigrationStep {
-    /// Step kind (`field_rename`, `index_backfill`, or `ttl_backfill`).
+    /// Step kind (`field_rename`, `index_backfill`, `ttl_backfill`, or `schema_reconcile`).
     pub kind: String,
     /// Source field for a rename, when applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1221,10 +1221,10 @@ impl SchemaService {
                 "GET the schema, then retry with its ETag in If-Match",
             ));
         }
-        if current.as_ref().is_some_and(|record| record.document.migration.as_ref().is_some_and(|migration| matches!(migration.state, MigrationState::Pending | MigrationState::Running))) {
+        let next_version = next_schema_version(current.as_ref(), schema.version)?;
+        if current.as_ref().is_some_and(|record| record.document.migration.as_ref().is_some_and(|migration| matches!(migration.state, MigrationState::Pending | MigrationState::Running) || (migration.state == MigrationState::Failed && record.migration_plan.is_some()))) {
             return Err(SchemaError::new(409, "migration_in_progress", "the current schema migration is still running", "wait for migration completion before applying another schema"));
         }
-        let next_version = next_schema_version(current.as_ref(), schema.version)?;
         let migration = plan_migration(
             current.as_ref().map(|record| &record.document.schema),
             &schema,
@@ -1376,8 +1376,8 @@ impl SchemaService {
                 &progress.target,
                 Some(&current),
                 DurableSchemaRecord {
-                    previous_schema: current.previous_schema.clone(),
-                    migration_plan: current.migration_plan.clone(),
+                    previous_schema: if document.migration.as_ref().is_some_and(|migration| migration.state == MigrationState::Complete) { None } else { current.previous_schema.clone() },
+                    migration_plan: if document.migration.as_ref().is_some_and(|migration| migration.state == MigrationState::Complete) { None } else { current.migration_plan.clone() },
                     document: document.clone(), idempotency,
                 },
             )
@@ -1879,6 +1879,15 @@ fn plan_migration(
             index: None,
         });
     }
+    let descriptors_changed = previous.map_or_else(
+        || next.fields.iter().any(|field| field.indexed || field.unique),
+        |old| old.indexes != next.indexes || old.ttl != next.ttl ||
+            old.fields.iter().map(|field| (&field.name, field.indexed, field.unique)).collect::<Vec<_>>() !=
+            next.fields.iter().map(|field| (&field.name, field.indexed, field.unique)).collect::<Vec<_>>(),
+    );
+    if descriptors_changed && steps.is_empty() {
+        steps.push(MigrationStep { kind: "schema_reconcile".into(), from: None, to: None, index: None });
+    }
     if steps.is_empty() {
         return Ok(None);
     }
@@ -2013,6 +2022,7 @@ fn validate_stored_document(
         }
         for step in &migration.steps {
             let valid = match step.kind.as_str() {
+                "schema_reconcile" => step.from.is_none() && step.to.is_none() && step.index.is_none(),
                 "field_rename" => {
                     step.index.is_none()
                         && document.schema.renames.iter().any(|rename| {
@@ -2336,11 +2346,22 @@ mod tests {
         }
     }
 
+    fn finish_initial_backfill(service: &SchemaService) {
+        let document = service.get(&target(), &identity()).expect("initial schema");
+        let migration = document.migration.expect("initial descriptors need backfill");
+        service.record_backfill_progress(BackfillProgress {
+            target: target(), generation: document.generation,
+            operation_id: migration.operation_id, idempotency_key: "initial-worker".into(),
+            total: 0, completed: 0, next_cursor: None, failed: false,
+        }).expect("initial descriptor worker completion");
+    }
+
     #[test]
     fn stored_migration_validation_accepts_history_and_rejects_corruption() {
         let store = Arc::new(FakeStore::default());
         let service = SchemaService::new(Some(store.clone()));
         apply_request(&service, None, None, "first").unwrap();
+        finish_initial_backfill(&service);
         let mut next = schema(None);
         next.indexes.push(IndexDescriptor {
             name: "title_index".into(),
@@ -2502,6 +2523,7 @@ mod tests {
         let store = Arc::new(FakeStore::default());
         let service = SchemaService::new(Some(store));
         apply_request(&service, Some(1), None, "first").expect("first");
+        finish_initial_backfill(&service);
         let mut changed = schema(Some(2));
         changed.fields[1].name = "headline".into();
         changed.renames = vec![FieldRename { from: "title".into(), to: "headline".into() }];
@@ -2566,6 +2588,7 @@ mod tests {
         let store = Arc::new(FakeStore::default());
         let service = SchemaService::new(Some(store.clone()));
         apply_request(&service, Some(1), None, "first").expect("first");
+        finish_initial_backfill(&service);
         let mut changed = schema(Some(2));
         changed.fields[1].name = "headline".into();
         changed.renames = vec![FieldRename { from: "title".into(), to: "headline".into() }];
@@ -2618,6 +2641,7 @@ mod tests {
         let store = Arc::new(FakeStore::default());
         let service = SchemaService::new(Some(store));
         apply_request(&service, Some(1), None, "first").expect("first");
+        finish_initial_backfill(&service);
         let mut changed = identity();
         changed.placement = vec!["SFO".into()];
         let error = service.get(&target(), &changed).expect_err("placement changed");

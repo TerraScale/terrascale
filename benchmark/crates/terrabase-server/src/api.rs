@@ -69,6 +69,18 @@ pub fn spawn_webhook_dispatcher(state: &Arc<ApiState>) -> Option<tokio::task::Jo
 }
 #[path = "api_schema.rs"]
 mod schema;
+#[path = "schema_index_runtime.rs"]
+mod schema_index_runtime;
+#[path = "schema_migration_runtime.rs"]
+mod schema_migration_runtime;
+
+/// Starts the member's schema migration driver once. The serving runtime
+/// aborts and joins the returned task during shutdown.
+#[must_use]
+pub fn spawn_schema_migrations(state: &Arc<ApiState>) -> Option<tokio::task::JoinHandle<()>> {
+    schema_migration_runtime::spawn(state)
+}
+
 #[path = "api_usage_indexes.rs"]
 mod usage_indexes;
 #[path = "api_webhooks.rs"]
@@ -482,6 +494,9 @@ impl IntoResponse for ApiError {
         body.push_str("\"}}");
         let mut response = (self.status, body).into_response();
         response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"),
+        );
         if let Some((placement, residency)) = self.placement
             && let (Ok(placement), Ok(residency)) =
                 (HeaderValue::from_str(&placement), HeaderValue::from_str(&residency))
@@ -522,6 +537,8 @@ fn regions_list(regions: &[RegionCode]) -> String {
 
 /// The public API's serving state.
 pub struct ApiState {
+    /// Production-only authoritative database ownership and retained Member leases.
+    pub admitted_databases: Option<Arc<crate::admitted_databases::AdmittedDatabaseRegistry>>,
     /// Actual peer acknowledgements; absent progress cannot certify durable writes.
     pub replication_progress: Option<Arc<crate::replication_runtime::ReplicationProgress>>,
     /// Bounded branch-only development admission faults.
@@ -806,6 +823,7 @@ fn add_parameter(
 
 fn add_route_parameters(operation: &mut serde_json::Map<String, serde_json::Value>, id: &str) {
     match id {
+        "create_webhook" => add_parameter(operation, "idempotency-key", "header", false, "string"),
         "list_documents" | "document_history" => {
             add_parameter(operation, "limit", "query", false, "integer");
             add_parameter(operation, "after", "query", false, "string");
@@ -1183,8 +1201,20 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .layer(Extension(openapi_json))
         .layer(from_fn_with_state(Arc::clone(&state), placement_headers))
         .layer(from_fn_with_state(Arc::clone(&state), authenticate))
+        .layer(axum::middleware::from_fn(private_error_cache_control))
         .layer(browser_cors())
         .with_state(state)
+}
+
+async fn private_error_cache_control(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    if response.status().is_client_error() || response.status().is_server_error() {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-store"),
+        );
+    }
+    response
 }
 
 // Credentials are explicit bearer/capability headers, never browser cookies.
@@ -1212,6 +1242,7 @@ fn browser_cors() -> tower_http::cors::CorsLayer {
                 "x-terrascale-session",
                 "x-terrascale-region",
                 "x-terrascale-project-id",
+                "x-terrascale-tenant-id",
                 "x-terrascale-preferred-region",
                 "x-terrascale-durability",
                 "x-terrascale-allow-stale",
@@ -1331,23 +1362,53 @@ async fn authenticate(
     let Some(token) = token else {
         return ApiError::malformed_credential().into_response();
     };
+    let route_owner = match database_of(request.uri().path()) {
+        Some(database) => match database_owner_scope(&state, database) {
+            Ok(scope) => scope, Err(error) => return error.into_response(),
+        },
+        None => state.scope.clone(),
+    };
+    let project_operation = is_project_administration(request.method(), request.uri().path());
+    let mut verified_project = None;
     let admitted = match state.keys.as_ref().map(|keys| keys.admit(token)) {
-        Some(Ok(principal)) => Ok(principal),
+        Some(Ok(principal)) => {
+            if state.admitted_databases.is_some() && route_owner != state.scope {
+                return ApiError::unauthorized().into_response();
+            }
+            if project_operation && principal.scope().admits_global(Verbs::ADMIN) {
+                verified_project = Some(crate::delegated_identity::VerifiedProjectScope {
+                    tenant_id: state.scope.0.clone(), project_id: state.scope.1.clone(),
+                });
+            }
+            Ok(principal)
+        },
         _ => match (&state.delegated_identity, database_of(request.uri().path())) {
             (Some(identity), Some(database)) => identity
                 .admit(
                     token,
-                    &state.scope.0,
-                    &state.scope.1,
+                    &route_owner.0,
+                    &route_owner.1,
                     database,
                     collection_of(request.uri().path()),
                     required_verb(request.method(), request.uri().path()),
                 )
                 .await
                 .map_err(|_| ApiError::unauthorized()),
+            (Some(identity), None) if project_operation => {
+                let tenant = request.headers().get("x-terrascale-tenant-id").and_then(|value| value.to_str().ok());
+                let project = request.headers().get("x-terrascale-project-id").and_then(|value| value.to_str().ok());
+                match (tenant, project) {
+                    (Some(tenant), Some(project)) => match identity.admit_project(token, tenant, project).await {
+                        Ok((principal, scope)) => { verified_project = Some(scope); Ok(principal) },
+                        Err(_) => Err(ApiError::unauthorized()),
+                    },
+                    _ => Err(ApiError::unauthorized()),
+                }
+            },
             _ => Err(ApiError::unauthorized()),
         },
     };
+    if let Some(scope) = verified_project { request.extensions_mut().insert(scope); }
     match admitted {
         Ok(principal) => {
             let verb = required_verb(request.method(), request.uri().path());
@@ -1437,6 +1498,12 @@ fn unix_seconds() -> u64 {
 /// `WRITE`, and database lifecycle, indexes, schema, webhooks, and exports
 /// ride `ADMIN` (the [`crate::api_keys::Verbs`] contract). Unknown mutating
 /// paths fail closed toward `ADMIN`.
+fn is_project_administration(method: &Method, path: &str) -> bool {
+    (*method == Method::POST && path == "/api/v1/databases")
+        || (*method == Method::GET && path.strip_prefix("/api/v1/operations/")
+            .is_some_and(|id| !id.is_empty() && !id.contains('/')))
+}
+
 fn required_verb(method: &Method, path: &str) -> Verbs {
     if path.strip_prefix("/api/v1/operations/").is_some_and(|id| !id.is_empty() && !id.contains('/')) {
         return Verbs::ADMIN;
@@ -1544,19 +1611,21 @@ async fn list_databases(State(state): State<Arc<ApiState>>) -> Response {
 }
 
 #[utoipa::path(get, path = "/api/v1/operations/{operation_id}", responses((status = 200, description = "Durable provisioning operation", body = crate::provisioning::ProvisioningOperation)))]
-async fn get_provisioning_operation(State(state): State<Arc<ApiState>>, Path(operation_id): Path<String>) -> Response {
+async fn get_provisioning_operation(State(state): State<Arc<ApiState>>, Path(operation_id): Path<String>, scope: Option<Extension<crate::delegated_identity::VerifiedProjectScope>>) -> Response {
+    let Some(Extension(scope)) = scope else { return ApiError::control_unavailable().into_response(); };
     let Some(authority) = &state.provisioning else { return ApiError::control_unavailable().into_response(); };
-    match authority.status(&operation_id).await {
+    match authority.status(&scope, &operation_id).await {
         Ok(operation) => match serde_json::to_string(&operation) {
             Ok(body) => json_response(StatusCode::OK, body),
             Err(_) => ApiError::control_unavailable().into_response(),
         },
-        Err(_) => ApiError::control_unavailable().into_response(),
+        Err(error) => provisioning_error(error).into_response(),
     }
 }
 
 async fn create_provisioned_database(
     authority: &crate::provisioning::ProvisioningClient,
+    scope: &crate::delegated_identity::VerifiedProjectScope,
     body: &str,
 ) -> Response {
     #[derive(serde::Deserialize)]
@@ -1582,23 +1651,38 @@ async fn create_provisioned_database(
         }
     };
     match authority
-        .create(&request.name, &request.placement, &request.residency, &request.operation_id)
+        .create(scope, &request.name, &request.placement, &request.residency, &request.operation_id)
         .await
     {
         Ok(operation) => match serde_json::to_string(&operation) {
             Ok(body) => json_response(StatusCode::ACCEPTED, body),
             Err(_) => ApiError::control_unavailable().into_response(),
         },
-        Err(_) => ApiError::control_unavailable().into_response(),
+        Err(error) => provisioning_error(error).into_response(),
     }
+}
+
+fn provisioning_error(error: crate::provisioning::ProvisioningError) -> ApiError {
+    use crate::provisioning::ProvisioningError;
+    let (status, code, message, fix) = match error {
+        ProvisioningError::InvalidRequest => (StatusCode::BAD_REQUEST, "invalid_provisioning_request",
+            "the provisioning request does not satisfy the database policy", "verify the database name, placement, residency and operation identifier"),
+        ProvisioningError::Conflict => (StatusCode::CONFLICT, "provisioning_conflict",
+            "the request conflicts with an existing immutable database or operation", "retry the original request with its unchanged operation identifier"),
+        ProvisioningError::Forbidden => (StatusCode::FORBIDDEN, "provisioning_forbidden",
+            "the authority denied provisioning access", "use credentials authorized to administer this project"),
+        ProvisioningError::Unavailable => return ApiError::control_unavailable(),
+    };
+    ApiError { status, code, message: message.into(), fix: fix.into(), placement: None }
 }
 
 /// Creates one database from an explicit placement and optional residency
 /// constraint (D-52).
 #[utoipa::path(post, path = "/api/v1/databases", responses((status = 201, description = "Database created"), (status = 202, description = "Durable provisioning accepted; not ready to serve", body = crate::provisioning::ProvisioningOperation)))]
-async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Response {
+async fn create_database(State(state): State<Arc<ApiState>>, scope: Option<Extension<crate::delegated_identity::VerifiedProjectScope>>, body: String) -> Response {
     if let Some(authority) = &state.provisioning {
-        return create_provisioned_database(authority, &body).await;
+        let Some(Extension(scope)) = scope else { return ApiError::control_unavailable().into_response(); };
+        return create_provisioned_database(authority, &scope, &body).await;
     }
     let Some(control) = state.control.clone() else {
         return ApiError::control_unavailable().into_response();
@@ -1980,6 +2064,7 @@ impl Durability {
 
 struct WriteDurability {
     class: Durability,
+    uniform_context: Option<std::collections::BTreeMap<String, u64>>,
     progress: Arc<crate::replication_runtime::ReplicationProgress>,
     scope: terrabase_cluster::production::DatabaseRouteScope,
     timeout: std::time::Duration,
@@ -1999,7 +2084,7 @@ fn durability_unknown() -> ApiError {
     ApiError {
         status: StatusCode::SERVICE_UNAVAILABLE,
         code: "commit_unknown",
-        message: "the write committed locally but its requested replication durability is unconfirmed".into(),
+        message: "the write may have committed; its requested replication durability is unconfirmed".into(),
         fix: "retry the identical request with its original Idempotency-Key; do not mint a new key".into(),
         placement: None,
     }
@@ -2008,7 +2093,6 @@ fn durability_unknown() -> ApiError {
 impl WriteDurability {
     async fn prepare(
         state: &ApiState,
-        database: &str,
         engine: &terrabase::Engine,
         engine_scope: &terrabase::types::TenantScope,
         headers: &axum::http::HeaderMap,
@@ -2016,9 +2100,10 @@ impl WriteDurability {
         let class = Durability::of_header(headers)?;
         let unavailable = || durability_unavailable(class == Durability::Global);
         let progress = state.replication_progress.clone().ok_or_else(unavailable)?;
-        let scope = terrabase_cluster::production::DatabaseRouteScope::try_new(
-            &state.scope.0, &state.scope.1, database,
-        ).map_err(|_| unavailable())?;
+        let owner = engine.database_owner();
+        let scope = terrabase_cluster::production::DatabaseRouteScope::new(
+            owner.tenant(), owner.project(), owner.database(),
+        );
         let timeout_ms = match headers.get("x-terrascale-timeout-ms") {
             Some(value) => value.to_str().ok().and_then(|value| value.parse::<u64>().ok())
                 .filter(|value| *value > 0 && *value <= 30_000)
@@ -2026,12 +2111,26 @@ impl WriteDurability {
             None => 5_000,
         };
         let timeout = std::time::Duration::from_millis(timeout_ms);
-        if class == Durability::Global {
+        // Sequence zero checks the accepted assignment and fencing state;
+        // it does not establish durability for any committed operation.
+        progress.wait_regional(scope, 0, timeout).await.map_err(|_| unavailable())?;
+        let uniform_context = if class == Durability::Global {
             let context = engine.durable_origin_prefixes(engine_scope)
                 .map_err(|_| ApiError::storage_failure())?;
             progress.wait_uniform(scope, &context, timeout).await.map_err(|_| unavailable())?;
+            Some(context)
+        } else {
+            None
+        };
+        Ok(Self { class, uniform_context, progress, scope, timeout })
+    }
+
+    fn guard(&self, transaction: &mut terrabase::Transaction<'_>) -> Result<(), ApiError> {
+        if let Some(context) = &self.uniform_context {
+            transaction.require_uniform_context(context.clone())
+                .map_err(|_| durability_unavailable(true))?;
         }
-        Ok(Self { class, progress, scope, timeout })
+        Ok(())
     }
 
     async fn confirm(
@@ -2123,7 +2222,7 @@ async fn batch_documents(
         Ok(operations) => operations,
         Err(error) => return error.into_response(),
     };
-    let durability = match WriteDurability::prepare(&state, &name, engine, &scope, &headers).await {
+    let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -2146,6 +2245,9 @@ async fn batch_documents(
         if let Err((code, message)) = stage_batch_operation(&mut transaction, &collection, item) {
             return batch_refusal(index, code, message);
         }
+    }
+    if let Err(error) = durability.guard(&mut transaction) {
+        return error.into_response();
     }
     match transaction.commit(LocalDurability::Synced) {
         CommitOutcome::Committed(receipt) => {
@@ -2420,28 +2522,49 @@ fn refresh_session(
 
 /// One document's route context: the host engine for the named database.
 pub(crate) fn document_host(
-    state: &ApiState,
-    name: &str,
-) -> Result<std::sync::Arc<terrabase_tbep::member_host::MemberHost>, ApiError> {
-    // The catalog is an open-file cache, not the source of database
-    // existence or placement. Resolve the durable registry first so an
-    // unknown/deleted name can never cause `host_for` to create a local file.
-    let Some(control) = state.control.clone() else {
-        return Err(ApiError::control_unavailable());
-    };
-    let record = match control.get(name) {
-        Ok(Some(record)) if record.deleted => return Err(ApiError::database_not_found(name)),
-        Ok(Some(record)) => record,
-        Ok(None) => return Err(ApiError::database_not_found(name)),
-        Err(error) => return Err(ApiError::control(error)),
-    };
+    state: &ApiState, name: &str,
+) -> Result<Arc<terrabase_tbep::member_host::MemberHost>, ApiError> {
+    if let Some(admitted) = &state.admitted_databases {
+        let database = admitted.resolve(name).map_err(|_| ApiError::storage_failure())?
+            .ok_or_else(|| ApiError::database_not_found(name))?;
+        let record = database.public_record();
+        if !record.placement.contains(&state.region) {
+            return Err(ApiError::misdirected(&record.placement, record.residency_header()));
+        }
+        return Ok(database.host.clone());
+    }
+    let record = database_record(state, name)?;
+    if record.deleted { return Err(ApiError::database_not_found(name)); }
     if !record.placement.contains(&state.region) {
         return Err(ApiError::misdirected(&record.placement, record.residency_header()));
     }
-    let Some(catalog) = state.catalog.clone() else {
-        return Err(ApiError::control_unavailable());
-    };
+    let catalog = state.catalog.as_ref().ok_or_else(ApiError::control_unavailable)?;
     catalog.host_for(&state.scope.0, &state.scope.1, name).map_err(|_| ApiError::storage_failure())
+}
+
+pub(crate) fn database_record(state: &ApiState, name: &str) -> Result<crate::control::DatabaseRecord, ApiError> {
+    if let Some(admitted) = &state.admitted_databases {
+        return admitted.resolve(name).map_err(|_| ApiError::storage_failure())?
+            .map(|database| database.public_record()).ok_or_else(|| ApiError::database_not_found(name));
+    }
+    state.control.as_ref().ok_or_else(ApiError::control_unavailable)?.get(name)
+        .map_err(ApiError::control)?.ok_or_else(|| ApiError::database_not_found(name))
+}
+
+pub(crate) fn database_records(state: &ApiState) -> Result<Vec<crate::control::DatabaseRecord>, ApiError> {
+    if let Some(admitted) = &state.admitted_databases {
+        return admitted.records().map_err(|_| ApiError::storage_failure());
+    }
+    state.control.as_ref().ok_or_else(ApiError::control_unavailable)?.list().map_err(ApiError::control)
+}
+
+pub(crate) fn database_owner_scope(state: &ApiState, name: &str) -> Result<(String, String), ApiError> {
+    if let Some(admitted) = &state.admitted_databases {
+        let database = admitted.resolve(name).map_err(|_| ApiError::storage_failure())?
+            .ok_or_else(|| ApiError::database_not_found(name))?;
+        return Ok((database.record.tenant_id.clone(), database.record.project_id.clone()));
+    }
+    Ok(state.scope.clone())
 }
 
 /// Admits one read or query against the database's D-64 rate guard (E-10).
@@ -2766,7 +2889,8 @@ fn time_travel_document(
         }
         .into_response();
     }
-    let Ok(tenant) = local_tenant() else {
+    let owner = match database_owner_scope(state, name) { Ok(owner) => owner, Err(error) => return error.into_response() };
+    let Ok(tenant) = terrabase::types::TenantId::try_new(&owner.0) else {
         return ApiError::control_unavailable().into_response();
     };
     match state.timetravel.read_at(name, &tenant, at_seconds, collection, id) {
@@ -2877,7 +3001,7 @@ async fn put_document(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let durability = match WriteDurability::prepare(&state, &name, engine, &scope, &headers).await {
+    let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -2916,6 +3040,9 @@ async fn put_document(
             placement: None,
         }
         .into_response();
+    }
+    if let Err(error) = durability.guard(&mut transaction) {
+        return error.into_response();
     }
     match transaction.commit(LocalDurability::Synced) {
         CommitOutcome::Committed(receipt) => {
@@ -2997,7 +3124,7 @@ async fn patch_document(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let durability = match WriteDurability::prepare(&state, &name, engine, &scope, &headers).await {
+    let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -3040,6 +3167,9 @@ async fn patch_document(
         }
         .into_response();
     }
+    if let Err(error) = durability.guard(&mut transaction) {
+        return error.into_response();
+    }
     match transaction.commit(LocalDurability::Synced) {
         CommitOutcome::Committed(receipt) => {
             if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
@@ -3061,10 +3191,11 @@ async fn patch_document(
             with_session(&mut response, &token);
             response
         }
-        _ => ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "commit_failed",
-            message: "the engine did not commit the patch".into(),
+        CommitOutcome::Unknown(_) => durability_unknown().into_response(),
+        CommitOutcome::Rejected(reason) => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "commit_rejected",
+            message: format!("the engine refused the patch: {reason:?}"),
             fix: "check whether it landed; retry the identical request with its original Idempotency-Key".into(),
             placement: None,
         }
@@ -3170,7 +3301,7 @@ async fn delete_document(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let durability = match WriteDurability::prepare(&state, &name, engine, &scope, &headers).await {
+    let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -3181,7 +3312,16 @@ async fn delete_document(
         return error.into_response();
     }
     if !present {
-        return document_not_found(collection.as_str(), id.as_str()).into_response();
+        // A timed-out delete has already removed its document. Only a
+        // known committed identity may reach the engine's digest-checked
+        // replay path; a fresh key must still receive not_found.
+        let replay = has_idempotency_key(&headers) && matches!(
+            engine.resolve_commit(&scope, transaction.operation_id().clone()),
+            Ok(terrabase::DurableResolution::Committed(_))
+        );
+        if !replay {
+            return document_not_found(collection.as_str(), id.as_str()).into_response();
+        }
     }
     let expected = if has_idempotency_key(&headers) {
         ExpectedVersion::Any
@@ -3198,6 +3338,9 @@ async fn delete_document(
     // existence, and this route read the target above); the commit's
     // conflict rejection is the version check.
     transaction.delete_in_collection(&collection, id.clone(), expected);
+    if let Err(error) = durability.guard(&mut transaction) {
+        return error.into_response();
+    }
     match transaction.commit(LocalDurability::Synced) {
         CommitOutcome::Committed(receipt) => {
             if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
@@ -3211,10 +3354,11 @@ async fn delete_document(
             with_session(&mut response, &token);
             response
         }
-        _ => ApiError {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            code: "commit_failed",
-            message: "the engine did not commit the deletion".into(),
+        CommitOutcome::Unknown(_) => durability_unknown().into_response(),
+        CommitOutcome::Rejected(reason) => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "commit_rejected",
+            message: format!("the engine refused the deletion: {reason:?}"),
             fix: "re-read to see whether it landed, then retry".into(),
             placement: None,
         }
@@ -3660,7 +3804,9 @@ fn local_tenant() -> Result<terrabase::types::TenantId, ()> {
 /// each database under its stable tenant label, so one fixed label serves
 /// the local stack.
 fn document_scope(engine: &terrabase::Engine) -> Result<terrabase::types::TenantScope, ()> {
-    let tenant = local_tenant()?;
+    let tenant = if engine.owner_scope_enforced() {
+        terrabase::types::TenantId::try_new(&engine.database_owner().tenant().to_string()).map_err(|_| ())?
+    } else { local_tenant()? };
     Ok(engine.scope_for(&tenant))
 }
 
@@ -3810,6 +3956,26 @@ mod tests {
     use tower::util::ServiceExt;
 
     #[tokio::test]
+    async fn delegated_identity_project_selectors_require_live_administration() {
+        let tenant = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let project = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+        let (verifier, reply, task) = crate::delegated_identity::tests::authority_for(tenant, project, "*", "admin").await;
+        let mut state = state();
+        Arc::get_mut(&mut state).unwrap().delegated_identity = Some(Arc::new(verifier));
+        let app = router(state);
+        let request = || Request::builder().method("POST").uri("/api/v1/databases")
+            .header("authorization", "Bearer delegated-token")
+            .header("x-terrascale-tenant-id", tenant).header("x-terrascale-project-id", project)
+            .body(Body::empty()).unwrap();
+        let admitted = app.clone().oneshot(request()).await.unwrap();
+        assert_ne!(admitted.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(admitted.headers()["x-terrascale-principal"], "user-1");
+        reply.lock().unwrap()["scopes"] = serde_json::json!(["database:read"]);
+        assert_eq!(app.oneshot(request()).await.unwrap().status(), StatusCode::UNAUTHORIZED);
+        task.abort();
+    }
+
+    #[tokio::test]
     async fn delegated_identity_is_live_on_actual_member_router() {
         let (verifier, reply, task) = crate::delegated_identity::tests::authority().await;
         let mut state = state();
@@ -3839,6 +4005,7 @@ mod tests {
         Arc::new(ApiState {
             development: Arc::default(),
             provisioning: None,
+            admitted_databases: None,
             replication_progress: None,
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
@@ -3886,6 +4053,7 @@ mod tests {
         Arc::new(ApiState {
             development: Arc::default(),
             provisioning: None,
+            admitted_databases: None,
             replication_progress: None,
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),

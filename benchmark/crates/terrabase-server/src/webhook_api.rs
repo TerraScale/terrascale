@@ -45,6 +45,8 @@ pub const MAX_WEBHOOK_BODY_BYTES: usize = 64 * 1024;
 pub const MAX_DELIVERY_BYTES: usize = 1_048_576;
 /// Maximum publications read in one journal page.
 pub const MAX_JOURNAL_PAGE: usize = 256;
+/// Maximum outbound requests per database dispatch tick, independent of endpoint count.
+pub const MAX_DISPATCH_ATTEMPTS: usize = 8;
 /// Maximum attempts, including the first delivery attempt.
 pub const MAX_ATTEMPTS: u32 = 8;
 /// The retry horizon.  A publication never remains retryable forever.
@@ -138,7 +140,7 @@ pub struct Publication {
     pub write_index: u32,
     /// Stable operation identity from the publication journal.
     pub event_id: String,
-    /// Canonical revision bytes, already encoded by the shared view engine.
+    /// Deterministic MessagePack event bytes reconstructed from the retained commit.
     pub body: Vec<u8>,
 }
 
@@ -239,7 +241,13 @@ pub trait WebhookStorage: Send + Sync + 'static {
     ///
     /// # Errors
     /// Returns conflict when an existing identity names another endpoint or is deleted.
-    fn create_endpoint_idempotent(&self, scope: &TenantScope, endpoint: &str, now: u64, id: &str) -> Result<WebhookEndpoint, StorageError>;
+    fn create_endpoint_idempotent(
+        &self,
+        scope: &TenantScope,
+        endpoint: &str,
+        now: u64,
+        id: &str,
+    ) -> Result<WebhookEndpoint, StorageError>;
     /// Removes an endpoint during create rollback or explicit deletion.
     ///
     /// # Errors
@@ -452,9 +460,14 @@ impl EngineWebhookStorage {
     ///
     /// # Errors
     /// Returns unavailable or malformed durable metadata.
-    pub fn dispatch_cursor(&self, scope: &TenantScope) -> Result<Option<ChangeCheckpoint>, StorageError> {
+    pub fn dispatch_cursor(
+        &self,
+        scope: &TenantScope,
+    ) -> Result<Option<ChangeCheckpoint>, StorageError> {
         self.read_document(scope, "dispatch", "cursor")?
-            .map(|document| journal::checkpoint_from_value(document.value()).ok_or(StorageError::Unavailable))
+            .map(|document| {
+                journal::checkpoint_from_value(document.value()).ok_or(StorageError::Unavailable)
+            })
             .transpose()
     }
 
@@ -473,7 +486,8 @@ impl EngineWebhookStorage {
         }
         let _lock = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
         let document = self.read_document(scope, "dispatch", "cursor")?;
-        let current = document.as_ref()
+        let current = document
+            .as_ref()
             .map(|doc| journal::checkpoint_from_value(doc.value()).ok_or(StorageError::Unavailable))
             .transpose()?;
         if current != expected {
@@ -483,8 +497,15 @@ impl EngineWebhookStorage {
             return Ok(());
         }
         let next = next.ok_or(StorageError::Conflict)?;
-        self.write_document(scope, "dispatch", "cursor", journal::checkpoint_value(next),
-            document.as_ref().map_or(ExpectedVersion::New, |doc| ExpectedVersion::Exact(doc.version)))
+        self.write_document(
+            scope,
+            "dispatch",
+            "cursor",
+            journal::checkpoint_value(next),
+            document
+                .as_ref()
+                .map_or(ExpectedVersion::New, |doc| ExpectedVersion::Exact(doc.version)),
+        )
     }
 
     fn read_document(
@@ -702,15 +723,39 @@ impl WebhookStorage for EngineWebhookStorage {
         Ok(record)
     }
 
-    fn create_endpoint_idempotent(&self, scope: &TenantScope, endpoint: &str, now: u64, id: &str) -> Result<WebhookEndpoint, StorageError> {
+    fn create_endpoint_idempotent(
+        &self,
+        scope: &TenantScope,
+        endpoint: &str,
+        now: u64,
+        id: &str,
+    ) -> Result<WebhookEndpoint, StorageError> {
         let _guard = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
         if let Some(existing) = self.endpoint(scope, id)? {
-            return if existing.endpoint == endpoint && !existing.deleted { Ok(existing) } else { Err(StorageError::Conflict) };
+            return if existing.endpoint == endpoint && !existing.deleted {
+                Ok(existing)
+            } else {
+                Err(StorageError::Conflict)
+            };
         }
-        let record = WebhookEndpoint { id: id.to_owned(), endpoint: endpoint.to_owned(), created_at: now, deleted: false };
-        match self.write_document(scope, WEBHOOK_ENDPOINTS_COLLECTION, id, endpoint_value(&record), ExpectedVersion::New) {
+        let record = WebhookEndpoint {
+            id: id.to_owned(),
+            endpoint: endpoint.to_owned(),
+            created_at: now,
+            deleted: false,
+        };
+        match self.write_document(
+            scope,
+            WEBHOOK_ENDPOINTS_COLLECTION,
+            id,
+            endpoint_value(&record),
+            ExpectedVersion::New,
+        ) {
             Ok(()) => Ok(record),
-            Err(StorageError::Conflict) => self.endpoint(scope, id)?.filter(|existing| existing.endpoint == endpoint && !existing.deleted).ok_or(StorageError::Conflict),
+            Err(StorageError::Conflict) => self
+                .endpoint(scope, id)?
+                .filter(|existing| existing.endpoint == endpoint && !existing.deleted)
+                .ok_or(StorageError::Conflict),
             Err(error) => Err(error),
         }
     }
@@ -779,7 +824,10 @@ impl WebhookStorage for EngineWebhookStorage {
         let id = delivery_id(endpoint_id, &publication.event_id);
         if let Some(document) = self.read_document(scope, WEBHOOK_DELIVERIES_COLLECTION, &id)? {
             let record = delivery_from_document(&document).ok_or(StorageError::Unavailable)?;
-            if record.event_id != publication.event_id || record.revision != publication.revision || record.write_index != publication.write_index {
+            if record.event_id != publication.event_id
+                || record.revision != publication.revision
+                || record.write_index != publication.write_index
+            {
                 return Err(StorageError::Conflict);
             }
             return Ok(record);
@@ -989,7 +1037,12 @@ pub trait WebhookSecrets: Send + Sync + 'static {
     ///
     /// # Errors
     /// Returns a missing, revoked, or unauthorized creation secret.
-    fn creation(&self, scope: &TenantScope, endpoint_id: &str, region: &str) -> Result<Vec<u8>, SecretError>;
+    fn creation(
+        &self,
+        scope: &TenantScope,
+        endpoint_id: &str,
+        region: &str,
+    ) -> Result<Vec<u8>, SecretError>;
     /// Replaces the signing key while retaining at most one bounded previous key.
     ///
     /// # Errors
@@ -1432,26 +1485,56 @@ impl WebhookService {
     ///
     /// # Errors
     /// Returns creation or authorized secret retrieval failures.
-    pub fn create_with_secret(&self, scope: &TenantScope, input: &CreateWebhook, operation: Option<&str>) -> Result<WebhookSecretResponse, WebhookError> {
+    pub fn create_with_secret(
+        &self,
+        scope: &TenantScope,
+        input: &CreateWebhook,
+        operation: Option<&str>,
+    ) -> Result<WebhookSecretResponse, WebhookError> {
         use base64::Engine as _;
         let endpoint = validate_endpoint(&input.endpoint)?;
         self.delivery.validate_target(&endpoint).map_err(WebhookError::delivery)?;
         let id = if let Some(operation) = operation {
-            if operation.is_empty() || operation.len() > 128 || operation.chars().any(char::is_control) { return Err(WebhookError::invalid_request("invalid webhook idempotency key")); }
-            let bytes = serde_json::to_vec(&(&scope.tenant, &scope.project, &scope.database, operation)).map_err(|_| WebhookError::misconfigured())?;
+            if operation.is_empty()
+                || operation.len() > 128
+                || operation.chars().any(char::is_control)
+            {
+                return Err(WebhookError::invalid_request("invalid webhook idempotency key"));
+            }
+            let bytes =
+                serde_json::to_vec(&(&scope.tenant, &scope.project, &scope.database, operation))
+                    .map_err(|_| WebhookError::misconfigured())?;
             blake3::hash(&bytes).to_hex().to_string()
-        } else { terrabase::identity::process_generator().generate().to_text() };
-        for existing in self.list(scope)? { self.guard.reserve(scope, &existing.id).map_err(|_| WebhookError::guard())?; }
+        } else {
+            terrabase::identity::process_generator().generate().to_text()
+        };
+        for existing in self.list(scope)? {
+            self.guard.reserve(scope, &existing.id).map_err(|_| WebhookError::guard())?;
+        }
         self.guard.reserve(scope, &id).map_err(|_| WebhookError::guard())?;
-        let webhook = match self.storage.create_endpoint_idempotent(scope, &endpoint, self.clock.now(), &id) {
+        let webhook = match self.storage.create_endpoint_idempotent(
+            scope,
+            &endpoint,
+            self.clock.now(),
+            &id,
+        ) {
             Ok(webhook) => webhook,
-            Err(error) => { self.guard.release(scope, &id); return Err(WebhookError::storage(error)); }
+            Err(error) => {
+                if self.storage.endpoint(scope, &id).is_ok_and(|endpoint| endpoint.is_none()) {
+                    self.guard.release(scope, &id);
+                }
+                return Err(WebhookError::storage(error));
+            }
         };
         // A provider outage leaves the scoped operation resumable. No delivery
         // can proceed until its encrypted key has been provisioned.
         self.secrets.provision(scope, &id, &self.region).map_err(WebhookError::secret)?;
-        let secret = self.secrets.creation(scope, &id, &self.region).map_err(WebhookError::secret)?;
-        Ok(WebhookSecretResponse { webhook, secret: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret) })
+        let secret =
+            self.secrets.creation(scope, &id, &self.region).map_err(WebhookError::secret)?;
+        Ok(WebhookSecretResponse {
+            webhook,
+            secret: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret),
+        })
     }
 
     /// Rotates one live endpoint signing secret with a bounded migration window.
@@ -1587,6 +1670,7 @@ impl WebhookService {
             self.journal.page(scope, cursor, MAX_JOURNAL_PAGE).map_err(WebhookError::storage)?;
         let publications = page.publications;
         let mut report = DispatchReport { cursor, ..DispatchReport::default() };
+        let started = std::time::Instant::now();
         for endpoint in endpoints {
             if endpoint.deleted {
                 continue;
@@ -1606,6 +1690,11 @@ impl WebhookService {
                 .due_deliveries(scope, &endpoint.id, now, MAX_JOURNAL_PAGE)
                 .map_err(WebhookError::storage)?;
             for row in due {
+                if report.attempted >= MAX_DISPATCH_ATTEMPTS
+                    || started.elapsed() >= std::time::Duration::from_secs(10)
+                {
+                    break;
+                }
                 if self.attempt(scope, &endpoint.id, &row, self.clock.now())? {
                     report.attempted = report.attempted.saturating_add(1);
                 }
@@ -1660,8 +1749,13 @@ impl WebhookService {
             .journal
             .page(scope, journal::before_publication(row)?, 1)
             .map_err(WebhookError::storage)?
-            .publications.into_iter()
-            .find(|item| item.revision == row.revision && item.write_index == row.write_index && item.event_id == row.event_id)
+            .publications
+            .into_iter()
+            .find(|item| {
+                item.revision == row.revision
+                    && item.write_index == row.write_index
+                    && item.event_id == row.event_id
+            })
             .ok_or_else(WebhookError::not_found)?;
         let timestamp = now.to_string();
         let mut signature = format!("v1={}", sign_delivery(&secret, &timestamp, &publication.body));
@@ -1838,9 +1932,28 @@ pub async fn create_webhook(
     let Ok(input) = serde_json::from_slice::<CreateWebhook>(&body) else {
         return WebhookError::invalid_request("webhook request is invalid").into_response();
     };
-    blocking_webhook_response(move || match state.service.create_with_secret(&scope, &input, None) {
-        Ok(webhook) => json_response(StatusCode::CREATED, &webhook),
-        Err(error) => error.into_response(),
+    let operation = match headers.get("idempotency-key") {
+        Some(value) => match value.to_str() {
+            Ok(value) => Some(value.to_owned()),
+            Err(_) => {
+                return WebhookError::invalid_request("invalid webhook idempotency key")
+                    .into_response();
+            }
+        },
+        None => None,
+    };
+    blocking_webhook_response(move || {
+        match state.service.create_with_secret(&scope, &input, operation.as_deref()) {
+            Ok(webhook) => {
+                let mut response = json_response(StatusCode::CREATED, &webhook);
+                response.headers_mut().insert(
+                    axum::http::header::CACHE_CONTROL,
+                    HeaderValue::from_static("no-store"),
+                );
+                response
+            }
+            Err(error) => error.into_response(),
+        }
     })
     .await
 }
@@ -1960,7 +2073,11 @@ impl WebhookError {
     }
     fn storage(error: StorageError) -> Self {
         match error {
-            StorageError::Conflict => Self { code: "webhook_conflict", status: StatusCode::CONFLICT, detail: "webhook operation identity conflicts with durable state" },
+            StorageError::Conflict => Self {
+                code: "webhook_conflict",
+                status: StatusCode::CONFLICT,
+                detail: "webhook operation identity conflicts with durable state",
+            },
             StorageError::NotFound => Self::not_found(),
             StorageError::Unavailable => Self::misconfigured(),
         }
@@ -2465,14 +2582,23 @@ mod tests {
         )
         .expect("owner scope");
         let storage = EngineWebhookStorage::new(Arc::clone(&engine));
-        assert_eq!(storage.dispatch_cursor(&scope), Ok(0));
-        storage.checkpoint_dispatch(&scope, 0, 7).expect("checkpoint");
-        assert_eq!(storage.checkpoint_dispatch(&scope, 0, 8), Err(StorageError::Conflict));
+        assert_eq!(storage.dispatch_cursor(&scope), Ok(None));
+        storage
+            .checkpoint_dispatch(&scope, None, Some(ChangeCheckpoint::after(7, 1)))
+            .expect("checkpoint");
+        assert_eq!(
+            storage.checkpoint_dispatch(&scope, None, Some(ChangeCheckpoint::after(8, 1))),
+            Err(StorageError::Conflict)
+        );
         let endpoint =
             storage.create_endpoint(&scope, "https://hooks.example/events", 42).expect("endpoint");
         assert_eq!(storage.endpoint(&scope, &endpoint.id), Ok(Some(endpoint.clone())));
-        let publication =
-            Publication { revision: 7, event_id: "event-7".into(), body: b"body".to_vec() };
+        let publication = Publication {
+            revision: 7,
+            write_index: 1,
+            event_id: "event-7".into(),
+            body: b"body".to_vec(),
+        };
         let delivery =
             storage.ensure_delivery(&scope, &endpoint.id, &publication, 42).expect("delivery");
         assert_eq!(
@@ -2513,6 +2639,7 @@ mod tests {
                 .expect("full-range endpoint timestamp");
             let publication = Publication {
                 revision: value,
+                write_index: 1,
                 event_id: format!("event-{value}"),
                 body: b"body".to_vec(),
             };
@@ -2529,10 +2656,20 @@ mod tests {
                 .expect("reopen"),
         );
         let storage = EngineWebhookStorage::new(Arc::clone(&reopened));
-        assert_eq!(storage.dispatch_cursor(&scope), Ok(7));
+        assert_eq!(storage.dispatch_cursor(&scope), Ok(Some(ChangeCheckpoint::after(7, 1))));
         let engine_scope = webhook_engine_scope(&reopened, &scope).expect("scope");
         assert!(
-            reopened.journal_rows(&engine_scope, 0, 256).expect("journal").is_empty(),
+            reopened
+                .streams()
+                .replay_sync_journal(
+                    &engine_scope,
+                    None,
+                    256,
+                    &terrabase::types::Cancellation::new()
+                )
+                .expect("retained journal")
+                .records()
+                .is_empty(),
             "internal webhook state must not enter customer journal"
         );
         for (endpoint, delivery) in boundary_records {

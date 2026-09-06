@@ -644,6 +644,21 @@ impl DatabaseKeyLease {
         Ok(Self { metadata, key, provider, expires_at })
     }
 
+    pub(super) fn from_adapter_until(
+        metadata: KeyVersionMetadata,
+        key: DatabaseKey,
+        expires_at: Instant,
+    ) -> Result<Self, EncryptionError> {
+        let remaining = expires_at
+            .checked_duration_since(Instant::now())
+            .filter(|duration| !duration.is_zero())
+            .ok_or(EncryptionError::KeyLeaseExpired)?;
+        if remaining > MAX_DATABASE_KEY_LEASE {
+            return Err(EncryptionError::InvalidKeyLease);
+        }
+        Ok(Self { metadata, key, provider: KeyProviderIdentity::OciVault, expires_at })
+    }
+
     #[cfg(test)]
     pub(crate) fn test_oci_vault(
         metadata: KeyVersionMetadata,

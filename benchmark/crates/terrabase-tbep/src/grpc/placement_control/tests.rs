@@ -50,7 +50,15 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
         [PRINCIPAL.to_owned()].into(),
     )
     .unwrap();
-    let server = Arc::new(PlacementControlServer::new(journal, config, BTreeSet::new()).unwrap());
+    let server = Arc::new(
+        PlacementControlServer::new(
+            journal,
+            Arc::new(fixture.open_auth()),
+            config,
+            BTreeSet::new(),
+        )
+        .unwrap(),
+    );
     let (ca, certificate, key, client_certificate, client_key) = tls_material();
     let listener =
         server.bind_tls("127.0.0.1:0".parse().unwrap(), &certificate, &key, &ca).await.unwrap();
@@ -67,6 +75,29 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
         Endpoint::from_shared(format!("https://{address}")).unwrap().tls_config(tls).unwrap();
     let channel = endpoint.connect().await.unwrap();
     let mut client = PlacementControlServiceClient::new(channel.clone());
+    let mut auth_client =
+        pb::auth_group_bootstrap_service_client::AuthGroupBootstrapServiceClient::new(
+            channel.clone(),
+        );
+    let identity = auth_client
+        .identity(request(pb::AuthStorageIdentityRequest {}, None))
+        .await
+        .unwrap()
+        .into_inner();
+    let grant = crate::auth_bootstrap::tests::grant(&fixture, &identity);
+    let auth_receipt =
+        auth_client.bootstrap(request(grant.clone(), None)).await.unwrap().into_inner();
+    assert_eq!(auth_receipt.grant, grant.grant);
+    assert_eq!(auth_receipt.status, pb::AuthGroupBootstrapStatus::Persisted as i32);
+    assert_eq!(
+        auth_client.bootstrap(request(grant.clone(), None)).await.unwrap().into_inner(),
+        auth_receipt
+    );
+    assert_eq!(
+        auth_client.bootstrap(Request::new(grant)).await.unwrap_err().code(),
+        Code::Unauthenticated
+    );
+
     assert_eq!(
         client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap_err().code(),
         Code::NotFound
@@ -136,7 +167,13 @@ async fn metadata_without_peer_certificate_cannot_reach_journal() {
     )
     .unwrap();
     let server = Arc::new(
-        PlacementControlServer::new(Arc::clone(&journal), config, BTreeSet::new()).unwrap(),
+        PlacementControlServer::new(
+            Arc::clone(&journal),
+            Arc::new(fixture.open_auth()),
+            config,
+            BTreeSet::new(),
+        )
+        .unwrap(),
     );
     let error = PlacementControlService::stage(
         &server,

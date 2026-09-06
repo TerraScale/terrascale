@@ -59,6 +59,7 @@
 #![deny(missing_docs)]
 
 pub mod anti_entropy;
+pub mod auth_bootstrap;
 pub mod catalog;
 pub mod engine_host;
 pub mod grpc;

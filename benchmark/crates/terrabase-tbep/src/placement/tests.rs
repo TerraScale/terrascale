@@ -52,6 +52,40 @@ impl Fixture {
         Self { root, boundary, request }
     }
 
+    pub fn open_auth(&self) -> crate::auth_bootstrap::AuthBootstrapJournal {
+        let proposal = self.request.proposal.as_ref().unwrap();
+        let boundary = crate::auth_bootstrap::AuthBootstrapBoundary::new(
+            &proposal.environment,
+            &proposal.cluster,
+            &self.boundary.member,
+            proposal
+                .assignments
+                .iter()
+                .map(|assignment| {
+                    DatabaseRouteScope::try_new(
+                        &assignment.tenant,
+                        &assignment.project,
+                        &assignment.database,
+                    )
+                    .unwrap()
+                })
+                .collect(),
+            proposal
+                .regions
+                .iter()
+                .flat_map(|region| {
+                    region.members.iter().map(|member| (member.clone(), region.region.clone()))
+                })
+                .collect(),
+        )
+        .unwrap();
+        crate::auth_bootstrap::AuthBootstrapJournal::open(
+            &self.root.join("auth-bootstrap.sqlite"),
+            boundary,
+        )
+        .unwrap()
+    }
+
     pub fn open(&self) -> PlacementJournal {
         PlacementJournal::open(&self.root.join("proposals.sqlite"), self.boundary.clone())
             .expect("journal")

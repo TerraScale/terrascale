@@ -96,13 +96,16 @@ impl WebhookSecrets for EngineWebhookSecrets {
         let lease = self.keys.lease(scope, region, None)?;
         let artifact = terrabase::identity::process_generator().generate().to_text();
         let mut cipher = self.cipher(scope, &format!("{id}-{artifact}"), &lease)?;
-        if self
+        if let Some(existing) = self
             .storage
             .read_document(scope, COLLECTION, id)
             .map_err(|_| SecretError::Unavailable)?
-            .is_some()
         {
-            return Err(SecretError::Unavailable);
+            return if matches!(existing.value(), MetadataValue::Object(_)) {
+                Ok(())
+            } else {
+                Err(SecretError::NotFound)
+            };
         }
         let mut secret = [0_u8; 32];
         aws_lc_rs::rand::fill(&mut secret).map_err(|_| SecretError::Unavailable)?;
@@ -117,9 +120,17 @@ impl WebhookSecrets for EngineWebhookSecrets {
                 MetadataValue::String(base64::engine::general_purpose::STANDARD.encode(encrypted)),
             ),
         ]));
-        self.storage
-            .write_document(scope, COLLECTION, id, value, ExpectedVersion::New)
-            .map_err(|_| SecretError::Unavailable)
+        match self.storage.write_document(scope, COLLECTION, id, value, ExpectedVersion::New) {
+            Ok(()) => Ok(()),
+            Err(StorageError::Conflict) => self
+                .storage
+                .read_document(scope, COLLECTION, id)
+                .map_err(|_| SecretError::Unavailable)?
+                .filter(|record| matches!(record.value(), MetadataValue::Object(_)))
+                .map(|_| ())
+                .ok_or(SecretError::Unavailable),
+            Err(_) => Err(SecretError::Unavailable),
+        }
     }
 
     fn destroy(&self, scope: &TenantScope, id: &str, region: &str) -> Result<(), SecretError> {
@@ -131,7 +142,7 @@ impl WebhookSecrets for EngineWebhookSecrets {
             .read_document(scope, COLLECTION, id)
             .map_err(|_| SecretError::Unavailable)?
             .ok_or(SecretError::NotFound)?;
-        // Retain a tombstone so endpoint identities can never reuse an AEAD nonce.
+        // Retain a tombstone so a deleted endpoint cannot be reprovisioned.
         self.storage
             .write_document(
                 scope,
@@ -141,6 +152,28 @@ impl WebhookSecrets for EngineWebhookSecrets {
                 ExpectedVersion::Exact(document.metadata().version()),
             )
             .map_err(|_| SecretError::Unavailable)
+    }
+
+    fn creation(
+        &self,
+        scope: &TenantScope,
+        id: &str,
+        region: &str,
+    ) -> Result<Vec<u8>, SecretError> {
+        let document = self
+            .storage
+            .read_document(scope, COLLECTION, id)
+            .map_err(|_| SecretError::Unavailable)?
+            .ok_or(SecretError::NotFound)?;
+        let MetadataValue::Object(fields) = document.value() else {
+            return Err(SecretError::NotFound);
+        };
+        let original = match fields.get("initial") {
+            Some(MetadataValue::Object(original)) => original,
+            None => fields,
+            _ => return Err(SecretError::Unavailable),
+        };
+        self.decrypt(scope, id, region, original)
     }
 
     fn rotate(
@@ -154,6 +187,7 @@ impl WebhookSecrets for EngineWebhookSecrets {
         if overlap_seconds > 3600 {
             return Err(SecretError::Unavailable);
         }
+        let expiry = now.checked_add(overlap_seconds).ok_or(SecretError::Unavailable)?;
         let _lock = self.writes.lock().map_err(|_| SecretError::Unavailable)?;
         let lease = self.keys.lease(scope, region, None)?;
         let document = self
@@ -164,13 +198,24 @@ impl WebhookSecrets for EngineWebhookSecrets {
         let MetadataValue::Object(mut previous) = document.value().clone() else {
             return Err(SecretError::NotFound);
         };
+        let original = match previous.remove("initial") {
+            Some(MetadataValue::Object(original)) => original,
+            None => previous.clone(),
+            _ => return Err(SecretError::Unavailable),
+        };
         previous.remove("previous");
         previous.remove("previous_until");
         let artifact = terrabase::identity::process_generator().generate().to_text();
         let mut cipher = self.cipher(scope, &format!("{id}-{artifact}"), &lease)?;
         let mut secret = vec![0_u8; 32];
         aws_lc_rs::rand::fill(&mut secret).map_err(|_| SecretError::Unavailable)?;
-        let encrypted = cipher.seal(&secret).map_err(|_| SecretError::Unavailable)?;
+        let encrypted = match cipher.seal(&secret) {
+            Ok(encrypted) => encrypted,
+            Err(_) => {
+                secret.fill(0);
+                return Err(SecretError::Unavailable);
+            }
+        };
         let mut fields = BTreeMap::from([
             ("artifact".into(), MetadataValue::String(artifact)),
             ("version".into(), MetadataValue::String(lease.metadata().version().to_text())),
@@ -179,12 +224,10 @@ impl WebhookSecrets for EngineWebhookSecrets {
                 MetadataValue::String(base64::engine::general_purpose::STANDARD.encode(encrypted)),
             ),
         ]);
+        fields.insert("initial".into(), MetadataValue::Object(original));
         if overlap_seconds > 0 {
             fields.insert("previous".into(), MetadataValue::Object(previous));
-            fields.insert(
-                "previous_until".into(),
-                unsigned_value(now.checked_add(overlap_seconds).ok_or(SecretError::Unavailable)?),
-            );
+            fields.insert("previous_until".into(), unsigned_value(expiry));
         }
         if self
             .storage
@@ -287,15 +330,16 @@ mod tests {
             .join("target")
             .join(format!("wk-{}", terrabase::identity::process_generator().generate().to_text()));
         std::fs::create_dir_all(&directory).expect("directory");
-        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o710))
             .expect("permissions");
         let socket = directory.join("keys.sock");
         let listener = UnixListener::bind(&socket).expect("socket");
-        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o660))
             .expect("socket permissions");
         let provider = OciVaultKeyDelivery::new(
             socket.clone(),
             std::fs::metadata(&socket).expect("metadata").uid(),
+            std::fs::metadata(&socket).expect("metadata").gid(),
         )
         .expect("provider");
         let engine_root = directory.join("database");
@@ -328,7 +372,7 @@ mod tests {
         );
         let version = metadata.version().to_text();
         let server = std::thread::spawn(move || {
-            for _ in 0..7 {
+            for _ in 0..8 {
                 let (mut connection, _) = listener.accept().expect("connection");
                 connection
                     .set_read_timeout(Some(std::time::Duration::from_secs(5)))
@@ -387,12 +431,13 @@ mod tests {
         assert_eq!(secrets.get(&scope, "endpoint", "GRU").expect("current"), rotated);
         assert_eq!(
             secrets.previous(&scope, "endpoint", "GRU", 399).expect("overlap"),
-            Some(plaintext)
+            Some(plaintext.clone())
         );
         assert_eq!(
             secrets.previous(&scope, "endpoint", "GRU", 400).expect("expired overlap"),
             None
         );
+        assert_eq!(secrets.creation(&scope, "endpoint", "GRU").expect("creation retry"), plaintext);
         secrets.destroy(&scope, "endpoint", "GRU").expect("destroy");
         assert_eq!(secrets.get(&scope, "endpoint", "GRU"), Err(SecretError::NotFound));
         drop(secrets);
@@ -437,6 +482,7 @@ impl OciWebhookKeyLeases {
         let provider = terrabase::encryption::OciVaultKeyDelivery::new(
             keys.socket.clone(),
             keys.orchestrator_uid,
+            keys.socket_gid,
         )
         .map_err(|_| SecretError::Unavailable)?;
         Ok(Self { provider, configuration, admission })

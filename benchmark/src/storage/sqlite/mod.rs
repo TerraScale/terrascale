@@ -90,14 +90,23 @@
 #![allow(clippy::all, reason = "SQLite backend lint debt is tracked behind the storage seam")]
 #![allow(clippy::pedantic, reason = "SQLite backend lint debt is tracked behind the storage seam")]
 
+mod accounting;
 mod descriptor_removal;
+pub(super) mod encrypted_file;
+pub(super) mod encrypted_vfs;
 mod invisible;
 mod private_metadata;
+mod replication_outbox;
+mod schema_indexes;
 mod schema_metadata;
+mod schema_ttl;
 mod shadow;
+mod storage_closure;
 #[cfg(test)]
 mod tests;
+pub(crate) mod usage_seal;
 mod webhook_metadata;
+mod write_usage;
 
 use std::{
     path::{Path, PathBuf},
@@ -111,7 +120,7 @@ use std::{
 };
 
 use rusqlite::types::Value;
-use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags, OptionalExtension as _, TransactionBehavior};
 
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
@@ -371,12 +380,12 @@ fn numeric_column(field: &str) -> String {
 /// with lifecycle semantics of its own (visible-as-expired until its pass
 /// deletes the record), so the document-TTL layer never extracts, hides,
 /// or sweeps it.
-fn extract_expires_at(document: &Document) -> Option<i64> {
+fn extract_expires_at(document: &Document, field: Option<&str>) -> Option<i64> {
     if document.collection().as_str() == RESERVED_FAMILY_COLLECTION {
         return None;
     }
     let DocumentValue::Object(fields) = document.value() else { return None };
-    match fields.get("expires_at") {
+    match fields.get(field?) {
         Some(DocumentValue::Integer(millis)) => Some(*millis),
         #[allow(clippy::cast_possible_truncation)]
         Some(DocumentValue::Number(number)) if number.is_finite() => Some(*number as i64),
@@ -871,12 +880,75 @@ CREATE TABLE IF NOT EXISTS webhook_metadata (
     PRIMARY KEY (tenant, namespace, record_key)
 ) WITHOUT ROWID;
 
+CREATE TABLE IF NOT EXISTS replication_publications (
+    tenant TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    origin_seq INTEGER NOT NULL,
+    hlc INTEGER NOT NULL,
+    operation TEXT NOT NULL,
+    local_seq INTEGER NOT NULL,
+    committed_at INTEGER NOT NULL,
+    context BLOB NOT NULL,
+    private_payload BLOB NOT NULL,
+    PRIMARY KEY (tenant, origin, origin_seq),
+    UNIQUE (tenant, local_seq)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS replication_publication_records (
+    tenant TEXT NOT NULL,
+    local_seq INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
+    collection TEXT NOT NULL,
+    id TEXT NOT NULL,
+    body BLOB,
+    PRIMARY KEY (tenant, local_seq, ordinal)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS private_control_versions (
+    tenant TEXT NOT NULL,
+    control_key TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    origin_seq INTEGER NOT NULL,
+    hlc INTEGER NOT NULL,
+    context BLOB NOT NULL,
+    PRIMARY KEY (tenant, control_key)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS family_metadata (
     tenant TEXT NOT NULL,
     record_key TEXT NOT NULL,
     seq INTEGER NOT NULL,
     value BLOB,
     PRIMARY KEY (tenant, record_key, seq)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS schema_ttl (
+    collection TEXT PRIMARY KEY,
+    field TEXT,
+    cursor_tenant TEXT NOT NULL DEFAULT '',
+    cursor_id TEXT NOT NULL DEFAULT '',
+    cursor_seq INTEGER NOT NULL DEFAULT -1,
+    complete INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS schema_index_builds (
+    tenant TEXT NOT NULL,
+    collection TEXT NOT NULL,
+    name TEXT NOT NULL,
+    fields TEXT NOT NULL,
+    watermark INTEGER NOT NULL,
+    cursor_id TEXT NOT NULL,
+    cursor_seq INTEGER NOT NULL,
+    PRIMARY KEY (tenant, collection, name)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS schema_indexes (
+    tenant TEXT NOT NULL,
+    collection TEXT NOT NULL,
+    name TEXT NOT NULL,
+    fields TEXT NOT NULL,
+    is_unique INTEGER NOT NULL,
+    PRIMARY KEY (tenant, collection, name)
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS schema_metadata (
@@ -922,6 +994,9 @@ CREATE TABLE IF NOT EXISTS documents (
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS documents_seq ON documents (commit_seq);
+
+CREATE INDEX IF NOT EXISTS documents_collection_cursor
+    ON documents (collection, tenant, id, commit_seq);
 
 -- Identifier-only reads also enforce reserved family namespace collisions.
 -- The primary key cannot narrow by id without a collection predicate.
@@ -992,6 +1067,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS operation_facts_client_request_ulid
     ON operation_facts (tenant, client_request_ulid)
     WHERE client_request_ulid <> '';
 
+CREATE TABLE IF NOT EXISTS usage_placement (
+    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+    tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL,
+    partition TEXT NOT NULL, region TEXT NOT NULL, selected_regions TEXT NOT NULL,
+    revision TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS usage_facts (
     tenant       TEXT    NOT NULL,
     project      TEXT    NOT NULL,
@@ -1008,6 +1090,17 @@ CREATE TABLE IF NOT EXISTS usage_facts (
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS usage_facts_tenant_seq ON usage_facts (tenant, seq);
+
+CREATE TABLE IF NOT EXISTS usage_stream_seals (
+    tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL,
+    partition TEXT NOT NULL, region TEXT NOT NULL,
+    start_millis INTEGER NOT NULL, end_millis INTEGER NOT NULL,
+    through_sequence INTEGER NOT NULL, write_units TEXT NOT NULL,
+    storage_byte_seconds TEXT NOT NULL, fact_count INTEGER NOT NULL,
+    checksum BLOB NOT NULL,
+    PRIMARY KEY (tenant, project, database, partition, region, start_millis, end_millis)
+) WITHOUT ROWID;
+
 
 CREATE TABLE IF NOT EXISTS origin_prefixes (
     tenant TEXT NOT NULL,
@@ -1291,6 +1384,7 @@ fn validate_database_binding(
 
 /// The `SQLite` storage engine behind [`StoragePort`].
 pub(crate) struct SqliteStorage {
+    encryption: Option<Arc<encrypted_vfs::EncryptedVfs>>,
     /// The location's database path, kept for pool overflow opens.
     database_path: PathBuf,
     /// Identity pinned when the original writer was opened.
@@ -1542,10 +1636,11 @@ fn spawn_checkpointer(
     expected_binding: &str,
     readers: Arc<Mutex<ReaderPool>>,
     checkpoint_gate: Arc<Mutex<()>>,
+    encryption: Option<&encrypted_vfs::EncryptedVfs>,
 ) -> Result<Checkpointer, StorageOpenError> {
     // Open synchronously so a failed checkpoint connection fails database
     // startup. Never create a replacement file if the original disappeared.
-    let connection = open_connection(&path, expected_binding)?;
+    let connection = open_connection(&path, expected_binding, encryption)?;
     let (wake, pending) = mpsc::sync_channel(1);
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop);
@@ -1618,20 +1713,43 @@ impl SqliteStorage {
         dir: &Path,
         origin: Option<&str>,
     ) -> Result<Self, StorageOpenError> {
+        Self::open_with_keys(dir, origin, None)
+    }
+
+    pub(crate) fn open_with_keys(
+        dir: &Path,
+        origin: Option<&str>,
+        keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
+    ) -> Result<Self, StorageOpenError> {
         // The engine path pre-creates the location; creating here too keeps
         // the seam's direct callers (and the FileStorage reference's
         // behavior) working on a named-but-absent directory.
         std::fs::create_dir_all(dir).map_err(|_| StorageOpenError::Unavailable)?;
         let database_path = dir.join(DATABASE_FILE);
-        let database_exists = database_path.exists();
+        let encrypted_exists = encrypted_file::companion(&database_path).exists();
+        if keys.is_none() && encrypted_exists {
+            return Err(StorageOpenError::Unavailable);
+        }
+        if keys.is_some() && database_path.metadata().is_ok_and(|metadata| metadata.len() > 0) {
+            return Err(StorageOpenError::Unavailable);
+        }
+        let database_exists =
+            if keys.is_some() { encrypted_exists } else { database_path.exists() };
+        let encryption = keys
+            .map(|keys| encrypted_vfs::EncryptedVfs::register(&database_path, keys))
+            .transpose()
+            .map_err(|_| StorageOpenError::Unavailable)?;
         let expected_binding = database_binding(dir)
             .map_err(|_| StorageOpenError::Unavailable)?
             .unwrap_or_else(|| format!("path-{}", local_origin_for(&database_path)));
         // Open the handle without WAL/schema pragmas first. An existing file
         // must prove its identity before any SQLite sidecar or schema state is
         // changed; otherwise a replacement valid SQLite file could be adopted.
-        let mut writer =
-            Connection::open(&database_path).map_err(|_| StorageOpenError::Unavailable)?;
+        let mut writer = raw_connection(
+            &database_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
+            encryption.as_deref(),
+        )?;
         if database_exists {
             let legacy = validate_database_binding(&writer, &expected_binding)?;
             if !legacy {
@@ -1702,6 +1820,8 @@ impl SqliteStorage {
         migrate_documents_ttl(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_idempotency(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_documents_row_aliases(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        storage_closure::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
+        accounting::initialize(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         migrate_operation_facts(&mut writer).map_err(|()| StorageOpenError::Unavailable)?;
         validate_operation_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         // The SQLite schema is authoritative; the metadata table carries only
@@ -1724,7 +1844,8 @@ impl SqliteStorage {
         reconcile_metering_db_facts(&writer).map_err(|()| StorageOpenError::Unavailable)?;
         let mut readers = ReaderPool::new(rss_budget_bytes());
         for _ in 0..READ_POOL_WIDTH {
-            let connection = open_connection(&database_path, &expected_binding)?;
+            let connection =
+                open_connection(&database_path, &expected_binding, encryption.as_deref())?;
             readers.push(connection, cache_resident_bytes());
         }
         let mut extracted = ExtractedState::default();
@@ -1751,9 +1872,11 @@ impl SqliteStorage {
             &expected_binding,
             Arc::clone(&readers),
             Arc::clone(&checkpoint_gate),
+            encryption.as_deref(),
         )?;
         let committer = spawn_committer(Arc::clone(&writer), context, checkpointer.wake.clone())?;
         Ok(Self {
+            encryption,
             database_path,
             expected_binding,
             writer,
@@ -1781,13 +1904,13 @@ impl SqliteStorage {
             pool.pop()
         };
         let entry = pooled.or_else(|| {
-            open_connection(&self.database_path, &self.expected_binding).ok().map(|connection| {
-                ReaderEntry {
+            open_connection(&self.database_path, &self.expected_binding, self.encryption.as_deref())
+                .ok()
+                .map(|connection| ReaderEntry {
                     connection,
                     returned_at: Instant::now(),
                     resident_bytes: cache_resident_bytes(),
-                }
-            })
+                })
         });
         match entry {
             Some(entry) => ReaderGuard::Pooled { pool: &self.readers, entry: Some(entry) },
@@ -1866,7 +1989,9 @@ impl SqliteStorage {
         let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let transaction =
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
+        let accounting_now = accounting::begin_change(&transaction, unix_millis().max(0) as u64)?;
         let Some(frontier) = history_floor_on(&transaction)? else {
+            accounting::settle_due(&transaction, accounting_now)?;
             transaction.commit().map_err(|_| ())?;
             return Ok(0);
         };
@@ -1941,6 +2066,7 @@ impl SqliteStorage {
             )
             .map_err(|_| ())?;
         transaction.execute_batch("DROP TRIGGER temp.pruning_watermark").map_err(|_| ())?;
+        accounting::settle_due(&transaction, accounting_now)?;
         transaction.commit().map_err(|_| ())?;
         u64::try_from(pruned).map_err(|_| ())
     }
@@ -2003,6 +2129,7 @@ impl CommitContext {
     ) -> Result<Vec<CommitResult>, ()> {
         let transaction =
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
+        let accounting_now = accounting::begin_change(&transaction, unix_millis().max(0) as u64)?;
         let mut results: Vec<Option<CommitResult>> = intents.iter().map(|_| None).collect();
         let mut watermark = durable_watermark(&transaction)?;
         // The wave's journal floor: every sequence above it was allocated by
@@ -2067,6 +2194,11 @@ impl CommitContext {
         // wave bills nothing and a retried operation identity — which replays
         // its receipt without writing a row — bills nothing twice.
         flush_metering_db_facts(&transaction, wave_base, intents, &results)?;
+        let accounting_tenants: std::collections::BTreeSet<_> =
+            intents.iter().map(|intent| intent.tenant.as_str()).collect();
+        for tenant in accounting_tenants {
+            accounting::settle(&transaction, tenant, accounting_now)?;
+        }
         // The test fault aborts between the staged rows and the commit: the
         // guard's drop rolls the transaction back, which is exactly the
         // in-process stand-in for a crash between two durable steps.
@@ -2104,7 +2236,8 @@ fn stage_intent(
     // Step 1: validation never binds the identity.
     if (intent.writes.is_empty()
         && intent.metadata.is_empty()
-        && intent.schema_envelopes.is_empty())
+        && intent.schema_envelopes.is_empty()
+        && intent.replication_publication.is_none())
         || codec::staged_writes_have_duplicate_targets(&intent.writes)
         || !private_metadata::valid_metadata(&intent.metadata)
         || !private_metadata::valid_envelopes(&intent.schema_envelopes)
@@ -2139,7 +2272,8 @@ fn stage_intent(
             .query_row(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM (
                     SELECT origin_seq AS seq FROM documents WHERE origin = ?1
-                    UNION ALL SELECT seq FROM origin_prefixes WHERE origin = ?1)",
+                    UNION ALL SELECT seq FROM origin_prefixes WHERE origin = ?1
+                    UNION ALL SELECT origin_seq FROM replication_publications WHERE origin = ?1)",
                 [provenance.origin()],
                 |row| row.get::<_, i64>(0),
             )
@@ -2228,10 +2362,44 @@ fn stage_intent(
             durability: entry.requested,
         }));
     }
+    // The uniform-cut guard must run inside this exact writer transaction:
+    // later intents in the same wave see earlier intents' new dependencies.
+    // Replay above intentionally wins, so a committed operation never turns
+    // into a failed precondition merely because later writes advanced context.
+    if let Some(expected) = &intent.expected_uniform_context
+        && context_frontier(transaction, &intent.tenant)? != *expected
+    {
+        // This admission guard publishes and binds nothing. The same logical
+        // operation may retry after the caller establishes a new uniform cut.
+        return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+    }
     // Step 3: conflict-check every write against the snapshot and the
     // published view. The published watermark already includes every
     // earlier intent of this batch.
     let snapshot_sequence = intent.snapshot_sequence.get();
+    if let Some(group) = &intent.replication_publication {
+        let available = crate::engine::merge::decode_context(&context_frontier(transaction, &intent.tenant)?)
+            .ok_or(())?;
+        let dependencies = crate::engine::merge::decode_context(&group.context).ok_or(())?;
+        if dependencies.frontier().iter().any(|(origin, sequence)| {
+            available.frontier().get(origin).copied().unwrap_or(0) < *sequence
+        }) || available.frontier().get(&group.origin).copied().unwrap_or(0) < group.origin_sequence - 1 {
+            return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+        }
+        for (collection, id) in &group.observations {
+            if conflict_between(
+                transaction,
+                &intent.tenant,
+                collection,
+                id,
+                crate::types::ExpectedVersion::Any,
+                snapshot_sequence,
+                *watermark,
+            )? {
+                return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+            }
+        }
+    }
     for write in &intent.writes {
         if let StagedWrite::Put { document, .. } | StagedWrite::ReplicatedPut { document, .. } =
             write
@@ -2312,12 +2480,14 @@ fn stage_intent(
             return Ok(CommitResult::Rejected(CommitRejection::Conflict));
         }
     }
-    if private_metadata::metadata_conflicts(
-        transaction,
-        &intent.tenant,
-        &intent.metadata,
-        snapshot_sequence,
-    )? {
+    if intent.replication_publication.is_none()
+        && private_metadata::metadata_conflicts(
+            transaction,
+            &intent.tenant,
+            &intent.metadata,
+            snapshot_sequence,
+        )?
+    {
         insert_rejection_row(
             transaction,
             &intent.tenant,
@@ -2358,7 +2528,9 @@ fn stage_intent(
             }
         }
     }
-    if private_metadata::envelopes_conflict(transaction, &intent.schema_envelopes)? {
+    if intent.replication_publication.is_none()
+        && private_metadata::envelopes_conflict(transaction, &intent.schema_envelopes)?
+    {
         insert_rejection_row(
             transaction,
             &intent.tenant,
@@ -2368,6 +2540,7 @@ fn stage_intent(
         )?;
         return Ok(CommitResult::Rejected(CommitRejection::Conflict));
     }
+    transaction.execute_batch("SAVEPOINT schema_unique_admission").map_err(|_| ())?;
     // Step 4: allocate the sequence past everything this location has named.
     let Some(sequence) = watermark.checked_add(1) else {
         return Err(());
@@ -2380,9 +2553,13 @@ fn stage_intent(
     // any row is written.
     if let Some(fact) = &admitted_fact {
         if usage_fact_body(transaction, fact)?.is_some() {
+            transaction.execute_batch("RELEASE schema_unique_admission").map_err(|_| ())?;
+            *watermark = sequence - 1;
             return Ok(CommitResult::Rejected(CommitRejection::OperationIdReuse));
         }
         let Some(durable) = DurableUsageFact::try_new(fact.clone(), sequence, 1).ok() else {
+            transaction.execute_batch("RELEASE schema_unique_admission").map_err(|_| ())?;
+            *watermark = sequence - 1;
             return Ok(CommitResult::Rejected(CommitRejection::Storage));
         };
         let scope = durable.fact().scope();
@@ -2414,16 +2591,19 @@ fn stage_intent(
     // A replicated commit carries the source region's identity and its
     // provenance stamp on every row.
     let context = intent
-        .writes
-        .iter()
-        .find_map(|write| match write {
-            StagedWrite::ReplicatedPut { context, .. }
-            | StagedWrite::ReplicatedDelete { context, .. }
-                if !context.is_empty() =>
-            {
-                Some(context.clone())
-            }
-            _ => None,
+        .replication_publication
+        .as_ref()
+        .map(|group| group.context.clone())
+        .or_else(|| {
+            intent.writes.iter().find_map(|write| match write {
+                StagedWrite::ReplicatedPut { context, .. }
+                | StagedWrite::ReplicatedDelete { context, .. }
+                    if !context.is_empty() =>
+                {
+                    Some(context.clone())
+                }
+                _ => None,
+            })
         })
         .unwrap_or(context_frontier(transaction, &intent.tenant)?);
     provenance = provenance.with_context(context.clone());
@@ -2439,11 +2619,35 @@ fn stage_intent(
         context,
     };
     let mut published_writes: Vec<PublishedWrite> = Vec::with_capacity(intent.writes.len());
-    private_metadata::stage_metadata(transaction, &intent.tenant, &intent.metadata, sequence)?;
-    private_metadata::stage_envelopes(transaction, &intent.schema_envelopes)?;
+    private_metadata::stage_controls(transaction, intent, &provenance, sequence)?;
+    replication_outbox::persist_publication(
+        transaction,
+        intent,
+        &provenance,
+        &row_identity,
+        sequence,
+    )?;
     let mut billed_writes = 0_u64;
     let mut billed_bytes = 0_u64;
     for write in &intent.writes {
+        let row_commit = match write {
+            StagedWrite::ReplicatedPut { hlc, origin, origin_sequence, context, .. }
+            | StagedWrite::ReplicatedDelete { hlc, origin, origin_sequence, context, .. } => {
+                FoldedCommit {
+                    operation: commit.operation,
+                    binding_operation: commit.binding_operation,
+                    requested: commit.requested,
+                    digest: commit.digest,
+                    kind: commit.kind,
+                    origin,
+                    origin_sequence: *origin_sequence,
+                    hlc: *hlc,
+                    context: context.clone(),
+                }
+            }
+            _ => FoldedCommit { context: commit.context.clone(), ..commit },
+        };
+        let commit = row_commit;
         match write {
             StagedWrite::Put { document, .. } | StagedWrite::ReplicatedPut { document, .. } => {
                 let version = version_at(
@@ -2545,15 +2749,30 @@ fn stage_intent(
             }
         }
     }
+    if provenance.kind() != JournalKind::Replicated
+        && !schema_indexes::validate_local_writes(transaction, &intent.tenant, sequence)?
+    {
+        transaction.execute_batch("ROLLBACK TO schema_unique_admission; RELEASE schema_unique_admission").map_err(|_| ())?;
+        *watermark = sequence - 1;
+        insert_rejection_row(transaction, &intent.tenant, &intent.operation, intent.digest, CommitRejection::Conflict)?;
+        return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+    }
+    transaction.execute_batch("RELEASE schema_unique_admission").map_err(|_| ())?;
     if let Some(fingerprint) = intent.replication_fingerprint {
         transaction.execute(
             "INSERT INTO replication_bindings (tenant, operation, fingerprint) VALUES (?1, ?2, ?3)",
             rusqlite::params![intent.tenant.as_str(), binding_identity.as_str(), fingerprint.as_slice()],
         ).map_err(|_| ())?;
     }
+    if let Some(group) = &intent.replication_publication {
+        for (collection, id, conflict) in &group.conflicts {
+            persist_merge_conflict(transaction, &intent.tenant, collection, id, conflict)?;
+        }
+    }
     if let Some((collection, id, conflict)) = &intent.merge_conflict {
         persist_merge_conflict(transaction, &intent.tenant, collection, id, conflict)?;
     }
+    write_usage::mint(transaction, intent, sequence, billed_writes, &provenance)?;
     let published = PublishedCommit::new(
         intent.tenant.clone(),
         intent.operation.clone(),
@@ -2751,6 +2970,17 @@ fn commit_identity_of(
     intent: &CommitIntent,
     local_origin: &str,
 ) -> Result<(OperationId, JournalProvenance), ()> {
+    if let Some(group) = &intent.replication_publication {
+        return Ok((
+            OperationId::try_new(&group.commit_ulid).map_err(|_| ())?,
+            JournalProvenance::new(
+                JournalKind::Replicated,
+                group.origin.clone(),
+                group.origin_sequence,
+                group.hlc,
+            ),
+        ));
+    }
     for write in &intent.writes {
         match write {
             StagedWrite::ReplicatedPut { commit_ulid, hlc, origin, origin_sequence, .. }
@@ -2852,7 +3082,16 @@ fn insert_put_row(
     parameters.push(Value::Integer(commit.origin_sequence as i64));
     parameters.push(Value::Integer(commit.hlc as i64));
     parameters.push(Value::Blob(commit.context.clone()));
-    parameters.push(match extract_expires_at(document) {
+    let ttl_field: Option<Option<String>> = transaction
+        .query_row(
+            "SELECT field FROM schema_ttl WHERE collection = ?1",
+            [document.collection().as_str()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| ())?;
+    let ttl_field = ttl_field.unwrap_or_else(|| Some("expires_at".to_owned()));
+    parameters.push(match extract_expires_at(document, ttl_field.as_deref()) {
         Some(millis) => Value::Integer(millis),
         None => Value::Null,
     });
@@ -3216,8 +3455,10 @@ fn origin_prefixes_on(
     let mut statement = connection
         .prepare(
             "SELECT origin, origin_seq,
-             COALESCE(MAX(CASE WHEN hlc < 0 THEN hlc END), MAX(hlc)) FROM documents
-         WHERE tenant = ?1 GROUP BY origin, origin_seq ORDER BY origin, origin_seq",
+             COALESCE(MAX(CASE WHEN hlc < 0 THEN hlc END), MAX(hlc)) FROM (
+             SELECT origin, origin_seq, hlc FROM documents WHERE tenant = ?1
+             UNION ALL SELECT origin, origin_seq, hlc FROM replication_publications WHERE tenant = ?1
+         ) GROUP BY origin, origin_seq ORDER BY origin, origin_seq",
         )
         .map_err(|_| ())?;
     let mut rows = statement.query([tenant]).map_err(|_| ())?;
@@ -3953,14 +4194,31 @@ fn chained_root(head: &str, sequence: u64, digest: u64) -> String {
 }
 
 /// Opens an existing database for readers without permission to create a file.
-fn open_connection(path: &Path, expected_binding: &str) -> Result<Connection, StorageOpenError> {
-    let connection = Connection::open_with_flags(
+fn raw_connection(
+    path: &Path,
+    flags: OpenFlags,
+    encryption: Option<&encrypted_vfs::EncryptedVfs>,
+) -> Result<Connection, StorageOpenError> {
+    match encryption {
+        Some(vfs) => Connection::open_with_flags_and_vfs(path, flags, vfs.name()),
+        None if encrypted_file::companion(path).exists() => {
+            return Err(StorageOpenError::Unavailable);
+        }
+        None => Connection::open_with_flags(path, flags),
+    }
+    .map_err(|_| StorageOpenError::Unavailable)
+}
+
+fn open_connection(
+    path: &Path,
+    expected_binding: &str,
+    encryption: Option<&encrypted_vfs::EncryptedVfs>,
+) -> Result<Connection, StorageOpenError> {
+    let connection = raw_connection(
         path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|_| StorageOpenError::Unavailable)?;
-    // Reader and checkpoint opens must never adopt a replacement or migrate
-    // an unbound legacy file. Verify before any WAL/configuration pragmas.
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        encryption,
+    )?;
     if validate_database_binding(&connection, expected_binding)? {
         return Err(StorageOpenError::Unavailable);
     }
@@ -4194,6 +4452,15 @@ impl SqliteStorage {
 }
 
 impl StoragePort for SqliteStorage {
+    fn replication_publications(
+        &self,
+        tenant: &TenantId,
+        after: u64,
+        limit: u32,
+    ) -> Result<Vec<(u64, crate::engine::ReplicatedPublication)>, ()> {
+        let reader = self.reader();
+        replication_outbox::read_publications(reader.connection(), tenant, after, limit)
+    }
     fn private_metadata_at(
         &self,
         tenant: &TenantId,
@@ -4316,7 +4583,8 @@ impl StoragePort for SqliteStorage {
         // A dedicated read handle inherits the already-opened, ownership-
         // validated database path. SQLite WAL gives it a coherent snapshot;
         // the query layer additionally pins the requested Engine sequence.
-        open_connection(&self.database_path, &self.expected_binding).map_err(|_| ())
+        open_connection(&self.database_path, &self.expected_binding, self.encryption.as_deref())
+            .map_err(|_| ())
     }
 
     fn commit(&mut self, intent: CommitIntent) -> CommitResult {
@@ -4459,6 +4727,8 @@ impl StoragePort for SqliteStorage {
         else {
             return Err(UsageStorageError::Unavailable);
         };
+        usage_seal::ensure_unsealed(&transaction, &fact)
+            .map_err(|()| UsageStorageError::Unavailable)?;
         let durable = DurableUsageFact::try_new(fact.clone(), sequence, 1)
             .map_err(|_| UsageStorageError::Corrupt)?;
         let scope = durable.fact().scope();
@@ -4503,6 +4773,41 @@ impl StoragePort for SqliteStorage {
         }
         transaction.commit().map_err(|_| UsageStorageError::Unavailable)?;
         Ok((durable, false))
+    }
+
+    fn close_storage_usage(
+        &mut self,
+        tenant: &TenantId,
+        window: MeasurementWindow,
+    ) -> Result<crate::usage::StorageUsageClosure, UsageStorageError> {
+        let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let transaction = writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| UsageStorageError::Unavailable)?;
+        let placement = write_usage::binding_for(&transaction, tenant)
+            .map_err(|()| UsageStorageError::Corrupt)?
+            .ok_or(UsageStorageError::Corrupt)?;
+        let regions = u32::try_from(placement.selected_regions.len())
+            .map_err(|_| UsageStorageError::Corrupt)?;
+        let receipt =
+            storage_closure::close(&transaction, placement.scope, regions, window)
+                .map_err(|()| UsageStorageError::Corrupt)?;
+        transaction.commit().map_err(|_| UsageStorageError::Unavailable)?;
+        Ok(receipt)
+    }
+
+    fn stop_storage_usage(
+        &mut self,
+        tenant: &TenantId,
+        at_millis: u64,
+    ) -> Result<(), UsageStorageError> {
+        let mut writer = self.writer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let transaction = writer
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| UsageStorageError::Unavailable)?;
+        accounting::stop(&transaction, tenant.as_str(), at_millis)
+            .map_err(|()| UsageStorageError::Corrupt)?;
+        transaction.commit().map_err(|_| UsageStorageError::Unavailable)
     }
 
     fn usage_facts_page(
@@ -4558,6 +4863,22 @@ impl StoragePort for SqliteStorage {
             facts.push(DurableUsageFact::decode(&body).map_err(|_| UsageStorageError::Corrupt)?);
         }
         Ok(facts)
+    }
+
+    fn configure_usage_placement(
+        &mut self,
+        placement: &crate::usage::UsagePlacement,
+    ) -> Result<(), ()> {
+        let mut writer = self.writer.lock().map_err(|_| ())?;
+        write_usage::configure(&mut writer, placement)
+    }
+
+    fn usage_placement(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<Option<crate::usage::UsagePlacement>, ()> {
+        let writer = self.writer.lock().map_err(|_| ())?;
+        write_usage::binding_for(&writer, tenant)
     }
 
     fn metering_fact(&self, db: &str) -> Option<DbUsageFact> {
@@ -5328,6 +5649,35 @@ impl StoragePort for SqliteStorage {
         self.backfill_invisible_index(tenant, id, batch)
     }
 
+    fn advance_schema_ttl(
+        &mut self,
+        collection: &CollectionName,
+        field: Option<&str>,
+        batch: u32,
+    ) -> Result<bool, ()> {
+        self.advance_ttl(collection, field, batch)
+    }
+
+    fn register_schema_index(
+        &mut self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        name: &str,
+        fields: &[String],
+        unique: bool,
+    ) -> Result<bool, ()> {
+        self.register_canonical_index(tenant, collection, name, fields, unique)
+    }
+
+    fn remove_schema_index(
+        &mut self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        name: &str,
+    ) -> Result<(), ()> {
+        self.remove_canonical_index(tenant, collection, name)
+    }
+
     fn register_index_descriptor(
         &mut self,
         collection: &CollectionName,
@@ -5367,6 +5717,30 @@ impl StoragePort for SqliteStorage {
         field: &str,
     ) -> Result<DescriptorRegistration, IndexDescriptorError> {
         self.register_fts_descriptor(collection, field)
+    }
+
+    fn remove_schema_fts(&mut self, collection: &CollectionName, field: &str) -> Result<(), ()> {
+        let mut writer = self.writer.lock().map_err(|_| ())?;
+        let transaction = writer.transaction().map_err(|_| ())?;
+        transaction
+            .execute(
+                "DELETE FROM fts_keys WHERE collection = ?1 AND field = ?2",
+                rusqlite::params![collection.as_str(), field],
+            )
+            .map_err(|_| ())?;
+        transaction
+            .execute(
+                "DELETE FROM fts_descriptors WHERE collection = ?1 AND field = ?2",
+                rusqlite::params![collection.as_str(), field],
+            )
+            .map_err(|_| ())?;
+        transaction.commit().map_err(|_| ())?;
+        self.fts
+            .lock()
+            .map_err(|_| ())?
+            .descriptors
+            .remove(&(collection.as_str().to_owned(), field.to_owned()));
+        Ok(())
     }
 
     fn fts_descriptor_state(&self, collection: &CollectionName, field: &str) -> Option<bool> {

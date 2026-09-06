@@ -31,37 +31,70 @@ impl SchemaDurablePort for EngineSchemaStore {
         record: DurableSchemaRecord,
     ) -> Result<DurableCommit, DurablePortError> {
         let expected = expected.map(serde_json::to_vec).transpose().map_err(|_| storage_error())?;
-        let record = serde_json::to_vec(&record).map_err(|_| storage_error())?;
+        let record_bytes = serde_json::to_vec(&record).map_err(|_| storage_error())?;
         let engine = self.0.engine();
         let scope = document_scope(engine).map_err(|()| storage_error())?;
         let snapshot = engine.read_snapshot(&scope).map_err(|_| storage_error())?;
         let operation = OperationId::try_new(&format!(
-            "schema-{}", terrabase::identity::process_generator().generate().to_text(),
-        )).map_err(|_| storage_error())?;
-        let mut transaction = engine.begin(&scope, snapshot, operation.clone()).map_err(|_| storage_error())?;
-        let decoded: DurableSchemaRecord = serde_json::from_slice(&record).map_err(|_| storage_error())?;
-        if decoded.document.migration.as_ref().is_none_or(|migration| migration.state == crate::schema_api::MigrationState::Complete) {
-            let canonical = crate::schema_api::canonical_schema_document(&crate::schema_api::SchemaJson {
-                collections: vec![decoded.document.schema.clone()], version: None,
-            }).map_err(|_| storage_error())?;
-            let version = terrabase::families::SchemaVersion::try_new(decoded.document.schema_version).map_err(|_| storage_error())?;
-            let validation = canonical.collections().first().ok_or_else(storage_error)?
-                .validation_schema(version).map_err(|_| storage_error())?;
+            "schema-{}",
+            terrabase::identity::process_generator().generate().to_text(),
+        ))
+        .map_err(|_| storage_error())?;
+        let mut transaction =
+            engine.begin(&scope, snapshot, operation.clone()).map_err(|_| storage_error())?;
+        if record.previous_schema.is_none()
+            || record.document.migration.as_ref().is_none_or(|migration| {
+                migration.state == crate::schema_api::MigrationState::Complete
+                    || !migration.steps.iter().any(|step| step.kind == "field_rename")
+            })
+        {
+            let canonical =
+                crate::schema_api::canonical_schema_document(&crate::schema_api::SchemaJson {
+                    collections: vec![record.document.schema.clone()],
+                    version: None,
+                })
+                .map_err(|_| storage_error())?;
+            let version =
+                terrabase::families::SchemaVersion::try_new(record.document.schema_version)
+                    .map_err(|_| storage_error())?;
+            let validation = canonical
+                .collections()
+                .first()
+                .ok_or_else(storage_error)?
+                .validation_schema(version)
+                .map_err(|_| storage_error())?;
             let update = terrabase::families::ValidationWrite::try_new(
-                scope, CollectionName::try_new(&target.collection).map_err(|_| storage_error())?,
-                Some(validation), operation,
-                terrabase::types::Deadline::after(std::time::Duration::from_secs(30)).map_err(|_| storage_error())?,
+                scope,
+                CollectionName::try_new(&target.collection).map_err(|_| storage_error())?,
+                Some(validation),
+                operation,
+                terrabase::types::Deadline::after(std::time::Duration::from_secs(30))
+                    .map_err(|_| storage_error())?,
                 terrabase::types::Cancellation::new(),
-            ).map_err(|_| storage_error())?;
-            engine.families().stage(&mut transaction,
-                terrabase::families::FamilyWriteRequest::schema_validation_update(update))
+            )
+            .map_err(|_| storage_error())?;
+            engine
+                .families()
+                .stage(
+                    &mut transaction,
+                    terrabase::families::FamilyWriteRequest::schema_validation_update(update),
+                )
                 .map_err(|_| storage_error())?;
         }
-        transaction.stage_schema_metadata(&target.database, &target.branch, &target.collection, expected.as_deref(), &record)
+        transaction
+            .stage_schema_metadata(
+                &target.database,
+                &target.branch,
+                &target.collection,
+                expected.as_deref(),
+                &record_bytes,
+            )
             .map_err(|_| storage_error())?;
         match transaction.commit(LocalDurability::Synced) {
             CommitOutcome::Committed(_) => Ok(DurableCommit::Committed),
-            CommitOutcome::Rejected(terrabase::CommitError::Conflict) => Ok(DurableCommit::GenerationConflict),
+            CommitOutcome::Rejected(terrabase::CommitError::Conflict) => {
+                Ok(DurableCommit::GenerationConflict)
+            }
             CommitOutcome::Rejected(_) | CommitOutcome::Unknown(_) => Err(storage_error()),
         }
     }
@@ -88,13 +121,7 @@ impl SchemaIdentityPort for BoundIdentity {
 
 fn schema_state(state: &ApiState, database: &str) -> Result<Arc<SchemaHttpState>, ApiError> {
     let host = document_host(state, database)?;
-    let record = state
-        .control
-        .as_ref()
-        .ok_or_else(ApiError::control_unavailable)?
-        .get(database)
-        .map_err(ApiError::control)?
-        .ok_or_else(|| ApiError::database_not_found(database))?;
+    let record = database_record(state, database)?;
     let identity = BoundIdentity {
         database: database.to_owned(),
         identity: DatabaseIdentity {
@@ -168,6 +195,7 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers()["cache-control"], "private, no-store");
         for _ in 0..2 {
             let response = app
                 .clone()
@@ -205,6 +233,31 @@ mod tests {
         )
         .expect("JSON");
         assert_eq!(value["schema"]["name"], "orders");
+        {
+            let host = document_host(&state, "demo").expect("database");
+            let engine = host.engine();
+            let scope = document_scope(engine).expect("scope");
+            let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+            let mut transaction = engine
+                .begin(
+                    &scope,
+                    snapshot,
+                    OperationId::try_new("schema-reopened-enforcement").expect("operation"),
+                )
+                .expect("transaction");
+            let invalid = Document::new(
+                DocumentId::try_new("invalid").expect("id"),
+                CollectionName::try_new("orders").expect("collection"),
+                DocumentValue::Object(std::collections::BTreeMap::from([(
+                    "title".into(),
+                    DocumentValue::Integer(7),
+                )])),
+            );
+            assert!(
+                transaction.put(invalid, ExpectedVersion::New).is_err(),
+                "HTTP schema install must enforce typed writes after reopening the database"
+            );
+        }
         let response = app
             .clone()
             .oneshot(
@@ -218,6 +271,7 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(response.headers()["cache-control"], "private, no-store");
         let response = app
             .oneshot(
                 Request::get(TARGET)

@@ -25,6 +25,15 @@ pub struct IdentityConfig {
     pub service_key: String,
 }
 
+/// Project scope verified by the identity producer's live ownership and role checks.
+#[derive(Clone, Debug)]
+pub struct VerifiedProjectScope {
+    /// Owning organization/tenant identity.
+    pub tenant_id: String,
+    /// Project whose persisted ownership was verified.
+    pub project_id: String,
+}
+
 /// A bounded native TLS client with no redirects, proxies, or admission cache.
 pub struct IdentityVerifier {
     endpoint: Uri,
@@ -182,6 +191,38 @@ impl IdentityVerifier {
         ))
     }
 
+    /// Verifies project-wide administration against current producer-owned project records.
+    ///
+    /// # Errors
+    /// Rejects invalid selectors, narrowed credentials, and unavailable ownership proof.
+    pub async fn admit_project(
+        &self,
+        token: &str,
+        organization: &str,
+        project: &str,
+    ) -> Result<(Principal, VerifiedProjectScope), IdentityError> {
+        let tenant: terrabase::identity::TenantUlid =
+            organization.parse().map_err(|_| IdentityError::Denied)?;
+        let project_id: terrabase::identity::ProjectUlid =
+            project.parse().map_err(|_| IdentityError::Denied)?;
+        if tenant.to_string() != organization || project_id.to_string() != project {
+            return Err(IdentityError::Denied);
+        }
+        let principal = self.admit(token, organization, project, "*", None, Verbs::ADMIN).await?;
+        let principal = Principal::delegated(
+            principal.label().to_owned(),
+            Scope::every_database(Verbs::ADMIN),
+            principal.expires_at().ok_or(IdentityError::Denied)?,
+        );
+        Ok((
+            principal,
+            VerifiedProjectScope {
+                tenant_id: organization.to_owned(),
+                project_id: project.to_owned(),
+            },
+        ))
+    }
+
     async fn exchange(&self, body: Vec<u8>) -> Result<Admission, IdentityError> {
         let host = self.endpoint.host().ok_or(IdentityError::Configuration)?;
         let port = self.endpoint.port_u16().unwrap_or(443);
@@ -233,6 +274,15 @@ pub(crate) mod tests {
 
     pub(crate) async fn authority()
     -> (IdentityVerifier, Arc<Mutex<serde_json::Value>>, tokio::task::JoinHandle<()>) {
+        authority_for("terrabase-local", "local", "db-a", "read").await
+    }
+
+    pub(crate) async fn authority_for(
+        organization: &str,
+        project: &str,
+        database: &str,
+        action: &str,
+    ) -> (IdentityVerifier, Arc<Mutex<serde_json::Value>>, tokio::task::JoinHandle<()>) {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
         let server = rustls::ServerConfig::builder_with_provider(provider.clone())
@@ -260,15 +310,18 @@ pub(crate) mod tests {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
         let reply = Arc::new(Mutex::new(
             serde_json::json!({"active":true,"issuer":"https://identity.example","audience":"https://api.example",
-            "subject":"user-1","organizationId":"terrabase-local","projectId":"local","databaseId":"db-a",
-            "action":"read","scopes":["database:read"],"expiresAt":now+60}),
+            "subject":"user-1","organizationId":organization,"projectId":project,"databaseId":database,
+            "action":action,"scopes":[format!("database:{action}")],"expiresAt":now+60}),
         ));
         let responses = reply.clone();
+        let expected = serde_json::json!({"token":"delegated-token","organizationId":organization,"projectId":project,
+            "databaseId":database,"action":action,"audience":"https://api.example"});
         let task = tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
                 let server = Arc::new(server.clone());
                 let responses = responses.clone();
+                let expected = expected.clone();
                 tokio::spawn(async move {
                     let Ok(stream) = tokio_rustls::TlsAcceptor::from(server).accept(stream).await
                     else {
@@ -280,6 +333,7 @@ pub(crate) mod tests {
                             hyper::service::service_fn(
                                 move |request: hyper::Request<hyper::body::Incoming>| {
                                     let responses = responses.clone();
+                                    let expected = expected.clone();
                                     async move {
                                         assert_eq!(
                                             request.headers()["x-terrascale-identity-service-key"],
@@ -293,13 +347,7 @@ pub(crate) mod tests {
                                             request.into_body().collect().await.unwrap().to_bytes();
                                         let input: serde_json::Value =
                                             serde_json::from_slice(&body).unwrap();
-                                        assert_eq!(input["token"], "delegated-token");
-                                        assert_eq!(input["organizationId"], "terrabase-local");
-                                        assert_eq!(input["projectId"], "local");
-                                        assert_eq!(input["databaseId"], "db-a");
-                                        assert_eq!(input["audience"], "https://api.example");
-                                        assert_eq!(input["action"], "read");
-                                        assert!(input.get("collection").is_none());
+                                        assert_eq!(input, expected);
                                         Ok::<_, std::convert::Infallible>(hyper::Response::new(
                                             Full::new(Bytes::from(
                                                 responses.lock().unwrap().to_string(),
@@ -324,6 +372,24 @@ pub(crate) mod tests {
         )
         .unwrap();
         (verifier, reply, task)
+    }
+
+    #[tokio::test]
+    async fn project_administration_requires_verified_owner_scope() {
+        let org = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let project = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+        let (verifier, reply, task) = authority_for(org, project, "*", "admin").await;
+        let (principal, scope) =
+            verifier.admit_project("delegated-token", org, project).await.unwrap();
+        assert!(principal.scope().admits_global(Verbs::ADMIN));
+        assert_eq!(scope.tenant_id, org);
+        assert_eq!(scope.project_id, project);
+        reply.lock().unwrap()["organizationId"] = serde_json::json!("01ARZ3NDEKTSV4RRFFQ69G5FAX");
+        assert_eq!(
+            verifier.admit_project("delegated-token", org, project).await.unwrap_err(),
+            IdentityError::Denied
+        );
+        task.abort();
     }
 
     #[tokio::test]

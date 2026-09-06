@@ -151,7 +151,8 @@ impl Session {
                 ));
             }
         };
-        let scope = format!("{}:{}:{}", self.state.scope.0, self.state.scope.1, self.database);
+        let (tenant, project) = crate::api::database_owner_scope(&self.state, &self.database).map_err(|_| ErrorCode::PermissionDenied)?;
+        let scope = format!("{tenant}:{project}:{}", self.database);
         let host = crate::api::document_host(&self.state, &self.database)
             .map_err(|_| ErrorCode::PermissionDenied)?;
         crate::api::check_read_guard(

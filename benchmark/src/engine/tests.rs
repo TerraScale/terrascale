@@ -2673,3 +2673,190 @@ fn index_durable_snapshot_excludes_process_local_planner_entries() {
     drop(reopened);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn uniform_context_guard_rejects_new_dependencies_and_allows_safe_retry_and_replay() {
+    let (dir, engine) = open_engine("uniform-context-guard");
+    let scope = tenant_scope(&engine, "uniform-tenant");
+    let old = engine.durable_origin_prefixes(&scope).expect("empty frontier");
+    assert!(old.is_empty());
+    let snapshot = engine.read_snapshot(&scope).expect("snapshot");
+    let mut pending = engine.begin(&scope, snapshot, operation("uniform-target")).expect("pending");
+    pending.require_uniform_context(old.clone()).expect("guard");
+    pending.put(document("target", "users", "target"), ExpectedVersion::New).expect("write");
+    assert!(matches!(
+        commit_put(
+            &engine,
+            "uniform-tenant",
+            "new-dependency",
+            "dependency",
+            "new",
+            ExpectedVersion::New,
+            LocalDurability::Synced
+        ),
+        CommitOutcome::Committed(_)
+    ));
+    assert_eq!(
+        pending.commit(LocalDurability::Synced),
+        CommitOutcome::Rejected(CommitError::Conflict)
+    );
+    assert!(read_document(&engine, "uniform-tenant", "target").is_none());
+    let new = engine.durable_origin_prefixes(&scope).expect("new frontier");
+    assert!(!new.is_empty());
+    let mut retry = engine
+        .begin(&scope, engine.read_snapshot(&scope).expect("snapshot"), operation("uniform-target"))
+        .expect("same identity retry");
+    retry.require_uniform_context(new).expect("new uniform proof");
+    retry.put(document("target", "users", "target"), ExpectedVersion::New).expect("write");
+    let CommitOutcome::Committed(receipt) = retry.commit(LocalDurability::Synced) else {
+        panic!("uniform retry commits");
+    };
+    let mut replay = engine
+        .begin(&scope, engine.read_snapshot(&scope).expect("snapshot"), operation("uniform-target"))
+        .expect("replay");
+    replay.require_uniform_context(old).expect("stale cut");
+    replay.put(document("target", "users", "target"), ExpectedVersion::New).expect("write");
+    let CommitOutcome::Committed(replayed) = replay.commit(LocalDurability::Synced) else {
+        panic!("committed identity replays before guard");
+    };
+    assert_eq!(receipt.sequence(), replayed.sequence());
+    drop(engine);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+fn replicated_group(ids: &[&str], stamp: u64) -> super::ReplicatedPublication {
+    super::ReplicatedPublication {
+        origin: "group-peer".into(),
+        origin_sequence: 1,
+        hlc: stamp,
+        commit_ulid: "group-source-operation".into(),
+        context: Vec::new(),
+        private_payload: Vec::new(),
+        records: ids
+            .iter()
+            .map(|id| ReplicatedRecord {
+                collection: CollectionName::try_new("users").unwrap(),
+                id: document_id(id),
+                body: DocumentValue::Integer(stamp as i64),
+                deleted: false,
+                commit_ulid: "group-source-operation".into(),
+                hlc: stamp,
+                origin: "group-peer".into(),
+                origin_sequence: 1,
+                context: Vec::new(),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn replicated_publication_rolls_back_every_document_and_replays_after_restart() {
+    let (dir, engine) = open_engine("atomic-replicated-group");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let publication = replicated_group(&["group-a", "group-b"], 100);
+    let sql = rusqlite::Connection::open(dir.join("terrabase.sqlite3")).unwrap();
+    sql.execute_batch("CREATE TRIGGER fail_second_group BEFORE INSERT ON documents WHEN NEW.id = 'group-b' BEGIN SELECT RAISE(ABORT, 'group fault'); END;").unwrap();
+    let before = engine.published_sequence().unwrap();
+    assert_eq!(
+        engine.apply_replicated_publication(&scope, &publication),
+        Err(EngineError::StorageFailure)
+    );
+    assert_eq!(engine.published_sequence().unwrap(), before);
+    assert!(read_document(&engine, "tenant-a", "group-a").is_none());
+    assert!(read_document(&engine, "tenant-a", "group-b").is_none());
+    sql.execute_batch("DROP TRIGGER fail_second_group").unwrap();
+    let applied = engine.apply_replicated_publication(&scope, &publication).unwrap();
+    assert!(!applied.replayed());
+    let sequence = engine.published_sequence().unwrap();
+    let distinct: u64 = sql
+        .query_row(
+            "SELECT COUNT(DISTINCT commit_seq) FROM documents WHERE id IN ('group-a', 'group-b')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(distinct, 1);
+    engine.shutdown().unwrap();
+    drop(engine);
+    drop(sql);
+    let engine = reopen_engine(&dir);
+    let scope = tenant_scope(&engine, "tenant-a");
+    assert!(engine.apply_replicated_publication(&scope, &publication).unwrap().replayed());
+    assert_eq!(engine.published_sequence().unwrap(), sequence);
+    let mut reordered = publication.clone();
+    reordered.records.reverse();
+    assert!(engine.apply_replicated_publication(&scope, &reordered).unwrap().replayed());
+    let mut changed = publication;
+    changed.records[0].body = DocumentValue::Integer(900);
+    assert!(matches!(
+        engine.apply_replicated_publication(&scope, &changed),
+        Err(EngineError::OperationIdReuse { .. })
+    ));
+    engine.shutdown().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn replicated_publication_conflict_history_failure_rolls_back_clean_sibling() {
+    let (dir, engine) = open_engine("atomic-replicated-conflict");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let mut original = replicated_group(&["group-b"], 50).records.remove(0);
+    original.origin = "other-peer".into();
+    original.commit_ulid = "older-source".into();
+    engine.apply_replicated(&scope, &original).unwrap();
+    let publication = replicated_group(&["group-a", "group-b"], 100);
+    let sql = rusqlite::Connection::open(dir.join("terrabase.sqlite3")).unwrap();
+    sql.execute_batch("CREATE TRIGGER fail_group_history BEFORE INSERT ON merge_conflicts BEGIN SELECT RAISE(ABORT, 'group history fault'); END;").unwrap();
+    assert_eq!(
+        engine.apply_replicated_publication(&scope, &publication),
+        Err(EngineError::StorageFailure)
+    );
+    assert!(read_document(&engine, "tenant-a", "group-a").is_none());
+    assert_eq!(
+        read_document(&engine, "tenant-a", "group-b").unwrap().value(),
+        &DocumentValue::Integer(50)
+    );
+    sql.execute_batch("DROP TRIGGER fail_group_history").unwrap();
+    engine.apply_replicated_publication(&scope, &publication).unwrap();
+    assert_eq!(
+        read_document(&engine, "tenant-a", "group-b").unwrap().value(),
+        &DocumentValue::Integer(100)
+    );
+    engine.shutdown().unwrap();
+    drop(sql);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn replicated_publication_private_controls_and_documents_share_rollback_and_restart() {
+    let (source_dir, source) = open_engine("atomic-private-source");
+    let source_scope = tenant_scope(&source, "tenant-a");
+    let snapshot = source.read_snapshot(&source_scope).unwrap();
+    let mut transaction = source.begin(&source_scope, snapshot, OperationId::try_new("private-source").unwrap()).unwrap();
+    transaction.put(Document::new(document_id("private-doc"), CollectionName::try_new("users").unwrap(), DocumentValue::Integer(7)), ExpectedVersion::Any).unwrap();
+    transaction.metadata.push(crate::storage::PrivateMetadataWrite { key: "migration:test:cursor".into(), value: Some(DocumentValue::Integer(7)) });
+    assert!(matches!(transaction.commit(LocalDurability::Written), CommitOutcome::Committed(_)));
+    let groups = source.replication_publications(&source_scope, 0, 10).unwrap();
+    let publication = &groups.last().unwrap().1;
+    assert_eq!(publication.records.len(), 1);
+    assert!(!publication.private_payload.is_empty());
+    let (dir, engine) = open_engine("atomic-private-target");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let sql = rusqlite::Connection::open(dir.join("terrabase.sqlite3")).unwrap();
+    sql.execute_batch("CREATE TRIGGER fail_private_document BEFORE INSERT ON documents BEGIN SELECT RAISE(ABORT, 'private group fault'); END;").unwrap();
+    assert_eq!(engine.apply_replicated_publication(&scope, publication), Err(EngineError::StorageFailure));
+    let count: u64 = sql.query_row("SELECT COUNT(*) FROM family_metadata", [], |row| row.get(0)).unwrap();
+    assert_eq!(count, 0);
+    sql.execute_batch("DROP TRIGGER fail_private_document").unwrap();
+    engine.apply_replicated_publication(&scope, publication).unwrap();
+    let sequence: u64 = sql.query_row("SELECT seq FROM family_metadata WHERE record_key='migration:test:cursor'", [], |row| row.get(0)).unwrap();
+    let doc_sequence: u64 = sql.query_row("SELECT commit_seq FROM documents WHERE id='private-doc'", [], |row| row.get(0)).unwrap();
+    assert_eq!(sequence, doc_sequence);
+    engine.shutdown().unwrap(); drop(engine); drop(sql);
+    let engine = reopen_engine(&dir);
+    let scope = tenant_scope(&engine, "tenant-a");
+    assert!(engine.apply_replicated_publication(&scope, publication).unwrap().replayed());
+    assert_eq!(engine.replication_publications(&scope, 0, 10).unwrap().last().unwrap().1.fingerprint().unwrap(), publication.fingerprint().unwrap());
+    engine.shutdown().unwrap(); source.shutdown().unwrap();
+    std::fs::remove_dir_all(dir).unwrap(); std::fs::remove_dir_all(source_dir).unwrap();
+}

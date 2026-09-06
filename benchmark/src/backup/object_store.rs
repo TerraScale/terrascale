@@ -56,6 +56,8 @@ impl Drop for Credentials {
 /// Operator-owned, admission-validated bucket and resource configuration.
 #[derive(Debug)]
 pub struct DestinationConfig {
+    /// Canonical database Region bound by the admitted provider mapping.
+    pub admitted_region: crate::regions::RegionCode,
     /// Cloud provider; separate instances have separate credentials and health.
     pub provider: Provider,
     /// Explicit HTTPS endpoint, without a path or embedded credentials.
@@ -106,6 +108,7 @@ impl std::error::Error for TransferError {}
 /// Each transfer holds at most one configured artifact in upload memory and
 /// streams downloads. The caller's bounded worker pool limits aggregate usage.
 pub struct ObjectDestination {
+    admitted_region: crate::regions::RegionCode,
     provider: Provider,
     store: Arc<dyn ObjectStore>,
     max_artifact_bytes: u64,
@@ -146,6 +149,7 @@ impl ObjectDestination {
         // Discard and zeroize the admission copy once the client owns its credentials.
         drop(config.credentials);
         Ok(Self {
+            admitted_region: config.admitted_region,
             provider: config.provider,
             store: Arc::new(store),
             max_artifact_bytes: config.max_artifact_bytes,
@@ -160,7 +164,19 @@ impl ObjectDestination {
         max_artifact_bytes: u64,
         max_point_bytes: u64,
     ) -> Self {
-        Self { provider, store, max_artifact_bytes, max_point_bytes }
+        Self {
+            admitted_region: crate::regions::RegionCode::GRU,
+            provider,
+            store,
+            max_artifact_bytes,
+            max_point_bytes,
+        }
+    }
+
+    /// Returns the canonical database Region bound at destination admission.
+    #[must_use]
+    pub fn admitted_region(&self) -> crate::regions::RegionCode {
+        self.admitted_region
     }
 
     /// Returns the independently configured provider.
@@ -253,6 +269,82 @@ impl ObjectDestination {
             .await
             .map_err(|_| TransferError::Unavailable)?;
         self.verify_remote(&key, &entry).await
+    }
+
+    /// Deletes one retired recovery point after the caller validates retention.
+    ///
+    /// Invalidates its publication index and encrypted manifest before deleting
+    /// members. Retries after interruption inspect only this exact point prefix;
+    /// they never delete a sibling point or recurse into nested keys.
+    ///
+    /// # Errors
+    /// Rejects malformed indexes, nested keys, or exceeded metadata bounds before
+    /// mutation. Provider failures leave remaining objects available for retry.
+    pub async fn delete_point(&self, prefix: &str) -> Result<(), TransferError> {
+        validate_prefix(prefix)?;
+        let index_key = object_key(prefix, INDEX)?;
+        let entries = match self.store.get(&index_key).await {
+            Ok(response) => {
+                let mut stream = response.into_stream();
+                let mut bytes = Vec::new();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|_| TransferError::Unavailable)?;
+                    if (bytes.len() as u64).saturating_add(chunk.len() as u64) > INDEX_LIMIT {
+                        return Err(TransferError::InvalidPoint);
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                Some(parse_index(&bytes, self.max_artifact_bytes, self.max_point_bytes)?)
+            }
+            Err(object_store::Error::NotFound { .. }) => None,
+            Err(_) => return Err(TransferError::Unavailable),
+        };
+        // Listing the exact prefix also collects orphan artifacts from an
+        // interrupted upload or deletion whose publication index is absent.
+        let path = ObjectPath::parse(prefix).map_err(|_| TransferError::InvalidPoint)?;
+        let exact_prefix = format!("{prefix}/");
+        let mut stream = self.store.list(Some(&path));
+        let mut keys = std::collections::BTreeSet::new();
+        let mut bytes = 0_u64;
+        while let Some(result) = stream.next().await {
+            let object = result.map_err(|_| TransferError::Unavailable)?;
+            let Some(name) = object.location.as_ref().strip_prefix(&exact_prefix) else {
+                return Err(TransferError::InvalidPoint);
+            };
+            if name != INDEX {
+                validate_name(name)?;
+            }
+            if keys.len() >= MAX_FILES + 1 || object.size > self.max_artifact_bytes.max(INDEX_LIMIT)
+            {
+                return Err(TransferError::InvalidPoint);
+            }
+            bytes = bytes.checked_add(object.size).ok_or(TransferError::InvalidPoint)?;
+            if bytes > self.max_point_bytes.saturating_add(INDEX_LIMIT) {
+                return Err(TransferError::InvalidPoint);
+            }
+            keys.insert(object.location);
+        }
+        if let Some(entries) = entries {
+            for entry in entries {
+                keys.insert(object_key(prefix, &entry.name)?);
+            }
+        }
+        self.delete_if_present(&index_key).await?;
+        let manifest = object_key(prefix, super::manifest::ENCRYPTED_MANIFEST_FILE)?;
+        self.delete_if_present(&manifest).await?;
+        keys.remove(&index_key);
+        keys.remove(&manifest);
+        for key in keys {
+            self.delete_if_present(&key).await?;
+        }
+        Ok(())
+    }
+
+    async fn delete_if_present(&self, key: &ObjectPath) -> Result<(), TransferError> {
+        match self.store.delete(key).await {
+            Ok(()) | Err(object_store::Error::NotFound { .. }) => Ok(()),
+            Err(_) => Err(TransferError::Unavailable),
+        }
     }
 
     /// Downloads a point into a new directory, verifying every artifact first.
@@ -452,7 +544,8 @@ fn validate_config(config: &DestinationConfig) -> Result<(), TransferError> {
         }
         Provider::Tigris => host == "fly.storage.tigris.dev",
     };
-    if !endpoint_valid
+    if !crate::regions::RegionCatalog::production().is_registered(&config.admitted_region)
+        || !endpoint_valid
         || host.bytes().any(|b| !(b.is_ascii_alphanumeric() || b == b'.' || b == b'-'))
         || config.signing_region.is_empty()
         || config.database_region.is_empty()
@@ -598,6 +691,10 @@ mod tests {
             assert!(!root.join("corrupt").exists());
             second.upload_point(&point, "db/rp-1").await.unwrap();
             second.download_point("db/rp-1", &root.join("retry")).await.unwrap();
+            first.upload_point(&point, "db/rp-1").await.unwrap();
+            first.delete_point("db/rp-1").await.unwrap();
+            assert!(first.list_points("db", 10).await.unwrap().is_empty());
+            assert_eq!(second.list_points("db", 10).await.unwrap(), vec!["db/rp-1"]);
             second_store.delete(&object_key("db/rp-1", "member.tbv3e").unwrap()).await.unwrap();
             assert_eq!(
                 second.download_point("db/rp-1", &root.join("partial")).await,
@@ -605,6 +702,30 @@ mod tests {
             );
             assert!(!root.join("partial").exists());
             fs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    #[test]
+    fn deletion_retry_cleans_orphans_without_touching_other_points() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let store = Arc::new(InMemory::new());
+            let destination = destination(store.clone());
+            let orphan = object_key("db/rp-1", "member.tbv3e").unwrap();
+            let sibling = object_key("db/rp-10", "member.tbv3e").unwrap();
+            store.put(&orphan, b"orphan".to_vec().into()).await.unwrap();
+            store.put(&sibling, b"retained".to_vec().into()).await.unwrap();
+            destination.delete_point("db/rp-1").await.unwrap();
+            destination.delete_point("db/rp-1").await.unwrap();
+            assert!(store.get(&orphan).await.is_err());
+            assert!(store.get(&sibling).await.is_ok());
+            let nested = ObjectPath::parse("db/rp-2/nested/member.tbv3e").unwrap();
+            store.put(&nested, b"nested".to_vec().into()).await.unwrap();
+            assert_eq!(destination.delete_point("db/rp-2").await, Err(TransferError::InvalidPoint));
+            assert!(store.get(&nested).await.is_ok());
+            let malformed = object_key("db/rp-3", INDEX).unwrap();
+            store.put(&malformed, b"bad index".to_vec().into()).await.unwrap();
+            assert_eq!(destination.delete_point("db/rp-3").await, Err(TransferError::InvalidPoint));
+            assert!(store.get(&malformed).await.is_ok());
         });
     }
 
@@ -643,6 +764,7 @@ mod tests {
                 .build()
                 .unwrap();
             let destination = ObjectDestination {
+                admitted_region: crate::regions::RegionCode::GRU,
                 provider: Provider::Oci,
                 store: Arc::new(store),
                 max_artifact_bytes: 1024,
@@ -674,6 +796,7 @@ mod tests {
     #[test]
     fn admission_requires_verified_residency_and_redacts_keys() {
         let mut config = DestinationConfig {
+            admitted_region: crate::regions::RegionCode::GRU,
             provider: Provider::Oci,
             endpoint: "https://namespace.compat.objectstorage.sa-saopaulo-1.oraclecloud.com".into(),
             signing_region: "sa-saopaulo-1".into(),

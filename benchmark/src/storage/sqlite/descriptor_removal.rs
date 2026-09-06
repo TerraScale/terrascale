@@ -33,6 +33,16 @@ impl SqliteStorage {
         if !exists {
             return Ok(false);
         }
+        let canonical_fields = {
+            let mut statement = tx.prepare("SELECT fields FROM schema_indexes WHERE collection = ?1")
+                .map_err(|_| Storage)?;
+            statement.query_map([collection.as_str()], |row| row.get::<_, String>(0))
+                .map_err(|_| Storage)?
+                .collect::<Result<Vec<_>, _>>().map_err(|_| Storage)?
+        };
+        if canonical_fields.iter().any(|fields| fields.split('\n').any(|member| member == field)) {
+            return Err(InUse);
+        }
         if super::invisible::uses_descriptor(&tx, collection.as_str(), field)
             .map_err(|()| Storage)?
         {

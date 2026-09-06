@@ -94,6 +94,20 @@ pub(crate) struct SchemaEnvelopeWrite {
     pub(crate) replacement: Vec<u8>,
 }
 
+/// Source transaction identity and merge observations published as one unit.
+#[derive(Clone, Debug)]
+pub(crate) struct ReplicationPublicationIntent {
+    pub(crate) origin: String,
+    pub(crate) origin_sequence: u64,
+    pub(crate) hlc: u64,
+    pub(crate) commit_ulid: String,
+    pub(crate) context: Vec<u8>,
+    pub(crate) records: Vec<crate::engine::ReplicatedRecord>,
+    pub(crate) private_payload: Vec<u8>,
+    pub(crate) observations: Vec<(CollectionName, DocumentId)>,
+    pub(crate) conflicts: Vec<(CollectionName, DocumentId, super::MergeConflictEntry)>,
+}
+
 /// The validated, digest-bound request storage publishes for one transaction.
 #[derive(Clone, Debug)]
 pub(crate) struct CommitIntent {
@@ -107,11 +121,15 @@ pub(crate) struct CommitIntent {
     pub(crate) snapshot_sequence: StorageSequence,
     /// The requested local durability point.
     pub(crate) durability: LocalDurability,
+    /// Exact causal frontier previously proven uniform for a GlobalDurable write.
+    /// Compared after replay lookup under the SQLite writer transaction.
+    pub(crate) expected_uniform_context: Option<Vec<u8>>,
     /// Trusted usage admission bound atomically to this origin mutation.
     /// Replication, repair, and internal writes carry `None` and never mint.
     pub(crate) usage_admission: Option<UsageAdmissionContext>,
     /// Original source content, independent of the merged publication bytes.
     pub(crate) replication_fingerprint: Option<[u8; 32]>,
+    pub(crate) replication_publication: Option<ReplicationPublicationIntent>,
     /// Conflict history staged atomically with a replicated document update.
     pub(crate) merge_conflict: Option<(CollectionName, DocumentId, super::MergeConflictEntry)>,
     /// The engine's replication clock stamp for an origin commit (the

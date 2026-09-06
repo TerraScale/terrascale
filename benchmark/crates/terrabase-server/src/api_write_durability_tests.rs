@@ -12,11 +12,12 @@ fn fixture() -> (Arc<ApiState>, Arc<terrabase_tbep::member_host::MemberHost>, Da
     let mut state = super::tests::state_with_keys_and_control();
     let state_mut = Arc::get_mut(&mut state).unwrap();
     state_mut.scope = (TENANT.into(), PROJECT.into());
-    let scope = DatabaseRouteScope::try_new(TENANT, PROJECT, DATABASE).unwrap();
+    let host = state_mut.catalog.as_ref().unwrap().host_for(TENANT, PROJECT, DATABASE).unwrap();
+    let owner = host.engine().database_owner();
+    let scope = DatabaseRouteScope::new(owner.tenant(), owner.project(), owner.database());
     let progress = Arc::new(ReplicationProgress::default());
     progress.admit(scope, BTreeSet::from(["gru".into(), "sfo".into()])).unwrap();
     state_mut.replication_progress = Some(progress);
-    let host = state.catalog.as_ref().unwrap().host_for(TENANT, PROJECT, DATABASE).unwrap();
     (state, host, scope)
 }
 
@@ -51,6 +52,7 @@ async fn postcommit_timeout_is_unknown_and_identical_operation_replays() {
     let scope = document_scope(engine).unwrap();
     let durability = WriteDurability {
         class: Durability::Regional,
+        uniform_context: None,
         progress: state.replication_progress.clone().unwrap(),
         scope: route_scope,
         timeout: Duration::from_millis(1),
@@ -77,6 +79,7 @@ async fn another_database_receipt_cannot_confirm_this_write() {
     progress.advance_regional(other, receipt.sequence().get());
     let durability = WriteDurability {
         class: Durability::Regional,
+        uniform_context: None,
         progress,
         scope: route_scope,
         timeout: Duration::from_millis(1),
@@ -89,19 +92,51 @@ async fn another_database_receipt_cannot_confirm_this_write() {
 
 #[tokio::test]
 async fn global_preflight_refuses_nonuniform_context_before_next_commit() {
-    let (state, host, route_scope) = fixture();
+    let (mut state, host, route_scope) = fixture();
     let engine = host.engine();
     let scope = document_scope(engine).unwrap();
     let receipt = commit(engine, &scope, "dependency");
-    let progress = state.replication_progress.as_ref().unwrap();
+    let context = engine.durable_origin_prefixes(&scope).unwrap();
+    let origin = context.keys().next().unwrap().clone();
+    let progress = Arc::new(ReplicationProgress::default());
+    progress.admit(route_scope, BTreeSet::from([origin.clone(), "sfo".into()])).unwrap();
     progress.advance_regional(route_scope, receipt.sequence().get());
+    progress.advance_region(route_scope, &origin, &context).unwrap();
     progress.advance_region(route_scope, "sfo", &BTreeMap::new()).unwrap();
+    Arc::get_mut(&mut state).unwrap().replication_progress = Some(progress);
     let mut headers = axum::http::HeaderMap::new();
     headers.insert("x-terrascale-durability", HeaderValue::from_static("global"));
     headers.insert("x-terrascale-timeout-ms", HeaderValue::from_static("1"));
     let before = engine.read_snapshot(&scope).unwrap().sequence();
-    let error =
-        WriteDurability::prepare(&state, DATABASE, engine, &scope, &headers).await.err().unwrap();
+    let error = WriteDurability::prepare(&state, engine, &scope, &headers).await.err().unwrap();
     assert_eq!(error.code, "global_durability_unavailable");
     assert_eq!(engine.read_snapshot(&scope).unwrap().sequence(), before);
+}
+
+#[tokio::test]
+async fn global_receipt_requires_every_selected_region_for_exact_origin_commit() {
+    let (state, host, route_scope) = fixture();
+    let engine = host.engine();
+    let scope = document_scope(engine).unwrap();
+    let receipt = commit(engine, &scope, "global-receipt");
+    let row = engine.journal_rows(&scope, receipt.sequence().get() - 1, 1).unwrap().remove(0);
+    let progress = Arc::new(ReplicationProgress::default());
+    progress.admit(route_scope, BTreeSet::from([row.origin.clone(), "sfo".into()])).unwrap();
+    progress.advance_regional(route_scope, receipt.sequence().get());
+    let frontier = BTreeMap::from([(row.origin.clone(), row.origin_sequence)]);
+    progress.advance_region(route_scope, &row.origin, &frontier).unwrap();
+    let durability = WriteDurability {
+        class: Durability::Global,
+        uniform_context: Some(BTreeMap::new()),
+        progress: progress.clone(),
+        scope: route_scope,
+        timeout: Duration::from_millis(1),
+    };
+    assert_eq!(
+        durability.confirm(engine, &scope, &receipt).await.unwrap_err().code,
+        "commit_unknown"
+    );
+    progress.advance_region(route_scope, "sfo", &frontier).unwrap();
+    durability.confirm(engine, &scope, &receipt).await.unwrap();
+    drop(state);
 }

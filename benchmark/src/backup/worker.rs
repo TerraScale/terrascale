@@ -45,6 +45,8 @@ pub struct StreamConfig {
     pub destinations: Vec<(Provider, Arc<ObjectDestination>)>,
     /// Persisted effective policy revision; changing policy requires re-admission.
     pub policy_revision: String,
+    /// Plan PITR retention: Free/Starter/Pro/Scale use 1/7/30/35 days.
+    pub retention_days: u8,
     /// Private durable staging directory for this database.
     pub staging: PathBuf,
     /// Immutable residency admitted for this database.
@@ -103,7 +105,7 @@ impl NativeBackupFleet {
             || limits.streams > 65_536
             || limits.points_per_stream == 0
             || limits.points_per_stream > 4096
-            || limits.staging_bytes_per_stream < 2 * 1024 * 1024
+            || limits.staging_bytes_per_stream < 3 * 1024 * 1024
         {
             return Err(FleetError::Configuration);
         }
@@ -118,16 +120,17 @@ impl NativeBackupFleet {
     /// Rejects duplicate streams, unbounded/empty policies and unavailable keys.
     pub fn attach(&mut self, config: StreamConfig) -> Result<(), FleetError> {
         let identity = config.engine.database_id().to_string();
-        if config.policy_revision.len() > 256
+        if !matches!(config.retention_days, 1 | 7 | 30 | 35)
+            || config.policy_revision.len() > 256
             || config.policy_revision.chars().any(char::is_control)
             || self.streams.len() >= self.limits.streams
             || self.streams.contains_key(&identity)
             || config.policy_revision.trim().is_empty()
             || config.destinations.is_empty()
-            || config
-                .destinations
-                .iter()
-                .any(|(provider, destination)| *provider != destination.provider())
+            || config.destinations.iter().any(|(provider, destination)| {
+                *provider != destination.provider()
+                    || destination.admitted_region() != config.engine.database_owner().region()
+            })
             || config.destinations.len() > 2
             || config.destinations.len() == 2
                 && config.destinations[0].0 == config.destinations[1].0
@@ -150,6 +153,85 @@ impl NativeBackupFleet {
             },
         );
         Ok(())
+    }
+
+    /// Applies an explicit effective account-policy revision. New providers
+    /// receive every retained point before replacing the active policy. A
+    /// failure leaves existing protection configured and a durable retry intent.
+    /// Retired provider artifacts remain retained; policy edits never bulk-delete.
+    /// The caller persists the desired policy in its durable lifecycle catalog
+    /// and retries this same revision after interruption.
+    ///
+    /// # Errors
+    /// Refuses invalid/provider-mismatched policies, corrupt chains and outages.
+    pub async fn change_policy(
+        &mut self,
+        database: &str,
+        revision: &str,
+        destinations: Vec<(Provider, Arc<ObjectDestination>)>,
+    ) -> Result<(), FleetError> {
+        let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
+        if revision.is_empty()
+            || revision.len() > 256
+            || revision.chars().any(char::is_control)
+            || destinations.is_empty()
+            || destinations.len() > 2
+            || destinations.iter().any(|(provider, destination)| {
+                *provider != destination.provider()
+                    || destination.admitted_region()
+                        != stream.config.engine.database_owner().region()
+            })
+            || destinations.len() == 2 && destinations[0].0 == destinations[1].0
+        {
+            return Err(FleetError::Configuration);
+        }
+        let points = point_paths(&stream.config.staging, self.limits.points_per_stream)?;
+        if points.is_empty() {
+            return Err(FleetError::Capture);
+        }
+        let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
+        let chain = super::verify_latest_chain_encrypted(&stream.config.staging, reader.as_ref())
+            .map_err(|_| FleetError::Capture)?;
+        let names = destinations
+            .iter()
+            .map(|(provider, _)| match provider {
+                Provider::Oci => "oci".to_owned(),
+                Provider::Tigris => "tigris".to_owned(),
+            })
+            .collect();
+        persist_upload_journal(&stream.config.staging.join("policy-transition"), revision, &names)?;
+        for (_, destination) in &destinations {
+            for point in &points {
+                let name =
+                    point.file_name().and_then(|name| name.to_str()).ok_or(FleetError::Capture)?;
+                destination
+                    .upload_point(point, &format!("{database}/{name}"))
+                    .await
+                    .map_err(|_| FleetError::Upload)?;
+            }
+        }
+        // Commit the exact configured set only after every survivor/new provider
+        // independently verifies a complete chain through the same boundary.
+        persist_upload_journal(&stream.config.staging.join("policy-active"), revision, &names)?;
+        stream.config.destinations = destinations;
+        stream.config.policy_revision = revision.to_owned();
+        stream.health.protected_sequence =
+            chain.last().ok_or(FleetError::Capture)?.boundary_sequence().get();
+        stream.health.providers =
+            stream.config.destinations.iter().map(|(provider, _)| (*provider, true)).collect();
+        stream.health.protected = true;
+        stream.due = Instant::now();
+        std::fs::remove_file(stream.config.staging.join("policy-transition"))
+            .map_err(|_| FleetError::Capture)?;
+        super::sync_directory(&stream.config.staging).map_err(|_| FleetError::Capture)
+    }
+
+    /// Stops future capture for a catalog-closed database, preserving all local
+    /// and remote retained artifacts. The lifecycle owner separately revokes
+    /// access, stops metering and performs authorized key/artifact deletion.
+    /// A running tick must finish before this exclusive operation can execute.
+    pub fn detach(&mut self, database: &str) {
+        self.streams.remove(database);
     }
 
     /// Runs each due stream once, continuing independent databases on failure.
@@ -321,11 +403,8 @@ async fn sync_stream(
     stream: &mut Stream,
     limits: FleetLimits,
 ) -> Result<(), FleetError> {
-    if stream.health.protected && stream.health.source_sequence == stream.health.protected_sequence
-    {
-        return Ok(());
-    }
-    let points = point_paths(&stream.config.staging)?;
+    enforce_retention(identity, stream, limits).await?;
+    let points = point_paths(&stream.config.staging, limits.points_per_stream)?;
     let bytes = staged_bytes(&stream.config.staging)?;
     let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
     let chain = if points.is_empty() {
@@ -341,34 +420,51 @@ async fn sync_stream(
         .journaled_high_water()
         .map_err(|_| FleetError::Capture)?
         .unwrap_or_default();
-    if base != Some(high_water) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| FleetError::Capture)?
+        .as_millis();
+    let now = u64::try_from(now).map_err(|_| FleetError::Capture)?;
+    let root_due = chain
+        .first()
+        .is_none_or(|root| now.saturating_sub(root.captured_unix_millis()) >= 86_400_000);
+    if stream.health.protected && base == Some(high_water) && !root_due {
+        return Ok(());
+    }
+    let mut captured_boundary = base.unwrap_or_default();
+    let mut capture_refusal = None;
+    if base != Some(high_water) || root_due {
         if points.len() >= limits.points_per_stream
             || bytes.saturating_add(2 * 1024 * 1024) >= limits.staging_bytes_per_stream
         {
-            return Err(FleetError::StagingFull);
-        }
-        let lease = stream.config.keys.lease().map_err(|_| FleetError::Capture)?;
-        let encryption = BackupEncryption::from_database_key_lease(
-            &lease,
-            stream.config.engine.database_owner().region(),
-            0,
-        )
-        .map_err(|_| FleetError::Capture)?;
-        let plan = match base {
-            Some(base) => BackupPlan::incremental_since(base, encryption),
-            None => BackupPlan::full(encryption),
-        }
-        .with_reader(reader)
-        .with_placement_lock(stream.config.placement.clone())
-        .with_archive_byte_limit(limits.staging_bytes_per_stream - bytes - 2 * 1024 * 1024);
-        let engine = Arc::clone(&stream.config.engine);
-        let staging = stream.config.staging.clone();
-        tokio::task::spawn_blocking(move || run_backup(&engine, plan, &staging))
-            .await
-            .map_err(|_| FleetError::Capture)?
+            capture_refusal = Some(FleetError::StagingFull);
+        } else {
+            let lease = stream.config.keys.lease().map_err(|_| FleetError::Capture)?;
+            let encryption = BackupEncryption::from_database_key_lease(
+                &lease,
+                stream.config.engine.database_owner().region(),
+                0,
+            )
             .map_err(|_| FleetError::Capture)?;
+            let plan = match (base, root_due) {
+                (Some(base), false) => BackupPlan::incremental_since(base, encryption),
+                _ => BackupPlan::full(encryption),
+            }
+            .with_reader(reader)
+            .with_placement_lock(stream.config.placement.clone())
+            .with_archive_byte_limit(limits.staging_bytes_per_stream - bytes - 2 * 1024 * 1024);
+            let engine = Arc::clone(&stream.config.engine);
+            let staging = stream.config.staging.clone();
+            let result = tokio::task::spawn_blocking(move || run_backup(&engine, plan, &staging))
+                .await
+                .map_err(|_| FleetError::Capture)?;
+            match result {
+                Ok(backup) => captured_boundary = backup.manifest().boundary_sequence(),
+                Err(_) => capture_refusal = Some(FleetError::Capture),
+            }
+        }
     }
-    let points = point_paths(&stream.config.staging)?;
+    let points = point_paths(&stream.config.staging, limits.points_per_stream)?;
     stream.health.providers.clear();
     let mut failed = false;
     for (provider, destination) in &stream.config.destinations {
@@ -402,19 +498,101 @@ async fn sync_stream(
         return Err(FleetError::Upload);
     }
     // Advance only after complete read-back verification on EVERY destination.
-    stream.config.engine.advance_backup_frontier(high_water).map_err(|_| FleetError::Capture)?;
-    stream.health.protected_sequence = high_water.get();
-    stream.health.protected = true;
+    stream
+        .config
+        .engine
+        .advance_backup_frontier(captured_boundary)
+        .map_err(|_| FleetError::Capture)?;
+    stream.health.protected_sequence = captured_boundary.get();
+    stream.health.protected = capture_refusal.is_none();
+    capture_refusal.map_or(Ok(()), Err)
+}
+
+async fn enforce_retention(
+    identity: &str,
+    stream: &Stream,
+    limits: FleetLimits,
+) -> Result<(), FleetError> {
+    let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
+    let points = super::restore::discover_encrypted_points(&stream.config.staging, reader.as_ref())
+        .map_err(|_| FleetError::Capture)?;
+    if points.len() > limits.points_per_stream {
+        return Err(FleetError::StagingFull);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| FleetError::Capture)?
+        .as_millis();
+    let cutoff = u64::try_from(now)
+        .map_err(|_| FleetError::Capture)?
+        .saturating_sub(u64::from(stream.config.retention_days) * 86_400_000);
+    // Keep the newest complete root at/before the retention cutoff and every
+    // newer point. The preceding root, rather than a timestamp-only segment
+    // filter, preserves the complete chain through the entire promised window.
+    let Some(root) = points
+        .iter()
+        .filter(|point| point.base_sequence().is_none() && point.captured_unix_millis() <= cutoff)
+        .max_by_key(|point| (point.captured_unix_millis(), point.boundary_sequence()))
+    else {
+        return Ok(());
+    };
+    let root_name = format!("rp-{}", root.identity());
+    for (provider, _) in &stream.config.destinations {
+        let path = stream.config.staging.join(match provider {
+            Provider::Oci => "uploaded-oci",
+            Provider::Tigris => "uploaded-tigris",
+        });
+        let uploaded =
+            read_upload_journal(&path, &stream.config.policy_revision, limits.points_per_stream)?;
+        if !uploaded.contains(&root_name) {
+            return Ok(());
+        }
+    }
+    // Authentication plus every member digest was verified before admission to
+    // deletion. Exclusive fleet execution excludes concurrent local restores.
+    for point in &points {
+        if point.captured_unix_millis() >= root.captured_unix_millis()
+            || point.boundary_sequence() >= root.boundary_sequence()
+        {
+            continue;
+        }
+        let name = format!("rp-{}", point.identity());
+        for (_, destination) in &stream.config.destinations {
+            destination
+                .delete_point(&format!("{identity}/{name}"))
+                .await
+                .map_err(|_| FleetError::Upload)?;
+        }
+        std::fs::remove_dir_all(stream.config.staging.join(&name))
+            .map_err(|_| FleetError::Capture)?;
+        super::sync_directory(&stream.config.staging).map_err(|_| FleetError::Capture)?;
+        for (provider, _) in &stream.config.destinations {
+            let path = stream.config.staging.join(match provider {
+                Provider::Oci => "uploaded-oci",
+                Provider::Tigris => "uploaded-tigris",
+            });
+            let mut uploaded = read_upload_journal(
+                &path,
+                &stream.config.policy_revision,
+                limits.points_per_stream,
+            )?;
+            uploaded.remove(&name);
+            persist_upload_journal(&path, &stream.config.policy_revision, &uploaded)?;
+        }
+    }
     Ok(())
 }
 
-fn point_paths(path: &Path) -> Result<Vec<PathBuf>, FleetError> {
+fn point_paths(path: &Path, limit: usize) -> Result<Vec<PathBuf>, FleetError> {
     let mut points = Vec::new();
     for entry in std::fs::read_dir(path).map_err(|_| FleetError::Capture)? {
         let entry = entry.map_err(|_| FleetError::Capture)?;
         if entry.file_name().to_str().is_some_and(|name| name.starts_with("rp-")) {
             if !entry.file_type().map_err(|_| FleetError::Capture)?.is_dir() {
                 return Err(FleetError::Capture);
+            }
+            if points.len() >= limit {
+                return Err(FleetError::StagingFull);
             }
             points.push(entry.path());
         }
@@ -573,6 +751,7 @@ mod tests {
                     engine: engine.clone(),
                     destinations: vec![(Provider::Oci, good), (Provider::Tigris, bad)],
                     policy_revision: "policy-1".into(),
+                    retention_days: 1,
                     staging: staging.clone(),
                     placement: PlacementLock::br_only(),
                 })
@@ -612,6 +791,26 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(receipt.restored_documents(), 1);
+            // Even a full staging queue must retry the old pending point once
+            // the provider recovers; newer unarchived work stays unprotected.
+            committed(put(
+                &engine,
+                "alpha",
+                "op-2",
+                "doc-2",
+                "users",
+                text("two"),
+                LocalDurability::Synced,
+            ));
+            std::fs::remove_file(&broken_path).unwrap();
+            std::fs::create_dir(&broken_path).unwrap();
+            fleet.limits.points_per_stream = 1;
+            fleet.streams.get_mut(&identity).unwrap().due = Instant::now();
+            assert_eq!(fleet.sync_once().await, vec![(identity.clone(), FleetError::StagingFull)]);
+            let health = fleet.health(&identity).unwrap();
+            assert!(health.protected_sequence > 0);
+            assert!(health.source_sequence > health.protected_sequence);
+            assert_eq!(health.providers, vec![(Provider::Oci, true), (Provider::Tigris, true)]);
         });
     }
 
@@ -643,6 +842,7 @@ mod tests {
                     (Provider::Tigris, second.clone()),
                 ],
                 policy_revision: "policy-1".into(),
+                retention_days: 1,
                 staging: staging.clone(),
                 placement: PlacementLock::br_only(),
             };

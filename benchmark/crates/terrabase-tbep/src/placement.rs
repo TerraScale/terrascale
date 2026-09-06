@@ -177,6 +177,7 @@ impl PlacementBoundary {
 pub struct PlacementJournal {
     connection: Mutex<Connection>,
     boundary: PlacementBoundary,
+    trust: Mutex<Option<transition::TransitionTrust>>,
 }
 
 impl PlacementJournal {
@@ -206,6 +207,7 @@ impl PlacementJournal {
         transaction.execute_batch(
             "CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), environment TEXT NOT NULL, cluster TEXT NOT NULL, member TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS proposals (revision INTEGER PRIMARY KEY, operation TEXT NOT NULL UNIQUE, principal TEXT NOT NULL, expected_revision INTEGER NOT NULL, proposal BLOB NOT NULL);
+             CREATE TABLE IF NOT EXISTS accepted (sequence INTEGER PRIMARY KEY, proposal_revision INTEGER NOT NULL, proof BLOB NOT NULL, digest TEXT NOT NULL UNIQUE);
              PRAGMA user_version=1;"
         ).map_err(|_| PlacementError::Storage)?;
         transaction
@@ -228,7 +230,7 @@ impl PlacementJournal {
         std::fs::File::open(path.parent().ok_or(PlacementError::Storage)?)
             .and_then(|file| file.sync_all())
             .map_err(|_| PlacementError::Storage)?;
-        let journal = Self { connection: Mutex::new(connection), boundary };
+        let journal = Self { connection: Mutex::new(connection), boundary, trust: Mutex::new(None) };
         match journal.latest() {
             Ok(_) | Err(PlacementError::NotFound) => Ok(journal),
             Err(error) => Err(error),
@@ -359,7 +361,7 @@ impl PlacementJournal {
     }
 }
 
-fn prepare_path(path: &Path) -> Result<(), PlacementError> {
+pub(crate) fn prepare_path(path: &Path) -> Result<(), PlacementError> {
     use std::fs::{File, OpenOptions};
     if !path.is_absolute()
         || path.components().any(|part| {
@@ -417,3 +419,116 @@ fn row_revision(row: &rusqlite::Row<'_>) -> rusqlite::Result<u64> {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+pub mod transition;
+
+
+impl PlacementJournal {
+    /// Installs explicitly provisioned public proof pins and verifies the retained chain.
+    /// Pins cannot be replaced on a live journal; key rotation requires a new composition.
+    ///
+    /// # Errors
+    /// Rejects repeated configuration or a retained proof that fails validation.
+    pub fn configure_transition_trust(&self, trust: transition::TransitionTrust) -> Result<(), PlacementError> {
+        let mut configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
+        if configured.is_some() { return Err(PlacementError::Conflict); }
+        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        self.verified_chain(&connection, &trust)?;
+        *configured = Some(trust);
+        Ok(())
+    }
+
+    /// Verifies and commits an accepted epoch independently of control liveness.
+    /// Catch-up and physical writer admission are still required before serving.
+    ///
+    /// # Errors
+    /// Rejects unconfigured pins, wrong proposal/identity, signature, chain or fence proofs.
+    pub fn accept(&self, operation: &str, request: &pb::PlacementAcceptRequest) -> Result<pb::PlacementAcceptanceResponse, PlacementError> {
+        let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
+        let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
+        let verified = trust.decode(&request.proof)?;
+        if operation != verified.proof.request.operation_id { return Err(PlacementError::RetryMismatch); }
+        let mut connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| PlacementError::Storage)?;
+        let chain = self.verified_chain(&transaction, trust)?;
+        if let Some((_, revision, prior)) = chain.iter().find(|(_, _, prior)| prior.proof.request.operation_id == operation) {
+            if *revision != request.proposal_revision || prior.digest != verified.digest { return Err(PlacementError::RetryMismatch); }
+            return Ok(acceptance_response(*revision, prior));
+        }
+        let latest_revision: u64 = transaction.query_row("SELECT revision FROM proposals ORDER BY revision DESC LIMIT 1", [], row_revision)
+            .optional().map_err(|_| PlacementError::Storage)?.ok_or(PlacementError::NotFound)?;
+        if request.proposal_revision != latest_revision { return Err(PlacementError::Conflict); }
+        self.match_proposal(&transaction, request.proposal_revision, &verified)?;
+        verified.follows(chain.last().map(|(_, _, prior)| prior))?;
+        if chain.len() >= MAX_PLACEMENT_PROPOSALS as usize { return Err(PlacementError::Exhausted); }
+        transaction.execute("INSERT INTO accepted VALUES (?1,?2,?3,?4)", params![
+            i64::try_from(chain.len()+1).map_err(|_| PlacementError::Exhausted)?,
+            i64::try_from(request.proposal_revision).map_err(|_| PlacementError::Invalid)?,
+            request.proof, verified.digest,
+        ]).map_err(|_| PlacementError::Storage)?;
+        transaction.commit().map_err(|_| PlacementError::Storage)?;
+        Ok(acceptance_response(request.proposal_revision, &verified))
+    }
+
+    /// Returns retained membership acceptance without depending on current GRU availability.
+    ///
+    /// # Errors
+    /// Rejects missing proofs or invalid retained chain.
+    pub fn accepted(&self) -> Result<pb::PlacementAcceptanceResponse, PlacementError> {
+        let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
+        let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
+        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let chain = self.verified_chain(&connection, trust)?;
+        let (_, revision, proof) = chain.last().ok_or(PlacementError::NotFound)?;
+        Ok(acceptance_response(*revision, proof))
+    }
+
+    fn verified_chain(&self, connection: &Connection, trust: &transition::TransitionTrust) -> Result<Vec<(u64,u64,transition::VerifiedProof)>, PlacementError> {
+        let mut statement = connection.prepare("SELECT sequence,proposal_revision,proof,digest FROM accepted ORDER BY sequence").map_err(|_| PlacementError::Storage)?;
+        let mut rows = statement.query([]).map_err(|_| PlacementError::Storage)?;
+        let mut chain: Vec<(u64,u64,transition::VerifiedProof)> = Vec::new();
+        while let Some(row) = rows.next().map_err(|_| PlacementError::Storage)? {
+            let sequence = row_revision(row).map_err(|_| PlacementError::Storage)?;
+            let revision: i64 = row.get(1).map_err(|_| PlacementError::Storage)?;
+            let revision = u64::try_from(revision).map_err(|_| PlacementError::Storage)?;
+            let bytes: Vec<u8> = row.get(2).map_err(|_| PlacementError::Storage)?;
+            let digest: String = row.get(3).map_err(|_| PlacementError::Storage)?;
+            if chain.len() >= MAX_PLACEMENT_PROPOSALS as usize || sequence != chain.len() as u64 + 1 { return Err(PlacementError::Storage); }
+            let verified = trust.decode(&bytes)?;
+            if digest != verified.digest { return Err(PlacementError::Storage); }
+            self.match_proposal(connection, revision, &verified)?;
+            verified.follows(chain.last().map(|(_,_,previous)| previous))?;
+            chain.push((sequence,revision,verified));
+        }
+        Ok(chain)
+    }
+
+    fn match_proposal(&self, connection: &Connection, revision: u64, proof: &transition::VerifiedProof) -> Result<(), PlacementError> {
+        let bytes: Vec<u8> = connection.query_row("SELECT proposal FROM proposals WHERE revision=?1", [i64::try_from(revision).map_err(|_| PlacementError::Invalid)?], |row| row.get(0))
+            .optional().map_err(|_| PlacementError::Storage)?.ok_or(PlacementError::NotFound)?;
+        let proposal = self.response(revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
+        if proof.proof.request.scope_id != format!("{}/{}", self.boundary.environment, self.boundary.cluster)
+            || proof.proof.request.epoch != proposal.epoch || proof.proof.request.generation != proposal.generation {
+            return Err(PlacementError::Invalid);
+        }
+        let mut expected = BTreeMap::new();
+        for seats in &proposal.regions {
+            for member in &seats.members {
+                let identity = MemberWorkloadIdentity::try_new(&self.boundary.environment, &self.boundary.cluster, member).map_err(|_| PlacementError::Invalid)?;
+                expected.insert(identity.to_string(), seats.region.clone());
+            }
+        }
+        if proof.proof.request.members.len() != expected.len() { return Err(PlacementError::Invalid); }
+        let local = MemberWorkloadIdentity::try_new(&self.boundary.environment, &self.boundary.cluster, &self.boundary.member).map_err(|_| PlacementError::Invalid)?;
+        for member in &proof.proof.request.members {
+            if expected.get(&member.identity) != Some(&member.region) || (member.identity == local.to_string() && member.placement_digest != transition::hash(&bytes)) {
+                return Err(PlacementError::Invalid);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn acceptance_response(revision: u64, proof: &transition::VerifiedProof) -> pb::PlacementAcceptanceResponse {
+    pb::PlacementAcceptanceResponse { proposal_revision: revision, epoch: proof.proof.request.epoch, generation: proof.proof.request.generation, proof_digest: proof.digest.clone(), status: pb::PlacementAcceptanceStatus::AdmittedCatchingUp as i32 }
+}

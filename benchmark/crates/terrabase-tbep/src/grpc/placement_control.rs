@@ -24,6 +24,7 @@ use pb::placement_control_service_server::{
 /// Authenticated placement control over one durable journal and bounded worker gate.
 pub struct PlacementControlServer {
     journal: Arc<PlacementJournal>,
+    auth_journal: Arc<crate::auth_bootstrap::AuthBootstrapJournal>,
     config: TbepGrpcConfig,
     inflight: Arc<AtomicUsize>,
     draining: AtomicBool,
@@ -38,6 +39,7 @@ impl PlacementControlServer {
     /// Refuses an empty allowlist or non-SPIFFE principal.
     pub fn new(
         journal: Arc<PlacementJournal>,
+        auth_journal: Arc<crate::auth_bootstrap::AuthBootstrapJournal>,
         config: TbepGrpcConfig,
         observer_principals: BTreeSet<String>,
     ) -> Result<Self, PlacementError> {
@@ -54,6 +56,7 @@ impl PlacementControlServer {
         }
         Ok(Self {
             journal,
+            auth_journal,
             config,
             inflight: Arc::new(AtomicUsize::new(0)),
             draining: AtomicBool::new(false),
@@ -134,9 +137,10 @@ impl PlacementControlServer {
         Ok(principal)
     }
 
-    async fn work<F>(&self, work: F) -> Result<pb::PlacementProposalResponse, Status>
+    async fn work<T, F>(&self, work: F) -> Result<T, Status>
     where
-        F: FnOnce() -> Result<pb::PlacementProposalResponse, PlacementError> + Send + 'static,
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, PlacementError> + Send + 'static,
     {
         if self.draining.load(Ordering::Acquire) {
             return Err(control_status(Code::Unavailable, "placement control is draining"));
@@ -226,6 +230,13 @@ impl PlacementControlListener {
                     .max_encoding_message_size(self.server.config.max_message_bytes()),
             )
             .add_service(
+                pb::auth_group_bootstrap_service_server::AuthGroupBootstrapServiceServer::new(
+                    Arc::clone(&self.server),
+                )
+                .max_decoding_message_size(self.server.config.max_message_bytes())
+                .max_encoding_message_size(self.server.config.max_message_bytes()),
+            )
+            .add_service(
                 pb::maintenance_service_server::MaintenanceServiceServer::new(Arc::clone(
                     &self.server,
                 ))
@@ -252,6 +263,20 @@ impl PlacementControlService for Arc<PlacementControlServer> {
         let request = request.into_inner();
         let journal = Arc::clone(&self.journal);
         self.work(move || journal.stage(&principal, &operation, request)).await.map(Response::new)
+    }
+
+    async fn accept(&self, request: Request<pb::PlacementAcceptRequest>) -> Result<Response<pb::PlacementAcceptanceResponse>, Status> {
+        self.authenticate(&request)?;
+        let operation = metadata_value(request.metadata(), super::IDEMPOTENCY_METADATA, super::MAX_IDEMPOTENCY_BYTES)?;
+        let journal = Arc::clone(&self.journal);
+        let request = request.into_inner();
+        self.work(move || journal.accept(&operation, &request)).await.map(Response::new)
+    }
+
+    async fn get_accepted(&self, request: Request<pb::PlacementGetRequest>) -> Result<Response<pb::PlacementAcceptanceResponse>, Status> {
+        self.authenticate(&request)?;
+        let journal = Arc::clone(&self.journal);
+        self.work(move || journal.accepted()).await.map(Response::new)
     }
 
     async fn get(
@@ -292,3 +317,26 @@ fn control_status(code: Code, detail: &str) -> Status {
 mod tests;
 
 mod observation;
+
+#[tonic::async_trait]
+impl pb::auth_group_bootstrap_service_server::AuthGroupBootstrapService
+    for Arc<PlacementControlServer>
+{
+    async fn identity(
+        &self,
+        request: Request<pb::AuthStorageIdentityRequest>,
+    ) -> Result<Response<pb::AuthStorageIdentity>, Status> {
+        self.authenticate(&request)?;
+        let journal = Arc::clone(&self.auth_journal);
+        self.work(move || journal.identity()).await.map(Response::new)
+    }
+    async fn bootstrap(
+        &self,
+        request: Request<pb::AuthGroupBootstrapRequest>,
+    ) -> Result<Response<pb::AuthGroupBootstrapReceipt>, Status> {
+        let principal = self.authenticate(&request)?;
+        let journal = Arc::clone(&self.auth_journal);
+        let request = request.into_inner();
+        self.work(move || journal.bootstrap(&principal, request)).await.map(Response::new)
+    }
+}

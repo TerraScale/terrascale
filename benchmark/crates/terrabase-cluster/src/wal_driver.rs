@@ -52,7 +52,11 @@ impl WalAuthenticatedPeer {
         }
     }
 
-    fn authorize(&self, binding: &WalReplicaBinding, sending: bool) -> Result<(), WalQuicError> {
+    pub(crate) fn authorize(
+        &self,
+        binding: &WalReplicaBinding,
+        sending: bool,
+    ) -> Result<(), WalQuicError> {
         binding
             .authorize_peer(&self.identity, self.generation, self.epoch, sending)
             .map_err(WalQuicError::Route)
@@ -336,11 +340,7 @@ impl WalFollowerDriver {
             let _permit = permit;
             let checkpoint = binding
                 .with_admission(|| {
-                    follower
-                        .lock()
-                        .map_err(|_| WalRouteError::Fenced)?
-                        .checkpoint()
-                        .map_err(WalRouteError::Storage)
+                    Ok(follower.lock().map_err(|_| WalRouteError::Fenced)?.checkpoint())
                 })
                 .map_err(WalQuicError::Route)?;
             Ok(WalCheckpointMessage { checkpoint: Some(checkpoint), ..request })

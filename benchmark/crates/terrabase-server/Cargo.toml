@@ -15,6 +15,7 @@ missing_docs = "deny"
 pedantic = "warn"
 
 [dependencies]
+terrabase-member-transport = { path = "../terrabase-member-transport" }
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 terrabase = { path = "../..", default-features = false }
 terrabase-tbep = { path = "../terrabase-tbep", default-features = false }
@@ -22,6 +23,8 @@ terrabase-cluster = { path = "../terrabase-cluster", default-features = false }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "ws", "json"] }
 aws-lc-rs = { version = "1.18.0", default-features = false, features = ["non-fips"] }
 base64 = "0.22"
+zeroize = "1.9.0"
+rustix = { version = "1.1.4", features = ["process", "fs"] }
 blake3 = "1.8.2"
 bytes = "1"
 http-body-util = "0.1"

@@ -400,6 +400,55 @@ impl RangeSummaryTable {
         Ok(ReconciliationPlan { messages, differences, rounds })
     }
 
+    /// Constructs a validated range in this table's fixed hierarchy.
+    ///
+    /// # Errors
+    /// Rejects empty origins, levels above the hierarchy, and overflowing buckets.
+    pub fn range(&self, origin: &str, level: u8, bucket: u64) -> Result<JournalRange, RepairError> {
+        let span = self.level_span(level);
+        if origin.is_empty()
+            || level > self.top_level
+            || bucket.checked_mul(span).is_none_or(|first| first == u64::MAX)
+        {
+            return Err(RepairError::InvalidRange);
+        }
+        Ok(JournalRange::new(origin.to_owned(), level, bucket, span))
+    }
+
+    /// Returns the complete sequence-space root for one origin.
+    ///
+    /// # Errors
+    /// Rejects an empty origin.
+    pub fn root(&self, origin: &str) -> Result<JournalRange, RepairError> {
+        self.range(origin, self.top_level, 0)
+    }
+
+    /// Returns nonempty child ranges in canonical order.
+    #[must_use]
+    pub fn children(&self, range: &JournalRange) -> Vec<JournalRange> {
+        if range.level == 0 {
+            return Vec::new();
+        }
+        let level = range.level - 1;
+        let span = self.level_span(level);
+        let first_bucket = (range.first - 1) / span;
+        let last_bucket = (range.last - 1) / span;
+        self.summaries
+            .range(
+                SummaryKey { origin: range.origin.clone(), level, bucket: first_bucket }
+                    ..=SummaryKey { origin: range.origin.clone(), level, bucket: last_bucket },
+            )
+            .filter(|(_, fingerprint)| fingerprint.count != 0)
+            .map(|(key, _)| JournalRange::new(range.origin.clone(), level, key.bucket, span))
+            .collect()
+    }
+
+    /// Returns exact retained identities in a leaf; internal nodes return no rows.
+    #[must_use]
+    pub fn leaf_rows(&self, range: &JournalRange) -> Vec<RowSummary> {
+        if range.level == 0 { self.rows_in(range) } else { Vec::new() }
+    }
+
     fn update_path(&mut self, id: &JournalRowId, row_hash: Hash32, add: bool) {
         let contribution = row_contribution(id, &row_hash);
         for level in 0..=self.top_level {

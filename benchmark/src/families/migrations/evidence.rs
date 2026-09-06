@@ -312,6 +312,37 @@ impl MigrationPlan {
         Self { manifest, collection, from, to, outcome }
     }
 
+    /// Restores ready evidence saved by the host before beginning a drive.
+    ///
+    /// The contract identity and checksum encoding are verified before any
+    /// resumed page can consume the evidence. Finalization still compares
+    /// the saved counts and chains against the durable collection.
+    ///
+    /// # Errors
+    /// Returns `PlanMismatch` for a changed contract or malformed checksum.
+    pub fn restore_ready(
+        contract: &SchemaMigration,
+        manifest: &str,
+        documents: u64,
+        source_digest: String,
+        result_digest: String,
+        transform_counts: TransformCounts,
+    ) -> Result<Self, super::MigrationError> {
+        if manifest != manifest_digest(contract)
+            || from_hex(&source_digest).is_none()
+            || from_hex(&result_digest).is_none()
+        {
+            return Err(super::MigrationError::PlanMismatch);
+        }
+        Ok(Self::new(
+            manifest.to_owned(),
+            contract.collection().clone(),
+            contract.from_version(),
+            contract.to_version(),
+            PlanOutcome::Ready { documents, source_digest, result_digest, transform_counts },
+        ))
+    }
+
     /// Returns the manifest digest of the contract the plan was computed
     /// for.
     #[must_use]

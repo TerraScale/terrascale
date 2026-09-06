@@ -5,10 +5,12 @@ use std::{path::PathBuf, sync::Mutex, time::Duration};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::export_api::{
-    ExportError, ExportJobLease, ExportJobState, ExportStore, FileExportStore,
+    ExportCancellation, ExportError, ExportJobLease, ExportJobState, ExportStatus, ExportStore,
+    FileExportStore, JobStatus, status_from_state,
 };
 
 const MAX_STATE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PROGRESS_BYTES: usize = 256 * 1024;
 
 /// SQLite control records and cancellation flags for resumable exports.
 /// Job leases use persistent lock files, released by the OS on process exit.
@@ -45,6 +47,7 @@ impl SqliteExportStore {
              CREATE TABLE IF NOT EXISTS export_jobs (
                  job_id TEXT PRIMARY KEY NOT NULL,
                  state BLOB NOT NULL CHECK(length(state) <= 33554432),
+                 progress BLOB NOT NULL CHECK(length(progress) <= 262144),
                  cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1))
              ) WITHOUT ROWID;",
             )
@@ -81,11 +84,12 @@ impl ExportStore for SqliteExportStore {
     fn create(&self, state: &ExportJobState) -> Result<ExportJobState, ExportError> {
         validate_id(&state.job_id)?;
         let bytes = encode(state)?;
+        let progress = encode_progress(state)?;
         let mut connection = self.connection.lock().map_err(io_error)?;
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(io_error)?;
-        transaction.execute("INSERT INTO export_jobs(job_id,state) VALUES (?1,?2) ON CONFLICT(job_id) DO NOTHING", params![state.job_id, bytes]).map_err(io_error)?;
+        transaction.execute("INSERT INTO export_jobs(job_id,state,progress) VALUES (?1,?2,?3) ON CONFLICT(job_id) DO NOTHING", params![state.job_id, bytes, progress]).map_err(io_error)?;
         let stored: Vec<u8> = transaction
             .query_row(
                 "SELECT length(state),state FROM export_jobs WHERE job_id=?1",
@@ -115,17 +119,47 @@ impl ExportStore for SqliteExportStore {
     fn save(&self, state: &ExportJobState) -> Result<(), ExportError> {
         validate_id(&state.job_id)?;
         let bytes = encode(state)?;
+        let progress = encode_progress(state)?;
         let connection = self.connection.lock().map_err(io_error)?;
         let changed = connection
             .execute(
-                "UPDATE export_jobs SET state=?2 WHERE job_id=?1",
-                params![state.job_id, bytes],
+                "UPDATE export_jobs SET state=?2,progress=?3 WHERE job_id=?1",
+                params![state.job_id, bytes, progress],
             )
             .map_err(io_error)?;
         if changed != 1 {
             return Err(ExportError::InvalidRequest("export job was not found"));
         }
         Ok(())
+    }
+
+    fn progress(&self, job_id: &str) -> Result<Option<ExportStatus>, ExportError> {
+        validate_id(job_id)?;
+        let connection = self.connection.lock().map_err(io_error)?;
+        let stored: Option<(Vec<u8>, bool)> = connection.query_row(
+            "SELECT length(progress),progress,cancel_requested FROM export_jobs WHERE job_id=?1", [job_id],
+            |row| {
+                let length = row.get::<_, i64>(0)?;
+                if length < 0 || usize::try_from(length).map_or(true, |length| length > MAX_PROGRESS_BYTES) { return Err(rusqlite::Error::InvalidQuery); }
+                Ok((row.get(1)?, row.get(2)?))
+            },
+        ).optional().map_err(io_error)?;
+        stored
+            .map(|(bytes, requested)| {
+                let mut progress: ExportStatus =
+                    serde_json::from_slice(&bytes).map_err(io_error)?;
+                if progress.job_id != job_id {
+                    return Err(ExportError::InvalidRequest("export progress identity mismatch"));
+                }
+                progress.cancellation = match progress.status {
+                    JobStatus::Complete => ExportCancellation::Unavailable,
+                    JobStatus::Cancelled => ExportCancellation::Complete,
+                    _ if requested => ExportCancellation::Requested,
+                    _ => ExportCancellation::Available,
+                };
+                Ok(progress)
+            })
+            .transpose()
     }
 
     fn list(&self, after: Option<&str>, limit: usize) -> Result<Vec<String>, ExportError> {
@@ -156,7 +190,7 @@ impl ExportStore for SqliteExportStore {
         validate_id(job_id)?;
         let connection = self.connection.lock().map_err(io_error)?;
         connection.execute(
-            "UPDATE export_jobs SET cancel_requested=1 WHERE job_id=?1 AND json_extract(CAST(state AS TEXT), '$.status') NOT IN ('Complete','Cancelled')",
+            "UPDATE export_jobs SET cancel_requested=1 WHERE job_id=?1 AND json_extract(CAST(progress AS TEXT), '$.status') NOT IN ('Complete','Cancelled')",
             [job_id],
         ).map(|changed| changed == 1).map_err(io_error)
     }
@@ -189,16 +223,16 @@ fn validate_id(id: &str) -> Result<(), ExportError> {
 }
 
 fn encode(state: &ExportJobState) -> Result<Vec<u8>, ExportError> {
-    let mut bytes = BoundedStateBytes(Vec::new());
+    let mut bytes = BoundedStateBytes::<MAX_STATE_BYTES>(Vec::new());
     serde_json::to_writer(&mut bytes, state).map_err(io_error)?;
     Ok(bytes.0)
 }
 
-struct BoundedStateBytes(Vec<u8>);
+struct BoundedStateBytes<const LIMIT: usize>(Vec<u8>);
 
-impl std::io::Write for BoundedStateBytes {
+impl<const LIMIT: usize> std::io::Write for BoundedStateBytes<LIMIT> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() > MAX_STATE_BYTES.saturating_sub(self.0.len()) {
+        if bytes.len() > LIMIT.saturating_sub(self.0.len()) {
             return Err(std::io::Error::other("export state exceeds byte limit"));
         }
         self.0.extend_from_slice(bytes);
@@ -277,6 +311,9 @@ mod tests {
         job.pages = 3;
         first.save(&job).expect("progress");
         assert!(first.cancel_requested(&job.job_id).expect("cancel survives progress"));
+        let progress = first.progress(&job.job_id).expect("small progress").expect("exists");
+        assert_eq!(progress.pages, 3);
+        assert_eq!(progress.cancellation, ExportCancellation::Requested);
         let mut replay = job.clone();
         replay.pages = 0;
         assert_eq!(second.create(&replay).expect("idempotent replay").pages, 3);
@@ -298,6 +335,35 @@ mod tests {
         reopened.save(&job).expect("complete");
         assert!(!reopened.request_cancel(&job.job_id).expect("terminal cancel"));
         drop(reopened);
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn progress_ignores_corrupt_and_oversized_snapshot_state() {
+        let root = std::env::temp_dir().join(format!(
+            "terrabase-sqlite-export-progress-{}",
+            terrabase::identity::DatabaseUlid::generate()
+        ));
+        let store = SqliteExportStore::open(&root).expect("store");
+        let job = state('d');
+        store.create(&job).expect("create");
+        {
+            let connection = store.connection.lock().expect("connection");
+            connection.execute("UPDATE export_jobs SET state=x'00'", []).expect("corrupt metadata");
+        }
+        assert!(store.load(&job.job_id).is_err());
+        assert_eq!(store.progress(&job.job_id).expect("progress").expect("exists").pages, 0);
+        {
+            let connection = store.connection.lock().expect("connection");
+            connection.execute_batch("PRAGMA ignore_check_constraints=ON; UPDATE export_jobs SET state=zeroblob(33554433); PRAGMA ignore_check_constraints=OFF;").expect("oversized metadata fixture");
+        }
+        assert!(store.load(&job.job_id).is_err());
+        assert!(store.request_cancel(&job.job_id).expect("cancel without reading metadata"));
+        assert_eq!(
+            store.progress(&job.job_id).expect("progress").expect("exists").cancellation,
+            ExportCancellation::Requested
+        );
+        drop(store);
         std::fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -338,4 +404,11 @@ fn bounded_state_bytes(row: &rusqlite::Row<'_>) -> rusqlite::Result<Vec<u8>> {
         return Err(rusqlite::Error::InvalidQuery);
     }
     row.get(1)
+}
+
+fn encode_progress(state: &ExportJobState) -> Result<Vec<u8>, ExportError> {
+    let progress = status_from_state(state, ExportCancellation::Available)?;
+    let mut bytes = BoundedStateBytes::<MAX_PROGRESS_BYTES>(Vec::new());
+    serde_json::to_writer(&mut bytes, &progress).map_err(io_error)?;
+    Ok(bytes.0)
 }

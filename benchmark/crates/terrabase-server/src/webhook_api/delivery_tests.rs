@@ -25,14 +25,24 @@ impl WebhookJournal for TestPorts {
     fn page(
         &self,
         _: &TenantScope,
-        cursor: u64,
+        cursor: Option<ChangeCheckpoint>,
         limit: usize,
-    ) -> Result<Vec<Publication>, StorageError> {
-        Ok(if cursor < 7 && limit > 0 {
-            vec![Publication { revision: 7, event_id: "event-7".into(), body: b"payload".to_vec() }]
+    ) -> Result<PublicationPage, StorageError> {
+        let publications = if journal::checkpoint_order(cursor) < Some((7, 1)) && limit > 0 {
+            vec![Publication {
+                revision: 7,
+                write_index: 1,
+                event_id: "event-7".into(),
+                body: b"payload".to_vec(),
+            }]
         } else {
             Vec::new()
-        })
+        };
+        let next = publications
+            .last()
+            .map(|row| ChangeCheckpoint::after(row.revision, row.write_index))
+            .or(cursor);
+        Ok(PublicationPage { publications, next })
     }
 }
 
@@ -53,7 +63,14 @@ impl WebhookSecrets for TestPorts {
             Ok(())
         }
     }
-    fn creation(&self, scope: &TenantScope, id: &str, region: &str) -> Result<Vec<u8>, SecretError> { self.get(scope, id, region) }
+    fn creation(
+        &self,
+        scope: &TenantScope,
+        id: &str,
+        region: &str,
+    ) -> Result<Vec<u8>, SecretError> {
+        self.get(scope, id, region)
+    }
     fn rotate(
         &self,
         _: &TenantScope,
@@ -134,8 +151,15 @@ async fn retries_survive_cursor_advance_and_restart_then_expire_without_sending(
         .storage
         .create_endpoint(&scope, "https://hooks.example/events", 100)
         .expect("endpoint");
-    assert_eq!(first.dispatch(&scope, 0).await.expect("initial dispatch").attempted, 1);
-    assert_eq!(first.dispatch(&scope, 7).await.expect("not due").attempted, 0);
+    assert_eq!(first.dispatch(&scope, None).await.expect("initial dispatch").attempted, 1);
+    assert_eq!(
+        first
+            .dispatch(&scope, Some(ChangeCheckpoint::after(7, 1)))
+            .await
+            .expect("not due")
+            .attempted,
+        0
+    );
     drop(first);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
     engine.shutdown().expect("shutdown");
@@ -143,12 +167,18 @@ async fn retries_survive_cursor_advance_and_restart_then_expire_without_sending(
     let engine = open();
     let reopened = service(&engine, &ports);
     ports.now.store(101, Ordering::SeqCst);
-    let retry = reopened.dispatch(&scope, 7).await.expect("retry with advanced cursor");
+    let retry = reopened
+        .dispatch(&scope, Some(ChangeCheckpoint::after(7, 1)))
+        .await
+        .expect("retry with advanced cursor");
     assert_eq!(retry.publications, 0);
     assert_eq!(retry.attempted, 1);
     assert_eq!(ports.sent.load(Ordering::SeqCst), 2);
     ports.now.store(100 + RETRY_HORIZON_SECONDS, Ordering::SeqCst);
-    let expired = reopened.dispatch(&scope, 7).await.expect("expire without publication");
+    let expired = reopened
+        .dispatch(&scope, Some(ChangeCheckpoint::after(7, 1)))
+        .await
+        .expect("expire without publication");
     assert_eq!(expired.attempted, 0);
     assert_eq!(ports.sent.load(Ordering::SeqCst), 2);
     let log = reopened.delivery_log(&scope, &endpoint.id, 10).expect("delivery log");
@@ -181,8 +211,12 @@ fn durable_adapters_reject_every_foreign_owner_dimension_without_mutation() {
     let journal = EngineWebhookJournal::new(Arc::clone(&engine));
     let endpoint =
         storage.create_endpoint(&scope, "https://hooks.example/events", 100).expect("endpoint");
-    let publication =
-        Publication { revision: 7, event_id: "event-7".into(), body: b"payload".to_vec() };
+    let publication = Publication {
+        revision: 7,
+        write_index: 1,
+        event_id: "event-7".into(),
+        body: b"payload".to_vec(),
+    };
     let delivery =
         storage.ensure_delivery(&scope, &endpoint.id, &publication, 100).expect("delivery");
     let revision = engine.published_sequence().expect("sequence");
@@ -233,7 +267,7 @@ fn durable_adapters_reject_every_foreign_owner_dimension_without_mutation() {
                 storage.due_deliveries(&foreign, &endpoint.id, 101, limit),
                 Err(StorageError::Conflict)
             );
-            assert_eq!(journal.page(&foreign, 0, limit), Err(StorageError::Conflict));
+            assert_eq!(journal.page(&foreign, None, limit), Err(StorageError::Conflict));
         }
     }
     assert_eq!(engine.published_sequence().expect("unchanged sequence"), revision);
@@ -335,7 +369,7 @@ fn deletion_reports_secret_destruction_failure_and_remains_retryable() {
 }
 
 #[test]
-fn journal_page_keeps_an_entire_large_commit_before_checkpointing() {
+fn journal_page_resumes_inside_a_large_commit_after_restart() {
     use terrabase::types::{CollectionName, Document, DocumentId, DocumentValue};
     let root = std::env::temp_dir().join(format!(
         "terrascale-webhook-batch-{}",
@@ -378,12 +412,14 @@ fn journal_page_keeps_an_entire_large_commit_before_checkpointing() {
         terrabase::CommitOutcome::Committed(_)
     ));
     let journal = EngineWebhookJournal::new(Arc::clone(&engine));
-    let page = journal.page(&scope, 0, MAX_JOURNAL_PAGE).expect("page");
-    assert_eq!(page.len(), MAX_JOURNAL_PAGE + 1);
-    assert!(page.iter().all(|row| row.revision == page[0].revision));
+    let page = journal.page(&scope, None, MAX_JOURNAL_PAGE).expect("page");
+    assert_eq!(page.publications.len(), MAX_JOURNAL_PAGE);
+    assert!(page.publications.iter().all(|row| row.revision == page.publications[0].revision));
+    let first = page.publications[0].clone();
+    assert_eq!(page.next.expect("cursor").write_index(), MAX_JOURNAL_PAGE as u32);
     let storage = EngineWebhookStorage::new(Arc::clone(&engine));
-    storage.checkpoint_dispatch(&scope, 0, page[0].revision).expect("checkpoint");
-    let cursor = page[0].revision;
+    storage.checkpoint_dispatch(&scope, None, page.next).expect("checkpoint");
+    let cursor = page.next;
     drop(storage);
     drop(journal);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
@@ -394,14 +430,153 @@ fn journal_page_keeps_an_entire_large_commit_before_checkpointing() {
     );
     let storage = EngineWebhookStorage::new(Arc::clone(&engine));
     assert_eq!(storage.dispatch_cursor(&scope), Ok(cursor));
+    let journal = EngineWebhookJournal::new(Arc::clone(&engine));
+    let tail = journal.page(&scope, cursor, MAX_JOURNAL_PAGE).expect("next page");
+    assert_eq!(tail.publications.len(), 1);
+    assert_eq!(tail.publications[0].write_index, (MAX_JOURNAL_PAGE + 1) as u32);
+    assert_eq!(tail.publications[0].revision, first.revision);
+    assert_ne!(tail.publications[0].event_id, first.event_id);
+    let endpoint =
+        storage.create_endpoint(&scope, "https://hooks.example/events", 100).expect("endpoint");
+    let pending = storage
+        .ensure_delivery(&scope, &endpoint.id, &tail.publications[0], 100)
+        .expect("pending tail retry");
+    let retry = journal
+        .page(&scope, journal::before_publication(&pending).expect("before"), 1)
+        .expect("retry exact position");
+    assert_eq!(retry.publications, tail.publications);
+    let replay = journal.page(&scope, None, 1).expect("first event after restart");
+    assert_eq!(replay.publications, vec![first]);
     assert!(
-        EngineWebhookJournal::new(Arc::clone(&engine))
-            .page(&scope, cursor, MAX_JOURNAL_PAGE)
-            .expect("next page")
-            .is_empty()
+        journal.page(&scope, tail.next, MAX_JOURNAL_PAGE).expect("drained").publications.is_empty()
     );
+    drop(journal);
     drop(storage);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole reopened engine") };
     engine.shutdown().expect("close");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn creation_retry_keeps_the_same_endpoint_and_secret_and_rejects_request_reuse() {
+    let root = std::env::temp_dir().join(format!(
+        "terrascale-webhook-idempotency-{}",
+        terrabase::identity::process_generator().generate().to_text()
+    ));
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("engine"),
+    );
+    let owner = engine.database_owner();
+    let scope = TenantScope::new(
+        owner.tenant().to_text(),
+        owner.project().to_text(),
+        owner.database().to_text(),
+    )
+    .expect("scope");
+    let ports = Arc::new(TestPorts::default());
+    let service = service(&engine, &ports);
+    let input = CreateWebhook { endpoint: "https://hooks.example/events".into() };
+    let first = service.create_with_secret(&scope, &input, Some("create-1")).expect("create");
+    let retry = service.create_with_secret(&scope, &input, Some("create-1")).expect("retry");
+    assert_eq!(first.webhook, retry.webhook);
+    assert_eq!(first.secret, retry.secret);
+    assert_eq!(service.list(&scope).expect("list").len(), 1);
+    let conflict = service.create_with_secret(
+        &scope,
+        &CreateWebhook { endpoint: "https://other.example/events".into() },
+        Some("create-1"),
+    );
+    assert!(matches!(conflict, Err(error) if error.status() == StatusCode::CONFLICT));
+    drop(service);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
+    engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn retained_journal_preserves_overwritten_events_and_pending_retry_after_restart() {
+    use terrabase::types::{CollectionName, Document, DocumentId, DocumentValue};
+    let root = std::env::temp_dir().join(format!(
+        "terrascale-webhook-history-{}",
+        terrabase::identity::process_generator().generate().to_text()
+    ));
+    let open = || {
+        Arc::new(
+            Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+                .expect("engine"),
+        )
+    };
+    let engine = open();
+    let owner = engine.database_owner();
+    let scope = TenantScope::new(
+        owner.tenant().to_text(),
+        owner.project().to_text(),
+        owner.database().to_text(),
+    )
+    .expect("scope");
+    let engine_scope = webhook_engine_scope(&engine, &scope).expect("engine scope");
+    for index in 0..3 {
+        let mut transaction = engine
+            .begin(
+                &engine_scope,
+                engine.read_snapshot(&engine_scope).expect("snapshot"),
+                terrabase::OperationId::try_new(&format!("overwrite-{index}")).expect("operation"),
+            )
+            .expect("transaction");
+        let id = DocumentId::try_new("same-document").expect("id");
+        if index == 2 {
+            transaction.delete(id, ExpectedVersion::Any).expect("delete");
+        } else {
+            transaction
+                .put(
+                    Document::new(
+                        id,
+                        CollectionName::try_new("orders").expect("collection"),
+                        DocumentValue::Integer(index),
+                    ),
+                    ExpectedVersion::Any,
+                )
+                .expect("put");
+        }
+        assert!(matches!(
+            transaction.commit(terrabase::LocalDurability::Synced),
+            terrabase::CommitOutcome::Committed(_)
+        ));
+    }
+    let journal = EngineWebhookJournal::new(Arc::clone(&engine));
+    let expected = journal.page(&scope, None, MAX_JOURNAL_PAGE).expect("all retained events");
+    assert_eq!(expected.publications.len(), 3);
+    assert!(expected.publications.windows(2).all(|pair| pair[0].revision < pair[1].revision && pair[0].event_id != pair[1].event_id));
+    let storage = EngineWebhookStorage::new(Arc::clone(&engine));
+    let endpoint =
+        storage.create_endpoint(&scope, "https://hooks.example/events", 100).expect("endpoint");
+    let pending = storage
+        .ensure_delivery(&scope, &endpoint.id, &expected.publications[0], 100)
+        .expect("pending original version");
+    storage
+        .checkpoint_dispatch(&scope, None, expected.next)
+        .expect("advance past overwrite and delete");
+    drop(storage);
+    drop(journal);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
+    engine.shutdown().expect("shutdown");
+    let engine = open();
+    let storage = EngineWebhookStorage::new(Arc::clone(&engine));
+    assert_eq!(storage.dispatch_cursor(&scope), Ok(expected.next));
+    let due = storage
+        .due_deliveries(&scope, &endpoint.id, 100, MAX_JOURNAL_PAGE)
+        .expect("durable pending retry");
+    assert_eq!(due, vec![pending.clone()]);
+    let journal = EngineWebhookJournal::new(Arc::clone(&engine));
+    assert_eq!(journal.page(&scope, None, MAX_JOURNAL_PAGE).expect("reopened history"), expected);
+    let retry = journal
+        .page(&scope, journal::before_publication(&pending).expect("exact predecessor"), 1)
+        .expect("retry original body");
+    assert_eq!(retry.publications, vec![expected.publications[0].clone()]);
+    drop(journal);
+    drop(storage);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole reopened engine") };
+    engine.shutdown().expect("shutdown reopened");
     std::fs::remove_dir_all(root).expect("cleanup");
 }

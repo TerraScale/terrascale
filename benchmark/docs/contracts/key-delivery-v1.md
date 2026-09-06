@@ -2,12 +2,15 @@
 
 The native host orchestrator owns OCI workload identity, Vault endpoints,
 regional ciphertext wrappers, key-version authorization and revocation.
-TerraBase requests leases over an owner-private Unix socket; neither process
+TerraBase requests leases over an dedicated-group Unix socket; neither process
 reads an unwrapped database key from local configuration or disk.
 
-Both peers authenticate the other's kernel UID. The socket is mode 0600 and
-its parent is mode 0700, owned by the orchestrator service user. Both services
-run under that configured UID. Ancestor directories must not be symlinks or
+Both peers authenticate the other's exact kernel UID. The socket is mode 0660
+and its parent is mode 0710, owned by the orchestrator service user and the
+dedicated key-delivery group. The engine and orchestrator use distinct stable
+UIDs. Group membership permits socket access but never authorizes a request.
+The consumer also verifies the configured socket GID. Catalog and credential
+directories remain mode 0700 under the orchestrator's private ownership. Ancestor directories must not be symlinks or
 writable by another user. The consumer rejects missing or unsafe sockets,
 unknown versions and malformed replies without exposing provider responses.
 

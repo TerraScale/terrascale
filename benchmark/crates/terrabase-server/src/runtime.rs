@@ -281,8 +281,20 @@ async fn serve_pending_placement_control(
         control.orchestrator_principals.clone(),
     )
     .map_err(|_| unavailable("placement control transport limits are invalid"))?;
+    let auth_boundary=terrabase_tbep::auth_bootstrap::AuthBootstrapBoundary::new(
+        production.environment.name.as_str(),
+        &production.environment.cluster.to_text(),
+        &production.environment.member.to_text(),
+        production.databases.iter().filter(|database|database.enabled).map(|database| {
+            terrabase_cluster::production::DatabaseRouteScope::new(database.tenant,database.project,database.database)
+        }).collect(),
+        production.placement.regions().flat_map(|seats| seats.members().iter().map(|member|(member.to_text(),seats.region().as_str().to_owned())).collect::<Vec<_>>()).collect(),
+    ).map_err(|_|unavailable("auth bootstrap host boundary is invalid"))?;
+    let auth_journal_path=control.proposal_journal.parent().ok_or_else(||unavailable("auth bootstrap journal directory missing"))?.join("auth-bootstrap.sqlite");
+    let auth_journal=Arc::new(terrabase_tbep::auth_bootstrap::AuthBootstrapJournal::open(&auth_journal_path,auth_boundary)
+        .map_err(|_|unavailable("auth bootstrap journal unavailable or identity mismatch"))?);
     let server = Arc::new(
-        PlacementControlServer::new(journal, grpc, control.observer_principals.clone())
+        PlacementControlServer::new(journal, auth_journal, grpc, control.observer_principals.clone())
             .map_err(|_| unavailable("placement control principal policy is invalid"))?,
     );
     let certificate = read_pem(&production.transport.server_certificate, false)
@@ -553,6 +565,13 @@ async fn serve_public_api(
         }
         None => crate::reactive_api::CapabilityKeyRing::default(),
     };
+    let rotation = public.credential_rotation.as_ref().map(|rotation| {
+        crate::credential_rotation::bind(&rotation.socket, &rotation.state_file,
+            read_secret_key(&rotation.token_file)?, origin_proof_keys.clone(), capability_keys.clone())
+            .map_err(|_| DaemonError::Engine("credential rotation receiver unavailable".into()))
+    }).transpose()?;
+    let (origin_proof_keys, capability_keys) = rotation.as_ref().map_or(
+        (origin_proof_keys, capability_keys), |bound| (bound.origin.clone(), bound.capability.clone()));
     let delegated_identity = public.identity.as_ref().map(|identity| {
         let secret = String::from_utf8(read_secret_key(&identity.service_key_file)?)
             .map_err(|_| DaemonError::SecretFile)?;
@@ -563,7 +582,7 @@ async fn serve_public_api(
     }).transpose()?;
     let provisioning = public.provisioning.as_ref().map(|authority| {
         crate::provisioning::ProvisioningClient::new(authority.socket.clone(), authority.authority_uid,
-            authority.environment.clone(), tenant.clone(), project.clone())
+            authority.environment.clone())
             .map(Arc::new).map_err(|_| DaemonError::Engine("invalid provisioning authority configuration".into()))
     }).transpose()?;
     let state = Arc::new(crate::api::ApiState {
@@ -585,6 +604,8 @@ async fn serve_public_api(
         )),
         delegated_identity,
         development: Arc::default(),
+        replication_progress: None,
+        admitted_databases: None,
         provisioning,
         capability_keys: Arc::new(capability_keys),
     });
@@ -596,9 +617,12 @@ async fn serve_public_api(
         }
     });
     let dispatcher = crate::api::spawn_webhook_dispatcher(&state);
+    let schema_migrations = crate::api::spawn_schema_migrations(&state);
     let export_runtime = state.exports.clone();
     let router = crate::api::router(state);
     let task = tokio::spawn(async move {
+        let (rotation_stop, rotation_signal) = oneshot::channel();
+        let rotation_task = rotation.map(|bound| tokio::spawn(bound.serve_until(async { let _ = rotation_signal.await; })));
         let _export_recovery = export_recovery;
         let result = axum::serve(listener, router)
             .with_graceful_shutdown(async {
@@ -606,11 +630,19 @@ async fn serve_public_api(
                 if let Some(exports) = export_runtime { exports.stop(); }
             })
             .await;
+        let _ = rotation_stop.send(());
+        let rotation_result = if let Some(task) = rotation_task {
+            task.await.map_err(std::io::Error::other)?
+        } else { Ok(()) };
+        if let Some(worker) = schema_migrations {
+            worker.abort();
+            let _ = worker.await;
+        }
         if let Some(dispatcher) = dispatcher {
             dispatcher.abort();
             let _ = dispatcher.await;
         }
-        result
+        result.and(rotation_result)
     });
     Ok((Some(task), stop))
 }

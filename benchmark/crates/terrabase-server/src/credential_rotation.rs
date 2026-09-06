@@ -1,0 +1,545 @@
+//! Authenticated host-local credential rotation with durable replay receipts.
+use crate::reactive_api::{CapabilityKeyRing, OriginProofKeyRing};
+use axum::{
+    Json, Router,
+    extract::{DefaultBodyLimit, State},
+    http::{HeaderMap, StatusCode},
+    routing::post,
+};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::BTreeMap,
+    io,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+fn now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(u64::MAX, |v| v.as_secs())
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub(crate) struct KeyMaterial {
+    pub(crate) current: Vec<u8>,
+    previous: Option<Vec<u8>>,
+    expires_at: u64,
+    previous_expires_at: u64,
+}
+impl std::fmt::Debug for KeyMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("KeyMaterial([REDACTED])")
+    }
+}
+impl Drop for KeyMaterial {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.current.zeroize();
+        if let Some(p) = &mut self.previous {
+            p.zeroize();
+        }
+    }
+}
+impl KeyMaterial {
+    pub(crate) fn new(current: &[u8], previous: Option<&[u8]>) -> Option<Self> {
+        if !(16..=4096).contains(&current.len())
+            || previous.is_some_and(|p| !(16..=4096).contains(&p.len()) || p == current)
+        {
+            return None;
+        }
+        Some(Self {
+            current: current.to_vec(),
+            previous: previous.map(<[u8]>::to_vec),
+            expires_at: u64::MAX,
+            previous_expires_at: u64::MAX,
+        })
+    }
+    pub(crate) fn usable(&self) -> Option<&Self> {
+        (!self.current.is_empty() && self.expires_at > now()).then_some(self)
+    }
+    pub(crate) fn previous_key(&self) -> Option<&[u8]> {
+        if self.previous_expires_at > now() { self.previous.as_deref() } else { None }
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(crate) struct LiveKeys {
+    pub(crate) origin: KeyMaterial,
+    pub(crate) capability: KeyMaterial,
+}
+impl LiveKeys {
+    pub(crate) fn single(keys: KeyMaterial) -> Self {
+        Self { origin: keys.clone(), capability: keys }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Request {
+    operation_id: String,
+    action: String,
+    generation: u64,
+    #[serde(default)]
+    expires_at: u64,
+    #[serde(default)]
+    current_key_id: String,
+    #[serde(default)]
+    current_key: String,
+    #[serde(default)]
+    previous_key_id: String,
+    #[serde(default)]
+    previous_key: String,
+    #[serde(default)]
+    previous_expires_at: u64,
+}
+impl Drop for Request {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.current_key.zeroize();
+        self.previous_key.zeroize();
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct Receipt {
+    generation: u64,
+    valid_until: u64,
+    state: String,
+    operation_id: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct SavedReceipt {
+    digest: String,
+    receipt: Receipt,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct Durable {
+    generation: u64,
+    state: String,
+    active: LiveKeys,
+    staged: Option<LiveKeys>,
+    rollback: Option<LiveKeys>,
+    verified: bool,
+    receipts: BTreeMap<String, SavedReceipt>,
+}
+struct Inner {
+    durable: Durable,
+    file: PathBuf,
+    _lock: std::fs::File,
+}
+struct Service {
+    inner: Mutex<Inner>,
+    live: Arc<RwLock<LiveKeys>>,
+    token: zeroize::Zeroizing<Vec<u8>>,
+}
+
+/// Bound private listener and the two rings that must be installed in API state.
+pub struct BoundRotation {
+    /// Live origin-proof verifier ring.
+    pub origin: OriginProofKeyRing,
+    /// Live capability issuer/verifier ring.
+    pub capability: CapabilityKeyRing,
+    listener: tokio::net::UnixListener,
+    socket: PathBuf,
+    service: Arc<Service>,
+}
+
+fn private_dir(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_dir()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err(io::Error::other("rotation directory must be private (0700)"));
+    }
+    Ok(())
+}
+fn persist(path: &Path, state: &Durable) -> io::Result<()> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+    let bytes = zeroize::Zeroizing::new(serde_json::to_vec(state)?);
+    let tmp = path.with_extension("rotation-tmp");
+    // A leftover temporary file is never trusted after a crash.
+    if tmp.exists() {
+        std::fs::remove_file(&tmp)?;
+    }
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+    f.write_all(&bytes)?;
+    f.sync_all()?;
+    std::fs::rename(&tmp, path)?;
+    std::fs::File::open(path.parent().ok_or_else(|| io::Error::other("missing state directory"))?)?
+        .sync_all()
+}
+
+/// Binds the private control socket and restores durable active credentials.
+///
+/// # Errors
+/// Rejects weak tokens, public directories, malformed state, or socket conflicts.
+pub fn bind(
+    socket: &Path,
+    state_file: &Path,
+    token: Vec<u8>,
+    origin: OriginProofKeyRing,
+    capability: CapabilityKeyRing,
+) -> io::Result<BoundRotation> {
+    use std::os::unix::fs::PermissionsExt;
+    if token.len() < 32 || token.len() > 4096 {
+        return Err(io::Error::other("rotation token must contain 32..4096 bytes"));
+    }
+    private_dir(socket.parent().ok_or_else(|| io::Error::other("missing socket directory"))?)?;
+    private_dir(state_file.parent().ok_or_else(|| io::Error::other("missing state directory"))?)?;
+    use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
+    let lock_path = state_file.with_extension("rotation-lock");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(lock_path)?;
+    lock.try_lock().map_err(io::Error::other)?;
+    if let Ok(metadata) = std::fs::symlink_metadata(socket) {
+        if !metadata.file_type().is_socket() || metadata.permissions().mode() & 0o077 != 0 {
+            return Err(io::Error::other("unsafe existing rotation socket"));
+        }
+        match std::os::unix::net::UnixStream::connect(socket) {
+            Ok(_) => return Err(io::Error::other("rotation socket already active")),
+            Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => std::fs::remove_file(socket)?,
+            Err(e) => return Err(e),
+        }
+    }
+    let initial = LiveKeys {
+        origin: origin
+            .live
+            .read()
+            .map_err(|_| io::Error::other("poisoned keyring"))?
+            .origin
+            .clone(),
+        capability: capability
+            .live
+            .read()
+            .map_err(|_| io::Error::other("poisoned keyring"))?
+            .capability
+            .clone(),
+    };
+    let durable = if state_file.exists() {
+        let metadata = std::fs::symlink_metadata(state_file)?;
+        if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
+            return Err(io::Error::other("rotation state must be a private regular file"));
+        }
+        let bytes = zeroize::Zeroizing::new(std::fs::read(state_file)?);
+        serde_json::from_slice::<Durable>(&bytes)?
+    } else {
+        let value = Durable {
+            generation: 0,
+            state: "active".into(),
+            active: initial,
+            staged: None,
+            rollback: None,
+            verified: false,
+            receipts: BTreeMap::new(),
+        };
+        persist(state_file, &value)?;
+        value
+    };
+    let live = Arc::new(RwLock::new(durable.active.clone()));
+    let listener = tokio::net::UnixListener::bind(socket)?;
+    std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
+    let service = Arc::new(Service {
+        inner: Mutex::new(Inner { durable, file: state_file.to_owned(), _lock: lock }),
+        live: live.clone(),
+        token: zeroize::Zeroizing::new(token),
+    });
+    Ok(BoundRotation {
+        origin: OriginProofKeyRing { live: live.clone() },
+        capability: CapabilityKeyRing { live },
+        listener,
+        socket: socket.to_owned(),
+        service,
+    })
+}
+impl BoundRotation {
+    /// Serves only the authenticated local rotation control route.
+    ///
+    /// # Errors
+    /// Returns listener failures.
+    pub async fn serve(self) -> io::Result<()> {
+        self.serve_until(std::future::pending::<()>()).await
+    }
+    /// Serves until the owner supplies a shutdown signal, then removes the socket.
+    ///
+    /// # Errors
+    /// Returns listener or socket cleanup failures.
+    pub async fn serve_until(
+        self,
+        shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> io::Result<()> {
+        let router = Router::new()
+            .route("/v1/credential-rotation", post(handle))
+            .layer(DefaultBodyLimit::max(24 * 1024))
+            .with_state(self.service);
+        let result = axum::serve(self.listener, router).with_graceful_shutdown(shutdown).await;
+        std::fs::remove_file(self.socket)?;
+        result
+    }
+}
+async fn handle(
+    State(service): State<Arc<Service>>,
+    headers: HeaderMap,
+    Json(request): Json<Request>,
+) -> Result<Json<Receipt>, (StatusCode, &'static str)> {
+    let supplied = headers
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .unwrap_or("");
+    if !constant_time_equal(supplied.as_bytes(), &service.token) {
+        return Err((StatusCode::UNAUTHORIZED, "unauthorized"));
+    }
+    apply(&service, &request)
+        .map(Json)
+        .map_err(|_| (StatusCode::CONFLICT, "rotation transition rejected"))
+}
+fn constant_time_equal(a: &[u8], b: &[u8]) -> bool {
+    // Hashing first gives the constant-time primitive fixed-size inputs.
+    aws_lc_rs::constant_time::verify_slices_are_equal(
+        blake3::hash(a).as_bytes(),
+        blake3::hash(b).as_bytes(),
+    )
+    .is_ok()
+}
+fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
+    let invalid = || io::Error::other("invalid rotation transition");
+    if request.operation_id.is_empty()
+        || request.operation_id.len() > 128
+        || request.generation == 0
+    {
+        return Err(invalid());
+    }
+    let encoded = zeroize::Zeroizing::new(serde_json::to_vec(request)?);
+    let digest = blake3::hash(&encoded).to_hex().to_string();
+    let mut inner = service.inner.lock().map_err(|_| invalid())?;
+    if let Some(saved) = inner.durable.receipts.get(&request.operation_id) {
+        return if saved.digest == digest { Ok(saved.receipt.clone()) } else { Err(invalid()) };
+    }
+    let mut next = inner.durable.clone();
+    match request.action.as_str() {
+        "stage" => {
+            if request.generation <= next.generation
+                || next.staged.is_some()
+                || request.expires_at <= now()
+                || request.current_key_id.is_empty()
+                || request.current_key_id.len() > 128
+            {
+                return Err(invalid());
+            }
+            let current = zeroize::Zeroizing::new(
+                STANDARD.decode(&request.current_key).map_err(|_| invalid())?,
+            );
+            let previous = zeroize::Zeroizing::new(
+                STANDARD.decode(&request.previous_key).map_err(|_| invalid())?,
+            );
+            let overlap = !previous.is_empty();
+            if overlap
+                && (request.previous_key_id.is_empty()
+                    || request.previous_key_id == request.current_key_id
+                    || request.previous_expires_at <= now()
+                    || request.previous_expires_at > request.expires_at)
+            {
+                return Err(invalid());
+            }
+            let mut keys = KeyMaterial::new(&current, overlap.then_some(previous.as_slice()))
+                .ok_or_else(invalid)?;
+            keys.expires_at = request.expires_at;
+            keys.previous_expires_at = request.previous_expires_at;
+            next.staged = Some(LiveKeys::single(keys));
+            next.generation = request.generation;
+            next.state = "staged".into();
+            next.verified = false;
+        }
+        "verify" => {
+            if request.generation != next.generation
+                || next.staged.as_ref().is_none_or(|s| s.origin.usable().is_none())
+            {
+                return Err(invalid());
+            }
+            next.verified = true;
+        }
+        "activate" => {
+            if request.generation != next.generation || !next.verified {
+                return Err(invalid());
+            }
+            let staged = next.staged.take().ok_or_else(invalid)?;
+            if staged.origin.usable().is_none() {
+                return Err(invalid());
+            }
+            next.rollback = Some(next.active.clone());
+            next.active = staged;
+            next.state = "active".into();
+        }
+        "retire" => {
+            if request.generation != next.generation || next.state != "active" {
+                return Err(invalid());
+            }
+            next.active.origin.previous = None;
+            next.active.capability.previous = None;
+            next.rollback = None;
+        }
+        "rollback" => {
+            if request.generation != next.generation {
+                return Err(invalid());
+            }
+            if next.staged.take().is_none() {
+                next.active = next.rollback.take().ok_or_else(invalid)?;
+            }
+            next.state = "active".into();
+        }
+        "fence" => {
+            if request.generation < next.generation {
+                return Err(invalid());
+            }
+            next.generation = request.generation;
+            next.active = LiveKeys::default();
+            next.staged = None;
+            next.rollback = None;
+            next.state = "fenced".into();
+        }
+        _ => return Err(invalid()),
+    }
+    let valid_until = next.staged.as_ref().unwrap_or(&next.active).origin.expires_at;
+    let receipt = Receipt {
+        generation: next.generation,
+        valid_until,
+        state: next.state.clone(),
+        operation_id: request.operation_id.clone(),
+    };
+    // A bounded receipt journal fails closed instead of evicting replay protection.
+    if next.receipts.len() >= 100_000 {
+        return Err(invalid());
+    }
+    next.receipts
+        .insert(request.operation_id.clone(), SavedReceipt { digest, receipt: receipt.clone() });
+    let mut live = service.live.write().map_err(|_| invalid())?;
+    if let Err(error) = persist(&inner.file, &next) {
+        // A failed directory fsync can leave an uncertain on-disk commit.
+        // Stop accepting credentials until an authenticated retry or restart reconciles it.
+        *live = LiveKeys::default();
+        return Err(error);
+    }
+    *live = next.active.clone();
+    inner.durable = next;
+    Ok(receipt)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reactive_api::{ORIGIN_PROOF_HEADER, origin_proof_for, verify_origin_proof};
+    use axum::http::{HeaderValue, Method, Uri};
+    fn request(action: &str, operation: &str) -> Request {
+        Request {
+            operation_id: operation.into(),
+            action: action.into(),
+            generation: 1,
+            expires_at: now() + 3600,
+            current_key_id: "new".into(),
+            current_key: STANDARD.encode(b"new-key-with-at-least-32-bytes-000"),
+            previous_key_id: "old".into(),
+            previous_key: STANDARD.encode(b"old-key-with-at-least-32-bytes-000"),
+            previous_expires_at: now() + 600,
+        }
+    }
+    fn accepts(ring: &OriginProofKeyRing, key: &[u8]) -> bool {
+        let time = now();
+        let uri = Uri::from_static("/api/v1/views/example/log");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            ORIGIN_PROOF_HEADER,
+            HeaderValue::from_str(&origin_proof_for(
+                &Method::GET,
+                uri.path(),
+                time / 600 * 600,
+                key,
+            ))
+            .unwrap(),
+        );
+        verify_origin_proof(&headers, &Method::GET, &uri, ring, time)
+    }
+    #[tokio::test]
+    async fn durable_rotation_changes_actual_verification_and_rejects_replays() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "rotation-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let old = b"old-key-with-at-least-32-bytes-000";
+        let new = b"new-key-with-at-least-32-bytes-000";
+        let make = || {
+            bind(
+                &dir.join("control.sock"),
+                &dir.join("state.json"),
+                vec![42; 32],
+                OriginProofKeyRing::new(old, None::<&[u8]>).unwrap(),
+                CapabilityKeyRing::new(old, None::<&[u8]>).unwrap(),
+            )
+            .unwrap()
+        };
+        let bound = make();
+        let unauthenticated = handle(
+            State(bound.service.clone()),
+            HeaderMap::new(),
+            Json(request("stage", "unauthorized")),
+        )
+        .await;
+        assert!(matches!(unauthenticated, Err((StatusCode::UNAUTHORIZED, _))));
+        let stage = request("stage", "stage");
+        apply(&bound.service, &stage).unwrap();
+        assert!(accepts(&bound.origin, old));
+        assert!(!accepts(&bound.origin, new));
+        assert!(apply(&bound.service, &request("activate", "early-activate")).is_err());
+        apply(&bound.service, &request("verify", "verify")).unwrap();
+        let activate = request("activate", "activate");
+        apply(&bound.service, &activate).unwrap();
+        apply(&bound.service, &activate).unwrap();
+        assert!(accepts(&bound.origin, old));
+        assert!(accepts(&bound.origin, new));
+        let mut conflict = request("fence", "activate");
+        conflict.generation = 2;
+        assert!(apply(&bound.service, &conflict).is_err());
+        let (stop, signal) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(bound.serve_until(async {
+            let _ = signal.await;
+        }));
+        let socket = dir.join("control.sock");
+        let response = tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(2))).unwrap();
+            let body = serde_json::to_string(&request("fence", "http-unauthorized")).unwrap();
+            write!(stream, "POST /v1/credential-rotation HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+            let mut response = String::new(); stream.read_to_string(&mut response).unwrap(); response
+        }).await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 401"));
+        stop.send(()).unwrap();
+        task.await.unwrap().unwrap();
+        let restored = make();
+        assert!(accepts(&restored.origin, new));
+        apply(&restored.service, &request("retire", "retire")).unwrap();
+        assert!(!accepts(&restored.origin, old));
+        assert!(accepts(&restored.origin, new));
+        apply(&restored.service, &request("fence", "fence")).unwrap();
+        assert!(!accepts(&restored.origin, new));
+        drop(restored);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn expired_material_and_debug_output_fail_closed() {
+        let mut keys = KeyMaterial::new(b"secret-key-at-least-16", None).unwrap();
+        keys.expires_at = now();
+        assert!(keys.usable().is_none());
+        assert!(!format!("{keys:?}").contains("secret"));
+    }
+}

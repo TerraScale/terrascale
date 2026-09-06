@@ -233,8 +233,20 @@ fn wire_usage_fact(
 }
 
 /// The TBEP host backed by one durable Engine.
+enum HostEngine {
+    Local(Engine),
+    Admitted(Arc<terrabase_cluster::production::ProductionDatabaseLease>),
+}
+
+impl std::ops::Deref for HostEngine {
+    type Target = Engine;
+    fn deref(&self) -> &Engine {
+        match self { Self::Local(engine) => engine, Self::Admitted(lease) => lease }
+    }
+}
+
 pub struct EngineHost {
-    engine: Engine,
+    engine: HostEngine,
     location: PathBuf,
     tenant: String,
     project: String,
@@ -274,7 +286,7 @@ impl EngineHost {
         )
         .map_err(|_| HostingError::EngineFailure("engine open refused".into()))?;
         Ok(Self {
-            engine,
+            engine: HostEngine::Local(engine),
             location: location.to_path_buf(),
             tenant: tenant.to_owned(),
             project: project.to_owned(),
@@ -284,6 +296,22 @@ impl EngineHost {
             health: Mutex::new(HealthState::Serving),
         })
     }
+
+    /// Composes the exact Member engine while retaining its admission lease.
+    #[must_use]
+    pub fn from_admitted(lease: terrabase_cluster::production::ProductionDatabaseLease,
+        location: PathBuf, instance: u64) -> Self {
+        let scope = lease.scope();
+        Self {
+            tenant: scope.tenant().to_string(), project: scope.project().to_string(),
+            database: scope.database().to_string(), engine: HostEngine::Admitted(Arc::new(lease)),
+            location, instance, frames_served: Mutex::new(0), health: Mutex::new(HealthState::Serving),
+        }
+    }
+
+    /// Logical tenant bound to this adapter's admitted engine.
+    #[must_use]
+    pub fn tenant(&self) -> &str { &self.tenant }
 
     /// Returns the durable location the host's engine serves.
     #[must_use]
