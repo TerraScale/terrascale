@@ -1,4 +1,4 @@
-use super::{Checkpoint, NativeRecoveryError, NativeRecoveryOperation, NativeRecoveryPhase};
+use super::{Checkpoint, NativeRecoveryError, NativeRecoveryOperation};
 use rusqlite::{params, Connection};
 
 pub(super) fn load_checkpoint(
@@ -59,3 +59,6 @@ pub(super) fn save_record_only(
     if changed != 1 { return Err(NativeRecoveryError::Unavailable); }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

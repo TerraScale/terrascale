@@ -11,6 +11,7 @@ use tokio::sync::Notify;
 
 mod admission;
 mod checkpoint;
+mod persistence;
 use checkpoint::Checkpoint;
 
 /// Finite bounds for the durable recovery ledger.
@@ -348,30 +349,12 @@ impl NativeRecoveryRuntime {
         operation: &NativeRecoveryOperation,
         checkpoint: Option<&Checkpoint>,
     ) -> Result<(), NativeRecoveryError> {
-        let bytes = serde_json::to_vec(operation).map_err(|_| NativeRecoveryError::Unavailable)?;
-        if bytes.len() > 262144 {
-            return Err(NativeRecoveryError::Unavailable);
-        }
-        let changed = self.operations
+        let connection = self
+            .operations
             .lock()
             .map_err(|_| NativeRecoveryError::Unavailable)?
-            .execute(
-                "UPDATE native_recovery_operations SET phase=?3, record=?4, checkpoint=?5 WHERE operation_id=?1 AND source_database_id=?2",
-                params![
-                    operation.operation_id,
-                    operation.source_database_id,
-                    serde_json::to_string(&operation.phase)
-                        .map_err(|_| NativeRecoveryError::Unavailable)?
-                        .trim_matches('"'),
-                    bytes,
-                    checkpoint.map(Checkpoint::encode).transpose().map_err(|_| NativeRecoveryError::Unavailable)?
-                ],
-            )
-            .map_err(|_| NativeRecoveryError::Unavailable)?;
-        if changed != 1 {
-            return Err(NativeRecoveryError::Unavailable);
-        }
-        Ok(())
+            ;
+        persistence::save(&connection, operation, checkpoint)
     }
 
     fn run_capture(
@@ -455,36 +438,14 @@ impl NativeRecoveryRuntime {
         operation: &str,
     ) -> Result<Option<Checkpoint>, NativeRecoveryError> {
         let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-        connection.query_row("SELECT checkpoint FROM native_recovery_operations WHERE source_database_id=?1 AND operation_id=?2", params![source, operation], |row| row.get::<_, Option<Vec<u8>>>(0))
-            .map_err(|_| NativeRecoveryError::Unavailable)?.map(|bytes| Checkpoint::decode(&bytes).map_err(|_| NativeRecoveryError::VerificationFailed)).transpose()
+        persistence::load_checkpoint(&connection, source, operation)
     }
 
     fn save_record_only(
         &self,
         operation: &NativeRecoveryOperation,
     ) -> Result<(), NativeRecoveryError> {
-        let bytes = serde_json::to_vec(operation).map_err(|_| NativeRecoveryError::Unavailable)?;
-        if bytes.len() > 262144 {
-            return Err(NativeRecoveryError::Unavailable);
-        }
-        let changed = self.operations
-            .lock()
-            .map_err(|_| NativeRecoveryError::Unavailable)?
-            .execute(
-                "UPDATE native_recovery_operations SET phase=?3, record=?4 WHERE operation_id=?1 AND source_database_id=?2",
-                params![
-                    operation.operation_id,
-                    operation.source_database_id,
-                    serde_json::to_string(&operation.phase)
-                        .map_err(|_| NativeRecoveryError::Unavailable)?
-                        .trim_matches('"'),
-                    bytes
-                ],
-            )
-            .map_err(|_| NativeRecoveryError::Unavailable)?;
-        if changed != 1 {
-            return Err(NativeRecoveryError::Unavailable);
-        }
-        Ok(())
+        let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+        persistence::save_record_only(&connection, operation)
     }
 }
