@@ -638,6 +638,16 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(crate::reactive_api::view_websocket))
 }
 
+/// Compose the management and admitted auth contracts into the single public
+/// document. Auth routes are mounted by the production data runtime with a
+/// different state type, so their handlers are merged at the OpenAPI level.
+fn full_openapi_document() -> utoipa::openapi::OpenApi {
+    let (_, mut document) = openapi_router().split_for_parts();
+    let (_, auth_document) = crate::auth_runtime::routes().split_for_parts();
+    document.merge(auth_document);
+    document
+}
+
 /// Adds the parts of the contract that cannot be inferred from axum extractors.
 /// The handlers deliberately keep hand-rendering JSON on the data path, so the
 /// public document describes those wire shapes here in one bounded table.
@@ -1181,7 +1191,7 @@ fn openapi_schemas() -> serde_json::Value {
 /// schema — a build regression, never a runtime input).
 #[must_use = "the contract document is only useful when written out"]
 pub fn openapi_json() -> String {
-    let (_router, openapi_document) = openapi_router().split_for_parts();
+    let openapi_document = full_openapi_document();
     enrich_openapi(openapi_document.to_json().expect("OpenAPI must serialize"))
 }
 
@@ -1194,12 +1204,14 @@ pub fn openapi_json() -> String {
 /// schema — a build regression, never a runtime input).
 #[must_use = "the returned router must be installed on a server"]
 pub fn router(state: Arc<ApiState>) -> Router {
-    let (router, openapi_document) = openapi_router().split_for_parts();
+    let (router, _) = openapi_router().split_for_parts();
+    let openapi_document = full_openapi_document();
     let openapi_json =
         Arc::new(enrich_openapi(openapi_document.to_json().expect("OpenAPI must serialize")));
+    let scalar_document = serde_json::from_str(&openapi_json).expect("OpenAPI must deserialize");
     router
         .route("/api/v1/openapi.json", get(openapi))
-        .merge(Scalar::with_url("/scalar", openapi_document))
+        .merge(Scalar::with_url("/scalar", scalar_document))
         .fallback(not_routed)
         .layer(Extension(openapi_json))
         .layer(from_fn_with_state(Arc::clone(&state), placement_headers))
@@ -4398,6 +4410,7 @@ mod tests {
             ("/api/v1/reactive/views", "post"),
             ("/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}", "get"),
             ("/api/v1/reactive/views/{view}/{generation}/log", "get"),
+            ("/api/v1/databases/{database}/auth/records/{model}/{id}", "get"),
         ] {
             assert!(
                 paths.get(path).is_some_and(|entry| entry.get(route).is_some()),
@@ -4447,6 +4460,12 @@ mod tests {
             components.get("schemas").and_then(serde_json::Value::as_object).expect("schemas");
         assert!(schemas.contains_key("SqlExplainResponse"));
         assert!(schemas.contains_key("SqlResultResponse"));
+        assert!(
+            document["paths"]
+                .get("/api/v1/databases/{database}/auth/records/{model}/{id}")
+                .and_then(|path| path.get("get"))
+                .is_some()
+        );
         assert_eq!(schemas["ReactiveEnvelope"]["minItems"], 7);
         assert!(!schemas.contains_key("ReactivePollRequest"));
         assert!(document["paths"].get("/api/v1/databases/{name}/reactive/poll").is_none());

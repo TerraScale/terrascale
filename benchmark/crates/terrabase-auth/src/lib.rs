@@ -52,6 +52,25 @@ pub enum Action {
     CompareAndSwap { model: String, id: String, expected: Record, update: Record },
     /// Delete and return one identified record if all predicates still match.
     ConsumeOne { model: String, id: String, expected: Record },
+    /// Update the lowest-id matching record.
+    UpdateOne { model: String, predicates: Vec<Predicate>, update: Record },
+    /// Update all matching records atomically within the mutation bound.
+    UpdateMany { model: String, predicates: Vec<Predicate>, update: Record },
+    /// Delete the lowest-id matching record.
+    DeleteOne { model: String, predicates: Vec<Predicate> },
+    /// Delete all matching records atomically within the mutation bound.
+    DeleteMany { model: String, predicates: Vec<Predicate> },
+    /// Increment one or more numeric fields on the lowest-id matching record.
+    IncrementOne {
+        model: String,
+        predicates: Vec<Predicate>,
+        increment: BTreeMap<String, serde_json::Number>,
+        set: Record,
+    },
+    /// Delete and return the lowest-id matching record.
+    ConsumeMatching { model: String, predicates: Vec<Predicate> },
+    /// Count all matching records exactly.
+    Count { model: String, predicates: Vec<Predicate> },
     /// Read a bounded model page using exact field predicates.
     Find { model: String, predicates: Vec<Predicate>, offset: u32, limit: u32 },
     /// Start a bounded optimistic transaction using a client label of at most 100 bytes.
@@ -78,6 +97,8 @@ pub enum Outcome {
     NotMatched,
     /// Bounded query records.
     Records { records: Vec<Record> },
+    /// Number of records affected or counted.
+    Count { count: u64 },
     /// An optimistic transaction started at a fixed revision and expiry.
     /// `transaction_id` is the exact server-issued identity for all subsequent commands.
     Transaction { transaction_id: String, expires_at_ms: u64 },

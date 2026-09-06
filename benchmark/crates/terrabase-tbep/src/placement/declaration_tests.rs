@@ -1,10 +1,14 @@
 use super::*;
-use terrabase_cluster::wal_route::DurableWalAssignmentSource as _;
-use terrabase::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
 use rusqlite::Connection;
+use terrabase::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
+use terrabase_cluster::wal_route::DurableWalAssignmentSource as _;
 
 fn unknown_scope() -> DatabaseRouteScope {
-    DatabaseRouteScope::new(TenantUlid::generate(), ProjectUlid::generate(), DatabaseUlid::generate())
+    DatabaseRouteScope::new(
+        TenantUlid::generate(),
+        ProjectUlid::generate(),
+        DatabaseUlid::generate(),
+    )
 }
 
 fn with_control_declaration(
@@ -48,10 +52,7 @@ fn stale_cas_does_not_persist_control_declaration_and_retry_identity_is_immutabl
 
     let mut stale = request.clone();
     stale.expected_revision = 1;
-    assert_eq!(
-        journal.stage("orchestrator", "stale", stale),
-        Err(PlacementError::Conflict)
-    );
+    assert_eq!(journal.stage("orchestrator", "stale", stale), Err(PlacementError::Conflict));
     drop(journal);
 
     // Reopening proves the failed CAS did not leave a declaration behind.
@@ -74,9 +75,11 @@ fn stale_cas_does_not_persist_control_declaration_and_retry_identity_is_immutabl
     let mut changed = request;
     changed.declarations[0].selected_regions = vec!["GRU".into(), "SFO".into()];
     assert!(journal.stage("orchestrator", "first", changed).is_err());
-    assert!(journal
-        .register_database(scope, "GRU", &std::collections::BTreeSet::from(["GRU".into()]))
-        .is_ok());
+    assert!(
+        journal
+            .register_database(scope, "GRU", &std::collections::BTreeSet::from(["GRU".into()]))
+            .is_ok()
+    );
 }
 
 #[test]
@@ -91,9 +94,7 @@ fn control_only_declaration_survives_restart_and_never_grants_wal_assignment() {
     let proposal = journal.stage("orchestrator", "control", request).unwrap().proposal.unwrap();
     journal.configure_transition_trust(super::transition_tests::trust(&proposal)).unwrap();
     let first = super::transition_tests::proof(&proposal, "control", None, &[]);
-    journal
-        .accept("control", &super::transition_tests::acceptance(&first, 1))
-        .unwrap();
+    journal.accept("control", &super::transition_tests::acceptance(&first, 1)).unwrap();
     assert!(journal.load_assignment(scope).is_err());
     drop(journal);
 
@@ -141,13 +142,9 @@ fn independent_journal_connection_preserves_local_promotion_when_staging_success
     let journal = PlacementJournal::open(&path, boundary_a).unwrap();
     let promoted = PlacementJournal::open(&path, boundary_b).unwrap();
     let first_proposal = journal.stage("orchestrator", "first", first).unwrap().proposal.unwrap();
-    journal
-        .configure_transition_trust(super::transition_tests::trust(&first_proposal))
-        .unwrap();
+    journal.configure_transition_trust(super::transition_tests::trust(&first_proposal)).unwrap();
     let first_proof = super::transition_tests::proof(&first_proposal, "first", None, &[]);
-    journal
-        .accept("first", &super::transition_tests::acceptance(&first_proof, 1))
-        .unwrap();
+    journal.accept("first", &super::transition_tests::acceptance(&first_proof, 1)).unwrap();
 
     // A separate SQLite connection performs the explicit local promotion.
     promoted
@@ -172,20 +169,12 @@ fn independent_journal_connection_preserves_local_promotion_when_staging_success
         request
     });
     let next_proposal = journal.stage("orchestrator", "successor", next).unwrap().proposal.unwrap();
-    let next_proof = super::transition_tests::proof(
-        &next_proposal,
-        "successor",
-        Some(&first_proof),
-        &["GRU"],
-    );
-    journal
-        .accept("successor", &super::transition_tests::acceptance(&next_proof, 2))
-        .unwrap();
+    let next_proof =
+        super::transition_tests::proof(&next_proposal, "successor", Some(&first_proof), &["GRU"]);
+    journal.accept("successor", &super::transition_tests::acceptance(&next_proof, 2)).unwrap();
 
     let reopened_a = fixture.open();
-    reopened_a
-        .configure_transition_trust(super::transition_tests::trust(&next_proposal))
-        .unwrap();
+    reopened_a.configure_transition_trust(super::transition_tests::trust(&next_proposal)).unwrap();
     assert_eq!(reopened_a.accepted().unwrap().epoch, 2);
     let assignment_a = reopened_a.load_assignment(scope).unwrap();
     assert_eq!(assignment_a.generation, 2);
@@ -193,9 +182,7 @@ fn independent_journal_connection_preserves_local_promotion_when_staging_success
 
     drop(promoted);
     let reopened_b = fixture.open();
-    reopened_b
-        .configure_transition_trust(super::transition_tests::trust(&next_proposal))
-        .unwrap();
+    reopened_b.configure_transition_trust(super::transition_tests::trust(&next_proposal)).unwrap();
     assert_eq!(reopened_b.accepted().unwrap().epoch, 2);
     let assignment_b = reopened_b.load_assignment(scope).unwrap();
     assert_eq!(assignment_b.generation, 2);

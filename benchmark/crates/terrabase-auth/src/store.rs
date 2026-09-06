@@ -234,6 +234,72 @@ fn conflicts(connection: &Connection, model: &str, id: &str, record: &Record) ->
     Ok(false)
 }
 
+const MAX_MUTATION_ROWS: usize = 1000;
+const MAX_MUTATION_BYTES: usize = 1024 * 1024;
+
+fn matching_records(
+    connection: &Connection,
+    model: &str,
+    predicates: &[Predicate],
+) -> Result<Vec<(String, Record)>> {
+    if predicates.len() > 64 {
+        return Err(storage("predicate bound exceeded"));
+    }
+    records(connection, model).map(|rows| {
+        rows.into_iter().filter(|(_, record)| crate::query::matches(record, predicates)).collect()
+    })
+}
+
+fn validate_final_records(
+    connection: &Connection,
+    model: &str,
+    replacements: &BTreeMap<String, Record>,
+) -> Result<bool> {
+    let mut final_records = records(connection, model)?;
+    for (id, record) in &mut final_records {
+        if let Some(replacement) = replacements.get(id) {
+            *record = replacement.clone();
+        }
+    }
+    for (id, record) in replacements {
+        if !final_records.iter().any(|(existing, _)| existing == id) {
+            final_records.push((id.clone(), record.clone()));
+        }
+    }
+    let mut statement = connection
+        .prepare("SELECT fields FROM auth_indexes WHERE model=?1")
+        .map_err(storage)?;
+    let indexes: Vec<Vec<String>> = statement
+        .query_map([model], |row| row.get::<_, Vec<u8>>(0))
+        .map_err(storage)?
+        .map(|row| decode(&row.map_err(storage)?))
+        .collect::<Result<_>>()?;
+    for fields in indexes {
+        let mut seen = std::collections::BTreeSet::new();
+        for (_, record) in &final_records {
+            if let Some(value) = index_value(record, &fields) {
+                if !seen.insert(encode(&value)?) {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn validate_mutation_size(records: &[(String, Record)]) -> Result<()> {
+    if records.len() > MAX_MUTATION_ROWS {
+        return Err(storage("mutation row bound exceeded"));
+    }
+    let bytes = records.iter().try_fold(0usize, |total, (_, record)| {
+        total.checked_add(encode(record)?.len()).ok_or_else(|| storage("mutation byte bound exceeded"))
+    })?;
+    if bytes > MAX_MUTATION_BYTES {
+        return Err(storage("mutation byte bound exceeded"));
+    }
+    Ok(())
+}
+
 fn invalid(reason: &str) -> Outcome {
     Outcome::Invalid { reason: reason.into() }
 }

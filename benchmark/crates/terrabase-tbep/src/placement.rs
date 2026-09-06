@@ -95,9 +95,7 @@ impl PlacementBoundary {
             }
             if selected_regions.is_empty()
                 || selected_regions.len() > 3
-                || local_region
-                    .as_ref()
-                    .is_some_and(|region| !selected_regions.contains(region))
+                || local_region.as_ref().is_some_and(|region| !selected_regions.contains(region))
                 || selected_regions
                     .iter()
                     .any(|region| RegionCatalog::production().parse(region).is_err())
@@ -169,11 +167,7 @@ impl PlacementBoundary {
                 &assignment.database,
             )
             .map_err(|_| PlacementError::Invalid)?;
-            let local_region = databases
-                .get(&scope)
-                .ok_or(PlacementError::Invalid)?
-                .0
-                .as_deref();
+            let local_region = databases.get(&scope).ok_or(PlacementError::Invalid)?.0.as_deref();
             if !assignments.insert((scope, assignment.region.clone()))
                 || !seats.contains_key(&assignment.region)
                 || assignment.writer_member == assignment.follower_member
@@ -183,7 +177,8 @@ impl PlacementBoundary {
             let pair = seats.get(&assignment.region).ok_or(PlacementError::Invalid)?;
             if !pair.contains(&assignment.writer_member)
                 || !pair.contains(&assignment.follower_member)
-                || (local_region == Some(assignment.region.as_str()) && !pair.contains(&self.member))
+                || (local_region == Some(assignment.region.as_str())
+                    && !pair.contains(&self.member))
             {
                 return Err(PlacementError::Invalid);
             }
@@ -240,7 +235,9 @@ fn read_declarations(connection: &Connection) -> Result<DeclarationCatalog, Plac
         let scope = DatabaseRouteScope::try_new(&tenant, &project, &database)
             .map_err(|_| PlacementError::Storage)?;
         RegionCatalog::production().parse(&selected).map_err(|_| PlacementError::Storage)?;
-        let local = if local.is_empty() { None } else {
+        let local = if local.is_empty() {
+            None
+        } else {
             RegionCatalog::production().parse(&local).map_err(|_| PlacementError::Storage)?;
             Some(local)
         };
@@ -268,15 +265,29 @@ fn insert_declaration(
     local: Option<&str>,
     selected: &BTreeSet<String>,
 ) -> Result<(), PlacementError> {
-    connection.execute(
-        "INSERT INTO declared VALUES(?1,?2,?3,?4)",
-        params![scope.tenant().to_text(), scope.project().to_text(), scope.database().to_text(), local.unwrap_or("")],
-    ).map_err(|_| PlacementError::Storage)?;
+    connection
+        .execute(
+            "INSERT INTO declared VALUES(?1,?2,?3,?4)",
+            params![
+                scope.tenant().to_text(),
+                scope.project().to_text(),
+                scope.database().to_text(),
+                local.unwrap_or("")
+            ],
+        )
+        .map_err(|_| PlacementError::Storage)?;
     for region in selected {
-        connection.execute(
-            "INSERT INTO selected_regions VALUES(?1,?2,?3,?4)",
-            params![scope.tenant().to_text(), scope.project().to_text(), scope.database().to_text(), region],
-        ).map_err(|_| PlacementError::Storage)?;
+        connection
+            .execute(
+                "INSERT INTO selected_regions VALUES(?1,?2,?3,?4)",
+                params![
+                    scope.tenant().to_text(),
+                    scope.project().to_text(),
+                    scope.database().to_text(),
+                    region
+                ],
+            )
+            .map_err(|_| PlacementError::Storage)?;
     }
     Ok(())
 }
@@ -360,15 +371,16 @@ impl PlacementJournal {
                 let local_region = if region.is_empty() {
                     None
                 } else {
-                    RegionCatalog::production().parse(&region).map_err(|_| PlacementError::Storage)?;
+                    RegionCatalog::production()
+                        .parse(&region)
+                        .map_err(|_| PlacementError::Storage)?;
                     Some(region)
                 };
                 let selected =
                     scopes.get(&scope).map(|(_, selected)| selected.clone()).unwrap_or_default();
                 if scopes.get(&scope).is_some_and(|(existing, _)| {
                     existing.as_ref().is_some_and(|region| Some(region) != local_region.as_ref())
-                })
-                    || (!scopes.contains_key(&scope) && scopes.len() >= 1024)
+                }) || (!scopes.contains_key(&scope) && scopes.len() >= 1024)
                     || database_ids
                         .insert(scope.database(), scope)
                         .is_some_and(|existing| existing != scope)
@@ -417,7 +429,9 @@ impl PlacementJournal {
                     *selected_regions = persisted.clone();
                 }
                 if selected_regions.is_empty()
-                    || local_region.as_ref().is_some_and(|region| !selected_regions.contains(region))
+                    || local_region
+                        .as_ref()
+                        .is_some_and(|region| !selected_regions.contains(region))
                 {
                     return Err(PlacementError::Storage);
                 }
@@ -496,28 +510,42 @@ impl PlacementJournal {
         let mut provided = BTreeSet::new();
         let mut represented = BTreeSet::new();
         for assignment in &proposal.assignments {
-            represented.insert(DatabaseRouteScope::try_new(
-                &assignment.tenant, &assignment.project, &assignment.database,
-            ).map_err(|_| PlacementError::Invalid)?);
+            represented.insert(
+                DatabaseRouteScope::try_new(
+                    &assignment.tenant,
+                    &assignment.project,
+                    &assignment.database,
+                )
+                .map_err(|_| PlacementError::Invalid)?,
+            );
         }
         for declaration in &request.declarations {
             let scope = DatabaseRouteScope::try_new(
-                &declaration.tenant, &declaration.project, &declaration.database,
-            ).map_err(|_| PlacementError::Invalid)?;
+                &declaration.tenant,
+                &declaration.project,
+                &declaration.database,
+            )
+            .map_err(|_| PlacementError::Invalid)?;
             let selected: BTreeSet<_> = declaration.selected_regions.iter().cloned().collect();
-            if !provided.insert(scope.database()) || !represented.contains(&scope)
-                || selected.is_empty() || selected.len() > 3
+            if !provided.insert(scope.database())
+                || !represented.contains(&scope)
+                || selected.is_empty()
+                || selected.len() > 3
                 || selected.len() != declaration.selected_regions.len()
                 || selected.iter().any(|region| RegionCatalog::production().parse(region).is_err())
             {
                 return Err(PlacementError::Invalid);
             }
             if let Some((_, existing)) = candidate.get(&scope) {
-                if existing != &selected { return Err(PlacementError::Conflict); }
+                if existing != &selected {
+                    return Err(PlacementError::Conflict);
+                }
             } else {
                 if candidate.len() >= 1024
                     || candidate.keys().any(|existing| existing.database() == scope.database())
-                { return Err(PlacementError::Conflict); }
+                {
+                    return Err(PlacementError::Conflict);
+                }
                 candidate.insert(scope, (None, selected));
             }
         }
@@ -555,8 +583,10 @@ impl PlacementJournal {
             return Err(PlacementError::Conflict);
         }
         if let Some((_, bytes)) = head {
-            let previous =
-                self.response(&transaction, revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
+            let previous = self
+                .response(&transaction, revision, &bytes)?
+                .proposal
+                .ok_or(PlacementError::Storage)?;
             if proposal.generation <= previous.generation || proposal.epoch <= previous.epoch {
                 return Err(PlacementError::Conflict);
             }
@@ -620,7 +650,8 @@ impl PlacementJournal {
         let mut proposal =
             pb::PlacementProposal::decode(bytes).map_err(|_| PlacementError::Storage)?;
         let catalog = read_declarations(connection)?;
-        self.boundary.canonicalize_with(&mut proposal, false, &catalog)
+        self.boundary
+            .canonicalize_with(&mut proposal, false, &catalog)
             .map_err(|_| PlacementError::Storage)?;
         if proposal.encode_to_vec() != bytes {
             return Err(PlacementError::Storage);
@@ -837,7 +868,8 @@ impl PlacementJournal {
             .optional()
             .map_err(|_| PlacementError::Storage)?
             .ok_or(PlacementError::NotFound)?;
-        let proposal = self.response(connection, revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
+        let proposal =
+            self.response(connection, revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
         if proof.proof.request.scope_id
             != format!("{}/{}", self.boundary.environment, self.boundary.cluster)
             || proof.proof.request.epoch != proposal.epoch
@@ -914,8 +946,10 @@ impl terrabase_cluster::production::DurableMembershipSource for PlacementJournal
                     |row| row.get(0),
                 )
                 .map_err(|_| PlacementError::Storage)?;
-            let proposal =
-                self.response(&connection, *revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
+            let proposal = self
+                .response(&connection, *revision, &bytes)?
+                .proposal
+                .ok_or(PlacementError::Storage)?;
             let regions = proposal
                 .regions
                 .into_iter()
@@ -971,8 +1005,10 @@ impl terrabase_cluster::wal_route::DurableWalAssignmentSource for PlacementJourn
                     |row| row.get(0),
                 )
                 .map_err(|_| PlacementError::Storage)?;
-            let proposal =
-                self.response(&connection, *revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
+            let proposal = self
+                .response(&connection, *revision, &bytes)?
+                .proposal
+                .ok_or(PlacementError::Storage)?;
             let local_region = read_declarations(&connection)?
                 .get(&scope)
                 .cloned()
@@ -1060,7 +1096,9 @@ impl PlacementJournal {
                     "UPDATE declared SET region=?1 WHERE tenant=?2 AND project=?3 AND database=?4 AND region=''",
                     params![local_region, scope.tenant().to_text(), scope.project().to_text(), scope.database().to_text()],
                 ).map_err(|_| PlacementError::Storage)?;
-                if changed != 1 { return Err(PlacementError::Conflict); }
+                if changed != 1 {
+                    return Err(PlacementError::Conflict);
+                }
             }
         } else {
             if scopes.len() >= 1024

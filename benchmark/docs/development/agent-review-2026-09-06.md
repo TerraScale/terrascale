@@ -84,3 +84,45 @@ The TBEP regression
 `explicit_empty_cut_stays_empty_and_baseline_mismatch_requires_snapshot` also
 passed in session `9519`; that combined run initially had two placement fixture
 failures subsequently corrected in `88323`.
+
+Global placement declarations now persist independently of local storage
+admission. Staging reloads the durable catalog under an immediate transaction,
+validates immutable owner and residency sets, and commits new declarations with
+the proposal CAS. Only explicit local registration promotes a control-only
+scope. Independent review found no material defect in this journal change.
+
+The placement run in session `26871` passed all 24 tests with
+`nice -n 19 cargo test -p terrabase-tbep --lib -j 2 placement:: -- --nocapture`.
+Coverage includes stale-CAS rollback, retained retries after catalog expansion,
+signed control-only acceptance across restart, explicit local promotion, and
+separate journal connections preserving durable admission. The multi-Region
+restart fixture now supplies SFO seats and assignment matching its declared
+GRU/SFO residency. The typed ULID APIs and upstream generator remain intact.
+
+Pending-host review confirmed that admission credentials are required and an
+absent observer is omitted from serialized ts-node configuration. The regression
+now uses a nonnil pending engine material and matching signed host manifest;
+`go test ./src/orchestrator/vmengineconfig ./src/orchestrator/vmimage` passed.
+Broader Go verification initially exposed a stale TBEP protobuf hash pin,
+requiring consumer regeneration and provenance refresh. These targeted results
+do not establish full repository gates or production readiness.
+
+The standard `terrabase-contracts` exporter completed in session `98749`.
+The producer, exported, and Go consumer `engine.proto` files match byte for
+byte. Exporter regression
+`bundle_contains_served_openapi_all_protos_and_integrity_metadata` passed in
+session `34527`, checking the served document, protobuf sources, and manifest
+digests. Regeneration also incorporates existing public database route and
+conformance changes; no exported routes were removed. The auth route annotations
+remain absent from `api::openapi_json()` and therefore the exported bundle.
+That producer-contract integration remains unfinished.
+
+The first full orchestrator command-package run exposed a bootstrap receipt
+mismatch: publisher canonicalization discarded Stage declarations. The publisher
+now retains them in the durable request. Empty initial bootstrap rejects
+declarations, and its fixture clears declarations with assignments. Focused
+bootstrap, database-plan, and transition tests passed after correction.
+The final full `tbep`, `placementpublisher`, and `cmd/orchestrator` Go package
+tests passed. A durable request roundtrip regression covers declaration
+preservation. Independent review found no material defect in these integration
+fixes; `git diff --check` passed in both affected repositories.

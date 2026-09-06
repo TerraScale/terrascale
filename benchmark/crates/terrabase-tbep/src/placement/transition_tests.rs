@@ -316,10 +316,9 @@ fn control_only_declaration_survives_restart_but_never_loads_wal() {
     );
     let proposal = fixture.request.proposal.as_mut().unwrap();
     let members = vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()];
-    proposal.regions.push(pb::PlacementRegionSeats {
-        region: "SFO".into(),
-        members: members.clone(),
-    });
+    proposal
+        .regions
+        .push(pb::PlacementRegionSeats { region: "SFO".into(), members: members.clone() });
     proposal.assignments.push(pb::PlacementDatabaseAssignment {
         region: "SFO".into(),
         writer_member: members[0].clone(),
@@ -384,16 +383,14 @@ fn control_only_and_local_database_can_share_an_accepted_proposal() {
         .unwrap();
     let mut request = fixture.request.clone();
     let seats = request.proposal.as_ref().unwrap().regions[0].members.clone();
-    request.proposal.as_mut().unwrap().assignments.push(
-        pb::PlacementDatabaseAssignment {
-            tenant: local_scope.tenant().to_text(),
-            project: local_scope.project().to_text(),
-            database: local_scope.database().to_text(),
-            region: "GRU".into(),
-            writer_member: seats[0].clone(),
-            follower_member: seats[1].clone(),
-        },
-    );
+    request.proposal.as_mut().unwrap().assignments.push(pb::PlacementDatabaseAssignment {
+        tenant: local_scope.tenant().to_text(),
+        project: local_scope.project().to_text(),
+        database: local_scope.database().to_text(),
+        region: "GRU".into(),
+        writer_member: seats[0].clone(),
+        follower_member: seats[1].clone(),
+    });
     let proposal = stage(&journal, request, "mixed-control");
     journal.configure_transition_trust(trust(&proposal)).unwrap();
     let proof = proof(&proposal, "mixed-control", None, &[]);
