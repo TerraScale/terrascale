@@ -1227,7 +1227,7 @@ impl Worker {
             // the crash/idempotency ordering guarantee.
             self.store.save(state)?;
         }
-        publish_bundle(writer, state, &mut facts_by_path, &mut facts)
+        publish_bundle(writer, state, &mut facts_by_path, &mut facts).map(Some)
     }
 }
 
@@ -1255,7 +1255,7 @@ fn publish_bundle(
     state: &ExportJobState,
     paths: &mut BTreeSet<String>,
     facts: &mut Vec<ArtifactFact>,
-) -> Result<Option<ArtifactFact>, ExportError> {
+) -> Result<ArtifactFact, ExportError> {
     facts.sort_by(|left, right| left.path.cmp(&right.path));
     let mut checksum_bytes = Vec::new();
     for fact in facts.iter() {
@@ -1271,7 +1271,7 @@ fn publish_bundle(
         facts.push(checksums);
     }
     let manifest = manifest_bytes(state, facts)?;
-    put_checked(writer, "manifest.json", &manifest).map(Some)
+    put_checked(writer, "manifest.json", &manifest)
 }
 
 fn validate_fact(fact: &ArtifactFact) -> Result<(), ExportError> {

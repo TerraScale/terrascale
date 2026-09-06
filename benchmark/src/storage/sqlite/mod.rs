@@ -590,9 +590,7 @@ fn migrate_documents_idempotency(connection: &Connection) -> Result<(), ()> {
     connection
         .execute_batch(
             "DROP INDEX IF EXISTS documents_client_request_ulid;
-             CREATE UNIQUE INDEX IF NOT EXISTS operation_facts_client_request_ulid
-             ON operation_facts (tenant, client_request_ulid)
-             WHERE client_request_ulid <> '';",
+             DROP INDEX IF EXISTS operation_facts_client_request_ulid;",
         )
         .map_err(|_| ())
 }
@@ -1133,10 +1131,6 @@ CREATE TABLE IF NOT EXISTS operation_facts (
     bytes               INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (tenant, client_request_ulid)
 ) WITHOUT ROWID;
-
-CREATE UNIQUE INDEX IF NOT EXISTS operation_facts_client_request_ulid
-    ON operation_facts (tenant, client_request_ulid)
-    WHERE client_request_ulid <> '';
 
 CREATE TABLE IF NOT EXISTS usage_placement (
     singleton INTEGER PRIMARY KEY CHECK(singleton=1),

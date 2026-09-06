@@ -789,3 +789,27 @@ test-build diagnostics; the earlier 189 count is superseded. Logs are
 `/tmp/terrascale-server-refactor-tests.log` and
 `/tmp/terrascale-server-clippy-current.log`. These results do not qualify the
 workspace or production gates.
+
+
+Independent source review found no concrete errors in removing the redundant
+branch document identity-map existence probe, extracting export recovery and
+bundle publication helpers, and extracting retired schema index removal. Every
+document commit identity already enters the temporary map; independent request
+and commit lookups, validation and billing reconciliation remain intact. Export
+cancellation and durable page ordering, and schema removal ordering, are
+preserved. The temporary export function-length allowance was removed.
+
+The subsequent full server library run (`76543`) again passed 338 tests with
+three ignored and the same sole performance failure: restore took 12.119408652
+seconds. The SQL change has not demonstrated a speedup; the ten-second gate
+remains unmet. See `/tmp/terrascale-server-reviewed-retest.log`. Usage-index
+let-else/borrow cleanup was made after that run compiled and requires its own
+verification.
+
+
+Final focused checks passed: three provenance tests (`93218`), three usage-index
+tests (`11820`), and 19 export tests (`86069`). The export publication helper now
+returns its artifact directly; the caller supplies the optional completion
+wrapper. Cancellation, staged-manifest refusal, durable resume and shutdown
+checkpoint tests passed after that cleanup. `git diff --check` passed. No
+complete workspace check or production-readiness success is claimed.

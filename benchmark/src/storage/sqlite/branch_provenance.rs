@@ -80,6 +80,11 @@ pub(crate) fn transform_provenance(
             "DELETE FROM branch_snapshot_receipts; DELETE FROM operation_facts WHERE committed=0;",
         )
         .map_err(|_| ())?;
+    // The WITHOUT ROWID primary key already enforces this identity. Remove
+    // the legacy duplicate index before rewriting the operation identities.
+    transaction
+        .execute_batch("DROP INDEX IF EXISTS operation_facts_client_request_ulid")
+        .map_err(|_| ())?;
     transaction
         .execute_batch(
             "CREATE TEMP TABLE branch_identity_map(
@@ -255,9 +260,26 @@ mod tests {
             INSERT INTO replication_publications VALUES('tenant','GRU',3,3,'metadata-only',3,3,X'',X'');
             INSERT INTO operation_facts(tenant,client_request_ulid,digest,committed,sequence,root,writes,bytes)
             VALUES('tenant','metadata-only',11,1,3,'source-root',1,0);").unwrap();
+        // Restored snapshots can still contain the retired index.
+        db.execute_batch(
+            "CREATE UNIQUE INDEX operation_facts_client_request_ulid
+             ON operation_facts(tenant, client_request_ulid)
+             WHERE client_request_ulid <> ''",
+        )
+        .unwrap();
         let transaction = db.transaction().unwrap();
         assert_eq!(transform_provenance(&transaction, &DatabaseOwner::local_development()), Ok(3));
         transaction.commit().unwrap();
+        assert_eq!(
+            db.query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='index' AND name='operation_facts_client_request_ulid'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
         // These are the same reconciliation paths storage open runs.
         super::super::validate_operation_facts(&db).unwrap();
         super::super::reconcile_metering_db_facts(&db).unwrap();
