@@ -357,7 +357,7 @@ mod admitted_fixture {
         journal
             .bootstrap(
                 "test",
-                terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapRequest {
+                terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapServiceBootstrapRequest {
                     operation_id: Ulid::new().to_string(),
                     grant: Some(grant),
                 },
@@ -570,7 +570,7 @@ async fn auth_http_errors_keep_status_envelope_and_headers() {
     let (status, body, headers) = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/count", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("content-type", "application/json")
             .body(Body::from(
                 r#"{"model":"users","predicates":[{"field":"x","value":"x","operator":"invalid"}]}"#,
@@ -626,7 +626,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let mut begin = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/transactions/begin", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("idempotency-key", "begin-1")
             .header("content-type", "application/json")
             .body(Body::from(r#"{"transactionId":"http-tx"}"#))
@@ -644,7 +644,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
                 "/api/v1/databases/{}/auth/transactions/begin",
                 fixture.database
             ))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("idempotency-key", "begin-1")
             .header("content-type", "application/json")
             .body(Body::from(r#"{"transactionId":"http-tx"}"#))
@@ -657,7 +657,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let insert = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/insertUnique", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("idempotency-key", "insert-1")
             .header("x-terrascale-auth-transaction", &transaction)
             .header("content-type", "application/json")
@@ -669,7 +669,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let staged = admitted_fixture::request(
         &fixture.runtime,
         Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("idempotency-key", "read-1")
             .header("x-terrascale-auth-transaction", &transaction)
             .body(Body::empty())
@@ -687,7 +687,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
         let response = admitted_fixture::request(
             &fixture.runtime,
             Request::post(format!("/api/v1/databases/{}/auth/insertUnique", fixture.database))
-                .header("authorization", &auth)
+                .header("authorization", auth)
                 .header("idempotency-key", format!("insert-{id}"))
                 .header("x-terrascale-auth-transaction", &transaction)
                 .header("content-type", "application/json")
@@ -706,7 +706,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let relation_page = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/findPage", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("idempotency-key", "read-joined-stage")
             .header("x-terrascale-auth-transaction", &transaction)
             .header("content-type", "application/json")
@@ -725,7 +725,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let unstaged_relation_page = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/findPage", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("content-type", "application/json")
             .body(Body::from(relation_query.to_string()))
             .unwrap(),
@@ -740,7 +740,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
         router(Arc::clone(&fixture.runtime))
             .oneshot(
                 Request::post(format!("/api/v1/databases/{}/auth/findPage", fixture.database))
-                    .header("authorization", &auth)
+                    .header("authorization", auth)
                     .header("content-type", "application/json")
                     .body(Body::from(malformed_query.to_string()))
                     .unwrap(),
@@ -804,14 +804,14 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     )
     .await;
     assert_eq!(denied_update.0, StatusCode::FORBIDDEN);
-    let malformed_transaction = admitted_fixture::request(&fixture.runtime, Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database)).header("authorization", &auth).header("idempotency-key", "malformed-tx").header("x-terrascale-auth-transaction", HeaderValue::from_static("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")).body(Body::empty()).unwrap()).await;
+    let malformed_transaction = admitted_fixture::request(&fixture.runtime, Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database)).header("authorization", auth).header("idempotency-key", "malformed-tx").header("x-terrascale-auth-transaction", HeaderValue::from_static("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")).body(Body::empty()).unwrap()).await;
     assert_eq!(malformed_transaction.0, StatusCode::BAD_REQUEST);
-    let invalid_predicate = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/findPage", fixture.database)).header("authorization", &auth).header("content-type", "application/json").body(Body::from(r#"{"model":"user","predicates":[{"field":"id","value":"u1","operator":"not-a-real-operator"}],"offset":0,"limit":10}"#)).unwrap()).await;
+    let invalid_predicate = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/findPage", fixture.database)).header("authorization", auth).header("content-type", "application/json").body(Body::from(r#"{"model":"user","predicates":[{"field":"id","value":"u1","operator":"not-a-real-operator"}],"offset":0,"limit":10}"#)).unwrap()).await;
     assert_eq!(invalid_predicate.0, StatusCode::BAD_REQUEST);
     let ordinary_before_commit = admitted_fixture::request(
         &fixture.runtime,
         Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .body(Body::empty())
             .unwrap(),
     )
@@ -821,7 +821,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let missing_transaction_key = admitted_fixture::request(
         &fixture.runtime,
         Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("x-terrascale-auth-transaction", &transaction)
             .body(Body::empty())
             .unwrap(),
@@ -832,7 +832,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let commit = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/transactions/commit", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("idempotency-key", "commit-1")
             .header("content-type", "application/json")
             .body(Body::from(format!(r#"{{"transactionId":"{transaction}"}}"#)))
@@ -843,7 +843,7 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let ordinary_after_commit = admitted_fixture::request(
         &fixture.runtime,
         Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .body(Body::empty())
             .unwrap(),
     )
@@ -923,7 +923,7 @@ async fn exercise_concurrent_and_rollback(fixture: &admitted_fixture::Fixture, a
     let rollback_begin = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/transactions/begin", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("idempotency-key", "rollback-begin")
             .header("content-type", "application/json")
             .body(Body::from(r#"{"transactionId":"rollback-tx"}"#))
@@ -935,7 +935,7 @@ async fn exercise_concurrent_and_rollback(fixture: &admitted_fixture::Fixture, a
     let rollback_insert = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/insertUnique", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("idempotency-key", "rollback-insert")
             .header("x-terrascale-auth-transaction", rollback_tx)
             .header("content-type", "application/json")
@@ -947,7 +947,7 @@ async fn exercise_concurrent_and_rollback(fixture: &admitted_fixture::Fixture, a
     let rollback = admitted_fixture::request(
         &fixture.runtime,
         Request::post(format!("/api/v1/databases/{}/auth/transactions/rollback", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .header("idempotency-key", "rollback-end")
             .header("content-type", "application/json")
             .body(Body::from(format!(r#"{{"transactionId":"{rollback_tx}"}}"#)))
@@ -958,7 +958,7 @@ async fn exercise_concurrent_and_rollback(fixture: &admitted_fixture::Fixture, a
     let rolled_back_read = admitted_fixture::request(
         &fixture.runtime,
         Request::get(format!("/api/v1/databases/{}/auth/records/user/u2", fixture.database))
-            .header("authorization", &auth)
+            .header("authorization", auth)
             .body(Body::empty())
             .unwrap(),
     )
@@ -989,7 +989,7 @@ async fn exercise_concurrent_and_rollback(fixture: &admitted_fixture::Fixture, a
         let response = admitted_fixture::request(
             &fixture.runtime,
             Request::post(format!("/api/v1/databases/{}/auth/{operation}", fixture.database))
-                .header("authorization", &auth)
+                .header("authorization", auth)
                 .header("idempotency-key", key)
                 .header("content-type", "application/json")
                 .body(Body::from(body.to_string()))
@@ -1005,7 +1005,7 @@ async fn exercise_concurrent_and_rollback(fixture: &admitted_fixture::Fixture, a
             "/api/v1/databases/{}/auth/records/account/external-b",
             fixture.database
         ))
-        .header("authorization", &auth)
+        .header("authorization", auth)
         .body(Body::empty())
         .unwrap(),
     )

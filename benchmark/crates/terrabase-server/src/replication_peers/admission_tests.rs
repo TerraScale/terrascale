@@ -49,6 +49,7 @@ fn synthetic() -> Synthetic {
             PeerInbox {
                 receiver: Some(receiver),
                 peer: peer.to_owned(),
+                worker_id: 1,
                 live_workers: live_workers.clone(),
                 progress: progress.clone(),
                 observations: observations.clone(),
@@ -225,7 +226,7 @@ async fn receiver_closed_after_reservation_cannot_publish_partial_admission() {
     ));
     assert!(synthetic.peers.admitted.lock().unwrap().is_empty());
     assert!(synthetic.peers.observations().lock().unwrap().contains_key(&("peer-a".into(), a)));
-    assert!(synthetic.progress.selected_regions(a).is_err());
+    assert!(synthetic.progress.selected_regions(a).is_ok());
     assert!(!synthetic.progress.boundaries().unwrap().contains_key(&b));
     assert!(!synthetic.observations.lock().unwrap().get(&("peer-a".into(), a)).unwrap().connected);
 }

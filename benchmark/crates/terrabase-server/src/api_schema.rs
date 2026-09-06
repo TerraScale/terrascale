@@ -215,7 +215,7 @@ mod tests {
                     Request::put(TARGET)
                         .header("authorization", KEY)
                         .header("idempotency-key", "apply-1")
-                        .body(Body::from(body))
+                        .body(Body::from(body.to_owned()))
                         .expect("request"),
                 )
                 .await
@@ -320,7 +320,7 @@ mod tests {
                         .method(method)
                         .uri(target)
                         .header("authorization", KEY)
-                        .body(Body::from(body))
+                        .body(Body::from(body.to_owned()))
                         .expect("request"),
                 )
                 .await

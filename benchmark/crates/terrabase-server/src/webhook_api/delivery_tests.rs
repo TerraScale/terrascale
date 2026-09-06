@@ -3,11 +3,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 #[derive(Default)]
-struct TestPorts {
+pub(crate) struct TestPorts {
     now: AtomicU64,
-    sent: AtomicU64,
+    pub(crate) sent: AtomicU64,
     destruction_attempts: AtomicU64,
-    destruction_unavailable: std::sync::atomic::AtomicBool,
+    pub(crate) destruction_unavailable: std::sync::atomic::AtomicBool,
     destruction_not_found: std::sync::atomic::AtomicBool,
     provision_unavailable: std::sync::atomic::AtomicBool,
     creation_unavailable: std::sync::atomic::AtomicBool,
@@ -19,10 +19,10 @@ struct ProvisionGate {
     resume: std::sync::mpsc::Receiver<()>,
 }
 
-struct BudgetPorts {
-    base: TestPorts,
-    stop: Arc<std::sync::atomic::AtomicBool>,
-    stop_after_send: bool,
+pub(crate) struct BudgetPorts {
+    pub(crate) base: TestPorts,
+    pub(crate) stop: Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) stop_after_send: bool,
 }
 
 impl WebhookJournal for BudgetPorts {
@@ -623,7 +623,7 @@ fn non_idempotent_creation_failure_rolls_back_endpoint_and_quota() {
 }
 
 #[tokio::test]
-fn failed_cleanup_is_retried_from_deleted_tombstone_after_restart() {
+async fn failed_cleanup_is_retried_from_deleted_tombstone_after_restart() {
     let root = std::env::temp_dir()
         .join(format!("terrascale-webhook-cleanup-{}", terrabase::identity::generate()));
     let engine = Arc::new(

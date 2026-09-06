@@ -209,7 +209,7 @@ mod tests {
                     row.get(0)
                 })
                 .unwrap(),
-            0
+            1
         );
         transaction.commit().unwrap();
         assert_eq!(

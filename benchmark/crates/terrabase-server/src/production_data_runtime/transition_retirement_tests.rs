@@ -112,7 +112,7 @@ fn staged_journal(
         .stage(
             "authenticated-orchestrator",
             "retirement-prior",
-            terrabase_tbep::proto::terrabase::v1::PlacementStageRequest {
+            terrabase_tbep::proto::terrabase::v1::PlacementControlServiceStageRequest {
                 expected_revision: 0,
                 proposal: Some(proposal),
                 declarations: Vec::new(),
@@ -170,7 +170,7 @@ fn prepared_journal(
     journal
         .accept(
             "retirement-prior",
-            &terrabase_tbep::proto::terrabase::v1::PlacementAcceptRequest {
+            &terrabase_tbep::proto::terrabase::v1::PlacementControlServiceAcceptRequest {
                 proposal_revision: 1,
                 proof: accepted,
             },

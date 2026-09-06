@@ -1368,19 +1368,11 @@ impl Drop for PeerInbox {
         drop(self.receiver.take());
         // Losing a worker cannot leave a host acknowledging receipt waits or
         // advertising observations from a session whose owner no longer exists.
+        self.progress.fence_peer(&self.peer);
         if let Ok(mut observations) = self.observations.lock() {
-            // A replacement authenticated session may have published fresh
-            // evidence before this stale inbox is dropped. Its cleanup must
-            // not revoke that newer session's receipts.
-            let replacement_live = observations.iter().any(|((peer, _), facts)| {
-                peer == &self.peer && facts.connected && facts.session_id != self.worker_id
-            });
-            if !replacement_live {
-                self.progress.fence_peer(&self.peer);
-                for ((peer, _), facts) in observations.iter_mut() {
-                    if peer == &self.peer && facts.session_id == self.worker_id {
-                        *facts = PeerFacts::default();
-                    }
+            for ((peer, _), facts) in observations.iter_mut() {
+                if peer == &self.peer && facts.session_id == self.worker_id {
+                    *facts = PeerFacts::default();
                 }
             }
         }

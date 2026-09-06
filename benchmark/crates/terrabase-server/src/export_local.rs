@@ -6,14 +6,13 @@ use crate::export_api::{
     ensure_no_symlink_components, fact, publish_artifact, safe_member_path,
     sync_directory_ancestors,
 };
+use crate::export_artifact_crypto::LocalCrypto;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use terrabase::encryption::{
-    ArtifactCipher, Compression, DatabaseKey, EncryptionContext, ProviderMode,
-};
+use terrabase::encryption::ProviderMode;
 
 fn io_error(error: &io::Error) -> ExportError {
     ExportError::Io(error.to_string())
@@ -106,66 +105,8 @@ pub fn local_artifacts(
     Ok(Arc::new(LocalPort { root: root.into(), crypto }))
 }
 
-struct LocalCrypto {
-    key: [u8; 32],
-    database: String,
-    tenant: String,
-}
-impl LocalCrypto {
-    fn tag(&self, job: &str, member: &str, plaintext: &[u8]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_keyed(&self.key);
-        hasher.update(b"terrabase-local-export-member-v1");
-        for bytes in [
-            self.database.as_bytes(),
-            self.tenant.as_bytes(),
-            job.as_bytes(),
-            member.as_bytes(),
-            plaintext,
-        ] {
-            hasher.update(&(bytes.len() as u64).to_be_bytes());
-            hasher.update(bytes);
-        }
-        *hasher.finalize().as_bytes()
-    }
-    fn cipher(&self, tag: &[u8; 32]) -> Result<ArtifactCipher, ExportError> {
-        let context = EncryptionContext::new(
-            "local",
-            &self.tenant,
-            &self.database,
-            "export",
-            blake3::Hash::from(*tag).to_hex().to_string(),
-            "local-export-v1",
-            1,
-            Compression::None,
-        )
-        .map_err(|_| ExportError::EncryptionUnavailable)?;
-        ArtifactCipher::new(ProviderMode::LocalFile, DatabaseKey::from_bytes(self.key), context)
-            .map_err(|_| ExportError::EncryptionUnavailable)
-    }
-    fn seal(&self, job: &str, member: &str, plaintext: &[u8]) -> Result<Vec<u8>, ExportError> {
-        let tag = self.tag(job, member, plaintext);
-        let mut bytes = tag.to_vec();
-        bytes.extend(
-            self.cipher(&tag)?.seal(plaintext).map_err(|_| ExportError::EncryptionUnavailable)?,
-        );
-        Ok(bytes)
-    }
-    fn open(&self, job: &str, member: &str, bytes: &[u8]) -> Result<Vec<u8>, ExportError> {
-        let tag: [u8; 32] = bytes
-            .get(..32)
-            .ok_or(ExportError::IdempotencyConflict)?
-            .try_into()
-            .map_err(|_| ExportError::IdempotencyConflict)?;
-        let plaintext =
-            self.cipher(&tag)?.open(&bytes[32..]).map_err(|_| ExportError::IdempotencyConflict)?;
-        if self.tag(job, member, &plaintext) != tag {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        Ok(plaintext)
-    }
-}
 #[derive(serde::Deserialize)]
-struct LocalManifest {
+pub(crate) struct LocalManifest {
     members: Vec<ArtifactFact>,
 }
 
@@ -173,7 +114,7 @@ struct LocalPort {
     root: PathBuf,
     crypto: Arc<LocalCrypto>,
 }
-struct LocalWriter {
+pub(crate) struct LocalWriter {
     directory: PathBuf,
     job_id: String,
     crypto: Arc<LocalCrypto>,

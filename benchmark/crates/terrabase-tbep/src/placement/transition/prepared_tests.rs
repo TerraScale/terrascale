@@ -1,5 +1,5 @@
 use super::*;
-use ring::signature::Ed25519KeyPair;
+use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::{Value, json};
 use terrabase::identity::MemberUlid;
 

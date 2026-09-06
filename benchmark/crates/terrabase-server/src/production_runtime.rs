@@ -21,6 +21,7 @@ pub struct ProductionRuntime {
 }
 
 impl ProductionRuntime {
+    /// Binds the live lifecycle, metrics, and public-serving status providers.
     #[must_use]
     pub fn new(
         lifecycle: Arc<ProductionDataLifecycle>,

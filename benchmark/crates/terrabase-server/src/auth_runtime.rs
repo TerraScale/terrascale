@@ -146,6 +146,13 @@ impl AuthRuntime {
         outcome
     }
 
+    /// Reconciles authenticated groups when the production API owns the
+    /// shared transport accept loop. This deliberately does not bind a
+    /// second listener or start a competing receive loop.
+    pub async fn reconcile_for_shared_listener(&self) -> Result<(), String> {
+        self.reconcile().await
+    }
+
     /// Recover every explicit grant once; failures leave that group unavailable.
     ///
     /// # Errors

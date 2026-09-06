@@ -1758,11 +1758,19 @@ impl WebhookService {
                 }
             }
         }
-        if let Some(error) = cleanup_error {
-            return Err(error);
-        }
         report.cursor = page.next.or(cursor);
         report.publications = publications.len();
+        // Cleanup is retried from the tombstone on the next tick. It must not
+        // prevent checkpointing a successfully processed publication page.
+        report.cleanup_pending = cleanup_error.is_some();
+        if report.cleanup_pending {
+            // Keep one bounded, redacted operator signal per dispatch tick;
+            // endpoint IDs and provider details are intentionally omitted.
+            eprintln!(
+                "webhook cleanup pending: database={} region={}",
+                scope.database, self.region
+            );
+        }
         Ok(report)
     }
 
@@ -1878,6 +1886,8 @@ pub struct DispatchReport {
     pub attempted: usize,
     /// Oversized publications skipped safely.
     pub skipped: usize,
+    /// A deleted endpoint's signing-key cleanup still needs a retry.
+    pub cleanup_pending: bool,
 }
 
 /// Public HTTP state used by the parent API router.
@@ -2802,3 +2812,7 @@ mod delivery_tests;
 #[cfg(test)]
 #[path = "webhook_api/boundary_tests.rs"]
 mod boundary_tests;
+
+#[cfg(test)]
+#[path = "webhook_api/cleanup_cursor_tests.rs"]
+mod cleanup_cursor_tests;

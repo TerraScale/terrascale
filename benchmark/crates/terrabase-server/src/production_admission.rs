@@ -208,6 +208,7 @@ pub(crate) fn lifecycle_allows_origin_activation(
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
+    use super::Writer;
     use super::{
         AcceptedAdmission, AdmissionAuthority, lifecycle_allows_origin_activation,
         storage_admission,

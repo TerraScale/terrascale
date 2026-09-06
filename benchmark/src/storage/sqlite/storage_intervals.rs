@@ -103,12 +103,8 @@ pub(super) fn load(
             logical_bytes: bytes.parse().map_err(|_| ())?,
         });
     }
-    // An empty timeline is the canonical representation of a valid zero-use
-    // closure. It still covers the complete window: there are simply no
-    // logical byte levels to record. The closure checksum binds this empty
-    // list, so exact replay can safely return it after a reopen.
     if result.is_empty() {
-        return Ok(result);
+        return Err(());
     }
     if result.windows(2).any(|pair| pair[0].end_millis != pair[1].start_millis) {
         return Err(());

@@ -19,6 +19,7 @@ use axum::extract::Extension;
 use axum::extract::Path;
 use axum::extract::Request;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::HeaderValue;
 use axum::http::Method;
 use axum::http::StatusCode;
@@ -1427,10 +1428,14 @@ async fn authenticate(
     let Some(token) = token else {
         return ApiError::malformed_credential().into_response();
     };
-    let (principal, verified_project) = match admit_bearer(&state, &request, token).await {
-        Ok(value) => value,
-        Err(error) => return error.into_response(),
-    };
+    let request_method = request.method().clone();
+    let request_path = request.uri().path().to_owned();
+    let request_headers = request.headers().clone();
+    let (principal, verified_project) =
+        match admit_bearer(&state, &request_method, &request_path, &request_headers, token).await {
+            Ok(value) => value,
+            Err(error) => return error.into_response(),
+        };
     if let Some(scope) = verified_project {
         request.extensions_mut().insert(scope);
     }
@@ -1498,17 +1503,19 @@ async fn authenticate(
 
 async fn admit_bearer(
     state: &ApiState,
-    request: &Request,
+    method: &Method,
+    path: &str,
+    headers: &HeaderMap,
     token: &str,
 ) -> Result<
     (crate::api_keys::Principal, Option<crate::delegated_identity::VerifiedProjectScope>),
     ApiError,
 > {
-    let route_owner = match database_of(request.uri().path()) {
+    let route_owner = match database_of(path) {
         Some(database) => database_owner_scope(state, database)?,
         None => state.scope.clone(),
     };
-    let project_operation = is_project_administration(request.method(), request.uri().path());
+    let project_operation = is_project_administration(method, path);
     let mut verified_project = None;
     let admitted = match state.keys.as_ref().map(|keys| keys.admit(token)) {
         Some(Ok(principal)) => {
@@ -1523,23 +1530,21 @@ async fn admit_bearer(
             }
             Ok(principal)
         }
-        _ => match (&state.delegated_identity, database_of(request.uri().path())) {
+        _ => match (&state.delegated_identity, database_of(path)) {
             (Some(identity), Some(database)) => identity
                 .admit(
                     token,
                     &route_owner.0,
                     &route_owner.1,
                     database,
-                    collection_of(request.uri().path()),
-                    required_verb(request.method(), request.uri().path()),
+                    collection_of(path),
+                    required_verb(method, path),
                 )
                 .await
                 .map_err(|_| ApiError::unauthorized()),
             (Some(identity), None) if project_operation => {
-                let tenant =
-                    request.headers().get("x-terrascale-tenant-id").and_then(|v| v.to_str().ok());
-                let project =
-                    request.headers().get("x-terrascale-project-id").and_then(|v| v.to_str().ok());
+                let tenant = headers.get("x-terrascale-tenant-id").and_then(|v| v.to_str().ok());
+                let project = headers.get("x-terrascale-project-id").and_then(|v| v.to_str().ok());
                 match (tenant, project) {
                     (Some(tenant), Some(project)) => {
                         match identity.admit_project(token, tenant, project).await {

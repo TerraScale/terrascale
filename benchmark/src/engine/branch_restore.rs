@@ -34,13 +34,14 @@ impl Engine {
             return Err(EngineOpenError::InvalidConfig);
         }
         let target = &config.location;
-        let metadata = fs::symlink_metadata(target).map_err(|_| EngineOpenError::InvalidConfig)?;
-        if !metadata.is_dir() || metadata.file_type().is_symlink() {
-            return Err(EngineOpenError::InvalidConfig);
+        if let Ok(metadata) = fs::symlink_metadata(target) {
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(EngineOpenError::InvalidConfig);
+            }
         }
         let marker =
             format!("{}:{}:{}", operation.as_str(), source_owner.database(), child.database());
-        if fs::read_dir(target).map_err(|_| EngineOpenError::InvalidConfig)?.next().is_some() {
+        if fs::read_dir(target).ok().and_then(|entries| entries.into_iter().next()).is_some() {
             let engine = Self::open(config.clone())?;
             let connection = engine
                 .open_sqlite_read_connection()
@@ -64,6 +65,14 @@ impl Engine {
                 u64::try_from(sequence).map_err(|_| EngineOpenError::FormatMismatch)?,
             ));
         }
+        // `EngineConfig::durable` creates the target directory up front. An
+        // empty directory is only a reservation; remove it so the prepared
+        // staging directory can be installed atomically with rename.
+        match fs::remove_dir(target) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(EngineOpenError::StorageUnavailable),
+        }
         let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
         let staging = parent.join(format!(".branch-restore-{}", crate::identity::generate()));
         let mut builder = fs::DirBuilder::new();
@@ -81,8 +90,10 @@ impl Engine {
             )
             .map_err(|_| EngineOpenError::FormatMismatch)?;
             let source_owner = source.database_owner();
+            let mut source_path = None;
             let registration = source
                 .with_quiescent_wal(|source_location| {
+                    source_path = Some(source_location.to_owned());
                     crate::storage::copy_encrypted_snapshot(
                         source_location,
                         &staging,
@@ -93,7 +104,7 @@ impl Engine {
                 .map_err(|_| EngineOpenError::StorageUnavailable)?
                 .map_err(|()| EngineOpenError::StorageUnavailable)?;
             let cut = transform_snapshot(
-                source.location(),
+                source_path.as_deref().ok_or(EngineOpenError::StorageUnavailable)?,
                 &staging,
                 source_owner,
                 child,
@@ -112,7 +123,8 @@ impl Engine {
                 // source was quiesced. Re-read the durable marker to make an
                 // exact same-operation loser idempotent; a different marker
                 // remains a conflict.
-                if let Some(existing) = installed_cut(target, &marker) {
+                if let Some(existing) = installed_cut(config, &marker) {
+                    let _ = fs::remove_dir_all(&staging);
                     return Ok(StorageSequence::new(existing));
                 }
                 return Err(EngineOpenError::StorageUnavailable);
@@ -131,12 +143,9 @@ impl Engine {
     }
 }
 
-fn installed_cut(target: &Path, marker: &str) -> Option<u64> {
-    let connection = crate::storage::open_physical_sqlite(
-        &crate::storage::database_file(target),
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .ok()?;
+fn installed_cut(config: &EngineConfig, marker: &str) -> Option<u64> {
+    let engine = Engine::open(config.clone()).ok()?;
+    let connection = engine.open_sqlite_read_connection().ok()?;
     let found: String = connection
         .query_row("SELECT value FROM meta WHERE key='branch_restore_operation'", [], |row| {
             row.get(0)

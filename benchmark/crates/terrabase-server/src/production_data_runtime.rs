@@ -284,6 +284,12 @@ impl ProductionDataLifecycle {
 }
 
 impl ProductionDataRuntime {
+    /// Shared durable progress ledger used by proof producers.
+    #[must_use]
+    pub fn progress(&self) -> Arc<ReplicationProgress> {
+        self.progress.clone()
+    }
+
     /// Starts physical and causal workers only from verified accepted assignments.
     /// A follower opens no Engine: the snapshot receiver owns its physical files.
     ///

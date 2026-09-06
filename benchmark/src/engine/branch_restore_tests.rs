@@ -94,7 +94,28 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
         .with_owner(child_owner.clone())
         .with_storage_keys(child_keys);
     let operation = OperationId::try_new("restore-branch").unwrap();
+    let (same_first, same_second) = std::thread::scope(|threads| {
+        let first_config = child_config.clone();
+        let second_config = child_config.clone();
+        let first = threads.spawn(move || {
+            Engine::restore_encrypted_sqlite_branch(&source, &first_config, &operation)
+        });
+        let second = threads.spawn(move || {
+            Engine::restore_encrypted_sqlite_branch(&source, &second_config, &operation)
+        });
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    let same_first = same_first.unwrap();
+    let same_second = same_second.unwrap();
+    assert_eq!(same_first, same_second);
+    assert!(
+        std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .all(|entry| !entry.file_name().to_string_lossy().starts_with(".branch-restore-"))
+    );
     let cut = Engine::restore_encrypted_sqlite_branch(&source, &child_config, &operation).unwrap();
+    assert_eq!(cut, same_first);
     assert!(cut.get() > 0);
     let retry =
         Engine::restore_encrypted_sqlite_branch(&source, &child_config, &operation).unwrap();
@@ -102,6 +123,32 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
     let child = Engine::open(child_config).unwrap();
     assert_eq!(child.database_id(), child_owner.database());
     assert_branch_contents(&child, &tenant, &child_owner.database().to_string());
+
+    let distinct_target = root.join("distinct-target");
+    let distinct_config = EngineConfig::durable(&distinct_target)
+        .unwrap()
+        .with_owner(child_owner.clone())
+        .with_storage_keys(test_storage_keys(&child_owner, 146));
+    let first_operation = OperationId::try_new("distinct-first").unwrap();
+    let second_operation = OperationId::try_new("distinct-second").unwrap();
+    let (distinct_first, distinct_second) = std::thread::scope(|threads| {
+        let first_config = distinct_config.clone();
+        let second_config = distinct_config.clone();
+        let first = threads.spawn(move || {
+            Engine::restore_encrypted_sqlite_branch(&source, &first_config, &first_operation)
+        });
+        let second = threads.spawn(move || {
+            Engine::restore_encrypted_sqlite_branch(&source, &second_config, &second_operation)
+        });
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    assert_ne!(distinct_first.is_ok(), distinct_second.is_ok());
+    assert!(
+        std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .all(|entry| !entry.file_name().to_string_lossy().starts_with(".branch-restore-"))
+    );
 
     let grandchild_owner = crate::storage::DatabaseOwner::new(
         child_owner.environment().clone(),
