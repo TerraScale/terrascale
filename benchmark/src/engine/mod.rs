@@ -523,6 +523,7 @@ pub struct EngineConfig {
     replication_origin: Option<RegionId>,
     replication_clock: Arc<dyn ReplicationClock>,
     storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
+    allow_create: bool,
 }
 
 impl EngineConfig {
@@ -554,7 +555,32 @@ impl EngineConfig {
             replication_origin: None,
             replication_clock: Arc::new(SystemReplicationClock),
             storage_keys: None,
+            allow_create: true,
         })
+    }
+
+    /// Describes an existing durable Engine location without creating it.
+    pub(crate) fn existing_durable(location: impl Into<PathBuf>) -> Result<Self, EngineConfigError> {
+        let location = location.into();
+        if location.as_os_str().is_empty() {
+            return Err(EngineConfigError::EmptyLocation);
+        }
+        if !location.is_dir() {
+            return Err(EngineConfigError::NonDurableLocation);
+        }
+        Ok(Self::durable_existing_unchecked(location))
+    }
+
+    fn durable_existing_unchecked(location: PathBuf) -> Self {
+        Self {
+            location,
+            lifecycle_thresholds: crate::query::optimizer::LifecycleThresholds::DEFAULT,
+            owner: None,
+            replication_origin: None,
+            replication_clock: Arc::new(SystemReplicationClock),
+            storage_keys: None,
+            allow_create: false,
+        }
     }
 
     /// Binds this location to the supplied production database owner tuple.
@@ -1205,15 +1231,27 @@ impl Engine {
             (Some(_), None) | (None, Some(_)) => return Err(EngineOpenError::InvalidConfig),
             (None, None) => {}
         }
-        let owner = crate::storage::load_or_create(
-            &location,
-            config.owner.as_ref(),
-            if config.owner.is_some() {
-                crate::storage::OwnershipMode::Production
-            } else {
-                crate::storage::OwnershipMode::LocalDevelopment
-            },
-        )
+        let owner = if config.allow_create {
+            crate::storage::load_or_create(
+                &location,
+                config.owner.as_ref(),
+                if config.owner.is_some() {
+                    crate::storage::OwnershipMode::Production
+                } else {
+                    crate::storage::OwnershipMode::LocalDevelopment
+                },
+            )
+        } else {
+            crate::storage::load_existing(
+                &location,
+                config.owner.as_ref(),
+                if config.owner.is_some() {
+                    crate::storage::OwnershipMode::Production
+                } else {
+                    crate::storage::OwnershipMode::LocalDevelopment
+                },
+            )
+        }
         .map_err(|error| match error {
             crate::storage::OwnershipError::Unavailable => EngineOpenError::StorageUnavailable,
             crate::storage::OwnershipError::InvalidEnvironment
@@ -1225,11 +1263,20 @@ impl Engine {
         })?;
         let metrics = Arc::new(MetricsRegistry::new());
         // Production owners use the authenticated VFS for every connection.
-        let mut storage: Box<dyn storage::StoragePort> = storage::SqliteStorage::open_with_keys(
-            &location,
-            config.replication_origin.as_ref().map(RegionId::as_str),
-            config.storage_keys.clone(),
-        )
+        let open_storage = if config.allow_create {
+            storage::SqliteStorage::open_with_keys(
+                &location,
+                config.replication_origin.as_ref().map(RegionId::as_str),
+                config.storage_keys.clone(),
+            )
+        } else {
+            storage::SqliteStorage::open_existing_with_keys(
+                &location,
+                config.replication_origin.as_ref().map(RegionId::as_str),
+                config.storage_keys.clone(),
+            )
+        };
+        let mut storage: Box<dyn storage::StoragePort> = open_storage
         .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
         .map_err(|_| EngineOpenError::StorageUnavailable)?;
         if config.owner.is_some()

@@ -137,6 +137,14 @@ impl EncryptedVfs {
     }
 
     pub(crate) fn shared_file(&self, path: &Path) -> io::Result<Arc<Mutex<EncryptedFile>>> {
+        self.shared_file_with_create(path, true)
+    }
+
+    fn shared_file_with_create(
+        &self,
+        path: &Path,
+        allow_create: bool,
+    ) -> io::Result<Arc<Mutex<EncryptedFile>>> {
         let path = path
             .parent()
             .ok_or_else(|| io::Error::other("database parent missing"))?
@@ -151,7 +159,11 @@ impl EncryptedVfs {
         if let Some(file) = files.get(path).and_then(Weak::upgrade) {
             return Ok(file);
         }
-        let file = Arc::new(Mutex::new(EncryptedFile::open(path, self.keys.clone(), kind)?));
+        let file = Arc::new(Mutex::new(if allow_create {
+            EncryptedFile::open(path, self.keys.clone(), kind)?
+        } else {
+            EncryptedFile::open_existing(path, self.keys.clone(), kind)?
+        }));
         files.insert(path.to_path_buf(), Arc::downgrade(&file));
         Ok(file)
     }
@@ -267,14 +279,15 @@ unsafe extern "C" fn open(
             ffi::sqlite3_free(native.cast());
             return result;
         }
-        let file = match registry.shared_file(&path) {
-            Ok(file) => file,
-            Err(_) => {
-                ((*(*native).pMethods).xClose.unwrap())(native);
-                ffi::sqlite3_free(native.cast());
-                return ffi::SQLITE_IOERR;
-            }
-        };
+        let file =
+            match registry.shared_file_with_create(&path, flags & ffi::SQLITE_OPEN_CREATE != 0) {
+                Ok(file) => file,
+                Err(_) => {
+                    ((*(*native).pMethods).xClose.unwrap())(native);
+                    ffi::sqlite3_free(native.cast());
+                    return ffi::SQLITE_IOERR;
+                }
+            };
         Arc::increment_strong_count((*vfs).pAppData.cast::<EncryptedVfs>());
         let registration = Arc::from_raw((*vfs).pAppData.cast::<EncryptedVfs>());
         let file_state = Box::new(FileState {
@@ -859,6 +872,39 @@ mod tests {
                 .query_row("SELECT COUNT(*) FROM retained", [], |row| row.get::<_, i64>(0))
                 .unwrap(),
             2
+        );
+    }
+
+    #[test]
+    fn existing_encrypted_open_never_recreates_missing_backing() {
+        let directory = Directory::new();
+        let path = directory.database();
+        assert!(EncryptedFile::open_existing(&path, keys(25), ArtifactKind::Database).is_err());
+        assert_eq!(std::fs::read_dir(&directory.0).unwrap().count(), 0);
+
+        let mut file = EncryptedFile::open(&path, keys(25), ArtifactKind::Database).unwrap();
+        file.write_all_at(&[42; 4096], 0).unwrap();
+        file.sync().unwrap();
+        drop(file);
+        let mut file = EncryptedFile::open_existing(&path, keys(25), ArtifactKind::Database).unwrap();
+        let mut retained_bytes = [0; 4096];
+        file.read_exact_at(&mut retained_bytes, 0).unwrap();
+        assert_eq!(retained_bytes, [42; 4096]);
+        drop(file);
+
+        std::fs::remove_file(backing(&path)).unwrap();
+        let retained: std::collections::BTreeSet<_> = std::fs::read_dir(&directory.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(EncryptedFile::open_existing(&path, keys(25), ArtifactKind::Database).is_err());
+        assert!(!backing(&path).exists());
+        assert_eq!(
+            retained,
+            std::fs::read_dir(&directory.0)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect()
         );
     }
 

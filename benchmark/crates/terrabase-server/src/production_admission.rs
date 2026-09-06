@@ -33,8 +33,6 @@ pub enum AcceptedAdmission {
     },
     /// Revoked database reopened only for deletion and maintenance.
     Maintenance {
-        /// Immutable placement revision retained for lifecycle correlation.
-        revision: String,
         /// Accepted regional origin.
         origin: RegionCode,
         /// Accepted epoch, which is never activated for origin writes.
@@ -96,7 +94,7 @@ pub fn storage_admission(
         };
         let tenant_id = TenantId::try_new(&record.tenant_id).map_err(|_| "invalid tenant")?;
         match accepted {
-            AcceptedAdmission::Maintenance { epoch, origin, local_is_writer, .. } => {
+            AcceptedAdmission::Maintenance { epoch, origin, local_is_writer } => {
                 if epoch == 0 || origin != region {
                     return Err("invalid accepted database authority".into());
                 }
@@ -104,7 +102,7 @@ pub fn storage_admission(
                     return Ok(());
                 }
                 let id = DatabaseId::try_new(&record.database_id).map_err(|_| "invalid database")?;
-                let lease = member.acquire(&id).map_err(|_| "encrypted database unavailable")?;
+                let lease = member.acquire_existing(&id).map_err(|_| "encrypted database unavailable")?;
                 if lifecycle_allows_origin_activation(&lease, &tenant_id)? {
                     return Err("maintenance admission is not access-revoked".into());
                 }
@@ -168,7 +166,7 @@ mod tests {
         admission::{AdmissionHost, AdmissionRecord},
         admitted_databases::AdmittedDatabaseRegistry,
     };
-    use std::{fs, sync::Arc, time::Duration};
+    use std::{fs, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
     use terrabase::{
         engine::lifecycle_state::DeletionIntent,
         identity::{DatabaseUlid, ProjectUlid, TenantUlid},
@@ -228,6 +226,9 @@ mod tests {
         let fenced_id = DatabaseId::from(fenced.database());
         let unrelated_id = DatabaseId::from(unrelated.database());
         let fixture = crate::test_keys::key_delivery();
+        let successor_maintenance = Arc::new(AtomicBool::new(false));
+        let maintenance_mode = Arc::clone(&successor_maintenance);
+        let fenced_text = fenced.database().to_text();
         let open = || {
             let mut keys =
                 crate::test_keys::storage_keys_with_provider(&fenced, fixture.provider.clone());
@@ -243,7 +244,14 @@ mod tests {
         };
         let authority: Arc<
             dyn Fn(&AdmissionRecord) -> Result<Option<AcceptedAdmission>, String> + Send + Sync,
-        > = Arc::new(|record| {
+        > = Arc::new(move |record| {
+            if maintenance_mode.load(Ordering::Acquire) && record.database_id == fenced_text {
+                return Ok(Some(AcceptedAdmission::Maintenance {
+                    origin: RegionCode::GRU,
+                    epoch: 2,
+                    local_is_writer: true,
+                }));
+            }
             Ok(Some(AcceptedAdmission::Active {
                 partition: format!("partition-{}", record.database_id),
                 revision: "revision".into(),
@@ -292,6 +300,7 @@ mod tests {
                     },
                 )
                 .unwrap();
+            successor_maintenance.store(true, Ordering::Release);
         }
         assert_eq!(fenced_host.host.engine().origin_epoch().unwrap(), (1, true));
         drop(fenced_host);

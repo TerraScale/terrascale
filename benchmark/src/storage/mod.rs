@@ -36,7 +36,7 @@ pub(crate) use intent::{
 };
 pub(crate) use ownership::validate_local_restore_source;
 pub use ownership::{DatabaseOwner, EnvironmentName, OwnershipError};
-pub(crate) use ownership::{OwnershipMode, load_or_create};
+pub(crate) use ownership::{OwnershipMode, load_existing, load_or_create};
 pub(crate) use sqlite::branch_import::{copy_encrypted_snapshot, rebind_owner};
 pub(crate) use sqlite::branch_provenance::transform_provenance;
 pub use sqlite::database_file;

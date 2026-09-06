@@ -1263,6 +1263,22 @@ impl Member {
     /// [`MemberError::UnknownDatabase`] for an unconfigured identity, or a
     /// typed capacity/storage refusal.
     pub fn acquire(&self, database: &DatabaseId) -> Result<DatabaseLease, MemberError> {
+        self.acquire_with_policy(database, true)
+    }
+
+    /// Acquires a lease only from an already materialized durable location.
+    /// This path never creates a directory, ownership record, or SQLite main
+    /// database file. SQLite may still create sidecar files for an existing
+    /// database while opening it.
+    pub fn acquire_existing(&self, database: &DatabaseId) -> Result<DatabaseLease, MemberError> {
+        self.acquire_with_policy(database, false)
+    }
+
+    fn acquire_with_policy(
+        &self,
+        database: &DatabaseId,
+        allow_create: bool,
+    ) -> Result<DatabaseLease, MemberError> {
         if *lock_unpoisoned(&self.inner.lifecycle) != LifecycleState::Serving {
             return Err(MemberError::Draining);
         }
@@ -1296,7 +1312,7 @@ impl Member {
             }
             (local, entry.location.clone())
         };
-        let engine = match open_database_engine(&self.inner, database, &location) {
+        let engine = match open_database_engine(&self.inner, database, &location, allow_create) {
             Ok(engine) => engine,
             Err(error) => {
                 drop(local);
@@ -1864,6 +1880,7 @@ fn open_database_engine(
     inner: &Arc<MemberInner>,
     database: &DatabaseId,
     location: &Path,
+    allow_create: bool,
 ) -> Result<Arc<Engine>, MemberError> {
     loop {
         let mut catalog = lock_unpoisoned(&inner.catalog);
@@ -1935,7 +1952,12 @@ fn open_database_engine(
                         CatalogValidationError::InvalidDatabaseLocation,
                     ));
                 }
-                let config = EngineConfig::durable(location).map_err(|error| {
+                let config = if allow_create {
+                    EngineConfig::durable(location)
+                } else {
+                    EngineConfig::existing_durable(location)
+                }
+                .map_err(|error| {
                     MemberError::EngineConfig { database: database.clone(), error }
                 })?;
                 // Production entries stay closed until writer acceptance. Their

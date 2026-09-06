@@ -234,6 +234,24 @@ pub(crate) fn load_or_create(
     Ok(owner)
 }
 
+/// Loads an existing location owner without creating directories or metadata.
+pub(crate) fn load_existing(
+    location: &Path,
+    expected: Option<&DatabaseOwner>,
+    mode: OwnershipMode,
+) -> Result<DatabaseOwner, OwnershipError> {
+    validate_location(location)?;
+    let path = location.join(FILE_NAME);
+    let (owner, stored_mode) = read_record(&path)?;
+    if stored_mode != mode {
+        return Err(OwnershipError::ModeMismatch);
+    }
+    if expected.is_some_and(|wanted| wanted != &owner) {
+        return Err(OwnershipError::Mismatch);
+    }
+    Ok(owner)
+}
+
 /// Returns the stable binding carried by the owner record, when one exists.
 ///
 /// `SQLite` stores this value alongside its schema so replacing the database

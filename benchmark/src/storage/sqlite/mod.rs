@@ -1754,10 +1754,31 @@ impl SqliteStorage {
         origin: Option<&str>,
         keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
     ) -> Result<Self, StorageOpenError> {
+        Self::open_with_keys_mode(dir, origin, keys, true)
+    }
+
+    pub(crate) fn open_existing_with_keys(
+        dir: &Path,
+        origin: Option<&str>,
+        keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
+    ) -> Result<Self, StorageOpenError> {
+        Self::open_with_keys_mode(dir, origin, keys, false)
+    }
+
+    fn open_with_keys_mode(
+        dir: &Path,
+        origin: Option<&str>,
+        keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
+        allow_create: bool,
+    ) -> Result<Self, StorageOpenError> {
         // The engine path pre-creates the location; creating here too keeps
         // the seam's direct callers (and the FileStorage reference's
         // behavior) working on a named-but-absent directory.
-        std::fs::create_dir_all(dir).map_err(|_| StorageOpenError::Unavailable)?;
+        if allow_create {
+            std::fs::create_dir_all(dir).map_err(|_| StorageOpenError::Unavailable)?;
+        } else if !dir.is_dir() {
+            return Err(StorageOpenError::Unavailable);
+        }
         let database_path = dir.join(DATABASE_FILE);
         let encrypted_exists = encrypted_file::companion(&database_path).exists();
         if keys.is_none() && encrypted_exists {
@@ -1778,12 +1799,16 @@ impl SqliteStorage {
         // Open the handle without WAL/schema pragmas first. An existing file
         // must prove its identity before any SQLite sidecar or schema state is
         // changed; otherwise a replacement valid SQLite file could be adopted.
+        let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE;
+        if allow_create {
+            flags |= OpenFlags::SQLITE_OPEN_CREATE;
+        }
         let mut writer = raw_connection(
             &database_path,
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
+            flags,
             encryption.as_deref(),
         )?;
-        if database_exists {
+        if database_exists || !allow_create {
             let legacy = validate_database_binding(&writer, &expected_binding)?;
             if !legacy {
                 // A bound file with a missing root is corrupt, not a fresh

@@ -51,10 +51,14 @@ the serialized payload and validate it against its database/epoch key.
 
 ## Remaining integration and qualification
 
-The Go orchestrator must read an exact active stream from its durable lifecycle
-journal and deliver that tuple to both regional members after signed placement
-acceptance. The lifecycle registration must be durable before writes can begin.
-This producer delivery is not wired yet. The daemon entrypoint, signed successor
-epoch test, and pending-registration recovery through the complete production
-runtime remain unqualified. These focused receiver tests do not pass the
-production launch or billing release gates.
+The Go orchestrator now reads exact active streams from its durable lifecycle
+journal and delivers them to both regional members after signed placement
+acceptance, before recording activation completion. The planner includes retained
+live databases affected by the new cluster epoch. Deleted scopes receive no new
+registration. Normal creation still lacks an authoritative stream allocator;
+missing streams keep activation pending.
+
+The daemon entrypoint, signed successor epoch test, and pending-registration
+recovery through the complete production runtime remain unqualified. Go transport
+tests use authenticated NATS and a Unix HTTP fake engine. These focused tests do
+not pass the production launch or billing release gates.

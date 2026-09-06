@@ -123,10 +123,30 @@ impl EncryptedFile {
         keys: Arc<dyn DatabaseKeySource>,
         kind: ArtifactKind,
     ) -> io::Result<Self> {
+        Self::open_with_create(path, keys, kind, true)
+    }
+
+    pub(crate) fn open_existing(
+        path: &Path,
+        keys: Arc<dyn DatabaseKeySource>,
+        kind: ArtifactKind,
+    ) -> io::Result<Self> {
+        Self::open_with_create(path, keys, kind, false)
+    }
+
+    fn open_with_create(
+        path: &Path,
+        keys: Arc<dyn DatabaseKeySource>,
+        kind: ArtifactKind,
+        allow_create: bool,
+    ) -> io::Result<Self> {
         use std::os::unix::fs::PermissionsExt;
         keys.current_lease().map_err(crypt)?;
         let backing = companion(path);
-        let lock = secure_options().create(true).truncate(false).open(suffix(path, ".tbe.lock"))?;
+        let lock = secure_options()
+            .create(allow_create)
+            .truncate(false)
+            .open(suffix(path, ".tbe.lock"))?;
         lock.try_lock().map_err(io::Error::other)?;
         let role = if path.as_os_str().as_encoded_bytes().ends_with(b"-journal") {
             "rollback"
@@ -152,7 +172,7 @@ impl EncryptedFile {
                 }
                 false
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => true,
+            Err(error) if allow_create && error.kind() == io::ErrorKind::NotFound => true,
             Err(error) => return Err(error),
         };
         let mut identity = [0; 32];
