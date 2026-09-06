@@ -409,3 +409,14 @@ returned `auth_authority_unavailable` (503). Log:
 policy does not fully explain the intermittent authority failures. Both the
 unmodified and cleanup-patched maintained-suite gates remain unpassed;
 underlying authority/transport diagnosis continues.
+
+
+Opt-in authority diagnostics in `56066` identified the failure: an outbound
+AuthConsensus connect returned `Saturated`; the linearizable read barrier then
+returned `QuorumNotEnough` with only voter 1. This attempt passed six cases,
+failed one, and left 343 unexecuted (exit 101). Log:
+`/tmp/terrascale-auth-authority-errors-diagnostic.log`. Independent source review
+confirmed OpenRaft read barriers can overlap ordinary replication RPCs. Each
+opened a fresh session against the single outbound class slot. The transport
+reservation is working as designed; auth RPC admission must coordinate callers
+across all groups sharing the endpoint. A bounded admission fix is in progress.

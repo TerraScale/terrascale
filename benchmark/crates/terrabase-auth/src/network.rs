@@ -257,6 +257,19 @@ impl AuthNetwork {
             body: request,
         })?;
         let response = tokio::time::timeout(deadline, async {
+            let _permit = self
+                .endpoint
+                .acquire_request(
+                    member,
+                    ProductionConnectionClass::AuthClient,
+                    bytes.len(),
+                    deadline,
+                )
+                .await
+                .map_err(|error| {
+                    diagnose_transport("auth-client admission", target, error);
+                    AuthorityError::Unavailable
+                })?;
             let connection = self
                 .endpoint
                 .connect(member, ProductionConnectionClass::AuthClient)
@@ -269,10 +282,15 @@ impl AuthNetwork {
                 diagnose_transport("auth-client send", target, error);
                 AuthorityError::Unavailable
             })?;
-            connection.receive_frame().await.map_err(|error| {
+            let response = connection.receive_frame().await.map_err(|error| {
                 diagnose_transport("auth-client receive", target, error);
                 AuthorityError::Unavailable
-            })
+            })?;
+            connection.complete_request().await.map_err(|error| {
+                diagnose_transport("auth-client close", target, error);
+                AuthorityError::Unavailable
+            })?;
+            Ok(response)
         })
         .await
         .map_err(|_| AuthorityError::Deadline)??;
@@ -332,6 +350,19 @@ impl AuthPeer {
         })
         .map_err(|_| transport_error())?;
         let response = tokio::time::timeout(option.hard_ttl(), async {
+            let _permit = self
+                .network
+                .endpoint
+                .acquire_request(
+                    member,
+                    ProductionConnectionClass::AuthConsensus,
+                    bytes.len(),
+                    option.hard_ttl(),
+                )
+                .await
+                .map_err(|error| {
+                    diagnose_transport("auth-consensus admission", self.target, error);
+                })?;
             let connection = self
                 .network
                 .endpoint
@@ -343,9 +374,13 @@ impl AuthPeer {
             connection.send_frame(&bytes).await.map_err(|error| {
                 diagnose_transport("auth-consensus send", self.target, error);
             })?;
-            connection.receive_frame().await.map_err(|error| {
+            let response = connection.receive_frame().await.map_err(|error| {
                 diagnose_transport("auth-consensus receive", self.target, error);
-            })
+            })?;
+            connection.complete_request().await.map_err(|error| {
+                diagnose_transport("auth-consensus close", self.target, error);
+            })?;
+            Ok(response)
         })
         .await
         .map_err(|_| transport_error())?

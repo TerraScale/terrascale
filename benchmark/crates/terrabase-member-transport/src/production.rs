@@ -44,7 +44,7 @@ const NONCE_BYTES: usize = 32;
 const MAX_CONNECTIONS_PER_PEER: usize = 5;
 
 /// The bounded application class carried in the authenticated hello.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(u8)]
 pub enum ProductionConnectionClass {
     /// Long-lived physical and causal database replication.
@@ -70,6 +70,7 @@ impl ProductionConnectionClass {
 pub const PRODUCTION_MAX_PEERS: usize = 5;
 const CLOSE_DRAINING: u32 = 0x5442_0001;
 const CLOSE_AUTHORIZATION: u32 = 0x5442_0002;
+const CLOSE_REQUEST_COMPLETE: u32 = 0x5442_0003;
 
 /// A Region in the initial production catalog.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -747,6 +748,39 @@ pub struct ProductionQuicEndpoint {
     state: Arc<RuntimeState>,
 }
 
+/// Holds FIFO ownership and the bounded request budget until the round trip ends.
+pub struct ProductionRequestPermit {
+    _slot: tokio::sync::OwnedSemaphorePermit,
+    _reservation: RequestReservation,
+}
+
+struct RequestReservation {
+    state: Arc<RuntimeState>,
+    class: ProductionConnectionClass,
+    bytes: usize,
+}
+
+struct RequestGate {
+    semaphore: Arc<tokio::sync::Semaphore>,
+}
+
+impl RequestGate {
+    fn new() -> Self {
+        Self { semaphore: Arc::new(tokio::sync::Semaphore::new(1)) }
+    }
+}
+
+impl Drop for RequestReservation {
+    fn drop(&mut self) {
+        if let Ok(mut usage) = self.state.request_usage.lock() {
+            let entry = usage.entry(self.class).or_default();
+            entry.0 = entry.0.saturating_sub(1);
+            entry.1 = entry.1.saturating_sub(self.bytes);
+        }
+        self.state.changed.notify_waiters();
+    }
+}
+
 impl ProductionQuicEndpoint {
     /// Binds one endpoint with the single non-FIPS ring provider (D-41
     /// defers FIPS builds past the first customer), TLS 1.3-only mutual
@@ -889,6 +923,62 @@ impl ProductionQuicEndpoint {
     #[must_use]
     pub fn config(&self) -> &ProductionTransportConfig {
         &self.config
+    }
+
+    /// Reserves one bounded request slot for an authenticated application class.
+    /// Direct session connects intentionally bypass this gate.
+    pub async fn acquire_request(
+        &self,
+        member: &MemberId,
+        class: ProductionConnectionClass,
+        bytes: usize,
+        deadline: Duration,
+    ) -> Result<ProductionRequestPermit, ProductionTransportError> {
+        if class == ProductionConnectionClass::Replication {
+            return Err(ProductionTransportError::InvalidConfiguration);
+        }
+        if self.state.draining.load(Ordering::Acquire) {
+            return Err(ProductionTransportError::Draining);
+        }
+        if self.config.peer(member).is_none() {
+            return Err(ProductionTransportError::PeerNotAdmitted);
+        }
+        let max_frames = self.config.limits.max_queued_frames / 2;
+        let max_bytes = self.config.limits.max_queued_bytes / 2;
+        {
+            let mut usage = self
+                .state
+                .request_usage
+                .lock()
+                .map_err(|_| ProductionTransportError::StateUnavailable)?;
+            let entry = usage.entry(class).or_default();
+            if entry.0 >= max_frames || bytes == 0 || entry.1.saturating_add(bytes) > max_bytes {
+                return Err(ProductionTransportError::QueueFull);
+            }
+            entry.0 += 1;
+            entry.1 += bytes;
+        }
+        let reservation = RequestReservation { state: Arc::clone(&self.state), class, bytes };
+        let gate = {
+            let mut gates = self
+                .state
+                .request_gates
+                .lock()
+                .map_err(|_| ProductionTransportError::StateUnavailable)?;
+            Arc::clone(
+                gates
+                    .entry((member.clone(), class))
+                    .or_insert_with(|| Arc::new(RequestGate::new())),
+            )
+        };
+        let slot = tokio::time::timeout(deadline, gate.semaphore.clone().acquire_owned())
+            .await
+            .map_err(|_| ProductionTransportError::Timeout)?
+            .map_err(|_| ProductionTransportError::Draining)?;
+        if self.state.draining.load(Ordering::Acquire) {
+            return Err(ProductionTransportError::Draining);
+        }
+        Ok(ProductionRequestPermit { _slot: slot, _reservation: reservation })
     }
 
     /// Returns current transport facts without claiming replication health.
@@ -1080,7 +1170,7 @@ impl ProductionQuicEndpoint {
     /// Stops admission, waits for active operations up to the configured
     /// deadline, then closes every QUIC connection and the UDP endpoint.
     pub async fn drain(self) -> ProductionDrainReport {
-        self.state.draining.store(true, Ordering::Release);
+        self.state.stop_requests();
         let deadline = tokio::time::Instant::now() + self.config.limits.drain_timeout;
         let drained = tokio::time::timeout_at(deadline, async {
             loop {
@@ -1109,7 +1199,7 @@ impl ProductionQuicEndpoint {
 
 impl Drop for ProductionQuicEndpoint {
     fn drop(&mut self) {
-        self.state.draining.store(true, Ordering::Release);
+        self.state.stop_requests();
         self.endpoint.close(CLOSE_DRAINING.into(), b"endpoint released");
         self.state.changed.notify_waiters();
     }
@@ -1174,6 +1264,21 @@ impl ProductionConnection {
     #[must_use]
     pub const fn maximum_frame_bytes(&self) -> usize {
         self.maximum_frame_bytes
+    }
+
+    /// Completes a request session and waits for its peer-side close signal.
+    pub async fn complete_request(mut self) -> Result<(), ProductionTransportError> {
+        self.connection.closed().await;
+        let result = match self.connection.close_reason() {
+            Some(quinn::ConnectionError::ApplicationClosed(code))
+                if code.error_code == CLOSE_REQUEST_COMPLETE.into() =>
+            {
+                Ok(())
+            }
+            _ => Err(ProductionTransportError::ConnectionFailed),
+        };
+        self._registration.release();
+        result
     }
 
     /// Sends one length-prefixed frame after a full authenticated handshake.
@@ -1271,7 +1376,8 @@ impl ProductionConnection {
 
 impl Drop for ProductionConnection {
     fn drop(&mut self) {
-        self.connection.close(CLOSE_DRAINING.into(), b"session released");
+        self._registration.release();
+        self.connection.close(CLOSE_REQUEST_COMPLETE.into(), b"request complete");
     }
 }
 
@@ -1461,6 +1567,8 @@ struct RuntimeState {
     draining: AtomicBool,
     active_operations: AtomicUsize,
     next_session_id: AtomicUsize,
+    request_gates: Mutex<BTreeMap<(MemberId, ProductionConnectionClass), Arc<RequestGate>>>,
+    request_usage: Mutex<BTreeMap<ProductionConnectionClass, (usize, usize)>>,
     handshake_inbound_operations: AtomicUsize,
     handshake_outbound_operations: AtomicUsize,
     replication_operations: AtomicUsize,
@@ -1472,11 +1580,23 @@ struct RuntimeState {
 }
 
 impl RuntimeState {
+    fn stop_requests(&self) {
+        self.draining.store(true, Ordering::Release);
+        if let Ok(gates) = self.request_gates.lock() {
+            for gate in gates.values() {
+                gate.semaphore.close();
+            }
+        }
+        self.changed.notify_waiters();
+    }
+
     fn new() -> Self {
         Self {
             draining: AtomicBool::new(false),
             active_operations: AtomicUsize::new(0),
             next_session_id: AtomicUsize::new(1),
+            request_gates: Mutex::new(BTreeMap::new()),
+            request_usage: Mutex::new(BTreeMap::new()),
             handshake_inbound_operations: AtomicUsize::new(0),
             handshake_outbound_operations: AtomicUsize::new(0),
             replication_operations: AtomicUsize::new(0),
@@ -1556,7 +1676,12 @@ impl RuntimeState {
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| current.checked_add(1))
             .map_err(|_| ProductionTransportError::StateUnavailable)?;
         sessions.push(SessionSlot { class, direction, connection: None, id });
-        Ok(ConnectionRegistration { state: Arc::clone(self), peer: peer.clone(), id })
+        Ok(ConnectionRegistration {
+            state: Arc::clone(self),
+            peer: peer.clone(),
+            id,
+            released: false,
+        })
     }
 
     fn attach_session(
@@ -1692,10 +1817,14 @@ struct ConnectionRegistration {
     state: Arc<RuntimeState>,
     peer: MemberId,
     id: usize,
+    released: bool,
 }
 
-impl Drop for ConnectionRegistration {
-    fn drop(&mut self) {
+impl ConnectionRegistration {
+    fn release(&mut self) {
+        if self.released {
+            return;
+        }
         if let Ok(mut connections) = self.state.connections_by_peer.lock()
             && let Some(sessions) = connections.get_mut(&self.peer)
         {
@@ -1704,7 +1833,14 @@ impl Drop for ConnectionRegistration {
                 connections.remove(&self.peer);
             }
         }
+        self.released = true;
         self.state.changed.notify_waiters();
+    }
+}
+
+impl Drop for ConnectionRegistration {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -2004,11 +2140,11 @@ mod tests {
         }
     }
 
-    fn endpoint_pair() -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
+    pub(super) fn endpoint_pair() -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
         endpoint_pair_with_max_frame(4096)
     }
 
-    fn endpoint_pair_with_max_frame(
+    pub(super) fn endpoint_pair_with_max_frame(
         maximum_frame_bytes: usize,
     ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
         let first_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("first port");
@@ -2606,3 +2742,6 @@ mod tests {
         assert_eq!(report.remaining_operations, 0);
     }
 }
+
+#[cfg(test)]
+mod request_tests;
