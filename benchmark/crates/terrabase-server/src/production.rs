@@ -16,8 +16,8 @@ use std::time::Duration;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
 use terrabase::member::{
-    AdmissionLimits, DatabaseScope, DatabaseSpec, MAX_ADMISSION_PERMITS, Member, MemberError,
-    MemberOpenError,
+    AdmissionLimits, DatabaseScope, DatabaseSpec, Member, MemberError, MemberOpenError,
+    MAX_ADMISSION_PERMITS,
 };
 use terrabase_cluster::production::{
     DatabaseRouteScope, DatabaseRoutingCatalog, ProductionMemberError, ProductionPlacement,
@@ -655,19 +655,36 @@ fn close_with<T>(
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
 
-    use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
-    use terrabase::member::{AdmissionLimits, DatabaseScope, DatabaseSpec, Member};
+    use rcgen::{
+        BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, Ia5String, IsCa, KeyPair,
+        KeyUsagePurpose, SanType,
+    };
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    use std::net::{Ipv4Addr, UdpSocket};
+    use terrabase::identity::{ClusterUlid, DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
+    use terrabase::member::{
+        AcceptedDatabaseRole, AdmissionLimits, DatabaseRole, DatabaseRoleAuthority, DatabaseScope,
+        DatabaseSpec, Member,
+    };
     use terrabase::regions::RegionCode;
+    use terrabase_cluster::production::{
+        MemberWorkloadIdentity, ProductionDataPlane, ProductionDataPlaneDrain,
+        ProductionDataPlaneError, ProductionDataPlaneFacts, ProductionMemberRuntime,
+        ProductionPeerAdmission, ProductionQuicEndpoint, ProductionRegion, ProductionTlsMaterial,
+        ProductionTransportConfig, ProductionTransportLimits,
+    };
 
     use super::{
-        DatabaseRouteScope, DatabaseRoutingCatalog, ProductionCatalogBootstrap,
-        ProductionCatalogError, ProductionComponent, ProductionComponentError, ProductionPlacement,
-        ProductionRegionSeats, close_with, derive_root, normalize_location,
+        close_with, derive_root, normalize_location, DatabaseRouteScope, DatabaseRoutingCatalog,
+        ProductionCatalogBootstrap, ProductionCatalogError, ProductionComponent,
+        ProductionComponentError, ProductionPlacement, ProductionRegionSeats,
     };
 
     #[test]
@@ -729,6 +746,196 @@ mod tests {
         let member = Member::open_production(root, [spec], AdmissionLimits::new(2, 2), keys)
             .expect("reopen after cleanup");
         member.close(Duration::from_secs(1)).expect("close reopened member");
+    }
+
+    struct Writer;
+
+    impl DatabaseRoleAuthority for Writer {
+        fn accepted_role(&self, _: &terrabase::member::DatabaseId) -> Option<AcceptedDatabaseRole> {
+            Some(AcceptedDatabaseRole { epoch: 1, role: DatabaseRole::Writer })
+        }
+    }
+
+    struct AsyncDrainPlane {
+        member: Member,
+        pending: bool,
+        lease: Mutex<Option<terrabase::member::DatabaseLease>>,
+        completed: Arc<AtomicBool>,
+    }
+
+    impl ProductionDataPlane for AsyncDrainPlane {
+        fn facts(&self) -> ProductionDataPlaneFacts {
+            ProductionDataPlaneFacts::default()
+        }
+
+        fn begin_drain(&self) {}
+
+        fn drain(&self, _: Duration) -> ProductionDataPlaneDrain<'_> {
+            Box::pin(async move {
+                tokio::task::yield_now().await;
+                if self.pending {
+                    return std::future::pending().await;
+                }
+                drop(self.lease.lock().expect("drain lease lock").take());
+                self.completed.store(true, Ordering::Release);
+                Ok(())
+            })
+        }
+    }
+
+    fn transport_pair(
+        placement: &ProductionPlacement,
+    ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
+        let local = placement.local_member();
+        let peer = placement.remote_members()[0];
+        let cluster = ClusterUlid::generate();
+        let local_identity =
+            MemberWorkloadIdentity::try_new("production", &cluster.to_text(), &local.to_text())
+                .expect("local identity");
+        let peer_identity =
+            MemberWorkloadIdentity::try_new("production", &cluster.to_text(), &peer.to_text())
+                .expect("peer identity");
+        let local_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("local socket");
+        let peer_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("peer socket");
+        let local_addr = local_socket.local_addr().expect("local address");
+        let peer_addr = peer_socket.local_addr().expect("peer address");
+        drop((local_socket, peer_socket));
+        let issuer_key = KeyPair::generate().expect("issuer key");
+        let mut issuer_params = CertificateParams::new(Vec::new()).expect("issuer params");
+        issuer_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        issuer_params.key_usages =
+            vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyCertSign];
+        let issuer = issuer_params.self_signed(&issuer_key).expect("issuer");
+        let anchor = CertificateDer::from(issuer.der().to_vec());
+        let tls = |identity: &MemberWorkloadIdentity, name: &str| {
+            let key = KeyPair::generate().expect("member key");
+            let mut params = CertificateParams::new(vec![name.to_owned()]).expect("member params");
+            params
+                .subject_alt_names
+                .push(SanType::URI(Ia5String::try_from(identity.as_str()).expect("SAN")));
+            params.extended_key_usages =
+                vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
+            let certificate = params.signed_by(&key, &issuer, &issuer_key).expect("member cert");
+            ProductionTlsMaterial::try_new(
+                vec![CertificateDer::from(certificate.der().to_vec())],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
+                vec![anchor.clone()],
+            )
+            .expect("member TLS")
+        };
+        let limits = ProductionTransportLimits::try_new(
+            16 * 1024 * 1024,
+            8,
+            8,
+            128 * 1024 * 1024,
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_millis(20),
+        )
+        .expect("transport limits");
+        let local_config = ProductionTransportConfig::try_new(
+            local_addr,
+            local_identity.clone(),
+            ProductionRegion::Gru,
+            placement.generation(),
+            placement.epoch(),
+            vec![ProductionPeerAdmission::try_new(
+                peer_identity.clone(),
+                ProductionRegion::Gru,
+                peer_addr,
+                "peer.internal",
+            )
+            .expect("peer admission")],
+            limits.clone(),
+        )
+        .expect("local transport");
+        let peer_config = ProductionTransportConfig::try_new(
+            peer_addr,
+            peer_identity.clone(),
+            ProductionRegion::Gru,
+            placement.generation(),
+            placement.epoch(),
+            vec![ProductionPeerAdmission::try_new(
+                local_identity.clone(),
+                ProductionRegion::Gru,
+                local_addr,
+                "local.internal",
+            )
+            .expect("local admission")],
+            limits,
+        )
+        .expect("peer transport");
+        (
+            ProductionQuicEndpoint::bind(local_config, tls(&local_identity, "local.internal"))
+                .expect("local endpoint"),
+            ProductionQuicEndpoint::bind(peer_config, tls(&peer_identity, "peer.internal"))
+                .expect("peer endpoint"),
+        )
+    }
+
+    fn runtime_with_async_drain(
+        label: &str,
+        pending: bool,
+    ) -> (ProductionMemberRuntime, PathBuf, DatabaseSpec, Arc<AsyncDrainPlane>) {
+        let (bootstrap, root, spec) = opened_bootstrap(label);
+        let parts = bootstrap.into_parts();
+        let placement = parts.placement.clone();
+        let database = parts.member.database_ids().next().expect("database");
+        parts.member.accept_database_role(&database, &Writer).expect("writer role");
+        let lease = parts.member.acquire(&database).expect("database lease");
+        let routes = parts.routes.clone();
+        let transport = transport_pair(&placement).0;
+        let member = parts.member.clone();
+        let runtime = ProductionMemberRuntime::try_new(placement, routes, parts.member, transport)
+            .expect("production member runtime");
+        let completed = Arc::new(AtomicBool::new(false));
+        let plane = Arc::new(AsyncDrainPlane {
+            member,
+            pending,
+            lease: Mutex::new(Some(lease)),
+            completed,
+        });
+        runtime.attach_data_plane(plane.clone()).expect("data plane attachment");
+        (runtime, root, spec, plane)
+    }
+
+    #[tokio::test]
+    async fn production_member_drain_awaits_data_plane_before_closing_storage() {
+        let (runtime, root, spec, completed) =
+            runtime_with_async_drain("async-member-drain", false);
+        let report = runtime.drain().await;
+        assert!(completed.completed.load(Ordering::Acquire));
+        assert!(report.data_plane.is_ok());
+        assert!(report.storage.is_ok(), "storage close: {:?}", report.storage);
+        reopen(&root, spec);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn production_member_retirement_awaits_data_plane_before_returning_member() {
+        let (runtime, root, spec, completed) =
+            runtime_with_async_drain("async-member-retire", false);
+        let retirement = runtime.retire_epoch().await;
+        assert!(completed.completed.load(Ordering::Acquire));
+        assert!(retirement.data_plane.is_ok());
+        retirement.member.close(Duration::from_secs(1)).expect("retired member close");
+        reopen(&root, spec);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn production_member_drain_timeout_retains_lease_and_reports_failed_close() {
+        let (runtime, root, spec, plane) = runtime_with_async_drain("async-member-timeout", true);
+        let report = runtime.drain().await;
+        assert_eq!(report.data_plane, Err(ProductionDataPlaneError::Timeout));
+        assert!(!plane.completed.load(Ordering::Acquire));
+        assert!(plane.lease.lock().unwrap().is_some());
+        assert!(report.storage.is_err(), "unfinished drain released storage");
+        drop(plane.lease.lock().unwrap().take());
+        plane.member.close(Duration::from_secs(1)).expect("close after lease released");
+        reopen(&root, spec);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -831,3 +831,42 @@ then all 119 SQLite tests passed (`73356`). Engine all-target Clippy passed with
 warnings denied (`77086`). Logs: `/tmp/terrascale-sqlite-index-removal-final.log`
 and `/tmp/terrascale-sqlite-cleanup-clippy.log`. The server lint backlog and
 restore performance gate remain unresolved.
+
+
+Production composition prerequisites now expose retained admitted hosts and lane
+activation without invoking readiness recursively. Inspection retains the
+original Member leases; public lookups still require readiness. Independent
+review caught existing lock-held readiness callbacks in serving and metadata
+lookup; those callbacks now execute before registry locks, with a regression
+checking that readiness can inspect the same registry safely.
+
+Global replication fencing now permanently refuses new scopes, including when
+the ledger was empty at shutdown. Peer controls expose non-consuming health and
+begin-drain operations. Admission commit and reserved queue publication share a
+mutex barrier with begin-drain, closing the in-flight admission race. Already
+accepted callbacks may finish; consuming drain still joins them and reports
+failures. These controls do not assert durable frontier persistence before joins.
+
+Targeted progress (eight tests, `28720`), peer admission (seven tests), and
+registry (five tests, `77798`) selections passed. The broader server library
+selection passed 342 tests with three ignored and the known restore performance
+benchmark explicitly excluded (`32301`). Log:
+`/tmp/terrascale-server-composition-controls-tests.log`. Final independent source
+review found no remaining material regression in these changes. The daemon
+still refuses missing production data-plane composition; no readiness facts were
+replaced with constants. Adapter ownership and asynchronous shutdown integration
+remain required before it can be attached.
+
+
+The refreshed server all-target Clippy run still fails with 75 test-build
+diagnostics (`30242`), logged at
+`/tmp/terrascale-server-composition-controls-clippy.log`. The new control and
+observation APIs do not establish a complete workspace check.
+
+Before adapter attachment, ownership must be resolved explicitly: peer workers
+retain `Arc<ProductionMemberRuntime>`, whereas Member drain consumes `self` and
+the data-plane trait currently exposes synchronous drain. A boxed async drain
+alone does not make that owner consumable. Transferring `data` out of admission
+also requires changing reconciliation ownership so it cannot start a second
+receiver. The next composition step must preserve a single worker owner, await
+joins without blocking Tokio, and close storage only after leases are released.

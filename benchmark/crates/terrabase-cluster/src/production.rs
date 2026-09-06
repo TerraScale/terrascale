@@ -9,7 +9,9 @@
 
 use crate::wal_route::{DurableWalAssignmentSource, WalReplicaBinding, WalRouteError};
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
 use std::ops::Deref;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -437,7 +439,22 @@ pub trait ProductionDataPlane: Send + Sync {
     ///
     /// Returns a typed error when the deadline expires or a required durable
     /// frontier cannot be persisted.
-    fn drain(&self, timeout: Duration) -> Result<(), ProductionDataPlaneError>;
+    fn drain(&self, timeout: Duration) -> ProductionDataPlaneDrain<'_>;
+}
+
+/// Asynchronous worker drain retained by the Member until completion or deadline.
+/// Implementations must retain unfinished worker ownership if this future is
+/// cancelled, so a timed-out join cannot falsely release storage leases.
+pub type ProductionDataPlaneDrain<'a> =
+    Pin<Box<dyn Future<Output = Result<(), ProductionDataPlaneError>> + Send + 'a>>;
+
+async fn drain_data_plane(
+    plane: &dyn ProductionDataPlane,
+    timeout: Duration,
+) -> Result<(), ProductionDataPlaneError> {
+    tokio::time::timeout(timeout, plane.drain(timeout))
+        .await
+        .map_err(|_| ProductionDataPlaneError::Timeout)?
 }
 
 /// Failure while draining the durable data-plane adapter.
@@ -944,8 +961,10 @@ impl ProductionMemberRuntime {
         }
         let timeout = self.transport.config().limits().drain_timeout();
         let transport = self.transport.drain().await;
-        let data_plane = data_plane
-            .map_or(Err(ProductionDataPlaneError::Persistence), |plane| plane.drain(timeout));
+        let data_plane = match data_plane {
+            Some(plane) => drain_data_plane(&*plane, timeout).await,
+            None => Err(ProductionDataPlaneError::Persistence),
+        };
         let storage = self.member.close(timeout);
         ProductionMemberDrainReport { transport, data_plane, storage }
     }
@@ -967,7 +986,10 @@ impl ProductionMemberRuntime {
         }
         let timeout = self.transport.config().limits().drain_timeout();
         let transport = self.transport.drain().await;
-        let data_plane = data_plane.map_or(Ok(()), |plane| plane.drain(timeout));
+        let data_plane = match data_plane {
+            Some(plane) => drain_data_plane(&*plane, timeout).await,
+            None => Ok(()),
+        };
         ProductionEpochRetirement {
             member: self.member,
             routes: lock_unpoisoned(&self.routes).clone(),
@@ -1075,6 +1097,57 @@ mod tests {
         DatabaseRouteScope, DatabaseRoutingCatalog, ProductionMemberError, ProductionPlacement,
         ProductionRegionSeats, PublishedRoutes,
     };
+
+    struct AsyncDrainProbe {
+        result: Option<Result<(), super::ProductionDataPlaneError>>,
+        completed: std::sync::atomic::AtomicBool,
+    }
+
+    impl super::ProductionDataPlane for AsyncDrainProbe {
+        fn facts(&self) -> super::ProductionDataPlaneFacts {
+            super::ProductionDataPlaneFacts::default()
+        }
+
+        fn begin_drain(&self) {}
+
+        fn drain(&self, _: std::time::Duration) -> super::ProductionDataPlaneDrain<'_> {
+            Box::pin(async move {
+                let Some(result) = self.result else {
+                    return std::future::pending().await;
+                };
+                tokio::task::yield_now().await;
+                self.completed.store(true, std::sync::atomic::Ordering::Release);
+                result
+            })
+        }
+    }
+
+    #[test]
+    fn asynchronous_plane_drain_preserves_results_and_enforces_deadline() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        runtime.block_on(async {
+            for result in [Ok(()), Err(super::ProductionDataPlaneError::Persistence)] {
+                let plane = AsyncDrainProbe {
+                    result: Some(result),
+                    completed: std::sync::atomic::AtomicBool::new(false),
+                };
+                assert_eq!(
+                    super::drain_data_plane(&plane, std::time::Duration::from_secs(1)).await,
+                    result
+                );
+                assert!(plane.completed.load(std::sync::atomic::Ordering::Acquire));
+            }
+            let plane = AsyncDrainProbe {
+                result: None,
+                completed: std::sync::atomic::AtomicBool::new(false),
+            };
+            assert_eq!(
+                super::drain_data_plane(&plane, std::time::Duration::from_millis(1)).await,
+                Err(super::ProductionDataPlaneError::Timeout)
+            );
+            assert!(!plane.completed.load(std::sync::atomic::Ordering::Acquire));
+        });
+    }
 
     fn value(number: u128) -> Ulid {
         Ulid::from_parts(1, number)
