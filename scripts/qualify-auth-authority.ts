@@ -13,6 +13,8 @@ const runner = await startVitest("test", ["src/integration/auth-authority.test.t
   maxWorkers: 1,
   fileParallelism: false,
   bail: 1,
+  // Filtered diagnostic runs still fail qualification because cases are skipped.
+  testNamePattern: process.env.TERRASCALE_AUTH_TEST_NAME_PATTERN,
   reporters: ["verbose"],
   disableConsoleIntercept: true,
   testTimeout: 30_000,
