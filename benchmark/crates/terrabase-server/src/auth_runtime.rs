@@ -390,24 +390,32 @@ impl AuthRuntime {
         database: &str,
         headers: &HeaderMap,
         verb: Verbs,
-    ) -> Result<Arc<Domain>, Response> {
+    ) -> Result<Arc<Domain>, AuthHttpError> {
         let token = headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "))
-            .ok_or_else(|| error(StatusCode::UNAUTHORIZED, "unauthorized"))?;
-        let principal =
-            self.keys.admit(token).map_err(|_| error(StatusCode::UNAUTHORIZED, "unauthorized"))?;
+            .ok_or(AuthHttpError { status: StatusCode::UNAUTHORIZED, code: "unauthorized" })?;
+        let principal = self.keys.admit(token).map_err(|_| AuthHttpError {
+            status: StatusCode::UNAUTHORIZED,
+            code: "unauthorized",
+        })?;
         if !principal.scope().admits_database(verb, database) {
-            return Err(error(StatusCode::FORBIDDEN, "forbidden"));
+            return Err(AuthHttpError { status: StatusCode::FORBIDDEN, code: "forbidden" });
         }
         self.domains
             .read()
-            .map_err(|_| error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"))?
+            .map_err(|_| AuthHttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "auth_authority_unavailable",
+            })?
             .values()
             .find(|domain| domain.grant.database == database)
             .cloned()
-            .ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"))
+            .ok_or(AuthHttpError {
+                status: StatusCode::SERVICE_UNAVAILABLE,
+                code: "auth_authority_unavailable",
+            })
     }
 }
 
@@ -419,6 +427,17 @@ impl crate::replication_peers::PeerControlDispatcher for AuthRuntime {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>
     {
         Box::pin(async move { self.dispatch_owned(connection, bytes) })
+    }
+}
+
+struct AuthHttpError {
+    status: StatusCode,
+    code: &'static str,
+}
+
+impl IntoResponse for AuthHttpError {
+    fn into_response(self) -> Response {
+        error(self.status, self.code)
     }
 }
 
@@ -505,7 +524,7 @@ enum PredicateModeSchema {
     Insensitive,
 }
 impl PredicateInput {
-    fn into_predicate(self) -> Result<terrabase_auth::Predicate, Response> {
+    fn into_predicate(self) -> Result<terrabase_auth::Predicate, AuthHttpError> {
         serde_json::from_value(serde_json::json!({
             "field": self.field,
             "value": self.value,
@@ -513,7 +532,10 @@ impl PredicateInput {
             "connector": self.connector.unwrap_or_else(|| "AND".into()),
             "mode": self.mode.unwrap_or_else(|| "sensitive".into()),
         }))
-        .map_err(|_| error(StatusCode::BAD_REQUEST, "invalid_auth_operation"))
+        .map_err(|_| AuthHttpError {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_auth_operation",
+        })
     }
 }
 #[derive(Deserialize, ToSchema)]
@@ -574,7 +596,7 @@ async fn mutation(
 ) -> Response {
     let domain = match runtime.domain(database, headers, Verbs::WRITE) {
         Ok(domain) => domain,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let Some(key) = headers
         .get("idempotency-key")
@@ -648,7 +670,9 @@ fn placement_response(mut response: Response, grant: &AuthGroupBootstrapGrant) -
     response
 }
 
-fn predicates(inputs: Vec<PredicateInput>) -> Result<Vec<terrabase_auth::Predicate>, Response> {
+fn predicates(
+    inputs: Vec<PredicateInput>,
+) -> Result<Vec<terrabase_auth::Predicate>, AuthHttpError> {
     inputs.into_iter().map(PredicateInput::into_predicate).collect()
 }
 
@@ -660,7 +684,7 @@ async fn query(
 ) -> Response {
     let domain = match runtime.domain(database, headers, Verbs::READ) {
         Ok(domain) => domain,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let result = if let Some(transaction) = headers.get("x-terrascale-auth-transaction") {
         let Ok(transaction) = transaction.to_str() else {
@@ -795,7 +819,7 @@ async fn update_one(
 ) -> Response {
     let predicates = match predicates(input.predicates) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     mutation(
         &runtime,
@@ -814,7 +838,7 @@ async fn update_many(
 ) -> Response {
     let predicates = match predicates(input.predicates) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     mutation(
         &runtime,
@@ -833,7 +857,7 @@ async fn delete_one(
 ) -> Response {
     let predicates = match predicates(input.predicates) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     mutation(&runtime, &database, &headers, Action::DeleteOne { model: input.model, predicates })
         .await
@@ -847,7 +871,7 @@ async fn delete_many(
 ) -> Response {
     let predicates = match predicates(input.predicates) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     mutation(&runtime, &database, &headers, Action::DeleteMany { model: input.model, predicates })
         .await
@@ -861,7 +885,7 @@ async fn increment_one(
 ) -> Response {
     let predicates = match predicates(input.predicates) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     mutation(
         &runtime,
@@ -885,7 +909,7 @@ async fn consume_matching(
 ) -> Response {
     let predicates = match predicates(input.predicates) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     mutation(
         &runtime,
@@ -904,7 +928,7 @@ async fn count(
 ) -> Response {
     let predicates = match predicates(input.predicates) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     query(&runtime, &database, &headers, Action::Count { model: input.model, predicates }).await
 }
@@ -916,7 +940,7 @@ async fn find_one(
 ) -> Response {
     let domain = match runtime.domain(&database, &headers, Verbs::READ) {
         Ok(domain) => domain,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     if let Some(transaction) = headers.get("x-terrascale-auth-transaction") {
         let Ok(transaction) = transaction.to_str() else {
@@ -1094,7 +1118,7 @@ async fn find_page(
 ) -> Response {
     let predicates = match predicates(input.predicates) {
         Ok(predicates) => predicates,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     query(
         &runtime,

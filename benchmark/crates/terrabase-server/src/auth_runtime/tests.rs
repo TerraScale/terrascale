@@ -415,7 +415,7 @@ mod admitted_fixture {
                         continue;
                     }
                     Err(error) => {
-                        drop(error);
+                        let _ = error;
                         break;
                     }
                 };
