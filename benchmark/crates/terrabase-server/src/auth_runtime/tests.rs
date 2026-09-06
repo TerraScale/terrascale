@@ -4,6 +4,8 @@ use axum::body::Body;
 use axum::http::header::CACHE_CONTROL;
 use axum::http::{HeaderValue, Request};
 use http_body_util::BodyExt;
+use std::process::{Command as ProcessCommand, Stdio};
+use std::time::Instant;
 use terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapGrant;
 
 // The transport crate intentionally keeps its certificate fixture private to
@@ -880,4 +882,98 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     drop(fixture.remote_endpoint);
     let _ = std::fs::remove_dir_all(fixture.root);
     drop(fixture.keys);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires the separately built Node SDK consumer fixture"]
+async fn admitted_http_router_serves_external_node_consumer() {
+    let executable = std::env::var("TERRASCALE_AUTH_CONSUMER_EXECUTABLE")
+        .expect("TERRASCALE_AUTH_CONSUMER_EXECUTABLE is required");
+    let script = std::env::var("TERRASCALE_AUTH_CONSUMER_SCRIPT")
+        .expect("TERRASCALE_AUTH_CONSUMER_SCRIPT is required");
+    assert!(std::path::Path::new(&executable).is_absolute());
+    assert!(std::path::Path::new(&script).is_absolute());
+
+    let fixture = admitted_fixture::create().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    let runtime = Arc::clone(&fixture.runtime);
+    let mut server = tokio::spawn(async move {
+        axum::serve(listener, router(runtime))
+            .with_graceful_shutdown(async {
+                let _ = stop_rx.await;
+            })
+            .await
+            .unwrap();
+    });
+
+    let base_url = format!("http://{address}");
+    let database = fixture.database.clone();
+    let access_token = fixture.key.to_owned();
+    let child = tokio::task::spawn_blocking(move || {
+        use rustix::process::{Pid, Signal, kill_process_group};
+        use std::os::unix::process::CommandExt;
+
+        let mut process = ProcessCommand::new(executable);
+        process.process_group(0);
+        process
+            .arg(script)
+            .env("TERRASCALE_AUTH_TEST_BASE_URL", base_url)
+            .env("TERRASCALE_AUTH_TEST_DATABASE", database)
+            .env("TERRASCALE_AUTH_TEST_ACCESS_TOKEN", access_token)
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        let mut child = process.spawn().map_err(|error| error.to_string())?;
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            match child.try_wait() {
+                Err(error) => {
+                    let _ =
+                        kill_process_group(Pid::from_raw(child.id() as i32).unwrap(), Signal::KILL);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(format!("failed waiting for external auth consumer: {error}"));
+                }
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ =
+                        kill_process_group(Pid::from_raw(child.id() as i32).unwrap(), Signal::KILL);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err("external auth consumer exceeded 180 seconds".into());
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            }
+        }
+    });
+    let consumer_result = child.await;
+
+    let _ = stop_tx.send(());
+    let server_result = match tokio::time::timeout(Duration::from_secs(10), &mut server).await {
+        Ok(result) => result.map_err(|error| error.to_string()),
+        Err(_) => {
+            server.abort();
+            let _ = server.await;
+            Err("HTTP router graceful shutdown exceeded 10 seconds".into())
+        }
+    };
+    fixture.runtime.shutdown().await;
+    fixture.local_receive.abort();
+    fixture.remote_receive.abort();
+    let _ = fixture.local_receive.await;
+    let _ = fixture.remote_receive.await;
+    fixture.remote.shutdown().await.unwrap();
+    drop(fixture.local_endpoint);
+    drop(fixture.remote_endpoint);
+    let _ = std::fs::remove_dir_all(fixture.root);
+    drop(fixture.keys);
+
+    assert!(server_result.is_ok(), "HTTP router task failed: {server_result:?}");
+    let consumer_status = consumer_result
+        .expect("external auth consumer task failed")
+        .expect("external auth consumer process failed");
+    assert!(consumer_status.success(), "external auth consumer exited with {consumer_status}");
 }

@@ -242,3 +242,30 @@ Artifact: `/tmp/terrascale-auth-dashboard-qualification-20260907/terrascale-sdk-
 SHA-256: `6133a1df3db7941f6cda8ff28a3d2238911acfb6065b42e4c1a598de954ac924`.
 The receipt remains beside the tarball. This is diagnostic qualification;
 Node 22 and immutable release publication remain outstanding.
+
+Dashboard verification finished with `make check` in session `72162`: contract
+checks, install, formatting/lint, all 203 test files (1,257 passed; one skipped),
+Vinext production build, bundle budget, and Wrangler deploy dry-run passed.
+Explicit TypeScript checking also passed after correcting the deferred fixture's
+callback types. The MFA browser fixture now sets its local auth origin before
+module import, so a production URL in the invoking shell cannot change its
+cookie expectations. The secondary-storage concurrency regression verifies
+retry after the official SDK's `unique_conflict` error class.
+
+The local SDK installs as a package through npm `install-links=true`, ensuring
+Dashboard's Better Auth plugins and the SDK share the app's core peer instance.
+This replaces the prior symlink's separate, incompatible plugin type registries.
+Source-backed corrections to preexisting dashboard checks preserved other
+agents' changes: current Worker entrypoint, device authorization metadata,
+public-principal fixtures and flat request-limit errors, adopted OAuth provider,
+and MCP tool ordering. Billing consent constants moved intact to a shared module
+so client code does not import a backend module. No prices or ULID APIs changed.
+Browserslist/fflate patch updates and required browser metadata updates reduced
+the reported dependency audit from two vulnerabilities to zero.
+
+Wrangler dry-run emitted a 1,592.18 KiB gzipped upload with the existing PROXY and
+ASSETS bindings; it did not deploy or exercise production credentials. The
+standalone package budget reported 13.6 KiB CSS and a 260.2 KiB Worker entry.
+Vitest still emits missing dependency source-map and post-test close-timeout
+warnings, with successful process exit on the passing run. Live provider,
+region concurrency, complete plugin/SDK parity and launch gates remain open.
