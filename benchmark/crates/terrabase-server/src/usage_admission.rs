@@ -277,7 +277,7 @@ impl UsageAdmissionJournal {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| "usage admission transaction unavailable")?;
-        let latest:Option<(String,Vec<u8>)>=tx.query_row("SELECT epoch,payload FROM registrations WHERE database_id=?1 ORDER BY epoch DESC LIMIT 1",[&r.database_id],|row| Ok((row.get(0)?,row.get(1)?))).optional().map_err(|_| "usage admission read failed")?;
+        let latest:Option<(String,Vec<u8>)>=tx.query_row("SELECT epoch,substr(payload,1,16385) FROM registrations WHERE database_id=?1 ORDER BY epoch DESC LIMIT 1",[&r.database_id],|row| Ok((row.get(0)?,row.get(1)?))).optional().map_err(|_| "usage admission read failed")?;
         if let Some((prior_epoch, payload)) = latest {
             let prior = self.decode(&r.database_id, &prior_epoch, &payload)?;
             if prior.tenant_id != r.tenant_id
@@ -326,7 +326,7 @@ impl UsageAdmissionJournal {
         let epoch_key = format!("{epoch:020}");
         let bytes: Option<Vec<u8>> = connection
             .query_row(
-                "SELECT payload FROM registrations WHERE database_id=?1 AND epoch=?2",
+                "SELECT substr(payload,1,16385) FROM registrations WHERE database_id=?1 AND epoch=?2",
                 params![r.database_id, epoch_key],
                 |row| row.get(0),
             )

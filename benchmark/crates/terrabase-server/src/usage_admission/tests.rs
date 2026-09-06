@@ -297,17 +297,47 @@ fn resolve_distinguishes_missing_and_delivered_registration() {
 #[test]
 fn host_owner_regions_and_digest_mismatches_are_rejected() {
     let fixture = Fixture::new();
-    for mutate in 0..4 {
+    for mutate in 0..7 {
         let journal = fixture.open();
         let mut record = fixture.registration();
         match mutate {
             0 => record.environment = "other".into(),
             1 => record.member_id = "other".into(),
             2 => record.selected_regions = vec!["SFO".into()],
-            _ => record.placement_proof_digest = "0".repeat(64),
+            3 => record.placement_proof_digest = "0".repeat(64),
+            4 => record.selected_regions = vec!["GRU".into(), "SFO".into()],
+            5 => record.tenant_id = TenantUlid::generate().to_text(),
+            _ => record.stream_epoch = 2,
         }
         assert!(journal.admit(record).is_err(), "mismatch {mutate} accepted");
     }
+}
+
+#[test]
+fn epoch_storage_preserves_unsigned_order_and_refuses_scope_reuse() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let first = fixture.registration();
+    journal.admit(first.clone()).unwrap();
+    // Storage-only boundary test. Public admission above still requires signed placement.
+    let mut next = first.clone();
+    next.stream_epoch = u64::MAX;
+    next.operation_id = "next-epoch".into();
+    let mut changed = next.clone();
+    changed.tenant_id = TenantUlid::generate().to_text();
+    assert!(journal.persist(changed).is_err());
+    journal.persist(next.clone()).unwrap();
+    assert!(journal.persist(first).is_err());
+    assert!(journal.persist(next).is_ok());
+    assert_eq!(
+        journal
+            .connection
+            .lock()
+            .unwrap()
+            .query_row("SELECT count(*) FROM registrations", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
 }
 
 #[test]
@@ -377,9 +407,32 @@ fn unsafe_usage_paths_are_refused() {
         )
         .is_err()
     );
+    fs::set_permissions(&world, fs::Permissions::from_mode(0o700)).unwrap();
+    drop(
+        UsageAdmissionJournal::open(
+            &world,
+            fixture.environment.clone(),
+            fixture.member.clone(),
+            fixture.region.clone(),
+            fixture.placement.clone(),
+        )
+        .unwrap(),
+    );
     let file = world.join("usage-admissions.sqlite");
-    fs::write(&file, b"not sqlite").unwrap();
     fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(
+        UsageAdmissionJournal::open(
+            &world,
+            fixture.environment.clone(),
+            fixture.member.clone(),
+            fixture.region.clone(),
+            fixture.placement.clone()
+        )
+        .is_err()
+    );
+    fs::remove_file(&file).unwrap();
+    drop(fixture.open());
+    std::os::unix::fs::symlink(fixture.usage_root.join("usage-admissions.sqlite"), &file).unwrap();
     assert!(
         UsageAdmissionJournal::open(
             &world,

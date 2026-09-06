@@ -531,3 +531,42 @@ backlog remains. Log: `/tmp/terrascale-shared-dispatch-clippy.log`. Focused test
 are not a substitute for the remaining repository `make check` gate.
 The final auth runtime rerun after that lint fix passed all nine ordinary tests
 (`7403`, external consumer ignored). All root execution handles are terminal.
+
+The next startup review identified an absent production billing-stream authority.
+The injected placeholder callback is now replaced by a durable private
+`UsageAdmissionJournal`, mounted on the existing UID-authenticated admission
+socket and read by the actual admission constructor. Missing registration leaves
+encrypted storage closed while control delivery remains available. Signed
+placement acceptance, exact database Regions, local seat, owner, epoch, and proof
+digest must match before registration or activation. Private SQLite WAL/FULL
+transactions retain immutable epoch rows and refuse conflicting retries,
+cross-owner reuse, unsafe paths, and corrupt payloads. The protocol and remaining
+producer work are in `docs/development/usage-admission.md`.
+
+Replication lane admission now reserves every worker queue before committing
+admission records. Review exposed a second race: a receiver could disappear
+after reservation. `PeerInbox` now closes receivers under the same lifecycle
+lock held across commit/enqueue. Worker loss fences receipt waits, invalidates
+its observations, stops the peer owner, and causes reconciliation to refuse
+further work. Four deterministic queue/lifecycle tests passed (`55140`), and
+independent review found no remaining material issue after the surviving-queue
+assertion was added.
+
+The final admission-focused server run passed all 27 selected tests (`67032`),
+including seven usage journal tests, four queue tests, and existing durable
+admission/deletion replay tests. The usage fixture constructs a real signed
+accepted placement; its full unsigned epoch test separately exercises private
+storage semantics without claiming signed successor-epoch qualification.
+Initial fixture compilation and signature-shape errors were corrected before
+the passing run. Independent review found no material issue in the journal,
+UID router attachment, or admission gates. All root execution handles are
+terminal; `git diff --check` passed.
+
+Still unfinished: Go lifecycle-authorized registration delivery, signed successor
+epoch integration, pending-registration recovery through the full daemon,
+the shared public API/readiness/backup/host composition, and all launch gates.
+`run_production` still explicitly refuses the uncomposed data plane. The prior
+server strict-Clippy backlog remains unpassed. Follow-up review must also resolve
+partial database route/progress publication before lane activation and deleted
+database metadata that is currently synthesized as live; retained maintenance
+leases and deletion tombstones must be preserved.
