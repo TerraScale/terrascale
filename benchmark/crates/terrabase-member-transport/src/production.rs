@@ -1229,7 +1229,7 @@ impl ProductionQuicEndpoint {
 
     /// Stops admission, waits for active operations up to the configured
     /// deadline, then closes every QUIC connection and the UDP endpoint.
-    pub async fn drain(self) -> ProductionDrainReport {
+    pub async fn drain(&self) -> ProductionDrainReport {
         self.state.stop_requests();
         let deadline = tokio::time::Instant::now() + self.config.limits.drain_timeout;
         let drained = tokio::time::timeout_at(deadline, async {

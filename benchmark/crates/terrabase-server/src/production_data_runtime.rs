@@ -52,7 +52,8 @@ impl ProductionDataRuntime {
         dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
     ) -> Result<Self, String> {
         let peers = build_peer_databases(&runtime, &progress, source, databases).await?;
-        let peers = ReplicationPeers::start_with_dispatch(runtime, progress.clone(), peers, dispatcher)?;
+        let peers =
+            ReplicationPeers::start_with_dispatch(runtime, progress.clone(), peers, dispatcher)?;
         Ok(Self { peers, progress })
     }
 
@@ -621,8 +622,7 @@ impl ProductionAdmissionRuntime {
         }
         let data = self.data.as_ref().ok_or("shared member receiver is unavailable")?;
         let lanes =
-            build_peer_databases(&self.runtime, &self.progress, &*self.journal, databases)
-                .await?;
+            build_peer_databases(&self.runtime, &self.progress, &*self.journal, databases).await?;
         data.peers.add_databases(lanes).await?;
         self.active.extend(newly_active);
         Ok(())

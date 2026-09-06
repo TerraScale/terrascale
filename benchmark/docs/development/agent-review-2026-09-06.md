@@ -500,3 +500,26 @@ QUIC owner must dispatch auth and replication while retaining their separate
 capacity, then connect the admission runtime, shared API registry/progress,
 data-plane attachment, and ordered shutdown. The two-voter auth fixture and
 its passing adapter cases do not prove that full daemon composition.
+
+The next composition step now shares the member endpoint through `Arc` and
+passes an owned-frame auth dispatcher to the admission runtime's single peer
+accept owner. Accepted reconciliation starts that owner even before database
+lanes exist. Auth retains separate eight-client and 32-consensus task limits.
+Review caught and fixed an inbound completion-close deadlock, task registration
+during shutdown, overlapping task drains, and stopping consensus before HTTP
+requests finished. Reconciliation and shutdown now share a lifecycle lock.
+An independent final review found no remaining material issue in these changes.
+
+Focused verification passed nine auth runtime tests (`84594`, external Node
+consumer ignored), seven cluster production tests (`90219`), and 24 ordinary
+transport tests (`86397`, ACK diagnostic ignored). A separate new regression
+proves retained endpoint references cannot dial or accept after member transport
+drain (`60988`, one passed). Initial new-test failures were corrected: wait for
+the initial auth quorum before a client RPC, send an actual Vote RPC to exercise
+consensus capacity, and expect the documented `Ok(None)` after endpoint closure.
+
+The actual `run_production` entrypoint still refuses startup with its explicit
+uncomposed-data-plane error. Shared API construction, attached observed readiness,
+admission and control lifecycle composition, and full daemon qualification remain
+unfinished. Existing partial database activation before lane admission also
+needs review for retry safety. No ULID or other agents' changes were reverted.

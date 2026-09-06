@@ -244,6 +244,27 @@ async fn drain_wakes_queued_requests() {
 }
 
 #[tokio::test]
+async fn drained_endpoint_rejects_retained_shared_owners() {
+    let (first, _second, peer) = pair();
+    let retained = Arc::clone(&first);
+    let report = first.drain().await;
+    assert!(report.operations_drained);
+    assert_eq!(report.remaining_operations, 0);
+    assert!(matches!(
+        retained
+            .connect_request(
+                &peer,
+                ProductionConnectionClass::AuthClient,
+                100,
+                Duration::from_secs(1),
+            )
+            .await,
+        Err(ProductionTransportError::Draining)
+    ));
+    assert!(matches!(retained.accept().await, Ok(None)));
+}
+
+#[tokio::test]
 async fn cancelled_active_request_allows_successor_without_replaying_payload() {
     let (first, second, peer) = pair();
     let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();

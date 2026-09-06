@@ -202,6 +202,21 @@ backoff inside the original deadline. No request is resent after frame transmiss
 begins. This admission is required because read barriers can overlap normal Raft
 replication even within one authority group.
 
+The member runtime shares one endpoint with auth outbound requests. Its accepted
+admission runtime starts the replication accept owner even with no database lanes,
+then adds admitted lanes to those existing workers. The owned-frame dispatcher
+checks the auth method against the connection class and retains each connection
+in a tracked task until its response has been sent. Inbound handlers then drop
+the connection; only the outbound caller waits for the completion close.
+
+Auth dispatch reserves eight client tasks and 32 consensus tasks independently.
+Shutdown closes dispatch admission under the task-registration boundary, drains
+tracked work, and then shuts down authorities. Grant reconciliation and shutdown
+are serialized. Standalone auth serving keeps its receiver alive while HTTP
+requests drain. The accepted composition must drain its shared receiver before
+auth shutdown and leave final endpoint/storage drain to the member runtime.
+Retained endpoint references cannot reopen admission after transport drain.
+
 ## Implementation and qualification dependencies
 
 Integrate the consensus storage and transport in the real member startup path,

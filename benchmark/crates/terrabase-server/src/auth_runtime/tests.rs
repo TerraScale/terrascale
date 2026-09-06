@@ -937,6 +937,183 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn admitted_quic_client_response_completes_after_runtime_dispatch() {
+    use terrabase_member_transport::production::ProductionConnectionClass;
+
+    let fixture = admitted_fixture::create().await;
+    let domain = fixture.runtime.domains.read().unwrap().values().next().unwrap().clone();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while domain
+            .authority
+            .query(Action::Count { model: "user".into(), predicates: Vec::new() })
+            .await
+            .is_err()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("initial quorum must be available before testing response completion");
+    let group = fixture.runtime.domains.read().unwrap().keys().next().unwrap().clone();
+    let command = Command {
+        idempotency_key: "quic-client-complete".into(),
+        observed_at_ms: 1,
+        action: Action::InsertUnique {
+            model: "user".into(),
+            record: BTreeMap::from([
+                ("id".into(), serde_json::Value::String("quic-client".into())),
+                ("email".into(), serde_json::Value::String("quic-client@example.test".into())),
+            ]),
+        },
+    };
+    let frame = serde_json::to_vec(&serde_json::json!({
+        "protocol": "terrabase.auth.raft.v1",
+        "group": group,
+        "sender": 2,
+        "body": { "method": "clientWrite", "request": command },
+    }))
+    .unwrap();
+    let member = fixture.local_endpoint.config().local_identity().member().clone();
+    let (_permit, connection) = fixture
+        .remote_endpoint
+        .connect_request(
+            &member,
+            ProductionConnectionClass::AuthClient,
+            frame.len(),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    connection.send_frame(&frame).await.unwrap();
+    let response = connection.receive_frame().await.unwrap();
+    let response: serde_json::Value = serde_json::from_slice(&response).unwrap();
+    assert_eq!(response["error"], serde_json::Value::Null);
+    assert_eq!(response["outcome"]["status"], "record");
+    tokio::time::timeout(Duration::from_secs(2), connection.complete_request())
+        .await
+        .expect("the runtime must complete the one-request client connection")
+        .unwrap();
+
+    fixture.runtime.shutdown().await;
+    fixture.local_receive.abort();
+    fixture.remote_receive.abort();
+    fixture.remote.shutdown().await.unwrap();
+    drop(fixture.local_endpoint);
+    drop(fixture.remote_endpoint);
+    let _ = std::fs::remove_dir_all(fixture.root);
+    drop(fixture.keys);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn client_capacity_does_not_consume_consensus_capacity() {
+    let fixture = admitted_fixture::create().await;
+    let client = fixture.runtime.client_slots.clone().try_acquire_many_owned(8).unwrap();
+    let group = fixture.runtime.domains.read().unwrap().keys().next().unwrap().clone();
+    let frame = serde_json::to_vec(&serde_json::json!({
+        "protocol": "terrabase.auth.raft.v1", "group": group, "sender": 2,
+        "body": { "method": "vote", "request": {
+            "vote": { "leader_id": { "term": 0, "node_id": 2 }, "committed": false },
+            "last_log_id": null
+        }}
+    }))
+    .unwrap();
+    let member = fixture.local_endpoint.config().local_identity().member().clone();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let (_permit, connection) = fixture
+            .remote_endpoint
+            .connect_request(
+                &member,
+                ProductionConnectionClass::AuthConsensus,
+                frame.len(),
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        connection.send_frame(&frame).await.unwrap();
+        let response = connection.receive_frame().await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&response).unwrap();
+        assert!(response["Ok"]["vote_granted"].is_boolean(), "{response}");
+        connection.complete_request().await.unwrap();
+    })
+    .await
+    .expect("consensus dispatch must progress while client capacity is full");
+    drop(client);
+    fixture.runtime.shutdown().await;
+    fixture.local_receive.abort();
+    fixture.remote_receive.abort();
+    fixture.remote.shutdown().await.unwrap();
+    drop(fixture.local_endpoint);
+    drop(fixture.remote_endpoint);
+    let _ = std::fs::remove_dir_all(fixture.root);
+    drop(fixture.keys);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shutdown_rejects_new_dispatch_and_waits_tracked_work() {
+    use crate::replication_peers::PeerControlDispatcher;
+    use terrabase_member_transport::production::ProductionConnectionClass;
+
+    let fixture = admitted_fixture::create().await;
+    let (release, wait) = tokio::sync::oneshot::channel();
+    fixture.runtime.client_work.lock().unwrap().spawn(async move {
+        let _ = wait.await;
+    });
+    let runtime = Arc::clone(&fixture.runtime);
+    let runtime_again = Arc::clone(&fixture.runtime);
+    let shutdown = tokio::spawn(async move { runtime.shutdown().await });
+    let shutdown_again = tokio::spawn(async move { runtime_again.shutdown().await });
+    for _ in 0..100 {
+        if !fixture.runtime.dispatching.load(Ordering::Acquire) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert!(!fixture.runtime.dispatching.load(Ordering::Acquire));
+    assert!(!shutdown.is_finished(), "shutdown must wait for tracked dispatch work");
+    assert!(!shutdown_again.is_finished(), "concurrent shutdown must wait for the lifecycle lock");
+
+    let group = fixture.runtime.domains.read().unwrap().keys().next().unwrap().clone();
+    let frame = serde_json::to_vec(&serde_json::json!({
+        "protocol": "terrabase.auth.raft.v1",
+        "group": group,
+        "sender": 2,
+        "body": { "method": "clientQuery", "request": Action::Find {
+            model: "user".into(), predicates: Vec::<Predicate>::new(), offset: 0, limit: 1,
+            select: None, sort: None, joins: Vec::new()
+        }},
+    }))
+    .unwrap();
+    let member = fixture.local_endpoint.config().local_identity().member().clone();
+    let (_permit, connection) = fixture
+        .remote_endpoint
+        .connect_request(
+            &member,
+            ProductionConnectionClass::AuthClient,
+            frame.len(),
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+    let dispatched = fixture.runtime.dispatch(connection, frame).await;
+    assert!(dispatched.is_err(), "shutdown must reject new dispatches");
+    release.send(()).unwrap();
+    shutdown.await.unwrap();
+    shutdown_again.await.unwrap();
+    assert!(fixture.runtime.reconcile().await.is_err());
+
+    fixture.local_receive.abort();
+    fixture.remote_receive.abort();
+    fixture.remote.shutdown().await.unwrap();
+    drop(fixture.local_endpoint);
+    drop(fixture.remote_endpoint);
+    let _ = std::fs::remove_dir_all(fixture.root);
+    drop(fixture.keys);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the separately built Node SDK consumer fixture"]
 async fn admitted_http_router_serves_external_node_consumer() {
     let executable = std::env::var("TERRASCALE_AUTH_CONSUMER_EXECUTABLE")

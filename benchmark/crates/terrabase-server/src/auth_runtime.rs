@@ -2,6 +2,7 @@
 //! Customer records never pass through the control journal or a Worker.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
@@ -40,6 +41,8 @@ pub struct AuthRuntime {
     consensus_slots: Arc<tokio::sync::Semaphore>,
     client_work: Mutex<tokio::task::JoinSet<()>>,
     consensus_work: Mutex<tokio::task::JoinSet<()>>,
+    dispatching: AtomicBool,
+    lifecycle_lock: tokio::sync::Mutex<()>,
 }
 
 impl AuthRuntime {
@@ -81,6 +84,8 @@ impl AuthRuntime {
             consensus_slots: Arc::new(tokio::sync::Semaphore::new(32)),
             client_work: Mutex::new(tokio::task::JoinSet::new()),
             consensus_work: Mutex::new(tokio::task::JoinSet::new()),
+            dispatching: AtomicBool::new(true),
+            lifecycle_lock: tokio::sync::Mutex::new(()),
         }))
     }
 
@@ -108,13 +113,17 @@ impl AuthRuntime {
                 .await
         });
         let mut receive = tokio::spawn(Arc::clone(&self).receive());
+        let mut receive_finished = false;
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         tokio::pin!(shutdown);
         let outcome = loop {
             tokio::select! {
                 ()=&mut shutdown=>break Ok(()),
                 _=&mut http=>break Err("auth public listener stopped".into()),
-                _=&mut receive=>break Err("auth consensus listener stopped".into()),
+                _=&mut receive=> {
+                    receive_finished = true;
+                    break Err("auth consensus listener stopped".into());
+                },
                 _=interval.tick()=> {
                     // Grant arrival after control startup activates its exact persisted group.
                     // Refused activation stays unavailable and is retried without reissuing genesis.
@@ -123,11 +132,15 @@ impl AuthRuntime {
             }
         };
         let _ = stop.send(());
-        receive.abort();
-        self.shutdown().await;
         if !http.is_finished() {
             let _ = http.await;
         }
+        // In-flight HTTP operations may still need inbound consensus to finish.
+        if !receive_finished {
+            receive.abort();
+            let _ = receive.await;
+        }
+        self.shutdown().await;
         outcome
     }
 
@@ -136,6 +149,10 @@ impl AuthRuntime {
     /// # Errors
     /// Refuses lost auth files, mismatched grants, missing keys, or consensus startup failure.
     pub async fn reconcile(&self) -> Result<(), String> {
+        let _lifecycle = self.lifecycle_lock.lock().await;
+        if !self.dispatching.load(Ordering::Acquire) {
+            return Err("auth runtime is shutting down".into());
+        }
         let journal = Arc::clone(&self.journal);
         let grants = tokio::task::spawn_blocking(move || journal.grants())
             .await
@@ -250,7 +267,8 @@ impl AuthRuntime {
         Ok(())
     }
 
-    /// Serve authenticated consensus connections on the dedicated member lane.
+    /// Serve authenticated connections when this runtime owns the member accept loop.
+    /// After stopping the receiver, the owner must call `shutdown` to drain dispatched work.
     ///
     /// # Errors
     /// Returns a transport failure; no alternate local consensus is created.
@@ -285,35 +303,28 @@ impl AuthRuntime {
                 let Ok(bytes) = connection.receive_frame().await else {
                     return;
                 };
-                let _ = runtime.dispatch_owned(connection, bytes).await;
+                let _ = runtime.dispatch_owned(connection, bytes);
             });
             while work.try_join_next().is_some() {}
         }
         while work.join_next().await.is_some() {}
-        self.drain_dispatchers().await;
         Ok(())
     }
 
     async fn drain_dispatchers(&self) {
-        let mut client_work = self
-            .client_work
-            .lock()
-            .map(|mut work| std::mem::take(&mut *work))
-            .ok();
+        let mut client_work =
+            self.client_work.lock().map(|mut work| std::mem::take(&mut *work)).ok();
         if let Some(ref mut work) = client_work {
             while work.join_next().await.is_some() {}
         }
-        let mut consensus_work = self
-            .consensus_work
-            .lock()
-            .map(|mut work| std::mem::take(&mut *work))
-            .ok();
+        let mut consensus_work =
+            self.consensus_work.lock().map(|mut work| std::mem::take(&mut *work)).ok();
         if let Some(ref mut work) = consensus_work {
             while work.join_next().await.is_some() {}
         }
     }
 
-    async fn dispatch_owned(
+    fn dispatch_owned(
         &self,
         connection: ProductionConnection,
         bytes: Vec<u8>,
@@ -321,14 +332,14 @@ impl AuthRuntime {
         let Ok((group, forwarded_client)) = AuthNetwork::frame_route(&bytes) else {
             return Ok(false);
         };
-        let Some(domain) = self
-            .domains
-            .read()
-            .ok()
-            .and_then(|domains| domains.get(&group).cloned())
+        let Some(domain) =
+            self.domains.read().ok().and_then(|domains| domains.get(&group).cloned())
         else {
             return Ok(false);
         };
+        if !self.dispatching.load(Ordering::Acquire) {
+            return Err("auth dispatch is shutting down".into());
+        }
         let expected = if forwarded_client {
             ProductionConnectionClass::AuthClient
         } else {
@@ -347,17 +358,21 @@ impl AuthRuntime {
             .try_acquire_owned()
             .map_err(|_| "auth dispatch capacity exhausted".to_owned())?;
         let mut work = work.lock().map_err(|_| "auth dispatch registry unavailable")?;
+        if !self.dispatching.load(Ordering::Acquire) {
+            return Err("auth dispatch is shutting down".into());
+        }
         while work.try_join_next().is_some() {}
         work.spawn(async move {
             let _permit = permit;
             let _ = domain.network.receive_frame(&connection, &domain.authority, &bytes).await;
-            let _ = connection.complete_request().await;
         });
         Ok(true)
     }
 
     /// Stop all auth consensus groups before the host closes transport/key resources.
     pub async fn shutdown(&self) {
+        let _lifecycle = self.lifecycle_lock.lock().await;
+        self.dispatching.store(false, Ordering::Release);
         self.drain_dispatchers().await;
         let domains = self
             .domains
@@ -368,16 +383,6 @@ impl AuthRuntime {
             let _ = domain.authority.shutdown().await;
         }
     }
-
-impl crate::replication_peers::PeerControlDispatcher for AuthRuntime {
-    fn dispatch<'a>(
-        &'a self,
-        connection: ProductionConnection,
-        bytes: Vec<u8>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>> {
-        Box::pin(self.dispatch_owned(connection, bytes))
-    }
-}
 
     fn domain(
         &self,
@@ -402,6 +407,17 @@ impl crate::replication_peers::PeerControlDispatcher for AuthRuntime {
             .find(|domain| domain.grant.database == database)
             .cloned()
             .ok_or_else(|| error(StatusCode::SERVICE_UNAVAILABLE, "auth_authority_unavailable"))
+    }
+}
+
+impl crate::replication_peers::PeerControlDispatcher for AuthRuntime {
+    fn dispatch<'a>(
+        &'a self,
+        connection: ProductionConnection,
+        bytes: Vec<u8>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>
+    {
+        Box::pin(async move { self.dispatch_owned(connection, bytes) })
     }
 }
 
