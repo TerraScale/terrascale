@@ -243,7 +243,7 @@ async fn usage_and_recommendations_preserve_authoritative_fields() {
     let mock = Mock::new(vec![
         Response::json(
             200,
-            &json!({"tenant_id":"tenant","database_id":"db","snapshot_sequence":18446744073709551615u64,
+            &json!({"tenant_id":"tenant","database_id":"db","snapshot_sequence":18446744073709551615u64,"storage_complete_through_millis":null,
             "meters":[{"meter":"document_write_units","units":"9007199254740993"},{"meter":"storage_byte_seconds","units":"123"}],
             "reads":{"total_reads":4}}),
         ),
@@ -260,6 +260,7 @@ async fn usage_and_recommendations_preserve_authoritative_fields() {
         .await
         .unwrap();
     assert_eq!(usage.snapshot_sequence, u64::MAX);
+    assert_eq!(usage.storage_complete_through_millis, None);
     assert_eq!(usage.meters[0].units, "9007199254740993");
     assert_eq!(usage.reads.total_reads, 4);
     let recommendations = sdk

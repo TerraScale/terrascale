@@ -1052,6 +1052,8 @@ impl Exports {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Usage {
+    /// End of the latest finalized storage interval, when available.
+    pub storage_complete_through_millis: Option<u64>,
     pub tenant_id: String,
     pub database_id: String,
     pub snapshot_sequence: u64,
