@@ -382,3 +382,30 @@ The six focused auth runtime tests passed with the directional transport in
 transport Clippy passed in `39518`. Full shared daemon composition,
 multi-group WAN/failure qualification, and final maintained-suite receipts
 remain outstanding. ULID and concurrent agents' changes were preserved.
+
+
+Further verification retained all ULID and concurrent changes. Final transport
+unit tests passed 16 cases; authenticated physical WAL/receipt transport passed
+one case, and replication class dispatch passed two cases. SDK diagnostic
+artifact qualification passed on Node 22.23.2 and 24.20.0, source revision
+`d534cceea97ea9df85de37cdac9c9f4946204c9a`. Tarball SHA-256:
+`dc29a3cc37b2f32dc450f5b976be7555d9b9613d88e5f0dd2fe4715f830e6866`.
+The receipt explicitly has `release.eligible: false`; this is diagnostic
+consumer evidence, not a publication qualification.
+
+The next cleanup-patched suite attempt (`71047`) passed 70 cases, failed one
+on a subsequent read after updateMany, and left 279 unexecuted. The SDK retry
+eligibility change did not enable retries: configured attempts still default
+to zero, including in this integration. The fixture also still used only eight
+total transport operations. Production limits are now extracted unchanged
+into a shared helper used by production startup and the external Node fixture.
+Small-limit focused auth tests remain unchanged; six passed in `93011`.
+Independent review found no material issue with the extraction.
+
+With the actual production transport policy, diagnostic `56375` still failed:
+19 passed, one failed, 330 unexecuted, exit 101. A one-to-one join findOne
+returned `auth_authority_unavailable` (503). Log:
+`/tmp/terrascale-auth-production-limits-diagnostic.log`. Thus the small fixture
+policy does not fully explain the intermittent authority failures. Both the
+unmodified and cleanup-patched maintained-suite gates remain unpassed;
+underlying authority/transport diagnosis continues.

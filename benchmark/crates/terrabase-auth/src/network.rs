@@ -261,9 +261,18 @@ impl AuthNetwork {
                 .endpoint
                 .connect(member, ProductionConnectionClass::AuthClient)
                 .await
-                .map_err(|_| AuthorityError::Unavailable)?;
-            connection.send_frame(&bytes).await.map_err(|_| AuthorityError::Unavailable)?;
-            connection.receive_frame().await.map_err(|_| AuthorityError::Unavailable)
+                .map_err(|error| {
+                    diagnose_transport("auth-client connect", target, error);
+                    AuthorityError::Unavailable
+                })?;
+            connection.send_frame(&bytes).await.map_err(|error| {
+                diagnose_transport("auth-client send", target, error);
+                AuthorityError::Unavailable
+            })?;
+            connection.receive_frame().await.map_err(|error| {
+                diagnose_transport("auth-client receive", target, error);
+                AuthorityError::Unavailable
+            })
         })
         .await
         .map_err(|_| AuthorityError::Deadline)??;
@@ -328,9 +337,15 @@ impl AuthPeer {
                 .endpoint
                 .connect(member, ProductionConnectionClass::AuthConsensus)
                 .await
-                .map_err(|_| ())?;
-            connection.send_frame(&bytes).await.map_err(|_| ())?;
-            connection.receive_frame().await.map_err(|_| ())
+                .map_err(|error| {
+                    diagnose_transport("auth-consensus connect", self.target, error);
+                })?;
+            connection.send_frame(&bytes).await.map_err(|error| {
+                diagnose_transport("auth-consensus send", self.target, error);
+            })?;
+            connection.receive_frame().await.map_err(|error| {
+                diagnose_transport("auth-consensus receive", self.target, error);
+            })
         })
         .await
         .map_err(|_| transport_error())?
@@ -341,6 +356,12 @@ impl AuthPeer {
         let result: Result<T, E> =
             serde_json::from_slice(&response).map_err(|_| transport_error())?;
         result.map_err(|error| RPCError::RemoteError(RemoteError::new(self.target, error)))
+    }
+}
+
+fn diagnose_transport<T: std::fmt::Debug>(operation: &str, target: u64, error: T) {
+    if std::env::var_os("TERRASCALE_AUTH_DIAGNOSTICS").is_some() {
+        eprintln!("[auth transport diagnostics] {operation} target={target}: {error:?}");
     }
 }
 

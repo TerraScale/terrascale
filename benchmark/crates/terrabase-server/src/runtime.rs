@@ -598,12 +598,33 @@ fn open_production_placement_journal(
     Ok(journal)
 }
 
+pub(crate) fn production_transport_limits()
+-> Result<terrabase_cluster::production::ProductionTransportLimits, String> {
+    use terrabase_cluster::production::ProductionTransportLimits;
+
+    let max_frame_bytes: usize = 16 * 1024 * 1024;
+    let max_inflight: usize = 1024;
+    let max_queued_bytes =
+        max_frame_bytes.saturating_mul(max_inflight).min(1024 * 1024 * 1024).max(max_frame_bytes);
+    ProductionTransportLimits::try_new(
+        max_frame_bytes,
+        max_inflight,
+        256,
+        max_queued_bytes,
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_mins(1),
+        std::time::Duration::from_mins(5),
+    )
+    .map_err(|error| format!("transport limits: {error:?}"))
+}
+
 fn build_production_transport(
     config: &crate::config::ProductionConfig,
 ) -> Result<terrabase_cluster::production::ProductionQuicEndpoint, String> {
     use terrabase_cluster::production::{
         MemberWorkloadIdentity, ProductionPeerAdmission, ProductionQuicEndpoint,
-        ProductionTlsMaterial, ProductionTransportConfig, ProductionTransportLimits,
+        ProductionTlsMaterial, ProductionTransportConfig,
     };
 
     let local = MemberWorkloadIdentity::try_new(
@@ -637,24 +658,8 @@ fn build_production_transport(
                 .map_err(|error| format!("peer transport: {error:?}"))?,
         );
     }
-    // Production transport limits are fixed policy, not customer-provided
-    // request settings. Keep the member boundary bounded and fail closed in
-    // the transport constructor if these constants ever violate its caps.
-    let max_frame_bytes: usize = 16 * 1024 * 1024;
-    let max_inflight: usize = 1024;
-    let max_queued_bytes =
-        max_frame_bytes.saturating_mul(max_inflight).min(1024 * 1024 * 1024).max(max_frame_bytes);
-    let limits = ProductionTransportLimits::try_new(
-        max_frame_bytes,
-        max_inflight,
-        256,
-        max_queued_bytes,
-        std::time::Duration::from_secs(30),
-        std::time::Duration::from_secs(30),
-        std::time::Duration::from_mins(1),
-        std::time::Duration::from_mins(5),
-    )
-    .map_err(|error| format!("transport limits: {error:?}"))?;
+    // Production transport limits are fixed policy, not customer-provided request settings.
+    let limits = production_transport_limits()?;
     let transport = ProductionTransportConfig::try_new(
         config.transport.quic_listen,
         local,

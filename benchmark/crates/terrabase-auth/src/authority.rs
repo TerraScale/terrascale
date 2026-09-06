@@ -207,7 +207,12 @@ impl AuthAuthority {
     }
 
     async fn query_local_inner(&self, action: Action) -> Result<Outcome, AuthorityError> {
-        self.raft.ensure_linearizable().await.map_err(|_| AuthorityError::Unavailable)?;
+        self.raft.ensure_linearizable().await.map_err(|error| {
+            if std::env::var_os("TERRASCALE_AUTH_DIAGNOSTICS").is_some() {
+                eprintln!("[auth authority diagnostics] linearizable barrier failed: {error:?}");
+            }
+            AuthorityError::Unavailable
+        })?;
         let store = self.store.clone();
         tokio::task::spawn_blocking(move || store.query(&action))
             .await

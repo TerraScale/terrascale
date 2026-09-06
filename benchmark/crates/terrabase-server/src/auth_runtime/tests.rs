@@ -98,7 +98,7 @@ mod admitted_fixture {
     fn endpoints(
         first: &terrabase_cluster::production::MemberWorkloadIdentity,
         second: &terrabase_cluster::production::MemberWorkloadIdentity,
-        max_frame_bytes: usize,
+        transport_limits: ProductionTransportLimits,
     ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
         let a = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let b = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
@@ -129,7 +129,7 @@ mod admitted_fixture {
                 )
                 .unwrap(),
             ],
-            limits(max_frame_bytes),
+            transport_limits.clone(),
         )
         .unwrap();
         let bc = ProductionTransportConfig::try_new(
@@ -147,7 +147,7 @@ mod admitted_fixture {
                 )
                 .unwrap(),
             ],
-            limits(max_frame_bytes),
+            transport_limits,
         )
         .unwrap();
         (
@@ -178,14 +178,16 @@ mod admitted_fixture {
             (2, second_identity.member().clone()),
         ]);
         let placement = BTreeSet::from([ProductionRegion::Gru]);
-        let (undersized, supported) = endpoints(&first_identity, &second_identity, 1024 * 1024);
+        let (undersized, supported) =
+            endpoints(&first_identity, &second_identity, limits(1024 * 1024));
         assert!(matches!(
             AuthNetwork::new(Arc::new(undersized), "group", voters.clone(), &placement),
             Err(terrabase_auth::AuthorityError::InvalidConfiguration)
         ));
         drop(supported);
 
-        let (supported, peer) = endpoints(&first_identity, &second_identity, 2 * 1024 * 1024);
+        let (supported, peer) =
+            endpoints(&first_identity, &second_identity, limits(2 * 1024 * 1024));
         assert!(AuthNetwork::new(Arc::new(supported), "group", voters, &placement).is_ok());
         drop(peer);
     }
@@ -252,6 +254,15 @@ mod admitted_fixture {
     }
 
     pub async fn create() -> Fixture {
+        create_with_limits(limits(16 * 1024 * 1024)).await
+    }
+
+    pub async fn create_with_production_limits() -> Fixture {
+        let limits = crate::runtime::production_transport_limits().expect("production limits");
+        create_with_limits(limits).await
+    }
+
+    async fn create_with_limits(transport_limits: ProductionTransportLimits) -> Fixture {
         let root = std::env::temp_dir().join(format!("terrabase-auth-http-{}", Ulid::new()));
         std::fs::create_dir_all(&root).unwrap();
         #[cfg(unix)]
@@ -278,7 +289,7 @@ mod admitted_fixture {
         )
         .unwrap();
         let (local, remote_endpoint) =
-            endpoints(&first_identity, &second_identity, 16 * 1024 * 1024);
+            endpoints(&first_identity, &second_identity, transport_limits);
         let local = Arc::new(local);
         let remote_endpoint = Arc::new(remote_endpoint);
         let keys = crate::test_keys::key_delivery();
@@ -935,7 +946,7 @@ async fn admitted_http_router_serves_external_node_consumer() {
     assert!(std::path::Path::new(&executable).is_absolute());
     assert!(std::path::Path::new(&script).is_absolute());
 
-    let fixture = admitted_fixture::create().await;
+    let fixture = admitted_fixture::create_with_production_limits().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
