@@ -157,7 +157,7 @@ export class TerraScaleHttp {
           fetchStarted = true;
           const response = await this.#fetch(request);
           responseReceived = true;
-          const body = await readResponseBody(response);
+          const body = await readResponseBody(response, options.routeName);
           this.observeSession(response.headers);
           this.recordRequestMetric(base, options.routeName, response.status, performance.now() - startedAt);
 
@@ -267,7 +267,7 @@ export class TerraScaleHttp {
     validateInternalHeaders(options.headers);
     const headers = new Headers();
 
-    headers.set("accept", headers.get("accept") ?? "application/json");
+    headers.set("accept", options.routeName === "databases.downloadExport" ? "application/octet-stream" : "application/json");
     if (this.config.projectId !== undefined) {
       headers.set("x-terrascale-project-id", this.config.projectId);
     }
@@ -540,7 +540,14 @@ function isQueryArray(value: QueryValue): value is readonly QueryScalar[] {
   return Array.isArray(value);
 }
 
-async function readResponseBody(response: Response): Promise<ParsedBody> {
+async function readResponseBody(response: Response, routeName: TerraScaleRouteName): Promise<ParsedBody> {
+  if (response.ok && routeName === "databases.downloadExport") {
+    const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (mediaType !== "application/octet-stream") {
+      return { ok: false, errorMessage: "Export artifacts require application/octet-stream.", raw: await response.text() };
+    }
+    return { ok: true, value: new Uint8Array(await response.arrayBuffer()), raw: "" };
+  }
   const raw = await response.text();
 
   if (raw.length === 0) {
@@ -554,7 +561,7 @@ async function readResponseBody(response: Response): Promise<ParsedBody> {
   }
 
   try {
-    return { ok: true, value: JSON.parse(raw) as unknown, raw };
+    return { ok: true, value: response.ok ? parseSuccessResponse(raw, routeName) : JSON.parse(raw) as unknown, raw };
   } catch (error) {
     return {
       ok: false,
@@ -563,6 +570,94 @@ async function readResponseBody(response: Response): Promise<ParsedBody> {
       raw,
     };
   }
+}
+
+function parseSuccessResponse(raw: string, routeName: TerraScaleRouteName): unknown {
+  if (routeName === "databases.getDocument") return parseDocumentValue(raw);
+  // Keep response metadata and ordinary DTOs on the normal JSON contract.
+  const ordinary: unknown = JSON.parse(raw);
+  const integerPaths = responseUint64Paths[routeName];
+  if (integerPaths !== undefined) {
+    const precise = parseDocumentValue(raw);
+    for (const fieldPath of integerPaths) installUint64Field(ordinary, precise, fieldPath.split("."));
+    return ordinary;
+  }
+  const key = routeName === "databases.executeSql" ? "rows"
+    : routeName === "databases.listDocuments" ? "documents" : undefined;
+  if (key === undefined || !isRecord(ordinary)) return ordinary;
+  const rows = ordinary[key];
+  if (!Array.isArray(rows)) return ordinary;
+  const precise = parseDocumentValue(raw);
+  if (!isRecord(precise)) return ordinary;
+  const preciseRows: unknown = precise[key];
+  if (!Array.isArray(preciseRows)) return ordinary;
+  return {
+    ...ordinary,
+    [key]: rows.map((row: unknown, index: number) => {
+      const exact: unknown = preciseRows[index];
+      return isRecord(row) && isRecord(exact) ? { ...row, value: exact.value } : row;
+    }),
+  };
+}
+
+const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly string[]>>> = {
+  "databases.getSchema": ["generation", "schema_version", "migration.total", "migration.completed"],
+  "databases.putSchema": ["generation", "schema_version", "migration.total", "migration.completed"],
+  "databases.databaseUsage": ["snapshot_sequence", "reads.total_reads"],
+  "databases.indexRecommendations": ["generation", "recommendations.*.generation", "recommendations.*.maintenance_cost"],
+  "databases.listWebhooks": ["webhooks.*.created_at"],
+  "databases.createWebhook": ["created_at"],
+  "databases.deleteWebhook": ["created_at"],
+  "databases.listDeliveries": ["deliveries.*.revision", "deliveries.*.retry_started_at", "deliveries.*.next_attempt_at"],
+  "databases.replayWebhook": ["revision", "retry_started_at", "next_attempt_at"],
+  "databases.getExport": ["records", "estimated_records", "manifest.length"],
+  "databases.resumeExport": ["records", "estimated_records", "manifest.length"],
+  "databases.listDatabases": ["databases.*.created_at"],
+  "databases.listBranches": ["branches.*.created_at"],
+  "databases.createDatabase": ["created_at"],
+  "databases.getDatabase": ["created_at"],
+  "databases.deleteDatabase": ["created_at"],
+  "databases.restoreDatabase": ["created_at"],
+  "databases.createBranch": ["created_at"],
+  "databases.restoreBackup": ["created_at"],
+};
+
+function installUint64Field(target: unknown, source: unknown, parts: readonly string[]): void {
+  const [part, ...rest] = parts;
+  if (part === "*") {
+    if (Array.isArray(target) && Array.isArray(source)) {
+      target.forEach((entry: unknown, index: number) => installUint64Field(entry, source[index], rest));
+    }
+    return;
+  }
+  if (part === undefined || !isRecord(target) || !isRecord(source)) return;
+  const value = source[part];
+  if (rest.length > 0) {
+    installUint64Field(target[part], value, rest);
+    return;
+  }
+  if (value === undefined || value === null) return;
+  if (!(typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+    && !(typeof value === "bigint" && value >= 0n && value <= 18446744073709551615n)) {
+    throw new TypeError(`Response field ${part} must be an unsigned 64-bit integer.`);
+  }
+  target[part] = value;
+}
+
+function parseDocumentValue(raw: string): unknown {
+  return JSON.parse(raw, (_key: string, value: unknown, context?: { source?: string }) => {
+    if (typeof value !== "number" || Number.isSafeInteger(value)) return value;
+    const source = context?.source;
+    if (source === undefined) {
+      // Older runtimes cannot distinguish an integer that was rounded from a
+      // floating-point literal. Never return a silently corrupted data value.
+      if (Number.isInteger(value) || !Number.isFinite(value)) {
+        throw new TypeError("Lossless data integers require JSON.parse reviver source support.");
+      }
+      return value;
+    }
+    return /^-?(?:0|[1-9][0-9]*)$/u.test(source) ? BigInt(source) : value;
+  });
 }
 
 function errorFromResponse(response: Response, body: unknown): TerraScaleError {

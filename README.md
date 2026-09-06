@@ -45,6 +45,12 @@ production, staging, deployment, and CI qualification. See
 ## Queries and reactive delivery
 
 Queries use read-only SQL; durable writes use document operations.
+Document reads and SQL row values return integer literals outside JavaScript's
+safe range as `bigint` through the `DocumentValue` and `SqlValue` types. Strings,
+floating-point literals, and safe integers retain their JSON representations.
+These reads require JSON reviver source support for large integers and return
+`invalid_response` if the runtime cannot preserve them. Write inputs remain
+`JsonValue`; `bigint` is not a supported request value.
 `TerraScaleSyncV1Client` implements the reactive state machine with CDN-backed
 HTTP delivery by default and explicit WebSocket opt-in. It applies bounded
 snapshots, ordered result changes, checkpoints, and typed resets. Online

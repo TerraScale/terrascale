@@ -280,6 +280,29 @@ describe("TerraScaleHttp request policy", () => {
     assert.deepEqual(requests.map(request => request.method), ["POST", "POST", "POST"]);
   });
 
+  test("preserves export artifact bytes and rejects an unexpected successful media type", async () => {
+    const bytes = new Uint8Array([0, 255, 128, 10, 13, 195, 40]);
+    const http = new TerraScaleHttp({
+      fetch: async input => {
+        assert.equal(new Request(input).headers.get("accept"), "application/octet-stream");
+        return new Response(bytes, { headers: { "content-type": "application/octet-stream" } });
+      },
+    });
+    const result = await http.request<Uint8Array>({
+      method: "GET", path: "/api/v1/databases/demo/exports/job/artifacts/member",
+      routeName: "databases.downloadExport",
+    });
+    assert.ok(result.ok);
+    assert.deepEqual(result.value, bytes);
+    const wrongType = new TerraScaleHttp({ fetch: async () => Response.json({}) });
+    const rejected = await wrongType.request({
+      method: "GET", path: "/api/v1/databases/demo/exports/job/artifacts/member",
+      routeName: "databases.downloadExport",
+    });
+    assert.ok(!rejected.ok);
+    assert.equal(rejected.error.code, "invalid_response");
+  });
+
   test("returns server backoff beyond the automatic retry window without retrying early", async () => {
     for (const retryAfter of ["60", new Date(Date.now() + 120_000).toUTCString()]) {
       let requests = 0;

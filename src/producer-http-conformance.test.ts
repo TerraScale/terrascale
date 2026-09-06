@@ -30,6 +30,9 @@ test("public HTTP clients consume the pinned producer response and error corpus"
       for (const query of route.sourceContract.query) {
         assert.ok(parameters.some((parameter: any) => parameter.in === "query" && parameter.name === query.name), `${route.routeName}: undocumented query ${query.name}`);
       }
+      for (const parameter of parameters.filter((parameter: any) => parameter.required && parameter.in === "header")) {
+        assert.ok(route.sourceContract.headers.some(header => header.name.toLowerCase() === parameter.name.toLowerCase()), `${route.routeName}: missing header ${parameter.name}`);
+      }
       for (const parameter of parameters.filter((parameter: any) => parameter.required && parameter.in === "query")) {
         assert.ok(route.sourceContract.query.some(query => query.name === parameter.name));
       }
@@ -37,6 +40,7 @@ test("public HTTP clients consume the pinned producer response and error corpus"
     });
     const statuses = [undefined, ...new Set(vectors.flatMap(({ vector }) => vector.errors.map(error => error.status)))];
     for (const status of statuses) {
+      const selected = vectors.filter(({ vector }) => status === undefined || vector.errors.some(error => error.status === status));
       let cursor = 0;
       let expected: WireResponse | undefined;
       await exercisePublicClientRoutes(async input => {
@@ -45,30 +49,31 @@ test("public HTTP clients consume the pinned producer response and error corpus"
         assert.ok(entry, `${request.method} ${request.url}`);
         expected = status === undefined ? entry.vector.response : entry.vector.errors.find(error => error.status === status);
         assert.ok(expected, `Missing producer status ${status}: ${entry.route.routeName}`);
-        return new Response(expected.body === undefined || expected.status === 204 ? null : JSON.stringify(expected.body), {
+        return new Response(expected.body === undefined || expected.status === 204 ? null : expected.mediaType === "application/octet-stream" ? String(expected.body) : JSON.stringify(expected.body), {
           status: expected.status,
-          headers: expected.mediaType ? { "content-type": expected.mediaType } : {},
+          headers: { ...(expected.mediaType ? { "content-type": expected.mediaType } : {}), ...expected.headers },
         });
       }, (routeName, raw) => {
         cursor++;
         const result = raw as TerraScaleResult<unknown>;
         assert.ok(expected);
         assert.equal(result.status, expected.status, routeName);
+        for (const [name, value] of Object.entries(expected.headers ?? {})) assert.equal(result.headers?.get(name), value, `${routeName}: ${name}`);
         assert.equal(result.ok, status === undefined, routeName);
-        if (result.ok) assert.deepEqual(result.value, expected.status === 204 ? undefined : expected.body, routeName);
+        if (result.ok) assert.deepEqual(result.value, expected.status === 204 ? undefined : expected.mediaType === "application/octet-stream" ? new TextEncoder().encode(String(expected.body)) : expected.body, routeName);
         else {
           const body = expected.body as { error: { code: string; message: string; fix: string } };
           assert.equal(result.error.code, body.error.code, routeName);
           assert.equal(result.error.message, body.error.message, routeName);
           assert.equal(result.error.fix, body.error.fix, routeName);
         }
-      });
-      assert.equal(cursor, captured.length);
+      }, selected.map(({ route }) => route.routeName));
+      assert.equal(cursor, selected.length);
     }
   } finally { await bundle.cleanup(); }
 });
 
-type WireResponse = { status: number; body?: unknown; mediaType?: string };
+type WireResponse = { status: number; body?: unknown; mediaType?: string; headers?: Record<string, string> };
 type Vector = { operationId: string; request: { method: string }; response: WireResponse; errors: WireResponse[] };
 
 function matchesPath(template: string, pathname: string): boolean {
@@ -82,6 +87,7 @@ function matchesPath(template: string, pathname: string): boolean {
 function assertSchema(value: unknown, schema: any, spec: any, label: string): void {
   if (schema.$ref) return assertSchema(value, schema.$ref.split("/").slice(1).reduce((node: any, key: string) => node[key], spec), spec, label);
   if (Array.isArray(schema.type)) return assertSchema(value, { anyOf: schema.type.map((type: string) => ({ ...schema, type })) }, spec, label);
+  if (schema.allOf) for (const branch of schema.allOf) assertSchema(value, branch, spec, label);
   if (schema.oneOf || schema.anyOf) {
     assert.ok((schema.oneOf ?? schema.anyOf).some((branch: any) => {
       try { assertSchema(value, branch, spec, label); return true; } catch { return false; }
@@ -95,6 +101,11 @@ function assertSchema(value: unknown, schema: any, spec: any, label: string): vo
     if (schema.minimum !== undefined) assert.ok(value >= schema.minimum, `${label}: below minimum`);
     if (schema.maximum !== undefined) assert.ok(value <= schema.maximum, `${label}: above maximum`);
   }
+  if (typeof value === "string") {
+    if (schema.minLength !== undefined) assert.ok([...value].length >= schema.minLength, label);
+    if (schema.maxLength !== undefined) assert.ok([...value].length <= schema.maxLength, label);
+    if (schema.pattern !== undefined) assert.match(value, new RegExp(schema.pattern, "u"), label);
+  }
   if (schema.type === undefined) return;
   if (schema.type === "object") {
     assert.ok(typeof value === "object" && value !== null && !Array.isArray(value), label);
@@ -107,6 +118,8 @@ function assertSchema(value: unknown, schema: any, spec: any, label: string): vo
     }
   } else if (schema.type === "array") {
     assert.ok(Array.isArray(value), label);
+    if (schema.minItems !== undefined) assert.ok(value.length >= schema.minItems, label);
+    if (schema.maxItems !== undefined) assert.ok(value.length <= schema.maxItems, label);
     for (const member of value) assertSchema(member, schema.items, spec, label);
   } else if (schema.type === "integer") assert.ok(typeof value === "number" && Number.isSafeInteger(value), label);
   else if (schema.type === "null") assert.equal(value, null, label);

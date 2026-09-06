@@ -91,7 +91,7 @@ export class TerraScaleClient {
 export type DocumentRow = {
   readonly id: string;
   readonly version: number;
-  readonly value: Models.JsonValue;
+  readonly value: Models.DocumentValue;
 };
 
 export type DocumentsResponse = {
@@ -185,7 +185,7 @@ export class DocumentsClient {
     });
   }
 
-  get<TValue extends Models.JsonValue = Models.JsonValue>(
+  get<TValue extends Models.DocumentValue = Models.DocumentValue>(
     database: string,
     collection: string,
     id: string,
@@ -344,7 +344,7 @@ export type SqlExecuteOptions = {
 
 export type SqlRow = {
   readonly id: string;
-  readonly value: Models.JsonValue;
+  readonly value: Models.SqlValue;
 };
 
 export type SqlResult = {

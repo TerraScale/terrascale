@@ -10,7 +10,7 @@ const pathTemplateSegments = new Map<string, string>([
   [sampleIds.database, "{name}"],
   [sampleIds.collection, "{collection}"],
   [sampleIds.documentId, "{id}"],
-]).set("SFO", "{regionCode}");
+]).set("SFO", "{regionCode}").set("email", "{field}").set("export-1", "{job_id}").set("delivery-1", "{delivery_id}").set("manifest.json", "{member}");
 
 /** Canonical producer operations not implemented by this SDK slice. */
 export const expectedContractGapRouteNames = [
@@ -144,6 +144,63 @@ function pathToTemplate(pathname: string): string {
 }
 
 const captureOperations: readonly CaptureOperation[] = [
+  {
+    client: "databases", operation: "downloadExport", routeName: "databases.downloadExport",
+    invoke: (_client, management) => management.exports.download(sampleIds.database, "export-1", "manifest.json"),
+  },
+  {
+    client: "databases", operation: "deleteIndex", routeName: "databases.deleteIndex",
+    invoke: (_client, management) => management.collections.deleteIndex(sampleIds.database, sampleIds.collection, "email"),
+  },
+  {
+    client: "databases", operation: "indexRecommendations", routeName: "databases.indexRecommendations",
+    invoke: (_client, management) => management.collections.recommendations(sampleIds.database, sampleIds.collection, { limit: 25 }),
+  },
+  {
+    client: "databases", operation: "databaseUsage", routeName: "databases.databaseUsage",
+    invoke: (_client, management) => management.usage.getDatabase(sampleIds.database),
+  },
+  {
+    client: "databases", operation: "getSchema", routeName: "databases.getSchema",
+    invoke: (_client, management) => management.schemas.get(sampleIds.database, sampleIds.collection),
+  },
+  {
+    client: "databases", operation: "putSchema", routeName: "databases.putSchema",
+    invoke: (_client, management) => management.schemas.put(sampleIds.database, sampleIds.collection, { name: sampleIds.collection, fields: [], historyRetentionDays: 30, mergePolicy: "remove-wins" }, { idempotencyKey: "schema-apply-1", ifMatch: '"1"' }),
+  },
+  {
+    client: "databases", operation: "listWebhooks", routeName: "databases.listWebhooks",
+    invoke: (_client, management) => management.webhooks.list(sampleIds.database),
+  },
+  {
+    client: "databases", operation: "createWebhook", routeName: "databases.createWebhook",
+    invoke: (_client, management) => management.webhooks.create(sampleIds.database, { endpoint: "https://hooks.example.test/events" }),
+  },
+  {
+    client: "databases", operation: "deleteWebhook", routeName: "databases.deleteWebhook",
+    invoke: (_client, management) => management.webhooks.delete(sampleIds.database, sampleIds.documentId),
+  },
+  {
+    client: "databases", operation: "listDeliveries", routeName: "databases.listDeliveries",
+    invoke: (_client, management) => management.webhooks.deliveries(sampleIds.database, sampleIds.documentId),
+  },
+  {
+    client: "databases", operation: "replayWebhook", routeName: "databases.replayWebhook",
+    invoke: (_client, management) => management.webhooks.replay(sampleIds.database, sampleIds.documentId, "delivery-1"),
+  },
+  {
+    client: "databases", operation: "createExport", routeName: "databases.createExport",
+    invoke: (_client, management) => management.exports.create(sampleIds.database, { idempotency_key: "export-create-1" }),
+  },
+  {
+    client: "databases", operation: "getExport", routeName: "databases.getExport",
+    invoke: (_client, management) => management.exports.get(sampleIds.database, "export-1"),
+  },
+  {
+    client: "databases", operation: "resumeExport", routeName: "databases.resumeExport",
+    invoke: (_client, management) => management.exports.resume(sampleIds.database, "export-1", { resume_cursor: "resume-1" }),
+  },
+
   {
     client: "databases", operation: "listDatabases", routeName: "databases.listDatabases",
     invoke: (_client, management) => management.databases.list(),

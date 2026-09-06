@@ -60,8 +60,6 @@ describe("management entrypoint", () => {
     expect(() => client.branches.getCapability()).toThrow(ManagementContractGapError);
     expect(() => client.branches.requestClone()).toThrow(ManagementContractGapError);
     expect(() => client.backups.configurePolicy("db", { fullBackupCron: "*" })).toThrow(ManagementContractGapError);
-    expect(() => client.schemas.get("db", "users")).toThrow(ManagementContractGapError);
-    expect(() => client.exports.create("db")).toThrow(ManagementContractGapError);
     expect(() => client.usage.getProject()).toThrow(ManagementContractGapError);
     expect(requests).toHaveLength(0);
   });
@@ -97,4 +95,31 @@ describe("management entrypoint", () => {
     ]);
     expect(requests).toHaveLength(4);
   });
+});
+
+it("carries schema generation preconditions and a stable apply identity", async () => {
+  const requests: Request[] = [];
+  const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests) });
+  const schema = { name: "users", fields: [], historyRetentionDays: 30, mergePolicy: "remove-wins" } as const;
+  await client.schemas.put("db", "users", schema, { idempotencyKey: "apply-one", ifMatch: '"7"' });
+  expect(requests[0]?.headers.get("if-match")).toBe('"7"');
+  expect(requests[0]?.headers.get("idempotency-key")).toBe("apply-one");
+  expect(await requests[0]?.json()).toEqual(schema);
+  expect(() => client.schemas.put("db", "users", schema, { idempotencyKey: "" })).toThrow(TypeError);
+  expect(() => client.schemas.put("db", "users", schema, { idempotencyKey: "key", ifMatch: 'W/"7"' })).toThrow(TypeError);
+  expect(() => client.schemas.put("db", "other", schema, { idempotencyKey: "key" })).toThrow(TypeError);
+  expect(requests).toHaveLength(1);
+});
+
+it("bounds recommendations and keeps export idempotency in the published request body", async () => {
+  const requests: Request[] = [];
+  const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests) });
+  await client.collections.recommendations("db", "users", { limit: 64 });
+  expect(new URL(requests[0]!.url).search).toBe("?limit=64");
+  for (const limit of [0, 65, 1.5, NaN]) expect(() => client.collections.recommendations("db", "users", { limit })).toThrow(TypeError);
+  await client.exports.create("db", { idempotency_key: "export-one" });
+  expect(await requests[1]?.json()).toEqual({ idempotency_key: "export-one" });
+  expect(requests[1]?.headers.has("idempotency-key")).toBe(false);
+  expect(() => client.webhooks.create("db", { endpoint: "http://example.test/hook" })).toThrow(TypeError);
+  expect(requests).toHaveLength(2);
 });

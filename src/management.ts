@@ -2,6 +2,9 @@ import type { TerraScaleRuntimeConfig } from "./config.js";
 import { TerraScaleHttp } from "./http.js";
 import { normalizeRegionCodes, type TerraScaleRegionCode } from "./regions.js";
 import type * as Models from "./models.js";
+import { validateSchema, type CollectionSchema } from "./schema.js";
+import type * as Contracts from "./management-contracts.js";
+export type * from "./management-contracts.js";
 import type { TerraScaleResult } from "./result.js";
 
 export type { TerraScaleRuntimeConfig } from "./config.js";
@@ -37,7 +40,7 @@ export class ManagementContractGapError extends Error {
 }
 
 export type Database = {
-  readonly created_at: number;
+  readonly created_at: Contracts.UInt64Value;
   readonly deleted: boolean;
   readonly name: string;
   readonly placement: string;
@@ -227,10 +230,32 @@ export class ManagementBackupsClient {
   }
 }
 
-/** Pending domains fail before transport until their owning contract is published. */
+export type SchemaOperationOptions = {
+  readonly idempotencyKey: string;
+  readonly ifMatch?: string;
+  readonly signal?: AbortSignal;
+};
+
 export class ManagementSchemasClient {
-  get(_databaseId: string, _collection: string): Promise<never> { return contractGap("schemas.get"); }
-  put(_databaseId: string, _collection: string, _schema: unknown, _options?: ManagementOperationOptions): Promise<never> { return contractGap("schemas.put"); }
+  readonly #http: TerraScaleHttp;
+  constructor(http: TerraScaleHttp) { this.#http = http; }
+
+  get(databaseId: string, collection: string): Promise<TerraScaleResult<Contracts.SchemaDocument>> {
+    return this.#http.request({ method: "GET", path: `${collectionPath(databaseId, collection)}/schema`, routeName: "databases.getSchema" });
+  }
+
+  put(databaseId: string, collection: string, schema: CollectionSchema, options: SchemaOperationOptions): Promise<TerraScaleResult<Contracts.SchemaDocument>> {
+    validateSchema({ collections: [schema] });
+    if (schema.name !== collection) throw new TypeError("schema.name must match the collection.");
+    requireText(options?.idempotencyKey, "idempotencyKey", 256);
+    if (options.ifMatch !== undefined && !/^"[0-9]+"$/u.test(options.ifMatch)) throw new TypeError("ifMatch must be a strong schema generation ETag.");
+    return this.#http.request({
+      method: "PUT", path: `${collectionPath(databaseId, collection)}/schema`, routeName: "databases.putSchema",
+      body: schema, idempotencyKey: options.idempotencyKey,
+      ...(options.ifMatch === undefined ? {} : { headers: { "if-match": options.ifMatch } }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  }
 }
 
 export class ManagementCollectionsClient {
@@ -274,11 +299,62 @@ export class ManagementCollectionsClient {
     });
   }
 
+  recommendations(databaseId: string, collection: string, options: { readonly limit?: number } = {}): Promise<TerraScaleResult<Contracts.IndexRecommendations>> {
+    if (options.limit !== undefined && (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 64)) throw new TypeError("limit must be an integer between 1 and 64.");
+    return this.#http.request({ method: "GET", path: `${collectionPath(databaseId, collection)}/indexes/recommendations`, routeName: "databases.indexRecommendations", query: options });
+  }
+
   listCollections(databaseId: string): Promise<TerraScaleResult<CollectionsResponse>> { return this.list(databaseId); }
 }
 
 export class ManagementExportsClient {
-  create(_databaseId: string, _request: unknown = {}, _options?: ManagementOperationOptions): Promise<never> { return contractGap("exports.create"); }
+  readonly #http: TerraScaleHttp;
+  constructor(http: TerraScaleHttp) { this.#http = http; }
+
+  create(databaseId: string, request: Contracts.CreateExportRequest): Promise<TerraScaleResult<Contracts.ExportAccepted>> {
+    requireText(request?.idempotency_key, "idempotency_key", 512);
+    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/exports`, routeName: "databases.createExport", body: request, idempotencyKey: false });
+  }
+
+  get(databaseId: string, jobId: string): Promise<TerraScaleResult<Contracts.ExportStatus>> {
+    return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}`, routeName: "databases.getExport" });
+  }
+
+  download(databaseId: string, jobId: string, member: string): Promise<TerraScaleResult<Uint8Array>> {
+    return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}/artifacts/${idSegment(member, "artifact member")}`, routeName: "databases.downloadExport" });
+  }
+
+  resume(databaseId: string, jobId: string, request: Contracts.ResumeExportRequest): Promise<TerraScaleResult<Contracts.ExportStatus>> {
+    requireText(request?.resume_cursor, "resume_cursor");
+    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/exports/${idSegment(jobId, "job id")}/resume`, routeName: "databases.resumeExport", body: request, idempotencyKey: false });
+  }
+}
+
+export class ManagementWebhooksClient {
+  readonly #http: TerraScaleHttp;
+  constructor(http: TerraScaleHttp) { this.#http = http; }
+
+  list(databaseId: string): Promise<TerraScaleResult<Contracts.WebhookList>> {
+    return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/webhooks`, routeName: "databases.listWebhooks" });
+  }
+
+  create(databaseId: string, request: Contracts.CreateWebhookRequest): Promise<TerraScaleResult<Contracts.WebhookEndpoint>> {
+    const endpoint = new URL(request?.endpoint);
+    if (endpoint.protocol !== "https:") throw new TypeError("webhook endpoint must use HTTPS.");
+    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/webhooks`, routeName: "databases.createWebhook", body: request, idempotencyKey: false });
+  }
+
+  delete(databaseId: string, webhookId: string): Promise<TerraScaleResult<Contracts.WebhookEndpoint>> {
+    return this.#http.request({ method: "DELETE", path: webhookPath(databaseId, webhookId), routeName: "databases.deleteWebhook", idempotencyKey: false });
+  }
+
+  deliveries(databaseId: string, webhookId: string): Promise<TerraScaleResult<Contracts.WebhookDeliveryLog>> {
+    return this.#http.request({ method: "GET", path: `${webhookPath(databaseId, webhookId)}/deliveries`, routeName: "databases.listDeliveries" });
+  }
+
+  replay(databaseId: string, webhookId: string, deliveryId: string): Promise<TerraScaleResult<Contracts.WebhookDelivery>> {
+    return this.#http.request({ method: "POST", path: `${webhookPath(databaseId, webhookId)}/deliveries/${idSegment(deliveryId, "delivery id")}/replay`, routeName: "databases.replayWebhook", idempotencyKey: false });
+  }
 }
 
 export class ManagementImportsClient {
@@ -286,7 +362,12 @@ export class ManagementImportsClient {
 }
 
 export class ManagementUsageClient {
-  constructor(_http: TerraScaleHttp) {}
+  readonly #http: TerraScaleHttp;
+  constructor(http: TerraScaleHttp) { this.#http = http; }
+
+  getDatabase(databaseId: string): Promise<TerraScaleResult<Contracts.DatabaseUsageSummary>> {
+    return this.#http.request({ method: "GET", path: `${databasePath(databaseId)}/usage`, routeName: "databases.databaseUsage" });
+  }
 
   getProject(_projectId?: string): Promise<TerraScaleResult<UsageSummary>> {
     return contractGap("management.usage.project.get");
@@ -306,6 +387,7 @@ export class TerraScaleManagementClient {
   readonly collections: ManagementCollectionsClient;
   readonly exports: ManagementExportsClient;
   readonly imports: ManagementImportsClient;
+  readonly webhooks: ManagementWebhooksClient;
   readonly usage: ManagementUsageClient;
 
   constructor(config: TerraScaleRuntimeConfig) {
@@ -313,10 +395,11 @@ export class TerraScaleManagementClient {
     this.databases = new ManagementDatabasesClient(this.#http);
     this.branches = new ManagementBranchesClient(this.#http);
     this.backups = new ManagementBackupsClient(this.#http);
-    this.schemas = new ManagementSchemasClient();
+    this.schemas = new ManagementSchemasClient(this.#http);
     this.collections = new ManagementCollectionsClient(this.#http);
-    this.exports = new ManagementExportsClient();
+    this.exports = new ManagementExportsClient(this.#http);
     this.imports = new ManagementImportsClient();
+    this.webhooks = new ManagementWebhooksClient(this.#http);
     this.usage = new ManagementUsageClient(this.#http);
   }
 
@@ -378,4 +461,12 @@ function validateRestoreRequest(request: RestoreRequest): void {
 
 function validateCreateIndexRequest(request: CreateIndexRequest): void {
   idSegment(request?.field, "field");
+}
+
+function webhookPath(databaseId: string, webhookId: string): string {
+  return `${databasePath(databaseId)}/webhooks/${idSegment(webhookId, "webhook id")}`;
+}
+
+function requireText(value: string, name: string, maximumBytes?: number): void {
+  if (typeof value !== "string" || value.trim().length === 0 || (maximumBytes !== undefined && new TextEncoder().encode(value).length > maximumBytes)) throw new TypeError(`${name} must be nonblank${maximumBytes === undefined ? "" : ` and at most ${maximumBytes} UTF-8 bytes`}.`);
 }

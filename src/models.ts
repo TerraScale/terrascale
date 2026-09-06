@@ -21,6 +21,10 @@ export type JsonPrimitive = boolean | null | number | string;
 export type JsonValue = JsonPrimitive | JsonObject | readonly JsonValue[];
 export type JsonObject = { readonly [key: string]: JsonValue };
 
+/** Document reads preserve integer literals outside JavaScript's safe range as bigint. */
+export type DocumentValue = JsonPrimitive | bigint | { readonly [key: string]: DocumentValue } | readonly DocumentValue[];
+export type SqlValue = DocumentValue;
+
 export type PageRequest = {
   readonly skip?: number;
   readonly take?: number;

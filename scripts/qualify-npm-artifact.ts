@@ -290,7 +290,11 @@ async function browserGraph(directory, entry) {
     if (visited.has(relative)) continue;
     visited.add(relative);
     const source = await readFile(path.join(directory, relative), "utf8");
-    const specifiers = [...source.matchAll(/(?:from\s*|import\s*)["']([^"']+)["']/gu)].map((match) => match[1]);
+    for (const dynamicImport of source.matchAll(/\bimport\s*\(\s*/gu)) {
+      const quote = source[dynamicImport.index + dynamicImport[0].length];
+      if (quote !== '"' && quote !== "'") throw new Error(`${entry} has an unresolved dynamic import through ${relative}.`);
+    }
+    const specifiers = [...source.matchAll(/(?:from\s*|import\s*(?:\(\s*)?)["']([^"']+)["']/gu)].map((match) => match[1]);
     for (const specifier of specifiers) {
       if (specifier.startsWith("node:") || specifier === "better-sqlite3") throw new Error(`${entry} browser graph imports ${specifier} through ${relative}.`);
       if (!specifier.startsWith(".")) continue;
