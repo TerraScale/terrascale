@@ -9,10 +9,20 @@ pub(crate) struct Fixture {
 
 impl Fixture {
     pub fn new() -> Self {
-        Self::with_selected(std::collections::BTreeSet::from(["GRU".into()]))
+        Self::with_selected_and_local(
+            std::collections::BTreeSet::from(["GRU".into()]),
+            Some("GRU".into()),
+        )
     }
 
     pub fn with_selected(selected_regions: std::collections::BTreeSet<String>) -> Self {
+        Self::with_selected_and_local(selected_regions, Some("GRU".into()))
+    }
+
+    pub fn with_selected_and_local(
+        selected_regions: std::collections::BTreeSet<String>,
+        local_region: Option<String>,
+    ) -> Self {
         let cluster = ClusterUlid::generate().to_text();
         let member = MemberUlid::generate().to_text();
         let peer = MemberUlid::generate().to_text();
@@ -35,7 +45,7 @@ impl Fixture {
             &member,
             1,
             1,
-            [(scope, "GRU".into(), selected_regions)],
+                [(scope, local_region, selected_regions)],
         )
         .expect("boundary");
         let request = pb::PlacementStageRequest {
@@ -58,6 +68,7 @@ impl Fixture {
                     follower_member: peer,
                 }],
             }),
+            declarations: Vec::new(),
         };
         Self { root, boundary, request }
     }
@@ -122,7 +133,10 @@ fn boundary_rejects_duplicate_database_identity_across_scopes() {
             &MemberUlid::generate().to_text(),
             1,
             1,
-            [(first, "GRU".to_owned(), selected.clone()), (second, "GRU".to_owned(), selected),],
+            [
+                (first, Some("GRU".to_owned()), selected.clone()),
+                (second, Some("GRU".to_owned()), selected),
+            ],
         )
         .map(|_| ()),
         Err(PlacementError::Invalid)
@@ -146,7 +160,11 @@ fn reopen_rejects_persisted_scope_with_configured_owner_conflict() {
         &fixture.boundary.member,
         fixture.boundary.generation,
         fixture.boundary.epoch,
-        [(conflicting, "GRU".to_owned(), std::collections::BTreeSet::from(["GRU".to_owned()]))],
+        [(
+            conflicting,
+            Some("GRU".to_owned()),
+            std::collections::BTreeSet::from(["GRU".to_owned()]),
+        )],
     )
     .unwrap();
     assert!(matches!(
@@ -168,7 +186,7 @@ fn boundary_catalog_accepts_1024_scopes_and_rejects_1025() {
                     ProjectUlid::generate(),
                     DatabaseUlid::generate(),
                 ),
-                "GRU".to_owned(),
+                Some("GRU".to_owned()),
                 selected.clone(),
             )
         })
@@ -183,7 +201,7 @@ fn boundary_catalog_accepts_1024_scopes_and_rejects_1025() {
                     ProjectUlid::generate(),
                     DatabaseUlid::generate(),
                 ),
-                "GRU".to_owned(),
+                Some("GRU".to_owned()),
                 selected.clone(),
             )
         })
@@ -214,7 +232,7 @@ fn reopen_accepts_exact_1024_union_and_rejects_1025_union() {
                     ProjectUlid::generate(),
                     DatabaseUlid::generate(),
                 ),
-                "GRU".to_owned(),
+                Some("GRU".to_owned()),
                 selected.clone(),
             )
         })
@@ -242,7 +260,7 @@ fn reopen_accepts_exact_1024_union_and_rejects_1025_union() {
         &member,
         1,
         1,
-        [(extra, "GRU".to_owned(), selected)],
+        [(extra, Some("GRU".to_owned()), selected)],
     )
     .unwrap();
     assert!(matches!(PlacementJournal::open(&path, overfull), Err(PlacementError::Storage)));

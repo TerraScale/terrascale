@@ -455,7 +455,16 @@ mod tests {
             fenced_lease.lifecycle_state(&fenced_scope).unwrap()
         );
         let prepared = fenced_lease.lifecycle_state(&fenced_scope).unwrap();
-        let cutoff = prepared.deletion_preparation.as_ref().unwrap().minimum_cutoff_millis;
+        // Preparation supplies a lower bound. Billing continues until the
+        // authority accepts deletion, which happens after this restart.
+        let cutoff = u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+        )
+        .unwrap()
+        .max(prepared.deletion_preparation.as_ref().unwrap().minimum_cutoff_millis);
         let accepted = fenced_lease
             .lifecycle_accept_deletion(
                 &fenced_scope,

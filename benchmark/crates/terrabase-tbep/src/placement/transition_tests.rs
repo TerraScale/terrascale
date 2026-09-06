@@ -309,6 +309,89 @@ fn accepted_proposal_survives_new_local_database_registration() {
 }
 
 #[test]
+fn control_only_declaration_survives_restart_but_never_loads_wal() {
+    let fixture = tests::Fixture::with_selected_and_local(
+        std::collections::BTreeSet::from(["GRU".into(), "SFO".into()]),
+        None,
+    );
+    let journal = fixture.open();
+    let proposal = stage(&journal, fixture.request.clone(), "control");
+    journal.configure_transition_trust(trust(&proposal)).unwrap();
+    let proof = proof(&proposal, "control", None, &[]);
+    journal.accept("control", &acceptance(&proof, 1)).unwrap();
+    let scope = *fixture.boundary.databases.read().unwrap().keys().next().unwrap();
+    assert!(journal.load_assignment(scope).is_err());
+    drop(journal);
+
+    let reopened = fixture.open();
+    reopened.configure_transition_trust(trust(&proposal)).unwrap();
+    assert_eq!(reopened.accepted().unwrap().epoch, 1);
+    assert!(reopened.load_assignment(scope).is_err());
+}
+
+#[test]
+fn control_only_declaration_requires_explicit_matching_promotion() {
+    let fixture = tests::Fixture::with_selected_and_local(
+        std::collections::BTreeSet::from(["GRU".into()]),
+        None,
+    );
+    let journal = fixture.open();
+    let proposal = stage(&journal, fixture.request.clone(), "promote");
+    journal.configure_transition_trust(trust(&proposal)).unwrap();
+    let proof = proof(&proposal, "promote", None, &[]);
+    journal.accept("promote", &acceptance(&proof, 1)).unwrap();
+    let scope = *fixture.boundary.databases.read().unwrap().keys().next().unwrap();
+    assert_eq!(
+        journal.register_database(
+            scope,
+            "GRU",
+            &std::collections::BTreeSet::from(["GRU".into(), "SFO".into()]),
+        ),
+        Err(PlacementError::Conflict)
+    );
+    journal
+        .register_database(scope, "GRU", &std::collections::BTreeSet::from(["GRU".into()]))
+        .unwrap();
+    assert_eq!(journal.load_assignment(scope).unwrap().epoch, 1);
+}
+
+#[test]
+fn control_only_and_local_database_can_share_an_accepted_proposal() {
+    let fixture = tests::Fixture::with_selected_and_local(
+        std::collections::BTreeSet::from(["GRU".into()]),
+        None,
+    );
+    let journal = fixture.open();
+    let local_scope = DatabaseRouteScope::new(
+        TenantUlid::generate(),
+        ProjectUlid::generate(),
+        DatabaseUlid::generate(),
+    );
+    journal
+        .register_database(local_scope, "GRU", &std::collections::BTreeSet::from(["GRU".into()]))
+        .unwrap();
+    let mut request = fixture.request.clone();
+    let seats = request.proposal.as_ref().unwrap().regions[0].members.clone();
+    request.proposal.as_mut().unwrap().assignments.push(
+        pb::PlacementDatabaseAssignment {
+            tenant: local_scope.tenant().to_text(),
+            project: local_scope.project().to_text(),
+            database: local_scope.database().to_text(),
+            region: "GRU".into(),
+            writer_member: seats[0].clone(),
+            follower_member: seats[1].clone(),
+        },
+    );
+    let proposal = stage(&journal, request, "mixed-control");
+    journal.configure_transition_trust(trust(&proposal)).unwrap();
+    let proof = proof(&proposal, "mixed-control", None, &[]);
+    journal.accept("mixed-control", &acceptance(&proof, 1)).unwrap();
+    let control_scope = *fixture.boundary.databases.read().unwrap().keys().next().unwrap();
+    assert!(journal.load_assignment(control_scope).is_err());
+    assert_eq!(journal.load_assignment(local_scope).unwrap().epoch, 1);
+}
+
+#[test]
 fn retained_digest_corruption_and_wrong_restart_pins_fail_closed() {
     let fixture = tests::Fixture::new();
     let journal = fixture.open();

@@ -871,9 +871,19 @@ message PlacementProposal {
   repeated PlacementDatabaseAssignment assignments = 6; // 0..1024; unique scope/Region.
 }
 
+// Immutable database residency supplied by authenticated provisioning authority.
+// This declares control metadata only; it grants no local storage or writer seat.
+message PlacementDatabaseDeclaration {
+  string tenant = 1;
+  string project = 2;
+  string database = 3;
+  repeated string selected_regions = 4;
+}
+
 message PlacementStageRequest {
   uint64 expected_revision = 1; // Local journal CAS revision, zero before first Stage.
   PlacementProposal proposal = 2;
+  repeated PlacementDatabaseDeclaration declarations = 3; // Exact provisioning scope/residency; committed with proposal CAS.
 }
 
 message PlacementGetRequest {}

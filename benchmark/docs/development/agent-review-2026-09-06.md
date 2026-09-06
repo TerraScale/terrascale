@@ -16,8 +16,9 @@ configuration edits. Native recovery signer and branch import warnings remain.
 Independent review found that placement catalog expansion invalidated older
 acceptance and that cluster membership Regions were incorrectly imposed on
 every database. Historical proposal validation was separated from new-stage
-coverage. Exact per-database selected residency persistence and configuration
-integration remain under review and require targeted test execution.
+coverage. Exact per-database selected residency is now persisted and supplied
+by configuration or authenticated admission records. Targeted verification
+passed as recorded below; global remote control declarations remain unfinished.
 
 Active writer reconciliation now checks durable deletion before skipping
 already-active databases. It removes replication lanes with acknowledgments
@@ -25,8 +26,8 @@ before retiring the route, retaining maintenance storage. The connected-peer
 runtime regression and follower deletion implementation remain outstanding.
 
 The initial encrypted admission restart run, session `50243`, compiled but
-failed all three tests at production root validation. The fixture is being
-corrected; this run is not evidence that deletion replay passes. No full
+failed all three tests at production root validation. Subsequent fixture and
+production fixes led to the passing run recorded below. No full
 repository check or production readiness claim follows from the library check.
 
 The engine regression
@@ -41,11 +42,27 @@ Member now validates the confined path, creates its directory, and revalidates
 before opening SQLite. Independent review found no material defect in this
 ordering change.
 
-Session `13278` passed all 17 server configuration tests, including required
-selected residency. All three deletion tests now reach encrypted restart but
-fail there, with the direct Member test reporting `FormatMismatch`. That storage
-failure is under investigation. First admission passing does not establish
-successful restart.
+Session `13278` passed all 17 server configuration tests but exposed a
+`FormatMismatch` during encrypted restart. Ownership validation rejected files
+created by the encrypted VFS itself. It now accepts the exact main, WAL, and
+rollback-journal companion formats, with 64-character lowercase hexadecimal
+generation identifiers. These must remain regular files beside both a valid
+owner record and the logical database. Six ownership tests passed, including
+malformed-name, orphan, directory, and symlink rejection. Independent review
+found no material defect in this fix.
+
+Final server verification passed in session `47728`:
+`nice -n 19 cargo test -p terrabase-server --lib -j 2 -- production_admission::tests config::tests --nocapture`,
+20 passed, zero failed. Real encrypted `AdmissionHost` replay covers both
+preparation-only and accepted deletion, retained fences at the same epoch,
+matching retries, and an unrelated document write after restart. The older
+helper test now supplies usage placement and chooses its first accepted cutoff
+after restart; accepted-deletion retries retain their original cutoff.
+
+The fixture's readiness callback does not establish production replication
+readiness. A delayed, already assigned control-plane cutoff arriving after a
+restart requires its own accounting test. No production accounting semantics
+were changed by the fixture correction.
 
 The Go VM configuration producer now carries an explicit selected Region set,
 renders each database only in selected Regions, and uses the host's local Region

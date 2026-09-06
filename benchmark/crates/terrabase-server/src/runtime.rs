@@ -541,14 +541,14 @@ fn open_production_placement_journal(
         &production.environment.member.to_text(),
         production.placement.generation,
         production.placement.epoch,
-        production.databases.iter().filter(|database| database.enabled).map(|database| {
+        production.databases.iter().map(|database| {
             (
                 terrabase_cluster::production::DatabaseRouteScope::new(
                     database.tenant,
                     database.project,
                     database.database,
                 ),
-                database.region.as_str().to_owned(),
+                database.enabled.then(|| database.region.as_str().to_owned()),
                 database.selected_regions.iter().map(|region| region.as_str().to_owned()).collect(),
             )
         }),
