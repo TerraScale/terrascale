@@ -291,7 +291,7 @@ async fn webhook_operations_match_endpoint_and_delivery_contracts() {
     use terrascale::CreateWebhook;
     let endpoint =
         json!({"id":"hook","endpoint":"https://example.com/hook","created_at":10,"deleted":false});
-    let delivery = json!({"id":"hook/event","event_id":"event","revision":2,"retry_started_at":10,"attempts":1,"next_attempt_at":0,"status":204,"delivered":true,"terminal":false});
+    let delivery = json!({"id":"hook/event","event_id":"event","revision":2,"write_index":1,"retry_started_at":10,"attempts":1,"next_attempt_at":0,"status":204,"delivered":true,"terminal":false});
     let mock = Mock::new(vec![
         Response::json(
             201,
@@ -770,7 +770,7 @@ async fn webhook_secret_rotation_never_retries_while_create_requires_stable_iden
 #[tokio::test]
 async fn exports_discover_and_cancel_with_durable_progress() {
     use terrascale::{ExportCancellation, ExportJobStatus};
-    let status = json!({"job_id":"job","status":"Cancelled","created_at_millis":1,"phase":"Documents","cancellation":"complete","pages":2,"records":5,"estimated_records":null,"progress_basis_points":1000,"resume_cursor":"resume","manifest":null,"error":null});
+    let status = json!({"job_id":"job","status":"Cancelled","created_at_millis":1,"phase":"Documents","cancellation":"complete","pages":2,"records":5,"estimated_records":null,"progress_basis_points":1000,"resume_cursor":"resume","manifest":null,"error":null,"write_index":3});
     let mock = Mock::new(vec![
         Response::json(
             200,

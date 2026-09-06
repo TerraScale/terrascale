@@ -1010,17 +1010,11 @@ impl ReactiveClient {
     pub async fn execute(&self, scope: &DatabaseScope, query: &Query) -> Result<SqlRows> {
         query.validate()?;
         let url = format!("{}/sql", self.shared.database_root(scope)?);
-        let parameters = query
-            .params()
-            .iter()
-            .enumerate()
-            .map(|(index, value)| (index.to_string(), value.clone()))
-            .collect::<serde_json::Map<_, _>>();
         let body = serde_json::json!({
             "sql": query.sql(),
-            "parameters": parameters,
+            "parameters": query.parameters(),
         });
-        let request = Request::json("reactive.execute", Method::Post, url, &body)?;
+        let request = Request::json("sql.execute", Method::Post, url, &body)?;
         self.shared.send_typed(request).await
     }
 }

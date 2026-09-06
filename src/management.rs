@@ -1348,6 +1348,8 @@ pub struct DeliveryRecord {
     pub id: String,
     pub event_id: String,
     pub revision: u64,
+    /// Exclusive write position within the journal commit.
+    pub write_index: u32,
     pub retry_started_at: u64,
     pub attempts: u32,
     pub next_attempt_at: u64,

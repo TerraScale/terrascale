@@ -644,10 +644,14 @@ async fn execute_uses_canonical_sql_parameter_object() {
         .reactive()
         .execute(
             &DatabaseScope::new("db"),
-            &Query::raw(
-                "SELECT * FROM users WHERE id = ? AND state = ?".to_owned(),
-                vec![json!(7), json!("open")],
-            ),
+            &Query::try_raw(
+                "SELECT * FROM users WHERE id = :id AND state = :state".to_owned(),
+                std::collections::BTreeMap::from([
+                    ("id".to_owned(), json!(7)),
+                    ("state".to_owned(), json!("open")),
+                ]),
+            )
+            .expect("valid query"),
         )
         .await
         .expect("execute");
@@ -656,10 +660,11 @@ async fn execute_uses_canonical_sql_parameter_object() {
         serde_json::from_slice(request.body.as_ref().expect("body")).expect("JSON SQL body");
     assert_eq!(
         body["sql"],
-        "SELECT * FROM users WHERE id = ? AND state = ?"
+        "SELECT * FROM users WHERE id = :id AND state = :state"
     );
-    assert_eq!(body["parameters"]["0"], 7);
-    assert_eq!(body["parameters"]["1"], "open");
+    assert_eq!(body["parameters"]["id"], 7);
+    assert_eq!(body["parameters"]["state"], "open");
+    assert_eq!(request.route_name, "sql.execute");
     assert!(body.get("statement").is_none());
 }
 
