@@ -1279,8 +1279,8 @@ impl Engine {
             )
         };
         let mut storage: Box<dyn storage::StoragePort> = open_storage
-        .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
-        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+            .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
+            .map_err(|_| EngineOpenError::StorageUnavailable)?;
         if config.owner.is_some()
             && storage.origin_epoch().map_err(|()| EngineOpenError::StorageUnavailable)?.0 == 0
         {

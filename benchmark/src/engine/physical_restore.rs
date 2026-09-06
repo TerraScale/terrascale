@@ -9,8 +9,10 @@ impl Engine {
     ///
     /// The source location supplies the authoritative owner binding. Scoped
     /// production locations are refused: their tenant data and metering require
-    /// remapping to the new database before physical import can serve them. The backup must be a closed, complete database
-    /// file, including any WAL contents already checkpointed by the producer.
+    /// remapping to the new database before physical import can serve them.
+    /// Imported receipts preserve the source cut without inheriting its billing
+    /// or lifecycle state. The backup must be a closed, complete database file,
+    /// including any WAL contents already checkpointed by the producer.
     /// A private staging location is verified before an atomic directory rename
     /// publishes it. Existing target data is never replaced.
     ///
@@ -87,6 +89,19 @@ mod tests {
         let source_id = engine.database_id();
         let tenant = TenantId::try_new("tenant-a").expect("tenant");
         let scope = engine.scope_for(&tenant);
+        let placement = |database: &str| {
+            crate::usage::UsagePlacement::try_new(
+                tenant.clone(),
+                "project",
+                database,
+                database,
+                crate::RegionCode::GRU,
+                vec![crate::RegionCode::GRU],
+                database,
+            )
+            .expect("placement")
+        };
+        engine.configure_usage_placement(placement("source")).expect("source placement");
         let snapshot = engine.read_snapshot(&scope).expect("snapshot");
         let mut transaction = engine
             .begin(&scope, snapshot, OperationId::try_new("write").expect("operation"))
@@ -118,6 +133,15 @@ mod tests {
             Engine::open(EngineConfig::durable(&target).expect("config")).expect("reopen");
         assert_ne!(restored.database_id(), source_id, "restore mints a new database identity");
         let scope = restored.scope_for(&tenant);
+        assert!(restored.usage_placement(&scope).expect("child placement").is_none());
+        let usage_request = || {
+            crate::usage::UsagePageRequest::try_new(None, crate::usage::MAX_USAGE_PAGE_SIZE, None)
+                .expect("usage request")
+        };
+        assert!(
+            restored.usage_page(&scope, usage_request()).expect("child usage").facts().is_empty()
+        );
+        restored.configure_usage_placement(placement("target")).expect("fresh child placement");
         let snapshot = restored.read_snapshot(&scope).expect("snapshot");
         let transaction = restored
             .begin(&scope, snapshot, OperationId::try_new("read").expect("operation"))
@@ -131,6 +155,21 @@ mod tests {
             &DocumentValue::Integer(42)
         );
         drop(transaction);
+        let snapshot = restored.read_snapshot(&scope).expect("child snapshot");
+        let mut transaction = restored
+            .begin(&scope, snapshot, OperationId::try_new("write").expect("operation"))
+            .expect("child begin");
+        transaction
+            .put(Document::new(id, collection, DocumentValue::Integer(43)), ExpectedVersion::Any)
+            .expect("child put");
+        assert!(matches!(
+            transaction.commit(LocalDurability::Synced),
+            super::super::CommitOutcome::Committed(_)
+        ));
+        let usage = restored.usage_page(&scope, usage_request()).expect("new child usage");
+        assert_eq!(usage.facts().len(), 1);
+        assert_eq!(usage.facts()[0].fact().delta(), 1);
+        assert_eq!(usage.facts()[0].fact().scope().database_id().as_str(), "target");
         drop(restored);
         let target_bytes = fs::read(super::super::database_file(&target)).expect("target bytes");
         assert_eq!(

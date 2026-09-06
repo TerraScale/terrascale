@@ -12,6 +12,17 @@ fn fixture() -> (Arc<ApiState>, Arc<terrabase_tbep::member_host::MemberHost>, Da
     let mut state = super::tests::state_with_keys_and_control();
     let state_mut = Arc::get_mut(&mut state).unwrap();
     state_mut.scope = (TENANT.into(), PROJECT.into());
+    let location = state_mut.catalog.as_ref().unwrap().location_for(TENANT, PROJECT, DATABASE);
+    // Production pins each origin to its Region. Seed that same durable
+    // configuration before the local catalog reopens the test database.
+    terrabase::Engine::open(
+        terrabase::engine::EngineConfig::durable(&location)
+            .unwrap()
+            .with_replication_origin(terrabase::types::RegionId::try_new("gru").unwrap()),
+    )
+    .unwrap()
+    .shutdown()
+    .unwrap();
     let host = state_mut.catalog.as_ref().unwrap().host_for(TENANT, PROJECT, DATABASE).unwrap();
     let owner = host.engine().database_owner();
     let scope = DatabaseRouteScope::new(owner.tenant(), owner.project(), owner.database());

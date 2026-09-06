@@ -99,6 +99,8 @@ pub(super) mod encrypted_vfs;
 mod invisible;
 mod json_codec;
 mod lifecycle_state;
+#[cfg(test)]
+mod operation_kind_markers_tests;
 mod private_metadata;
 mod repair_summary;
 mod replication_outbox;
@@ -1343,6 +1345,8 @@ pub(crate) fn import_backup_file(
         return Err(());
     }
     let transaction = connection.transaction().map_err(|_| ())?;
+    // The restored database owns a new billing stream. Preserve the source
+    // snapshot as imported data without inheriting its receipts or lifecycle.
     branch_provenance::transform_provenance(&transaction, child_owner)?;
     transaction
         .execute(

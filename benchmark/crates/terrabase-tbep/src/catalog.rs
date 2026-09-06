@@ -177,9 +177,7 @@ impl HostCatalog {
                 database,
                 MemberHostOptions::tb1a(),
             )
-            .map_err(|error| {
-                CatalogError::OpenFailed(error.detail())
-            })?,
+            .map_err(|error| CatalogError::OpenFailed(error.detail()))?,
         );
         entries.insert(key, Entry { host: Arc::clone(&host), last_used: now });
         Ok(host)
