@@ -118,44 +118,16 @@ public sealed class TerraScaleApiException : HttpRequestException
 
         try
         {
-            // Decode the owner-published envelope through the generated
-            // contract metadata first. The element fallback below retains
-            // compatibility with older top-level error responses.
             var envelope = JsonSerializer.Deserialize(body, TerraScaleContractJsonContext.Default.ErrorResponse);
-            // `message` is required by the owner-published envelope. Require
-            // it before accepting the generated model so an older nested
-            // shape such as {"error":{"error":"..."}} can still reach the
-            // compatibility fallback below.
-            if (envelope?.Error is { Message: not null } publishedError)
-            {
-                return (publishedError.Code, publishedError.Message, publishedError.Fix);
-            }
-
-            var root = JsonElement.Parse(body);
-            if (root.TryGetProperty("error", out var error) &&
-                error.ValueKind == JsonValueKind.Object)
-            {
-                return (
-                    TryGetString(error, "code"),
-                    TryGetString(error, "message") ?? TryGetString(error, "error"),
-                    TryGetString(error, "fix"));
-            }
-
-            return (
-                TryGetString(root, "code"),
-                TryGetString(root, "message") ?? TryGetString(root, "error"),
-                TryGetString(root, "fix"));
+            return envelope is { Error: { Code: not null, Message: not null, Fix: not null } error }
+                ? (error.Code, error.Message, error.Fix)
+                : (null, null, null);
         }
         catch (JsonException)
         {
             return (null, null, null);
         }
     }
-
-    private static string? TryGetString(JsonElement element, string propertyName) =>
-        element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
-            ? property.GetString()
-            : null;
 
     private static string? RedactDiagnostic(string? value) =>
         value is null ? null : RedactTextAssignments(value);

@@ -62,7 +62,7 @@ public sealed class TerraScaleApiExceptionTests
     }
 
     [Test]
-    public async Task MissingPublishedFixRemainsAbsent()
+    public async Task MissingPublishedErrorFieldsRemainUntyped()
     {
         using var handler = new ErrorHandler(_ => ErrorResponse("{\"error\":{\"code\":\"not_found\",\"message\":\"Missing.\"}}"));
         using var httpClient = new HttpClient(handler);
@@ -72,42 +72,72 @@ public sealed class TerraScaleApiExceptionTests
             client.Documents.GetAsync("orders", "items", "item-a"));
 
         await Assert.That(failure).IsNotNull();
-        await Assert.That(failure!.ErrorCode).IsEqualTo("not_found");
-        await Assert.That(failure.Message).IsEqualTo("Missing.");
+        await Assert.That(failure!.ErrorCode).IsNull();
+        await Assert.That(failure.Message).IsEqualTo("TerraScale API returned HTTP 429 TooManyRequests.");
         await Assert.That(failure.Fix).IsNull();
     }
 
     [Test]
-    public async Task OlderTopLevelErrorShapeRemainsBackwardCompatible()
+    public async Task NonObjectErrorBodiesRemainUntyped()
     {
-        using var handler = new ErrorHandler(_ => ErrorResponse(
-            "{\"code\":\"legacy_error\",\"message\":\"Legacy failure.\",\"fix\":\"upgrade the client\"}"));
-        using var httpClient = new HttpClient(handler);
-        var client = CreateClient(httpClient);
+        foreach (var body in new[] { "null", "[]", "\"error\"", "{\"error\":null}", "{\"error\":[]}", "{\"error\":\"bad\"}" })
+        {
+            using var handler = new ErrorHandler(_ => ErrorResponse(body));
+            using var httpClient = new HttpClient(handler);
+            var client = CreateClient(httpClient);
 
-        var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            client.Documents.GetAsync("orders", "items", "item-a"));
+            var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Documents.GetAsync("orders", "items", "item-a"));
 
-        await Assert.That(failure).IsNotNull();
-        await Assert.That(failure!.ErrorCode).IsEqualTo("legacy_error");
-        await Assert.That(failure.Message).IsEqualTo("Legacy failure.");
-        await Assert.That(failure.Fix).IsEqualTo("upgrade the client");
+            await Assert.That(failure).IsNotNull();
+            await Assert.That(failure!.ErrorCode).IsNull();
+            await Assert.That(failure.Message).IsEqualTo("TerraScale API returned HTTP 429 TooManyRequests.");
+        }
     }
 
     [Test]
-    public async Task OlderNestedErrorAliasRemainsBackwardCompatible()
+    public async Task NullPublishedErrorMembersRemainUntyped()
     {
-        using var handler = new ErrorHandler(_ => ErrorResponse(
-            "{\"error\":{\"code\":\"legacy_error\",\"error\":\"Legacy failure.\"}}"));
-        using var httpClient = new HttpClient(handler);
-        var client = CreateClient(httpClient);
+        foreach (var body in new[]
+        {
+            "{\"error\":{\"code\":null,\"message\":\"failure\",\"fix\":\"retry\"}}",
+            "{\"error\":{\"code\":\"bad\",\"message\":null,\"fix\":\"retry\"}}",
+            "{\"error\":{\"code\":\"bad\",\"message\":\"failure\",\"fix\":null}}",
+        })
+        {
+            using var handler = new ErrorHandler(_ => ErrorResponse(body));
+            using var httpClient = new HttpClient(handler);
+            var client = CreateClient(httpClient);
 
-        var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
-            client.Documents.GetAsync("orders", "items", "item-a"));
+            var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Documents.GetAsync("orders", "items", "item-a"));
 
-        await Assert.That(failure).IsNotNull();
-        await Assert.That(failure!.ErrorCode).IsEqualTo("legacy_error");
-        await Assert.That(failure.Message).IsEqualTo("Legacy failure.");
+            await Assert.That(failure).IsNotNull();
+            await Assert.That(failure!.ErrorCode).IsNull();
+            await Assert.That(failure.Message).IsEqualTo("TerraScale API returned HTTP 429 TooManyRequests.");
+        }
+    }
+
+    [Test]
+    public async Task ObsoleteTopLevelAndNestedAliasShapesRemainUntyped()
+    {
+        foreach (var body in new[]
+        {
+            "{\"code\":\"legacy_error\",\"message\":\"legacy\",\"fix\":\"upgrade\"}",
+            "{\"error\":{\"code\":\"legacy_error\",\"error\":\"legacy\",\"fix\":\"upgrade\"}}",
+        })
+        {
+            using var handler = new ErrorHandler(_ => ErrorResponse(body));
+            using var httpClient = new HttpClient(handler);
+            var client = CreateClient(httpClient);
+
+            var failure = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+                client.Documents.GetAsync("orders", "items", "item-a"));
+
+            await Assert.That(failure).IsNotNull();
+            await Assert.That(failure!.ErrorCode).IsNull();
+            await Assert.That(failure.Message).IsEqualTo("TerraScale API returned HTTP 429 TooManyRequests.");
+        }
     }
 
     [Test]

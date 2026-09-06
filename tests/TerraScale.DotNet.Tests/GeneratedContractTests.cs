@@ -34,6 +34,26 @@ public sealed class GeneratedContractTests
     }
 
     [Test]
+    public async Task GeneratedWebhookAndIncrementModelsRoundTripWireNames()
+    {
+        var webhook = JsonSerializer.Deserialize(
+            "{\"id\":\"hook-1\",\"endpoint\":\"https://receiver.test/hook\",\"created_at\":7,\"deleted\":false,\"secret\":\"key\"}",
+            TerraScaleContractJsonContext.Default.WebhookSecretResponse);
+        await Assert.That(webhook).IsNotNull();
+        await Assert.That(webhook!.Secret).IsEqualTo("key");
+
+        var increment = new Increment(
+            new Dictionary<string, double> { ["count"] = 2 },
+            "orders",
+            [],
+            null);
+        var json = JsonSerializer.Serialize(increment, TerraScaleContractJsonContext.Default.Increment);
+        using var document = JsonDocument.Parse(json);
+        await Assert.That(document.RootElement.GetProperty("increment").GetProperty("count").GetDouble()).IsEqualTo(2d);
+        await Assert.That(document.RootElement.TryGetProperty("IncrementValue", out _)).IsFalse();
+    }
+
+    [Test]
     public async Task GeneratedMessagePackMetadataPreservesTagsAndFields()
     {
         var protocolMajor = TerraScaleSyncV1Contract.ProtocolMajor;

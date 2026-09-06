@@ -211,7 +211,11 @@ class OpenApiGenerator:
                 while property_name == pascal(name) or property_name in allocated:
                     property_name += "Value"
                 allocated.add(property_name)
-                type_text = self.type_name(definition, name + property_name, nullable)
+                # Inline model names are derived from the wire field, not the
+                # allocated C# member.  A member may be suffixed to avoid an
+                # enclosing-type or Pascal-name collision, but that must not
+                # change the separately collected inline record name.
+                type_text = self.type_name(definition, name + pascal(field), nullable)
                 required_attribute = ", JsonRequired" if field in required else ", JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)"
                 fields.append(f"[property: JsonPropertyName({string_literal(field)}){required_attribute}] {type_text} {property_name}")
             if not fields:

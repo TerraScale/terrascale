@@ -8,6 +8,24 @@ namespace TerraScale.DotNet.Tests;
 public sealed class ProducerReactiveConformanceTests
 {
     [Test]
+    public async Task ProducerNoStoreResetWithoutEtagIsAcceptedAndNotCached()
+    {
+        await using var stream = File.OpenRead(Path.Combine(AppContext.BaseDirectory, "conformance", "reactive.json"));
+        using var corpus = await JsonDocument.ParseAsync(stream);
+        using var handler = new CorpusHandler(corpus.RootElement, resetNoStore: true);
+        using var http = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(http, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("demo", "v-conformance-view", "SELECT id FROM orders ORDER BY id");
+
+        await subscription.ReadNextAsync();
+        var reset = await subscription.ReadNextAsync();
+        await Assert.That(reset!.Frame).IsTypeOf<TerraScaleReactiveReset>();
+        await Assert.That(reset.ETag).IsNull();
+        await Assert.That(subscription.LastETag).IsNull();
+        await Assert.That(subscription.SessionState).IsEqualTo(TerraScaleViewSessionState.Resetting);
+    }
+
+    [Test]
     public async Task ProducerSnapshotAndDeltaUpdateThePublicSubscription()
     {
         await using var stream = File.OpenRead(Path.Combine(AppContext.BaseDirectory, "conformance", "reactive.json"));
@@ -55,7 +73,7 @@ public sealed class ProducerReactiveConformanceTests
         }
     }
 
-    private sealed class CorpusHandler(JsonElement corpus, byte[]? logOverride = null) : HttpMessageHandler
+    private sealed class CorpusHandler(JsonElement corpus, byte[]? logOverride = null, bool resetNoStore = false) : HttpMessageHandler
     {
         private int logRequests;
 
@@ -89,6 +107,8 @@ public sealed class ProducerReactiveConformanceTests
             }
             if (frame.TryGetProperty("cacheControl", out var cacheControl))
                 response.Headers.CacheControl = CacheControlHeaderValue.Parse(cacheControl.GetString()!);
+            if (name == "reset" && resetNoStore)
+                response.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
             return Task.FromResult(response);
         }
     }

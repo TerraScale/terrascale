@@ -114,19 +114,21 @@ public sealed class TerraScaleReactiveHttpClient
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return null; }
             using (response)
             {
-                if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotModified || IsNoStore(response)) return null;
+                if (response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.NotModified) return null;
                 if (response.StatusCode == HttpStatusCode.Gone) return await ReattachAsync(subscription, TerraScaleReactiveResetReason.HistoryExpired, cancellationToken).ConfigureAwait(false);
                 if (response.StatusCode == HttpStatusCode.Conflict) return await ReattachAsync(subscription, TerraScaleReactiveResetReason.Reconnect, cancellationToken).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode) throw await TerraScaleReactiveHttpException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
                 var bytes = await ReadBoundedBytesAsync(response.Content, options.MaxResponseBytes, cancellationToken).ConfigureAwait(false);
                 if (bytes.Length == 0) return null;
-                var etag = response.Headers.ETag?.Tag;
+                var etagHeader = response.Headers.ETag;
+                var etag = etagHeader?.Tag;
                 var frame = DecodeFrame(bytes, subscription.Attachment);
                 if (frame is null) return null;
-                if (frame is (TerraScaleReactiveDelta or TerraScaleReactiveSnapshotFrame or TerraScaleReactiveReset) && !IsStrongEtag(etag))
+                if (frame is (TerraScaleReactiveDelta or TerraScaleReactiveSnapshotFrame) && !IsStrongEtag(etagHeader))
                     throw new TerraScaleReactiveProtocolException("A data-bearing reactive response must carry an ETag.");
-                if (etag is not null) subscription.RememberEtag(FrameRevision(frame, subscription.Offset), etag);
-                return subscription.Accept(frame, etag);
+                var immutableEtag = frame is TerraScaleReactiveDelta or TerraScaleReactiveSnapshotFrame ? etag : null;
+                if (immutableEtag is not null) subscription.RememberEtag(FrameRevision(frame, subscription.Offset), immutableEtag);
+                return subscription.Accept(frame, immutableEtag);
             }
         }
     }
@@ -201,7 +203,7 @@ public sealed class TerraScaleReactiveHttpClient
             using var response = await SendWithRetryAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode) throw await TerraScaleReactiveHttpException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
             var bytes = await ReadBoundedBytesAsync(response.Content, options.MaxResponseBytes, cancellationToken).ConfigureAwait(false);
-            if (!IsStrongEtag(response.Headers.ETag?.Tag)) throw new TerraScaleReactiveProtocolException("An immutable snapshot response must carry a strong ETag.");
+            if (!IsStrongEtag(response.Headers.ETag)) throw new TerraScaleReactiveProtocolException("An immutable snapshot response must carry a strong ETag.");
             var snapshot = DecodeSnapshot(bytes, attachment) ?? throw new TerraScaleReactiveProtocolException("A snapshot chunk was empty.");
             if (first is not null && (snapshot.ViewGeneration != first.ViewGeneration || snapshot.AuthorizationGeneration != first.AuthorizationGeneration || snapshot.Revision != first.Revision || !string.Equals(snapshot.Digest, first.Digest, StringComparison.Ordinal) || !string.Equals(snapshot.Checkpoint.Token, first.Checkpoint.Token, StringComparison.Ordinal)))
                 throw new TerraScaleReactiveProtocolException("Snapshot chunks do not describe one immutable cut.");
@@ -252,7 +254,7 @@ public sealed class TerraScaleReactiveHttpClient
         return builder.Uri;
     }
 
-    private static bool IsStrongEtag(string? value) => !string.IsNullOrWhiteSpace(value) && !value.StartsWith("W/", StringComparison.OrdinalIgnoreCase);
+    private static bool IsStrongEtag(EntityTagHeaderValue? value) => value is { Tag: not null, IsWeak: false } && value.Tag != "*";
 
     private static ulong FrameRevision(TerraScaleReactiveFrame frame, ulong fallback) => frame switch
     {
@@ -335,7 +337,6 @@ public sealed class TerraScaleReactiveHttpClient
     }
 
     private static bool IsTransient(HttpStatusCode status) => status is HttpStatusCode.RequestTimeout or (HttpStatusCode)425 or HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError;
-    private static bool IsNoStore(HttpResponseMessage response) => response.Headers.CacheControl?.NoStore == true || response.Headers.TryGetValues("Cloudflare-CDN-Cache-Control", out var values) && values.Any(value => string.Equals(value.Trim(), "no-store", StringComparison.OrdinalIgnoreCase));
 
     private static async Task<byte[]> ReadBoundedBytesAsync(HttpContent content, int limit, CancellationToken cancellationToken)
     {

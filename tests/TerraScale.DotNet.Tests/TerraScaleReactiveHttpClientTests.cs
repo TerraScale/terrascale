@@ -57,6 +57,56 @@ public sealed class TerraScaleReactiveHttpClientTests
     }
 
     [Test]
+    public async Task NoStoreUnauthorizedPollSurfacesTypedFailure()
+    {
+        using var handler = new ReactiveHandler(pollStatus: HttpStatusCode.Unauthorized, noStore: true);
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        var exception = await Assert.ThrowsAsync<TerraScaleReactiveHttpException>(() => subscription.ReadNextAsync());
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    public async Task WeakDeltaEtagIsRejected()
+    {
+        using var handler = new ReactiveHandler(weakPollEtag: true);
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+        await Assert.That(subscription.Offset).IsEqualTo(0ul);
+    }
+
+    [Test]
+    public async Task WeakSnapshotEtagIsRejected()
+    {
+        using var handler = new ReactiveHandler(weakSnapshotEtag: true);
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => client.SubscribeAsync("db", "sub", "SELECT * FROM docs"));
+    }
+
+    [Test]
+    public async Task WildcardSnapshotEtagIsRejected()
+    {
+        using var handler = new ReactiveHandler(wildcardSnapshotEtag: true);
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => client.SubscribeAsync("db", "sub", "SELECT * FROM docs"));
+    }
+
+    [Test]
+    public async Task WildcardDeltaEtagIsRejected()
+    {
+        using var handler = new ReactiveHandler(wildcardPollEtag: true);
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+    }
+
+    [Test]
     public async Task LegacyMapFrameIsRejectedFailClosed()
     {
         using var handler = new ReactiveHandler(legacyFrame: true);
@@ -194,7 +244,7 @@ public sealed class TerraScaleReactiveHttpClientTests
         await Assert.That(regionSubscription.SessionState).IsEqualTo(TerraScaleViewSessionState.Live);
     }
 
-    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub") : HttpMessageHandler
+    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false) : HttpMessageHandler
     {
         public List<RequestObservation> Requests { get; } = [];
         public TaskCompletionSource PollStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -212,11 +262,20 @@ public sealed class TerraScaleReactiveHttpClientTests
             if (request.RequestUri!.AbsolutePath.EndsWith("/snapshot/0", StringComparison.Ordinal))
             {
                 var response = Binary(Envelope(3, 0, SnapshotMessage(subscription, Snapshot(3, 0, 0, "Y3AtMA=="))));
-                response.Headers.ETag = new EntityTagHeaderValue("\"snapshot-0\"");
+                if (weakSnapshotEtag) response.Headers.ETag = new EntityTagHeaderValue("\"snapshot-0\"", isWeak: true);
+                else if (wildcardSnapshotEtag) response.Headers.ETag = EntityTagHeaderValue.Any;
+                else response.Headers.ETag = new EntityTagHeaderValue("\"snapshot-0\"");
                 return response;
             }
             PollStarted.TrySetResult();
             if (blockPoll) await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            if (pollStatus is not null)
+            {
+                var response = Binary([]);
+                response.StatusCode = pollStatus.Value;
+                if (noStore) response.Headers.CacheControl = new CacheControlHeaderValue { NoStore = true };
+                return response;
+            }
             if (timeout)
             {
                 var response = Binary([]);
@@ -225,7 +284,9 @@ public sealed class TerraScaleReactiveHttpClientTests
             }
             var body = pollFrame ?? (legacyFrame ? new byte[] { 0x81, 0xa1, (byte)'x', 0x01 } : Envelope(4, 0, Delta(subscription, 3, 0, 1, "Y3AtMQ==")));
             var poll = Binary(body);
-            poll.Headers.ETag = new EntityTagHeaderValue("\"revision-1\"");
+            if (weakPollEtag) poll.Headers.ETag = new EntityTagHeaderValue("\"revision-1\"", isWeak: true);
+            else if (wildcardPollEtag) poll.Headers.ETag = EntityTagHeaderValue.Any;
+            else poll.Headers.ETag = new EntityTagHeaderValue("\"revision-1\"");
             return poll;
         }
 

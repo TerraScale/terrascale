@@ -45,6 +45,18 @@ class GeneratorSchemaTests(unittest.TestCase):
         self.assertIn('JsonPropertyName("increment_"), JsonIgnore', output)
         self.assertIn('double? IncrementValueValue', output)
 
+    def test_inline_types_use_wire_names_after_member_allocation(self):
+        api = self.generator({"Parent": {"type": "object", "properties": {
+            "parent": {"type": "object", "properties": {"first": {"type": "string"}}},
+            "parent_value": {"type": "object", "properties": {"second": {"type": "string"}}},
+        }}})
+        api.collect_inline()
+        output = api.models()
+        self.assertIn("public sealed record ParentParent(", output)
+        self.assertIn("public sealed record ParentParentValue(", output)
+        self.assertIn("ParentParent? ParentValue", output)
+        self.assertIn("ParentParentValue? ParentValueValue", output)
+
 
 if __name__ == "__main__":
     unittest.main()
