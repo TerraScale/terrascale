@@ -156,7 +156,8 @@ export type DocumentBatchRequest = {
 };
 
 export type DocumentBatchResponse = {
-  readonly committed: number;
+  /** The producer publishes this as an int64; unsafe values are bigint. */
+  readonly committed: number | bigint;
   readonly count: number;
 };
 

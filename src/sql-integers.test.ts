@@ -38,6 +38,16 @@ test("document GET and list preserve large integer values and int64 versions", a
   assert.throws(() => client.documents.put("demo", "orders", "a", { amount: 1n } as never), /JSON/);
 });
 
+test("document batch preserves the producer int64 committed count", async () => {
+  const client = clientFor('{"committed":9223372036854775807,"count":1}');
+  const result = await client.documents.batch("demo", "orders", {
+    operations: [{ op: "put", id: "row-1", value: { active: true } }],
+  });
+  assert.ok(result.ok);
+  assert.equal(result.value.committed, 9223372036854775807n);
+  assert.equal(result.value.count, 1);
+});
+
 test("SQL rejects unsafe integers when the runtime does not provide original number sources", async () => {
   const nativeParse = JSON.parse;
   const parse = vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => nativeParse(text,
