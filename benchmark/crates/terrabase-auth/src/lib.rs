@@ -20,6 +20,8 @@ mod bulk_tests;
 #[cfg(test)]
 mod join_tests;
 #[cfg(test)]
+mod predicate_tests;
+#[cfg(test)]
 mod tests;
 pub use store::SqliteStore;
 

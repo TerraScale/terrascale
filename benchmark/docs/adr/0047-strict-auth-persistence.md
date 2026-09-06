@@ -107,6 +107,18 @@ operands outside the exact binary64 integer range is rejected instead of
 silently discarding counter precision. Integer predicate ordering also retains
 64-bit precision.
 
+Predicates follow the Better Auth 1.7.2 Kysely/Drizzle grouping contract:
+all AND terms must match, and at least one OR term must match when OR terms
+are present. Request order does not change that grouping. An OR term cannot
+bypass an AND tenant guard. The pinned memory adapter uses different grouping
+and does not qualify this SQL-backed predicate contract.
+
+Missing fields count as null. Equality and inequality against null act as null
+checks; inequality against a non-null value excludes null records. Nonempty
+`not_in` excludes null records and matches nothing when its list contains null.
+Empty `in` matches nothing and empty `not_in` matches everything. Insensitive
+membership folds strings only when every list element is a string.
+
 Ordinary count and page queries require read permission and a quorum-confirmed
 applied barrier. They do not create idempotency records or advance the mutation
 revision. Transactional queries require the returned transaction identity and

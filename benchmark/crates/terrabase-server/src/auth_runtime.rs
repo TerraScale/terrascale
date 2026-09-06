@@ -396,13 +396,19 @@ struct UniqueIndex {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PredicateInput {
     field: String,
+    /// Missing fields are null. Eq/ne against null are null checks; ne against
+    /// a non-null value excludes null records. Empty in/not_in match none/all.
+    /// Nonempty not_in excludes null records and matches nothing with a null list member.
     value: serde_json::Value,
     #[schema(value_type = Option<PredicateOperatorSchema>)]
     #[serde(default)]
     operator: Option<String>,
+    /// All AND terms must match, plus at least one OR term when present,
+    /// independent of request order (Better Auth 1.7.2 Kysely/Drizzle grouping).
     #[schema(value_type = Option<PredicateConnectorSchema>)]
     #[serde(default)]
     connector: Option<String>,
+    /// Insensitive membership folds strings only for homogeneous string lists.
     #[schema(value_type = Option<PredicateModeSchema>)]
     #[serde(default)]
     mode: Option<String>,

@@ -72,7 +72,7 @@ pub enum Operator {
     StartsWith,
     EndsWith,
 }
-/// Predicate connector, evaluated in request order.
+/// Predicate connector for the SQL-style AND group and OR group.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub enum Connector {
     #[default]
@@ -80,7 +80,7 @@ pub enum Connector {
     OR,
 }
 /// String sensitivity.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
     #[default]
@@ -175,8 +175,25 @@ pub(crate) fn compare_records(left: &Record, right: &Record, sort: &QuerySort) -
 }
 
 fn one(record: &Record, predicate: &Predicate) -> bool {
-    let value = scalar(record.get(&predicate.field).unwrap_or(&Value::Null), predicate.mode);
-    let expected = scalar(&predicate.value, predicate.mode);
+    // Keep predicate behavior aligned with the maintained SQL adapters:
+    // missing fields are SQL NULL, so equality and inequality have explicit
+    // null semantics rather than ordinary JSON inequality.
+    let raw_value = record.get(&predicate.field).unwrap_or(&Value::Null);
+    let value = raw_value;
+    let expected = &predicate.value;
+    let value_is_null = value.is_null();
+    let expected_is_null = expected.is_null();
+    if matches!(predicate.operator, Operator::Eq | Operator::Ne)
+        && (value_is_null || expected_is_null)
+    {
+        return match predicate.operator {
+            Operator::Eq => value_is_null && expected_is_null,
+            Operator::Ne => !value_is_null && expected_is_null,
+            _ => unreachable!(),
+        };
+    }
+    let value = scalar(value, predicate.mode);
+    let expected = scalar(expected, predicate.mode);
     let ordering = match (&value, &expected) {
         (Value::Number(a), Value::Number(b)) => Some(compare_numbers(a, b)),
         (Value::String(a), Value::String(b)) => Some(a.cmp(b)),
@@ -189,14 +206,38 @@ fn one(record: &Record, predicate: &Predicate) -> bool {
         Operator::Lte => ordering.is_some_and(|order| order.is_le()),
         Operator::Gt => ordering.is_some_and(|order| order.is_gt()),
         Operator::Gte => ordering.is_some_and(|order| order.is_ge()),
-        Operator::In => predicate
-            .value
-            .as_array()
-            .is_some_and(|values| values.iter().any(|item| scalar(item, predicate.mode) == value)),
-        Operator::NotIn => predicate
-            .value
-            .as_array()
-            .is_some_and(|values| values.iter().all(|item| scalar(item, predicate.mode) != value)),
+        Operator::In => predicate.value.as_array().is_some_and(|values| {
+            !value_is_null && !values.is_empty() && {
+                let insensitive =
+                    predicate.mode == Mode::Insensitive && values.iter().all(Value::is_string);
+                let comparison_value = if insensitive {
+                    scalar(raw_value, Mode::Insensitive)
+                } else {
+                    raw_value.clone()
+                };
+                values.iter().any(|item| {
+                    let item =
+                        if insensitive { scalar(item, Mode::Insensitive) } else { item.clone() };
+                    item == comparison_value
+                })
+            }
+        }),
+        Operator::NotIn => predicate.value.as_array().is_some_and(|values| {
+            if values.is_empty() {
+                return true;
+            }
+            if value_is_null || values.iter().any(Value::is_null) {
+                return false;
+            }
+            let insensitive =
+                predicate.mode == Mode::Insensitive && values.iter().all(Value::is_string);
+            let comparison_value =
+                if insensitive { scalar(raw_value, Mode::Insensitive) } else { raw_value.clone() };
+            values.iter().all(|item| {
+                let item = if insensitive { scalar(item, Mode::Insensitive) } else { item.clone() };
+                item != comparison_value
+            })
+        }),
         Operator::Contains => value
             .as_str()
             .zip(expected.as_str())
@@ -212,16 +253,18 @@ fn one(record: &Record, predicate: &Predicate) -> bool {
     }
 }
 pub(crate) fn matches(record: &Record, predicates: &[Predicate]) -> bool {
-    let mut result = None;
-    for predicate in predicates {
-        let matched = one(record, predicate);
-        result = Some(match (result, predicate.connector) {
-            (None, _) => matched,
-            (Some(prior), Connector::AND) => prior && matched,
-            (Some(prior), Connector::OR) => prior || matched,
-        });
-    }
-    result.unwrap_or(true)
+    // SQL grouping is all AND terms, combined with the OR term group. This
+    // prevents an OR email predicate from bypassing a tenant guard.
+    let and_matches = predicates
+        .iter()
+        .filter(|predicate| matches!(predicate.connector, Connector::AND))
+        .all(|predicate| one(record, predicate));
+    let or_terms: Vec<_> = predicates
+        .iter()
+        .filter(|predicate| matches!(predicate.connector, Connector::OR))
+        .collect();
+    and_matches
+        && (or_terms.is_empty() || or_terms.into_iter().any(|predicate| one(record, predicate)))
 }
 
 #[cfg(test)]
