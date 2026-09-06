@@ -64,6 +64,7 @@ pub mod engine_host;
 pub mod grpc;
 pub mod host;
 pub mod member_host;
+pub mod placement;
 pub mod reactive;
 pub mod registry;
 pub mod replication;

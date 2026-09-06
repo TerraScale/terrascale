@@ -53,6 +53,13 @@ use utoipa_scalar::Servable;
 
 use crate::api_keys::Verbs;
 
+#[path = "api_schema.rs"]
+mod schema;
+#[path = "api_usage_indexes.rs"]
+mod usage_indexes;
+#[path = "api_webhooks.rs"]
+mod webhooks;
+
 /// The public API's path prefix.
 pub const API_PREFIX: &str = "/api/v1";
 
@@ -540,6 +547,8 @@ pub struct ApiState {
     /// HMAC key ring used for view capability issuance and direct regional
     /// capability verification.
     pub capability_keys: Arc<crate::reactive_api::CapabilityKeyRing>,
+    /// Authorized regional encryption-key leases for durable webhook secrets.
+    pub webhook_keys: Option<Arc<dyn crate::webhook_api::WebhookKeyLeases>>,
 }
 
 /// The served route table as an `OpenAPI` router: the single source of both
@@ -553,6 +562,14 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(get_database, delete_database))
         .routes(routes!(restore_database))
         .routes(routes!(list_collections))
+        .routes(routes!(schema::get_schema, schema::put_schema))
+        .routes(routes!(usage_indexes::database_usage))
+        .routes(routes!(usage_indexes::delete_index))
+        .routes(routes!(usage_indexes::index_recommendations))
+        .routes(routes!(webhooks::list_webhooks, webhooks::create_webhook))
+        .routes(routes!(webhooks::delete_webhook))
+        .routes(routes!(webhooks::list_deliveries))
+        .routes(routes!(webhooks::replay_webhook))
         .routes(routes!(list_indexes, create_index))
         .routes(routes!(list_documents))
         .routes(routes!(batch_documents))
@@ -578,6 +595,8 @@ fn enrich_openapi(raw: String) -> String {
         return raw;
     };
     document["security"] = serde_json::json!([{ "bearerAuth": [] }]);
+    let mut schemas = document["components"]["schemas"].as_object().cloned().unwrap_or_default();
+    schemas.extend(openapi_schemas().as_object().expect("schema table").clone());
     document["components"] = serde_json::json!({
         "securitySchemes": {
             "bearerAuth": {
@@ -590,7 +609,7 @@ fn enrich_openapi(raw: String) -> String {
                 "description": "Offer terrascale.sync.v1 and terrascale.cap.<view capability>; the server selects only terrascale.sync.v1."
             }
         },
-        "schemas": openapi_schemas()
+        "schemas": schemas
     });
 
     let Some(paths) = document.get_mut("paths").and_then(serde_json::Value::as_object_mut) else {
@@ -1047,11 +1066,6 @@ fn openapi_schemas() -> serde_json::Value {
         "CreateIndexRequest": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" } } },
         "BatchRequest": { "type": "object", "required": ["operations"], "properties": { "operations": { "type": "array", "minItems": 1, "maxItems": 1000, "items": { "type": "object", "required": ["op", "id"], "properties": { "op": { "type": "string", "enum": ["put", "patch", "delete"] }, "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
         "RestoreRequest": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "at": { "type": "integer", "format": "int64" } } },
-        "WebhookRequest": { "oneOf": [
-            { "type": "object", "required": ["endpoint"], "properties": { "endpoint": { "type": "string", "format": "uri" } } },
-            { "type": "object", "required": ["url"], "properties": { "url": { "type": "string", "format": "uri" } } },
-            { "type": "object", "required": ["id"], "properties": { "id": { "type": "string" } } }
-        ] },
         "AttachViewRequest": { "type": "object", "required": ["databaseId", "statement"], "properties": { "databaseId": { "type": "string" }, "statement": { "type": "string" }, "parameters": { "type": "string", "description": "Base64 encoded SQL parameter bytes" }, "checkpoint": { "type": ["string", "null"], "description": "Base64 encoded opaque resume checkpoint" }, "subscription": { "type": ["string", "null"] }, "entitlement_epoch": { "type": "integer", "format": "int64" } } },
         "AttachViewResponse": { "type": "object", "required": ["view", "generation", "snapshot_chunks", "log", "checkpoint", "capability", "capability_header", "offset"], "properties": { "view": { "type": "string" }, "generation": { "type": "integer", "format": "int64" }, "snapshot_chunks": { "type": "array", "items": { "type": "string" } }, "log": { "type": "string" }, "checkpoint": { "type": "string" }, "capability": { "type": "string" }, "capability_header": { "type": "string" }, "offset": { "type": "integer", "format": "int64" } } },
     });
@@ -3583,11 +3597,12 @@ mod tests {
             timetravel,
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
+            webhook_keys: None,
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         })
     }
 
-    fn state_with_keys_and_control() -> Arc<ApiState> {
+    pub(super) fn state_with_keys_and_control() -> Arc<ApiState> {
         use crate::api_keys::KeyStore;
         use crate::api_keys::Scope;
         use crate::api_keys::Verbs;
@@ -3628,6 +3643,7 @@ mod tests {
             timetravel,
             guards: Arc::new(crate::guards::AbuseGuards::default()),
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
+            webhook_keys: None,
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         })
     }
@@ -3700,6 +3716,8 @@ mod tests {
             ("/api/v1/databases/{name}/backups", "get"),
             ("/api/v1/databases/{name}/branches", "get"),
             ("/api/v1/databases/{name}/reactive", "get"),
+            ("/api/v1/databases/{name}/collections/{collection}/schema", "get"),
+            ("/api/v1/databases/{name}/collections/{collection}/schema", "put"),
             ("/api/v1/reactive/views", "post"),
             ("/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}", "get"),
             ("/api/v1/reactive/views/{view}/{generation}/log", "get"),
@@ -3709,14 +3727,7 @@ mod tests {
                 "the contract lists {route} {path}"
             );
         }
-        for path in [
-            "/api/v1/databases/{name}/usage",
-            "/api/v1/databases/{name}/webhooks",
-            "/api/v1/databases/{name}/exports",
-            "/api/v1/databases/{name}/collections/{collection}/schema",
-            "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
-            "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
-        ] {
+        for path in ["/api/v1/databases/{name}/exports"] {
             assert!(!paths.contains_key(path), "unavailable route {path} is not published");
         }
         let response = router(state())
@@ -3776,8 +3787,10 @@ mod tests {
             "attach_view",
             "restore_backup",
             "create_branch",
+            "put_schema",
         ];
         let mut operation_count = 0;
+        let mut operation_ids = std::collections::BTreeSet::new();
         for item in paths.values() {
             let item = item.as_object().expect("path item");
             for (method, operation) in item {
@@ -3790,6 +3803,7 @@ mod tests {
                     .get("operationId")
                     .and_then(serde_json::Value::as_str)
                     .expect("operation id");
+                assert!(operation_ids.insert(id), "duplicate operation id: {id}");
                 assert_eq!(
                     operation.get("security"),
                     Some(&if id == "view_websocket" {
@@ -3855,7 +3869,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(operation_count, 27, "registered route count changed");
+        assert_eq!(operation_count, 37, "registered route count changed");
     }
 
     #[tokio::test]
@@ -5392,14 +5406,8 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 4096).await.expect("body");
         let body = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(body.contains("\"field\":\"status\""), "{body}");
-        // D-31 lifecycle routes are not mounted until a durable coordinator
-        // adapter is composed; an absent route must not advertise a 501
-        // launch operation or mutate any guard state.
-        for (method, path) in [
-            ("DELETE", "/api/v1/databases/prod/collections/orders/indexes/status"),
-            ("GET", "/api/v1/databases/prod/collections/orders/indexes/recommendations"),
-            ("GET", "/api/v1/databases/prod/collections/orders/schema"),
-        ] {
+        // This collection has indexes but no applied schema yet.
+        for (method, path) in [("GET", "/api/v1/databases/prod/collections/orders/schema")] {
             let request = match method {
                 "DELETE" => Request::delete(path),
                 _ => Request::get(path),

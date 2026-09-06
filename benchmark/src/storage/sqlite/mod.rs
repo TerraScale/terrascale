@@ -90,7 +90,9 @@
 #![allow(clippy::all, reason = "SQLite backend lint debt is tracked behind the storage seam")]
 #![allow(clippy::pedantic, reason = "SQLite backend lint debt is tracked behind the storage seam")]
 
+mod descriptor_removal;
 mod invisible;
+mod schema_metadata;
 mod shadow;
 #[cfg(test)]
 mod tests;
@@ -859,6 +861,14 @@ fn extract_column_value(document: &Document, field: &str) -> Option<ColumnValue>
 
 /// The schema statements every location carries.
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS schema_metadata (
+    database_id TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    collection TEXT NOT NULL,
+    envelope BLOB NOT NULL,
+    PRIMARY KEY (database_id, branch, collection)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value BLOB NOT NULL
@@ -4101,6 +4111,26 @@ impl SqliteStorage {
 }
 
 impl StoragePort for SqliteStorage {
+    fn schema_metadata_load(
+        &self,
+        database: &str,
+        branch: &str,
+        collection: &str,
+    ) -> Result<Option<Vec<u8>>, ()> {
+        self.load_schema_metadata(database, branch, collection)
+    }
+
+    fn schema_metadata_compare_exchange(
+        &mut self,
+        database: &str,
+        branch: &str,
+        collection: &str,
+        expected: Option<&[u8]>,
+        record: &[u8],
+    ) -> Result<bool, ()> {
+        self.compare_exchange_schema_metadata(database, branch, collection, expected, record)
+    }
+
     fn index_lifecycle_events(&self, from: u64, limit: usize) -> Result<Vec<Vec<u8>>, ()> {
         let reader = self.reader();
         let mut statement = reader
@@ -5183,6 +5213,14 @@ impl StoragePort for SqliteStorage {
         field: &str,
     ) -> Result<DescriptorRegistration, IndexDescriptorError> {
         self.register_descriptor(collection, field)
+    }
+
+    fn remove_index_descriptor(
+        &mut self,
+        collection: &CollectionName,
+        field: &str,
+    ) -> Result<bool, super::IndexDescriptorRemovalError> {
+        self.remove_descriptor(collection, field)
     }
 
     fn index_descriptors(&self) -> Result<Vec<DescriptorListing>, ()> {

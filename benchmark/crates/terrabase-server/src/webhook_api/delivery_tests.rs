@@ -6,6 +6,7 @@ use std::time::Duration;
 struct TestPorts {
     now: AtomicU64,
     sent: AtomicU64,
+    destruction_unavailable: std::sync::atomic::AtomicBool,
     provision_gate: std::sync::Mutex<Option<ProvisionGate>>,
 }
 
@@ -46,7 +47,11 @@ impl WebhookSecrets for TestPorts {
         Ok(())
     }
     fn destroy(&self, _: &TenantScope, _: &str, _: &str) -> Result<(), SecretError> {
-        Ok(())
+        if self.destruction_unavailable.load(Ordering::SeqCst) {
+            Err(SecretError::Unavailable)
+        } else {
+            Ok(())
+        }
     }
     fn get(&self, _: &TenantScope, _: &str, _: &str) -> Result<Vec<u8>, SecretError> {
         Ok(b"test-secret".to_vec())
@@ -268,6 +273,42 @@ async fn create_handler_keeps_runtime_responsive_while_secret_provider_blocks() 
     resume.send(()).expect("runtime releases provider");
     assert_eq!(request.await.expect("handler").status(), StatusCode::CREATED);
     drop(ports);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
+    engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn deletion_reports_secret_destruction_failure_and_remains_retryable() {
+    let root = std::env::temp_dir().join(format!(
+        "terrascale-webhook-delete-{}",
+        terrabase::identity::process_generator().generate().to_text()
+    ));
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("engine"),
+    );
+    let owner = engine.database_owner();
+    let scope = TenantScope::new(
+        owner.tenant().to_text(),
+        owner.project().to_text(),
+        owner.database().to_text(),
+    )
+    .expect("scope");
+    let ports = Arc::new(TestPorts::default());
+    let service = service(&engine, &ports);
+    let endpoint = service
+        .create(&scope, &CreateWebhook { endpoint: "https://hooks.example/events".into() })
+        .expect("create");
+    ports.destruction_unavailable.store(true, Ordering::SeqCst);
+    assert_eq!(
+        service.delete(&scope, &endpoint.id).expect_err("destruction failed").status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert!(service.list(&scope).expect("list").is_empty());
+    ports.destruction_unavailable.store(false, Ordering::SeqCst);
+    assert!(service.delete(&scope, &endpoint.id).expect("retry destruction").deleted);
+    drop(service);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
     engine.shutdown().expect("shutdown");
     std::fs::remove_dir_all(root).expect("cleanup");

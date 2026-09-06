@@ -13,6 +13,7 @@ publish = false
 resolver = "3"
 members = [
   "crates/terrabase-causal",
+  "crates/terrabase-auth",
   "crates/terrabase-crdt",
   "crates/terrabase-sync-core",
   "crates/terrabase-member-transport",
@@ -56,6 +57,8 @@ aws-lc-rs = { version = "1.18.0", default-features = false, features = ["non-fip
 
 blake3 = "1.8.2"
 zeroize = "1.9.0"
+memmap2 = "0.9.9"
+rustix = { version = "1.1.4", features = ["net", "process"] }
 # ADR 0027 'Libraries and evidence': Rust uses the `ulid` crate behind a
 # TerraScale-owned wrapper (src/identity/). Every 1.x manifest of this crate
 # declares `std = ["rand"]`, so the engine-core build takes NO features at

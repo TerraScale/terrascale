@@ -210,6 +210,21 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         }
     };
 
+    if production.control.is_some() {
+        let outcome = serve_pending_placement_control(&config, production).await;
+        let report = member.drain().await;
+        return match outcome {
+            Ok(()) => report.storage.map_err(|error| {
+                Box::new(DaemonError::ProductionStartup(ProductionStartupError::Catalog(
+                    crate::production::ProductionCatalogError::Cleanup(error),
+                ))) as Box<dyn Error + Send + Sync>
+            }),
+            Err(error) => Err(Box::new(DaemonError::ProductionStartup(
+                error.with_storage_cleanup(report.storage),
+            ))),
+        };
+    }
+
     // Membership is deliberately not inferred from the static file. The
     // orchestrator's durable admission record is the authority; until its
     // source is wired, close the already-opened endpoint and catalog and
@@ -221,6 +236,124 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     })
     .with_storage_cleanup(report.storage);
     Err(Box::new(DaemonError::ProductionStartup(error)))
+}
+
+/// Runs authenticated control intent and lifecycle observations while admission is
+/// pending. The journal has no accepted-membership operation, so no public API or
+/// writer is started and process readiness stays false throughout this phase.
+async fn serve_pending_placement_control(
+    config: &ServerConfig,
+    production: &crate::config::ProductionConfig,
+) -> Result<(), ProductionStartupError> {
+    use terrabase_tbep::grpc::placement_control::PlacementControlServer;
+    use terrabase_tbep::placement::{PlacementBoundary, PlacementJournal};
+    let unavailable = |detail| {
+        ProductionStartupError::Component(crate::production::ProductionComponentError {
+            component: crate::production::ProductionComponent::ControlApi,
+            detail,
+        })
+    };
+    let control = production
+        .control
+        .as_ref()
+        .ok_or_else(|| unavailable("placement control configuration missing"))?;
+    let boundary = PlacementBoundary::new(
+        production.environment.name.as_str(),
+        &production.environment.cluster.to_text(),
+        &production.environment.member.to_text(),
+        production.databases.iter().filter(|database| database.enabled).map(|database| {
+            (
+                terrabase_cluster::production::DatabaseRouteScope::new(
+                    database.tenant,
+                    database.project,
+                    database.database,
+                ),
+                database.region.as_str().to_owned(),
+            )
+        }),
+    )
+    .map_err(|_| unavailable("placement control boundary is invalid"))?;
+    let journal =
+        Arc::new(PlacementJournal::open(&control.proposal_journal, boundary).map_err(|_| {
+            unavailable("durable placement proposal journal cannot be opened or validated")
+        })?);
+    let grpc = TbepGrpcConfig::try_new(
+        config.max_message_bytes,
+        config.max_inflight,
+        config.request_timeout,
+        config.tls_handshake_timeout,
+        config.shutdown_grace,
+        control.orchestrator_principals.clone(),
+    )
+    .map_err(|_| unavailable("placement control transport limits are invalid"))?;
+    let server = Arc::new(
+        PlacementControlServer::new(journal, grpc)
+            .map_err(|_| unavailable("placement control principal policy is invalid"))?,
+    );
+    let certificate = read_pem(&production.transport.server_certificate, false)
+        .map_err(|_| unavailable("placement control TLS certificate is unavailable"))?;
+    let key = read_pem(&production.transport.server_private_key, true)
+        .map_err(|_| unavailable("placement control TLS private key is unavailable"))?;
+    let ca = read_pem(&production.transport.client_ca, false)
+        .map_err(|_| unavailable("placement control TLS CA is unavailable"))?;
+    let listener = server
+        .bind_tls(production.transport.tbep_listen, &certificate, &key, &ca)
+        .await
+        .map_err(|_| unavailable("placement control mTLS listener cannot bind"))?;
+    let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
+    metrics.set_component_health(Component::Metrics, HealthStatus::Healthy);
+    // Starting is retained. A persisted proposal is not a membership proof.
+    let observations = tokio::net::TcpListener::bind(production.transport.metrics_listen)
+        .await
+        .map_err(|_| unavailable("pending placement metrics listener cannot bind"))?;
+    let (control_stop, control_signal) = oneshot::channel();
+    let mut control_task = tokio::spawn(listener.serve(async {
+        let _ = control_signal.await;
+    }));
+    let (metrics_stop, metrics_signal) = oneshot::channel();
+    let app = crate::http::router(metrics);
+    let mut metrics_task = tokio::spawn(async move {
+        axum::serve(observations, app)
+            .with_graceful_shutdown(async {
+                let _ = metrics_signal.await;
+            })
+            .await
+    });
+    let mut control_finished = false;
+    let mut metrics_finished = false;
+    let outcome = tokio::select! {
+        result = wait_for_shutdown() => result.map_err(|_| unavailable("shutdown signal listener failed")),
+        _ = &mut control_task => {
+            control_finished = true;
+            Err(unavailable("placement control listener stopped unexpectedly"))
+        },
+        _ = &mut metrics_task => {
+            metrics_finished = true;
+            Err(unavailable("pending placement metrics listener stopped unexpectedly"))
+        },
+    };
+    server.begin_drain();
+    let _ = control_stop.send(());
+    let _ = metrics_stop.send(());
+    let drained = tokio::time::timeout(config.shutdown_grace, async {
+        if !control_finished {
+            control_task
+                .await
+                .map_err(|_| unavailable("placement control task failed"))?
+                .map_err(|_| unavailable("placement control listener drain failed"))?;
+        }
+        if !metrics_finished {
+            metrics_task
+                .await
+                .map_err(|_| unavailable("pending placement metrics task failed"))?
+                .map_err(|_| unavailable("pending placement metrics drain failed"))?;
+        }
+        server.drain().await.map_err(|_| unavailable("placement journal work did not drain"))
+    })
+    .await
+    .map_err(|_| unavailable("pending placement shutdown deadline elapsed"))?;
+    drained?;
+    outcome
 }
 
 fn build_production_transport(
@@ -437,6 +570,7 @@ async fn serve_public_api(
         timetravel,
         guards: Arc::new(crate::guards::AbuseGuards::default()),
         origin_proof_keys: Arc::new(origin_proof_keys),
+        webhook_keys: None,
         capability_keys: Arc::new(capability_keys),
     });
     let listener = tokio::net::TcpListener::bind(public.listen).await?;

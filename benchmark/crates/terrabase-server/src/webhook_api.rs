@@ -28,7 +28,9 @@ use terrabase::{CommitError, CommitOutcome, EngineError, LocalDurability, Operat
 use crate::guards::AbuseGuards;
 
 mod https;
+mod secrets;
 pub use https::NativeHttpsTransport;
+pub use secrets::{EngineWebhookSecrets, WebhookKeyLeases};
 
 /// Maximum endpoint URL length accepted by the service.
 pub const MAX_ENDPOINT_BYTES: usize = 2_048;
@@ -81,7 +83,7 @@ impl TenantScope {
 
 /// A webhook endpoint as stored durably.  Secrets are never part of this
 /// value, serialized responses, delivery logs, or error messages.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct WebhookEndpoint {
     /// Stable durable endpoint identity.
     pub id: String,
@@ -94,7 +96,7 @@ pub struct WebhookEndpoint {
 }
 
 /// Input for endpoint creation.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateWebhook {
     /// HTTPS destination.  `url` is accepted for old clients.
     #[serde(alias = "url")]
@@ -113,7 +115,7 @@ pub struct Publication {
 }
 
 /// Durable delivery state and the latest redacted outcome.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct DeliveryRecord {
     /// Stable idempotency identity (`endpoint/event`).
     pub id: String,
@@ -136,7 +138,7 @@ pub struct DeliveryRecord {
 }
 
 /// A durable delivery log page.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct DeliveryLog {
     /// Entries in durable attempt order.
     pub deliveries: Vec<DeliveryRecord>,
@@ -324,6 +326,21 @@ pub trait WebhookJournal: Send + Sync + 'static {
     ) -> Result<Vec<Publication>, StorageError>;
 }
 
+enum WebhookEngine {
+    Engine(Arc<Engine>),
+    Host(Arc<terrabase_tbep::member_host::MemberHost>),
+}
+
+impl std::ops::Deref for WebhookEngine {
+    type Target = Engine;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Engine(engine) => engine,
+            Self::Host(host) => host.engine(),
+        }
+    }
+}
+
 /// Engine-backed publication journal adapter.
 ///
 /// `Engine::journal_rows` is the same durable revision line consumed by the
@@ -332,14 +349,20 @@ pub trait WebhookJournal: Send + Sync + 'static {
 /// stable across restart and cannot collide merely because two documents share
 /// one commit sequence.
 pub struct EngineWebhookJournal {
-    engine: Arc<Engine>,
+    engine: WebhookEngine,
 }
 
 impl EngineWebhookJournal {
     /// Binds the adapter to an already opened, durable Engine.
     #[must_use]
     pub fn new(engine: Arc<Engine>) -> Self {
-        Self { engine }
+        Self { engine: WebhookEngine::Engine(engine) }
+    }
+
+    /// Uses the database host already admitted by the public API.
+    #[must_use]
+    pub fn from_host(host: Arc<terrabase_tbep::member_host::MemberHost>) -> Self {
+        Self { engine: WebhookEngine::Host(host) }
     }
 }
 
@@ -386,7 +409,7 @@ impl WebhookJournal for EngineWebhookJournal {
 /// process restart. A process-local mutex only serializes this adapter's
 /// compare-and-write operations; it is not a source of state or a fallback.
 pub struct EngineWebhookStorage {
-    engine: Arc<Engine>,
+    engine: WebhookEngine,
     writes: Mutex<()>,
 }
 
@@ -394,7 +417,13 @@ impl EngineWebhookStorage {
     /// Binds storage to an already opened, durable Engine.
     #[must_use]
     pub fn new(engine: Arc<Engine>) -> Self {
-        Self { engine, writes: Mutex::new(()) }
+        Self { engine: WebhookEngine::Engine(engine), writes: Mutex::new(()) }
+    }
+
+    /// Uses the database host already admitted by the public API.
+    #[must_use]
+    pub fn from_host(host: Arc<terrabase_tbep::member_host::MemberHost>) -> Self {
+        Self { engine: WebhookEngine::Host(host), writes: Mutex::new(()) }
     }
 
     fn engine_scope(&self, scope: &TenantScope) -> Result<terrabase::TenantScope, StorageError> {
@@ -595,6 +624,7 @@ fn is_webhook_metadata_row(canonical: &[u8]) -> bool {
     let Some(collection) = canonical.get(4..4_usize.saturating_add(length)) else { return false };
     collection == WEBHOOK_ENDPOINTS_COLLECTION.as_bytes()
         || collection == WEBHOOK_DELIVERIES_COLLECTION.as_bytes()
+        || collection == secrets::COLLECTION.as_bytes()
 }
 
 impl WebhookStorage for EngineWebhookStorage {
@@ -1316,8 +1346,10 @@ impl WebhookService {
             .ok_or_else(WebhookError::not_found)?;
         let deleted = self.storage.delete_endpoint(scope, id).map_err(WebhookError::storage)?;
         self.guard.release(scope, &endpoint.endpoint);
-        let _ = self.secrets.destroy(scope, id, &self.region);
-        Ok(deleted)
+        match self.secrets.destroy(scope, id, &self.region) {
+            Ok(()) | Err(SecretError::NotFound) => Ok(deleted),
+            Err(error) => Err(WebhookError::secret(error)),
+        }
     }
 
     /// Replays one durable delivery immediately, then performs it once.

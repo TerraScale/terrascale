@@ -13,10 +13,14 @@ use aws_lc_rs::{aead, digest, hkdf, rand};
 use zeroize::Zeroize;
 
 mod local_file;
+#[cfg(target_os = "linux")]
+mod key_delivery;
 mod oci_vault;
 mod provider;
 
 pub use local_file::LocalFileKeyProvider;
+#[cfg(target_os = "linux")]
+pub use key_delivery::OciVaultKeyDelivery;
 pub use oci_vault::UnconfiguredOciVaultProvider;
 pub use provider::{
     ArtifactKind, DatabaseKeyHierarchy, DatabaseKeyLease, DatabaseKeyVersion, KeyProviderIdentity,
@@ -150,7 +154,12 @@ impl std::error::Error for EncryptionError {}
 
 /// A random 256-bit database key held in zeroizing memory.
 pub struct DatabaseKey {
-    bytes: [u8; 32],
+    bytes: KeyMemory,
+}
+
+enum KeyMemory {
+    Local([u8; 32]),
+    Locked(memmap2::MmapMut),
 }
 
 impl DatabaseKey {
@@ -163,7 +172,7 @@ impl DatabaseKey {
     pub fn generate() -> Result<Self, EncryptionError> {
         let mut bytes = [0u8; 32];
         rand::fill(&mut bytes).map_err(|_| EncryptionError::CryptographicFailure)?;
-        Ok(Self { bytes })
+        Ok(Self { bytes: KeyMemory::Local(bytes) })
     }
 
     /// Creates a key from exactly 256 bits of caller-owned key material.
@@ -171,7 +180,31 @@ impl DatabaseKey {
     /// Callers should clear any other copy of the input after construction.
     #[must_use]
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self { bytes }
+        Self { bytes: KeyMemory::Local(bytes) }
+    }
+
+    fn material(&self) -> &[u8] {
+        match &self.bytes {
+            KeyMemory::Local(bytes) => bytes,
+            KeyMemory::Locked(bytes) => bytes,
+        }
+    }
+
+    fn material_mut(&mut self) -> &mut [u8] {
+        match &mut self.bytes {
+            KeyMemory::Local(bytes) => bytes,
+            KeyMemory::Locked(bytes) => bytes,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn locked() -> Result<Self, EncryptionError> {
+        let memory = memmap2::MmapMut::map_anon(32)
+            .map_err(|_| EncryptionError::ProductionProviderUnavailable)?;
+        memory.lock().map_err(|_| EncryptionError::ProductionProviderUnavailable)?;
+        memory.advise(memmap2::Advice::DontDump)
+            .map_err(|_| EncryptionError::ProductionProviderUnavailable)?;
+        Ok(Self { bytes: KeyMemory::Locked(memory) })
     }
 
     /// Immediately destroys this key's material.
@@ -181,7 +214,7 @@ impl DatabaseKey {
     /// destructor performs the same operation, so calling this method is
     /// idempotent.
     pub fn destroy(&mut self) {
-        self.bytes.zeroize();
+        self.material_mut().zeroize();
     }
 }
 
@@ -561,7 +594,7 @@ impl ArtifactCipher {
         }
 
         let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, b"terrabase/database-key/v1");
-        let prk = salt.extract(&database_key.bytes);
+        let prk = salt.extract(database_key.material());
         let info = context.derivation_info();
         let info_parts = [info.as_slice()];
         let okm = prk

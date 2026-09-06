@@ -226,6 +226,12 @@ for relative in ("conformance/reactive.json",):
     for key in ("snapshot", "log", "reset"):
         if re.fullmatch(r"[0-9a-f]*", reactive[key].get("hex", "")) is None:
             raise SystemExit(f"reactive {key} bytes are not canonical hex")
+    for key in ("snapshot", "log"):
+        headers = reactive[key].get("headers", {})
+        if headers.get("content-type") != "application/msgpack" or headers.get("cache-control") != "private, max-age=0":
+            raise SystemExit(f"reactive {key} fixture is missing served immutable response headers")
+        if re.fullmatch(r'"[^"\r\n]+"', headers.get("etag", "")) is None:
+            raise SystemExit(f"reactive {key} fixture has no strong ETag")
 
 msgpack_manifest = root / "msgpack" / "terrascale.sync.v1.msgpack.json"
 manifest_bytes = msgpack_manifest.read_bytes()

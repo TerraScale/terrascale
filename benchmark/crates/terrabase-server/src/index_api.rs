@@ -209,7 +209,7 @@ pub struct CoordinatorIndex {
 }
 
 /// A recommendation produced by the D-31 coordinator.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct CoordinatorRecommendation {
     /// Candidate identity (stable across retries).
     pub candidate_id: String,
@@ -284,7 +284,7 @@ pub struct IndexList {
 }
 
 /// Read response for recommendations.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct RecommendationList {
     /// Current lifecycle generation. Pass this to [`ApplyRequest`].
     pub generation: u64,

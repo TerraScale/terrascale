@@ -60,6 +60,7 @@ impl Fixture {
                 )
                 .expect("origin keys"),
             ),
+            webhook_keys: None,
             capability_keys: Arc::new(
                 CapabilityKeyRing::new(b"e17-capability-current", Some(b"e17-capability-previous"))
                     .expect("capability keys"),

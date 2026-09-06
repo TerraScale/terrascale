@@ -63,7 +63,9 @@ pub const MAX_SCHEMA_VERSION: u64 = 9_007_199_254_740_991;
 
 /// A durable target.  `branch` is part of the identity, not a mutable field
 /// in a schema record, so a schema can never accidentally cross a branch.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, utoipa::ToSchema,
+)]
 pub struct SchemaTarget {
     /// The immutable database identifier.
     pub database: String,
@@ -74,7 +76,7 @@ pub struct SchemaTarget {
 }
 
 /// Database identity supplied by the control plane.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DatabaseIdentity {
     /// Immutable database identifier/incarnation.
     pub database_id: String,
@@ -83,7 +85,7 @@ pub struct DatabaseIdentity {
 }
 
 /// The supported scalar and CRDT field types in `terrascale.schema.json`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum FieldType {
     /// UTF-8 string.
@@ -129,7 +131,7 @@ impl FieldType {
 }
 
 /// Collection-level merge policy.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum MergePolicy {
     /// Remove wins when concurrent changes touch one field.
@@ -142,7 +144,7 @@ pub enum MergePolicy {
 }
 
 /// A typed field descriptor.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 #[allow(
     clippy::struct_excessive_bools,
@@ -174,8 +176,9 @@ pub struct FieldDescriptor {
 }
 
 /// An ordinary or FTS index descriptor.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
+#[schema(as = SchemaIndexDescriptor)]
 pub struct IndexDescriptor {
     /// Stable index identifier.
     pub name: String,
@@ -190,7 +193,7 @@ pub struct IndexDescriptor {
 }
 
 /// Index implementation kind.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum IndexKind {
     /// Extracted-value B-tree index.
@@ -214,7 +217,7 @@ impl<'de> Deserialize<'de> for IndexKind {
 }
 
 /// Explicit full-text descriptor.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FtsDescriptor {
     /// Fields indexed for full-text search.
@@ -266,7 +269,7 @@ impl<'de> Deserialize<'de> for FtsDescriptor {
 }
 
 /// Explicit TTL descriptor.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TtlDescriptor {
     /// Timestamp field used as the expiry deadline.
@@ -274,7 +277,9 @@ pub struct TtlDescriptor {
 }
 
 /// A first-class field rename migration.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize, utoipa::ToSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct FieldRename {
     /// Existing field name in stored documents.
@@ -284,7 +289,7 @@ pub struct FieldRename {
 }
 
 /// Canonical collection schema, matching the SDK's `CollectionSchema`.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CollectionSchema {
     /// Collection identifier.
@@ -587,7 +592,7 @@ const fn server_merge_policy(value: FamilyMergePolicy) -> MergePolicy {
 }
 
 /// The durable response to an apply operation.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SchemaDocument {
     /// Target identity.
     pub target: SchemaTarget,
@@ -606,7 +611,7 @@ pub struct SchemaDocument {
 
 /// Resumable migration state.  The worker that processes documents reports
 /// progress through [`SchemaService::record_backfill_progress`].
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MigrationStatus {
     /// Stable migration operation identifier.
     pub operation_id: String,
@@ -626,7 +631,7 @@ pub struct MigrationStatus {
 }
 
 /// Migration lifecycle state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MigrationState {
     /// Waiting for a backfill worker.
@@ -640,7 +645,7 @@ pub enum MigrationState {
 }
 
 /// One bounded migration step.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MigrationStep {
     /// Step kind (`field_rename`, `index_backfill`, or `ttl_backfill`).
     pub kind: String,

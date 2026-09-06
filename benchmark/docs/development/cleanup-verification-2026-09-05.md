@@ -34,3 +34,29 @@ translation and tunnel addresses, native public IPv6, and a public initial
 rejected without a second network send. These are adapter-level tests; real
 provider routing, redirect behavior, and the broader release gates still need
 their own evidence.
+
+The native transport now uses the existing Rustls/Hyper dependencies with
+Mozilla roots, original-hostname verification, and direct TCP connections to
+validated addresses. It neither reads proxy settings nor follows redirects.
+DNS jobs retain one of sixteen permits until completion even if their caller
+times out. HTTPS attempts share that admission budget and have a ten-second
+total deadline; response processing ends after bounded headers, without
+consuming arbitrary response bodies. Cancellation drops the connection future
+and socket. `WebhookPorts::native_https` provides concrete transport composition
+alongside the caller's durable journal, storage, secrets, and guard authorities.
+Attaching the service to the member's main router remains separate work.
+
+Validation:
+
+- `nice -n 19 cargo test -p terrabase-server --locked webhook_api --lib`: 15
+  tests passed, including real TLS on local sockets, hostname mismatch,
+  redirect refusal, admission and deadline bounds, plus durable retry tests.
+- `nice -n 19 cargo clippy -p terrabase-server --all-targets --locked -- -D warnings`:
+  passed after native transport changes.
+- The initial `nice -n 19 make check` passed workspace Rust tests and doc tests,
+  then failed contract freshness because a concurrent TBEP placement proposal
+  change was not yet regenerated. It is not a green whole-repository check;
+  rerun after the coordinated contract and runtime changes settle.
+
+The native transport tests validate real TLS and HTTP behavior on local
+sockets, not intended-provider egress or full production composition.

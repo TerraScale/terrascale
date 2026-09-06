@@ -12,6 +12,7 @@ pub mod byo_jwt;
 pub mod config;
 pub mod control;
 pub mod export_api;
+pub mod export_local;
 pub mod guards;
 pub mod http;
 pub mod index_api;

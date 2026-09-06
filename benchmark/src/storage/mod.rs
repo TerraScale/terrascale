@@ -184,6 +184,17 @@ pub enum DescriptorRegistration {
     Unchanged,
 }
 
+/// A descriptor could not be removed without violating durable index state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IndexDescriptorRemovalError {
+    /// The requested field is not a valid extracted descriptor name.
+    InvalidField,
+    /// A hidden index build still depends on this descriptor.
+    InUse,
+    /// The durable operation failed; no partial deletion is committed.
+    Storage,
+}
+
 /// Failures registering one extracted index-column descriptor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IndexDescriptorError {
@@ -612,6 +623,24 @@ pub(crate) struct AppliedFrontierEntry {
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
+    /// Loads an opaque public schema envelope from internal metadata.
+    fn schema_metadata_load(
+        &self,
+        database: &str,
+        branch: &str,
+        collection: &str,
+    ) -> Result<Option<Vec<u8>>, ()>;
+
+    /// Replaces an envelope only when its complete previous bytes match.
+    fn schema_metadata_compare_exchange(
+        &mut self,
+        database: &str,
+        branch: &str,
+        collection: &str,
+        expected: Option<&[u8]>,
+        record: &[u8],
+    ) -> Result<bool, ()>;
+
     /// Runs a file capture with commits and background checkpoints excluded.
     fn with_quiescent_wal(&self, capture: &mut dyn FnMut(&std::path::Path)) -> Result<(), ()>;
     /// Opens a read-only `SQLite` handle for one bounded SQL execution.
@@ -891,6 +920,20 @@ pub(crate) trait StoragePort: Send {
         _field: &str,
     ) -> Result<DescriptorRegistration, IndexDescriptorError> {
         Err(IndexDescriptorError::Storage)
+    }
+
+    /// Removes an extracted descriptor and releases unused physical resources.
+    /// Returns false when the descriptor is already absent.
+    ///
+    /// # Errors
+    ///
+    /// Refuses invalid fields, descriptors used by hidden builds, or storage failures.
+    fn remove_index_descriptor(
+        &mut self,
+        _collection: &CollectionName,
+        _field: &str,
+    ) -> Result<bool, IndexDescriptorRemovalError> {
+        Err(IndexDescriptorRemovalError::Storage)
     }
 
     /// Lists the durable index descriptors with their activity and

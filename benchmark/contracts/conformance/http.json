@@ -3969,17 +3969,6 @@
         {
           "body": {
             "error": {
-              "code": "request_failed",
-              "fix": "follow the contract and retry when safe",
-              "message": "conformance 101 response"
-            }
-          },
-          "mediaType": "application/json",
-          "status": 101
-        },
-        {
-          "body": {
-            "error": {
               "code": "invalid_request",
               "fix": "follow the contract and retry when safe",
               "message": "conformance 400 response"
@@ -4110,43 +4099,20 @@
         "query": {}
       },
       "response": {
-        "body": {
-          "error": {
-            "code": "request_failed",
-            "fix": "follow the contract and retry when safe",
-            "message": "conformance 101 response"
-          }
-        },
-        "mediaType": "application/json",
+        "body": null,
+        "mediaType": null,
         "status": 101
       },
       "responses": [
         {
-          "body": {
-            "error": {
-              "code": "request_failed",
-              "fix": "follow the contract and retry when safe",
-              "message": "conformance 101 response"
-            }
-          },
-          "mediaType": "application/json",
+          "body": null,
+          "mediaType": null,
           "status": 101
         }
       ]
     },
     {
       "errors": [
-        {
-          "body": {
-            "error": {
-              "code": "request_failed",
-              "fix": "follow the contract and retry when safe",
-              "message": "conformance 101 response"
-            }
-          },
-          "mediaType": "application/json",
-          "status": 101
-        },
         {
           "body": {
             "error": {
@@ -4280,26 +4246,14 @@
         "query": {}
       },
       "response": {
-        "body": {
-          "error": {
-            "code": "request_failed",
-            "fix": "follow the contract and retry when safe",
-            "message": "conformance 101 response"
-          }
-        },
-        "mediaType": "application/json",
+        "body": null,
+        "mediaType": null,
         "status": 101
       },
       "responses": [
         {
-          "body": {
-            "error": {
-              "code": "request_failed",
-              "fix": "follow the contract and retry when safe",
-              "message": "conformance 101 response"
-            }
-          },
-          "mediaType": "application/json",
+          "body": null,
+          "mediaType": null,
           "status": 101
         }
       ]

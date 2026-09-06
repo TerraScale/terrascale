@@ -1,0 +1,18 @@
+[package]
+name = "terrabase-auth"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+publish = false
+
+[dependencies]
+openraft = { version = "=0.9.21", features = ["serde", "storage-v2"] }
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1.8.2"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+[dev-dependencies]
+tempfile = "3"

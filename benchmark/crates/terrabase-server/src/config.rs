@@ -147,6 +147,28 @@ pub struct ProductionConfig {
     pub transport: ProductionTransport,
     /// Release/capability qualification binding.
     pub release: ReleaseBinding,
+    /// Explicit authenticated control-intent listener configuration.
+    pub control: Option<ProductionControl>,
+    /// OCI Vault delivery needed before admitting encrypted data operations.
+    pub keys: Option<ProductionKeys>,
+}
+
+/// Durable pending-placement control policy. It cannot grant membership or readiness.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionControl {
+    /// Owner-private SQLite proposal and retry journal.
+    pub proposal_journal: PathBuf,
+    /// Exact SPIFFE principals allowed to stage host-scoped intent over mTLS.
+    pub orchestrator_principals: BTreeSet<String>,
+}
+
+/// Authenticated local orchestrator key-delivery endpoint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProductionKeys {
+    /// Absolute Unix socket path under an owner-private directory.
+    pub socket: PathBuf,
+    /// Required orchestrator peer UID, checked on every key-delivery connection.
+    pub orchestrator_uid: u32,
 }
 
 /// One RF=2 placement generation.
@@ -365,6 +387,22 @@ struct FileProductionConfig {
     placement: FileProductionPlacement,
     transport: FileProductionTransport,
     release: FileReleaseBinding,
+    control: Option<FileProductionControl>,
+    keys: Option<FileProductionKeys>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionKeys {
+    socket: PathBuf,
+    orchestrator_uid: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileProductionControl {
+    proposal_journal: PathBuf,
+    orchestrator_principals: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -735,7 +773,37 @@ impl ServerConfig {
             transport.client_ca.clone(),
         ]);
         let release = parse_release(&file.release)?;
-        let production = ProductionConfig { environment, databases, placement, transport, release };
+        let control = file
+            .control
+            .map(|control| {
+                let proposal_journal = production_path(&control.proposal_journal)?;
+                if control.orchestrator_principals.is_empty()
+                    || control.orchestrator_principals.len() > MAX_MEMBER_PRINCIPALS
+                {
+                    return Err(ConfigError::InvalidMemberPrincipal);
+                }
+                let mut principals = BTreeSet::new();
+                for principal in control.orchestrator_principals {
+                    if !principal.starts_with("spiffe://")
+                        || principal.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
+                        || principal.chars().any(char::is_whitespace)
+                        || principal.chars().any(char::is_control)
+                        || !principals.insert(principal)
+                    {
+                        return Err(ConfigError::InvalidMemberPrincipal);
+                    }
+                }
+                paths.push(proposal_journal.clone());
+                Ok(ProductionControl { proposal_journal, orchestrator_principals: principals })
+            })
+            .transpose()?;
+        let keys = file.keys.map(|keys| {
+            let socket = production_path(&keys.socket)?;
+            paths.push(socket.clone());
+            Ok(ProductionKeys { socket, orchestrator_uid: keys.orchestrator_uid })
+        }).transpose()?;
+        let production =
+            ProductionConfig { environment, databases, placement, transport, release, control, keys };
         let first = production
             .databases
             .iter()

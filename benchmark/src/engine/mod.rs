@@ -18,11 +18,13 @@ use std::{
 };
 
 mod authorized;
+mod export;
 mod ingest;
 pub(crate) mod merge;
 mod metadata;
 mod patch;
 mod physical_restore;
+mod schema_metadata;
 
 #[cfg(test)]
 mod ingest_tests;
@@ -43,6 +45,7 @@ pub use crate::storage::{
     MergeKernelEntry, MergePolicy, MergeSchema, MergeSchemaError,
 };
 pub use authorized::{AuthorizedEngine, AuthorizedEngineError, AuthorizedSession};
+pub use export::{ExportHistoryRow, ExportMetadataSnapshot};
 pub use ingest::{
     BulkIngestRequest, IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal,
     IngestRefusalReason, IngestStream, IngestTermination, MAX_INGEST_BATCH_DOCUMENTS,
@@ -734,22 +737,21 @@ pub struct CommitReceipt {
 }
 
 /// One final-state document and the durability achieved by its winning write.
-/// This remains crate-private so archive and streaming consumers share the
-/// typed fact without exposing storage internals publicly.
+/// Export consumers retain the winning write durability alongside its document.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SnapshotRecord {
+pub struct SnapshotRecord {
     document: Document,
     durability: LocalDurability,
 }
 
 impl SnapshotRecord {
     /// Returns the final-state document.
-    pub(crate) fn document(&self) -> &Document {
+    pub fn document(&self) -> &Document {
         &self.document
     }
 
     /// Returns the durability of the write that won at the snapshot boundary.
-    pub(crate) fn durability(&self) -> LocalDurability {
+    pub fn durability(&self) -> LocalDurability {
         self.durability
     }
 }
@@ -3031,6 +3033,25 @@ impl Engine {
             }
             crate::storage::IndexDescriptorError::Storage => IndexRegistrationError::Storage,
         })
+    }
+
+    /// Removes one collection's extracted index descriptor. Shared columns and
+    /// indexes remain while another collection uses the field. Removing the
+    /// last descriptor releases its physical columns and database column budget.
+    /// A later query can register the field again through normal auto-indexing.
+    ///
+    /// # Errors
+    ///
+    /// Refuses invalid fields, hidden-index dependencies, and durable failures.
+    pub fn remove_index_field(
+        &self,
+        collection: &CollectionName,
+        field: &str,
+    ) -> Result<bool, crate::storage::IndexDescriptorRemovalError> {
+        let mut storage = self
+            .lock_storage()
+            .map_err(|_| crate::storage::IndexDescriptorRemovalError::Storage)?;
+        storage.port.remove_index_descriptor(collection, field)
     }
 
     /// Lists the database's durable index descriptors with their activity

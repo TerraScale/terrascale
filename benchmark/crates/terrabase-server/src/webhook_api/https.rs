@@ -69,9 +69,9 @@ impl NativeHttpsTransport {
         let (sender, receiver) = mpsc::sync_channel(1);
         let timeout = self.timeout;
         let task = self.runtime.spawn(async move {
-            let _permit = permit;
             let result =
                 tokio::time::timeout(timeout, work).await.unwrap_or(Err(DeliveryError::Retryable));
+            drop(permit);
             let _ = sender.send(result);
         });
         let result = receiver.recv_timeout(timeout + Duration::from_secs(1));

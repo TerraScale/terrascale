@@ -3413,3 +3413,102 @@ fn index_lifecycle_sqlite_replay_and_failed_mutations_are_atomic() {
     drop(reopened);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn descriptor_removal_preserves_shared_users_and_survives_restart() {
+    let (dir, mut storage) = sqlite_store("descriptor-remove-shared");
+    let tenant = scan_tenant();
+    let users = scan_users();
+    let orders = CollectionName::try_new("orders").expect("collection");
+    commit_object(
+        &mut storage,
+        &tenant,
+        "before-removal",
+        object_document("doc-a", "users", &[("score", DocumentValue::Integer(7))]),
+    );
+    storage.register_index_descriptor(&users, "score").expect("users descriptor");
+    storage.register_index_descriptor(&orders, "score").expect("shared descriptor");
+    let before = storage.published_state();
+    assert_eq!(storage.remove_index_descriptor(&users, "score"), Ok(true));
+    assert_eq!(storage.remove_index_descriptor(&users, "score"), Ok(false));
+    assert_eq!(storage.index_descriptor_state(&users, "score"), None);
+    assert_eq!(storage.index_descriptor_state(&orders, "score"), Some(true));
+    assert_eq!(storage.published_state(), before, "index cleanup creates no customer write");
+    assert_eq!(storage.remove_index_descriptor(&orders, "score"), Ok(true));
+    let writer = storage.writer.lock().expect("writer");
+    let columns: i64 = writer.query_row(
+        "SELECT count(*) FROM pragma_table_info('documents') WHERE name IN ('f:score#t','f:score#n')", [], |row| row.get(0)
+    ).expect("physical columns");
+    assert_eq!(columns, 0, "last deletion removes stored columns");
+    drop(writer);
+    commit_object(
+        &mut storage,
+        &tenant,
+        "after-removal",
+        object_document("doc-b", "users", &[("score", DocumentValue::Integer(7))]),
+    );
+    drop(storage);
+    let mut storage = SqliteStorage::open(&dir).expect("restart after retirement");
+    assert!(storage.index_descriptors().expect("descriptors").is_empty());
+    assert_eq!(
+        storage.register_index_descriptor(&users, "score"),
+        Ok(DescriptorRegistration::Active)
+    );
+    let latest = storage.published_state().0.get();
+    assert_eq!(
+        filtered(&storage, latest, &equals("score", DocumentValue::Integer(7)))
+            .expect("recreated index")
+            .len(),
+        2
+    );
+    drop(storage);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn descriptor_removal_refuses_hidden_dependencies_atomically() {
+    let (dir, mut storage) = sqlite_store("descriptor-remove-hidden");
+    let users = scan_users();
+    storage.register_index_descriptor(&users, "score").expect("descriptor");
+    storage
+        .begin_invisible_index(
+            &scan_tenant(),
+            &users,
+            "candidate",
+            &[crate::storage::InvisibleIndexColumn {
+                field: "score".into(),
+                kind: crate::storage::InvisibleColumnKind::Numeric,
+            }],
+        )
+        .expect("hidden candidate");
+    assert_eq!(
+        storage.remove_index_descriptor(&users, "score"),
+        Err(crate::storage::IndexDescriptorRemovalError::InUse)
+    );
+    assert_eq!(storage.index_descriptor_state(&users, "score"), Some(true));
+    drop(storage);
+    let storage = SqliteStorage::open(&dir).expect("restart after refusal");
+    assert_eq!(storage.index_descriptor_state(&users, "score"), Some(true));
+    drop(storage);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn descriptor_removal_releases_the_column_budget() {
+    let (dir, mut storage) = sqlite_store("descriptor-remove-budget");
+    let users = scan_users();
+    for position in 0..32 {
+        storage.register_index_descriptor(&users, &format!("field{position}")).expect("descriptor");
+    }
+    assert_eq!(
+        storage.register_index_descriptor(&users, "replacement"),
+        Err(IndexDescriptorError::ColumnBudgetExceeded)
+    );
+    assert_eq!(storage.remove_index_descriptor(&users, "field0"), Ok(true));
+    assert_eq!(
+        storage.register_index_descriptor(&users, "replacement"),
+        Ok(DescriptorRegistration::Active)
+    );
+    drop(storage);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}

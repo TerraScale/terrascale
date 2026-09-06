@@ -20,7 +20,7 @@ use terrabase::usage::{
 };
 
 /// The only billable meters in the public pricing contract.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BillableMeter {
     /// Canonical document mutation bytes rounded to 4 KiB units.
@@ -199,7 +199,7 @@ pub struct UsageEntry {
 }
 
 /// Read counters are attribution-only and never appear as billable meters.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct ReadAttribution {
     /// Point/document reads served.
     pub point_reads: u64,
@@ -766,6 +766,120 @@ fn map_engine_usage_error(error: UsageCommandError) -> UsageSourceError {
     }
 }
 
+/// Authoritative database totals at one immutable usage ledger high-water.
+/// Amounts remain decimal strings to preserve integer precision for clients.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, utoipa::ToSchema)]
+pub struct UsageSummary {
+    /// Authenticated owner tenant.
+    pub tenant_id: String,
+    /// Hosted database identity.
+    pub database_id: String,
+    /// Durable ledger high-water shared by all totals.
+    pub snapshot_sequence: u64,
+    /// The only two billable meters.
+    pub meters: [MeterTotal; 2],
+    /// Attribution-only read counters.
+    pub reads: ReadAttribution,
+}
+
+/// Reads database totals directly from the hosted Engine, across its partitions.
+/// The Engine fixes the snapshot on the first page; subsequent pages retain that
+/// high-water. This adapter holds only one bounded page and never estimates bytes
+/// from document counts or converts retained bytes into elapsed storage charges.
+///
+/// # Errors
+/// Returns typed source failures or rejects facts outside the Engine owner tuple.
+pub fn engine_summary(engine: &Engine) -> Result<UsageSummary, UsageApiError> {
+    let owner = engine.database_owner();
+    let tenant = owner.tenant().to_text();
+    let project = owner.project().to_text();
+    let database = owner.database().to_text();
+    let tenant_id = TenantId::try_new(&tenant)
+        .map_err(|_| UsageApiError::InvalidScope { field: "tenant_id" })?;
+    let scope = engine.scope_for(&tenant_id);
+    let mut continuation = None;
+    let mut snapshot = None;
+    let mut totals = UsageTotals::zero();
+    loop {
+        let request = terrabase::usage::UsagePageRequest::try_new(
+            None,
+            terrabase::usage::MAX_USAGE_PAGE_SIZE,
+            continuation,
+        )
+        .map_err(|_| UsageApiError::InvalidCursor)?;
+        let page = engine
+            .usage_page(&scope, request)
+            .map_err(map_engine_usage_error)
+            .map_err(map_source_error)?;
+        let high_water = page.snapshot_sequence().get();
+        if snapshot.is_some_and(|previous| previous != high_water) {
+            return Err(UsageApiError::CorruptSource {
+                detail: "the Engine changed the usage snapshot during aggregation".into(),
+            });
+        }
+        snapshot = Some(high_water);
+        for durable in page.facts() {
+            let fact = durable.fact();
+            let binding = fact.scope();
+            if binding.tenant_id().as_str() != tenant
+                || binding.project_id().as_str() != project
+                || binding.database_id().as_str() != database
+                || *binding.region_id() != owner.region()
+                || durable.sequence() == 0
+                || durable.sequence() > high_water
+            {
+                return Err(UsageApiError::CorruptSource {
+                    detail: "the usage ledger returned a fact outside its owner snapshot".into(),
+                });
+            }
+            let total = match fact.meter() {
+                terrabase::usage::MeterKind::DocumentWriteUnits => &mut totals.document_write_units,
+                terrabase::usage::MeterKind::StorageByteSeconds => &mut totals.storage_byte_seconds,
+                _ => {
+                    return Err(UsageApiError::CorruptSource {
+                        detail: "the usage ledger returned a non-billable meter".into(),
+                    });
+                }
+            };
+            *total =
+                total.checked_add(fact.delta()).ok_or_else(|| UsageApiError::CorruptSource {
+                    detail: "usage totals overflowed the integer source range".into(),
+                })?;
+        }
+        continuation = page
+            .continuation()
+            .map(|value| {
+                UsageContinuation::try_new(value.as_bytes().to_vec())
+                    .map_err(|_| UsageApiError::InvalidCursor)
+            })
+            .transpose()?;
+        if continuation.is_none() {
+            break;
+        }
+    }
+    let totals = totals.validate()?;
+    Ok(UsageSummary {
+        tenant_id: tenant,
+        database_id: database,
+        snapshot_sequence: snapshot.unwrap_or(0),
+        meters: [
+            MeterTotal {
+                meter: BillableMeter::DocumentWriteUnits,
+                units: totals.document_write_units.to_string(),
+            },
+            MeterTotal {
+                meter: BillableMeter::StorageByteSeconds,
+                units: totals.storage_byte_seconds.to_string(),
+            },
+        ],
+        reads: ReadAttribution {
+            point_reads: engine.metering_read_count(&scope),
+            query_reads: 0,
+            reactive_reads: 0,
+        },
+    })
+}
+
 /// A bounded response DTO suitable for the pending HTTP route.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct UsageResponse {
@@ -788,7 +902,7 @@ pub struct UsageResponse {
 
 /// One bounded billable total DTO. Integer values stay strings to avoid JSON
 /// number precision loss in JavaScript clients.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, utoipa::ToSchema)]
 pub struct MeterTotal {
     /// Closed billable meter.
     pub meter: BillableMeter,

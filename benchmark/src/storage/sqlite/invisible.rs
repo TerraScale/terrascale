@@ -127,6 +127,38 @@ fn load(connection: &Connection, tenant: &str, id: &str) -> Result<Option<Build>
         .map_err(|_| ())
 }
 
+/// Hidden triggers continue reading extracted columns even after a build completes.
+pub(super) fn uses_descriptor(
+    connection: &Connection,
+    collection: &str,
+    field: &str,
+) -> Result<bool, ()> {
+    let mut statement = connection
+        .prepare(
+            "SELECT CASE WHEN length(columns) <= 131072 THEN columns END,
+                CASE WHEN length(digest) = 32 THEN digest END
+         FROM invisible_index_builds WHERE collection = ?1 LIMIT 33",
+        )
+        .map_err(|_| ())?;
+    let mut rows = statement.query([collection]).map_err(|_| ())?;
+    let mut count = 0;
+    while let Some(row) = rows.next().map_err(|_| ())? {
+        count += 1;
+        if count > 32 {
+            return Err(());
+        }
+        let bytes: Vec<u8> = row.get(0).map_err(|_| ())?;
+        let digest: Vec<u8> = row.get(1).map_err(|_| ())?;
+        if digest != blake3::hash(&bytes).as_bytes() {
+            return Err(());
+        }
+        if decode_columns(&bytes)?.iter().any(|column| column.field == field) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Produces SQL only for a complete, correctly scoped hidden build. The
 /// metadata is read inside the same transaction as both shadow executions.
 pub(super) fn shadow_sql(

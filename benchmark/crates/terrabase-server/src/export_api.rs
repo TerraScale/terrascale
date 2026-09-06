@@ -53,6 +53,10 @@ pub const EXPORT_ROUTE: &str = "/api/v1/databases/{name}/exports";
 
 static NEXT_JOB: AtomicU64 = AtomicU64::new(1);
 
+#[path = "export_runtime.rs"]
+mod runtime;
+pub use runtime::{ExportArtifactFactory, ExportRuntime};
+
 mod region_code_serde {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::str::FromStr;
@@ -436,7 +440,7 @@ impl EncryptionAttestation {
 }
 
 /// One immutable member fact returned by an artifact writer.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ArtifactFact {
     /// Relative bundle member path.
     pub path: String,
@@ -530,7 +534,7 @@ pub struct ExportJobState {
 }
 
 /// Durable export lifecycle.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum JobStatus {
     /// Accepted and waiting for a worker.
     Accepted,
@@ -609,7 +613,7 @@ pub enum ExportError {
 
 impl ExportError {
     /// A bounded response message containing no provider-supplied text.
-    fn public_message(&self) -> &'static str {
+    pub(crate) fn public_message(&self) -> &'static str {
         match self {
             Self::DependencyUnavailable => "export dependency unavailable",
             Self::EncryptionUnavailable => "export encryption provider unavailable",
@@ -641,7 +645,7 @@ impl fmt::Display for ExportError {
 impl std::error::Error for ExportError {}
 
 /// An accepted asynchronous export.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ExportAccepted {
     /// Job identity.
     pub job_id: String,
@@ -652,7 +656,7 @@ pub struct ExportAccepted {
 }
 
 /// Status view returned by polling.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ExportStatus {
     /// Job identity.
     pub job_id: String,
@@ -1482,7 +1486,7 @@ fn hex_decode(text: &str) -> Result<Vec<u8>, ExportError> {
     Ok(bytes)
 }
 
-fn safe_member_path(path: &str) -> bool {
+pub(crate) fn safe_member_path(path: &str) -> bool {
     let path = Path::new(path);
     !path.as_os_str().is_empty()
         && path.components().all(|component| matches!(component, Component::Normal(_)))
@@ -1680,7 +1684,7 @@ struct EncryptedFileWriter {
 }
 
 /// Publishes immutable bytes without replacing a concurrent winner.
-fn publish_artifact(path: &Path, bytes: &[u8]) -> Result<bool, ExportError> {
+pub(crate) fn publish_artifact(path: &Path, bytes: &[u8]) -> Result<bool, ExportError> {
     let parent = path.parent().ok_or(ExportError::DestinationUnavailable)?;
     ensure_no_symlink_components(parent)?;
     fs::create_dir_all(parent).map_err(|error| ExportError::Io(error.to_string()))?;
@@ -1711,7 +1715,7 @@ fn publish_artifact(path: &Path, bytes: &[u8]) -> Result<bool, ExportError> {
     result.map_err(|error| ExportError::Io(error.to_string()))
 }
 
-fn sync_directory_ancestors(directory: &Path) -> io::Result<()> {
+pub(crate) fn sync_directory_ancestors(directory: &Path) -> io::Result<()> {
     // Includes newly created documents/history and job directories, so a
     // durable cursor can never outlive the directory entry containing its page.
     for ancestor in fs::canonicalize(directory)?.ancestors() {
@@ -1869,7 +1873,7 @@ impl ArtifactPort for EncryptedFileArtifactPort {
     }
 }
 
-fn ensure_no_symlink_components(path: &Path) -> Result<(), ExportError> {
+pub(crate) fn ensure_no_symlink_components(path: &Path) -> Result<(), ExportError> {
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
@@ -1885,7 +1889,7 @@ fn ensure_no_symlink_components(path: &Path) -> Result<(), ExportError> {
     Ok(())
 }
 
-fn fact(path: &str, bytes: &[u8]) -> ArtifactFact {
+pub(crate) fn fact(path: &str, bytes: &[u8]) -> ArtifactFact {
     ArtifactFact {
         path: path.to_owned(),
         length: bytes.len() as u64,
@@ -1954,7 +1958,7 @@ impl HttpExportRequest {
     }
 }
 
-fn error_status(error: &ExportError) -> StatusCode {
+pub(crate) fn error_status(error: &ExportError) -> StatusCode {
     match error {
         ExportError::PlacementMismatch => StatusCode::MISDIRECTED_REQUEST,
         ExportError::EncryptionUnavailable
@@ -1966,7 +1970,7 @@ fn error_status(error: &ExportError) -> StatusCode {
     }
 }
 
-fn json_response<T: Serialize>(status: StatusCode, value: &T) -> HttpResponse<Body> {
+pub(crate) fn json_response<T: Serialize>(status: StatusCode, value: &T) -> HttpResponse<Body> {
     match serde_json::to_vec(value) {
         Ok(bytes) => HttpResponse::builder()
             .status(status)

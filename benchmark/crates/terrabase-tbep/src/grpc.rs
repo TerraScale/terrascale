@@ -29,6 +29,8 @@
 //! The sync host seam is synchronous, so every host call rides
 //! `spawn_blocking`; the tonic runtime never blocks on engine work.
 
+pub mod placement_control;
+
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::Path;
