@@ -5557,7 +5557,7 @@ impl StoragePort for SqliteStorage {
                       WHEN EXISTS (
                         SELECT 1 FROM operation_kind_markers marker
                         WHERE marker.tenant = documents.tenant
-                          AND marker.operation = documents.operation
+                          AND marker.operation = documents.client_request_ulid
                           AND marker.kind = 'internal_maintenance'
                       ) THEN 'internal_maintenance'
                       ELSE 'origin'

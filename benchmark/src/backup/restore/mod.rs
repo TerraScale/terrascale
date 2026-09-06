@@ -73,7 +73,8 @@ use crate::backup::{
 use crate::engine::{Engine, EngineConfig};
 use crate::regions::RegionCode;
 use crate::storage::{
-    CommitIntent, CommitResult, SqliteStorage, StagedWrite, StoragePort, write_set_digest,
+    CommitIntent, CommitResult, PrivateMetadataWrite, SqliteStorage, StagedWrite, StoragePort,
+    write_set_digest,
 };
 use crate::types::{
     CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
@@ -595,6 +596,21 @@ pub struct RestoreIdentity {
     pub provider: String,
     /// Canonical point or timestamp selection.
     pub selection: String,
+    /// Authenticated SHA-256 identity of the selected recovery manifest.
+    pub expected_manifest_digest: String,
+    /// Authenticated journal boundary of the selected recovery manifest.
+    pub expected_journal_boundary: u64,
+    /// Accepted authority epoch for this restore operation.
+    pub restore_epoch: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+struct RestoreMarker {
+    identity: RestoreIdentity,
+    target_sequence: u64,
+    logical_checksum: String,
+    restored_documents: u64,
+    restored_family_records: u64,
 }
 
 impl RecoveryReceipt {
@@ -1274,6 +1290,13 @@ fn execute_configured_restore(
     cutoff: Option<u64>,
     identity: &RestoreIdentity,
 ) -> Result<RecoveryReceipt, BackupError> {
+    let selected = chain.last().ok_or(BackupError::ChainIncomplete)?;
+    if identity.expected_manifest_digest != selected.identity()
+        || identity.expected_journal_boundary != selected.boundary_sequence().get()
+        || identity.restore_epoch == 0
+    {
+        return Err(BackupError::ChecksumMismatch);
+    }
     if !target.has_encrypted_owner() {
         return Err(BackupError::DestinationUnavailable);
     }
@@ -1306,8 +1329,10 @@ fn execute_configured_restore(
         let guard = reopened.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
         let verification = verify_storage(guard.port.as_ref(), &replay)?;
         drop(guard);
-        drop(reopened);
         let facts = replay.into_facts(verification);
+        write_restore_metadata(&reopened, identity, &facts)?;
+        verify_restore_metadata(&reopened, identity, &facts)?;
+        drop(reopened);
         publish_with_identity(&staging, path, identity)?;
         Ok(facts)
     })();
@@ -1400,15 +1425,86 @@ fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
     Ok(())
 }
 
-fn publish_with_identity(
-    staging: &StagingDir,
-    target: &Path,
+fn write_restore_metadata(
+    engine: &Engine,
     identity: &RestoreIdentity,
+    facts: &RunFacts,
 ) -> Result<(), BackupError> {
-    let marker = serde_json::to_vec(identity).map_err(|_| BackupError::DestinationUnavailable)?;
-    std::fs::write(staging.path().join(".terrabase-restore-marker"), marker)
+    let tenant = TenantId::try_new(engine.database_owner().tenant().to_text().as_str())
         .map_err(|_| BackupError::DestinationUnavailable)?;
-    super::sync_directory(staging.path())?;
+    let operation = OperationId::try_new(&format!("restore-marker-{}", identity.operation_id))
+        .map_err(|_| BackupError::DestinationUnavailable)?;
+    let value = serde_json::to_string(&RestoreMarker {
+        identity: identity.clone(),
+        target_sequence: facts.target_sequence.get(),
+        logical_checksum: facts.logical_checksum.clone(),
+        restored_documents: facts.restored_documents,
+        restored_family_records: facts.restored_family_records,
+    })
+    .map_err(|_| BackupError::DestinationUnavailable)?;
+    let mut guard = engine.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
+    let intent = CommitIntent {
+        budget_allocation: None,
+        tenant: tenant.clone(),
+        digest: write_set_digest(&tenant, &[]),
+        snapshot_sequence: guard.port.published_state().0,
+        durability: LocalDurability::Synced,
+        usage_admission: None,
+        internal_maintenance: true,
+        expected_origin_epoch: None,
+        expected_uniform_context: None,
+        merge_conflict: None,
+        replication_fingerprint: None,
+        replication_publication: None,
+        hlc: 0,
+        metadata: vec![PrivateMetadataWrite {
+            key: format!("restore/{}", identity.operation_id),
+            value: Some(crate::types::DocumentValue::String(value)),
+        }],
+        schema_envelopes: Vec::new(),
+        writes: Vec::new(),
+        operation,
+    };
+    match guard.port.commit(intent) {
+        CommitResult::Committed(_) => Ok(()),
+        CommitResult::Rejected(_) | CommitResult::Unknown(_) => {
+            Err(BackupError::DestinationUnavailable)
+        }
+    }
+}
+
+fn verify_restore_metadata(
+    engine: &Engine,
+    identity: &RestoreIdentity,
+    facts: &RunFacts,
+) -> Result<(), BackupError> {
+    let tenant = TenantId::try_new(engine.database_owner().tenant().to_text().as_str())
+        .map_err(|_| BackupError::DestinationUnavailable)?;
+    let key = format!("restore/{}", identity.operation_id);
+    let guard = engine.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
+    let snapshot = guard.port.published_state().0;
+    let value = guard
+        .port
+        .private_metadata_at(&tenant, &key, snapshot)
+        .map_err(|_| BackupError::DestinationUnavailable)?
+        .ok_or(BackupError::DestinationUnavailable)?;
+    let crate::types::DocumentValue::String(value) = value else {
+        return Err(BackupError::ChecksumMismatch);
+    };
+    let marker: RestoreMarker =
+        serde_json::from_str(&value).map_err(|_| BackupError::ChecksumMismatch)?;
+    if marker.identity != *identity
+        || marker.target_sequence != facts.target_sequence.get()
+        || marker.logical_checksum != facts.logical_checksum
+        || marker.restored_documents != facts.restored_documents
+        || marker.restored_family_records != facts.restored_family_records
+    {
+        return Err(BackupError::ChecksumMismatch);
+    }
+    Ok(())
+}
+
+fn publish_with_identity(staging: &StagingDir, target: &Path, _identity: &RestoreIdentity) -> Result<(), BackupError> {
     if rustix::fs::renameat_with(
         rustix::fs::CWD,
         staging.path(),

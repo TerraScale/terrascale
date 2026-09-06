@@ -555,6 +555,48 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
         let runtime = Arc::clone(&self.runtime);
         let backups = Arc::clone(&self.backups);
         Box::pin(async move {
+            if request.source_owner.is_empty()
+                || request.target_owner.is_empty()
+                || request.recovery_point_id.is_empty()
+                || request.recovery_point_digest.len() != 64
+                || request.journal_cut.is_empty()
+                || request.restore_epoch == 0
+            {
+                return Err("restore request facts are incomplete".into());
+            }
+            let admitted = runtime
+                .registry
+                .resolve(&request.source_database_id)
+                .map_err(|_| "source admission unavailable")?
+                .ok_or("source database is not admitted")?;
+            if admitted.record.regions != request.placement
+                || admitted.record.database_id != request.source_database_id
+                || format!("{}/{}", admitted.record.tenant_id, admitted.record.project_id)
+                    != request.source_owner
+            {
+                return Err("restore source facts do not match accepted admission".into());
+            }
+            let accepted_epoch = runtime
+                .journal
+                .accepted()
+                .map_err(|_| "accepted placement authority unavailable")?
+                .epoch;
+            if request.restore_epoch != accepted_epoch {
+                return Err("restore epoch does not match accepted placement authority".into());
+            }
+            let target = runtime
+                .registry
+                .retained_snapshot()
+                .map_err(|_| "target admission unavailable")?
+                .into_iter()
+                .find(|entry| entry.database.record.database_id == request.target_database_id)
+                .ok_or("target database is not admitted")?;
+            if format!("{}/{}", target.database.record.tenant_id, target.database.record.project_id)
+                != request.target_owner
+                || target.database.record.regions != request.placement
+            {
+                return Err("restore target facts do not match accepted admission".into());
+            }
             let provider = match request.provider.as_str() {
                 "oci" => terrabase::backup::object_store::Provider::Oci,
                 "tigris" => terrabase::backup::object_store::Provider::Tigris,
@@ -568,6 +610,10 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                     return Err("timestamp restore executor is unavailable".into());
                 }
             };
+            let expected_cut = request
+                .journal_cut
+                .parse::<u64>()
+                .map_err(|_| "restore journal cut is invalid")?;
             let receipt = tokio::task::spawn_blocking(move || {
                 tokio::runtime::Handle::current().block_on(runtime.restore_native_to_target(
                     &backups,
@@ -576,8 +622,16 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                     provider,
                     point,
                     &request.operation_id,
+                    &request.recovery_point_digest,
+                    expected_cut,
+                    request.restore_epoch,
                 ))
             }).await.map_err(|_| "restore executor unavailable")??;
+            if receipt.selected_identity() != request.recovery_point_id
+                || receipt.selected().boundary_sequence().get() != expected_cut
+            {
+                return Err("authenticated recovery manifest facts do not match request".into());
+            }
             Ok(crate::native_recovery::NativeRestoreOutcome { receipt: receipt.render() })
         })
     }
@@ -818,7 +872,7 @@ impl ProductionAdmissionRuntime {
         limits: FleetLimits,
     ) -> Result<crate::native_backup_runtime::NativeBackupRuntime, String> {
         use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
-        use terrabase::backup::{PlacementLock, worker::OciBackupKeys};
+        use terrabase::backup::worker::OciBackupKeys;
         use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
         let key_config = self.config.keys.as_ref().ok_or("production key delivery missing")?;
         let provider = OciVaultKeyDelivery::new(
@@ -1122,6 +1176,9 @@ impl ProductionAdmissionRuntime {
         provider: terrabase::backup::object_store::Provider,
         point: Option<&str>,
         operation_id: &str,
+        expected_manifest_digest: &str,
+        expected_journal_boundary: u64,
+        restore_epoch: u64,
     ) -> Result<terrabase::backup::RecoveryReceipt, String> {
         let reservation = self.registry.reserve_restore(target)?;
         let record = reservation.record().clone();
@@ -1228,6 +1285,9 @@ impl ProductionAdmissionRuntime {
                     target_database_id: target.to_owned(),
                     provider: format!("{provider:?}").to_lowercase(),
                     selection: point.unwrap_or("latest").to_owned(),
+                    expected_manifest_digest: expected_manifest_digest.to_owned(),
+                    expected_journal_boundary,
+                    restore_epoch,
                 },
             )
             .await

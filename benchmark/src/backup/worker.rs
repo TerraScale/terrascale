@@ -1287,6 +1287,25 @@ mod tests {
                         target_database_id: "fleet-outage-restore".into(),
                         provider: "oci".into(),
                         selection: "latest".into(),
+                        expected_manifest_digest: crate::backup::restore::discover_encrypted_points(
+                            &staging,
+                            fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
+                        )
+                        .unwrap()
+                        .last()
+                        .unwrap()
+                        .identity()
+                        .to_owned(),
+                        expected_journal_boundary: crate::backup::restore::discover_encrypted_points(
+                            &staging,
+                            fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
+                        )
+                        .unwrap()
+                        .last()
+                        .unwrap()
+                        .boundary_sequence()
+                        .get(),
+                        restore_epoch: 1,
                     },
                 )
                 .await
@@ -1422,6 +1441,9 @@ mod tests {
                         target_database_id: "retained-root-restore".into(),
                         provider: format!("{provider:?}").to_lowercase(),
                         selection: "latest".into(),
+                        expected_manifest_digest: root.manifest().identity().into(),
+                        expected_journal_boundary: root.manifest().boundary_sequence().get(),
+                        restore_epoch: 1,
                     },
                 )
                 .await
@@ -1509,6 +1531,25 @@ mod tests {
                             target_database_id: "fleet-restore".into(),
                             provider: format!("{provider:?}").to_lowercase(),
                             selection: "latest".into(),
+                            expected_manifest_digest: crate::backup::restore::discover_encrypted_points(
+                                &staging,
+                                fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
+                            )
+                            .unwrap()
+                            .last()
+                            .unwrap()
+                            .identity()
+                            .to_owned(),
+                            expected_journal_boundary: crate::backup::restore::discover_encrypted_points(
+                                &staging,
+                                fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
+                            )
+                            .unwrap()
+                            .last()
+                            .unwrap()
+                            .boundary_sequence()
+                            .get(),
+                            restore_epoch: 1,
                         },
                     )
                     .await

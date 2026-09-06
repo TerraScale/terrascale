@@ -22,7 +22,6 @@ pub enum LifecycleGrantAction {
     StopNativeBackup,
     Reactivate,
     DeleteOwnedData,
-    RestoreToTarget,
 }
 
 /// Strict, scoped lifecycle effect grant payload.

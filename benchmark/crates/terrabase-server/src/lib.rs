@@ -65,8 +65,6 @@ pub mod replication_peers;
 pub mod native_snapshot_backup;
 pub mod production_lifecycle_control;
 
-#[cfg(test)]
-mod budget_http_tests;
 pub(crate) mod export_artifact_crypto;
 /// Shared production composition for the native backup fleet.
 pub mod native_backup_runtime;

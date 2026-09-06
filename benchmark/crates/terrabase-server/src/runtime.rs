@@ -546,7 +546,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         )))
         .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
     let (metrics_stop, metrics_signal) = tokio::sync::oneshot::channel();
-    let mut metrics_task = tokio::spawn(prepared_metrics.serve(async {
+    let metrics_task = tokio::spawn(prepared_metrics.serve(async {
         let _ = metrics_signal.await;
     }));
     // The production TBEP endpoint uses the same retained-host registry as

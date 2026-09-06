@@ -3,6 +3,11 @@
 use crate::usage_admission::{
     AllocationBindingResolver, AllocationVerifierConfig, UsageAdmissionJournal,
 };
+use aws_lc_rs::{
+    digest::{SHA256, digest},
+    rand::SystemRandom,
+    signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair},
+};
 use axum::{
     Router,
     body::Body,
@@ -126,6 +131,62 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
+}
+
+/// The public PUT route derives its operation identity from this key.
+/// Build the producer envelope with the test-only P256 signer so the test
+/// exercises the same wire verifier as production delivery.
+fn signed_for(tenant: &str, _project: &str, database: &str) -> (Value, Vec<u8>) {
+    let key_der =
+        EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &SystemRandom::new())
+            .unwrap();
+    let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, key_der.as_ref()).unwrap();
+    let mut spki = vec![
+        0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08,
+        0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+    ];
+    spki.extend_from_slice(key.public_key().as_ref());
+    let key_id = hex::encode(digest(&SHA256, &spki).as_ref());
+    let payload = serde_json::to_vec(&terrabase::usage::AllocationEnvelope {
+        schema_version: 1,
+        grant: terrabase::usage::AllocationGrant {
+            cycle_id: "cycle".into(),
+            rate_nano_dollar: 1000,
+            operation_id: "api-put-idem-budget".into(),
+            organization_id: tenant.into(),
+            database_id: database.into(),
+            branch_id: "main".into(),
+            holder_id: "holder".into(),
+            requested_units: 1,
+            included_units: 1,
+            paid_units: 0,
+            regions: vec!["gru".into()],
+            units: 1,
+            cost_nano_dollar: 0,
+            policy_epoch: 1,
+            consent_epoch: 1,
+            writer_epoch: 1,
+            issued_at: "2026-01-01T00:00:00Z".into(),
+            expires_at: "2099-01-01T00:00:00Z".into(),
+            revoked: false,
+            fenced: false,
+        },
+        cycle_id: "cycle".into(),
+        rate_nano_dollar: 1000,
+        placement: "db-placement".into(),
+    })
+    .unwrap();
+    let mut message = terrabase::usage::ALLOCATION_SIGNING_DOMAIN.to_vec();
+    message.extend_from_slice(&payload);
+    let signature = key.sign(&SystemRandom::new(), &message).unwrap();
+    let mut wrapped = b"TSCS\x01\x01".to_vec();
+    wrapped.extend_from_slice(&hex::decode(&key_id).unwrap());
+    wrapped.extend_from_slice(&(signature.as_ref().len() as u16).to_be_bytes());
+    wrapped.extend_from_slice(signature.as_ref());
+    (
+        serde_json::json!({"payload":STANDARD.encode(payload),"signature":STANDARD.encode(wrapped),"key_id":key_id}),
+        spki,
+    )
 }
 
 #[tokio::test]

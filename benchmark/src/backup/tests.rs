@@ -438,6 +438,9 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
             target_database_id: "target".into(),
             provider: "oci".into(),
             selection: "latest".into(),
+            expected_manifest_digest: backup.manifest().identity().into(),
+            expected_journal_boundary: backup.manifest().boundary_sequence().get(),
+            restore_epoch: 1,
         },
     )
     .expect("encrypted restore runs");
@@ -470,7 +473,10 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
                 source_database_id: "source".into(),
                 target_database_id: "target".into(),
                 provider: "oci".into(),
-                selection: "latest".into()
+                selection: "latest".into(),
+                expected_manifest_digest: backup.manifest().identity().into(),
+                expected_journal_boundary: backup.manifest().boundary_sequence().get(),
+                restore_epoch: 1,
             }
         )
         .is_err()

@@ -75,11 +75,11 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         let request = request.into_inner();
         if request.operation_id.is_empty()
             || request.restore_epoch == 0
-            || request.source_owner.is_empty()
+            || !valid_owner(&request.source_owner)
             || request.source_database.is_empty()
             || request.recovery_point_id.is_empty()
             || request.recovery_point_digest.len() != 64
-            || request.target_owner.is_empty()
+            || !valid_owner(&request.target_owner)
             || request.target_database.is_empty()
             || request.journal_cut.is_empty()
             || !matches!(request.provider, 1 | 2)
@@ -161,6 +161,11 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         })
         .await
     }
+}
+
+fn valid_owner(value: &str) -> bool {
+    let Some((tenant, project)) = value.split_once('/') else { return false };
+    !tenant.is_empty() && !project.is_empty() && !project.contains('/') && tenant.len() <= 64 && project.len() <= 255
 }
 
 impl TbepGrpcServer {

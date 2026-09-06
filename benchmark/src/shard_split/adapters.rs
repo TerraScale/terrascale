@@ -6,7 +6,7 @@
 //! record.  Merely calling [`ShardRouter::cut_over`] is not sufficient for a
 //! production member because it cannot atomically update the engine catalog.
 
-use super::{CutoverPermit, SplitContext, SplitStateStore};
+use super::{CutoverPermit, DurableSplitState, RouteTable, SplitContext, SplitStateStore};
 
 /// The facts an orchestrator must validate before a cutover.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,12 +22,14 @@ pub struct CutoverContext {
 }
 
 /// Durable route receipt returned while recovering an already committed split.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommittedSplitRoute {
     /// Operation identity whose route was installed.
     pub split: SplitContext,
     /// Durable route generation assigned by the engine.
     pub generation: u64,
+    /// The authoritative route table to install in the serving mirror.
+    pub route: RouteTable,
 }
 
 /// Engine-owned atomic cutover seam.
@@ -38,7 +40,11 @@ pub trait AtomicSplitCutover {
     /// Fences writes, replaces routing, and persists the cutover phase in one
     /// durable transaction. Implementations must return the installed route
     /// generation and make an exact retry a no-op.
-    fn install_split_route(&mut self, context: &CutoverContext) -> Result<u64, Self::Error>;
+    fn install_split_route(
+        &mut self,
+        context: &CutoverContext,
+        state: &DurableSplitState,
+    ) -> Result<u64, Self::Error>;
 
     /// Recovers the durable route receipt for an operation after restart.
     fn recover_split_route(

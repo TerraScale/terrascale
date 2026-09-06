@@ -2,7 +2,10 @@
 
 use super::{CommitError, CommitOutcome, Engine, EngineError};
 use crate::{
-    shard_split::{DurableSplitState, RouteTable, ShardRoute},
+    shard_split::{
+        CommittedSplitRoute, CutoverContext, DurableSplitState, RouteTable, ShardRoute, ShardSplit,
+        SplitPhase,
+    },
     types::{DocumentValue, LocalDurability, OperationId, TenantScope},
 };
 
@@ -193,5 +196,90 @@ impl Engine {
                 Err(RouteCatalogError::Engine(EngineError::StorageFailure))
             }
         }
+    }
+
+    /// Installs a fenced split route and its cut-over record atomically.
+    pub(crate) fn install_shard_split_route(
+        &self,
+        scope: &TenantScope,
+        context: &CutoverContext,
+        state: &DurableSplitState,
+        operation: OperationId,
+    ) -> Result<u64, RouteCatalogError> {
+        if !context.permit.is_valid() || state.context() != Some(context.split) {
+            return Err(RouteCatalogError::Malformed);
+        }
+        let mut tx = self.begin(scope, self.read_snapshot(scope)?, operation)?;
+        let route_key = key(context.split.database_incarnation());
+        let current = bytes(tx.read_private_metadata(&route_key)?)?
+            .ok_or(RouteCatalogError::Malformed)?;
+        let catalog = decode_catalog(&current)?;
+        if catalog.generation != context.route_generation {
+            return Err(RouteCatalogError::Conflict);
+        }
+        let mut table = catalog.table;
+        table
+            .split(
+                context.split.source_shard(),
+                context.split.target_shard(),
+                state.split_key().to_vec(),
+                context.permit,
+            )
+            .map_err(|_| RouteCatalogError::Conflict)?;
+        let generation = catalog.generation.checked_add(1).ok_or(RouteCatalogError::Malformed)?;
+        let replacement = encode_catalog(&RouteCatalog { table, generation })?;
+        let mut lifecycle = ShardSplit::from_durable_state(state.clone())
+            .map_err(|_| RouteCatalogError::Malformed)?;
+        lifecycle
+            .cut_over_with_permit(context.permit)
+            .map_err(|_| RouteCatalogError::Conflict)?;
+        tx.put_private_metadata(&route_key, value(&replacement))?;
+        tx.put_private_metadata(
+            &split_key(context.split.database_incarnation()),
+            value(&lifecycle.durable_state().encode()),
+        )?;
+        match tx.commit(LocalDurability::Synced) {
+            CommitOutcome::Committed(_) => Ok(generation),
+            CommitOutcome::Rejected(CommitError::Conflict) => Err(RouteCatalogError::Conflict),
+            CommitOutcome::Rejected(error) => Err(RouteCatalogError::Engine(match error {
+                CommitError::Validation => EngineError::InvalidDocument,
+                CommitError::OperationIdReuse { .. } => EngineError::Conflict,
+                CommitError::EngineClosed => EngineError::Closed(super::EngineClosed),
+                CommitError::UsageRequiresSynced => EngineError::InvalidDocument,
+                CommitError::StorageFailure => EngineError::StorageFailure,
+                CommitError::Conflict => EngineError::Conflict,
+            })),
+            CommitOutcome::Unknown(_) => Err(RouteCatalogError::Engine(EngineError::StorageFailure)),
+        }
+    }
+
+    /// Recovers the durable route receipt and authoritative catalog together.
+    pub(crate) fn recover_shard_split_route(
+        &self,
+        scope: &TenantScope,
+        split: &crate::shard_split::SplitContext,
+    ) -> Result<Option<(CommittedSplitRoute, RouteCatalog)>, RouteCatalogError> {
+        let tx = self.begin(
+            scope,
+            self.read_snapshot(scope)?,
+            OperationId::try_new("route-recover").map_err(|_| RouteCatalogError::Malformed)?,
+        )?;
+        let catalog = bytes(tx.read_private_metadata(&key(split.database_incarnation()))?)?
+            .map(|raw| decode_catalog(&raw))
+            .transpose()?;
+        let Some(catalog) = catalog else { return Ok(None); };
+        let Some(raw) = bytes(tx.read_private_metadata(&split_key(split.database_incarnation()))?)? else {
+            return Ok(None);
+        };
+        let state = DurableSplitState::decode(&raw).map_err(|_| RouteCatalogError::Malformed)?;
+        if state.context() != Some(*split)
+            || !matches!(state.phase(), SplitPhase::CutOver | SplitPhase::Complete)
+        {
+            return Ok(None);
+        }
+        Ok(Some((
+            CommittedSplitRoute { split: *split, generation: catalog.generation, route: catalog.table.clone() },
+            catalog,
+        )))
     }
 }

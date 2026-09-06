@@ -29,7 +29,7 @@ impl SplitStateStore for Engine {
 
 impl AtomicSplitCutover for Engine {
     type Error = ();
-    fn install_split_route(&mut self, _context: &CutoverContext) -> Result<u64, Self::Error> {
+    fn install_split_route(&mut self, _context: &CutoverContext, _state: &DurableSplitState) -> Result<u64, Self::Error> {
         self.installs += 1;
         Ok(self.installs as u64)
     }
@@ -161,16 +161,23 @@ impl SplitStateStore for CrashEngine {
 
 impl AtomicSplitCutover for CrashEngine {
     type Error = ();
-    fn install_split_route(&mut self, context: &CutoverContext) -> Result<u64, Self::Error> {
+    fn install_split_route(&mut self, context: &CutoverContext, _state: &DurableSplitState) -> Result<u64, Self::Error> {
         self.0.borrow_mut().route =
-            Some(CommittedSplitRoute { split: context.split, generation: 1 });
+            Some(CommittedSplitRoute {
+                split: context.split,
+                generation: 1,
+                route: RouteTable::new(vec![
+                    ShardRoute::new(context.split.target_shard(), None, Some(b"k".to_vec())).unwrap(),
+                    ShardRoute::new(context.split.source_shard(), Some(b"k".to_vec()), None).unwrap(),
+                ]).unwrap(),
+            });
         Ok(1)
     }
     fn recover_split_route(
         &mut self,
         _split: &terrabase::shard_split::SplitContext,
     ) -> Result<Option<CommittedSplitRoute>, Self::Error> {
-        Ok(self.0.borrow().route)
+        Ok(self.0.borrow().route.clone())
     }
 }
 

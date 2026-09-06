@@ -40,6 +40,7 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
         operation: &str,
         signature: &[u8],
         operation_grant: &[u8],
+        expected_restore_digest: Option<&str>,
     ) -> Result<(), String> {
         self.journal
             .verify_lifecycle_authority(
@@ -70,6 +71,8 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
             .map_err(|_| "accepted lifecycle placement digest is unavailable")?;
         if grant.action != action
             || grant.operation_id != operation
+            || (expected_restore_digest.is_some_and(|expected| grant.accepted_restore_request_digest != expected)
+                || (expected_restore_digest.is_none() && !grant.accepted_restore_request_digest.is_empty()))
             || grant.environment != assignment.environment
             || grant.tenant != assignment.tenant
             || grant.project != assignment.project
@@ -90,6 +93,21 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
     }
 }
 
+fn restore_request_digest(request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest) -> Result<String, String> {
+    use aws_lc_rs::digest::{digest, SHA256};
+    let mut bytes = Vec::new();
+    for value in [&request.source_owner, &request.source_database, &request.recovery_point_id, &request.recovery_point_digest, &request.target_owner, &request.target_database, &request.journal_cut] {
+        let len = u32::try_from(value.len()).map_err(|_| "restore request is too large")?;
+        bytes.extend_from_slice(&len.to_be_bytes());
+        bytes.extend_from_slice(value.as_bytes());
+    }
+    bytes.extend_from_slice(&request.restore_epoch.to_be_bytes());
+    bytes.extend_from_slice(&(request.provider as u32).to_be_bytes());
+    let mut input = b"terrascale-restore-request-v1\0".to_vec();
+    input.extend_from_slice(&bytes);
+    Ok(hex::encode(digest(&SHA256, &input).as_ref()))
+}
+
 impl TbepLifecycleControl {
     #[must_use]
     pub fn new(control: Arc<ProductionLifecycleControl>) -> Self {
@@ -104,6 +122,10 @@ impl TbepLifecycleControl {
         request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
     ) -> Result<terrabase_tbep::proto::terrabase::v1::LifecycleControlResponse, String> {
         let context = request.context.as_ref().ok_or("restore context is missing")?;
+        if request.target_database != context.database
+            || request.target_owner != format!("{}/{}", context.tenant, context.project) {
+            return Err("restore target is outside the admitted lifecycle scope".into());
+        }
         let assignment = Self::assignment(context);
         self.control.authority.verify(
             &assignment,
@@ -111,16 +133,11 @@ impl TbepLifecycleControl {
             &request.operation_id,
             &context.authority_signature,
             &context.operation_grant,
+            Some(&restore_request_digest(request)?),
         )?;
-        self.control.worker.restore_to_target(request).await?;
-        Ok(terrabase_tbep::proto::terrabase::v1::LifecycleControlResponse {
-            status: terrabase_tbep::proto::terrabase::v1::LifecycleStatus::Accepted as i32,
-            operation_id: request.operation_id.clone(),
-            detail: String::new(),
-            recovery_point_id: String::new(),
-            recovery_point_digest: String::new(),
-            placement: Vec::new(),
-        })
+        let _receipt = self.control.worker.restore_to_target(request).await?;
+        Err("native restore admitted; retry for terminal verified facts".into())
+/
     }
 
     fn assignment(
@@ -370,7 +387,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
     async fn restore_to_target(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
-    ) -> Result<(), String> {
+    ) -> Result<NativeLifecycleReceipt, String> {
         let recovery = self.recovery.as_ref().ok_or("native recovery owner is not composed")?;
         let operation = crate::native_recovery::NativeRestoreRequest {
             operation_id: request.operation_id.clone(),
@@ -382,9 +399,9 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             target_database_id: request.target_database.clone(),
             journal_cut: request.journal_cut.clone(),
             restore_epoch: request.restore_epoch,
-            provider: match request.provider {
-                terrabase_tbep::proto::terrabase::v1::RestoreProvider::Oci => "oci",
-                terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris => "tigris",
+            provider: match terrabase_tbep::proto::terrabase::v1::RestoreProvider::try_from(request.provider) {
+                Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::Oci) => "oci",
+                Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris) => "tigris",
                 _ => return Err("restore provider is not approved".into()),
             }
             .into(),
@@ -397,7 +414,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         };
         recovery
             .admit_restore(operation)
-            .map(|_| ())
+            .map(|_| Err("native restore admitted; retry for terminal verified facts".into()))
             .map_err(|_| "native restore admission refused".into())
     }
 
@@ -464,6 +481,7 @@ pub trait LifecycleAuthority: Send + Sync {
         operation: &str,
         signature: &[u8],
         operation_grant: &[u8],
+        expected_restore_digest: Option<&str>,
     ) -> Result<(), String>;
 }
 
@@ -485,7 +503,7 @@ impl ProductionLifecycleControl {
         signature: &[u8],
         operation_grant: &[u8],
     ) -> Result<NativeLifecycleReceipt, String> {
-        self.authority.verify(assignment, action, operation, signature, operation_grant)?;
+        self.authority.verify(assignment, action, operation, signature, operation_grant, None)?;
         self.worker.ensure_snapshot(assignment, operation).await
     }
 
@@ -498,7 +516,7 @@ impl ProductionLifecycleControl {
         signature: &[u8],
         operation_grant: &[u8],
     ) -> Result<(), String> {
-        self.authority.verify(assignment, action, operation, signature, operation_grant)?;
+        self.authority.verify(assignment, action, operation, signature, operation_grant, None)?;
         self.worker.close_database(assignment, operation).await
     }
 
@@ -511,7 +529,7 @@ impl ProductionLifecycleControl {
         signature: &[u8],
         operation_grant: &[u8],
     ) -> Result<NativeLifecycleReceipt, String> {
-        self.authority.verify(assignment, action, operation, signature, operation_grant)?;
+        self.authority.verify(assignment, action, operation, signature, operation_grant, None)?;
         self.worker.stop_native_backup(assignment, operation).await
     }
 
@@ -524,7 +542,7 @@ impl ProductionLifecycleControl {
         signature: &[u8],
         operation_grant: &[u8],
     ) -> Result<NativeLifecycleReceipt, String> {
-        self.authority.verify(assignment, action, operation, signature, operation_grant)?;
+        self.authority.verify(assignment, action, operation, signature, operation_grant, None)?;
         self.worker.reactivate(assignment, operation).await
     }
 
@@ -536,7 +554,7 @@ impl ProductionLifecycleControl {
         signature: &[u8],
         operation_grant: &[u8],
     ) -> Result<NativeLifecycleReceipt, String> {
-        self.authority.verify(assignment, action, operation, signature, operation_grant)?;
+        self.authority.verify(assignment, action, operation, signature, operation_grant, None)?;
         self.worker.verify_snapshot_placement(assignment, operation).await.map(|_| {
             NativeLifecycleReceipt::State(
                 terrabase::engine::lifecycle_state::LifecycleOperationOutcome::AlreadyApplied,
@@ -552,7 +570,7 @@ impl ProductionLifecycleControl {
         signature: &[u8],
         operation_grant: &[u8],
     ) -> Result<(), String> {
-        self.authority.verify(assignment, action, operation, signature, operation_grant)?;
+        self.authority.verify(assignment, action, operation, signature, operation_grant, None)?;
         self.worker.delete_owned_data(assignment, operation).await
     }
 }

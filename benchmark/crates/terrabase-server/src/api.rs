@@ -4468,6 +4468,8 @@ pub(crate) fn json_response(status: StatusCode, body: String) -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[path = "../../budget_http_tests.rs"]
+    mod budget_http_tests;
     #[path = "../../byo_router_tests.rs"]
     mod byo_router_tests;
     #[path = "conditional_create.rs"]
@@ -4641,7 +4643,7 @@ mod tests {
         })
     }
 
-    pub(super) fn state_with_keys_and_control() -> Arc<ApiState> {
+    pub(crate) fn state_with_keys_and_control() -> Arc<ApiState> {
         use crate::api_keys::KeyStore;
         use crate::api_keys::Scope;
         use crate::api_keys::Verbs;

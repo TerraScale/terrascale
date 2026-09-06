@@ -147,7 +147,8 @@ pub struct NativeRestoreRequest {
     pub source_database_id: String,
     /// Selected recovery point identity.
     pub recovery_point_id: String,
-    /// Selected recovery point digest.
+    /// Selected backup manifest identity digest (SHA-256), distinct from the
+    /// logical content BLAKE3 checksum measured after restore.
     pub recovery_point_digest: String,
     /// Authenticated target owner.
     pub target_owner: String,
@@ -629,6 +630,13 @@ impl NativeRecoveryRuntime {
         let Some(bytes) = row else { return Ok(false) };
         let mut operation: NativeRestoreOperation =
             serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::VerificationFailed)?;
+        if matches!(operation.phase, NativeRestorePhase::Verifying)
+            && operation.receipt.is_some()
+        {
+            operation.phase = NativeRestorePhase::Complete;
+            self.save_restore(&operation)?;
+            return Ok(true);
+        }
         let request = &operation.request;
         let admitted = self
             .registry

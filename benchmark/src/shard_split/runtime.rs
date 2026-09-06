@@ -134,6 +134,7 @@ where
             if route.split != context {
                 return Err(SplitRuntimeError::MissingCommittedGeneration);
             }
+            self.router = ShardRouter::from_table(route.route);
             self.committed_generation = Some(route.generation);
         }
         self.split = Some(split);
@@ -211,6 +212,26 @@ where
         self.orchestrator
             .validate_split_placement(context.database_incarnation(), context.placement_epoch())
             .map_err(SplitRuntimeError::Placement)?;
+        // The engine route is authoritative after a lost response. Reconcile
+        // the complete table before attempting another cutover transaction;
+        // retrying against this worker's stale mirror could fence a new route.
+        if let Some(recovered) = self
+            .engine
+            .recover_split_route(&context)
+            .map_err(SplitRuntimeError::Cutover)?
+        {
+            if recovered.split != context {
+                return Err(SplitRuntimeError::MissingCommittedGeneration);
+            }
+            self.router = ShardRouter::from_table(recovered.route);
+            self.committed_generation = Some(recovered.generation);
+            split.cut_over().map_err(|_| SplitRuntimeError::MissingCommittedGeneration)?;
+            self.engine.save(&split.durable_state()).map_err(SplitRuntimeError::State)?;
+            self.orchestrator
+                .publish_split_frontier(&context, recovered.generation)
+                .map_err(SplitRuntimeError::Publication)?;
+            return Ok(recovered.generation);
+        }
         let generation = self
             .engine
             .install_split_route(&CutoverContext {
@@ -218,7 +239,7 @@ where
                 route_generation: self.router.table().generation(),
                 drained_through,
                 permit,
-            })
+            }, &split.durable_state())
             .map_err(SplitRuntimeError::Cutover)?;
         let routing_result = self.router.cut_over(
             context.source_shard(),
