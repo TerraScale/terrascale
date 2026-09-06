@@ -1,7 +1,7 @@
 //! Durable native recovery-point operations bound to the running member fleet.
 
 use crate::admitted_databases::AdmittedDatabaseRegistry;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -385,7 +385,10 @@ impl NativeRecoveryRuntime {
         if matches!(state.phase, NativeRecoveryPhase::Complete) {
             return Ok(());
         }
-        let mut checkpoint = match self.load_checkpoint(source, operation) {
+        if state.operation_id != operation || state.source_database_id != source {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
+        let checkpoint = match self.load_checkpoint(source, operation) {
             Ok(value) => value,
             Err(error) => {
                 state.phase = NativeRecoveryPhase::Failed;
@@ -396,32 +399,52 @@ impl NativeRecoveryRuntime {
                 return Err(error);
             }
         };
-        let source_owned = source.to_owned();
-        let capture_fleet = Arc::clone(&self.fleet);
-        let capture = move || {
+        let capture = || {
             let manifest = {
-                let mut fleet = capture_fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-                tokio::runtime::Handle::current().block_on(fleet.capture_snapshot(&source_owned))
+                let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+                tokio::runtime::Handle::current()
+                    .block_on(fleet.capture_snapshot(source))
                     .map_err(|_| NativeRecoveryError::VerificationFailed)?
             };
-            Ok(Checkpoint::from_manifest(&manifest, &source_owned, &placement))
+            Ok(Checkpoint::from_manifest(&manifest, source, &placement))
         };
-        let persist = |operation: &NativeRecoveryOperation, cp: Option<&Checkpoint>| self.save(operation, cp);
-        let measure_fleet = Arc::clone(&self.fleet);
-        let measure_source = source.to_owned();
-        let measure_placement = placement.clone();
-        let measure = move |point: &Checkpoint| {
-            let fleet = measure_fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-            fleet.retained_points(&measure_source).map_err(|_| NativeRecoveryError::VerificationFailed)?
-                .into_iter().find(|manifest| point.matches_manifest(manifest))
+        let persist =
+            |operation: &NativeRecoveryOperation, cp: Option<&Checkpoint>| self.save(operation, cp);
+        let measure = |point: &Checkpoint| {
+            let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            fleet
+                .retained_points(source)
+                .map_err(|_| NativeRecoveryError::VerificationFailed)?
+                .into_iter()
+                .find(|manifest| point.matches_manifest(manifest))
                 .ok_or(NativeRecoveryError::VerificationFailed)?;
-            let tenant = terrabase::types::TenantId::try_new(host.tenant()).map_err(|_| NativeRecoveryError::InvalidRequest)?;
-            let stats = host.engine().recovery_statistics(&host.engine().scope_for(&tenant), point.journal_cut, point.captured_at_millis, None)
+            drop(fleet);
+            let tenant = terrabase::types::TenantId::try_new(host.tenant())
+                .map_err(|_| NativeRecoveryError::InvalidRequest)?;
+            let stats = host
+                .engine()
+                .recovery_statistics(
+                    &host.engine().scope_for(&tenant),
+                    point.journal_cut,
+                    point.captured_at_millis,
+                    None,
+                )
                 .map_err(|_| NativeRecoveryError::VerificationFailed)?;
-            if stats.journal_cut != point.journal_cut || stats.captured_at_millis != point.captured_at_millis {
+            if stats.journal_cut != point.journal_cut
+                || stats.captured_at_millis != point.captured_at_millis
+            {
                 return Err(NativeRecoveryError::VerificationFailed);
             }
-            Ok(RecoveryPointFacts { recovery_point_id: point.recovery_point_id.clone(), source_database_id: source_owned.clone(), journal_cut: point.journal_cut, captured_at_millis: point.captured_at_millis, checksum: blake3::Hash::from(stats.checksum).to_hex().to_string(), row_count: stats.row_count, placement: measure_placement.clone(), retained_until_millis: point.retained_until_millis })
+            Ok(RecoveryPointFacts {
+                recovery_point_id: point.recovery_point_id.clone(),
+                source_database_id: source.to_owned(),
+                journal_cut: point.journal_cut,
+                captured_at_millis: point.captured_at_millis,
+                checksum: blake3::Hash::from(stats.checksum).to_hex().to_string(),
+                row_count: stats.row_count,
+                placement: placement.clone(),
+                retained_until_millis: point.retained_until_millis,
+            })
         };
         checkpoint::advance(&mut state, checkpoint, &placement, capture, persist, measure)
     }

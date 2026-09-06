@@ -107,6 +107,7 @@ where
         state.error = None;
         persist(state, None)?;
         checkpoint = Some(capture()?);
+        validate(checkpoint.as_ref(), &state.source_database_id, placement)?;
     }
     if matches!(state.phase, NativeRecoveryPhase::Accepted) {
         state.phase = NativeRecoveryPhase::Measuring;
@@ -118,44 +119,10 @@ where
     }
     let facts = measure(checkpoint.as_ref().ok_or(NativeRecoveryError::VerificationFailed)?)?;
     state.facts = Some(facts);
+    state.error = None;
     state.phase = NativeRecoveryPhase::Complete;
     persist(state, checkpoint.as_ref())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn point() -> Checkpoint {
-        Checkpoint {
-            recovery_point_id: "rp".into(),
-            source_database_id: "db".into(),
-            journal_cut: 7,
-            captured_at_millis: 11,
-            retained_until_millis: 99,
-            placement: vec!["GRU".into()],
-        }
-    }
-
-    #[test]
-    fn checkpoint_round_trips_with_strict_bounds() {
-        let original = point();
-        let encoded = original.encode().unwrap();
-        assert_eq!(Checkpoint::decode(&encoded).unwrap(), original);
-        assert!(validate(Some(&original), "db", &["GRU".into()]).is_ok());
-    }
-
-    #[test]
-    fn checkpoint_rejects_source_and_placement_mismatch() {
-        let original = point();
-        assert_eq!(
-            validate(Some(&original), "other", &["GRU".into()]),
-            Err(NativeRecoveryError::VerificationFailed)
-        );
-        assert_eq!(
-            validate(Some(&original), "db", &["SFO".into()]),
-            Err(NativeRecoveryError::VerificationFailed)
-        );
-        assert!(Checkpoint::decode(br"{}").is_err());
-    }
-}
+mod tests;
