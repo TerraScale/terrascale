@@ -521,7 +521,7 @@ impl ProductionAdmissionRuntime {
             config,
             active: BTreeSet::new(),
             pending_publication: BTreeMap::new(),
-            lifecycle: Arc::new(ProductionDataLifecycle::new(progress.clone(), registry.clone())),
+            lifecycle: Arc::new(ProductionDataLifecycle::new(progress, registry.clone())),
             dispatcher,
             usage,
             snapshot_max_bytes,
@@ -916,20 +916,7 @@ impl ProductionAdmissionRuntime {
     /// # Errors
     /// Reports a failed bounded peer drain.
     pub async fn drain(&self) -> Result<(), String> {
-        self.lifecycle.begin_drain();
-        let registry_fenced = self.registry.begin_drain();
-        let workers = self.lifecycle.drain().await;
-        // A terminal worker failure still releases this registry's leases.
-        // Cancellation never reaches this point, and an unavailable join state
-        // must retain hosts for a later cleanup attempt.
-        let released = if self.lifecycle.get().is_none_or(|data| data.peers.drain_completed()) {
-            self.registry.release_drained_hosts()
-        } else {
-            Err("replication worker cleanup has not completed".into())
-        };
-        workers?;
-        registry_fenced?;
-        released
+        self.lifecycle.drain().await
     }
 }
 
@@ -968,11 +955,11 @@ mod lifecycle_tests {
         };
         assert!(lifecycle.data.set(data).is_ok());
         assert_eq!(registry.retained_snapshot().unwrap().len(), records.len());
-        assert_eq!(lifecycle.drain().await.as_deref(), Err(failure));
+        assert_eq!(lifecycle.drain().await.unwrap_err(), failure);
         assert!(registry.retained_snapshot().unwrap().is_empty());
         assert!(registry.resolve(&records[0].database_id).is_err());
         member.close(std::time::Duration::from_secs(1)).expect("all registry leases released");
-        assert_eq!(lifecycle.drain().await.as_deref(), Err(failure));
+        assert_eq!(lifecycle.drain().await.unwrap_err(), failure);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

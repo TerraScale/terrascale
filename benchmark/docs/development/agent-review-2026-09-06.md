@@ -953,3 +953,40 @@ three ignored, and the same known restore performance test excluded. Log:
 500 remains an unexplained intermittent failure, not a proven fix. No additional
 repeat runs are justified without new evidence. Production composition and the
 full workspace check remain incomplete; all ULID and concurrent work is retained.
+
+
+A shared ProductionDataLifecycle now retains one replication runtime in a
+OnceLock and the exact admitted registry. Startup serializes through an async
+mutex; draining fences progress and registry admission before awaiting workers.
+The installed owner is never taken or replaced. Repeated startup is rejected
+rather than silently accepting new authority or assignment arguments. Admission
+uses this owner for reconciliation and delegates shutdown to it.
+
+Registry draining serializes with publication and serving lookups, preserves
+hosts for shutdown observations, and releases its hosts only after the worker
+join is known complete. Previously resolved hosts and snapshots retain their
+resource-accounted Member leases. A terminal worker error remains an error but
+does not permanently prevent registry release. Cancellation and unavailable
+join state retain hosts for retry. Independent review found the ignored-startup
+arguments and terminal-error lease leak; both were fixed and reviewed again.
+
+All 29 production-related server tests passed (`19660`), including real QUIC
+empty-lane lifecycle ownership, no restart after drain, and terminal failed
+worker cleanup with real encrypted registry/Member leases. Nine peer tests
+passed and six registry tests passed (`66740`). Logs:
+`/tmp/terrascale-owned-registry-production-tests.log`,
+`/tmp/terrascale-lifecycle-peer-tests.log`, and
+`/tmp/terrascale-registry-drain-tests.log`. The failure-injection test uses a
+synthetic supervisor task; it does not certify physical replication shutdown.
+The final independent source review found no remaining material lifecycle
+defect. No ProductionDataPlane adapter is attached yet, and the accepted
+startup path still refuses incomplete composition.
+
+The broader server library verification passed (`70114`): 356 passed, three
+ignored, and the known 100k-document restore performance gate excluded. The
+time-travel API test passed in this run; its earlier intermittent HTTP 500 is
+not claimed fixed. Log: `/tmp/terrascale-owned-lifecycle-server-library.log`.
+Server all-target Clippy remains at 75 diagnostics after removing the new
+redundant ownership clone (`57746`); log:
+`/tmp/terrascale-owned-lifecycle-clippy-final.log`. No full workspace check or
+production-readiness claim is made.
