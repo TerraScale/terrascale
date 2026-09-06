@@ -38,7 +38,7 @@ fn key(seed: u8) -> Ed25519KeyPair {
 
 fn hash(bytes: &[u8]) -> String {
     let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes);
-    digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+    hex::encode(digest.as_ref())
 }
 
 fn signed(key_id: &str, key: &Ed25519KeyPair, payload: &[u8]) -> Vec<u8> {
@@ -56,10 +56,10 @@ fn member(identity: String) -> Member {
     Member { identity, region: "GRU".into(), placement_digest: "a".repeat(64) }
 }
 
-fn prepared_journal(
+fn staged_journal(
     runtime: &ProductionMemberRuntime,
     root: &std::path::Path,
-) -> (Arc<terrabase_tbep::placement::PlacementJournal>, Vec<u8>) {
+) -> (Arc<terrabase_tbep::placement::PlacementJournal>, String) {
     let config = runtime.transport().config();
     let local = config.local_identity();
     let peer = config.peers().next().unwrap().identity();
@@ -125,7 +125,21 @@ fn prepared_journal(
         .unwrap()
         .query_row("SELECT proposal FROM proposals WHERE revision=1", [], |row| row.get(0))
         .unwrap();
-    let placement_digest = hash(&bytes);
+    (journal, hash(&bytes))
+}
+
+fn prepared_journal(
+    runtime: &ProductionMemberRuntime,
+    root: &std::path::Path,
+) -> (Arc<terrabase_tbep::placement::PlacementJournal>, Vec<u8>) {
+    let (journal, placement_digest) = staged_journal(runtime, root);
+    let config = runtime.transport().config();
+    let local = config.local_identity();
+    let peer = config.peers().next().unwrap().identity();
+    let environment = local.environment();
+    let cluster = local.cluster();
+    let authority = key(1);
+    let genesis = key(2);
     let mut members = vec![member(local.as_str().to_owned()), member(peer.as_str().to_owned())];
     for member in &mut members {
         member.placement_digest.clone_from(&placement_digest);
@@ -206,6 +220,7 @@ async fn valid_prepared_transition_fences_empty_runtime_epoch() {
     let fences = lifecycle.begin_transition_retirement(runtime.clone(), &prepared).await.unwrap();
     assert!(fences.sequences().is_empty());
     assert!(lifecycle.is_draining());
+    lifecycle.get().unwrap().ensure_running().unwrap();
     lifecycle.drain().await.unwrap();
     drop(fences);
     runtime.drain().await.storage.unwrap();

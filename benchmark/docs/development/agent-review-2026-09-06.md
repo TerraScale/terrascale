@@ -1133,3 +1133,55 @@ engine fencing, live worker retirement, physical acknowledgment fencing, durable
 frontier capture, receipt signing, and the production PlacementDataControl
 adapter still need composition. No completed drain receipt is inferred from the
 intent, and the larger production and provider qualification gates remain open.
+
+## Live origin retirement and retained worker ownership
+
+ProductionMemberRuntime now exposes a shared-reference retirement barrier that
+revokes membership and every retained WAL binding while preserving the Member
+and worker owners. Final retire_epoch still signals and joins its data plane;
+normal storage shutdown cannot be used to qualify successor retirement.
+
+ProductionDataLifecycle.begin_transition_retirement consumes the sealed prepared
+intent descriptor, checks its exact scope/epoch/generation and runtime owner,
+fences public/progress admission, and durably fences every retained accepted
+writer Engine on a blocking worker. The returned writer leases remain available
+for later frontier inspection. Missing hosts, foreign inventory, and stale
+Engine epochs refuse the result. Physical followers never open another Engine.
+This is origin fencing only, not a completed or signed transition receipt.
+
+Independent review found and corrected two lifecycle bugs before qualification:
+a different runtime could pass the same prepared tuple, and cancelling the async
+caller could release startup serialization before its blocking task completed.
+The running data owner now retains a Weak runtime identity and compares Arc
+identity. The blocking closure owns the startup mutex guard through completion,
+including when queued behind another blocking task and after caller cancellation.
+
+Further physical-follower tracing separated admission fencing from worker stop.
+Beginning retirement keeps peer lane owners alive, so final physical evidence
+can be captured before explicit drain drops their exclusive files. Tests verify
+worker-owner liveness after the barrier; a real follower capture still requires
+the distinct post-fence driver operation and coordinated peer command.
+
+The final production-filter server run passed all 61 selected tests (`34486`):
+`/tmp/terrascale-transition-retirement-preserved-workers-tests.log`. Coverage
+includes real signed journal/prepared authority, wrong lifecycle owner, cancelled
+queued fencing racing drain, encrypted retained writer fencing and rejection of
+a pre-admitted transaction, and a newer role after retiring/closing the old Engine.
+The cancellation integration fixture has no database lanes; real writer fencing
+is verified separately. The cluster production selection passed nine tests
+(`25130`), and final cluster all-target Clippy passed (`97049`). Independent final
+review found no material defects in the ownership fixes or phase separation.
+
+The overall GOAL.md estimate communicated to the owner is about 55 percent,
+explicitly a judgment estimate rather than a measured completion score. None of
+G1-G4 is fully passed. Production composition, signed drain receipts and follower
+frontiers, native provider integration, full workspace checks, real provider and
+multi-Region fault qualification, soak/restore windows, and owner launch gates
+remain unfinished. ULID and concurrent agent work remain intact.
+
+Final server all-target Clippy remains at the same 74 existing diagnostics
+(`26930`), with no diagnostics in the new retirement modules. Log:
+`/tmp/terrascale-transition-retirement-preserved-workers-clippy.log`. The two new
+test-helper diagnostics were fixed by using the existing hex encoder and splitting
+journal staging from signed-proof construction. `git diff --check` passed; no
+Cargo process remains running.

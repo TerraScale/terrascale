@@ -180,6 +180,33 @@ impl WalReplicaBinding {
         self.worker.clone().try_acquire_owned().map_err(|_| WalRouteError::Busy)
     }
 
+    /// Reserves the storage worker lane after this binding has been fenced.
+    /// Unlike normal serving admission, retirement waits for an operation that
+    /// already owns the lane to finish before taking its capture.
+    pub(crate) async fn reserve_retired_worker(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, WalRouteError> {
+        {
+            let active = self.active.try_lock().map_err(|error| match error {
+                TryLockError::WouldBlock => WalRouteError::Busy,
+                TryLockError::Poisoned(_) => WalRouteError::Fenced,
+            })?;
+            if *active {
+                return Err(WalRouteError::Unauthorized);
+            }
+        }
+        let permit =
+            self.worker.clone().acquire_owned().await.map_err(|_| WalRouteError::Fenced)?;
+        let active = self.active.try_lock().map_err(|error| match error {
+            TryLockError::WouldBlock => WalRouteError::Busy,
+            TryLockError::Poisoned(_) => WalRouteError::Fenced,
+        })?;
+        if *active {
+            return Err(WalRouteError::Unauthorized);
+        }
+        Ok(permit)
+    }
+
     pub(crate) fn authorize_connection(
         &self,
         connection: &terrabase_member_transport::production::ProductionConnection,

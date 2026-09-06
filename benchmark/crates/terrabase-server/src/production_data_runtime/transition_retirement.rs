@@ -40,7 +40,8 @@ impl ProductionDataLifecycle {
     /// The sealed descriptor comes from `PlacementJournal::begin_transition_drain`.
     /// Admission and physical bindings are revoked before every retained writer
     /// origin is durably fenced. The caller still owns public-task shutdown,
-    /// replication worker joins, final frontier capture, and receipt signing.
+    /// final physical frontier capture, replication worker joins, and receipt signing.
+    /// Peer workers remain owned until that capture and explicit drain.
     /// The result retains the existing Engine leases through those later steps.
     ///
     /// # Errors
@@ -86,7 +87,7 @@ impl ProductionDataLifecycle {
             // WAL revocation may wait for a physical persistence critical section.
             // Keep it and the Engine barriers off Tokio's async worker threads.
             runtime.begin_epoch_retirement();
-            lifecycle.begin_drain()?;
+            lifecycle.fence_admission()?;
             let hosts = lifecycle.registry.retained_snapshot()?;
             fence_writer_hosts(&expected, hosts, epoch)
         })

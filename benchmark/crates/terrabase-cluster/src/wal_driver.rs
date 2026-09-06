@@ -400,6 +400,48 @@ pub struct WalPhysicalBoundary {
     checkpoint: [u8; 32],
     sequence: u64,
 }
+
+/// A retired follower's final physical checkpoint, captured only after its
+/// binding has been explicitly fenced and all prior storage work has drained.
+#[derive(Clone, Debug)]
+pub struct WalRetiredPhysicalBoundary {
+    installed: crate::wal_snapshot::WalInstalledSnapshotProof,
+    checkpoint: [u8; 32],
+    sequence: u64,
+}
+
+impl WalRetiredPhysicalBoundary {
+    /// Exact database scope.
+    #[must_use]
+    pub fn scope(&self) -> DatabaseRouteScope {
+        self.installed.scope()
+    }
+    /// Accepted placement generation.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.installed.generation()
+    }
+    /// Accepted replica epoch.
+    #[must_use]
+    pub fn epoch(&self) -> u64 {
+        self.installed.epoch()
+    }
+    /// Installed base snapshot identity.
+    #[must_use]
+    pub fn snapshot_digest(&self) -> [u8; 32] {
+        self.installed.snapshot_digest()
+    }
+    /// Current durable WAL checkpoint identity.
+    #[must_use]
+    pub fn checkpoint_digest(&self) -> [u8; 32] {
+        self.checkpoint
+    }
+    /// Conservative SQLite sequence known included in durable files.
+    #[must_use]
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
 impl WalPhysicalBoundary {
     /// Accepted placement generation.
     #[must_use]
@@ -605,6 +647,35 @@ impl WalFollowerDriver {
         })
         .await
         .map_err(|_| WalQuicError::WorkerUnavailable)?
+    }
+
+    /// Captures the final physical checkpoint of a fenced follower. The
+    /// capture waits for all previously admitted storage work to release its
+    /// worker permit and never re-enters serving admission.
+    ///
+    /// # Errors
+    /// Returns an admission, worker, or follower-lock failure. An absent
+    /// installed snapshot is rejected because it cannot establish a boundary.
+    pub async fn retired_physical_boundary(
+        &mut self,
+    ) -> Result<WalRetiredPhysicalBoundary, WalQuicError> {
+        let installed =
+            self.installed.clone().ok_or(WalQuicError::Route(WalRouteError::Unauthorized))?;
+        let permit = self.binding.reserve_retired_worker().await.map_err(WalQuicError::Route)?;
+        let follower = self.follower.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let checkpoint = follower.lock().map_err(|_| WalRouteError::Fenced)?.checkpoint();
+            let bytes = serde_json::to_vec(&checkpoint).map_err(|_| WalRouteError::Unauthorized)?;
+            Ok(WalRetiredPhysicalBoundary {
+                sequence: installed.sequence(),
+                installed,
+                checkpoint: *blake3::hash(&bytes).as_bytes(),
+            })
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)?
+        .map_err(WalQuicError::Route)
     }
 
     /// Verifies an authenticated writer's causal/root challenge against the

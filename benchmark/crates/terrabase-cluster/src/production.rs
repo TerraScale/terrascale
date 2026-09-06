@@ -998,28 +998,21 @@ impl ProductionMemberRuntime {
         ProductionMemberDrainReport { transport, data_plane, storage }
     }
 
-    /// Fences this placement epoch while retaining the runtime and root
-    /// [`Member`] for a separately authenticated successor composition.
+    /// Fences this placement epoch while retaining the runtime, its data-plane
+    /// workers, and root [`Member`] for authenticated retirement.
     ///
-    /// This is the synchronous authority barrier: membership admission,
-    /// serving admission, and every retained WAL binding are revoked before
-    /// the attached data plane is asked to stop accepting work. Callers must
-    /// persist the durable transition intent before invoking this method.
-    /// WAL revocation may wait for an in-flight persistence operation. Async
-    /// callers must invoke this barrier on a blocking worker.
-    /// The method does not close storage or claim that the epoch has drained;
-    /// [`Self::retire_epoch`] performs that later bounded retirement.
+    /// Callers must persist durable transition intent before invoking this
+    /// barrier. Membership, serving admission, and retained WAL bindings are
+    /// revoked. Workers remain owned so their final physical frontiers can be
+    /// captured before [`Self::retire_epoch`] signals shutdown and joins them.
+    /// No storage is closed and no completed drain is implied.
+    /// WAL revocation may wait for in-flight persistence; async callers should
+    /// run this barrier on a blocking worker.
     pub fn begin_epoch_retirement(&self) {
-        let data_plane = {
-            let mut admission = lock_unpoisoned(&self.membership_admission);
-            *admission = MembershipAdmission::Fenced;
-            self.draining.store(true, Ordering::Release);
-            lock_unpoisoned(&self.wal_bindings).fence();
-            lock_unpoisoned(&self.data_plane).clone()
-        };
-        if let Some(data_plane) = data_plane {
-            data_plane.begin_drain();
-        }
+        let mut admission = lock_unpoisoned(&self.membership_admission);
+        *admission = MembershipAdmission::Fenced;
+        self.draining.store(true, Ordering::Release);
+        lock_unpoisoned(&self.wal_bindings).fence();
     }
 
     /// Retires this immutable placement epoch while preserving the shared Member
@@ -1042,6 +1035,9 @@ impl ProductionMemberRuntime {
         }
         self.begin_epoch_retirement();
         let data_plane = lock_unpoisoned(&self.data_plane).take();
+        if let Some(plane) = &data_plane {
+            plane.begin_drain();
+        }
         let timeout = self.transport.config().limits().drain_timeout();
         let transport = self.transport.drain().await;
         let data_plane = match data_plane {

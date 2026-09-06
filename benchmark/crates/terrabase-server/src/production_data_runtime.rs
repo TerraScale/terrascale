@@ -183,11 +183,16 @@ impl ProductionDataLifecycle {
     /// # Errors
     /// Reports unavailable registry fencing state after signaling workers.
     pub fn begin_drain(&self) -> Result<(), String> {
-        self.draining.store(true, Ordering::Release);
-        self.progress.fence();
+        let admission = self.fence_admission();
         if let Some(data) = self.data.get() {
             data.begin_drain();
         }
+        admission
+    }
+
+    fn fence_admission(&self) -> Result<(), String> {
+        self.draining.store(true, Ordering::Release);
+        self.progress.fence();
         self.registry.begin_drain()
     }
 

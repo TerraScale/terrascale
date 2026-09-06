@@ -27,8 +27,11 @@ use tokio::sync::{mpsc, watch};
 
 #[cfg(test)]
 mod admission_tests;
+mod retirement;
 #[cfg(test)]
 pub(crate) use admission_tests::failed_peer_owner;
+
+pub use retirement::{RetiredPeerLane, RetirementEvidence};
 
 /// Application control frames multiplexed on the same authenticated endpoint.
 pub trait PeerControlDispatcher: Send + Sync {
@@ -175,6 +178,8 @@ pub struct ReplicationPeers {
     live_workers: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
     stop: watch::Sender<bool>,
     draining: AtomicBool,
+    retiring: AtomicBool,
+    retirement_result: std::sync::Mutex<Option<Result<RetirementEvidence, String>>>,
     // Observe completion without contending with join ownership; never abort here.
     worker_status: tokio::task::AbortHandle,
     join: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
@@ -347,6 +352,8 @@ impl ReplicationPeers {
         Ok(Self {
             stop,
             draining: AtomicBool::new(false),
+            retiring: AtomicBool::new(false),
+            retirement_result: std::sync::Mutex::new(None),
             worker_status: join.abort_handle(),
             join: tokio::sync::Mutex::new(Some(join)),
             drain_result: std::sync::Mutex::new(None),
@@ -358,11 +365,64 @@ impl ReplicationPeers {
             progress: retained_progress,
         })
     }
+
+    /// Captures one immutable physical/causal boundary from every configured
+    /// peer worker. The workers remain parked with their lanes retained until
+    /// the normal owner stop path releases them.
+    ///
+    /// # Errors
+    /// Refuses a normal drain, missing worker response, or any lane that cannot
+    /// produce its required durable boundary. No partial result is published.
+    pub async fn capture_retirement(&self) -> Result<RetirementEvidence, String> {
+        if self.draining.load(Ordering::Acquire) || *self.stop.borrow() {
+            return Err("replication peer owner is draining".into());
+        }
+        if let Some(result) = self.retirement_result.lock().map_err(failure)?.clone() {
+            return result;
+        }
+        let peers = {
+            let mut admitted = self.admitted.lock().map_err(failure)?;
+            if self.draining.load(Ordering::Acquire) || *self.stop.borrow() {
+                return Err("replication peer owner is draining".into());
+            }
+            if !self.retiring.swap(true, Ordering::AcqRel) {
+                admitted.clone()
+            } else {
+                admitted.clone()
+            }
+        };
+        let mut responses = BTreeMap::new();
+        for peer in self.admissions.keys() {
+            let (done, response) = tokio::sync::oneshot::channel();
+            self.admissions
+                .get(peer)
+                .ok_or("configured peer worker is missing")?
+                .send(PeerCommand::Retire { done })
+                .await
+                .map_err(failure)?;
+            let lanes = response.await.map_err(failure)??;
+            for (scope, lane) in lanes {
+                if !peers.contains(&(peer.clone(), scope)) {
+                    return Err("retirement worker returned an unadmitted lane".into());
+                }
+                responses.insert((peer.clone(), scope), lane);
+            }
+        }
+        if responses.keys().copied().collect::<std::collections::BTreeSet<_>>() != peers {
+            return Err("retirement response lane set is incomplete".into());
+        }
+        let result = Ok(RetirementEvidence { lanes: responses });
+        *self.retirement_result.lock().map_err(failure)? = Some(result.clone());
+        result
+    }
     /// Adds newly accepted scopes to the bounded persistent peer workers.
     /// # Errors
     /// Rejects duplicate scopes, unadmitted peers, exceeded bounds, or stopped workers.
     pub async fn add_databases(&self, batch: PeerDatabaseBatch) -> Result<(), String> {
-        if self.draining.load(Ordering::Acquire) || *self.stop.borrow() {
+        if self.draining.load(Ordering::Acquire)
+            || self.retiring.load(Ordering::Acquire)
+            || *self.stop.borrow()
+        {
             return Err("replication peer owner is draining".into());
         }
         batch.validate()?;
@@ -389,7 +449,10 @@ impl ReplicationPeers {
             return Err("replication peer worker stopped".into());
         }
         let mut admitted = self.admitted.lock().map_err(failure)?;
-        if self.draining.load(Ordering::Acquire) || *self.stop.borrow() {
+        if self.draining.load(Ordering::Acquire)
+            || self.retiring.load(Ordering::Acquire)
+            || *self.stop.borrow()
+        {
             return Err("replication peer owner is draining".into());
         }
         let added = peers.values().map(Vec::len).sum::<usize>();
