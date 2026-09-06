@@ -1,7 +1,5 @@
 //! Strict parsing helpers for the upstream `ulid::Ulid` value.
 
-use std::fmt;
-
 pub use ::ulid::Ulid;
 
 /// Length of canonical uppercase text.

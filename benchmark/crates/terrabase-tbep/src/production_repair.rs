@@ -1092,7 +1092,7 @@ mod tests {
         assert!(right.refresh(&target, &bound()).unwrap());
         let mut sender = driver("a", "b", 1);
         let mut receiver = driver("b", "a", 1);
-        let mut old = None;
+        let mut old: Option<Vec<u8>> = None;
         let mut repaired = 0;
         for tick in 0..64 {
             if tick == 1 {

@@ -1129,43 +1129,13 @@ fn date_claim(claims: &BTreeMap<String, Value>, name: &str) -> Result<u64, JwtAu
 }
 
 fn decode_base64url(value: &str, max_decoded: usize) -> Result<Vec<u8>, ()> {
-    if value.is_empty()
-        || value.contains('=')
-        || !value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+    if value.is_empty() || value.len() > max_decoded.saturating_mul(2) {
         return Err(());
     }
-    if value.len() > max_decoded.saturating_mul(2) {
-        return Err(());
-    }
-    let mut output = Vec::with_capacity(value.len() * 3 / 4);
-    let mut accumulator = 0_u32;
-    let mut bits = 0_u8;
-    for byte in value.bytes() {
-        let digit = match byte {
-            b'A'..=b'Z' => byte - b'A',
-            b'a'..=b'z' => byte - b'a' + 26,
-            b'0'..=b'9' => byte - b'0' + 52,
-            b'-' => 62,
-            b'_' => 63,
-            _ => return Err(()),
-        };
-        accumulator = (accumulator << 6) | u32::from(digit);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            output.push(u8::try_from(accumulator >> bits).map_err(|_| ())?);
-            if bits == 0 {
-                accumulator = 0;
-            } else {
-                accumulator &= (1_u32 << bits) - 1;
-            }
-            if output.len() > max_decoded {
-                return Err(());
-            }
-        }
-    }
-    if bits >= 6 || (bits > 0 && accumulator & ((1_u32 << bits) - 1) != 0) {
+    let output = URL_SAFE_NO_PAD.decode(value).map_err(|_| ())?;
+    if output.len() > max_decoded {
         return Err(());
     }
     Ok(output)
@@ -1511,6 +1481,10 @@ mod tests {
         assert!(decode_base64url("AQ=", 10).is_err());
         assert!(decode_base64url("AB", 10).is_err());
         assert_eq!(decode_base64url("AQ", 10), Ok(vec![1]));
+        assert!(decode_base64url("", 10).is_err());
+        assert!(decode_base64url("AQID", 2).is_err());
+        assert!(decode_base64url("AQ", 0).is_err());
+        assert_eq!(decode_base64url("AQID", 3), Ok(vec![1, 2, 3]));
     }
 
     #[test]

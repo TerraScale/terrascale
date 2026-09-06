@@ -141,8 +141,6 @@ use crate::usage::{
 #[cfg(test)]
 use super::faults::FaultPlan;
 use super::ownership::database_binding;
-pub(crate) use json_codec::decode_document_body;
-use json_codec::encode_document_body;
 use super::{
     AppliedFrontierEntry, BackfillProgress, DbUsageFact, DescriptorListing, DescriptorRegistration,
     DocumentMergeState, DocumentRevisionEntry, ExpiredTtlKey, IndexDescriptorError, JournalKind,
@@ -158,6 +156,8 @@ use super::{
         StorageReceipt,
     },
 };
+pub(crate) use json_codec::decode_document_body;
+use json_codec::encode_document_body;
 
 /// The wall-clock commit time of a row, in Unix milliseconds (the D-42
 /// 30-day history floor is evaluated against it).
@@ -4246,17 +4246,6 @@ impl SqliteStorage {
 impl StoragePort for SqliteStorage {
     fn local_replication_origin(&self) -> &str {
         &self.local_origin
-    }
-    fn replication_repair_frontier(
-        &self,
-        tenant: &TenantId,
-        cut: u64,
-    ) -> Result<std::collections::BTreeMap<String, u64>, ()> {
-        let reader = self.reader();
-        let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
-        let result = repair_summary::frontier(&transaction, tenant, cut)?;
-        transaction.commit().map_err(|_| ())?;
-        Ok(result)
     }
     fn replication_repair_cut(
         &self,

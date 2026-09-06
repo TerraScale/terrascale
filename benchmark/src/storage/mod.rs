@@ -656,11 +656,6 @@ pub(crate) trait StoragePort: Send {
 
     fn local_replication_origin(&self) -> &str;
 
-    fn replication_repair_frontier(
-        &self,
-        tenant: &TenantId,
-        cut: u64,
-    ) -> Result<std::collections::BTreeMap<String, u64>, ()>;
     fn replication_repair_cut(
         &self,
         tenant: &TenantId,

@@ -110,7 +110,7 @@ impl PlacementBoundary {
             || proposal.epoch == 0
             || proposal.regions.is_empty()
             || proposal.regions.len() > 3
-            || proposal.assignments.len() > databases.len()
+            || proposal.assignments.len() > databases.len() * proposal.regions.len()
             || proposal.encoded_len() > MAX_PLACEMENT_PROPOSAL_BYTES
         {
             return Err(PlacementError::Invalid);
@@ -138,7 +138,7 @@ impl PlacementBoundary {
         if !members.contains(&self.member) {
             return Err(PlacementError::Invalid);
         }
-        let mut scopes = BTreeSet::new();
+        let mut assignments = BTreeSet::new();
         for assignment in &proposal.assignments {
             let scope = DatabaseRouteScope::try_new(
                 &assignment.tenant,
@@ -146,8 +146,9 @@ impl PlacementBoundary {
                 &assignment.database,
             )
             .map_err(|_| PlacementError::Invalid)?;
-            if databases.get(&scope) != Some(&assignment.region)
-                || !scopes.insert(scope)
+            let local_region = databases.get(&scope).ok_or(PlacementError::Invalid)?;
+            if !assignments.insert((scope, assignment.region.clone()))
+                || !seats.contains_key(&assignment.region)
                 || assignment.writer_member == assignment.follower_member
             {
                 return Err(PlacementError::Invalid);
@@ -155,10 +156,19 @@ impl PlacementBoundary {
             let pair = seats.get(&assignment.region).ok_or(PlacementError::Invalid)?;
             if !pair.contains(&assignment.writer_member)
                 || !pair.contains(&assignment.follower_member)
-                || !pair.contains(&self.member)
+                || (assignment.region == *local_region && !pair.contains(&self.member))
             {
                 return Err(PlacementError::Invalid);
             }
+        }
+        if assignments.len() != databases.len() * proposal.regions.len()
+            || databases.iter().any(|(scope, local_region)| {
+                proposal.regions.iter().any(|region| {
+                    !assignments.contains(&(*scope, region.region.clone()))
+                }) || !assignments.contains(&(*scope, local_region.clone()))
+            })
+        {
+            return Err(PlacementError::Invalid);
         }
         proposal.regions.sort_by(|a, b| a.region.cmp(&b.region));
         proposal.assignments.sort_by(|a, b| {
@@ -742,6 +752,14 @@ impl terrabase_cluster::wal_route::DurableWalAssignmentSource for PlacementJourn
                 .map_err(|_| PlacementError::Storage)?;
             let proposal =
                 self.response(*revision, &bytes)?.proposal.ok_or(PlacementError::Storage)?;
+            let local_region = self
+                .boundary
+                .databases
+                .read()
+                .map_err(|_| PlacementError::Storage)?
+                .get(&scope)
+                .cloned()
+                .ok_or(PlacementError::Invalid)?;
             let assignment = proposal
                 .assignments
                 .iter()
@@ -749,6 +767,7 @@ impl terrabase_cluster::wal_route::DurableWalAssignmentSource for PlacementJourn
                     entry.tenant == scope.tenant().to_text()
                         && entry.project == scope.project().to_text()
                         && entry.database == scope.database().to_text()
+                        && entry.region == local_region
                 })
                 .ok_or(PlacementError::Invalid)?;
             Ok(WalAssignment {

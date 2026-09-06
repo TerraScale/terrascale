@@ -1711,6 +1711,13 @@ mod tests {
         let first =
             service.page(&access(), &UsagePageRequest::try_new(None, 1, None).unwrap()).unwrap();
         let cursor = first.next_cursor.unwrap();
+        assert_eq!(
+            CursorState::decode(&cursor.to_uppercase(), &[9; 32]),
+            CursorState::decode(&cursor, &[9; 32]),
+        );
+        for malformed in ["", "0", "zz", &"0".repeat(MAX_CURSOR_TEXT_BYTES + 2)] {
+            assert!(CursorState::decode(malformed, &[9; 32]).is_err());
+        }
         let restarted = UsageService::new(source, [9; 32]);
         let second = restarted
             .page(&access(), &UsagePageRequest::try_new(None, 1, Some(cursor.clone())).unwrap())

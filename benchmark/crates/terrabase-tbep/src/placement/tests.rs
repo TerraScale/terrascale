@@ -177,6 +177,42 @@ fn invalid_roles_residency_scope_and_environment_are_rejected_before_write() {
 }
 
 #[test]
+fn canonicalizes_one_assignment_per_scope_and_selected_region() {
+    let fixture = Fixture::new();
+    let journal = fixture.open();
+    let mut request = fixture.request.clone();
+    let proposal = request.proposal.as_mut().unwrap();
+    proposal.regions.push(pb::PlacementRegionSeats {
+        region: "SFO".into(),
+        members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
+    });
+    let remote = proposal.regions[1].members.clone();
+    let local_assignment = proposal.assignments[0].clone();
+    proposal.assignments.push(pb::PlacementDatabaseAssignment {
+        region: "SFO".into(),
+        writer_member: remote[0].clone(),
+        follower_member: remote[1].clone(),
+        ..local_assignment
+    });
+    let staged = journal.stage("principal", "two-regions", request).unwrap();
+    assert_eq!(staged.proposal.unwrap().assignments.len(), 2);
+
+    let mut duplicate = fixture.request.clone();
+    let duplicate_assignment = duplicate.proposal.as_ref().unwrap().assignments[0].clone();
+    duplicate.proposal.as_mut().unwrap().assignments.push(duplicate_assignment);
+    assert_eq!(journal.stage("principal", "duplicate", duplicate), Err(PlacementError::Invalid));
+
+    let mut foreign = fixture.request.clone();
+    foreign.proposal.as_mut().unwrap().assignments[0].database = DatabaseUlid::generate().to_text();
+    assert_eq!(journal.stage("principal", "foreign", foreign), Err(PlacementError::Invalid));
+
+    let mut wrong_seats = fixture.request.clone();
+    wrong_seats.proposal.as_mut().unwrap().assignments[0].writer_member =
+        MemberUlid::generate().to_text();
+    assert_eq!(journal.stage("principal", "wrong-seats", wrong_seats), Err(PlacementError::Invalid));
+}
+
+#[test]
 fn independent_connections_serialize_expected_revision() {
     let fixture = Fixture::new();
     let left = fixture.open();

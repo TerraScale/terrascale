@@ -96,3 +96,38 @@ test await the coordinated current-source test build.
 
 Native HTTPS admission was also moved to one process-wide semaphore. Creating
 one transport per database or request cannot multiply its sixteen-slot limit.
+
+## Auth transaction review and verification
+
+Astra review found transaction identity reuse, incomplete poisoning after
+rejected inner operations, and transactional record GETs reading committed
+state. Begin now returns an exact generation-qualified identity from a durable
+counter retained in snapshots. Terminal workspaces can be removed safely.
+Hard state-machine failures clear staged writes and refuse commit; identical
+successful requests still replay their retained result. Transactional GET now
+uses the replicated workspace, and the TypeScript client retains its explicit
+GET idempotency key.
+
+All 13 `terrabase-auth` library tests passed on the working tree based on
+`946c52e6b4ba1b9d2e557bc1c09f310aeddf509c`. Coverage includes delayed commands,
+expiry/restart, snapshot restore, simultaneous owner-departure transactions,
+operation limits, and caught invalid/idempotency failures without visible staged
+writes. The verified implementation SHA-256 values are
+`8837347fce121c4b14c3ba925e38e6293793d7815012efb71cb61fbf37b24ac3`
+for `transactions.rs`,
+`091e5add3e5ed547c539a04930a7be7dc13d20771e10f26a69af910045d9264f`
+for `store.rs`, and
+`9270b8c299782de9d78fabb84235d109ffa727de8e8bf52871db7240a11ac36b`
+for `tests.rs`, all under `crates/terrabase-auth/src`.
+
+The TypeScript auth transport tests also passed, including the 100-byte Begin
+label boundary and returned identity. These are library and transport-adapter
+results. Actual admitted QUIC/encrypted HTTP journeys, the complete Better Auth
+callback adapter, and production startup remain unfinished. Pre-consensus HTTP
+validation errors still require the callback adapter to prevent commit and
+resolve or roll back its transaction; they do not prove durable poisoning.
+
+The broader server test build subsequently failed at the missing
+`ReplicationRepairCut::baseline_digest` producer method. That integration is
+being repaired while preserving the ULID and replication changes. No server
+suite or whole-workspace pass follows from the auth result.

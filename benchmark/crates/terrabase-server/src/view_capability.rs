@@ -469,8 +469,9 @@ fn decode(token: &str) -> Result<ViewCapabilityClaims, CapabilityError> {
 
 fn decode_mac(token: &str) -> Result<[u8; 32], CapabilityError> {
     let field = token.rsplit('.').next().ok_or(CapabilityError::Malformed)?;
-    let bytes = hex::decode(field).map_err(|_| CapabilityError::Malformed)?;
-    bytes.try_into().map_err(|_| CapabilityError::Malformed)
+    let mut bytes = [0; 32];
+    hex::decode_to_slice(field, &mut bytes).map_err(|_| CapabilityError::Malformed)?;
+    Ok(bytes)
 }
 
 fn parse_decimal(value: &str) -> Result<u64, CapabilityError> {
@@ -488,10 +489,7 @@ fn encode_scope(scope: &str) -> String {
     {
         scope.to_owned()
     } else {
-        format!(
-            "b64:{}",
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(scope.as_bytes())
-        )
+        format!("b64:{}", base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(scope.as_bytes()))
     }
 }
 
@@ -514,26 +512,6 @@ fn decode_scope(field: &str) -> Result<String, CapabilityError> {
         return Ok(scope);
     }
     Err(CapabilityError::Malformed)
-}
-
-fn base64url_decode(value: &str) -> Result<Vec<u8>, CapabilityError> {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(value)
-        .map_err(|_| CapabilityError::Malformed)
-}
-
-fn base64_value(byte: u8) -> Result<u8, CapabilityError> {
-    match byte {
-        b'A'..=b'Z' => Ok(byte - b'A'),
-        b'a'..=b'z' => Ok(byte - b'a' + 26),
-        b'0'..=b'9' => Ok(byte - b'0' + 52),
-        b'-' => Ok(62),
-        b'_' => Ok(63),
-        _ => Err(CapabilityError::Malformed),
-    }
-}
-fn hex_encode(bytes: &[u8; 32]) -> String {
-    hex::encode(bytes)
 }
 
 fn constant_time_equal(left: &[u8; 32], right: &[u8; 32]) -> bool {
@@ -579,7 +557,7 @@ mod tests {
     #[test]
     fn hmac_matches_standard_vectors() {
         assert_eq!(
-            hex_encode(&hmac_sha256(b"key", b"The quick brown fox jumps over the lazy dog")),
+            hex::encode(hmac_sha256(b"key", b"The quick brown fox jumps over the lazy dog")),
             "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
         );
         // RFC 4231 case 6: keys larger than the SHA-256 block are hashed first.
@@ -605,6 +583,20 @@ mod tests {
         let claims = verifier.verify(&token, VIEW, 7, NOW).expect("valid");
         assert_eq!(claims.authorization_scope, "rule:v3:db:01J5G8Z3M2P4Q6R8T0V1W2X4YZ");
         assert_eq!(claims.region, RegionCode::GRU);
+    }
+
+    #[test]
+    fn capability_codecs_require_canonical_scope_and_lowercase_mac() {
+        assert_eq!(decode_scope("b64:Lw"), Ok("/".into()));
+        for malformed in ["b64:", "b64:Lw==", "b64:Lx", "b64:c2NvcGU", "b64:____"] {
+            assert_eq!(decode_scope(malformed), Err(CapabilityError::Malformed));
+        }
+        let token = issue();
+        let (body, mac) = token.rsplit_once('.').unwrap();
+        let uppercase = format!("{body}.{}", mac.to_uppercase());
+        assert_ne!(uppercase, token);
+        assert_eq!(decode(&uppercase), Err(CapabilityError::Malformed));
+        assert!(decode(&token).is_ok());
     }
 
     #[test]

@@ -481,8 +481,29 @@ impl ProductionAdmissionRuntime {
             }
             let id =
                 terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
-            self.runtime.register_route(scope, id).map_err(failure)?;
             self.host.admit(record.clone())?;
+            // A deletion preparation or acceptance is a durable local fence.
+            // Keep the admission manifest so the control plane can retry the
+            // operation, but do not construct a normal replication lane for
+            // this database.  The admission callback has already retained it
+            // in the Member catalog without publishing it to customer routes.
+            if let Some(assignment) =
+                assignments.iter().find(|assignment| assignment.region == record.region)
+            {
+                if assignment.writer_member == self.config.environment.member.to_text() {
+                    let lease = self.member.acquire(&id).map_err(failure)?;
+                    let tenant =
+                        terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
+                    let lifecycle = lease
+                        .engine()
+                        .lifecycle_state(&lease.engine().scope_for(&tenant))
+                        .map_err(failure)?;
+                    if lifecycle.access_revoked() {
+                        continue;
+                    }
+                }
+            }
+            self.runtime.register_route(scope, id).map_err(failure)?;
             let keys = self.config.keys.as_ref().ok_or("production key delivery missing")?;
             use terrabase::encryption::{
                 DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata, OciVaultDatabaseKeys,

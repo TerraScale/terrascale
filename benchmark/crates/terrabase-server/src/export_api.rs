@@ -1568,7 +1568,7 @@ fn encode_cursor(
     signed.extend_from_slice(job_id.as_bytes());
     signed.extend_from_slice(&payload);
     let mac = blake3::keyed_hash(key, &signed);
-    format!("ex1.{}.{}.{}", phase, hex_encode(source), hex_encode(&mac.as_bytes()[..16]))
+    format!("ex1.{}.{}.{}", phase, hex::encode(source), hex::encode(&mac.as_bytes()[..16]))
 }
 
 fn decode_cursor(
@@ -1590,12 +1590,14 @@ fn decode_cursor(
         _ => return Err(ExportError::InvalidRequest("resume cursor phase is invalid")),
     };
     let source =
-        hex_decode(parts.next().ok_or(ExportError::InvalidRequest("resume cursor is malformed"))?)?;
+        hex::decode(parts.next().ok_or(ExportError::InvalidRequest("resume cursor is malformed"))?)
+            .map_err(|_| ExportError::InvalidRequest("resume cursor encoding is invalid"))?;
     if source.len() > MAX_SOURCE_CURSOR_BYTES {
         return Err(ExportError::InvalidRequest("resume cursor is too large"));
     }
     let provided =
-        hex_decode(parts.next().ok_or(ExportError::InvalidRequest("resume cursor is malformed"))?)?;
+        hex::decode(parts.next().ok_or(ExportError::InvalidRequest("resume cursor is malformed"))?)
+            .map_err(|_| ExportError::InvalidRequest("resume cursor encoding is invalid"))?;
     if parts.next().is_some() || provided.len() != 16 {
         return Err(ExportError::InvalidRequest("resume cursor is malformed"));
     }
@@ -1604,35 +1606,6 @@ fn decode_cursor(
         return Err(ExportError::InvalidRequest("resume cursor authentication failed"));
     }
     Ok((phase, (!source.is_empty()).then_some(source)))
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
-}
-
-fn hex_decode(text: &str) -> Result<Vec<u8>, ExportError> {
-    if !text.len().is_multiple_of(2) {
-        return Err(ExportError::InvalidRequest("resume cursor encoding is invalid"));
-    }
-    let mut bytes = Vec::with_capacity(text.len() / 2);
-    for pair in text.as_bytes().as_chunks::<2>().0 {
-        let high = (pair[0] as char)
-            .to_digit(16)
-            .ok_or(ExportError::InvalidRequest("resume cursor encoding is invalid"))?;
-        let low = (pair[1] as char)
-            .to_digit(16)
-            .ok_or(ExportError::InvalidRequest("resume cursor encoding is invalid"))?;
-        bytes.push(
-            u8::try_from((high << 4) | low)
-                .map_err(|_| ExportError::InvalidRequest("resume cursor encoding is invalid"))?,
-        );
-    }
-    Ok(bytes)
 }
 
 pub(crate) fn safe_member_path(path: &str) -> bool {

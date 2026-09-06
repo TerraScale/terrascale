@@ -88,8 +88,22 @@ pub fn storage_admission(
         }
         let id = DatabaseId::try_new(&record.database_id).map_err(|_| "invalid database")?;
         let lease = member.acquire(&id).map_err(|_| "encrypted database unavailable")?;
+        // Preparation and acceptance are durable origin fences.  Replay must
+        // retain the encrypted entry for an authorized deletion retry, while
+        // leaving origin writes fenced so it cannot make the whole Member fail
+        // to start.
+        let tenant_id = TenantId::try_new(&record.tenant_id).map_err(|_| "invalid tenant")?;
+        if !lifecycle_allows_origin_activation(&lease, &tenant_id)? {
+            registry.publish(
+                record.clone(),
+                lease,
+                member.root().join(&record.database_id),
+                instance,
+            )?;
+            return Ok(());
+        }
         let placement = UsagePlacement::try_new(
-            TenantId::try_new(&record.tenant_id).map_err(|_| "invalid tenant")?,
+            tenant_id,
             &record.project_id,
             &record.database_id,
             &accepted.partition,
@@ -107,4 +121,129 @@ pub fn storage_admission(
         lease.activate_origin_epoch(accepted.epoch).map_err(|_| "writer epoch refused")?;
         registry.publish(record.clone(), lease, member.root().join(&record.database_id), instance)
     })
+}
+
+/// Reads the durable deletion fence before replay can activate a writer epoch.
+/// A false result retains the lease for authorized maintenance without
+/// reopening origin writes.
+fn lifecycle_allows_origin_activation(
+    lease: &terrabase::member::DatabaseLease,
+    tenant: &TenantId,
+) -> Result<bool, String> {
+    lease
+        .lifecycle_state(&lease.scope_for(tenant))
+        .map(|state| !state.access_revoked())
+        .map_err(|_| "database lifecycle unavailable".into())
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::lifecycle_allows_origin_activation;
+    use std::{fs, time::Duration};
+    use terrabase::{
+        engine::lifecycle_state::DeletionIntent,
+        identity::{DatabaseUlid, ProjectUlid, TenantUlid},
+        member::{
+            AcceptedDatabaseRole, AdmissionLimits, DatabaseId, DatabaseRole, DatabaseRoleAuthority,
+            DatabaseScope, DatabaseSpec, Member,
+        },
+        regions::RegionCode,
+        types::TenantId,
+    };
+
+    struct Writer;
+    impl DatabaseRoleAuthority for Writer {
+        fn accepted_role(&self, _: &DatabaseId) -> Option<AcceptedDatabaseRole> {
+            Some(AcceptedDatabaseRole { epoch: 1, role: DatabaseRole::Writer })
+        }
+    }
+
+    #[test]
+    fn prepared_database_replay_stays_fenced_alongside_unrelated_writer() {
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-admission-replay-{}", DatabaseUlid::generate()));
+        let make_scope = || {
+            DatabaseScope::new(
+                "production",
+                TenantUlid::generate(),
+                ProjectUlid::generate(),
+                DatabaseUlid::generate(),
+                RegionCode::GRU,
+            )
+            .unwrap()
+        };
+        let fenced = make_scope();
+        let unrelated = make_scope();
+        let specs = [
+            DatabaseSpec::scoped(fenced.clone(), "fenced"),
+            DatabaseSpec::scoped(unrelated.clone(), "unrelated"),
+        ];
+        let mut keys = crate::test_keys::storage_keys(&fenced);
+        keys.extend(crate::test_keys::storage_keys(&unrelated));
+        let member =
+            Member::open_production(&root, specs.clone(), AdmissionLimits::new(4, 2), keys)
+                .unwrap();
+        let writer = Writer;
+        let fenced_id = DatabaseId::from(fenced.database());
+        let unrelated_id = DatabaseId::from(unrelated.database());
+        member.accept_database_role(&fenced_id, &writer).unwrap();
+        member.accept_database_role(&unrelated_id, &writer).unwrap();
+        let fenced_lease = member.acquire(&fenced_id).unwrap();
+        fenced_lease
+            .lifecycle_prepare_deletion(
+                &fenced_lease.scope_for(&TenantId::try_new(&fenced.tenant().to_text()).unwrap()),
+                "delete-replay",
+            )
+            .unwrap();
+        drop(fenced_lease);
+        member.close(Duration::from_secs(1)).unwrap();
+
+        let mut keys = crate::test_keys::storage_keys(&fenced);
+        keys.extend(crate::test_keys::storage_keys(&unrelated));
+        let reopened =
+            Member::open_production(&root, specs, AdmissionLimits::new(4, 2), keys).unwrap();
+        reopened.accept_database_role(&fenced_id, &writer).unwrap();
+        reopened.accept_database_role(&unrelated_id, &writer).unwrap();
+        let fenced_lease = reopened.acquire(&fenced_id).unwrap();
+        let unrelated_lease = reopened.acquire(&unrelated_id).unwrap();
+        assert!(
+            !lifecycle_allows_origin_activation(
+                &fenced_lease,
+                &TenantId::try_new(&fenced.tenant().to_text()).unwrap(),
+            )
+            .unwrap()
+        );
+        assert!(
+            lifecycle_allows_origin_activation(
+                &unrelated_lease,
+                &TenantId::try_new(&unrelated.tenant().to_text()).unwrap(),
+            )
+            .unwrap()
+        );
+        assert!(unrelated_lease.activate_origin_epoch(1).is_ok());
+        assert_eq!(fenced_lease.origin_epoch().unwrap().0, 0);
+        let fenced_scope =
+            fenced_lease.scope_for(&TenantId::try_new(&fenced.tenant().to_text()).unwrap());
+        assert!(fenced_lease.lifecycle_state(&fenced_scope).unwrap().access_revoked());
+        assert_eq!(
+            fenced_lease.lifecycle_prepare_deletion(&fenced_scope, "delete-replay").unwrap(),
+            fenced_lease.lifecycle_state(&fenced_scope).unwrap()
+        );
+        let prepared = fenced_lease.lifecycle_state(&fenced_scope).unwrap();
+        let cutoff = prepared.deletion_preparation.as_ref().unwrap().minimum_cutoff_millis;
+        let accepted = fenced_lease
+            .lifecycle_accept_deletion(
+                &fenced_scope,
+                DeletionIntent {
+                    operation_id: "delete-replay".into(),
+                    usage_stopped_at: cutoff,
+                    retain_until: Some(cutoff + 1),
+                },
+            )
+            .unwrap();
+        assert!(accepted.deletion.is_some());
+        drop((fenced_lease, unrelated_lease));
+        reopened.close(Duration::from_secs(1)).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 }

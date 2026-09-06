@@ -13,7 +13,7 @@ use axum::extract::{Path, Query, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::http::{Method, Uri};
 use axum::response::{IntoResponse, Response};
-use base64::Engine as _;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -453,7 +453,7 @@ fn attach_response(view: &View, capability_keys: &CapabilityKeyRing) -> AttachRe
             view.id, view.generation
         )],
         log: format!("/api/v1/reactive/views/{}/{}/log?offset={offset}", view.id, view.generation),
-        checkpoint: encode_base64(&checkpoint),
+        checkpoint: STANDARD.encode(&checkpoint),
         capability,
         capability_header: VIEW_CAPABILITY_HEADER,
         offset,
@@ -1567,7 +1567,7 @@ fn encode_scope(scope: &str) -> String {
     {
         scope.to_owned()
     } else {
-        format!("b64:{}", encode_base64(scope.as_bytes()))
+        format!("b64:{}", STANDARD.encode(scope.as_bytes()))
     }
 }
 
@@ -1791,12 +1791,10 @@ fn frame_error() -> ApiError {
     }
 }
 
-fn encode_base64(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
 fn decode_base64(input: &str) -> Result<Vec<u8>, ()> {
-    let compact: String = input.chars().filter(|character| !character.is_ascii_whitespace()).collect();
-    base64::engine::general_purpose::STANDARD.decode(compact).map_err(|_| ())
+    let compact: String =
+        input.chars().filter(|character| !character.is_ascii_whitespace()).collect();
+    STANDARD.decode(compact).map_err(|_| ())
 }
 fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
     aws_lc_rs::constant_time::verify_slices_are_equal(left, right).is_ok()
@@ -1806,6 +1804,16 @@ fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
 mod tests {
     use super::*;
     use axum::http::{HeaderValue, Uri};
+
+    #[test]
+    fn reactive_base64_preserves_whitespace_and_rejects_invalid_padding() {
+        assert_eq!(decode_base64(""), Ok(Vec::new()));
+        assert_eq!(decode_base64(" Zg==\r\n\t"), Ok(b"f".to_vec()));
+        assert_eq!(decode_base64("Zm9v"), Ok(b"foo".to_vec()));
+        for malformed in ["Zg", "Zh==", "Zm9=", "Zg==AAAA", "AA=A", "____"] {
+            assert!(decode_base64(malformed).is_err(), "accepted {malformed}");
+        }
+    }
 
     #[test]
     fn retained_log_replay_does_not_wait_for_materialization() {

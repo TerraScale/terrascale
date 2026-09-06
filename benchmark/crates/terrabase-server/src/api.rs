@@ -29,7 +29,7 @@ use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::get;
-use base64::Engine as _;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use terrabase::CommitOutcome;
 use terrabase::Session;
 use terrabase::SessionError;
@@ -2533,31 +2533,17 @@ fn invalid_session_token() -> ApiError {
     }
 }
 
-/// Decodes the unpadded base64url spelling used by the REST session header.
-/// Canonical re-encoding is checked by [`decode_session_header`], so alternate
-/// spellings and padding never become equivalent credentials.
-fn decode_base64url(value: &str) -> Option<Vec<u8>> {
-    if value.is_empty() {
-        return None;
-    }
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value).ok()
-}
-
-fn encode_base64url(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
-}
-
 fn decode_session_header(
     headers: &axum::http::HeaderMap,
 ) -> Result<Option<SessionToken>, ApiError> {
     let Some(value) = headers.get(&SESSION_HEADER) else { return Ok(None) };
     let value = value.to_str().map_err(|_| invalid_session_token())?;
-    if value.len() > MAX_SESSION_HEADER_BYTES {
+    if value.is_empty() || value.len() > MAX_SESSION_HEADER_BYTES {
         return Err(invalid_session_token());
     }
-    let bytes = decode_base64url(value).ok_or_else(invalid_session_token)?;
+    let bytes = URL_SAFE_NO_PAD.decode(value).map_err(|_| invalid_session_token())?;
     let token = SessionToken::decode(&bytes).map_err(|_| invalid_session_token())?;
-    if encode_base64url(&token.encode()) != value {
+    if URL_SAFE_NO_PAD.encode(&token.encode()) != value {
         return Err(invalid_session_token());
     }
     Ok(Some(token))
@@ -2583,7 +2569,7 @@ fn open_session<'engine>(
 /// observes the durable multi-origin frontier, so this never substitutes the
 /// global storage sequence for an origin sequence.
 fn with_session(response: &mut Response, token: &SessionToken) {
-    let encoded = encode_base64url(&token.encode());
+    let encoded = URL_SAFE_NO_PAD.encode(&token.encode());
     if let Ok(value) = HeaderValue::from_str(&encoded) {
         response.headers_mut().insert(SESSION_HEADER.clone(), value);
     }
@@ -4130,7 +4116,6 @@ mod tests {
     use super::ApiState;
     use super::SESSION_HEADER;
     use super::decode_session_header;
-    use super::encode_base64url;
     use super::openapi_json;
     use super::router;
     use axum::body::Body;
@@ -4139,6 +4124,7 @@ mod tests {
     use axum::http::StatusCode;
     use axum::http::header;
     use axum::response::IntoResponse;
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use std::sync::Arc;
     use terrabase::SessionEpoch;
     use terrabase::SessionToken;
@@ -4338,14 +4324,20 @@ mod tests {
         let mut token = SessionToken::for_epoch(7).expect("epoch");
         token.advance(RegionId::try_new("GRU").expect("origin"), 11).expect("frontier");
         token.advance(RegionId::try_new("FRA").expect("origin"), 19).expect("frontier");
-        let encoded = encode_base64url(&token.encode());
+        let encoded = URL_SAFE_NO_PAD.encode(&token.encode());
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(SESSION_HEADER.clone(), HeaderValue::from_str(&encoded).expect("header"));
         assert_eq!(decode_session_header(&headers).expect("decode"), Some(token));
 
         // Decimal legacy values, padding, malformed alphabet, and tampering
         // are all rejected before a request reaches an engine.
-        for value in ["1".to_owned(), format!("{encoded}="), "!!!!".to_owned()] {
+        for value in [
+            String::new(),
+            "1".to_owned(),
+            format!("{encoded}="),
+            "!!!!".to_owned(),
+            "A".repeat(super::MAX_SESSION_HEADER_BYTES + 1),
+        ] {
             headers.insert(SESSION_HEADER.clone(), HeaderValue::from_str(&value).expect("header"));
             assert!(decode_session_header(&headers).is_err(), "rejected {value}");
         }
@@ -5636,7 +5628,7 @@ mod tests {
             .oneshot(
                 Request::get("/api/v1/databases/prod/collections/users/documents/a")
                     .header(auth, key)
-                    .header(SESSION_HEADER.clone(), encode_base64url(&session.encode()))
+                    .header(SESSION_HEADER.clone(), URL_SAFE_NO_PAD.encode(&session.encode()))
                     .body(Body::empty())
                     .expect("causal read request"),
             )
@@ -6391,7 +6383,7 @@ mod tests {
                 .oneshot(
                     Request::get(path)
                         .header(auth, key)
-                        .header(SESSION_HEADER.clone(), encode_base64url(&future.encode()))
+                        .header(SESSION_HEADER.clone(), URL_SAFE_NO_PAD.encode(&future.encode()))
                         .header("if-none-match", etag.clone())
                         .body(Body::empty())
                         .expect("request"),

@@ -118,7 +118,7 @@ fn acceptance(value: &Value, revision: u64) -> pb::PlacementAcceptRequest {
 #[test]
 fn pending_is_not_membership_and_acceptance_survives_restart_without_control_service() {
     let fixture = tests::Fixture::new();
-    let scope = *fixture.boundary.databases.keys().next().unwrap();
+    let scope = *fixture.boundary.databases.read().unwrap().keys().next().unwrap();
     let journal = fixture.open();
     let proposal = stage(&journal, fixture.request.clone(), "first");
     journal.configure_transition_trust(trust(&proposal)).unwrap();
@@ -206,12 +206,24 @@ fn successor_needs_one_fence_from_each_old_pair_and_exact_predecessor() {
         region: "SFO".into(),
         members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
     });
+    let sfo_members = fixture.request.proposal.as_ref().unwrap().regions[1].members.clone();
+    let scope = fixture.request.proposal.as_ref().unwrap().assignments[0].clone();
+    fixture.request.proposal.as_mut().unwrap().assignments.push(
+        pb::PlacementDatabaseAssignment {
+            region: "SFO".into(),
+            writer_member: sfo_members[0].clone(),
+            follower_member: sfo_members[1].clone(),
+            ..scope
+        },
+    );
     let journal = fixture.open();
     let first_proposal = stage(&journal, fixture.request.clone(), "first");
     let pins = trust(&first_proposal);
     journal.configure_transition_trust(pins.clone()).unwrap();
     let first = proof(&first_proposal, "first", None, &[]);
     journal.accept("first", &acceptance(&first, 1)).unwrap();
+    let scope = *fixture.boundary.databases.read().unwrap().keys().next().unwrap();
+    assert_eq!(journal.load_assignment(scope).unwrap().epoch, 1);
     let mut next = fixture.request.clone();
     next.expected_revision = 1;
     let next_proposal = next.proposal.as_mut().unwrap();
@@ -219,6 +231,7 @@ fn successor_needs_one_fence_from_each_old_pair_and_exact_predecessor() {
     next_proposal.epoch = 2;
     // Removing SFO from the new placement must not remove its old fencing duty.
     next_proposal.regions.retain(|region| region.region == "GRU");
+    next_proposal.assignments.retain(|assignment| assignment.region == "GRU");
     let proposal = stage(&journal, next, "second");
     let missing = proof(&proposal, "second", Some(&first), &["GRU"]);
     assert!(journal.accept("second", &acceptance(&missing, 2)).is_err());

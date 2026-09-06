@@ -552,22 +552,10 @@ pub(crate) fn schema_digest_bytes(schema: &SchemaDefinition) -> Vec<u8> {
 /// the migration record's decoder stays in this module instead of widening
 /// the backup checksum module's surface.
 pub(crate) fn from_hex(text: &str) -> Option<[u8; 32]> {
-    let mut digest = [0_u8; 32];
-    let bytes = text.as_bytes();
-    if bytes.len() != digest.len() * 2 {
+    if text.bytes().any(|byte| byte.is_ascii_uppercase()) {
         return None;
     }
-    let nibble = |byte: u8| -> Option<u8> {
-        match byte {
-            b'0'..=b'9' => Some(byte - b'0'),
-            b'a'..=b'f' => Some(byte - b'a' + 10),
-            _ => None,
-        }
-    };
-    for (index, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
-        let high = nibble(pair[0])?;
-        let low = nibble(pair[1])?;
-        digest[index] = (high << 4) | low;
-    }
+    let mut digest = [0; 32];
+    hex::decode_to_slice(text, &mut digest).ok()?;
     Some(digest)
 }

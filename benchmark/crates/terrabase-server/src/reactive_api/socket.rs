@@ -1,10 +1,10 @@
 //! Optional WebSocket delivery over the same immutable view log as HTTP.
 use super::{
     ApiError, ApiState, AttachRequest, ReadResult, WsPermit, checkpoint_bytes,
-    checkpoint_bytes_with_identity, constant_time_equal, encode_base64, error_bytes, prepare_view,
-    store,
+    checkpoint_bytes_with_identity, constant_time_equal, error_bytes, prepare_view, store,
 };
 use axum::extract::ws::{Message as SocketMessage, WebSocket};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use terrabase_sync_core::wire::{ErrorCode, Message, decode_envelope};
 use tokio::task::{AbortHandle, JoinSet};
@@ -239,8 +239,8 @@ impl Session {
         let request = AttachRequest {
             database_id: self.database.clone(),
             statement: query,
-            parameters: encode_base64(&parameters),
-            checkpoint: checkpoint.as_ref().map(|value| encode_base64(value)),
+            parameters: STANDARD.encode(&parameters),
+            checkpoint: checkpoint.as_ref().map(|value| STANDARD.encode(value)),
             subscription: Some(subscription.clone()),
             entitlement_epoch: 0,
         };

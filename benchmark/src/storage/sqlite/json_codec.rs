@@ -4,16 +4,48 @@
 //! the non-finite floating point extension at the storage boundary.
 
 use std::collections::BTreeMap;
+use std::io::{self, Write};
 
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use serde_json::Deserializer;
+use serde_json::ser::{CharEscape, CompactFormatter, Formatter};
 
 use crate::types::{CollectionName, Document, DocumentId, DocumentValue};
 
 use super::codec;
 
 const NONFINITE_FIELD: &str = "__terrascale_nonfinite__";
+
+/// Retains the persisted spelling of floats and control-character escapes.
+struct StorageFormatter;
+
+impl Formatter for StorageFormatter {
+    fn write_f64<W: ?Sized + Write>(&mut self, writer: &mut W, value: f64) -> io::Result<()> {
+        let text = value.to_string();
+        writer.write_all(text.as_bytes())?;
+        if !text.contains(['.', 'e', 'E']) {
+            writer.write_all(b".0")?;
+        }
+        Ok(())
+    }
+
+    fn write_char_escape<W: ?Sized + Write>(
+        &mut self,
+        writer: &mut W,
+        escape: CharEscape,
+    ) -> io::Result<()> {
+        let escape = match escape {
+            CharEscape::Backspace => CharEscape::AsciiControl(8),
+            CharEscape::FormFeed => CharEscape::AsciiControl(12),
+            CharEscape::LineFeed => CharEscape::AsciiControl(10),
+            CharEscape::CarriageReturn => CharEscape::AsciiControl(13),
+            CharEscape::Tab => CharEscape::AsciiControl(9),
+            other => other,
+        };
+        CompactFormatter.write_char_escape(writer, escape)
+    }
+}
 
 struct Value<'a>(&'a DocumentValue);
 
@@ -30,9 +62,7 @@ impl Serialize for Value<'_> {
                 map.end()
             }
             DocumentValue::String(value) => serializer.serialize_str(value),
-            DocumentValue::Array(values) => {
-                serializer.collect_seq(values.iter().map(Value))
-            }
+            DocumentValue::Array(values) => serializer.collect_seq(values.iter().map(Value)),
             DocumentValue::Object(values) => {
                 let mut map = serializer.serialize_map(Some(values.len()))?;
                 for (key, value) in values {
@@ -81,9 +111,18 @@ impl<'de> Visitor<'de> for ValueVisitor {
     }
 
     fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
-        i64::try_from(value)
-            .map(DocumentValue::Integer)
-            .map_err(|_| E::custom("integer exceeds i64"))
+        if let Ok(value) = i64::try_from(value) {
+            return Ok(DocumentValue::Integer(value));
+        }
+        // The legacy parser treated an unsigned integer outside i64 as a
+        // floating point number after its integer parse failed.
+        #[allow(clippy::cast_precision_loss)]
+        let value = value as f64;
+        if value.is_finite() {
+            Ok(DocumentValue::Number(value))
+        } else {
+            Err(E::custom("number exceeds f64"))
+        }
     }
 
     fn visit_f64<E: de::Error>(self, value: f64) -> Result<Self::Value, E> {
@@ -103,9 +142,6 @@ impl<'de> Visitor<'de> for ValueVisitor {
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
-        if self.depth > codec::MAX_VALUE_DEPTH {
-            return Err(de::Error::custom("JSON value nesting exceeds limit"));
-        }
         let mut values = Vec::new();
         while let Some(value) = access.next_element_seed(ValueSeed { depth: self.depth + 1 })? {
             values.push(value);
@@ -114,11 +150,9 @@ impl<'de> Visitor<'de> for ValueVisitor {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
-        if self.depth > codec::MAX_VALUE_DEPTH {
-            return Err(de::Error::custom("JSON value nesting exceeds limit"));
-        }
         let mut fields = BTreeMap::new();
-        while let Some((name, value)) = access.next_entry_seed(KeySeed, ValueSeed { depth: self.depth + 1 })? {
+        while let Some(name) = access.next_key::<String>()? {
+            let value = access.next_value_seed(ValueSeed { depth: self.depth + 1 })?;
             fields.insert(name, value);
         }
         if fields.len() == 1 {
@@ -144,7 +178,10 @@ struct ValueSeed {
 impl<'de> de::DeserializeSeed<'de> for ValueSeed {
     type Value = DocumentValue;
 
-    fn deserialize<D: de::Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+    fn deserialize<D: de::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
         if self.depth > codec::MAX_VALUE_DEPTH {
             return Err(de::Error::custom("JSON value nesting exceeds limit"));
         }
@@ -152,44 +189,23 @@ impl<'de> de::DeserializeSeed<'de> for ValueSeed {
     }
 }
 
-struct KeySeed;
-
-impl<'de> de::DeserializeSeed<'de> for KeySeed {
-    type Value = String;
-
-    fn deserialize<D: de::Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.deserialize_string(StringVisitor)
-    }
-}
-
-struct StringVisitor;
-
-impl<'de> Visitor<'de> for StringVisitor {
-    type Value = String;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("a JSON string")
-    }
-
-    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
-        Ok(value.to_owned())
-    }
-
-    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
-        Ok(value)
-    }
-}
-
 /// Encodes one document as the deterministic JSON storage envelope.
 pub(crate) fn encode_document_body(document: &Document) -> Vec<u8> {
-    serde_json::to_vec(&DocumentBody(document)).expect("document JSON serialization cannot fail")
+    let mut bytes = Vec::new();
+    let mut serializer = serde_json::Serializer::with_formatter(&mut bytes, StorageFormatter);
+    DocumentBody(document)
+        .serialize(&mut serializer)
+        .expect("document JSON serialization cannot fail");
+    bytes
 }
 
 /// Decodes one JSON body, rejecting malformed input, trailing bytes, and an
 /// invalid envelope.
 pub(crate) fn decode_document_body(bytes: &[u8]) -> Option<Document> {
     let mut deserializer = Deserializer::from_slice(bytes);
-    let DocumentValue::Object(mut fields) = ValueSeed { depth: 0 }.deserialize(&mut deserializer).ok()? else {
+    let DocumentValue::Object(mut fields) =
+        ValueSeed { depth: 0 }.deserialize(&mut deserializer).ok()?
+    else {
         return None;
     };
     deserializer.end().ok()?;
@@ -213,3 +229,6 @@ pub(crate) fn decode_document_body(bytes: &[u8]) -> Option<Document> {
     document.set_version(version);
     Some(document)
 }
+
+#[cfg(test)]
+mod tests;
