@@ -1321,5 +1321,5 @@ internal partial class TerraScaleSqlJsonContext : JsonSerializerContext;
 
 internal static class TerraScaleSqlJson
 {
-    internal static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+    internal static readonly JsonSerializerOptions Options = TerraScaleTimestampJson.CreateOptions();
 }

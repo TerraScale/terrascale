@@ -1,12 +1,9 @@
-using System.Text.Json.Serialization;
-using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
+using TerraScale.DotNet.Generated;
 
 #pragma warning disable CS1591
-
 namespace TerraScale.DotNet;
 
-/// <summary>Named operations backed by the pinned TerraBase contract.</summary>
+/// <summary>Named administration operations backed by the public contract.</summary>
 public sealed class TerraScaleManagementClient
 {
     public TerraScaleManagementClient(TerraScaleClient client)
@@ -15,59 +12,39 @@ public sealed class TerraScaleManagementClient
         Databases = client.Databases;
         Collections = client.Collections;
         Backups = client.Backups;
-        Exports = new TerraScaleManagementExportsClient(client);
-        Usage = new TerraScaleUsageClient(client);
+        Exports = new(client);
+        Usage = new(client);
+        Schema = new(client);
+        Indexes = new(client);
+        Webhooks = new(client);
+        Development = new(client);
     }
-
-    /// <summary>Database operations in the pinned contract.</summary>
     public TerraScaleDatabasesClient Databases { get; }
-    /// <summary>Database collection operations in the pinned contract.</summary>
     public TerraScaleCollectionsClient Collections { get; }
-    /// <summary>Backup operations in the pinned contract.</summary>
     public TerraScaleBackupsClient Backups { get; }
-    /// <summary>Export operation, pending a published success contract.</summary>
     public TerraScaleManagementExportsClient Exports { get; }
-    /// <summary>Usage operation, pending a published success contract.</summary>
     public TerraScaleUsageClient Usage { get; }
+    public TerraScaleSchemaClient Schema { get; }
+    public TerraScaleIndexesClient Indexes { get; }
+    public TerraScaleWebhooksClient Webhooks { get; }
+    public TerraScaleDevelopmentClient Development { get; }
 }
 
-/// <summary>Logical database export operation.</summary>
-public sealed class TerraScaleManagementExportsClient
+public sealed class TerraScaleUsageClient(TerraScaleClient client)
 {
-    internal TerraScaleManagementExportsClient(TerraScaleClient client) => _ = client;
-
-    public Task<TerraScaleExportJob> CreateAsync(
-        string databaseId,
-        TerraScaleCreateExportRequest? request = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        if (request is not null && request.Format is not (null or "bundle" or "jsonl"))
-            throw new ArgumentException("Export format must be bundle or jsonl.", nameof(request));
-        return Gap<TerraScaleExportJob>("exports.create", cancellationToken);
-    }
-
-    private static Task<T> Gap<T>(string operation, CancellationToken cancellationToken) =>
-        cancellationToken.IsCancellationRequested
-            ? Task.FromCanceled<T>(cancellationToken)
-            : Task.FromException<T>(new TerraScaleContractGapException(operation));
+    public Task<UsageSummary> GetAsync(string database, CancellationToken cancellationToken = default) =>
+        client.SendJsonAsync(HttpMethod.Get, TerraScaleManagementPaths.Database(database) + "/usage", TerraScaleContractJsonContext.Default.UsageSummary, cancellationToken);
 }
 
-/// <summary>Database usage operation.</summary>
-public sealed class TerraScaleUsageClient
+internal static class TerraScaleManagementPaths
 {
-    internal TerraScaleUsageClient(TerraScaleClient client) => _ = client;
-
-    public Task<TerraScaleDatabaseUsage> GetAsync(string databaseId, CancellationToken cancellationToken = default)
+    public static string Escape(string value)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(databaseId);
-        return Gap<TerraScaleDatabaseUsage>("usage.database.get", cancellationToken);
+        ArgumentException.ThrowIfNullOrWhiteSpace(value);
+        return Uri.EscapeDataString(value.Trim());
     }
-
-    private static Task<T> Gap<T>(string operation, CancellationToken cancellationToken) =>
-        cancellationToken.IsCancellationRequested
-            ? Task.FromCanceled<T>(cancellationToken)
-            : Task.FromException<T>(new TerraScaleContractGapException(operation));
+    public static string Database(string database) => "/api/v1/databases/" + Escape(database);
+    public static string Collection(string database, string collection) => Database(database) + "/collections/" + Escape(collection);
 }
 
 /// <summary>Raised when an operation has no published TerraBase contract.</summary>
@@ -86,37 +63,4 @@ public sealed class TerraScaleContractGapException : NotSupportedException
     public string Code => "contract_gap";
     /// <summary>Contract artifact checked by this SDK.</summary>
     public string Contract => "terrabase/openapi.json";
-}
-
-public sealed record TerraScaleCreateExportRequest(
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Format = null,
-    bool IncludeHistory = true);
-
-public sealed record TerraScaleExportJob(
-    [property: JsonRequired] string ExportId,
-    [property: JsonRequired] string DatabaseId,
-    string? Format = null,
-    string? Status = null,
-    double? Progress = null,
-    string? DownloadUrl = null) : IJsonOnDeserialized
-{
-    void IJsonOnDeserialized.OnDeserialized()
-    {
-        if (string.IsNullOrWhiteSpace(ExportId) || string.IsNullOrWhiteSpace(DatabaseId))
-            throw new JsonException("Export responses require non-blank exportId and databaseId fields.");
-    }
-}
-
-/// <summary>Usage facts returned by the usage contract.</summary>
-public sealed record TerraScaleDatabaseUsage(
-    [property: JsonRequired] long Writes,
-    [property: JsonRequired] long StorageBytes,
-    string? PeriodStart = null,
-    string? PeriodEnd = null) : IJsonOnDeserialized
-{
-    void IJsonOnDeserialized.OnDeserialized()
-    {
-        if (Writes < 0 || StorageBytes < 0)
-            throw new JsonException("Usage response counters must not be negative.");
-    }
 }

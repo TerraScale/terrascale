@@ -80,6 +80,24 @@ public sealed class TerraScaleDocumentsClientTests
         await Assert.That(handler.Request!.IfNoneMatch).IsEqualTo("*");
     }
 
+    [Test]
+    public async Task NativeTimestampAndBytesUseCanonicalSchemaValues()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"revision\":\"1\"}", "\"1\"");
+        using var http = new HttpClient(handler);
+        var client = CreateClient(http);
+        var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(1700000000123);
+        await client.Documents.PutAsync("db", "items", "one", new { timestamp, utc = timestamp.UtcDateTime, bytes = new byte[] { 0, 255 } });
+        using var body = JsonDocument.Parse(handler.Request!.Body!);
+        await Assert.That(body.RootElement.GetProperty("timestamp").GetInt64()).IsEqualTo(1700000000123L);
+        await Assert.That(body.RootElement.GetProperty("utc").GetInt64()).IsEqualTo(1700000000123L);
+        await Assert.That(body.RootElement.GetProperty("bytes").GetString()).IsEqualTo("AP8=");
+        var parameters = TerraScaleSqlParameters.FromOrdinal(timestamp, timestamp.UtcDateTime);
+        await Assert.That(parameters["1"].GetInt64()).IsEqualTo(1700000000123L);
+        await Assert.That(parameters["2"].GetInt64()).IsEqualTo(1700000000123L);
+        await Assert.ThrowsAsync<JsonException>(() => client.Documents.PutAsync("db", "items", "one", new { timestamp = new DateTime(2026, 1, 1) }));
+    }
+
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.example.invalid/"),

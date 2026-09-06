@@ -78,7 +78,7 @@ public sealed class TerraScaleDocumentsClient
         ValidateMutationOptions(options, method);
         var payload = JsonSerializer.SerializeToUtf8Bytes(document, TerraScaleDocumentJson.Options);
         if (payload.Length > MaxDocumentBytes) throw new ArgumentException("The document exceeds the 1 MiB limit.", nameof(document));
-        return client.SendAsync<TerraScaleDocumentWriteResponse, TerraScaleDocument>(method, DocumentRoute(database, collection, documentId), document, preferredRegion: null,
+        return client.SendAsync<TerraScaleDocumentWriteResponse, TerraScaleDocument>(method, DocumentRoute(database, collection, documentId), JsonSerializer.SerializeToElement(document, TerraScaleDocumentJson.Options), preferredRegion: null,
             request => ConfigureMutation(request, options), (value, response) => client.ObserveDocumentWrite(ReadWriteResult(value, response, database, collection, documentId), response, database), cancellationToken);
     }
 
@@ -151,9 +151,9 @@ internal sealed record TerraScaleDocumentEmptyResponse;
 
 public sealed record TerraScaleDocumentBatchOperation(string Operation, string DocumentId, JsonElement? Data)
 {
-    public static TerraScaleDocumentBatchOperation Create<TDocument>(string documentId, TDocument document) => new("put", RequiredId(documentId), JsonSerializer.SerializeToElement(document));
+    public static TerraScaleDocumentBatchOperation Create<TDocument>(string documentId, TDocument document) => new("put", RequiredId(documentId), JsonSerializer.SerializeToElement(document, TerraScaleDocumentJson.Options));
     public static TerraScaleDocumentBatchOperation Upsert<TDocument>(string documentId, TDocument document) => Create(documentId, document);
-    public static TerraScaleDocumentBatchOperation Patch<TPatch>(string documentId, TPatch patch) => new("patch", RequiredId(documentId), JsonSerializer.SerializeToElement(patch));
+    public static TerraScaleDocumentBatchOperation Patch<TPatch>(string documentId, TPatch patch) => new("patch", RequiredId(documentId), JsonSerializer.SerializeToElement(patch, TerraScaleDocumentJson.Options));
     public static TerraScaleDocumentBatchOperation Delete(string documentId) => new("delete", RequiredId(documentId), null);
     internal TerraScaleDocumentBatchOperationWire ToWire() { if (Operation is not ("put" or "patch" or "delete")) throw new ArgumentException("Batch operation must be put, patch, or delete.", nameof(Operation)); if (string.IsNullOrWhiteSpace(DocumentId)) throw new ArgumentException("Batch operation id cannot be blank.", nameof(DocumentId)); if (Operation is not "delete" && Data is null) throw new ArgumentException("Put and patch operations require a value.", nameof(Data)); return new(Operation, DocumentId.Trim(), Data); }
     private static string RequiredId(string value) { ArgumentException.ThrowIfNullOrWhiteSpace(value); return value.Trim(); }
@@ -179,6 +179,6 @@ public sealed record TerraScaleRoutingObservation(string? EdgeRegion, string? Se
     private static string? Read(HttpResponseMessage response, string name) => response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault()?.Trim().ToUpperInvariant() : null;
 }
 public enum TerraScaleRouteMode { Global, Preferred, PreferredFailover, RegionalStrict }
-internal static class TerraScaleDocumentJson { internal static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web); }
+internal static class TerraScaleDocumentJson { internal static readonly JsonSerializerOptions Options = TerraScaleTimestampJson.CreateOptions(); }
 
 #pragma warning restore CS1591

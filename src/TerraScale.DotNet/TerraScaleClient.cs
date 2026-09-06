@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Cysharp.Text;
+using TerraScale.DotNet.Generated;
 
 namespace TerraScale.DotNet;
 
@@ -54,6 +55,7 @@ public sealed class TerraScaleClient
 
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Databases = new TerraScaleDatabasesClient(this);
+        Operations = new TerraScaleOperationsClient(this);
         Collections = new TerraScaleCollectionsClient(this);
         Documents = new TerraScaleDocumentsClient(this);
         Regions = new TerraScaleRegionsClient(this);
@@ -85,6 +87,9 @@ public sealed class TerraScaleClient
     /// Database management operations.
     /// </summary>
     public TerraScaleDatabasesClient Databases { get; }
+
+    /// <summary>Authoritative provisioning operation lookup.</summary>
+    public TerraScaleOperationsClient Operations { get; }
 
     /// <summary>
     /// Database collection operations.
@@ -203,6 +208,46 @@ public sealed class TerraScaleClient
             configureRequest,
             static (response, _) => response,
             cancellationToken);
+
+    internal async Task<SchemaDocument> PutCollectionSchemaAsync(string route, CollectionSchema schema, string idempotencyKey, ulong? expectedGeneration, CancellationToken cancellationToken)
+    {
+        using var response = await SendWithRetriesAsync(HttpMethod.Put, route,
+            CreateJsonContentFactory(schema, TerraScaleContractJsonContext.Default.CollectionSchema), RequestAuthenticationMode.Authenticated,
+            request =>
+            {
+                if (expectedGeneration is { } generation)
+                    request.Headers.IfMatch.Add(new EntityTagHeaderValue("\"" + generation.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\""));
+            }, activity: null, cancellationToken, idempotencyKey, allowUnkeyedPutRetry: false).ConfigureAwait(false);
+        return await ReadJsonResponseAsync(response, TerraScaleContractJsonContext.Default.SchemaDocument, activity: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task DownloadExportArtifactAsync(string route, Stream destination, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (!destination.CanWrite) throw new ArgumentException("The export destination must be writable.", nameof(destination));
+        using var response = await SendWithRetriesAsync(HttpMethod.Get, route, static () => null, RequestAuthenticationMode.Authenticated,
+            request => request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/octet-stream")), activity: null, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode != HttpStatusCode.OK || response.Content.Headers.ContentType?.MediaType != "application/octet-stream")
+            throw new TerraScaleApiException(response.StatusCode, "The export artifact response must be HTTP 200 application/octet-stream.", null, ReadRequestId(response), null, null);
+        await response.Content.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async Task<TerraScaleDatabaseCreationResult> CreateDatabaseAsync(CreateDatabaseRequest request, string operationId, CancellationToken cancellationToken)
+    {
+        using var response = await SendWithRetriesAsync(HttpMethod.Post, "/api/v1/databases",
+            CreateJsonContentFactory(request, TerraScaleContractJsonContext.Default.CreateDatabaseRequest), RequestAuthenticationMode.Authenticated,
+            configureRequest: null, activity: null, cancellationToken, operationId).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        return response.StatusCode switch
+        {
+            HttpStatusCode.Created => new TerraScaleDatabaseCreated(await ReadJsonResponseAsync(response, TerraScaleContractJsonContext.Default.DatabaseRecord, null, cancellationToken).ConfigureAwait(false)),
+            HttpStatusCode.Accepted => new TerraScaleDatabaseAccepted(await ReadJsonResponseAsync(response, TerraScaleContractJsonContext.Default.ProvisioningOperation, null, cancellationToken).ConfigureAwait(false)),
+            _ => throw new TerraScaleApiException(response.StatusCode, "Database creation requires HTTP 201 or 202.", null, ReadRequestId(response), null, null),
+        };
+    }
 
     internal Task<TResponse> SendJsonAsync<TResponse>(
         HttpMethod method,

@@ -152,7 +152,8 @@ class OpenApiGenerator:
                 nullable = field not in required or "null" in definition.get("type", []) if isinstance(definition.get("type"), list) else field not in required
                 property_name = pascal(field)
                 type_text = self.type_name(definition, name + property_name, nullable)
-                fields.append(f"[property: JsonPropertyName({string_literal(field)})] {type_text} {property_name}")
+                required_attribute = ", JsonRequired" if field in required else ", JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)"
+                fields.append(f"[property: JsonPropertyName({string_literal(field)}){required_attribute}] {type_text} {property_name}")
             if not fields:
                 lines.append(f"public sealed record {pascal(name)};\n")
             else:

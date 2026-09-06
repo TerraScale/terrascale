@@ -10,7 +10,10 @@ The C#/.NET 10 client SDK for TerraScale. The workspace
   retries, idempotency and request IDs, typed `TerraScaleApiException`
   errors, and dependency-injection registration.
 - Named clients for document CRUD, collections, databases, database branches,
-  regions, backups, tenant lifecycle, SQL, and reactive HTTP views.
+  regions, backups, SQL, reactive views, usage, schemas, indexes, webhooks,
+  development operations, and durable exports. Provisioning creation distinguishes
+  immediate HTTP 201 records from HTTP 202 accepted operations; use
+  `Operations.GetAsync` to observe authoritative progress.
 - `TerraScaleSyncV1ViewEngine`: the transport-independent result-view state
   machine (bounded snapshots, atomic deltas, opaque checkpoints, typed resets,
   reversible optimistic presentation). `TerraScaleReactiveHttpClient` supplies
@@ -32,7 +35,7 @@ var client = new TerraScaleClient(
         ApiKey = Environment.GetEnvironmentVariable("TERRASCALE_API_KEY")
     });
 
-var databases = await client.Databases.ListAsync(cancellationToken);
+var databases = await client.Databases.ListAsync(cancellationToken: cancellationToken);
 ```
 
 Caller-supplied `HttpClient` handlers must set `AllowAutoRedirect = false`.
@@ -42,6 +45,19 @@ are errors; regional routing uses the explicit 421 repair contract.
 
 `BearerToken` or `BearerTokenProvider` replaces `ApiKey` for token
 authentication; the provider is called before each request and retry.
+
+Document and SQL values encode native `byte[]` as standard padded base64 and
+`DateTime`/`DateTimeOffset` as integer Unix milliseconds. A `DateTime` must have
+UTC or local kind; unspecified time zones are rejected. `Documents.CreateAsync`
+uses the server's atomic create-only precondition. For conditional PUT, set
+`TerraScaleDocumentMutationOptions.CreateOnly`; it cannot be combined with
+`ExpectedChangeToken`.
+
+Configure `TenantId` and `ProjectId` together for project-scoped operations.
+These are selectors verified by server-side authority, not authorization grants.
+Webhook create and rotation return a one-time signing secret; list responses do
+not contain that secret. Pass a stable create idempotency key when enabling
+retries; rotation and replay are not automatically retried.
 
 ## Verification
 

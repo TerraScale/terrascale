@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using TerraScale.DotNet.Generated;
 
 #pragma warning disable CS1591
 
@@ -35,26 +36,28 @@ public sealed class TerraScaleDatabasesClient
     }
 
     /// <summary>Creates a database with explicit placement and residency.</summary>
-    public Task<TerraScaleDatabaseRecord> CreateAsync(
+    public Task<TerraScaleDatabaseCreationResult> CreateAsync(
         string name,
         IReadOnlyList<string> placement,
-        string? residency = null,
+        string operationId,
+        string residency,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(placement);
+        ArgumentException.ThrowIfNullOrWhiteSpace(operationId);
         var normalizedPlacement = placement.Select(region => TerraScaleRegionCodes.Validate(region, nameof(placement))).ToArray();
         if (normalizedPlacement.Length is < 1 or > 20)
         {
             throw new ArgumentException("Placement must contain between 1 and 20 canonical TerraScale regions.", nameof(placement));
         }
-        if (residency is not (null or "eu-only" or "br-only"))
+        if (residency is not ("eu-only" or "br-only"))
             throw new ArgumentException("Residency must be eu-only or br-only.", nameof(residency));
         if (residency == "eu-only" && normalizedPlacement.Any(region => region != TerraScaleRegions.Fra))
             throw new ArgumentException("eu-only residency requires FRA placement.", nameof(placement));
         if (residency == "br-only" && normalizedPlacement.Any(region => region != TerraScaleRegions.Gru))
             throw new ArgumentException("br-only residency requires GRU placement.", nameof(placement));
-        return client.SendAsync<TerraScaleDatabaseRecord>(HttpMethod.Post, "/api/v1/databases", new TerraScaleDirectCreateDatabaseRequest(name.Trim(), normalizedPlacement, residency), cancellationToken);
+        return client.CreateDatabaseAsync(new CreateDatabaseRequest(Name: name.Trim(), Placement: normalizedPlacement, Residency: residency, OperationId: operationId), operationId, cancellationToken);
     }
 
     /// <summary>
@@ -115,10 +118,12 @@ public sealed class TerraScaleDatabasesClient
 }
 
 internal sealed record TerraScaleDatabaseListResponse([property: JsonRequired] IReadOnlyList<TerraScaleDatabaseRecord> Databases);
-internal sealed record TerraScaleDirectCreateDatabaseRequest(
-    string Name,
-    IReadOnlyList<string> Placement,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Residency);
+/// <summary>Creation can finish synchronously or accept durable provisioning work.</summary>
+public abstract record TerraScaleDatabaseCreationResult;
+/// <summary>A development database was created synchronously.</summary>
+public sealed record TerraScaleDatabaseCreated(DatabaseRecord Database) : TerraScaleDatabaseCreationResult;
+/// <summary>Durable provisioning was accepted; this does not imply serving readiness.</summary>
+public sealed record TerraScaleDatabaseAccepted(ProvisioningOperation Operation) : TerraScaleDatabaseCreationResult;
 
 /// <summary>Direct database record published by TerraBase.</summary>
 public sealed record TerraScaleDatabaseRecord(
