@@ -8,17 +8,17 @@ authority: ../../../GOAL.md
 
 ## Public operation coverage
 
-The Go `TerraScale.Database` gateway exposes every supported customer and
+The Rust TerraBase member exposes every supported customer and
 administrative database operation through a named, typed REST contract. Public
 SDKs expose the same operation set, authorization requirements, errors,
 limits, idempotency behavior, durability choices, and reactive behavior where
 it applies. An operation is not public until OpenAPI, the supported SDKs,
 public examples, contract tests, and the service implementation agree.
 
-The first release uses `/api/v1`. Public clients never call TBEP, TerraBase, an
-OCI API, or an untyped raw HTTP escape hatch. The gateway translates each
-supported public operation to a named private TBEP gRPC operation through
-`terrabase-go`. TerraBase owns no public wire encoding.
+The first release uses `/api/v1`. The member owns public REST and reactive
+wire encoding. Public clients use these versioned APIs, never private TBEP,
+direct storage, or OCI APIs. `terrabase-go` is the private control client for
+the orchestrator; it is not a gateway on the customer request path.
 
 ## Compatibility window
 
@@ -63,7 +63,7 @@ enters the engine:
 
 | Resource | Hard limit |
 | --- | --- |
-| One materialized document | 8 MiB |
+| One materialized document | 1 MiB |
 | One HTTP request or mutation batch | 16 MiB |
 | Mutations in one batch | 1,000 |
 | Document nesting depth | 64 |
@@ -88,8 +88,7 @@ a declared total bound, sequence, checksum, deadline, and cancellation path.
 The receiver verifies every chunk before publication and discards incomplete
 streams after the bounded retention window.
 
-The service may impose lower tenant quotas or admission limits when the public
-Production service publishes them before use. A lower quota returns a typed
+The service may impose lower tenant quotas or admission limits when the service publishes them before use. A lower quota returns a typed
 limit error and does not change the protocol ceiling. SDKs apply backpressure
 and bounded concurrency instead of hiding server rejection with unbounded
 queues.

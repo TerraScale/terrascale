@@ -10,8 +10,7 @@ performance and efficiency improvements; replacement of the existing external
 process adapter is required work. Backup policy selects OCI Object Storage, Tigris, or both by plan, with
 operator-managed overrides for specific users. See [ADR 0046](docs/adr/0046-native-rust-backup-subsystem.md).
 
-The workspace [GOAL.md](../GOAL.md) is authoritative. This repository's
-[GOAL.md](GOAL.md) is only the pointer above, while [AGENTS.md](AGENTS.md)
+The workspace [GOAL.md](../GOAL.md#terrabase) defines the production target; [AGENTS.md](AGENTS.md)
 contains repository rules and [docs/adr/README.md](docs/adr/README.md) indexes
 durable local decisions. `GlobalDurable` is accepted only with at least two
 active selected Regions; a request with fewer Regions fails before

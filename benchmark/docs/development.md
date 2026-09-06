@@ -1,7 +1,7 @@
 # Development contract
 
 The workspace [GOAL.md](../../GOAL.md) is the product and architecture
-authority. This repository's [GOAL.md](../GOAL.md) is only a pointer;
+authority;
 [docs/adr/README.md](adr/README.md) indexes durable local context, and
 [AGENTS.md](../AGENTS.md) contains the repository rules. Source and tests are
 the implementation authority.

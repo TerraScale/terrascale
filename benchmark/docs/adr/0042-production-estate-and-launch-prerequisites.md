@@ -18,7 +18,7 @@ anything on this page is.
 Region identity, fault-domain placement, and the `RegionCode` catalog stay
 as ADR 0033 defines them. This ADR replaces 0033's release posture: the
 engine is **closed source** (GOAL D-50; the MIT paragraph in 0033 is void),
-the launch is a **waitlist beta** (D-23), and the pre-launch soak is
+the launch is **public self-service** (D-23), and the pre-launch soak is
 **seven days** on the exact launch digests (D-10, M5-1), not thirty.
 
 ## Why not three servers

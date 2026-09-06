@@ -68,7 +68,7 @@ operation model in ADR 0028.
 
 ## Operability
 
-The launch posture is a waitlist beta after the required seven-day soak and
+Public self-service launch follows the required seven-day soak and
 restore, fault, and degraded-mode checks. The Orchestrator owns placement,
 drain, rollout, replacement, key rotation, backup lifecycle, and repair. The
 dashboard and private Prometheus/Grafana path are the operator surface.

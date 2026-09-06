@@ -44,7 +44,7 @@ backfill by range, tail the journal to catch up, atomically cut routing
 over, verify, drop the moved range. Auto-trigger: sustained > 10k writes/s
 over 5 minutes, or > 10 GB, or sustained write-p99 breach. CRDT merge is
 reserved for cross-region replication; intra-region RF=2 durability copies
-are journal-followers with promotion, not second writers.
+are physical WAL-frame followers with promotion, not second writers (ADR 0044).
 
 ### D-29 — Native Rust backup
 
