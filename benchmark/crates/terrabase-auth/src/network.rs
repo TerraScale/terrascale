@@ -12,7 +12,7 @@ use openraft::{BasicNode, RaftNetwork, RaftNetworkFactory};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use terrabase_member_transport::MemberId;
 use terrabase_member_transport::production::{
-    ProductionConnection, ProductionQuicEndpoint, ProductionRegion,
+    ProductionConnection, ProductionConnectionClass, ProductionQuicEndpoint, ProductionRegion,
 };
 
 use crate::{Action, AuthAuthority, AuthorityError, Command, Outcome, TypeConfig};
@@ -184,6 +184,17 @@ impl AuthNetwork {
         {
             return Err(AuthorityError::Unavailable);
         }
+        let expected_class = match &envelope.body {
+            Request::ClientWrite(_) | Request::ClientQuery(_) => {
+                ProductionConnectionClass::AuthClient
+            }
+            Request::Append(_) | Request::Vote(_) | Request::Snapshot(_) => {
+                ProductionConnectionClass::AuthConsensus
+            }
+        };
+        if connection.class() != expected_class {
+            return Err(AuthorityError::Unavailable);
+        }
         let bytes = match envelope.body {
             Request::Append(request) => encode(&authority.raft().append_entries(request).await)?,
             Request::Vote(request) => encode(&authority.raft().vote(request).await)?,
@@ -246,8 +257,11 @@ impl AuthNetwork {
             body: request,
         })?;
         let response = tokio::time::timeout(deadline, async {
-            let connection =
-                self.endpoint.connect(member).await.map_err(|_| AuthorityError::Unavailable)?;
+            let connection = self
+                .endpoint
+                .connect(member, ProductionConnectionClass::AuthClient)
+                .await
+                .map_err(|_| AuthorityError::Unavailable)?;
             connection.send_frame(&bytes).await.map_err(|_| AuthorityError::Unavailable)?;
             connection.receive_frame().await.map_err(|_| AuthorityError::Unavailable)
         })
@@ -309,7 +323,12 @@ impl AuthPeer {
         })
         .map_err(|_| transport_error())?;
         let response = tokio::time::timeout(option.hard_ttl(), async {
-            let connection = self.network.endpoint.connect(member).await.map_err(|_| ())?;
+            let connection = self
+                .network
+                .endpoint
+                .connect(member, ProductionConnectionClass::AuthConsensus)
+                .await
+                .map_err(|_| ())?;
             connection.send_frame(&bytes).await.map_err(|_| ())?;
             connection.receive_frame().await.map_err(|_| ())
         })

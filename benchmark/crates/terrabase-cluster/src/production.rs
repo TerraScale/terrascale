@@ -21,9 +21,10 @@ use terrabase::member::{
 };
 use terrabase::{Engine, RegionCode};
 pub use terrabase_member_transport::production::{
-    MemberWorkloadIdentity, ProductionDrainReport as TransportDrainReport, ProductionPeerAdmission,
-    ProductionQuicEndpoint, ProductionRegion, ProductionTlsMaterial, ProductionTransportConfig,
-    ProductionTransportError, ProductionTransportFacts, ProductionTransportLimits,
+    MemberWorkloadIdentity, ProductionConnectionClass,
+    ProductionDrainReport as TransportDrainReport, ProductionPeerAdmission, ProductionQuicEndpoint,
+    ProductionRegion, ProductionTlsMaterial, ProductionTransportConfig, ProductionTransportError,
+    ProductionTransportFacts, ProductionTransportLimits,
 };
 
 /// The maximum selected Regions in the initial production topology.
@@ -1009,8 +1010,8 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid, Ulid};
     use terrabase::RegionCode;
+    use terrabase::identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid, Ulid};
 
     use super::{
         DatabaseRouteScope, DatabaseRoutingCatalog, ProductionMemberError, ProductionPlacement,

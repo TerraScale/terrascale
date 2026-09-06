@@ -28,10 +28,10 @@ use x509_parser::prelude::{FromDer, X509Certificate};
 use crate::identity::MemberId;
 
 /// The application protocol negotiated for production Member links.
-pub const PRODUCTION_MEMBER_ALPN: &[u8] = b"terrabase-member/1";
+pub const PRODUCTION_MEMBER_ALPN: &[u8] = b"terrabase-member/2";
 
 /// The current production Member connection protocol major.
-pub const PRODUCTION_PROTOCOL_MAJOR: u16 = 1;
+pub const PRODUCTION_PROTOCOL_MAJOR: u16 = 2;
 
 /// The largest frame the production boundary will admit.
 pub const PRODUCTION_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -39,9 +39,29 @@ pub const PRODUCTION_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 /// The largest connection hello, including every length prefix.
 pub const PRODUCTION_MAX_HELLO_BYTES: usize = 1024;
 
-const HELLO_MAGIC: [u8; 4] = *b"TBM1";
+const HELLO_MAGIC: [u8; 4] = *b"TBM2";
 const NONCE_BYTES: usize = 32;
-const MAX_CONNECTIONS_PER_PEER: usize = 2;
+const MAX_CONNECTIONS_PER_PEER: usize = 3;
+
+/// The bounded application class carried in the authenticated hello.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u8)]
+pub enum ProductionConnectionClass {
+    Replication = 1,
+    AuthClient = 2,
+    AuthConsensus = 3,
+}
+
+impl ProductionConnectionClass {
+    const fn from_wire(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Replication),
+            2 => Some(Self::AuthClient),
+            3 => Some(Self::AuthConsensus),
+            _ => None,
+        }
+    }
+}
 
 /// Maximum remote seats in the initial three-Region, RF=2 topology.
 pub const PRODUCTION_MAX_PEERS: usize = 5;
@@ -317,7 +337,7 @@ impl ProductionTransportLimits {
         drain_timeout: Duration,
     ) -> Result<Self, ProductionTransportError> {
         let invalid = !(1024..=PRODUCTION_MAX_FRAME_BYTES).contains(&max_frame_bytes)
-            || !(1..=1024).contains(&max_inflight)
+            || !(8..=1024).contains(&max_inflight)
             || !(1..=4096).contains(&max_queued_frames)
             || max_queued_bytes < max_frame_bytes
             || max_queued_bytes > 1024 * 1024 * 1024
@@ -371,6 +391,23 @@ impl ProductionTransportLimits {
     #[must_use]
     pub const fn max_inflight(&self) -> usize {
         self.max_inflight
+    }
+
+    /// Returns the nonzero operation quota reserved for one connection class.
+    #[must_use]
+    pub const fn class_quota(&self, class: ProductionConnectionClass) -> usize {
+        let base = self.max_inflight / 4;
+        match class {
+            ProductionConnectionClass::AuthConsensus => base,
+            ProductionConnectionClass::Replication => base,
+            ProductionConnectionClass::AuthClient => base,
+        }
+    }
+
+    /// Returns the handshake quota; partition remainder is reserved here.
+    #[must_use]
+    pub const fn handshake_quota(&self) -> usize {
+        self.max_inflight / 4 + self.max_inflight % 4
     }
 
     /// Returns the application queue frame ceiling.
@@ -446,6 +483,11 @@ impl ProductionTransportConfig {
             || replica_set_epoch == 0
             || peers.is_empty()
             || peers.len() > PRODUCTION_MAX_PEERS
+        {
+            return Err(ProductionTransportError::InvalidConfiguration);
+        }
+        if limits.class_quota(ProductionConnectionClass::Replication)
+            < peers.len().saturating_mul(2).max(2)
         {
             return Err(ProductionTransportError::InvalidConfiguration);
         }
@@ -866,8 +908,13 @@ impl ProductionQuicEndpoint {
     pub async fn connect(
         &self,
         member: &MemberId,
+        class: ProductionConnectionClass,
     ) -> Result<ProductionConnection, ProductionTransportError> {
-        let _operation = self.state.begin_operation(self.config.limits.max_inflight)?;
+        let _operation = self.state.begin_operation(
+            OperationClass::Handshake,
+            self.config.limits.handshake_quota(),
+            self.config.limits.max_inflight,
+        )?;
         let deadline = tokio::time::Instant::now() + self.config.limits.handshake_timeout;
         let peer =
             self.config.peer(member).ok_or(ProductionTransportError::PeerNotAdmitted)?.clone();
@@ -889,7 +936,7 @@ impl ProductionQuicEndpoint {
             .await
             .map_err(|_| ProductionTransportError::Timeout)?
             .map_err(|_| ProductionTransportError::ConnectionFailed)?;
-        let local_hello = ConnectionHello::new(&self.config)?;
+        let local_hello = ConnectionHello::new(&self.config, class)?;
         tokio::time::timeout_at(deadline, write_hello(&mut send, &local_hello))
             .await
             .map_err(|_| ProductionTransportError::Timeout)??;
@@ -898,6 +945,9 @@ impl ProductionQuicEndpoint {
             .await
             .map_err(|_| ProductionTransportError::Timeout)??;
         self.validate_hello(&remote_hello, &certificate_identity, &peer)?;
+        if remote_hello.class != class {
+            return Err(ProductionTransportError::ProtocolMismatch);
+        }
         self.finish_connection(connection, certificate_identity, &remote_hello)
     }
 
@@ -908,7 +958,6 @@ impl ProductionQuicEndpoint {
     /// Uses the same fail-closed classes as [`Self::connect`]. A closed
     /// endpoint returns `Ok(None)`.
     pub async fn accept(&self) -> Result<Option<ProductionConnection>, ProductionTransportError> {
-        let _operation = self.state.begin_operation(self.config.limits.max_inflight)?;
         let deadline = tokio::time::Instant::now() + self.config.limits.handshake_timeout;
         let Some(incoming) = tokio::time::timeout_at(deadline, self.endpoint.accept())
             .await
@@ -916,6 +965,11 @@ impl ProductionQuicEndpoint {
         else {
             return Ok(None);
         };
+        let _operation = self.state.begin_operation(
+            OperationClass::Handshake,
+            self.config.limits.handshake_quota(),
+            self.config.limits.max_inflight,
+        )?;
         let connection = tokio::time::timeout_at(deadline, incoming)
             .await
             .map_err(|_| ProductionTransportError::Timeout)?
@@ -938,7 +992,7 @@ impl ProductionQuicEndpoint {
             .await
             .map_err(|_| ProductionTransportError::Timeout)??;
         self.validate_hello(&remote_hello, &certificate_identity, &peer)?;
-        let local_hello = ConnectionHello::new(&self.config)?;
+        let local_hello = ConnectionHello::new(&self.config, remote_hello.class)?;
         tokio::time::timeout_at(deadline, write_hello(&mut send, &local_hello))
             .await
             .map_err(|_| ProductionTransportError::Timeout)??;
@@ -982,16 +1036,19 @@ impl ProductionQuicEndpoint {
         peer: MemberWorkloadIdentity,
         hello: &ConnectionHello,
     ) -> Result<ProductionConnection, ProductionTransportError> {
-        let registration = self.state.register_connection(peer.member(), &connection)?;
+        let registration =
+            self.state.register_connection(peer.member(), hello.class, &connection)?;
         Ok(ProductionConnection {
             connection,
             peer,
             peer_region: hello.region,
+            class: hello.class,
             placement_generation: hello.placement_generation,
             replica_set_epoch: hello.replica_set_epoch,
             maximum_frame_bytes: self.config.limits.max_frame_bytes.min(hello.maximum_frame_bytes),
             frame_timeout: self.config.limits.frame_timeout,
-            max_inflight: self.config.limits.max_inflight,
+            class_quota: self.config.limits.class_quota(hello.class),
+            total_quota: self.config.limits.max_inflight,
             state: Arc::clone(&self.state),
             _registration: registration,
         })
@@ -1040,11 +1097,13 @@ pub struct ProductionConnection {
     connection: quinn::Connection,
     peer: MemberWorkloadIdentity,
     peer_region: ProductionRegion,
+    class: ProductionConnectionClass,
     placement_generation: u64,
     replica_set_epoch: u64,
     maximum_frame_bytes: usize,
     frame_timeout: Duration,
-    max_inflight: usize,
+    class_quota: usize,
+    total_quota: usize,
     state: Arc<RuntimeState>,
     _registration: ConnectionRegistration,
 }
@@ -1060,6 +1119,20 @@ impl ProductionConnection {
     #[must_use]
     pub const fn peer_region(&self) -> ProductionRegion {
         self.peer_region
+    }
+
+    /// Returns the authenticated application class for this session.
+    #[must_use]
+    pub const fn class(&self) -> ProductionConnectionClass {
+        self.class
+    }
+
+    const fn operation_class(&self) -> OperationClass {
+        match self.class {
+            ProductionConnectionClass::Replication => OperationClass::Replication,
+            ProductionConnectionClass::AuthClient => OperationClass::AuthClient,
+            ProductionConnectionClass::AuthConsensus => OperationClass::AuthConsensus,
+        }
     }
 
     /// Returns the admitted placement generation.
@@ -1090,7 +1163,11 @@ impl ProductionConnection {
         if frame.is_empty() || frame.len() > self.maximum_frame_bytes {
             return Err(ProductionTransportError::FrameTooLarge);
         }
-        let _operation = self.state.begin_operation(self.max_inflight)?;
+        let _operation = self.state.begin_operation(
+            self.operation_class(),
+            self.class_quota,
+            self.total_quota,
+        )?;
         let deadline = tokio::time::Instant::now() + self.frame_timeout;
         let mut stream = tokio::time::timeout_at(deadline, self.connection.open_uni())
             .await
@@ -1126,7 +1203,11 @@ impl ProductionConnection {
     /// frames above the negotiated limit before allocating the body. Trailing
     /// bytes are refused, and a missing FIN remains subject to the frame deadline.
     pub async fn receive_frame(&self) -> Result<Vec<u8>, ProductionTransportError> {
-        let _operation = self.state.begin_operation(self.max_inflight)?;
+        let _operation = self.state.begin_operation(
+            self.operation_class(),
+            self.class_quota,
+            self.total_quota,
+        )?;
         let deadline = tokio::time::Instant::now() + self.frame_timeout;
         let mut stream = tokio::time::timeout_at(deadline, self.connection.accept_uni())
             .await
@@ -1180,11 +1261,15 @@ struct ConnectionHello {
     placement_generation: u64,
     replica_set_epoch: u64,
     maximum_frame_bytes: usize,
+    class: ProductionConnectionClass,
     nonce: [u8; NONCE_BYTES],
 }
 
 impl ConnectionHello {
-    fn new(config: &ProductionTransportConfig) -> Result<Self, ProductionTransportError> {
+    fn new(
+        config: &ProductionTransportConfig,
+        class: ProductionConnectionClass,
+    ) -> Result<Self, ProductionTransportError> {
         let mut nonce = [0_u8; NONCE_BYTES];
         SystemRandom::new()
             .fill(&mut nonce)
@@ -1197,6 +1282,7 @@ impl ConnectionHello {
             placement_generation: config.placement_generation,
             replica_set_epoch: config.replica_set_epoch,
             maximum_frame_bytes: config.limits.max_frame_bytes,
+            class,
             nonce,
         })
     }
@@ -1218,6 +1304,7 @@ impl ConnectionHello {
                 .map_err(|_| ProductionTransportError::ProtocolMismatch)?
                 .to_be_bytes(),
         );
+        bytes.push(self.class as u8);
         bytes.push(
             u8::try_from(cluster.len()).map_err(|_| ProductionTransportError::ProtocolMismatch)?,
         );
@@ -1234,7 +1321,7 @@ impl ConnectionHello {
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, ProductionTransportError> {
-        const FIXED: usize = 4 + 2 + 3 + 8 + 8 + 4 + 1 + 1;
+        const FIXED: usize = 4 + 2 + 3 + 8 + 8 + 4 + 1 + 1 + 1;
         if bytes.len() < FIXED + NONCE_BYTES || bytes.len() > PRODUCTION_MAX_HELLO_BYTES {
             return Err(ProductionTransportError::ProtocolMismatch);
         }
@@ -1250,6 +1337,8 @@ impl ConnectionHello {
         let placement_generation = u64::from_be_bytes(take(bytes, &mut cursor)?);
         let replica_set_epoch = u64::from_be_bytes(take(bytes, &mut cursor)?);
         let maximum_frame_bytes = u32::from_be_bytes(take(bytes, &mut cursor)?) as usize;
+        let class = ProductionConnectionClass::from_wire(take::<1>(bytes, &mut cursor)?[0])
+            .ok_or(ProductionTransportError::ProtocolMismatch)?;
         let cluster_len = usize::from(take::<1>(bytes, &mut cursor)?[0]);
         let member_len = usize::from(take::<1>(bytes, &mut cursor)?[0]);
         let variable_end = cursor
@@ -1279,6 +1368,7 @@ impl ConnectionHello {
             placement_generation,
             replica_set_epoch,
             maximum_frame_bytes,
+            class,
             nonce,
         })
     }
@@ -1347,7 +1437,12 @@ fn peer_identity(
 struct RuntimeState {
     draining: AtomicBool,
     active_operations: AtomicUsize,
-    connections_by_peer: Mutex<BTreeMap<MemberId, Vec<quinn::Connection>>>,
+    handshake_operations: AtomicUsize,
+    replication_operations: AtomicUsize,
+    auth_client_operations: AtomicUsize,
+    auth_consensus_operations: AtomicUsize,
+    connections_by_peer:
+        Mutex<BTreeMap<MemberId, Vec<(ProductionConnectionClass, quinn::Connection)>>>,
     seen_nonces: Mutex<VecDeque<(MemberId, [u8; NONCE_BYTES])>>,
     changed: Notify,
 }
@@ -1357,6 +1452,10 @@ impl RuntimeState {
         Self {
             draining: AtomicBool::new(false),
             active_operations: AtomicUsize::new(0),
+            handshake_operations: AtomicUsize::new(0),
+            replication_operations: AtomicUsize::new(0),
+            auth_client_operations: AtomicUsize::new(0),
+            auth_consensus_operations: AtomicUsize::new(0),
             connections_by_peer: Mutex::new(BTreeMap::new()),
             seen_nonces: Mutex::new(VecDeque::new()),
             changed: Notify::new(),
@@ -1365,27 +1464,46 @@ impl RuntimeState {
 
     fn begin_operation(
         self: &Arc<Self>,
+        class: OperationClass,
         maximum: usize,
+        total_maximum: usize,
     ) -> Result<OperationGuard, ProductionTransportError> {
         if self.draining.load(Ordering::Acquire) {
             return Err(ProductionTransportError::Draining);
         }
-        let previous = self.active_operations.fetch_add(1, Ordering::AcqRel);
-        if previous >= maximum || self.draining.load(Ordering::Acquire) {
-            self.active_operations.fetch_sub(1, Ordering::AcqRel);
+        let counter = match class {
+            OperationClass::Handshake => &self.handshake_operations,
+            OperationClass::Replication => &self.replication_operations,
+            OperationClass::AuthClient => &self.auth_client_operations,
+            OperationClass::AuthConsensus => &self.auth_consensus_operations,
+        };
+        if !reserve(counter, maximum) {
             self.changed.notify_waiters();
-            return Err(if previous >= maximum {
-                ProductionTransportError::Saturated
-            } else {
-                ProductionTransportError::Draining
-            });
+            return Err(ProductionTransportError::Saturated);
         }
-        Ok(OperationGuard { state: Arc::clone(self) })
+        if self.draining.load(Ordering::Acquire) {
+            counter.fetch_sub(1, Ordering::AcqRel);
+            self.changed.notify_waiters();
+            return Err(ProductionTransportError::Draining);
+        }
+        if !reserve(&self.active_operations, total_maximum) {
+            counter.fetch_sub(1, Ordering::AcqRel);
+            self.changed.notify_waiters();
+            return Err(ProductionTransportError::Saturated);
+        }
+        if self.draining.load(Ordering::Acquire) {
+            self.active_operations.fetch_sub(1, Ordering::AcqRel);
+            counter.fetch_sub(1, Ordering::AcqRel);
+            self.changed.notify_waiters();
+            return Err(ProductionTransportError::Draining);
+        }
+        Ok(OperationGuard { state: Arc::clone(self), class })
     }
 
     fn register_connection(
         self: &Arc<Self>,
         peer: &MemberId,
+        class: ProductionConnectionClass,
         connection: &quinn::Connection,
     ) -> Result<ConnectionRegistration, ProductionTransportError> {
         let mut connections = self
@@ -1396,11 +1514,11 @@ impl RuntimeState {
             return Err(ProductionTransportError::Draining);
         }
         let sessions = connections.entry(peer.clone()).or_default();
-        sessions.retain(|session| session.close_reason().is_none());
-        if sessions.len() >= MAX_CONNECTIONS_PER_PEER {
+        sessions.retain(|(_, session)| session.close_reason().is_none());
+        if sessions.iter().any(|(existing, _)| *existing == class) {
             return Err(ProductionTransportError::Saturated);
         }
-        sessions.push(connection.clone());
+        sessions.push((class, connection.clone()));
         Ok(ConnectionRegistration {
             state: Arc::clone(self),
             peer: peer.clone(),
@@ -1412,7 +1530,7 @@ impl RuntimeState {
         let mut connections =
             self.connections_by_peer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         connections.retain(|_, sessions| {
-            sessions.retain(|session| session.close_reason().is_none());
+            sessions.retain(|(_, session)| session.close_reason().is_none());
             !sessions.is_empty()
         });
         (connections.values().map(Vec::len).sum(), connections.len())
@@ -1441,13 +1559,47 @@ impl RuntimeState {
     }
 }
 
+fn reserve(counter: &AtomicUsize, maximum: usize) -> bool {
+    let mut current = counter.load(Ordering::Acquire);
+    loop {
+        if current >= maximum {
+            return false;
+        }
+        match counter.compare_exchange_weak(
+            current,
+            current + 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => return true,
+            Err(next) => current = next,
+        }
+    }
+}
+
 struct OperationGuard {
     state: Arc<RuntimeState>,
+    class: OperationClass,
+}
+
+#[derive(Clone, Copy)]
+enum OperationClass {
+    Handshake,
+    Replication,
+    AuthClient,
+    AuthConsensus,
 }
 
 impl Drop for OperationGuard {
     fn drop(&mut self) {
         self.state.active_operations.fetch_sub(1, Ordering::AcqRel);
+        let counter = match self.class {
+            OperationClass::Handshake => &self.state.handshake_operations,
+            OperationClass::Replication => &self.state.replication_operations,
+            OperationClass::AuthClient => &self.state.auth_client_operations,
+            OperationClass::AuthConsensus => &self.state.auth_consensus_operations,
+        };
+        counter.fetch_sub(1, Ordering::AcqRel);
         self.state.changed.notify_waiters();
     }
 }
@@ -1463,7 +1615,7 @@ impl Drop for ConnectionRegistration {
         if let Ok(mut connections) = self.state.connections_by_peer.lock()
             && let Some(sessions) = connections.get_mut(&self.peer)
         {
-            sessions.retain(|session| session.stable_id() != self.id);
+            sessions.retain(|(_, session)| session.stable_id() != self.id);
             if sessions.is_empty() {
                 connections.remove(&self.peer);
             }
@@ -1529,15 +1681,15 @@ mod tests {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
     use super::{
-        ConnectionHello, MemberWorkloadIdentity, ProductionFrameQueue, ProductionPeerAdmission,
-        ProductionQuicEndpoint, ProductionRegion, ProductionTlsMaterial, ProductionTransportConfig,
-        ProductionTransportError, ProductionTransportLimits,
+        ConnectionHello, MemberWorkloadIdentity, ProductionConnectionClass, ProductionFrameQueue,
+        ProductionPeerAdmission, ProductionQuicEndpoint, ProductionRegion, ProductionTlsMaterial,
+        ProductionTransportConfig, ProductionTransportError, ProductionTransportLimits,
     };
 
     fn limits() -> ProductionTransportLimits {
         ProductionTransportLimits::try_new(
             4096,
-            4,
+            8,
             2,
             6000,
             Duration::from_secs(1),
@@ -1667,8 +1819,11 @@ mod tests {
 
     #[test]
     fn hello_round_trip_keeps_membership_fencing_and_nonce() {
-        let hello =
-            ConnectionHello { nonce: [7; 32], ..ConnectionHello::new(&config()).expect("hello") };
+        let hello = ConnectionHello {
+            nonce: [7; 32],
+            ..ConnectionHello::new(&config(), ProductionConnectionClass::Replication)
+                .expect("hello")
+        };
         assert_eq!(ConnectionHello::decode(&hello.encode().expect("encode")), Ok(hello));
     }
 
@@ -1822,8 +1977,10 @@ mod tests {
         let (first, second) = endpoint_pair();
         let first_identity = first.config.local_identity.clone();
         let second_identity = second.config.local_identity.clone();
-        let (outbound, inbound) =
-            tokio::join!(first.connect(second_identity.member()), second.accept(),);
+        let (outbound, inbound) = tokio::join!(
+            first.connect(second_identity.member(), ProductionConnectionClass::Replication),
+            second.accept(),
+        );
         let outbound = outbound.expect("outbound authentication");
         let mut inbound = inbound.expect("inbound authentication").expect("inbound connection");
         assert_eq!(outbound.peer(), &second_identity);
@@ -1854,7 +2011,10 @@ mod tests {
     async fn send_frame_waits_for_peer_ack_before_connection_drop() {
         let (client_endpoint, server_endpoint) = endpoint_pair_with_max_frame(512 * 1024);
         let (client, accepted) = tokio::join!(
-            client_endpoint.connect(server_endpoint.config.local_identity.member(),),
+            client_endpoint.connect(
+                server_endpoint.config.local_identity.member(),
+                ProductionConnectionClass::Replication
+            ),
             server_endpoint.accept(),
         );
         let client = client.expect("client authentication");
@@ -1916,7 +2076,9 @@ mod tests {
                     .await
                     .expect("mTLS");
                 let (mut send, receive) = connection.open_bi().await.expect("hello stream");
-                let hello = ConnectionHello::new(&first.config).expect("hello");
+                let hello =
+                    ConnectionHello::new(&first.config, ProductionConnectionClass::Replication)
+                        .expect("hello");
                 let bytes = hello.encode().expect("hello encoding");
                 let length = u16::try_from(bytes.len()).expect("bounded hello");
                 send.write_all(&length.to_be_bytes()).await.expect("length");
@@ -1967,6 +2129,89 @@ mod tests {
         tokio::join!(sender, receiver);
         inbound.frame_timeout = previous;
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn class_operation_quota_isolated_and_reclaimed_on_cancellation() {
+        let (first, second) = endpoint_pair();
+        let peer = second.config.local_identity.member();
+        let (replication, replication_in) = tokio::join!(
+            first.connect(peer, ProductionConnectionClass::Replication),
+            second.accept()
+        );
+        let replication = replication.expect("replication session");
+        let replication_in =
+            replication_in.expect("replication accept").expect("replication session");
+        let (client, client_in) = tokio::join!(
+            first.connect(peer, ProductionConnectionClass::AuthClient),
+            second.accept()
+        );
+        let client = std::sync::Arc::new(client.expect("client session"));
+        let _client_in = client_in.expect("client accept").expect("client session");
+        let (consensus, consensus_in) = tokio::join!(
+            first.connect(peer, ProductionConnectionClass::AuthConsensus),
+            second.accept()
+        );
+        let consensus = consensus.expect("consensus session");
+        let consensus_in = consensus_in.expect("consensus accept").expect("consensus session");
+
+        let held_one_client = std::sync::Arc::clone(&client);
+        let held_one = tokio::spawn(async move { held_one_client.receive_frame().await });
+        let held_two_client = std::sync::Arc::clone(&client);
+        let held_two = tokio::spawn(async move { held_two_client.receive_frame().await });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while first.facts().inflight_operations != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("client receives hold both permits");
+        assert_eq!(first.facts().inflight_operations, 2);
+        assert_eq!(client.receive_frame().await.err(), Some(ProductionTransportError::Saturated));
+
+        let (sent, received) =
+            tokio::join!(consensus.send_frame(b"consensus"), consensus_in.receive_frame());
+        sent.expect("consensus send while clients held");
+        assert_eq!(received.expect("consensus receive"), b"consensus");
+
+        let (sent, received, reply_sent, reply_received) = tokio::join!(
+            replication.send_frame(b"replication"),
+            replication_in.receive_frame(),
+            replication_in.send_frame(b"replication reply"),
+            replication.receive_frame(),
+        );
+        sent.expect("replication sends while clients held");
+        reply_sent.expect("replication replies while receiving");
+        assert_eq!(received.expect("replication receives"), b"replication");
+        assert_eq!(reply_received.expect("replication replies"), b"replication reply");
+
+        held_one.abort();
+        held_two.abort();
+        let _ = held_one.await;
+        let _ = held_two.await;
+        assert_eq!(first.facts().inflight_operations, 0);
+        let (sent, received) =
+            tokio::join!(_client_in.send_frame(b"resumed"), client.receive_frame());
+        sent.expect("send after client cancellation");
+        assert_eq!(received.expect("client permits reclaimed"), b"resumed");
+        drop(replication);
+        drop(replication_in);
+        drop(consensus);
+        drop(consensus_in);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn idle_accept_does_not_reserve_operation_capacity() {
+        let (_first, second) = endpoint_pair();
+        let mut accepting = Box::pin(second.accept());
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(accepting.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        assert_eq!(second.facts().inflight_operations, 0);
+        drop(accepting);
+        assert_eq!(second.facts().inflight_operations, 0);
+    }
     async fn closed_sessions_release_admission(
         first: &ProductionQuicEndpoint,
         second: &ProductionQuicEndpoint,
@@ -1983,7 +2228,10 @@ mod tests {
             assert_eq!(first.facts().authenticated_connections, 0);
             assert_eq!(second.facts().authenticated_peers, 0);
             retained.push((outbound, inbound));
-            let (next_outbound, next_inbound) = tokio::join!(first.connect(&peer), second.accept());
+            let (next_outbound, next_inbound) = tokio::join!(
+                first.connect(&peer, ProductionConnectionClass::Replication),
+                second.accept()
+            );
             outbound = next_outbound.expect("reconnect with retained closed handles");
             inbound = next_inbound.expect("accept").expect("connection");
             assert_eq!(first.facts().authenticated_peers, 1);
@@ -2035,17 +2283,32 @@ mod tests {
         second: &ProductionQuicEndpoint,
     ) {
         let peer = first.config.peers().next().expect("peer").identity().member();
-        let (extra_out, extra_in) = tokio::join!(first.connect(peer), second.accept());
+        let (extra_out, extra_in) = tokio::join!(
+            first.connect(peer, ProductionConnectionClass::AuthClient),
+            second.accept()
+        );
         let extra_out = extra_out.expect("second session");
         let extra_in = extra_in.expect("accepted").expect("second session");
-        assert_eq!(first.facts().authenticated_connections, super::MAX_CONNECTIONS_PER_PEER);
-        let (excess_out, excess_in) = tokio::join!(first.connect(peer), second.accept());
+        assert_eq!(first.facts().authenticated_connections, 2);
+        let (excess_out, excess_in) = tokio::join!(
+            first.connect(peer, ProductionConnectionClass::AuthClient),
+            second.accept()
+        );
         assert!(excess_out.is_err());
         assert_eq!(excess_in.err(), Some(ProductionTransportError::Saturated));
-        assert_eq!(first.facts().authenticated_connections, super::MAX_CONNECTIONS_PER_PEER);
-        assert_eq!(second.facts().authenticated_connections, super::MAX_CONNECTIONS_PER_PEER);
+        assert_eq!(first.facts().authenticated_connections, 2);
+        assert_eq!(second.facts().authenticated_connections, 2);
+        let (consensus_out, consensus_in) = tokio::join!(
+            first.connect(peer, ProductionConnectionClass::AuthConsensus),
+            second.accept()
+        );
+        let consensus_out = consensus_out.expect("consensus session");
+        let consensus_in = consensus_in.expect("accepted").expect("consensus session");
+        assert_eq!(first.facts().authenticated_connections, 3);
         drop(extra_out);
         drop(extra_in);
+        drop(consensus_out);
+        drop(consensus_in);
         assert_eq!(first.facts().authenticated_connections, 1);
         assert_eq!(second.facts().authenticated_connections, 1);
     }
@@ -2053,7 +2316,10 @@ mod tests {
     async fn dropping_endpoint_closes_retained_sessions_and_stops_admission() {
         let (first, second) = endpoint_pair();
         let peer = second.config.local_identity.member();
-        let (outbound, inbound) = tokio::join!(first.connect(peer), second.accept());
+        let (outbound, inbound) = tokio::join!(
+            first.connect(peer, ProductionConnectionClass::Replication),
+            second.accept()
+        );
         let outbound = outbound.expect("outbound");
         let inbound = inbound.expect("accept").expect("inbound");
         drop(first);

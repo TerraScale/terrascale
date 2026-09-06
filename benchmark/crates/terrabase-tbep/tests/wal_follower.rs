@@ -1001,8 +1001,13 @@ async fn physical_wal_and_receipt_cross_authenticated_quic() {
     };
     let writer_binding = binding(writer_id);
     let follower_binding = binding(follower_id);
-    let (outbound, inbound) =
-        tokio::join!(first.connect(follower_identity.member()), second.accept());
+    let (outbound, inbound) = tokio::join!(
+        first.connect(
+            follower_identity.member(),
+            terrabase_member_transport::production::ProductionConnectionClass::Replication
+        ),
+        second.accept()
+    );
     let mut outbound = outbound.unwrap();
     let inbound = inbound.unwrap().unwrap();
     let (location, writer) = member("quic-writer");
@@ -1039,8 +1044,13 @@ async fn physical_wal_and_receipt_cross_authenticated_quic() {
     let durable_bytes = std::fs::read(&wal_path).unwrap();
     drop(outbound);
     drop(inbound);
-    let (outbound, inbound) =
-        tokio::join!(first.connect(follower_identity.member()), second.accept());
+    let (outbound, inbound) = tokio::join!(
+        first.connect(
+            follower_identity.member(),
+            terrabase_member_transport::production::ProductionConnectionClass::Replication
+        ),
+        second.accept()
+    );
     let mut outbound = outbound.unwrap();
     let mut inbound = inbound.unwrap().unwrap();
     let (sent, received) = tokio::join!(

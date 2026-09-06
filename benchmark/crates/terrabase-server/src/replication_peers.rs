@@ -18,7 +18,7 @@ use terrabase_cluster::wal_snapshot::{
 };
 use terrabase_cluster::wal_wire::{ScopedWalAck, ScopedWalBatch};
 use terrabase_member_transport::identity::MemberId;
-use terrabase_member_transport::production::ProductionConnection;
+use terrabase_member_transport::production::{ProductionConnection, ProductionConnectionClass};
 use terrabase_tbep::production_causal::{CausalDriver, CausalReceive};
 use terrabase_tbep::production_repair::{PublicationIndex, RepairDriver, VerifiedRepairCut};
 use terrabase_tbep::registry::BoundScope;
@@ -34,6 +34,14 @@ pub trait PeerControlDispatcher: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>;
 }
 const PEER_HELLO: &[u8] = b"TBPEER\0\x01";
+
+fn accepts_peer_frame(class: ProductionConnectionClass, bytes: &[u8]) -> bool {
+    if bytes == PEER_HELLO {
+        class == ProductionConnectionClass::Replication
+    } else {
+        class != ProductionConnectionClass::Replication
+    }
+}
 /// A physical assignment with an independently established shared snapshot.
 pub enum PhysicalDriver {
     /// Captured immutable base retained until the follower confirms installation.
@@ -252,6 +260,7 @@ impl ReplicationPeers {
                             let local = endpoint.config().local_identity().member().as_str().to_owned();
                             classifiers.spawn(async move {
                                 let Ok(bytes) = connection.receive_frame().await else { return; };
+                                if !accepts_peer_frame(connection.class(), &bytes) { return; }
                                 if bytes == PEER_HELLO {
                                     if connection.peer().member().as_str() < local.as_str() && let Some(sender) = incoming.get(connection.peer().member().as_str()) { let _ = sender.try_send(connection); }
                                 } else if let Some(dispatcher) = dispatcher { let _ = dispatcher.dispatch(&connection, &bytes).await; }
@@ -408,7 +417,7 @@ async fn peer_worker(
             _ = stopped.changed() => return,
             command = new_lanes.recv() => { if let Some(command) = command { apply_command(command, &mut lanes, &observations, id.as_str()); } else { return; } continue; },
             connection = async {
-                if dial { endpoint.connect(&id).await.ok() } else { incoming.recv().await }
+                if dial { endpoint.connect(&id, ProductionConnectionClass::Replication).await.ok() } else { incoming.recv().await }
             } => connection,
         };
         if let Some(connection) = connection {
@@ -816,6 +825,16 @@ mod tests {
         }
         bytes[4..8].copy_from_slice(&u32::MAX.to_be_bytes());
         assert!(frame_scope(&bytes).is_err());
+    }
+
+    #[test]
+    fn connection_class_routes_hello_only_to_replication_and_other_frames_to_control() {
+        assert!(accepts_peer_frame(ProductionConnectionClass::Replication, PEER_HELLO));
+        assert!(!accepts_peer_frame(ProductionConnectionClass::AuthClient, PEER_HELLO));
+        assert!(!accepts_peer_frame(ProductionConnectionClass::AuthConsensus, PEER_HELLO));
+        assert!(!accepts_peer_frame(ProductionConnectionClass::Replication, b"auth-frame"));
+        assert!(accepts_peer_frame(ProductionConnectionClass::AuthClient, b"auth-frame"));
+        assert!(accepts_peer_frame(ProductionConnectionClass::AuthConsensus, b"auth-frame"));
     }
 }
 
