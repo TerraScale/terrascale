@@ -45,9 +45,8 @@ pub(super) async fn capture_lane(lane: &mut PeerDatabase) -> Result<RetiredPeerL
     let causal_frontier = tokio::task::spawn_blocking(move || {
         causal
             .map(|causal| {
-                let driver = causal
-                    .lock()
-                    .map_err(|_| "causal frontier lock poisoned".to_owned())?;
+                let driver =
+                    causal.lock().map_err(|_| "causal frontier lock poisoned".to_owned())?;
                 Ok::<BTreeMap<String, u64>, String>(driver.durable_peer_frontier().clone())
             })
             .transpose()
