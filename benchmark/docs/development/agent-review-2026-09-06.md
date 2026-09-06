@@ -748,3 +748,25 @@ The final complete engine test selection passed all 142 tests (`33453`),
 including the final TTL, causal retry, encrypted ownership and native branch
 fixtures. Together with the separately verified 48 backup tests, this qualifies
 the reviewed local behavior, not the pending workspace or production gates.
+
+TBEP review continuation preserved the admitted engine leases, signed placement
+checks, causal reassembly, repair bounds, TLS rotation wrapper, and durable
+apply-before-ack ordering while extracting bounded helpers. Independent review
+found and resolved the TLS stream return-type mismatch; compile verification
+also corrected mutable repair state and test imports. The TBEP all-target
+Clippy selection passed with warnings denied (`89633`).
+
+TBEP library tests passed 65/66 (`84155`); the failure expected an unimplemented
+maintenance endpoint that now authenticates observer requests. Its corrected
+missing-credentials expectation passed over real mTLS (`46350`). The full
+physical WAL integration selection passed all 20 tests (`7082`), including
+QUIC transfer and retry after a withheld durable acknowledgment. The complete
+library selection has not yet been rerun after the assertion correction.
+
+Source investigation confirms production composition still lacks the real
+`ProductionDataPlane` adapter and serving-host readiness wiring. The GRU
+orchestrator also lacks the authoritative lifecycle stream allocator; its
+existing usage journal and planner only consume committed streams. The signed
+transition delivery path accepts placement on every target before calling
+usage registration, leaving a concrete allocation integration boundary there.
+No guessed billing partitions or configuration-derived readiness were added.

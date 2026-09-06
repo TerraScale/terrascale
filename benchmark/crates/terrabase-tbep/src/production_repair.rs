@@ -655,7 +655,7 @@ impl RepairDriver {
         match frame.kind {
             1 => self.receive_catalog_request(engine, index, &frame, &mut result)?,
             3 => self.receive_range_request(engine, index, &frame, &mut result)?,
-            7 => self.receive_publication_request(engine, index, &frame, &mut result)?,
+            7 => Self::receive_publication_request(engine, index, &frame, &mut result)?,
             2 | 4..=6 => self.receive_response(engine, index, &frame, &mut result)?,
             _ => return Err(refused("unsupported repair message")),
         }
@@ -705,6 +705,230 @@ impl RepairDriver {
             return Err(refused("invalid repair entry"));
         }
         Ok(frame)
+    }
+    fn receive_catalog_request(
+        &mut self,
+        engine: &Engine,
+        index: &PublicationIndex,
+        frame: &Frame,
+        result: &mut RepairReceive,
+    ) -> Result<(), HostingError> {
+        if frame.entries.len() > MAX_ORIGINS || index.floors.len() > MAX_ORIGINS {
+            return Err(refused("invalid repair catalog"));
+        }
+        if self.source_cut.as_ref().is_some_and(|(id, _)| frame.cut == 0 && frame.id < *id) {
+            return Ok(());
+        }
+        if frame.cut == 0 && self.source_cut.as_ref().is_none_or(|(id, _)| *id != frame.id) {
+            let frontier = if frame.baseline.is_empty() {
+                if !frame.entries.is_empty() {
+                    return Err(refused("common cut lacks baseline binding"));
+                }
+                self.desired_cut
+                    .as_ref()
+                    .map_or_else(|| index.frontier.clone(), |cut| cut.frontier.clone())
+            } else {
+                if frame.baseline.len() != 32 {
+                    return Err(refused("invalid common cut baseline"));
+                }
+                let mut frontier = BTreeMap::new();
+                for entry in &frame.entries {
+                    let root = index.table.root(&entry.origin).map_err(failure)?;
+                    if entry.first != 1
+                        || entry.level != u32::from(root.level())
+                        || entry.hash.len() != 16
+                        || entry.floor != 1
+                        || frontier.insert(entry.origin.clone(), entry.cutoff).is_some()
+                    {
+                        return Err(refused("invalid requested common cut"));
+                    }
+                }
+                frontier
+            };
+            let mut frozen = index.at_frontier(&frontier);
+            frozen.frontier = frontier;
+            frozen.floors = frozen.frontier.keys().map(|origin| (origin.clone(), 1)).collect();
+            self.source_cut = Some((frame.id, frozen));
+        }
+        let (cut_id, frozen) =
+            self.source_cut.as_ref().ok_or_else(|| refused("unknown repair source cut"))?;
+        if frame.cut != 0 && frame.cut != *cut_id {
+            return Err(refused("expired repair source cut"));
+        }
+        let frontier = frozen.frontier.clone();
+        let mut entries = Vec::new();
+        for (origin, floor) in &frozen.floors {
+            let root = frozen.table.root(origin).map_err(failure)?;
+            let mut entry = frozen.summary(engine, &root)?;
+            entry.floor = *floor;
+            entry.cutoff = frontier.get(origin).copied().unwrap_or(0);
+            entries.push(entry);
+        }
+        let mut response = self.frame(frame.id, 2, entries);
+        response.cut = *cut_id;
+        response.baseline = frozen.baseline.to_vec();
+        result.frames.push(self.encode(&response)?);
+        Ok(())
+    }
+    fn receive_range_request(
+        &mut self,
+        engine: &Engine,
+        _index: &PublicationIndex,
+        frame: &Frame,
+        result: &mut RepairReceive,
+    ) -> Result<(), HostingError> {
+        let (cut_id, index) =
+            self.source_cut.as_ref().ok_or_else(|| refused("missing source repair cut"))?;
+        if frame.cut < *cut_id {
+            return Ok(());
+        }
+        if *cut_id != frame.cut {
+            return Err(refused("wrong source repair cut"));
+        }
+        if frame.entries.len() != 1 {
+            return Err(refused("invalid repair range request"));
+        }
+        let entry = &frame.entries[0];
+        if entry.hash.len() != 16 {
+            return Err(refused("invalid repair fingerprint"));
+        }
+        let range = index.range(entry)?;
+        let local = index.summary(engine, &range)?;
+        let (kind, entries) = if local.count == entry.count && local.hash == entry.hash {
+            (4, vec![local])
+        } else if range.level() == 0 {
+            let rows = index
+                .leaf_rows(engine, &range)?
+                .into_iter()
+                .map(|row| Entry {
+                    origin: row.id.origin().to_owned(),
+                    level: 0,
+                    first: row.id.sequence(),
+                    count: 1,
+                    hash: row.row_hash.to_vec(),
+                    floor: 0,
+                    cutoff: 0,
+                })
+                .collect();
+            (6, rows)
+        } else {
+            (5, index.children(engine, &range)?)
+        };
+        let mut response = self.frame(frame.id, kind, entries);
+        response.cut = frame.cut;
+        result.frames.push(self.encode(&response)?);
+        Ok(())
+    }
+    fn receive_publication_request(
+        engine: &Engine,
+        index: &PublicationIndex,
+        frame: &Frame,
+        result: &mut RepairReceive,
+    ) -> Result<(), HostingError> {
+        if frame.entries.len() > MAX_REPAIRS {
+            return Err(refused("repair publication request budget exceeded"));
+        }
+        let mut unique = BTreeSet::new();
+        for entry in &frame.entries {
+            let id = JournalRowId::new(&entry.origin, entry.first).map_err(failure)?;
+            if !unique.insert(id.clone()) || entry.hash.len() != 32 {
+                return Err(refused("invalid repair publication request"));
+            }
+            let groups = index.publications(engine, id.origin(), id.sequence(), id.sequence())?;
+            match groups.first() {
+                Some(group) if group.fingerprint().map_err(failure)?.as_slice() == entry.hash => {
+                    result.requested.push((entry.origin.clone(), entry.first));
+                }
+                None => result.needs_snapshot = true,
+                _ => return Err(refused("requested publication hash mismatch")),
+            }
+        }
+        Ok(())
+    }
+    fn receive_response(
+        &mut self,
+        engine: &Engine,
+        index: &PublicationIndex,
+        frame: &Frame,
+        result: &mut RepairReceive,
+    ) -> Result<(), HostingError> {
+        let Some((pending, _)) = &self.pending else {
+            return Ok(());
+        };
+        if frame.id < pending.id {
+            return Ok(());
+        }
+        if frame.id != pending.id {
+            return Err(refused("uncorrelated repair response"));
+        }
+        let pending = pending.clone();
+        match frame.kind {
+            2 => self.receive_catalog(engine, index, &pending, frame, result)?,
+            4..=6 => self.receive_range_response(engine, index, &pending, frame, result)?,
+            _ => unreachable!(),
+        }
+        self.pending = None;
+        Ok(())
+    }
+    fn receive_range_response(
+        &mut self,
+        engine: &Engine,
+        index: &PublicationIndex,
+        pending: &Frame,
+        frame: &Frame,
+        result: &mut RepairReceive,
+    ) -> Result<(), HostingError> {
+        let cut = self.comparison.as_ref().ok_or_else(|| refused("missing comparison cut"))?;
+        if frame.cut != cut.id {
+            return Err(refused("wrong comparison cut"));
+        }
+        let view = index.at_frontier(&cut.frontier);
+        let index = &view;
+        if pending.kind != 3 || pending.entries.len() != 1 {
+            return Err(refused("unexpected repair range response"));
+        }
+        let range = index.range(&pending.entries[0])?;
+        match frame.kind {
+            4 => {
+                if frame.entries != pending.entries {
+                    return Err(refused("unproved equal range"));
+                }
+            }
+            5 => {
+                if range.level() == 0 || frame.entries.len() > 64 {
+                    return Err(refused("invalid repair refinement"));
+                }
+                let mut children = BTreeMap::new();
+                for entry in &frame.entries {
+                    let child = index.range(entry)?;
+                    if child.origin() != range.origin()
+                        || child.level() + 1 != range.level()
+                        || child.first() < range.first()
+                        || child.last() > range.last()
+                        || entry.hash.len() != 16
+                        || children.insert(child.first(), entry.clone()).is_some()
+                    {
+                        return Err(refused("repair child outside requested range"));
+                    }
+                }
+                for child in index.children(engine, &range)? {
+                    children.entry(child.first).or_insert(Entry {
+                        count: 0,
+                        hash: vec![0; 16],
+                        ..child
+                    });
+                }
+                for remote in children.values() {
+                    let local = index.summary(engine, &index.range(remote)?)?;
+                    if local.count != remote.count || local.hash != remote.hash {
+                        self.work.push_back(local);
+                    }
+                }
+            }
+            6 => self.compare_leaf(engine, index, &range, frame, result)?,
+            _ => unreachable!(),
+        }
+        Ok(())
     }
     fn receive_catalog(
         &mut self,
@@ -1059,5 +1283,8 @@ mod tests {
         assert!(
             driver("b", "a", 1).receive_frame(&target, &index, &vec![0; MAX_BYTES + 1]).is_err()
         );
+        drop(source);
+        drop(target);
+        std::fs::remove_dir_all(path).unwrap();
     }
 }

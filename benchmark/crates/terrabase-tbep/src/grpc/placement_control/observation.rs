@@ -111,8 +111,10 @@ impl MaintenanceService for Arc<PlacementControlServer> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::grpc::TbepGrpcConfig;
     use crate::placement::tests::Fixture;
     use pb::maintenance_service_client::MaintenanceServiceClient;
+    use std::time::Duration;
     use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
 
     const OBSERVER: &str = "spiffe://terrascale.tech/production/engine-observer/gru-1";
@@ -132,8 +134,14 @@ mod tests {
         request
     }
 
-    #[tokio::test]
-    async fn real_mtls_observation_is_pending_scoped_and_read_only() {
+    async fn start_observer(
+        fixture: &Fixture,
+    ) -> (
+        Arc<PlacementControlServer>,
+        tonic::transport::Channel,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
+    ) {
         use rcgen::{
             BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, Ia5String, IsCa, KeyPair,
             SanType,
@@ -151,7 +159,6 @@ mod tests {
         params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
         params.subject_alt_names = vec![SanType::URI(Ia5String::try_from(OBSERVER).unwrap())];
         let client_certificate = params.signed_by(&client_key, &ca, &ca_key).unwrap();
-        let fixture = Fixture::new();
         let config = TbepGrpcConfig::try_new(
             256 * 1024,
             8,
@@ -199,6 +206,13 @@ mod tests {
             .connect()
             .await
             .unwrap();
+        (server, channel, stop, serving)
+    }
+
+    #[tokio::test]
+    async fn real_mtls_observation_is_pending_scoped_and_read_only() {
+        let fixture = Fixture::new();
+        let (server, channel, stop, serving) = start_observer(&fixture).await;
         let mut client = MaintenanceServiceClient::new(channel.clone());
         let health = client
             .supervision_health(request(

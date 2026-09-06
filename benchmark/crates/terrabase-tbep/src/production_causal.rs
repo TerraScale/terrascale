@@ -357,48 +357,7 @@ impl CausalDriver {
             return self.receive_fragment(engine, &mut body, now_ms);
         }
         if kind == 1 {
-            let message_id = take_u64(&mut body)?;
-            let decoded = decompress_publication(body)?;
-            let publication = ReplicatedPublication::decode_wire(&decoded).map_err(failure)?;
-            if publication.origin != self.origin
-                && self
-                    .repair_authorizations
-                    .get(&(publication.origin.clone(), publication.origin_sequence))
-                    != Some(&publication.fingerprint().map_err(failure)?)
-            {
-                return Err(refused("causal source has no correlated repair authorization"));
-            }
-            let scope = engine.scope_for(&TenantId::try_new(&self.scope.tenant).map_err(failure)?);
-            if !engine
-                .replication_publication_dependencies_ready(&scope, &publication)
-                .map_err(failure)?
-            {
-                return Ok(CausalReceive::Deferred);
-            }
-            engine.apply_replicated_publication(&scope, &publication).map_err(failure)?;
-            let operations = vec![publication.commit_ulid.clone()];
-            let receipt = self.wrap(&Envelope {
-                kind: FrameKind::AckBatch,
-                message_id,
-                correlation_id: Some(message_id),
-                causation_id: None,
-                idempotency_key: None,
-                source: self.local.clone(),
-                target: self.peer.clone(),
-                issued_at: LaneInstant::at_ticks(0),
-                expires_at: None,
-                range: None,
-                epoch: None,
-                payload: Payload::AckBatch {
-                    tenant: WireTenant::try_new(&self.scope.tenant).map_err(failure)?,
-                    reports: vec![(
-                        OperationId::try_new(blake3::hash(bytes).to_hex().as_str())
-                            .map_err(failure)?,
-                        true,
-                    )],
-                },
-            })?;
-            return Ok(CausalReceive::Applied { receipt, operations });
+            return self.receive_publication(engine, body, bytes);
         }
         if kind != 0 {
             return Err(refused("unknown causal frame kind"));
@@ -458,6 +417,57 @@ impl CausalDriver {
             }
             _ => Err(refused("unsupported causal frame kind")),
         }
+    }
+
+    fn receive_publication(
+        &mut self,
+        engine: &Engine,
+        body: &[u8],
+        frame_bytes: &[u8],
+    ) -> Result<CausalReceive, HostingError> {
+        let mut payload = body;
+        let message_id = take_u64(&mut payload)?;
+        let decoded = decompress_publication(payload)?;
+        let publication = ReplicatedPublication::decode_wire(&decoded).map_err(failure)?;
+        if publication.origin != self.origin
+            && self
+                .repair_authorizations
+                .get(&(publication.origin.clone(), publication.origin_sequence))
+                != Some(&publication.fingerprint().map_err(failure)?)
+        {
+            return Err(refused("causal source has no correlated repair authorization"));
+        }
+        let scope = engine.scope_for(&TenantId::try_new(&self.scope.tenant).map_err(failure)?);
+        if !engine
+            .replication_publication_dependencies_ready(&scope, &publication)
+            .map_err(failure)?
+        {
+            return Ok(CausalReceive::Deferred);
+        }
+        engine.apply_replicated_publication(&scope, &publication).map_err(failure)?;
+        let operations = vec![publication.commit_ulid.clone()];
+        let receipt = self.wrap(&Envelope {
+            kind: FrameKind::AckBatch,
+            message_id,
+            correlation_id: Some(message_id),
+            causation_id: None,
+            idempotency_key: None,
+            source: self.local.clone(),
+            target: self.peer.clone(),
+            issued_at: LaneInstant::at_ticks(0),
+            expires_at: None,
+            range: None,
+            epoch: None,
+            payload: Payload::AckBatch {
+                tenant: WireTenant::try_new(&self.scope.tenant).map_err(failure)?,
+                reports: vec![(
+                    OperationId::try_new(blake3::hash(frame_bytes).to_hex().as_str())
+                        .map_err(failure)?,
+                    true,
+                )],
+            },
+        })?;
+        Ok(CausalReceive::Applied { receipt, operations })
     }
 
     fn receive_fragment(
@@ -613,17 +623,8 @@ mod tests {
         assert!(decompress_publication(&bomb).is_err());
     }
 
-    #[test]
-    fn retry_receipt_and_database_fencing() {
-        let path = std::env::temp_dir().join(format!(
-            "causal-driver-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        let source = Engine::open(EngineConfig::durable(path.join("source")).unwrap()).unwrap();
-        let target = Engine::open(EngineConfig::durable(path.join("target")).unwrap()).unwrap();
-        let tenant = TenantId::try_new("tenant").unwrap();
-        let scope = source.scope_for(&tenant);
+    fn seed_fragmented_publication(source: &Engine, tenant: &TenantId) -> String {
+        let scope = source.scope_for(tenant);
         let mut tx = source
             .begin(
                 &scope,
@@ -661,7 +662,20 @@ mod tests {
             .streams()
             .replay_sync_journal(&scope, None, 2, &Cancellation::default())
             .unwrap();
-        let origin = batch.records()[0].provenance().origin().to_owned();
+        batch.records()[0].provenance().origin().to_owned()
+    }
+
+    #[test]
+    fn retry_receipt_and_database_fencing() {
+        let path = std::env::temp_dir().join(format!(
+            "causal-driver-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let source = Engine::open(EngineConfig::durable(path.join("source")).unwrap()).unwrap();
+        let target = Engine::open(EngineConfig::durable(path.join("target")).unwrap()).unwrap();
+        let tenant = TenantId::try_new("tenant").unwrap();
+        let origin = seed_fragmented_publication(&source, &tenant);
         let bound = BoundScope {
             principal: "member".into(),
             tenant: "tenant".into(),

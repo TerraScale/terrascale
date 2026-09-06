@@ -441,9 +441,7 @@ fn tls_incoming(
     tls_acceptor: reloadable_tls::ReloadableTls,
     handshake_timeout: std::time::Duration,
     handshake_limit: usize,
-) -> impl futures_util::Stream<
-    Item = std::io::Result<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>,
-> {
+) -> impl futures_util::Stream<Item = std::io::Result<reloadable_tls::RotatingStream>> {
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener).map(move |accepted| {
         let acceptor = tls_acceptor.clone();
         async move {
@@ -460,6 +458,22 @@ fn tls_incoming(
         }
     });
     futures_util::StreamExt::buffer_unordered(incoming, handshake_limit)
+}
+
+fn validate_tls_listener(server: &TbepGrpcServer) -> std::io::Result<()> {
+    if server.binding != pb::BindingKind::NetworkMtls {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "a TLS listener requires the network mTLS binding kind",
+        ));
+    }
+    if server.config.gateway_principals.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "a production TLS listener requires an authenticated gateway mapping",
+        ));
+    }
+    Ok(())
 }
 
 impl TbepGrpcServer {
@@ -744,18 +758,7 @@ impl TbepGrpcServer {
         address: SocketAddr,
         tls_acceptor: reloadable_tls::ReloadableTls,
     ) -> std::io::Result<TbepGrpcHandle> {
-        if self.binding != pb::BindingKind::NetworkMtls {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "a TLS listener requires the network mTLS binding kind",
-            ));
-        }
-        if self.config.gateway_principals.is_empty() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "a production TLS listener requires an authenticated gateway mapping",
-            ));
-        }
+        validate_tls_listener(self)?;
         let server = Arc::clone(self);
         let startup_timeout = self.config.tls_handshake_timeout();
         let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();

@@ -962,19 +962,19 @@ fn physical_routes_authorize_before_storage_or_tail_progress() {
 #[path = "wal_quic_support/mod.rs"]
 mod wal_quic_support;
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn physical_wal_and_receipt_cross_authenticated_quic() {
-    use std::sync::{Arc, Mutex};
+fn wal_replica_bindings(
+    writer_identity: &terrabase_member_transport::production::MemberWorkloadIdentity,
+    follower_identity: &terrabase_member_transport::production::MemberWorkloadIdentity,
+) -> (
+    terrabase_cluster::production::DatabaseRouteScope,
+    terrabase_cluster::wal_route::WalReplicaBinding,
+    terrabase_cluster::wal_route::WalReplicaBinding,
+) {
     use terrabase::{RegionCode, identity::MemberUlid};
     use terrabase_cluster::production::{
         DatabaseRouteScope, ProductionPlacement, ProductionRegionSeats,
     };
-    use terrabase_cluster::wal_quic::{receive_batch, send_batch};
     use terrabase_cluster::wal_route::WalReplicaBinding;
-    use terrabase_cluster::wal_wire::ScopedWalBatch;
-    let (first, second) = wal_quic_support::endpoint_pair();
-    let writer_identity = first.config().local_identity().clone();
-    let follower_identity = second.config().local_identity().clone();
     let writer_id = MemberUlid::from_text(writer_identity.member().as_str()).unwrap();
     let follower_id = MemberUlid::from_text(follower_identity.member().as_str()).unwrap();
     let scope = DatabaseRouteScope::try_new(
@@ -1001,6 +1001,19 @@ async fn physical_wal_and_receipt_cross_authenticated_quic() {
     };
     let writer_binding = binding(writer_id);
     let follower_binding = binding(follower_id);
+    (scope, writer_binding, follower_binding)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn physical_wal_and_receipt_cross_authenticated_quic() {
+    use std::sync::{Arc, Mutex};
+    use terrabase_cluster::wal_quic::{receive_batch, send_batch};
+    use terrabase_cluster::wal_wire::ScopedWalBatch;
+    let (first, second) = wal_quic_support::endpoint_pair();
+    let writer_identity = first.config().local_identity().clone();
+    let follower_identity = second.config().local_identity().clone();
+    let (scope, writer_binding, follower_binding) =
+        wal_replica_bindings(&writer_identity, &follower_identity);
     let (outbound, inbound) = tokio::join!(
         first.connect(
             follower_identity.member(),

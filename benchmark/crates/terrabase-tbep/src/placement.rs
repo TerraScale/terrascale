@@ -347,6 +347,133 @@ fn candidate_declarations(
     Ok((durable, candidate))
 }
 
+fn reconcile_persisted_declarations(
+    transaction: &rusqlite::Transaction<'_>,
+    boundary: &PlacementBoundary,
+) -> Result<(), PlacementError> {
+    let mut scopes = boundary.databases.write().map_err(|_| PlacementError::Storage)?;
+    let configured = scopes.clone();
+    let mut database_ids: BTreeMap<_, DatabaseRouteScope> =
+        configured.keys().map(|scope| (scope.database(), *scope)).collect();
+    let mut persisted_declared = BTreeSet::new();
+    let mut persisted_selected: BTreeMap<DatabaseRouteScope, BTreeSet<String>> = BTreeMap::new();
+    let mut statement = transaction
+        .prepare("SELECT tenant,project,database,region FROM declared")
+        .map_err(|_| PlacementError::Storage)?;
+    let mut rows = statement.query([]).map_err(|_| PlacementError::Storage)?;
+    while let Some(row) = rows.next().map_err(|_| PlacementError::Storage)? {
+        let tenant: String = row.get(0).map_err(|_| PlacementError::Storage)?;
+        let project: String = row.get(1).map_err(|_| PlacementError::Storage)?;
+        let database: String = row.get(2).map_err(|_| PlacementError::Storage)?;
+        let region: String = row.get(3).map_err(|_| PlacementError::Storage)?;
+        let scope = DatabaseRouteScope::try_new(&tenant, &project, &database)
+            .map_err(|_| PlacementError::Storage)?;
+        persisted_declared.insert(scope);
+        let local_region = if region.is_empty() {
+            None
+        } else {
+            RegionCatalog::production().parse(&region).map_err(|_| PlacementError::Storage)?;
+            Some(region)
+        };
+        let selected = scopes.get(&scope).map(|(_, selected)| selected.clone()).unwrap_or_default();
+        if scopes.get(&scope).is_some_and(|(existing, _)| {
+            existing.as_ref().is_some_and(|region| Some(region) != local_region.as_ref())
+        }) || (!scopes.contains_key(&scope) && scopes.len() >= 1024)
+            || database_ids
+                .insert(scope.database(), scope)
+                .is_some_and(|existing| existing != scope)
+        {
+            return Err(PlacementError::Storage);
+        }
+        scopes.insert(scope, (local_region, selected));
+    }
+    drop(rows);
+    drop(statement);
+    let mut statement = transaction
+        .prepare("SELECT tenant,project,database,region FROM selected_regions")
+        .map_err(|_| PlacementError::Storage)?;
+    let mut rows = statement.query([]).map_err(|_| PlacementError::Storage)?;
+    while let Some(row) = rows.next().map_err(|_| PlacementError::Storage)? {
+        let tenant: String = row.get(0).map_err(|_| PlacementError::Storage)?;
+        let project: String = row.get(1).map_err(|_| PlacementError::Storage)?;
+        let database: String = row.get(2).map_err(|_| PlacementError::Storage)?;
+        let region: String = row.get(3).map_err(|_| PlacementError::Storage)?;
+        let scope = DatabaseRouteScope::try_new(&tenant, &project, &database)
+            .map_err(|_| PlacementError::Storage)?;
+        if database_ids.get(&scope.database()) != Some(&scope) {
+            return Err(PlacementError::Storage);
+        }
+        RegionCatalog::production().parse(&region).map_err(|_| PlacementError::Storage)?;
+        persisted_selected.entry(scope).or_default().insert(region);
+    }
+    drop(rows);
+    drop(statement);
+    if persisted_selected.keys().any(|scope| !scopes.contains_key(scope)) {
+        return Err(PlacementError::Storage);
+    }
+    persist_declarations(
+        transaction,
+        &mut scopes,
+        &configured,
+        &persisted_declared,
+        &persisted_selected,
+    )
+}
+
+fn persist_declarations(
+    transaction: &rusqlite::Transaction<'_>,
+    scopes: &mut DeclarationCatalog,
+    configured: &DeclarationCatalog,
+    persisted_declared: &BTreeSet<DatabaseRouteScope>,
+    persisted_selected: &BTreeMap<DatabaseRouteScope, BTreeSet<String>>,
+) -> Result<(), PlacementError> {
+    for (scope, (local_region, selected_regions)) in scopes.iter_mut() {
+        if persisted_declared.contains(scope) {
+            let persisted = persisted_selected.get(scope).ok_or(PlacementError::Storage)?;
+            if configured.get(scope).is_some_and(|(_, selected)| selected != persisted)
+                || configured
+                    .get(scope)
+                    .and_then(|(local, _)| local.as_ref())
+                    .is_some_and(|local| Some(local) != local_region.as_ref())
+            {
+                return Err(PlacementError::Storage);
+            }
+            selected_regions.clone_from(persisted);
+        }
+        if selected_regions.is_empty()
+            || local_region.as_ref().is_some_and(|region| !selected_regions.contains(region))
+            || selected_regions.len() > 3
+        {
+            return Err(PlacementError::Storage);
+        }
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO declared VALUES (?1,?2,?3,?4)",
+                params![
+                    scope.tenant().to_text(),
+                    scope.project().to_text(),
+                    scope.database().to_text(),
+                    local_region.as_deref().unwrap_or("")
+                ],
+            )
+            .map_err(|_| PlacementError::Storage)?;
+        for region in selected_regions.iter() {
+            transaction
+                .execute(
+                    "INSERT OR IGNORE INTO selected_regions VALUES (?1,?2,?3,?4)",
+                    params![
+                        scope.tenant().to_text(),
+                        scope.project().to_text(),
+                        scope.database().to_text(),
+                        region
+                    ],
+                )
+                .map_err(|_| PlacementError::Storage)?;
+        }
+    }
+    Ok(())
+}
+
 /// One `SQLite` journal of pending control intent and durable retry receipts.
 /// No API on this type can mark a proposal admitted or a database writable.
 pub struct PlacementJournal {
@@ -403,122 +530,7 @@ impl PlacementJournal {
         {
             return Err(PlacementError::IdentityMismatch);
         }
-        {
-            let mut scopes = boundary.databases.write().map_err(|_| PlacementError::Storage)?;
-            let configured = scopes.clone();
-            let mut database_ids: BTreeMap<_, DatabaseRouteScope> =
-                configured.keys().map(|scope| (scope.database(), *scope)).collect();
-            let mut persisted_declared = BTreeSet::new();
-            let mut persisted_selected: BTreeMap<DatabaseRouteScope, BTreeSet<String>> =
-                BTreeMap::new();
-            let mut statement = transaction
-                .prepare("SELECT tenant,project,database,region FROM declared")
-                .map_err(|_| PlacementError::Storage)?;
-            let mut rows = statement.query([]).map_err(|_| PlacementError::Storage)?;
-            while let Some(row) = rows.next().map_err(|_| PlacementError::Storage)? {
-                let tenant: String = row.get(0).map_err(|_| PlacementError::Storage)?;
-                let project: String = row.get(1).map_err(|_| PlacementError::Storage)?;
-                let database: String = row.get(2).map_err(|_| PlacementError::Storage)?;
-                let region: String = row.get(3).map_err(|_| PlacementError::Storage)?;
-                let scope = DatabaseRouteScope::try_new(&tenant, &project, &database)
-                    .map_err(|_| PlacementError::Storage)?;
-                persisted_declared.insert(scope);
-                let local_region = if region.is_empty() {
-                    None
-                } else {
-                    RegionCatalog::production()
-                        .parse(&region)
-                        .map_err(|_| PlacementError::Storage)?;
-                    Some(region)
-                };
-                let selected =
-                    scopes.get(&scope).map(|(_, selected)| selected.clone()).unwrap_or_default();
-                if scopes.get(&scope).is_some_and(|(existing, _)| {
-                    existing.as_ref().is_some_and(|region| Some(region) != local_region.as_ref())
-                }) || (!scopes.contains_key(&scope) && scopes.len() >= 1024)
-                    || database_ids
-                        .insert(scope.database(), scope)
-                        .is_some_and(|existing| existing != scope)
-                {
-                    return Err(PlacementError::Storage);
-                }
-                scopes.insert(scope, (local_region, selected));
-            }
-            drop(rows);
-            drop(statement);
-            let mut statement = transaction
-                .prepare("SELECT tenant,project,database,region FROM selected_regions")
-                .map_err(|_| PlacementError::Storage)?;
-            let mut rows = statement.query([]).map_err(|_| PlacementError::Storage)?;
-            while let Some(row) = rows.next().map_err(|_| PlacementError::Storage)? {
-                let tenant: String = row.get(0).map_err(|_| PlacementError::Storage)?;
-                let project: String = row.get(1).map_err(|_| PlacementError::Storage)?;
-                let database: String = row.get(2).map_err(|_| PlacementError::Storage)?;
-                let region: String = row.get(3).map_err(|_| PlacementError::Storage)?;
-                let scope = DatabaseRouteScope::try_new(&tenant, &project, &database)
-                    .map_err(|_| PlacementError::Storage)?;
-                if database_ids.get(&scope.database()) != Some(&scope) {
-                    return Err(PlacementError::Storage);
-                }
-                RegionCatalog::production().parse(&region).map_err(|_| PlacementError::Storage)?;
-                persisted_selected.entry(scope).or_default().insert(region);
-            }
-            drop(rows);
-            drop(statement);
-            if persisted_selected.keys().any(|scope| !scopes.contains_key(scope)) {
-                return Err(PlacementError::Storage);
-            }
-            for (scope, (local_region, selected_regions)) in scopes.iter_mut() {
-                if persisted_declared.contains(scope) {
-                    let persisted = persisted_selected.get(scope).ok_or(PlacementError::Storage)?;
-                    if configured.get(scope).is_some_and(|(_, selected)| selected != persisted) {
-                        return Err(PlacementError::Storage);
-                    }
-                    if configured
-                        .get(scope)
-                        .and_then(|(local, _)| local.as_ref())
-                        .is_some_and(|local| Some(local) != local_region.as_ref())
-                    {
-                        return Err(PlacementError::Storage);
-                    }
-                    selected_regions.clone_from(persisted);
-                }
-                if selected_regions.is_empty()
-                    || local_region
-                        .as_ref()
-                        .is_some_and(|region| !selected_regions.contains(region))
-                {
-                    return Err(PlacementError::Storage);
-                }
-                if selected_regions.len() > 3 {
-                    return Err(PlacementError::Storage);
-                }
-                transaction
-                    .execute(
-                        "INSERT OR IGNORE INTO declared VALUES (?1,?2,?3,?4)",
-                        params![
-                            scope.tenant().to_text(),
-                            scope.project().to_text(),
-                            scope.database().to_text(),
-                            local_region.as_deref().unwrap_or("")
-                        ],
-                    )
-                    .map_err(|_| PlacementError::Storage)?;
-                for region in selected_regions.iter() {
-                    transaction
-                        .execute(
-                            "INSERT OR IGNORE INTO selected_regions VALUES (?1,?2,?3,?4)",
-                            params![
-                                scope.tenant().to_text(),
-                                scope.project().to_text(),
-                                scope.database().to_text(),
-                                region
-                            ],
-                        )
-                        .map_err(|_| PlacementError::Storage)?;
-                }
-            }
-        }
+        reconcile_persisted_declarations(&transaction, &boundary)?;
         transaction.commit().map_err(|_| PlacementError::Storage)?;
         std::fs::File::open(path.parent().ok_or(PlacementError::Storage)?)
             .and_then(|file| file.sync_all())

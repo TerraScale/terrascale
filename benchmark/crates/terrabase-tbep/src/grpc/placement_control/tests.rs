@@ -37,6 +37,29 @@ fn request<T>(message: T, operation: Option<&str>) -> Request<T> {
     request
 }
 
+async fn assert_auth_bootstrap(fixture: &Fixture, channel: tonic::transport::Channel) {
+    let mut auth_client =
+        pb::auth_group_bootstrap_service_client::AuthGroupBootstrapServiceClient::new(channel);
+    let identity = auth_client
+        .identity(request(pb::AuthStorageIdentityRequest {}, None))
+        .await
+        .unwrap()
+        .into_inner();
+    let grant = crate::auth_bootstrap::tests::grant(fixture, &identity);
+    let auth_receipt =
+        auth_client.bootstrap(request(grant.clone(), None)).await.unwrap().into_inner();
+    assert_eq!(auth_receipt.grant, grant.grant);
+    assert_eq!(auth_receipt.status, pb::AuthGroupBootstrapStatus::Persisted as i32);
+    assert_eq!(
+        auth_client.bootstrap(request(grant.clone(), None)).await.unwrap().into_inner(),
+        auth_receipt
+    );
+    assert_eq!(
+        auth_client.bootstrap(Request::new(grant)).await.unwrap_err().code(),
+        Code::Unauthenticated
+    );
+}
+
 #[tokio::test]
 async fn real_mtls_stage_get_retry_and_scope_isolation() {
     let fixture = Fixture::new();
@@ -75,28 +98,7 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
         Endpoint::from_shared(format!("https://{address}")).unwrap().tls_config(tls).unwrap();
     let channel = endpoint.connect().await.unwrap();
     let mut client = PlacementControlServiceClient::new(channel.clone());
-    let mut auth_client =
-        pb::auth_group_bootstrap_service_client::AuthGroupBootstrapServiceClient::new(
-            channel.clone(),
-        );
-    let identity = auth_client
-        .identity(request(pb::AuthStorageIdentityRequest {}, None))
-        .await
-        .unwrap()
-        .into_inner();
-    let grant = crate::auth_bootstrap::tests::grant(&fixture, &identity);
-    let auth_receipt =
-        auth_client.bootstrap(request(grant.clone(), None)).await.unwrap().into_inner();
-    assert_eq!(auth_receipt.grant, grant.grant);
-    assert_eq!(auth_receipt.status, pb::AuthGroupBootstrapStatus::Persisted as i32);
-    assert_eq!(
-        auth_client.bootstrap(request(grant.clone(), None)).await.unwrap().into_inner(),
-        auth_receipt
-    );
-    assert_eq!(
-        auth_client.bootstrap(Request::new(grant)).await.unwrap_err().code(),
-        Code::Unauthenticated
-    );
+    assert_auth_bootstrap(&fixture, channel.clone()).await;
 
     assert_eq!(
         client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap_err().code(),
@@ -141,7 +143,7 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
             .await
             .unwrap_err()
             .code(),
-        Code::Unimplemented
+        Code::Unauthenticated
     );
     server.begin_drain();
     assert_eq!(
