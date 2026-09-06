@@ -4498,6 +4498,9 @@ mod tests {
             "PredicateUpdate",
             "PredicateOnly",
             "Increment",
+            "PredicateOperatorSchema",
+            "PredicateConnectorSchema",
+            "PredicateModeSchema",
         ] {
             assert!(schemas.contains_key(schema), "auth schema is published: {schema}");
         }

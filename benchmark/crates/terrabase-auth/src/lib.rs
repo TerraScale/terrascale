@@ -14,6 +14,8 @@ pub use authority::{AuthAuthority, AuthorityError};
 pub use network::AuthNetwork;
 
 #[cfg(test)]
+mod bulk_tests;
+#[cfg(test)]
 mod tests;
 pub use store::SqliteStore;
 

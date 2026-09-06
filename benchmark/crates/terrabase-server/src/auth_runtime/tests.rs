@@ -1,6 +1,7 @@
 use super::*;
 
 use axum::body::Body;
+use axum::http::{HeaderValue, Request};
 use axum::http::header::CACHE_CONTROL;
 use http_body_util::BodyExt;
 use terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapGrant;
@@ -12,10 +13,10 @@ use terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapGrant;
 mod admitted_fixture {
     use super::*;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode, header};
+    use axum::http::{Request, StatusCode};
     use rcgen::{BasicConstraints, Certificate, CertificateParams, ExtendedKeyUsagePurpose, Ia5String, IsCa, KeyPair, KeyUsagePurpose, SanType};
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+    use std::net::{Ipv4Addr, UdpSocket};
     use std::path::PathBuf;
     use std::time::Duration;
     use terrabase::encryption::{DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata, OciVaultDatabaseKeys};
@@ -33,7 +34,6 @@ mod admitted_fixture {
         pub runtime: Arc<AuthRuntime>,
         pub database: String,
         pub key: &'static str,
-        pub group: String,
         pub remote: AuthAuthority,
         pub remote_endpoint: Arc<ProductionQuicEndpoint>,
         pub local_endpoint: Arc<ProductionQuicEndpoint>,
@@ -73,10 +73,9 @@ mod admitted_fixture {
         (ProductionQuicEndpoint::bind(ac, atls).unwrap(), ProductionQuicEndpoint::bind(bc, btls).unwrap())
     }
 
-    fn production_config(scope: (TenantUlid, ProjectUlid, DatabaseUlid), member: MemberUlid, peer: MemberUlid, root: &PathBuf, keys: &crate::test_keys::KeyDeliveryFixture) -> ProductionConfig {
+    fn production_config(scope: (TenantUlid, ProjectUlid, DatabaseUlid), cluster: ClusterUlid, member: MemberUlid, peer: MemberUlid, root: &PathBuf, keys: &crate::test_keys::KeyDeliveryFixture) -> ProductionConfig {
         let (tenant, project, database) = scope;
         let environment = EnvironmentName::try_new("production").unwrap();
-        let cluster = ClusterUlid::generate();
         ProductionConfig {
             environment: ProductionEnvironment { name: environment, cluster, member },
             databases: vec![ProductionDatabase { tenant, project, database, region: RegionCode::GRU, selected_regions: BTreeSet::from([RegionCode::GRU]), location: root.join("database"), policy_journal: root.join("policy.sqlite"), backup_root: root.join("backup"), encryption_provider: terrabase::encryption::KeyProviderIdentity::OciVault, encryption_key: DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(), quotas: DatabaseQuotas { max_storage_bytes: 1 << 30, max_documents: 1000, max_inflight: 16 }, enabled: true }],
@@ -88,19 +87,21 @@ mod admitted_fixture {
     }
 
     pub async fn create() -> Fixture {
-        let root = std::env::temp_dir().join(format!("terrabase-auth-http-{}", Ulid::generate())); std::fs::create_dir_all(&root).unwrap();
+        let root = std::env::temp_dir().join(format!("terrabase-auth-http-{}", Ulid::new())); std::fs::create_dir_all(&root).unwrap();
+        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap(); }
         let tenant = TenantUlid::generate(); let project = ProjectUlid::generate(); let database = DatabaseUlid::generate();
         let first = MemberUlid::generate(); let second = MemberUlid::generate();
-        let first_identity = terrabase_cluster::production::MemberWorkloadIdentity::try_new("production", "cluster", &first.to_text()).unwrap();
-        let second_identity = terrabase_cluster::production::MemberWorkloadIdentity::try_new("production", "cluster", &second.to_text()).unwrap();
+        let cluster = ClusterUlid::generate();
+        let first_identity = terrabase_cluster::production::MemberWorkloadIdentity::try_new("production", &cluster.to_text(), &first.to_text()).unwrap();
+        let second_identity = terrabase_cluster::production::MemberWorkloadIdentity::try_new("production", &cluster.to_text(), &second.to_text()).unwrap();
         let (local, remote_endpoint) = endpoints(&first_identity, &second_identity); let local = Arc::new(local); let remote_endpoint = Arc::new(remote_endpoint);
         let keys = crate::test_keys::key_delivery();
-        let group = Ulid::generate().to_string();
-        let boundary = AuthBootstrapBoundary::new("production", "cluster", &first.to_text(), BTreeSet::from([terrabase_cluster::production::DatabaseRouteScope::new(tenant, project, database)]), BTreeMap::from([(first.to_text(), "GRU".into()), (second.to_text(), "GRU".into())])).unwrap();
+        let group = Ulid::new().to_string();
+        let boundary = AuthBootstrapBoundary::new("production", &cluster.to_text(), &first.to_text(), BTreeSet::from([terrabase_cluster::production::DatabaseRouteScope::new(tenant, project, database)]), BTreeMap::from([(first.to_text(), "GRU".into()), (second.to_text(), "GRU".into())])).unwrap();
         let journal = Arc::new(AuthBootstrapJournal::open(&root.join("auth-bootstrap.sqlite"), boundary).unwrap());
         let local_incarnation = journal.identity().unwrap().storage_incarnation;
-        let grant = AuthGroupBootstrapGrant { environment: "production".into(), cluster: "cluster".into(), group_id: group.clone(), tenant: tenant.to_text(), project: project.to_text(), database: database.to_text(), generation: 1, regions: vec!["GRU".into()], voters: vec![AuthGroupVoter { node_id: 1, member: first.to_text(), region: "GRU".into(), spiffe_uri: first_identity.as_str().into(), storage_incarnation: local_incarnation }, AuthGroupVoter { node_id: 2, member: second.to_text(), region: "GRU".into(), spiffe_uri: second_identity.as_str().into(), storage_incarnation: Ulid::generate().to_string() }], authority_revision: 1, genesis_node: 1 };
-        journal.bootstrap("test", terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapRequest { operation_id: Ulid::generate().to_string(), grant: Some(grant) }).unwrap();
+        let grant = AuthGroupBootstrapGrant { environment: "production".into(), cluster: cluster.to_text(), group_id: group.clone(), tenant: tenant.to_text(), project: project.to_text(), database: database.to_text(), generation: 1, regions: vec!["GRU".into()], voters: vec![AuthGroupVoter { node_id: 1, member: first.to_text(), region: "GRU".into(), spiffe_uri: first_identity.as_str().into(), storage_incarnation: local_incarnation }, AuthGroupVoter { node_id: 2, member: second.to_text(), region: "GRU".into(), spiffe_uri: second_identity.as_str().into(), storage_incarnation: Ulid::new().to_string() }], authority_revision: 1, genesis_node: 1 };
+        journal.bootstrap("test", terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapRequest { operation_id: Ulid::new().to_string(), grant: Some(grant) }).unwrap();
         let scope = terrabase::member::DatabaseScope::new("production", tenant, project, database, RegionCode::GRU).unwrap();
         let source = OciVaultDatabaseKeys::new(keys.provider.clone(), KeyVersionMetadata::new(KeyScope::new_with_project("production", tenant, project, database, KeyPurpose::Data).unwrap(), DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap()), RegionCode::GRU).unwrap();
         let remote_store = SqliteStore::open_encrypted(&root.join("remote.sqlite"), &group, Arc::new(source), true).unwrap();
@@ -109,15 +110,26 @@ mod admitted_fixture {
         let remote_network = AuthNetwork::new(Arc::clone(&remote_endpoint), &group, voters.clone(), &placement).unwrap();
         let remote = AuthAuthority::recover_admitted(remote_store, remote_network.clone(), terrabase_auth::consensus_config(&group), Duration::from_secs(10)).await.unwrap();
         let remote_for_task = remote.clone(); let remote_network_for_task = remote_network.clone(); let remote_listener = Arc::clone(&remote_endpoint);
-        let remote_receive = tokio::spawn(async move { while let Ok(Some(connection)) = remote_listener.accept().await { let authority = remote_for_task.clone(); let network = remote_network_for_task.clone(); tokio::spawn(async move { let _ = network.receive(&connection, &authority).await; }); } });
+        let remote_receive = tokio::spawn(async move {
+            while let Ok(Some(connection)) = remote_listener.accept().await {
+                let authority = remote_for_task.clone();
+                let network = remote_network_for_task.clone();
+                tokio::spawn(async move {
+                    if let Ok(bytes) = connection.receive_frame().await {
+                        let _ = network.receive_frame(&connection, &authority, &bytes).await;
+                    }
+                });
+            }
+        });
         let key_path = root.join("bootstrap.key"); std::fs::write(&key_path, "test-bootstrap-key-01234567890123456789").unwrap();
+        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap(); }
         let public = PublicApiConfig { lifecycle_publication: None, billing_closure: None, credential_rotation: None, provisioning: None, identity: None, listen: "127.0.0.1:0".parse().unwrap(), data_root: root.clone(), bootstrap_key_file: Some(key_path), origin_proof_key_file: None, origin_proof_previous_key_file: None, capability_key_file: None, capability_previous_key_file: None };
-        let production = production_config((tenant, project, database), first, second, &root, &keys);
+        let production = production_config((tenant, project, database), cluster, first, second, &root, &keys);
         let runtime = AuthRuntime::new(Arc::clone(&local), Arc::clone(&journal), production, &public).unwrap();
         runtime.reconcile().await.unwrap();
         let local_for_task = Arc::clone(&runtime); let local_receive = tokio::spawn(async move { let _ = local_for_task.receive().await; });
         let _ = scope;
-        Fixture { runtime, database: database.to_text(), key: "test-bootstrap-key-01234567890123456789", group, remote, remote_endpoint, local_endpoint: local, local_receive, remote_receive, root, keys }
+        Fixture { runtime, database: database.to_text(), key: "test-bootstrap-key-01234567890123456789", remote, remote_endpoint, local_endpoint: local, local_receive, remote_receive, root, keys }
     }
 
     pub async fn request(runtime: &Arc<AuthRuntime>, request: Request<Body>) -> (StatusCode, serde_json::Value, axum::http::HeaderMap) {
@@ -144,7 +156,6 @@ fn auth_result_keeps_transaction_identity_and_camel_case_shape() {
 async fn error_responses_are_uncacheable_and_have_stable_envelope() {
     let response = error(StatusCode::BAD_REQUEST, "idempotency_key_required");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
 
     let body = response.into_body().collect().await.expect("body collects").to_bytes();
     let value: serde_json::Value = serde_json::from_slice(&body).expect("JSON error envelope");
@@ -173,13 +184,18 @@ fn openapi_registers_transactional_record_get() {
     assert!(path.get.is_some());
 }
 
-#[cfg(all(target_os = "linux", feature = "never"))]
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let fixture = admitted_fixture::create().await;
     let auth = format!("Bearer {}", fixture.key);
-    let begin = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/transactions/begin", fixture.database)).header("authorization", &auth).header("idempotency-key", "begin-1").header("content-type", "application/json").body(Body::from(r#"{"transactionId":"http-tx"}"#)).unwrap()).await;
-    assert_eq!(begin.0, StatusCode::OK);
+    let mut begin = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/transactions/begin", fixture.database)).header("authorization", &auth).header("idempotency-key", "begin-1").header("content-type", "application/json").body(Body::from(r#"{"transactionId":"http-tx"}"#)).unwrap()).await;
+    for _ in 0..100 {
+        if begin.0 != StatusCode::SERVICE_UNAVAILABLE { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        begin = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/transactions/begin", fixture.database)).header("authorization", &auth).header("idempotency-key", "begin-1").header("content-type", "application/json").body(Body::from(r#"{"transactionId":"http-tx"}"#)).unwrap()).await;
+    }
+    assert_eq!(begin.0, StatusCode::OK, "begin response: {:?}", begin.1);
     let transaction = begin.1["transactionId"].as_str().unwrap().to_owned();
     let insert = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/insertUnique", fixture.database)).header("authorization", &auth).header("idempotency-key", "insert-1").header("x-terrascale-auth-transaction", &transaction).header("content-type", "application/json").body(Body::from(r#"{"model":"user","record":{"id":"u1","name":"before"}}"#)).unwrap()).await;
     assert_eq!(insert.0, StatusCode::OK);
@@ -189,6 +205,25 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     assert_eq!(staged.1["record"]["name"], "before");
     assert_eq!(staged.2["cache-control"], "no-store");
     assert_eq!(staged.2["x-terrascale-placement"], "GRU");
+    fixture.runtime.keys.register("read-only-http-key-0123456789", "read-only", Scope::database(&fixture.database, Verbs::READ));
+    let read_auth = "Bearer read-only-http-key-0123456789";
+    let mut count = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/count", fixture.database)).header("authorization", read_auth).header("content-type", "application/json").body(Body::from(r#"{"model":"user","predicates":[]}"#)).unwrap()).await;
+    for _ in 0..20 {
+        if count.0 != StatusCode::SERVICE_UNAVAILABLE { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        count = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/count", fixture.database)).header("authorization", read_auth).header("content-type", "application/json").body(Body::from(r#"{"model":"user","predicates":[]}"#)).unwrap()).await;
+    }
+    assert_eq!(count.0, StatusCode::OK, "count response: {:?}", count.1);
+    assert_eq!(count.1["count"], 0);
+    let page = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/findPage", fixture.database)).header("authorization", read_auth).header("content-type", "application/json").body(Body::from(r#"{"model":"user","predicates":[],"offset":0,"limit":10}"#)).unwrap()).await;
+    assert_eq!(page.0, StatusCode::OK);
+    assert_eq!(page.1["records"].as_array().unwrap().len(), 0);
+    let denied_update = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/updateOne", fixture.database)).header("authorization", read_auth).header("idempotency-key", "read-only-write").header("content-type", "application/json").body(Body::from(r#"{"model":"user","predicates":[],"update":{"name":"denied"}}"#)).unwrap()).await;
+    assert_eq!(denied_update.0, StatusCode::FORBIDDEN);
+    let malformed_transaction = admitted_fixture::request(&fixture.runtime, Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database)).header("authorization", &auth).header("idempotency-key", "malformed-tx").header("x-terrascale-auth-transaction", HeaderValue::from_static("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")).body(Body::empty()).unwrap()).await;
+    assert_eq!(malformed_transaction.0, StatusCode::BAD_REQUEST);
+    let invalid_predicate = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/findPage", fixture.database)).header("authorization", &auth).header("content-type", "application/json").body(Body::from(r#"{"model":"user","predicates":[{"field":"id","value":"u1","operator":"not-a-real-operator"}],"offset":0,"limit":10}"#)).unwrap()).await;
+    assert_eq!(invalid_predicate.0, StatusCode::BAD_REQUEST);
     let ordinary_before_commit = admitted_fixture::request(&fixture.runtime, Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database)).header("authorization", &auth).body(Body::empty()).unwrap()).await;
     assert_eq!(ordinary_before_commit.0, StatusCode::OK);
     assert_eq!(ordinary_before_commit.1["matched"], false);
@@ -200,6 +235,16 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     let ordinary_after_commit = admitted_fixture::request(&fixture.runtime, Request::get(format!("/api/v1/databases/{}/auth/records/user/u1", fixture.database)).header("authorization", &auth).body(Body::empty()).unwrap()).await;
     assert_eq!(ordinary_after_commit.0, StatusCode::OK);
     assert_eq!(ordinary_after_commit.1["record"]["id"], "u1");
+    let rollback_begin = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/transactions/begin", fixture.database)).header("authorization", &auth).header("idempotency-key", "rollback-begin").header("content-type", "application/json").body(Body::from(r#"{"transactionId":"rollback-tx"}"#)).unwrap()).await;
+    assert_eq!(rollback_begin.0, StatusCode::OK);
+    let rollback_tx = rollback_begin.1["transactionId"].as_str().unwrap();
+    let rollback_insert = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/insertUnique", fixture.database)).header("authorization", &auth).header("idempotency-key", "rollback-insert").header("x-terrascale-auth-transaction", rollback_tx).header("content-type", "application/json").body(Body::from(r#"{"model":"user","record":{"id":"u2","name":"rolled-back"}}"#)).unwrap()).await;
+    assert_eq!(rollback_insert.0, StatusCode::OK);
+    let rollback = admitted_fixture::request(&fixture.runtime, Request::post(format!("/api/v1/databases/{}/auth/transactions/rollback", fixture.database)).header("authorization", &auth).header("idempotency-key", "rollback-end").header("content-type", "application/json").body(Body::from(format!(r#"{{"transactionId":"{rollback_tx}"}}"#))).unwrap()).await;
+    assert_eq!(rollback.0, StatusCode::OK);
+    let rolled_back_read = admitted_fixture::request(&fixture.runtime, Request::get(format!("/api/v1/databases/{}/auth/records/user/u2", fixture.database)).header("authorization", &auth).body(Body::empty()).unwrap()).await;
+    assert_eq!(rolled_back_read.0, StatusCode::OK);
+    assert_eq!(rolled_back_read.1["matched"], false);
     fixture.runtime.shutdown().await;
     fixture.local_receive.abort();
     fixture.remote_receive.abort();

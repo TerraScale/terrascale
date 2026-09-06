@@ -91,6 +91,29 @@ such failures and resolve uncertain outcomes before retrying. It must never
 rerun a callback to recover an uncertain commit. These public failure cases
 and Better Auth's maintained transaction tests remain qualification work.
 
+The state machine now provides predicate-based update-one, update-many,
+delete-one, delete-many, consume-matching, increment-one, and exact count.
+Single-record operations choose the lowest matching ID. Bulk mutations affect
+at most 1,000 records and at most 1 MiB of aggregate record data; exceeding a
+bound rejects the entire operation. Replacement records and their unique keys
+are checked before any write. Signed floating zero has one unique-index key,
+including when nested in JSON values.
+
+Increment applies all requested numeric fields and optional set fields
+atomically. It rejects ID changes, overlapping increment/set fields, integer
+overflow, and nonfinite results. Integer arithmetic preserves the full signed
+and unsigned 64-bit ranges. Mixing floating-point increments with integer
+operands outside the exact binary64 integer range is rejected instead of
+silently discarding counter precision. Integer predicate ordering also retains
+64-bit precision.
+
+Ordinary count and page queries require read permission and a quorum-confirmed
+applied barrier. They do not create idempotency records or advance the mutation
+revision. Transactional queries require the returned transaction identity and
+a stable idempotency key and execute against the replicated workspace. The
+public auth routes contribute their schemas to the same OpenAPI document used
+by the served JSON, Scalar, and contract exporter.
+
 ## Implementation and qualification dependencies
 
 Integrate the consensus storage and transport in the real member startup path,

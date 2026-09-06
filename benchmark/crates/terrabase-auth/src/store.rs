@@ -226,13 +226,16 @@ fn index_value(record: &Record, fields: &[String]) -> Option<Vec<serde_json::Val
             _ => {}
         }
     }
-    fields.iter().map(|field| {
-        let mut value = record.get(field).filter(|value| !value.is_null())?.clone();
-        // Value equality treats signed float zero equally. Serialized index
-        // keys must preserve that equality, including inside arrays/objects.
-        normalize(&mut value);
-        Some(value)
-    }).collect()
+    fields
+        .iter()
+        .map(|field| {
+            let mut value = record.get(field).filter(|value| !value.is_null())?.clone();
+            // Value equality treats signed float zero equally. Serialized index
+            // keys must preserve that equality, including inside arrays/objects.
+            normalize(&mut value);
+            Some(value)
+        })
+        .collect()
 }
 
 fn conflicts(connection: &Connection, model: &str, id: &str, record: &Record) -> Result<bool> {

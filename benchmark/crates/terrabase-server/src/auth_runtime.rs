@@ -351,12 +351,44 @@ struct UniqueIndex {
 struct PredicateInput {
     field: String,
     value: serde_json::Value,
+    #[schema(value_type = Option<PredicateOperatorSchema>)]
     #[serde(default)]
     operator: Option<String>,
+    #[schema(value_type = Option<PredicateConnectorSchema>)]
     #[serde(default)]
     connector: Option<String>,
+    #[schema(value_type = Option<PredicateModeSchema>)]
     #[serde(default)]
     mode: Option<String>,
+}
+#[derive(ToSchema)]
+#[allow(dead_code)]
+#[serde(rename_all = "snake_case")]
+enum PredicateOperatorSchema {
+    Eq,
+    Ne,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+    In,
+    NotIn,
+    Contains,
+    StartsWith,
+    EndsWith,
+}
+#[derive(ToSchema)]
+#[allow(non_camel_case_types)]
+#[serde(rename_all = "UPPERCASE")]
+enum PredicateConnectorSchema {
+    AND,
+    OR,
+}
+#[derive(ToSchema)]
+#[serde(rename_all = "lowercase")]
+enum PredicateModeSchema {
+    Sensitive,
+    Insensitive,
 }
 impl PredicateInput {
     fn into_predicate(self) -> Result<terrabase_auth::Predicate, Response> {
@@ -751,7 +783,7 @@ async fn consume_matching(
     )
     .await
 }
-#[utoipa::path(post, path="/api/v1/databases/{database}/auth/count", request_body=PredicateOnly, params(("database"=String,Path),("Idempotency-Key"=Option<String>,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)), responses((status=200,body=AuthResult),(status=503,description="Authority unavailable")))]
+#[utoipa::path(post, path="/api/v1/databases/{database}/auth/count", request_body=PredicateOnly, params(("database"=String,Path),("Idempotency-Key"=Option<String>,Header,description="Required only with an active transaction; reuse the same key for retries"),("X-TerraScale-Auth-Transaction"=Option<String>,Header)), responses((status=200,body=AuthResult),(status=503,description="Authority unavailable")))]
 async fn count(
     State(runtime): State<Arc<AuthRuntime>>,
     Path(database): Path<String>,
@@ -892,7 +924,7 @@ struct PageQuery {
     offset: u32,
     limit: u32,
 }
-#[utoipa::path(post,path="/api/v1/databases/{database}/auth/findPage",request_body=PageQuery,params(("database"=String,Path),("Idempotency-Key"=Option<String>,Header),("X-TerraScale-Auth-Transaction"=Option<String>,Header)),responses((status=200,body=AuthResult),(status=503,description="Authority unavailable")))]
+#[utoipa::path(post,path="/api/v1/databases/{database}/auth/findPage",request_body=PageQuery,params(("database"=String,Path),("Idempotency-Key"=Option<String>,Header,description="Required only with an active transaction; reuse the same key for retries"),("X-TerraScale-Auth-Transaction"=Option<String>,Header)),responses((status=200,body=AuthResult),(status=503,description="Authority unavailable")))]
 async fn find_page(
     State(runtime): State<Arc<AuthRuntime>>,
     Path(database): Path<String>,

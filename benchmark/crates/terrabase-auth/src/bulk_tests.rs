@@ -424,3 +424,137 @@ fn increment_unique_violation_and_changed_idempotency_key_do_not_mutate_records(
     );
     assert!(store.read_record("user", "second").unwrap().is_none());
 }
+
+#[test]
+fn signed_zero_is_canonical_for_unique_indexes_in_direct_and_transaction_updates() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open_store(&dir);
+    let signed_zero = serde_json::Value::Number(serde_json::Number::from_f64(-0.0).unwrap());
+    let positive_zero = serde_json::Value::Number(serde_json::Number::from_f64(0.0).unwrap());
+    let mut existing_a = record("a", 0);
+    existing_a.insert("counter".into(), positive_zero.clone());
+    let mut existing_b = record("b", 0);
+    existing_b.insert("counter".into(), signed_zero.clone());
+    for (index, value) in [(1, existing_a), (2, existing_b)] {
+        assert!(matches!(
+            apply_entry(
+                &mut store,
+                index,
+                command(
+                    &format!("existing-{index}"),
+                    Action::InsertUnique { model: "user".into(), record: value },
+                ),
+            ),
+            Outcome::Record { .. }
+        ));
+    }
+    assert_eq!(
+        apply_entry(
+            &mut store,
+            3,
+            command(
+                "create-existing-index",
+                Action::CreateUniqueIndex { model: "user".into(), fields: vec!["counter".into()] },
+            ),
+        ),
+        Outcome::UniqueConflict
+    );
+    let mut after_failed_index = record("c", 0);
+    after_failed_index.insert("counter".into(), positive_zero.clone());
+    assert!(matches!(
+        apply_entry(
+            &mut store,
+            4,
+            command(
+                "after-failed-index",
+                Action::InsertUnique { model: "user".into(), record: after_failed_index },
+            ),
+        ),
+        Outcome::Record { .. }
+    ));
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open_store(&dir);
+    let mut indexed_a = record("a", 0);
+    indexed_a.insert("profile".into(), json!({"counter": 0.0}));
+    let mut indexed_b = record("b", 0);
+    indexed_b.insert("profile".into(), json!({"counter": 1.0}));
+    for (index, value) in [(1, indexed_a), (2, indexed_b)] {
+        assert!(matches!(
+            apply_entry(
+                &mut store,
+                index,
+                command(
+                    &format!("nested-{index}"),
+                    Action::InsertUnique { model: "user".into(), record: value },
+                ),
+            ),
+            Outcome::Record { .. }
+        ));
+    }
+    assert_eq!(
+        apply_entry(
+            &mut store,
+            3,
+            command(
+                "nested-index",
+                Action::CreateUniqueIndex { model: "user".into(), fields: vec!["profile".into()] },
+            ),
+        ),
+        Outcome::Applied
+    );
+    let mut direct_update = Record::new();
+    direct_update.insert("profile".into(), json!({"counter": -0.0}));
+    assert_eq!(
+        apply_entry(
+            &mut store,
+            4,
+            command(
+                "nested-direct-zero",
+                Action::UpdateOne {
+                    model: "user".into(),
+                    predicates: vec![predicate("id", json!("b"))],
+                    update: direct_update.clone(),
+                },
+            ),
+        ),
+        Outcome::UniqueConflict
+    );
+    assert_eq!(store.read_record("user", "b").unwrap().unwrap()["profile"], json!({"counter": 1.0}));
+
+    assert!(matches!(
+        apply_entry(
+            &mut store,
+            5,
+            command("begin-zero", Action::BeginTransaction { transaction_id: "zero".into() }),
+        ),
+        Outcome::Transaction { transaction_id, .. } if transaction_id == "zero#1"
+    ));
+    assert_eq!(
+        apply_entry(
+            &mut store,
+            6,
+            command(
+                "nested-tx-zero",
+                transaction(
+                    "zero#1",
+                    Action::UpdateOne {
+                        model: "user".into(),
+                        predicates: vec![predicate("id", json!("b"))],
+                        update: direct_update,
+                    },
+                ),
+            ),
+        ),
+        Outcome::UniqueConflict
+    );
+    assert_eq!(
+        apply_entry(
+            &mut store,
+            7,
+            command("zero-commit", Action::CommitTransaction { transaction_id: "zero#1".into() }),
+        ),
+        Outcome::TransactionConflict
+    );
+    assert_eq!(store.read_record("user", "b").unwrap().unwrap()["profile"], json!({"counter": 1.0}));
+}
