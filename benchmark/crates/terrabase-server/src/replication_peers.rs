@@ -27,6 +27,8 @@ use tokio::sync::{mpsc, watch};
 
 #[cfg(test)]
 mod admission_tests;
+#[cfg(test)]
+pub(crate) use admission_tests::failed_peer_owner;
 
 /// Application control frames multiplexed on the same authenticated endpoint.
 pub trait PeerControlDispatcher: Send + Sync {
@@ -522,6 +524,12 @@ impl ReplicationPeers {
         *join = None;
         *self.drain_result.lock().map_err(failure)? = Some(result.clone());
         result
+    }
+
+    /// Whether the worker join completed, including a terminal worker error.
+    /// Unavailable join state never qualifies storage cleanup.
+    pub(crate) fn drain_completed(&self) -> bool {
+        self.drain_result.lock().is_ok_and(|result| result.is_some())
     }
 }
 

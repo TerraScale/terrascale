@@ -3,7 +3,10 @@ use crate::{admission::AdmissionRecord, control::DatabaseRecord};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use terrabase::member::DatabaseLease;
 use terrabase_tbep::member_host::MemberHost;
@@ -67,6 +70,7 @@ pub struct AdmittedDatabaseRegistry {
     ready: Arc<dyn Fn() -> bool + Send + Sync>,
     databases: RwLock<BTreeMap<String, Arc<AdmittedDatabase>>>,
     serving: RwLock<BTreeSet<String>>,
+    draining: AtomicBool,
 }
 
 impl AdmittedDatabaseRegistry {
@@ -77,7 +81,42 @@ impl AdmittedDatabaseRegistry {
             ready,
             databases: RwLock::new(BTreeMap::new()),
             serving: RwLock::new(BTreeSet::new()),
+            draining: AtomicBool::new(false),
         }
+    }
+
+    /// Fences publication, activation, and serving lookups while retaining
+    /// admitted hosts for shutdown observations.
+    ///
+    /// # Errors
+    /// Refuses unavailable activation state.
+    pub fn begin_drain(&self) -> Result<(), String> {
+        let _serving = self.serving.write().map_err(|_| "admitted activation unavailable")?;
+        self.draining.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    /// Releases retained hosts after the registry has been fenced.
+    ///
+    /// Host drops occur after both registry locks are released so Member
+    /// shutdown cannot re-enter registry code while a lock is held.
+    ///
+    /// # Errors
+    /// Refuses release before fencing or when registry state is unavailable.
+    pub fn release_drained_hosts(&self) -> Result<(), String> {
+        let mut serving = self.serving.write().map_err(|_| "admitted activation unavailable")?;
+        if !self.draining.load(Ordering::Acquire) {
+            return Err("admitted registry must be fenced before releasing hosts".into());
+        }
+        let hosts = {
+            let mut databases =
+                self.databases.write().map_err(|_| "admitted registry unavailable")?;
+            serving.clear();
+            std::mem::take(&mut *databases)
+        };
+        drop(serving);
+        drop(hosts);
+        Ok(())
     }
 
     /// Publishes only after real Member admission, retaining its resource-accounted lease.
@@ -106,6 +145,10 @@ impl AdmittedDatabaseRegistry {
                 .any(|region| region.parse::<terrabase::regions::RegionCode>().is_err())
         {
             return Err("admitted database owner mismatch".into());
+        }
+        let _serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
+            return Err("admitted registry is draining".into());
         }
         let mut databases = self.databases.write().map_err(|_| "admitted registry unavailable")?;
         if let Some(existing) = databases.get(&record.database_id) {
@@ -156,6 +199,10 @@ impl AdmittedDatabaseRegistry {
         if !(self.ready)() {
             return Err("Member is not ready to serve".into());
         }
+        let _serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
+            return Err("Member is not ready to serve".into());
+        }
         Ok(self
             .databases
             .read()
@@ -171,6 +218,9 @@ impl AdmittedDatabaseRegistry {
     /// Returns an error when an entry is not retained or the registry is unavailable.
     pub fn activate(&self, databases: &[String]) -> Result<(), String> {
         let mut serving = self.serving.write().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
+            return Err("admitted registry is draining".into());
+        }
         let retained = self.databases.read().map_err(|_| "admitted registry unavailable")?;
         if databases.iter().any(|id| !retained.contains_key(id)) {
             return Err("activation database is not retained".into());
@@ -188,6 +238,9 @@ impl AdmittedDatabaseRegistry {
             return Err("Member is not ready to serve".into());
         }
         let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
+            return Err("Member is not ready to serve".into());
+        }
         if !serving.contains(database) {
             return Ok(None);
         }
@@ -211,6 +264,9 @@ impl AdmittedDatabaseRegistry {
             return Err("Member is not ready to serve".into());
         }
         let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
+            return Err("Member is not ready to serve".into());
+        }
         let retained = self
             .databases
             .read()
@@ -234,6 +290,9 @@ impl AdmittedDatabaseRegistry {
             return Err("Member is not ready to serve".into());
         }
         let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
+            return Err("Member is not ready to serve".into());
+        }
         self.databases
             .read()
             .map_err(|_| "admitted registry unavailable")?
@@ -252,6 +311,10 @@ impl AdmittedDatabaseRegistry {
     /// Returns an error when the Member is not ready, the registry is unavailable, or metadata is invalid.
     pub fn records(&self) -> Result<Vec<DatabaseRecord>, String> {
         if !(self.ready)() {
+            return Err("Member is not ready to serve".into());
+        }
+        let _serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
             return Err("Member is not ready to serve".into());
         }
         self.databases
@@ -358,6 +421,37 @@ pub(crate) mod tests {
         registry.activate(&batch).unwrap();
         assert_eq!(registry.public_records().unwrap().len(), 2);
         drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn drain_fences_publication_and_serving_but_retains_hosts_until_release() {
+        let (registry, member, records, root) = fixture();
+        let snapshot = registry.retained_snapshot().unwrap();
+        assert_eq!(snapshot.len(), records.len());
+        assert!(registry.release_drained_hosts().is_err());
+        registry.begin_drain().unwrap();
+        registry.begin_drain().unwrap();
+        assert!(registry.resolve(&records[0].database_id).is_err());
+        assert!(registry.resolve_serving(&records[0].database_id).is_err());
+        assert!(registry.resolve_metadata(&records[0].database_id).is_err());
+        assert!(registry.records().is_err());
+        assert!(registry.public_records().is_err());
+        assert!(registry.activate(&[records[0].database_id.clone()]).is_err());
+        let id = terrabase::member::DatabaseId::try_new(&records[0].database_id).unwrap();
+        let lease = member.acquire(&id).unwrap();
+        assert!(
+            registry
+                .publish(records[0].clone(), lease, root.join(&records[0].database_id), 2)
+                .is_err()
+        );
+        assert!(member.close(std::time::Duration::from_millis(50)).is_err());
+        registry.release_drained_hosts().unwrap();
+        registry.release_drained_hosts().unwrap();
+        assert!(registry.retained_snapshot().unwrap().is_empty());
+        assert!(member.close(std::time::Duration::ZERO).is_err());
+        drop(snapshot);
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -500,6 +594,10 @@ impl AdmittedDatabaseRegistry {
         now: u64,
     ) -> Result<Vec<crate::lifecycle_publication::LifecyclePublicationSnapshot>, String> {
         if !(self.ready)() {
+            return Err("Member is not ready to publish lifecycle".into());
+        }
+        let _serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
             return Err("Member is not ready to publish lifecycle".into());
         }
         let databases: Vec<_> = self

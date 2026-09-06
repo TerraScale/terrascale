@@ -81,6 +81,14 @@ fn request(a: DatabaseRouteScope, b: DatabaseRouteScope) -> BTreeMap<String, Vec
     BTreeMap::from([("peer-a".into(), vec![lane(a)]), ("peer-b".into(), vec![lane(b)])])
 }
 
+pub(crate) fn failed_peer_owner(error: &'static str) -> ReplicationPeers {
+    let mut synthetic = synthetic();
+    let join = tokio::spawn(async move { Err(error.to_owned()) });
+    synthetic.peers.worker_status = join.abort_handle();
+    synthetic.peers.join = tokio::sync::Mutex::new(Some(join));
+    synthetic.peers
+}
+
 fn batch(lanes: BTreeMap<String, Vec<PeerDatabase>>) -> PeerDatabaseBatch {
     let selected_regions = lanes
         .values()
@@ -141,11 +149,13 @@ async fn cancelled_drain_retains_join_for_retry_and_caches_failure() {
     let timed_out = tokio::time::timeout(Duration::from_millis(1), synthetic.peers.drain()).await;
     assert!(timed_out.is_err());
     assert!(synthetic.peers.join.lock().await.is_some());
+    assert!(!synthetic.peers.drain_completed());
     synthetic.peers.join.lock().await.as_ref().unwrap().abort();
     let first = synthetic.peers.drain().await;
     let second = synthetic.peers.drain().await;
     assert!(first.is_err());
     assert_eq!(first, second);
+    assert!(synthetic.peers.drain_completed());
 }
 
 #[tokio::test]

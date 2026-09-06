@@ -912,6 +912,95 @@ mod tests {
         (runtime, root, spec, plane)
     }
 
+    struct NoDatabaseAssignments;
+
+    impl terrabase_cluster::wal_route::DurableWalAssignmentSource for NoDatabaseAssignments {
+        fn load_assignment(
+            &self,
+            _: terrabase_cluster::production::DatabaseRouteScope,
+        ) -> Result<
+            terrabase_cluster::wal_route::WalAssignment,
+            terrabase_cluster::wal_route::WalAssignmentError,
+        > {
+            panic!("empty database startup must not invent assignments")
+        }
+    }
+
+    struct NoControlFrames;
+
+    impl crate::replication_peers::PeerControlDispatcher for NoControlFrames {
+        fn dispatch<'a>(
+            &'a self,
+            _: terrabase_member_transport::production::ProductionConnection,
+            _: Vec<u8>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>
+        {
+            Box::pin(async { Ok(false) })
+        }
+    }
+
+    #[tokio::test]
+    async fn production_data_lifecycle_retains_one_owner_and_refuses_restart() {
+        use crate::production_data_runtime::ProductionDataLifecycle;
+        let (runtime, root, spec, _) = runtime_with_async_drain("data-lifecycle-owner", false);
+        let runtime = Arc::new(runtime);
+        let progress = Arc::new(crate::replication_runtime::ReplicationProgress::default());
+        let lifecycle = Arc::new(ProductionDataLifecycle::new(
+            progress,
+            Arc::new(crate::admitted_databases::AdmittedDatabaseRegistry::new(Arc::new(|| false))),
+        ));
+        let start = || {
+            lifecycle.start(
+                runtime.clone(),
+                &NoDatabaseAssignments,
+                Vec::new(),
+                Arc::new(NoControlFrames),
+            )
+        };
+        let (first, second) = tokio::join!(start(), start());
+        assert_ne!(first.is_ok(), second.is_ok(), "exactly one startup is accepted");
+        let data = lifecycle.get().expect("retained runtime");
+        data.ensure_running().expect("worker owner is running");
+        let (first, second) = tokio::join!(lifecycle.drain(), lifecycle.drain());
+        first.expect("first drain");
+        second.expect("shared drain");
+        assert!(std::ptr::eq(data, lifecycle.get().expect("owner remains installed")));
+        assert!(data.ensure_running().is_err());
+        assert!(start().await.is_err(), "shutdown cannot start a new receiver");
+        assert!(runtime.drain().await.storage.is_ok());
+        reopen(&root, spec);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_data_lifecycle_empty_drain_fences_later_startup() {
+        use crate::production_data_runtime::ProductionDataLifecycle;
+        let (runtime, root, spec, _) = runtime_with_async_drain("data-lifecycle-empty", false);
+        let runtime = Arc::new(runtime);
+        let progress = Arc::new(crate::replication_runtime::ReplicationProgress::default());
+        let lifecycle = ProductionDataLifecycle::new(
+            progress,
+            Arc::new(crate::admitted_databases::AdmittedDatabaseRegistry::new(Arc::new(|| false))),
+        );
+        lifecycle.drain().await.expect("empty drain");
+        assert!(lifecycle.is_draining());
+        assert!(
+            lifecycle
+                .start(
+                    runtime.clone(),
+                    &NoDatabaseAssignments,
+                    Vec::new(),
+                    Arc::new(NoControlFrames),
+                )
+                .await
+                .is_err()
+        );
+        assert!(lifecycle.get().is_none());
+        assert!(runtime.drain().await.storage.is_ok());
+        reopen(&root, spec);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn production_member_drain_awaits_data_plane_before_closing_storage() {
         let (runtime, root, spec, completed) =

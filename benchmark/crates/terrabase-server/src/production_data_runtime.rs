@@ -5,6 +5,7 @@ use crate::replication_peers::{
 use crate::replication_runtime::ReplicationProgress;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use terrabase::encryption::{
@@ -42,6 +43,118 @@ pub struct ProductionDatabaseAssignment {
 pub struct ProductionDataRuntime {
     peers: ReplicationPeers,
     progress: Arc<ReplicationProgress>,
+}
+
+/// Shared owner for the one process-wide accepted replication runtime.
+pub struct ProductionDataLifecycle {
+    data: OnceLock<ProductionDataRuntime>,
+    startup: tokio::sync::Mutex<()>,
+    draining: AtomicBool,
+    progress: Arc<ReplicationProgress>,
+    registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+}
+
+impl ProductionDataLifecycle {
+    /// Creates an empty lifecycle owner for one shared progress ledger.
+    #[must_use]
+    pub fn new(
+        progress: Arc<ReplicationProgress>,
+        registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+    ) -> Self {
+        Self {
+            data: OnceLock::new(),
+            startup: tokio::sync::Mutex::new(()),
+            draining: AtomicBool::new(false),
+            progress,
+            registry,
+        }
+    }
+
+    /// Returns the installed runtime without transferring ownership.
+    #[must_use]
+    pub fn get(&self) -> Option<&ProductionDataRuntime> {
+        self.data.get()
+    }
+
+    /// Returns whether startup or serving has been fenced.
+    #[must_use]
+    pub fn is_draining(&self) -> bool {
+        self.draining.load(Ordering::Acquire)
+    }
+
+    /// Fences new progress and lane startup without consuming the owner.
+    ///
+    /// # Errors
+    /// Reports unavailable registry fencing state after signaling workers.
+    pub fn begin_drain(&self) -> Result<(), String> {
+        self.draining.store(true, Ordering::Release);
+        self.progress.fence();
+        if let Some(data) = self.data.get() {
+            data.begin_drain();
+        }
+        self.registry.begin_drain()
+    }
+
+    /// Starts the one runtime, serializing concurrent startup attempts.
+    ///
+    /// # Errors
+    /// Refuses a fenced lifecycle or failed worker startup.
+    pub async fn start(
+        &self,
+        runtime: Arc<ProductionMemberRuntime>,
+        source: &dyn DurableWalAssignmentSource,
+        databases: Vec<ProductionDatabaseAssignment>,
+        dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
+    ) -> Result<(), String> {
+        if self.is_draining() {
+            return Err("production data lifecycle is draining".into());
+        }
+        let _startup = self.startup.lock().await;
+        if self.is_draining() {
+            return Err("production data lifecycle is draining".into());
+        }
+        if self.data.get().is_some() {
+            return Err("production data lifecycle is already initialized".into());
+        }
+        let data = ProductionDataRuntime::start(
+            runtime,
+            self.progress.clone(),
+            source,
+            databases,
+            dispatcher,
+        )
+        .await?;
+        if let Err(data) = self.data.set(data) {
+            let _ = self.begin_drain();
+            data.begin_drain();
+            let _ = data.drain().await;
+            return Err("production data lifecycle was initialized twice".into());
+        }
+        if self.is_draining() {
+            let _ = self.begin_drain();
+            return Err("production data lifecycle began draining during startup".into());
+        }
+        Ok(())
+    }
+
+    /// Fences startup and existing workers, then joins the retained runtime.
+    ///
+    /// # Errors
+    /// Reports worker startup, join, or cached drain failures.
+    pub async fn drain(&self) -> Result<(), String> {
+        let begin_result = self.begin_drain();
+        let _startup = self.startup.lock().await;
+        let data_result = match self.data.get() {
+            Some(data) => data.drain().await,
+            None => Ok(()),
+        };
+        let release_result = if self.data.get().is_none_or(|data| data.peers.drain_completed()) {
+            self.registry.release_drained_hosts()
+        } else {
+            Err("replication worker cleanup has not completed".into())
+        };
+        begin_result.and(data_result).and(release_result)
+    }
 }
 
 impl ProductionDataRuntime {
@@ -234,12 +347,11 @@ pub struct ProductionAdmissionRuntime {
     config: crate::config::ProductionConfig,
     active: BTreeSet<String>,
     pending_publication: BTreeMap<DatabaseRouteScope, Option<String>>,
-    data: Option<ProductionDataRuntime>,
+    lifecycle: Arc<ProductionDataLifecycle>,
     dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
     usage: Arc<crate::usage_admission::UsageAdmissionJournal>,
     snapshot_max_bytes: u64,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
-    draining: AtomicBool,
 }
 
 impl ProductionAdmissionRuntime {
@@ -403,18 +515,17 @@ impl ProductionAdmissionRuntime {
             runtime,
             member,
             journal,
-            progress,
+            progress: progress.clone(),
             records,
             host: Arc::new(host),
             config,
             active: BTreeSet::new(),
             pending_publication: BTreeMap::new(),
-            data: None,
+            lifecycle: Arc::new(ProductionDataLifecycle::new(progress.clone(), registry.clone())),
             dispatcher,
             usage,
             snapshot_max_bytes,
             registry,
-            draining: AtomicBool::new(false),
         })
     }
 
@@ -498,13 +609,19 @@ impl ProductionAdmissionRuntime {
     /// Current live peer observations, absent until the data workers start.
     #[must_use]
     pub fn observations(&self) -> Option<crate::replication_peers::PeerObservations> {
-        self.data.as_ref().map(ProductionDataRuntime::observations)
+        self.lifecycle.get().map(ProductionDataRuntime::observations)
     }
 
     /// Receipt ledger shared by writes and catch-up observations.
     #[must_use]
     pub fn progress(&self) -> Arc<ReplicationProgress> {
         self.progress.clone()
+    }
+
+    /// Returns the shared data lifecycle owner for the production adapter.
+    #[must_use]
+    pub fn lifecycle(&self) -> Arc<ProductionDataLifecycle> {
+        self.lifecycle.clone()
     }
 
     /// Verified accepted placement journal used to determine local writer roles.
@@ -518,11 +635,11 @@ impl ProductionAdmissionRuntime {
     /// # Errors
     /// Refuses changed authority, missing admitted records, or failed worker startup.
     pub async fn reconcile(&mut self) -> Result<(), String> {
-        if self.draining.load(Ordering::Acquire) {
+        if self.lifecycle.is_draining() {
             return Err("production admission runtime is draining".into());
         }
-        if let Some(data) = &self.data {
-            data.peers.ensure_running()?;
+        if let Some(data) = self.lifecycle.get() {
+            data.ensure_running()?;
         }
         let accepted = match self.journal.accepted_proposal() {
             Ok(accepted) => accepted,
@@ -536,17 +653,10 @@ impl ProductionAdmissionRuntime {
         }
         self.runtime.admit_membership(&*self.journal).map_err(failure)?;
         // Auth groups need the shared accept owner even before a database lane is admitted.
-        if self.data.is_none() {
-            self.data = Some(
-                ProductionDataRuntime::start(
-                    self.runtime.clone(),
-                    self.progress.clone(),
-                    &*self.journal,
-                    Vec::new(),
-                    self.dispatcher.clone(),
-                )
-                .await?,
-            );
+        if self.lifecycle.get().is_none() {
+            self.lifecycle
+                .start(self.runtime.clone(), &*self.journal, Vec::new(), self.dispatcher.clone())
+                .await?;
         }
         let records = self
             .records
@@ -589,7 +699,7 @@ impl ProductionAdmissionRuntime {
             if !lifecycle.access_revoked() {
                 continue;
             }
-            if let Some(data) = &self.data {
+            if let Some(data) = self.lifecycle.get() {
                 data.peers.remove_database(scope).await?;
             }
             self.runtime.retire_route(scope).map_err(failure)?;
@@ -713,7 +823,7 @@ impl ProductionAdmissionRuntime {
         if databases.is_empty() {
             return Ok(());
         }
-        let data = self.data.as_ref().ok_or("shared member receiver is unavailable")?;
+        let data = self.lifecycle.get().ok_or("shared member receiver is unavailable")?;
         let lanes = build_peer_databases(&self.runtime, &*self.journal, databases).await?;
         data.peers.add_databases(lanes).await?;
         // The queue commit cannot be canceled halfway. Record its phase before
@@ -806,13 +916,20 @@ impl ProductionAdmissionRuntime {
     /// # Errors
     /// Reports a failed bounded peer drain.
     pub async fn drain(&self) -> Result<(), String> {
-        self.draining.store(true, Ordering::Release);
-        if let Some(data) = self.data.as_ref() {
-            data.drain().await?;
+        self.lifecycle.begin_drain();
+        let registry_fenced = self.registry.begin_drain();
+        let workers = self.lifecycle.drain().await;
+        // A terminal worker failure still releases this registry's leases.
+        // Cancellation never reaches this point, and an unavailable join state
+        // must retain hosts for a later cleanup attempt.
+        let released = if self.lifecycle.get().is_none_or(|data| data.peers.drain_completed()) {
+            self.registry.release_drained_hosts()
         } else {
-            self.progress.fence();
-        }
-        Ok(())
+            Err("replication worker cleanup has not completed".into())
+        };
+        workers?;
+        registry_fenced?;
+        released
     }
 }
 
@@ -831,5 +948,31 @@ impl terrabase::member::DatabaseRoleAuthority for VerifiedRole {
         database: &terrabase::member::DatabaseId,
     ) -> Option<terrabase::member::AcceptedDatabaseRole> {
         (database == &self.database).then_some(self.accepted)
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn terminal_worker_failure_releases_registry_leases_and_stays_failed() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let progress = Arc::new(ReplicationProgress::default());
+        let lifecycle = ProductionDataLifecycle::new(progress.clone(), registry.clone());
+        let failure = "terminal peer failure";
+        let data = ProductionDataRuntime {
+            peers: crate::replication_peers::failed_peer_owner(failure),
+            progress,
+        };
+        assert!(lifecycle.data.set(data).is_ok());
+        assert_eq!(registry.retained_snapshot().unwrap().len(), records.len());
+        assert_eq!(lifecycle.drain().await.as_deref(), Err(failure));
+        assert!(registry.retained_snapshot().unwrap().is_empty());
+        assert!(registry.resolve(&records[0].database_id).is_err());
+        member.close(std::time::Duration::from_secs(1)).expect("all registry leases released");
+        assert_eq!(lifecycle.drain().await.as_deref(), Err(failure));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
