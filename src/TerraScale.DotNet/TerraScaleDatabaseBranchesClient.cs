@@ -20,7 +20,7 @@ public sealed class TerraScaleDatabaseBranchesClient
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectId);
-        return client.SendAsync<TerraScaleDatabaseBranchCapability>(
+        return client.SendDashboardAsync<TerraScaleDatabaseBranchCapability>(
             HttpMethod.Get,
             TerraScaleApiRoutes.DatabaseBranchesCapabilityGet(projectId),
             body: null,
@@ -31,8 +31,8 @@ public sealed class TerraScaleDatabaseBranchesClient
     /// Requests a physical clone of a project database.
     /// </summary>
     /// <remarks>
-    /// Platform currently fails closed with a <see cref="TerraScaleApiException"/> having HTTP 503 and
-    /// error code <c>TERRASCALE-5001</c> until an Orchestrator-backed physical lifecycle controller is available.
+    /// Platform currently fails closed with a <see cref="TerraScaleApiException"/> using
+    /// <c>database_branch_unavailable</c> until an Orchestrator-backed physical lifecycle controller is available.
     /// </remarks>
     public async Task RequestCloneAsync(
         string projectId,
@@ -43,7 +43,7 @@ public sealed class TerraScaleDatabaseBranchesClient
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.SourceDatabaseId);
 
-        _ = await client.SendAsync<TerraScaleDatabaseBranchCapability>(
+        _ = await client.SendDashboardAsync<TerraScaleDatabaseBranchCapability>(
             HttpMethod.Post,
             TerraScaleApiRoutes.DatabaseBranchesCreate(projectId),
             request,

@@ -29,7 +29,7 @@ public sealed class TerraScaleDatabaseBranchesClientTests
     public async Task RequestCloneAsync_SendsPublicRequestAndMapsUnavailableFailure()
     {
         using var handler = new RecordingHandler(HttpStatusCode.ServiceUnavailable, """
-            {"error":{"code":"TERRASCALE-5001","message":"Service temporarily unavailable. Please retry."}}
+            {"error":{"code":"database_branch_unavailable","message":"Service temporarily unavailable. Please retry.","category":"System"}}
             """);
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
@@ -48,7 +48,68 @@ public sealed class TerraScaleDatabaseBranchesClientTests
         }
 
         await Assert.That(exception.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(exception.ErrorCode).IsEqualTo("TERRASCALE-5001");
+        await Assert.That(exception.ErrorCode).IsEqualTo("database_branch_unavailable");
+        await Assert.That(exception.Fix).IsNull();
+    }
+
+    [Test]
+    public async Task RequestCloneAsync_MapsDashboardAuthorizationFailure()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.Forbidden, """
+            {"error":{"code":"forbidden","message":"Access denied.","category":"Authorization"}}
+            """);
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.DatabaseBranches.RequestCloneAsync(
+            "project-a", new TerraScaleCreateDatabaseBranchRequest("database-a")));
+
+        await Assert.That(exception).IsNotNull();
+        await Assert.That(exception!.ErrorCode).IsEqualTo("forbidden");
+        await Assert.That(exception.Message).IsEqualTo("Access denied.");
+        await Assert.That(exception.Fix).IsNull();
+    }
+
+    [Test]
+    public async Task GetCapabilityAsync_MapsDashboardErrorEnvelope()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.Forbidden, """
+            {"error":{"code":"forbidden","message":"Access denied.","category":"Authorization"}}
+            """);
+        using var httpClient = new HttpClient(handler);
+        var client = CreateClient(httpClient);
+
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.DatabaseBranches.GetCapabilityAsync("project-a"));
+
+        await Assert.That(exception).IsNotNull();
+        await Assert.That(exception!.ErrorCode).IsEqualTo("forbidden");
+        await Assert.That(exception.Message).IsEqualTo("Access denied.");
+        await Assert.That(exception.Fix).IsNull();
+    }
+
+    [Test]
+    public async Task DashboardMalformedErrorEnvelopesRemainUntyped()
+    {
+        foreach (var body in new[]
+        {
+            "null", "[]", "\"error\"", "{\"code\":\"forbidden\",\"message\":\"denied\"}",
+            "{\"error\":{\"code\":\"forbidden\",\"message\":\"denied\"}}",
+            "{\"error\":{\"code\":null,\"message\":\"denied\",\"category\":\"Authorization\"}}",
+            "{\"error\":{\"code\":\"forbidden\",\"message\":null,\"category\":\"Authorization\"}}",
+            "{\"error\":{\"code\":\"forbidden\",\"message\":\"denied\",\"category\":null}}",
+            "{\"error\":{\"code\":\"forbidden\",\"error\":\"denied\",\"category\":\"Authorization\"}}",
+        })
+        {
+            using var handler = new RecordingHandler(HttpStatusCode.Forbidden, body);
+            using var httpClient = new HttpClient(handler);
+            var client = CreateClient(httpClient);
+            var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.DatabaseBranches.GetCapabilityAsync("project-a"));
+
+            await Assert.That(exception).IsNotNull();
+            await Assert.That(exception!.ErrorCode).IsNull();
+            await Assert.That(exception.Message).IsEqualTo("TerraScale API returned HTTP 403 Forbidden.");
+            await Assert.That(exception.Fix).IsNull();
+        }
     }
 
     [Test]

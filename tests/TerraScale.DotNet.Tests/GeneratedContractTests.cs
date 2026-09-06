@@ -15,8 +15,10 @@ public sealed class GeneratedContractTests
         await Assert.That(operation.Method).IsEqualTo("POST");
         await Assert.That(operation.PathTemplate).IsEqualTo("/api/v1/databases/{name}/sql");
         await Assert.That(operation.RequestType).IsEqualTo("SqlRequest");
-        await Assert.That(operation.ResponseType).IsEqualTo("SqlResultResponse");
+        await Assert.That(operation.ResponseType).IsEqualTo("JsonElement");
         await Assert.That(operation.RequestMediaTypes).Contains("application/json");
+        await Assert.That(TerraScaleContractJsonContext.Default.SqlResponse).IsNotNull();
+        await Assert.That(TerraScaleContractJsonContext.Default.SqlExplainResponse).IsNotNull();
     }
 
     [Test]

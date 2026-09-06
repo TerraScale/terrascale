@@ -143,6 +143,23 @@ public sealed class TerraScaleClient
         CancellationToken cancellationToken) =>
         SendAsync<TResponse>(method, route.RequestUri, body, cancellationToken);
 
+    internal Task<TResponse> SendDashboardAsync<TResponse>(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        object? body,
+        CancellationToken cancellationToken) =>
+        SendAsync<TResponse, TResponse>(
+            method,
+            route.RequestUri,
+            body,
+            preferredRegion: null,
+            configureRequest: null,
+            responseFactory: static (response, _) => response,
+            cancellationToken: cancellationToken,
+            idempotencyKeyOverride: null,
+            allowUnkeyedPutRetry: true,
+            errorContract: TerraScaleErrorContract.DashboardProduct);
+
     internal Task<TResponse> SendAsync<TResponse>(
         HttpMethod method,
         string requestUri,
@@ -559,7 +576,8 @@ public sealed class TerraScaleClient
         Func<TResponse, HttpResponseMessage, TResult> responseFactory,
         CancellationToken cancellationToken,
         string? idempotencyKeyOverride,
-        bool allowUnkeyedPutRetry = true)
+        bool allowUnkeyedPutRetry = true,
+        TerraScaleErrorContract errorContract = TerraScaleErrorContract.TerraBase)
     {
         ArgumentNullException.ThrowIfNull(responseFactory);
         using var activity = StartActivity(method, requestUri);
@@ -583,7 +601,7 @@ public sealed class TerraScaleClient
             allowUnkeyedPutRetry).ConfigureAwait(false);
 
         SetResponseTags(activity, response);
-        var payload = await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken).ConfigureAwait(false);
+        var payload = await ReadJsonResponseAsync<TResponse>(response, activity, cancellationToken, errorContract).ConfigureAwait(false);
         return responseFactory(payload, response);
     }
 
@@ -686,12 +704,13 @@ public sealed class TerraScaleClient
     private async Task<TResponse> ReadJsonResponseAsync<TResponse>(
         HttpResponseMessage response,
         Activity? activity,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TerraScaleErrorContract errorContract = TerraScaleErrorContract.TerraBase)
     {
         if (!response.IsSuccessStatusCode)
         {
             activity?.SetStatus(ActivityStatusCode.Error, response.ReasonPhrase);
-            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+            throw await TerraScaleApiException.CreateAsync(response, cancellationToken, errorContract).ConfigureAwait(false);
         }
 
         var payload = await response.Content.ReadFromJsonAsync<TResponse>(

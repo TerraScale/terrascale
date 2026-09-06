@@ -88,11 +88,12 @@ public sealed class TerraScaleApiException : HttpRequestException
 
     internal static async Task<TerraScaleApiException> CreateAsync(
         HttpResponseMessage response,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TerraScaleErrorContract errorContract = TerraScaleErrorContract.TerraBase)
     {
         var body = await ReadResponseBodyAsync(response.Content, cancellationToken).ConfigureAwait(false);
 
-        var (code, message, fix) = ReadError(body);
+        var (code, message, fix) = ReadError(body, errorContract);
         var safeMessage = RedactDiagnostic(message);
         return new TerraScaleApiException(
             response.StatusCode,
@@ -109,7 +110,7 @@ public sealed class TerraScaleApiException : HttpRequestException
             RedactDiagnostic(fix));
     }
 
-    private static (string? Code, string? Message, string? Fix) ReadError(string? body)
+    private static (string? Code, string? Message, string? Fix) ReadError(string? body, TerraScaleErrorContract errorContract)
     {
         if (string.IsNullOrWhiteSpace(body))
         {
@@ -118,6 +119,13 @@ public sealed class TerraScaleApiException : HttpRequestException
 
         try
         {
+            if (errorContract == TerraScaleErrorContract.DashboardProduct)
+            {
+                var dashboard = JsonSerializer.Deserialize(body, DashboardErrorJsonContext.Default.DashboardErrorResponse);
+                return dashboard is { Error: { Code: not null, Message: not null, Category: not null } dashboardError }
+                    ? (dashboardError.Code, dashboardError.Message, null)
+                    : (null, null, null);
+            }
             var envelope = JsonSerializer.Deserialize(body, TerraScaleContractJsonContext.Default.ErrorResponse);
             return envelope is { Error: { Code: not null, Message: not null, Fix: not null } error }
                 ? (error.Code, error.Message, error.Fix)
