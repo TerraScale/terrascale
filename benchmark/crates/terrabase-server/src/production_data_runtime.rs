@@ -475,7 +475,8 @@ impl ProductionAdmissionRuntime {
                 // follower retirement is a separate exclusive-file workflow.
                 continue;
             }
-            let id = terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
+            let id =
+                terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
             let lease = self.member.acquire(&id).map_err(failure)?;
             let tenant = terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
             let lifecycle = lease

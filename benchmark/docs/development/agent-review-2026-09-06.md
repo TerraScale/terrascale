@@ -50,4 +50,20 @@ successful restart.
 The Go VM configuration producer now carries an explicit selected Region set,
 renders each database only in selected Regions, and uses the host's local Region
 for its physical owner. Focused `vmengineconfig` and `internal/testengineconfig`
-tests passed. Independent review of this producer integration remains pending.
+tests passed. Independent review identified further work: pending hosts need an
+explicit observer-absence path, and remote database control declarations must
+remain available independently of local storage selection. A global proposal
+must not fail merely because the receiving host does not store every database.
+
+Placement verification subsequently passed in session `88323`:
+`nice -n 19 cargo test -p terrabase-tbep placement:: --lib`, 18 passed, zero
+failed. Coverage includes mixed residency in one accepted successor across
+restart, historical acceptance after registration, exact selected sets,
+conflicting owners, persisted residency corruption, and merged catalog bounds.
+The transition fixtures preserve immutable residency and supply the required
+old-pair fence receipts.
+
+The TBEP regression
+`explicit_empty_cut_stays_empty_and_baseline_mismatch_requires_snapshot` also
+passed in session `9519`; that combined run initially had two placement fixture
+failures subsequently corrected in `88323`.

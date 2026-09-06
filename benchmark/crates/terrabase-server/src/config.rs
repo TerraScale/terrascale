@@ -1885,15 +1885,11 @@ address = "0.0.0.0:7202"
     fn production_requires_exact_selected_residency_with_local_region() {
         let missing = production_valid().replace("selected_regions = [\"GRU\"]\n", "");
         assert!(ServerConfig::parse(&missing).is_err());
-        let duplicate = production_valid().replace(
-            "selected_regions = [\"GRU\"]",
-            "selected_regions = [\"GRU\", \"GRU\"]",
-        );
+        let duplicate = production_valid()
+            .replace("selected_regions = [\"GRU\"]", "selected_regions = [\"GRU\", \"GRU\"]");
         assert!(ServerConfig::parse(&duplicate).is_err());
-        let foreign = production_valid().replace(
-            "selected_regions = [\"GRU\"]",
-            "selected_regions = [\"SFO\"]",
-        );
+        let foreign = production_valid()
+            .replace("selected_regions = [\"GRU\"]", "selected_regions = [\"SFO\"]");
         assert!(ServerConfig::parse(&foreign).is_err());
     }
 

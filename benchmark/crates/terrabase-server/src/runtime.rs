@@ -549,11 +549,7 @@ fn open_production_placement_journal(
                     database.database,
                 ),
                 database.region.as_str().to_owned(),
-                database
-                    .selected_regions
-                    .iter()
-                    .map(|region| region.as_str().to_owned())
-                    .collect(),
+                database.selected_regions.iter().map(|region| region.as_str().to_owned()).collect(),
             )
         }),
     )

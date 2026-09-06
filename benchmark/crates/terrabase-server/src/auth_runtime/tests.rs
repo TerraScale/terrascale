@@ -35,10 +35,8 @@ async fn error_responses_are_uncacheable_and_have_stable_envelope() {
 
 #[test]
 fn placement_response_marks_private_result_uncacheable() {
-    let grant = AuthGroupBootstrapGrant {
-        regions: vec!["GRU".into(), "SFO".into()],
-        ..Default::default()
-    };
+    let grant =
+        AuthGroupBootstrapGrant { regions: vec!["GRU".into(), "SFO".into()], ..Default::default() };
     let response = placement_response((StatusCode::OK, Body::empty()).into_response(), &grant);
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()[CACHE_CONTROL], "no-store");

@@ -210,7 +210,11 @@ mod tests {
                 &unrelated,
                 fixture.provider.clone(),
             ));
-            Member::open_production(&root, specs.clone(), AdmissionLimits::new(4, 2), keys).unwrap()
+            let member =
+                Member::open_production(&root, specs.clone(), AdmissionLimits::new(4, 2), keys)
+                    .unwrap();
+            member.set_clock_offset_seconds(0.0);
+            member
         };
         let authority: Arc<
             dyn Fn(&AdmissionRecord) -> Result<Option<AcceptedAdmission>, String> + Send + Sync,
@@ -396,6 +400,21 @@ mod tests {
         member.accept_database_role(&unrelated_id, &writer).unwrap();
         let fenced_lease = member.acquire(&fenced_id).unwrap();
         fenced_lease
+            .configure_usage_placement(
+                terrabase::usage::UsagePlacement::try_new(
+                    TenantId::try_new(&fenced.tenant().to_text()).unwrap(),
+                    &fenced.project().to_text(),
+                    &fenced.database().to_text(),
+                    "partition",
+                    RegionCode::GRU,
+                    vec![RegionCode::GRU],
+                    "revision",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        fenced_lease.activate_origin_epoch(1).unwrap();
+        fenced_lease
             .lifecycle_prepare_deletion(
                 &fenced_lease.scope_for(&TenantId::try_new(&fenced.tenant().to_text()).unwrap()),
                 "delete-replay",
@@ -427,7 +446,7 @@ mod tests {
             .unwrap()
         );
         assert!(unrelated_lease.activate_origin_epoch(1).is_ok());
-        assert_eq!(fenced_lease.origin_epoch().unwrap().0, 0);
+        assert_eq!(fenced_lease.origin_epoch().unwrap(), (1, true));
         let fenced_scope =
             fenced_lease.scope_for(&TenantId::try_new(&fenced.tenant().to_text()).unwrap());
         assert!(fenced_lease.lifecycle_state(&fenced_scope).unwrap().access_revoked());

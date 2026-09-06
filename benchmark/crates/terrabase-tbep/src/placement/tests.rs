@@ -29,16 +29,15 @@ impl Fixture {
             std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
                 .expect("private root");
         }
-        let boundary =
-            PlacementBoundary::new(
-                "production",
-                &cluster,
-                &member,
-                1,
-                1,
-                [(scope, "GRU".into(), selected_regions)],
-            )
-                .expect("boundary");
+        let boundary = PlacementBoundary::new(
+            "production",
+            &cluster,
+            &member,
+            1,
+            1,
+            [(scope, "GRU".into(), selected_regions)],
+        )
+        .expect("boundary");
         let request = pb::PlacementStageRequest {
             expected_revision: 0,
             proposal: Some(pb::PlacementProposal {
@@ -123,10 +122,7 @@ fn boundary_rejects_duplicate_database_identity_across_scopes() {
             &MemberUlid::generate().to_text(),
             1,
             1,
-            [
-                (first, "GRU".to_owned(), selected.clone()),
-                (second, "GRU".to_owned(), selected),
-            ],
+            [(first, "GRU".to_owned(), selected.clone()), (second, "GRU".to_owned(), selected),],
         )
         .map(|_| ()),
         Err(PlacementError::Invalid)
@@ -150,11 +146,7 @@ fn reopen_rejects_persisted_scope_with_configured_owner_conflict() {
         &fixture.boundary.member,
         fixture.boundary.generation,
         fixture.boundary.epoch,
-        [(
-            conflicting,
-            "GRU".to_owned(),
-            std::collections::BTreeSet::from(["GRU".to_owned()]),
-        )],
+        [(conflicting, "GRU".to_owned(), std::collections::BTreeSet::from(["GRU".to_owned()]))],
     )
     .unwrap();
     assert!(matches!(
@@ -253,10 +245,7 @@ fn reopen_accepts_exact_1024_union_and_rejects_1025_union() {
         [(extra, "GRU".to_owned(), selected)],
     )
     .unwrap();
-    assert!(matches!(
-        PlacementJournal::open(&path, overfull),
-        Err(PlacementError::Storage)
-    ));
+    assert!(matches!(PlacementJournal::open(&path, overfull), Err(PlacementError::Storage)));
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -349,10 +338,8 @@ fn canonicalizes_one_assignment_per_scope_and_selected_region() {
     });
     assert!(local_only_journal.stage("principal", "local-only", local_only).is_ok());
 
-    let fixture = Fixture::with_selected(std::collections::BTreeSet::from([
-        "GRU".into(),
-        "SFO".into(),
-    ]));
+    let fixture =
+        Fixture::with_selected(std::collections::BTreeSet::from(["GRU".into(), "SFO".into()]));
     let journal = fixture.open();
     let mut request = fixture.request.clone();
     let proposal = request.proposal.as_mut().unwrap();
@@ -418,7 +405,10 @@ fn canonicalizes_one_assignment_per_scope_and_selected_region() {
     let mut wrong_seats = fixture.request.clone();
     wrong_seats.proposal.as_mut().unwrap().assignments[0].writer_member =
         MemberUlid::generate().to_text();
-    assert_eq!(journal.stage("principal", "wrong-seats", wrong_seats), Err(PlacementError::Invalid));
+    assert_eq!(
+        journal.stage("principal", "wrong-seats", wrong_seats),
+        Err(PlacementError::Invalid)
+    );
 }
 
 #[test]

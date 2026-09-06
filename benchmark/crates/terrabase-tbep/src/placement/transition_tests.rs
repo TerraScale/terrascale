@@ -202,24 +202,11 @@ fn authenticated_wrong_tuple_digest_genesis_and_signer_never_admit() {
 
 #[test]
 fn successor_needs_one_fence_from_each_old_pair_and_exact_predecessor() {
-    let mut fixture = tests::Fixture::with_selected(std::collections::BTreeSet::from([
-        "GRU".into(),
-        "SFO".into(),
-    ]));
+    let mut fixture = tests::Fixture::new();
     fixture.request.proposal.as_mut().unwrap().regions.push(pb::PlacementRegionSeats {
         region: "SFO".into(),
         members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
     });
-    let sfo_members = fixture.request.proposal.as_ref().unwrap().regions[1].members.clone();
-    let scope = fixture.request.proposal.as_ref().unwrap().assignments[0].clone();
-    fixture.request.proposal.as_mut().unwrap().assignments.push(
-        pb::PlacementDatabaseAssignment {
-            region: "SFO".into(),
-            writer_member: sfo_members[0].clone(),
-            follower_member: sfo_members[1].clone(),
-            ..scope
-        },
-    );
     let journal = fixture.open();
     let first_proposal = stage(&journal, fixture.request.clone(), "first");
     let pins = trust(&first_proposal);
@@ -309,7 +296,7 @@ fn accepted_proposal_survives_new_local_database_registration() {
         follower_member: sfo_members[1].clone(),
     });
     let successor = stage(&journal, successor, "second");
-    let second = proof(&successor, "second", Some(&first), &[]);
+    let second = proof(&successor, "second", Some(&first), &["GRU", "SFO"]);
     journal.accept("second", &acceptance(&second, 2)).unwrap();
     assert_eq!(journal.load_assignment(added_scope).unwrap().epoch, 2);
 

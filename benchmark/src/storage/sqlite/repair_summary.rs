@@ -10,11 +10,9 @@ use terrabase_replication_core::anti_entropy::{JournalRowId, RangeFingerprint, r
 /// carries the provenance written by `branch_provenance`.
 pub(super) fn baseline_digest(connection: &Connection) -> Result<[u8; 32], ()> {
     let marker: Option<String> = connection
-        .query_row(
-            "SELECT value FROM meta WHERE key='branch_snapshot_baseline'",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT value FROM meta WHERE key='branch_snapshot_baseline'", [], |row| {
+            row.get(0)
+        })
         .optional()
         .map_err(|_| ())?;
     let mut hasher = blake3::Hasher::new();
@@ -466,7 +464,9 @@ mod tests {
     #[test]
     fn baseline_digest_distinguishes_branch_provenance_and_is_stable() {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);").unwrap();
+        connection
+            .execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .unwrap();
         let normal = baseline_digest(&connection).unwrap();
         connection
             .execute(

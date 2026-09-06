@@ -327,6 +327,18 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
             has_companion = true;
             continue;
         }
+        // Encrypted SQLite keeps its authenticated companion, generation
+        // files, and per-artifact lock stubs beside the logical database.
+        // They are all regular files owned by the encrypted VFS and must
+        // survive a Member restart so the owner record can be revalidated.
+        let encrypted_artifact = name.to_str().is_some_and(|name| encrypted_artifact_name(name));
+        if encrypted_artifact {
+            if !entry_type.is_file() {
+                return Err(OwnershipError::ForeignLocation);
+            }
+            has_companion = true;
+            continue;
+        }
         return Err(OwnershipError::ForeignLocation);
     }
     if (has_database || has_companion) && !has_owner {
@@ -336,6 +348,22 @@ fn validate_location(location: &Path) -> Result<(), OwnershipError> {
         return Err(OwnershipError::ForeignLocation);
     }
     Ok(())
+}
+
+fn encrypted_artifact_name(name: &str) -> bool {
+    [DATABASE_FILE, "terrabase.sqlite3-wal", "terrabase.sqlite3-journal"].iter().any(|base| {
+        let Some(suffix) = name.strip_prefix(base) else {
+            return false;
+        };
+        if matches!(suffix, ".tbe" | ".tbe.lock" | ".tbe.manifest-next") {
+            return true;
+        }
+        let Some(generation) = suffix.strip_prefix(".tbe.gen-") else {
+            return false;
+        };
+        generation.len() == 64
+            && generation.bytes().all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    })
 }
 
 fn unique_temp_path(location: &Path) -> PathBuf {
@@ -548,6 +576,64 @@ mod tests {
         assert_eq!(
             load_or_create(&path, None, OwnershipMode::LocalDevelopment),
             Err(OwnershipError::InvalidLocation)
+        );
+        let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn encrypted_vfs_artifacts_are_owned_and_strictly_named() {
+        let path = location("encrypted-artifacts");
+        load_or_create(&path, None, OwnershipMode::LocalDevelopment).expect("owner");
+        let generation = "a".repeat(64);
+        for name in [
+            "terrabase.sqlite3.tbe",
+            "terrabase.sqlite3.tbe.lock",
+            "terrabase.sqlite3.tbe.manifest-next",
+            "terrabase.sqlite3-wal.tbe",
+            "terrabase.sqlite3-wal.tbe.lock",
+            "terrabase.sqlite3-wal.tbe.manifest-next",
+            "terrabase.sqlite3-journal.tbe",
+            "terrabase.sqlite3-journal.tbe.lock",
+            "terrabase.sqlite3-journal.tbe.manifest-next",
+        ] {
+            fs::write(path.join(name), b"artifact").expect("artifact");
+        }
+        fs::write(path.join(format!("terrabase.sqlite3.tbe.gen-{generation}")), b"artifact")
+            .expect("generation");
+        for base in ["terrabase.sqlite3-wal", "terrabase.sqlite3-journal"] {
+            fs::write(path.join(format!("{base}.tbe.gen-{generation}")), b"artifact")
+                .expect("generation");
+        }
+        fs::write(path.join(DATABASE_FILE), b"sqlite-owned-by-test").expect("database");
+        load_or_create(&path, None, OwnershipMode::LocalDevelopment).expect("reopen");
+
+        for name in [
+            "terrabase.sqlite3.tbe.gen-A",
+            "terrabase.sqlite3.tbe.gen-abc",
+            "terrabase.sqlite3-wal.tbe.gen-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.extra",
+            "terrabase.sqlite3.other",
+        ] {
+            fs::write(path.join(name), b"foreign").expect("foreign");
+            assert_eq!(
+                load_or_create(&path, None, OwnershipMode::LocalDevelopment),
+                Err(OwnershipError::ForeignLocation)
+            );
+            fs::remove_file(path.join(name)).expect("remove foreign");
+        }
+        let symlink = path.join("terrabase.sqlite3-wal.tbe");
+        fs::remove_file(&symlink).expect("remove artifact");
+        fs::create_dir(&symlink).expect("directory");
+        assert_eq!(
+            load_or_create(&path, None, OwnershipMode::LocalDevelopment),
+            Err(OwnershipError::ForeignLocation)
+        );
+        fs::remove_dir(&symlink).expect("remove directory");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(path.join("missing"), &symlink).expect("symlink");
+        #[cfg(unix)]
+        assert_eq!(
+            load_or_create(&path, None, OwnershipMode::LocalDevelopment),
+            Err(OwnershipError::ForeignLocation)
         );
         let _ = fs::remove_dir_all(path);
     }
