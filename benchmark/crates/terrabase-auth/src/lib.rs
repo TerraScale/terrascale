@@ -125,6 +125,13 @@ impl std::fmt::Debug for Command {
 pub fn consensus_config(group: &str) -> openraft::Config {
     openraft::Config {
         cluster_name: group.into(),
+        // OpenRaft also uses heartbeat_interval as the AppendEntries/read-barrier
+        // RPC deadline. Every admitted RPC currently includes a fresh mTLS and
+        // epoch handshake, so the upstream 50 ms default cannot serve WAN peers.
+        heartbeat_interval: 2_000,
+        election_timeout_min: 6_000,
+        election_timeout_max: 10_000,
+        install_snapshot_timeout: 10_000,
         max_payload_entries: 1,
         snapshot_max_chunk_size: 64 * 1024,
         ..Default::default()

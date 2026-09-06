@@ -14,6 +14,7 @@ pub struct AuthAuthority {
     store: SqliteStore,
     deadline: Duration,
     durability_voters: Option<Arc<BTreeMap<u64, BasicNode>>>,
+    network: Option<crate::AuthNetwork>,
     local: u64,
 }
 
@@ -41,9 +42,11 @@ impl AuthAuthority {
             .bind_admission(network.group(), network.local_node(), &network.initial_nodes())
             .map_err(|_| AuthorityError::InvalidConfiguration)?;
         let voters = Arc::new(network.initial_nodes());
+        let network_for_authority = network.clone();
         let mut authority =
             Self::recover(network.local_node(), store, network, config, deadline).await?;
         authority.durability_voters = Some(voters);
+        authority.network = Some(network_for_authority);
         Ok(authority)
     }
 
@@ -66,7 +69,7 @@ impl AuthAuthority {
         let raft = Raft::new(node, Arc::new(config), network, store.clone(), store.clone())
             .await
             .map_err(|_| AuthorityError::Unavailable)?;
-        Ok(Self { raft, store, deadline, durability_voters: None, local: node })
+        Ok(Self { raft, store, deadline, durability_voters: None, network: None, local: node })
     }
 
     /// Initialize an explicitly authorized, new voter configuration once.
@@ -87,39 +90,53 @@ impl AuthAuthority {
 
     /// Submit a stable conditional command to consensus; local followers refuse.
     pub async fn mutate(&self, command: Command) -> Result<Outcome, AuthorityError> {
-        tokio::time::timeout(self.deadline, async {
-            let response =
-                self.raft.client_write(command).await.map_err(|_| AuthorityError::Unavailable)?;
-            // The admitted group has two independently durable SQLite voters per Region.
-            // A majority alone need not include both regional seats. Require every voter
-            // to durably append the committed entry before acknowledging auth success.
-            if let Some(voters) = &self.durability_voters {
-                let mut metrics = self.raft.metrics();
-                loop {
-                    let complete = {
-                        let observed = metrics.borrow();
-                        if observed.current_leader != Some(self.local) {
-                            return Err(AuthorityError::Unavailable);
-                        }
-                        observed.replication.as_ref().is_some_and(|replication| {
-                            voters.keys().all(|id| {
-                                *id == self.local
-                                    || replication.get(id).is_some_and(|matched| {
-                                        matched.is_some_and(|log| log >= response.log_id)
-                                    })
-                            })
-                        })
-                    };
-                    if complete {
-                        break;
-                    }
-                    metrics.changed().await.map_err(|_| AuthorityError::Unavailable)?;
-                }
+        tokio::time::timeout(self.deadline, async { self.mutate_routed(command).await })
+            .await
+            .map_err(|_| AuthorityError::Deadline)?
+    }
+
+    async fn mutate_routed(&self, command: Command) -> Result<Outcome, AuthorityError> {
+        let leader = self.raft.metrics().borrow().current_leader;
+        match leader {
+            Some(leader) if leader == self.local => self.mutate_local(command).await,
+            Some(leader) => {
+                let network = self.network.as_ref().ok_or(AuthorityError::Unavailable)?;
+                network.client_write(leader, command, self.deadline).await
             }
-            Ok(response.data)
-        })
-        .await
-        .map_err(|_| AuthorityError::Deadline)?
+            None => Err(AuthorityError::Unavailable),
+        }
+    }
+
+    pub(crate) async fn mutate_local(&self, command: Command) -> Result<Outcome, AuthorityError> {
+        let response =
+            self.raft.client_write(command).await.map_err(|_| AuthorityError::Unavailable)?;
+        // The admitted group has two independently durable SQLite voters per Region.
+        // A majority alone need not include both regional seats. Require every voter
+        // to durably append the committed entry before acknowledging auth success.
+        if let Some(voters) = &self.durability_voters {
+            let mut metrics = self.raft.metrics();
+            loop {
+                let complete = {
+                    let observed = metrics.borrow();
+                    if observed.current_leader != Some(self.local) {
+                        return Err(AuthorityError::Unavailable);
+                    }
+                    observed.replication.as_ref().is_some_and(|replication| {
+                        voters.keys().all(|id| {
+                            *id == self.local
+                                || replication.get(id).is_some_and(|matched| {
+                                    matched.is_some_and(|log| log >= response.log_id)
+                                })
+                        })
+                    })
+                };
+                if complete {
+                    break;
+                }
+                metrics.changed().await.map_err(|_| AuthorityError::Unavailable)?;
+            }
+        }
+        Ok(response.data)
     }
 
     /// Read only after a quorum-confirmed barrier and application of its index.
@@ -128,15 +145,24 @@ impl AuthAuthority {
         model: String,
         id: String,
     ) -> Result<Option<Record>, AuthorityError> {
-        tokio::time::timeout(self.deadline, self.raft.ensure_linearizable())
-            .await
-            .map_err(|_| AuthorityError::Deadline)?
-            .map_err(|_| AuthorityError::Unavailable)?;
-        let store = self.store.clone();
-        tokio::task::spawn_blocking(move || store.read_record(&model, &id))
-            .await
-            .map_err(|_| AuthorityError::Unavailable)?
-            .map_err(|_| AuthorityError::Unavailable)
+        let outcome = self
+            .query(Action::Find {
+                model,
+                predicates: vec![crate::Predicate {
+                    field: "id".into(),
+                    value: serde_json::Value::String(id),
+                    operator: crate::Operator::Eq,
+                    connector: crate::Connector::AND,
+                    mode: crate::Mode::Sensitive,
+                }],
+                offset: 0,
+                limit: 1,
+            })
+            .await?;
+        match outcome {
+            Outcome::Records { mut records } => Ok(records.pop()),
+            _ => Err(AuthorityError::Unavailable),
+        }
     }
 
     /// Execute a read-only predicate query after a quorum-confirmed applied barrier.
@@ -145,16 +171,30 @@ impl AuthAuthority {
         if !matches!(action, Action::Find { .. } | Action::Count { .. }) {
             return Err(AuthorityError::InvalidConfiguration);
         }
-        tokio::time::timeout(self.deadline, async {
-            self.raft.ensure_linearizable().await.map_err(|_| AuthorityError::Unavailable)?;
-            let store = self.store.clone();
-            tokio::task::spawn_blocking(move || store.query(&action))
-                .await
-                .map_err(|_| AuthorityError::Unavailable)?
-                .map_err(|_| AuthorityError::Unavailable)
-        })
-        .await
-        .map_err(|_| AuthorityError::Deadline)?
+        tokio::time::timeout(self.deadline, async { self.query_routed(action).await })
+            .await
+            .map_err(|_| AuthorityError::Deadline)?
+    }
+
+    async fn query_routed(&self, action: Action) -> Result<Outcome, AuthorityError> {
+        let leader = self.raft.metrics().borrow().current_leader;
+        match leader {
+            Some(leader) if leader == self.local => self.query_local(action).await,
+            Some(leader) => {
+                let network = self.network.as_ref().ok_or(AuthorityError::Unavailable)?;
+                network.client_query(leader, action, self.deadline).await
+            }
+            None => Err(AuthorityError::Unavailable),
+        }
+    }
+
+    pub(crate) async fn query_local(&self, action: Action) -> Result<Outcome, AuthorityError> {
+        self.raft.ensure_linearizable().await.map_err(|_| AuthorityError::Unavailable)?;
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || store.query(&action))
+            .await
+            .map_err(|_| AuthorityError::Unavailable)?
+            .map_err(|_| AuthorityError::Unavailable)
     }
 
     /// The consensus RPC receiver for an authenticated transport dispatcher.

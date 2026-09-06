@@ -251,10 +251,25 @@ impl AuthRuntime {
             if work.len() >= 32 {
                 let _ = work.join_next().await;
             }
-            let Some(connection) =
-                self.endpoint.accept().await.map_err(|_| "auth consensus listener unavailable")?
-            else {
-                break;
+            use terrabase_cluster::production::ProductionTransportError;
+            let connection = match self.endpoint.accept().await {
+                Ok(Some(connection)) => connection,
+                Ok(None) | Err(ProductionTransportError::Draining) => break,
+                Err(
+                    ProductionTransportError::Timeout
+                    | ProductionTransportError::ConnectionFailed
+                    | ProductionTransportError::PeerNotAdmitted
+                    | ProductionTransportError::InvalidPeerCertificate
+                    | ProductionTransportError::IdentityMismatch
+                    | ProductionTransportError::ProtocolMismatch
+                    | ProductionTransportError::StaleMembership
+                    | ProductionTransportError::Replay,
+                ) => continue,
+                Err(ProductionTransportError::Saturated) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    continue;
+                }
+                Err(_) => return Err("auth consensus listener unavailable".into()),
             };
             let runtime = Arc::clone(&self);
             work.spawn(async move {
@@ -362,7 +377,7 @@ struct PredicateInput {
     mode: Option<String>,
 }
 #[derive(ToSchema)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "OpenAPI-only enum; runtime validates strings into auth predicates")]
 #[serde(rename_all = "snake_case")]
 enum PredicateOperatorSchema {
     Eq,
@@ -378,13 +393,14 @@ enum PredicateOperatorSchema {
     EndsWith,
 }
 #[derive(ToSchema)]
-#[allow(non_camel_case_types)]
+#[allow(dead_code, reason = "OpenAPI-only enum; runtime validates strings into auth predicates")]
 #[serde(rename_all = "UPPERCASE")]
 enum PredicateConnectorSchema {
-    AND,
-    OR,
+    And,
+    Or,
 }
 #[derive(ToSchema)]
+#[allow(dead_code, reason = "OpenAPI-only enum; runtime validates strings into auth predicates")]
 #[serde(rename_all = "lowercase")]
 enum PredicateModeSchema {
     Sensitive,
@@ -402,25 +418,24 @@ impl PredicateInput {
         .map_err(|_| error(StatusCode::BAD_REQUEST, "invalid_auth_operation"))
     }
 }
-type PredicateInputs = Vec<PredicateInput>;
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PredicateUpdate {
     model: String,
-    predicates: PredicateInputs,
+    predicates: Vec<PredicateInput>,
     update: BTreeMap<String, serde_json::Value>,
 }
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PredicateOnly {
     model: String,
-    predicates: PredicateInputs,
+    predicates: Vec<PredicateInput>,
 }
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Increment {
     model: String,
-    predicates: PredicateInputs,
+    predicates: Vec<PredicateInput>,
     #[schema(value_type = BTreeMap<String, f64>)]
     increment: BTreeMap<String, serde_json::Number>,
     #[serde(default)]
@@ -535,7 +550,7 @@ fn placement_response(mut response: Response, grant: &AuthGroupBootstrapGrant) -
     response
 }
 
-fn predicates(inputs: PredicateInputs) -> Result<Vec<terrabase_auth::Predicate>, Response> {
+fn predicates(inputs: Vec<PredicateInput>) -> Result<Vec<terrabase_auth::Predicate>, Response> {
     inputs.into_iter().map(PredicateInput::into_predicate).collect()
 }
 
@@ -920,7 +935,7 @@ struct TransactionIdentity {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct PageQuery {
     model: String,
-    predicates: PredicateInputs,
+    predicates: Vec<PredicateInput>,
     offset: u32,
     limit: u32,
 }

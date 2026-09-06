@@ -111,12 +111,33 @@ mod admitted_fixture {
         let remote = AuthAuthority::recover_admitted(remote_store, remote_network.clone(), terrabase_auth::consensus_config(&group), Duration::from_secs(10)).await.unwrap();
         let remote_for_task = remote.clone(); let remote_network_for_task = remote_network.clone(); let remote_listener = Arc::clone(&remote_endpoint);
         let remote_receive = tokio::spawn(async move {
-            while let Ok(Some(connection)) = remote_listener.accept().await {
+            loop {
+                use terrabase_cluster::production::ProductionTransportError;
+                let connection = match remote_listener.accept().await {
+                    Ok(Some(connection)) => connection,
+                    Ok(None) | Err(ProductionTransportError::Draining) => break,
+                    Err(ProductionTransportError::Timeout
+                    | ProductionTransportError::ConnectionFailed
+                    | ProductionTransportError::PeerNotAdmitted
+                    | ProductionTransportError::InvalidPeerCertificate
+                    | ProductionTransportError::IdentityMismatch
+                    | ProductionTransportError::ProtocolMismatch
+                    | ProductionTransportError::StaleMembership
+                    | ProductionTransportError::Replay) => continue,
+                    Err(ProductionTransportError::Saturated) => {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        continue;
+                    }
+                    Err(_) => break,
+                };
                 let authority = remote_for_task.clone();
                 let network = remote_network_for_task.clone();
                 tokio::spawn(async move {
-                    if let Ok(bytes) = connection.receive_frame().await {
-                        let _ = network.receive_frame(&connection, &authority, &bytes).await;
+                    match connection.receive_frame().await {
+                        Ok(bytes) => {
+                            let _ = network.receive_frame(&connection, &authority, &bytes).await;
+                        }
+                        Err(_) => {}
                     }
                 });
             }

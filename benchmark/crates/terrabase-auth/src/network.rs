@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use openraft::error::{InstallSnapshotError, NetworkError, RPCError, RaftError, RemoteError};
 use openraft::network::RPCOption;
@@ -14,7 +15,7 @@ use terrabase_member_transport::production::{
     ProductionConnection, ProductionQuicEndpoint, ProductionRegion,
 };
 
-use crate::{AuthAuthority, AuthorityError, TypeConfig};
+use crate::{Action, AuthAuthority, AuthorityError, Command, Outcome, TypeConfig};
 
 const MAX_RPC_BYTES: usize = 2 * 1024 * 1024;
 
@@ -49,6 +50,23 @@ enum Request {
     Append(AppendEntriesRequest<TypeConfig>),
     Vote(VoteRequest<u64>),
     Snapshot(InstallSnapshotRequest<TypeConfig>),
+    ClientWrite(Command),
+    ClientQuery(Action),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClientReply {
+    outcome: Option<Outcome>,
+    error: Option<ClientError>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ClientError {
+    Unavailable,
+    Deadline,
+    Invalid,
 }
 
 impl AuthNetwork {
@@ -153,8 +171,11 @@ impl AuthNetwork {
             Request::Append(request) => request.vote.leader_id.node_id,
             Request::Vote(request) => request.vote.leader_id.node_id,
             Request::Snapshot(request) => request.vote.leader_id.node_id,
+            Request::ClientWrite(_) | Request::ClientQuery(_) => envelope.sender,
         };
-        if claimed != envelope.sender {
+        if !matches!(&envelope.body, Request::ClientWrite(_) | Request::ClientQuery(_))
+            && claimed != envelope.sender
+        {
             return Err(AuthorityError::Unavailable);
         }
         let bytes = match envelope.body {
@@ -163,8 +184,82 @@ impl AuthNetwork {
             Request::Snapshot(request) => {
                 encode(&authority.raft().install_snapshot(request).await)?
             }
+            Request::ClientWrite(command) => encode_client(authority.mutate_local(command).await)?,
+            Request::ClientQuery(action) => encode_client(authority.query_local(action).await)?,
         };
         connection.send_frame(&bytes).await.map_err(|_| AuthorityError::Unavailable)
+    }
+}
+
+fn encode_client(result: Result<Outcome, AuthorityError>) -> Result<Vec<u8>, AuthorityError> {
+    let reply = match result {
+        Ok(outcome) => ClientReply { outcome: Some(outcome), error: None },
+        Err(AuthorityError::Unavailable) => {
+            ClientReply { outcome: None, error: Some(ClientError::Unavailable) }
+        }
+        Err(AuthorityError::Deadline) => {
+            ClientReply { outcome: None, error: Some(ClientError::Deadline) }
+        }
+        Err(AuthorityError::InvalidConfiguration) => {
+            ClientReply { outcome: None, error: Some(ClientError::Invalid) }
+        }
+    };
+    encode(&reply)
+}
+
+impl AuthNetwork {
+    pub(crate) async fn client_write(
+        &self,
+        target: u64,
+        command: Command,
+        deadline: Duration,
+    ) -> Result<Outcome, AuthorityError> {
+        self.client_request(target, Request::ClientWrite(command), deadline).await
+    }
+
+    pub(crate) async fn client_query(
+        &self,
+        target: u64,
+        action: Action,
+        deadline: Duration,
+    ) -> Result<Outcome, AuthorityError> {
+        self.client_request(target, Request::ClientQuery(action), deadline).await
+    }
+
+    async fn client_request(
+        &self,
+        target: u64,
+        request: Request,
+        deadline: Duration,
+    ) -> Result<Outcome, AuthorityError> {
+        let member = self.voters.get(&target).ok_or(AuthorityError::Unavailable)?;
+        let bytes = encode(&Envelope {
+            protocol: "terrabase.auth.raft.v1".into(),
+            group: self.group.to_string(),
+            sender: self.local,
+            body: request,
+        })?;
+        let response = tokio::time::timeout(deadline, async {
+            let connection =
+                self.endpoint.connect(member).await.map_err(|_| AuthorityError::Unavailable)?;
+            connection.send_frame(&bytes).await.map_err(|_| AuthorityError::Unavailable)?;
+            connection.receive_frame().await.map_err(|_| AuthorityError::Unavailable)
+        })
+        .await
+        .map_err(|_| AuthorityError::Deadline)??;
+        if response.len() > MAX_RPC_BYTES {
+            return Err(AuthorityError::Unavailable);
+        }
+        let reply: ClientReply =
+            serde_json::from_slice(&response).map_err(|_| AuthorityError::Unavailable)?;
+        match (reply.outcome, reply.error) {
+            (Some(outcome), None) => Ok(outcome),
+            (None, Some(ClientError::Unavailable)) => Err(AuthorityError::Unavailable),
+            (None, Some(ClientError::Deadline)) => Err(AuthorityError::Deadline),
+            (None, Some(ClientError::Invalid)) | (Some(_), Some(_)) | (None, None) => {
+                Err(AuthorityError::Unavailable)
+            }
+        }
     }
 }
 

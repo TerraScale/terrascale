@@ -1208,7 +1208,7 @@ pub fn router(state: Arc<ApiState>) -> Router {
     let openapi_document = full_openapi_document();
     let openapi_json =
         Arc::new(enrich_openapi(openapi_document.to_json().expect("OpenAPI must serialize")));
-    let scalar_document: utoipa::openapi::OpenApi =
+    let scalar_document: serde_json::Value =
         serde_json::from_str(&openapi_json).expect("OpenAPI must deserialize");
     router
         .route("/api/v1/openapi.json", get(openapi))
