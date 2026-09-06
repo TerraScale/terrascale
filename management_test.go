@@ -35,8 +35,12 @@ func TestTerraBaseManagementRoutesAreTypedAndBounded(t *testing.T) {
 		case "/api/v1/databases/prod/collections/users/schema":
 			_ = json.NewEncoder(w).Encode(SchemaDocument{Schema: CollectionSchema{Name: "users", Fields: []FieldDef{}, HistoryRetentionDays: 7, MergePolicy: MergeLastWriteWins}})
 		case "/api/v1/databases/prod/branches":
-			parent := "prod"
-			_ = json.NewEncoder(w).Encode(BranchPage{Branches: []BranchRecord{{Name: "preview", Parent: &parent}}})
+			if r.Method == http.MethodPost {
+				_ = json.NewEncoder(w).Encode(DatabaseRecord{Name: "preview", Placement: "GRU"})
+			} else {
+				parent := "prod"
+				_ = json.NewEncoder(w).Encode(BranchPage{Branches: []BranchRecord{{Name: "preview", Parent: &parent}}})
+			}
 		case "/api/v1/databases/prod/backups":
 			_ = json.NewEncoder(w).Encode(BackupReadiness{Ready: true, Streaming: true})
 		case "/api/v1/databases/prod/backups/restore":

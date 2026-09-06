@@ -219,8 +219,8 @@ type CreateDatabaseRequest struct {
 
 // CreateBranchRequest creates a branch/restore target from a database backup.
 type CreateBranchRequest struct {
-	Name string `json:"name"`
-	At   *int64 `json:"at,omitempty"`
+	Name        string `json:"name"`
+	OperationID string `json:"operation_id"`
 }
 
 // BranchRecord is a direct TerraBase branch record. TerraBase returns the
@@ -874,7 +874,7 @@ func (d *DatabasesClient) GetDatabase(ctx context.Context, name string, opts ...
 }
 
 // DeleteDatabase soft-deletes a direct TerraBase database.
-func (d *DatabasesClient) DeleteDatabase(ctx context.Context, name string, opts ...RequestOption) (*DatabaseRecord, error) {
+func (d *DatabasesClient) DeleteDatabase(ctx context.Context, name string, opts ...RequestOption) (*DeleteDatabaseResult, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
@@ -888,7 +888,7 @@ func (d *DatabasesClient) DeleteDatabase(ctx context.Context, name string, opts 
 	if err := deleteConfirmation(opts, name); err != nil {
 		return nil, err
 	}
-	var out DatabaseRecord
+	var out DeleteDatabaseResult
 	if err := d.c.do(ctx, "DELETE", path, nil, nil, &out, "delete_database", opts...); err != nil {
 		return nil, err
 	}
@@ -1100,15 +1100,12 @@ func (b *DatabaseBranchesClient) ListBranches(ctx context.Context, database stri
 // CreateBranch creates a branch from the source database's retained backup
 // stream. The target is always a new database and inherits the source's
 // placement lock on the server.
-func (b *DatabaseBranchesClient) CreateBranch(ctx context.Context, database string, request CreateBranchRequest, opts ...RequestOption) (*DatabaseRecord, error) {
+func (b *DatabaseBranchesClient) CreateBranch(ctx context.Context, database string, request CreateBranchRequest, opts ...RequestOption) (*CreateBranchResult, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
 	if err := validateDatabaseName(request.Name); err != nil {
 		return nil, err
-	}
-	if request.At != nil && *request.At < 0 {
-		return nil, &ValidationError{Field: "at", Message: "must be a non-negative Unix-millisecond timestamp"}
 	}
 	path, err := databasePath(database)
 	if err != nil {
@@ -1117,7 +1114,14 @@ func (b *DatabaseBranchesClient) CreateBranch(ctx context.Context, database stri
 	if err := managementMutation(opts); err != nil {
 		return nil, err
 	}
-	var out DatabaseRecord
+	request.OperationID = strings.TrimSpace(request.OperationID)
+	if request.OperationID == "" {
+		request.OperationID = resolveRequestOptions(opts).idempotencyKey
+	}
+	if request.OperationID == "" {
+		return nil, &ValidationError{Field: "operation_id", Message: "must be nonblank or supplied by the idempotency key"}
+	}
+	var out CreateBranchResult
 	if err := b.c.do(ctx, "POST", path+"/branches", nil, request, &out, "create_branch", opts...); err != nil {
 		return nil, err
 	}

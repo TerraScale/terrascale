@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -341,6 +342,58 @@ type CreateDatabaseResult struct {
 	Status    int                    `json:"status"`
 	Database  *DatabaseRecord        `json:"database,omitempty"`
 	Operation *ProvisioningOperation `json:"operation,omitempty"`
+}
+
+// DeleteDatabaseResult distinguishes immediate soft deletion from accepted
+// durable deletion. Exactly one of Database (200) and Operation (202) is set.
+type DeleteDatabaseResult struct {
+	Status    int                    `json:"status"`
+	Database  *DatabaseRecord        `json:"database,omitempty"`
+	Operation *ProvisioningOperation `json:"operation,omitempty"`
+}
+
+// CreateBranchResult distinguishes immediate branch registration from
+// accepted durable provisioning. Exactly one result is set.
+type CreateBranchResult struct {
+	Status    int                    `json:"status"`
+	Database  *DatabaseRecord        `json:"database,omitempty"`
+	Operation *ProvisioningOperation `json:"operation,omitempty"`
+}
+
+func decodeProvisioningResult(status int, body []byte, databaseOut **DatabaseRecord, operationOut **ProvisioningOperation) error {
+	switch status {
+	case http.StatusOK, http.StatusCreated:
+		var database DatabaseRecord
+		if err := json.Unmarshal(body, &database); err != nil {
+			return err
+		}
+		if database.Name == "" {
+			return fmt.Errorf("sdk: response has no database name")
+		}
+		*databaseOut = &database
+	case http.StatusAccepted:
+		var operation ProvisioningOperation
+		if err := json.Unmarshal(body, &operation); err != nil {
+			return err
+		}
+		if operation.Environment == "" || operation.TenantID == "" || operation.ProjectID == "" || operation.OperationID == "" || operation.DatabaseID == "" || operation.KeyVersion == "" || operation.Name == "" || len(operation.Regions) == 0 || (operation.State != "accepted" && operation.State != "pending") {
+			return fmt.Errorf("sdk: accepted operation has no valid provisioning identity")
+		}
+		*operationOut = &operation
+	default:
+		return fmt.Errorf("sdk: unexpected success status %d", status)
+	}
+	return nil
+}
+
+func (r *DeleteDatabaseResult) decodeHTTPResponse(status int, body []byte) error {
+	*r = DeleteDatabaseResult{Status: status}
+	return decodeProvisioningResult(status, body, &r.Database, &r.Operation)
+}
+
+func (r *CreateBranchResult) decodeHTTPResponse(status int, body []byte) error {
+	*r = CreateBranchResult{Status: status}
+	return decodeProvisioningResult(status, body, &r.Database, &r.Operation)
 }
 
 func (r *CreateDatabaseResult) decodeHTTPResponse(status int, body []byte) error {

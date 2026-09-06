@@ -417,3 +417,44 @@ func TestProvisioningOperationMatchesProducerScopeAndState(t *testing.T) {
 		t.Fatal("non-canonical title-case state was accepted")
 	}
 }
+
+func TestProvisionedBranchAndDeletePreserveAcceptedOperation(t *testing.T) {
+	const operation = `{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"branch-key","database_id":"db-1","parent_database_id":null,"key_version":"key-1","name":"demo","regions":["GRU"],"residency":"br-only","state":"pending"}`
+	const deletion = `{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"delete-key","database_id":"db-1","parent_database_id":null,"key_version":"key-1","name":"demo","regions":["GRU"],"residency":"br-only","state":"pending"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			if r.URL.Path != "/api/v1/databases/demo/branches" {
+				t.Fatalf("branch path = %s", r.URL.Path)
+			}
+			var body CreateBranchRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body.OperationID != "branch-key" {
+				t.Fatalf("branch operation id = %q", body.OperationID)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(operation))
+			return
+		}
+		if r.URL.Path != "/api/v1/databases/demo" {
+			t.Fatalf("delete path = %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(deletion))
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch, err := client.DatabaseBranches.CreateBranch(t.Context(), "demo", CreateBranchRequest{Name: "child"}, WithIdempotencyKey("branch-key"))
+	if err != nil || branch.Operation == nil || branch.Operation.OperationID != "branch-key" {
+		t.Fatalf("branch result = %+v, err = %v", branch, err)
+	}
+	deleted, err := client.Databases.DeleteDatabase(t.Context(), "demo", WithIdempotencyKey("delete-key"), WithDeleteConfirmation("demo"))
+	if err != nil || deleted.Operation == nil || deleted.Operation.OperationID != "delete-key" {
+		t.Fatalf("delete result = %+v, err = %v", deleted, err)
+	}
+}
