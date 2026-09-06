@@ -115,3 +115,25 @@ This fixture does not qualify daemon startup, OCI deployment, production key
 delivery, WAN behavior, or multi-Region failure recovery. Its second voter uses
 a test receiver loop. Passing local suites is required evidence, but does not
 establish production readiness.
+
+### Cleanup-corrected diagnostics
+
+The published 1.7.2 utility retains every tracked row after a multi-row cleanup,
+even when deletion succeeds. Later cases therefore repeat durable deletes for
+historical rows. An unmodified run stopped after 38 passes on a 30-second test
+and cleanup timeout; the same test passed in isolation.
+
+Setting `TERRASCALE_AUTH_PATCH_UPSTREAM_CLEANUP=1` on the producer command enables
+an explicitly labeled diagnostic correction. A test-only Vite transform in
+`scripts/better-auth-cleanup-patch.ts` checks the exact upstream module path and
+SHA-256 `2993733da66175a5e8a13180a15199ceb398e99439cf92619c24e08a012c9f33`
+before replacing only cleanup tracking. Successful deletions leave the tracker;
+failed deletions and unknown models remain for retry. Adapter assertions are
+unchanged. The transform does not modify installed dependencies or SDK output.
+
+The runner prints original and transformed source hashes and requires the
+transform to have executed. Results use the distinct
+`better-auth-1.7.2-public-authority-patched-cleanup` label and do not pass the
+unmodified upstream-suite gate. `TERRASCALE_AUTH_TEST_NAME_PATTERN` is available
+for focused diagnostics; filtered runs still fail qualification because the
+runner rejects skipped cases.
