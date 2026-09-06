@@ -681,3 +681,22 @@ Rust `make check` (`84301`) passed formatting and stopped at a Clippy
 `missing_panics_doc` error in `replication-core::row_contribution`. The fixed-size
 hash conversion now copies the same sixteen bytes without the fallible
 conversion/expect. The complete check still needs rerunning after profiling.
+
+Stage profiling measured roughly 5.327 seconds in identity rewriting and 3.418
+seconds in source validation. The rewrite now builds a temporary tenant-keyed
+identity map, updates each affected table in one pass, and drops the map before
+publication. The compiled local importer sets `temp_store=MEMORY` before its
+transaction. Independent review found no material identity or rollback issue.
+Four branch-related helper tests passed (`69393`), and the physical restore
+regression passed again after the rewrite. The large timing case improved to
+11.698746991 seconds (`61219`) but still failed the unchanged ten-second limit.
+The local importer now uses the same bounded SQLite connection settings as the
+normal Engine, after source binding validation. Its physical restore regression
+passed (`84368`), and independent review found no material issue. The large case
+measured 11.779108996 seconds (`30040`); that performance gate remains unpassed.
+
+The existing `src/engine/branch_restore.rs` is not declared by `engine/mod.rs`
+and references an absent `transform_branch_schema` integration. It remains
+unfinished work, not a qualified native import path. Its future connection setup
+also records the memory-only temporary-store requirement. The tests above cover
+the compiled shared provenance helper and local physical restore only.

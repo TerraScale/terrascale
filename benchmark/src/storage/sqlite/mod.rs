@@ -1339,6 +1339,7 @@ pub(crate) fn import_backup_file(
     if validate_database_binding(&connection, &source_binding).map_err(|_| ())? {
         return Err(());
     }
+    configure_connection(&connection).map_err(|_| ())?;
     let integrity: String =
         connection.query_row("PRAGMA integrity_check", [], |row| row.get(0)).map_err(|_| ())?;
     if integrity != "ok" {

@@ -80,33 +80,95 @@ pub(crate) fn transform_provenance(
             "DELETE FROM branch_snapshot_receipts; DELETE FROM operation_facts WHERE committed=0;",
         )
         .map_err(|_| ())?;
-    for (tenant, original) in identities {
-        let replacement = imported_identity(child_owner, &tenant, &original);
-        transaction.execute("UPDATE documents SET client_request_ulid=?1 WHERE tenant=?2 AND client_request_ulid=?3", params![replacement, tenant, original]).map_err(|_| ())?;
-        transaction
-            .execute(
-                "UPDATE documents SET commit_ulid=?1 WHERE tenant=?2 AND commit_ulid=?3",
-                params![replacement, tenant, original],
+    transaction
+        .execute_batch(
+            "CREATE TEMP TABLE branch_identity_map(
+                 tenant TEXT NOT NULL,
+                 original TEXT NOT NULL,
+                 replacement TEXT NOT NULL,
+                 PRIMARY KEY (tenant, original)
+             ) WITHOUT ROWID",
+        )
+        .map_err(|_| ())?;
+    {
+        let mut insert = transaction
+            .prepare_cached(
+                "INSERT INTO branch_identity_map(tenant,original,replacement) VALUES(?1,?2,?3)",
             )
             .map_err(|_| ())?;
-        transaction.execute("UPDATE merge_conflicts SET loser_commit_ulid=?1 WHERE tenant=?2 AND loser_commit_ulid=?3", params![replacement, tenant, original]).map_err(|_| ())?;
-        transaction.execute("UPDATE merge_conflicts SET winner_commit_ulid=?1 WHERE tenant=?2 AND winner_commit_ulid=?3", params![replacement, tenant, original]).map_err(|_| ())?;
-        let changed = transaction.execute("UPDATE operation_facts SET client_request_ulid=?1,writes=0,bytes=0 WHERE tenant=?2 AND client_request_ulid=?3", params![replacement, tenant, original]).map_err(|_| ())?;
-        if changed != 0 {
-            transaction
-                .execute(
-                    "DELETE FROM operation_kind_markers WHERE tenant=?1 AND operation=?2",
-                    params![tenant, original],
-                )
-                .map_err(|_| ())?;
-            transaction
-                .execute(
-                    "INSERT INTO branch_snapshot_receipts VALUES(?1,?2)",
-                    params![tenant, replacement],
-                )
-                .map_err(|_| ())?;
+        for (tenant, original) in identities {
+            let replacement = imported_identity(child_owner, &tenant, &original);
+            insert.execute(params![tenant, original, replacement]).map_err(|_| ())?;
         }
     }
+    transaction
+        .execute(
+            "UPDATE documents
+             SET client_request_ulid = COALESCE(
+                     (SELECT replacement FROM branch_identity_map
+                      WHERE tenant=documents.tenant AND original=documents.client_request_ulid),
+                     client_request_ulid),
+                 commit_ulid = COALESCE(
+                     (SELECT replacement FROM branch_identity_map
+                      WHERE tenant=documents.tenant AND original=documents.commit_ulid),
+                     commit_ulid)
+             WHERE EXISTS (SELECT 1 FROM branch_identity_map
+                           WHERE tenant=documents.tenant
+                             AND (original=documents.client_request_ulid
+                               OR original=documents.commit_ulid))",
+            [],
+        )
+        .map_err(|_| ())?;
+    transaction
+        .execute(
+            "UPDATE merge_conflicts
+             SET loser_commit_ulid = COALESCE(
+                     (SELECT replacement FROM branch_identity_map
+                      WHERE tenant=merge_conflicts.tenant AND original=merge_conflicts.loser_commit_ulid),
+                     loser_commit_ulid),
+                 winner_commit_ulid = COALESCE(
+                     (SELECT replacement FROM branch_identity_map
+                      WHERE tenant=merge_conflicts.tenant AND original=merge_conflicts.winner_commit_ulid),
+                     winner_commit_ulid)
+             WHERE EXISTS (SELECT 1 FROM branch_identity_map
+                           WHERE tenant=merge_conflicts.tenant
+                             AND (original=merge_conflicts.loser_commit_ulid
+                               OR original=merge_conflicts.winner_commit_ulid))",
+            [],
+        )
+        .map_err(|_| ())?;
+    transaction
+        .execute(
+            "DELETE FROM operation_kind_markers
+             WHERE EXISTS (SELECT 1 FROM branch_identity_map
+                           WHERE tenant=operation_kind_markers.tenant
+                             AND original=operation_kind_markers.operation)",
+            [],
+        )
+        .map_err(|_| ())?;
+    transaction
+        .execute(
+            "UPDATE operation_facts
+             SET client_request_ulid = (SELECT replacement FROM branch_identity_map
+                                        WHERE tenant=operation_facts.tenant
+                                          AND original=operation_facts.client_request_ulid),
+                 writes=0, bytes=0
+             WHERE EXISTS (SELECT 1 FROM branch_identity_map
+                           WHERE tenant=operation_facts.tenant
+                             AND original=operation_facts.client_request_ulid)",
+            [],
+        )
+        .map_err(|_| ())?;
+    transaction
+        .execute(
+            "INSERT INTO branch_snapshot_receipts(tenant,operation)
+             SELECT fact.tenant, fact.client_request_ulid
+             FROM operation_facts AS fact
+             WHERE fact.committed=1",
+            [],
+        )
+        .map_err(|_| ())?;
+    transaction.execute_batch("DROP TABLE branch_identity_map").map_err(|_| ())?;
     // Standalone usage facts may own the highest sequence without a document
     // or operation receipt. Preserve that allocation even after removing bills.
     if cut != 0 {

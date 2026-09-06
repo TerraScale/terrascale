@@ -82,7 +82,7 @@ impl Engine {
             )
             .map_err(|_| EngineOpenError::StorageUnavailable)?;
             connection
-                .execute_batch("PRAGMA synchronous=FULL;")
+                .execute_batch("PRAGMA synchronous=FULL; PRAGMA temp_store=MEMORY;")
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
             let transaction =
                 connection.transaction().map_err(|_| EngineOpenError::StorageUnavailable)?;
