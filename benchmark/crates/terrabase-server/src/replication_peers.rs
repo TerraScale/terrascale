@@ -1503,4 +1503,19 @@ mod tests {
         assert!(!live_workers.lock().unwrap().contains("peer-old"));
         assert!(live_workers.lock().unwrap().contains("peer-survivor"));
     }
+
+    #[test]
+    fn stale_disconnect_preserves_newer_session_observation() {
+        let id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let scope = DatabaseRouteScope::try_new(id, id, id).unwrap();
+        let lanes = [PeerDatabase { scope, physical: None, causal: None }];
+        let observations: PeerObservations = Arc::default();
+        observe(&observations, "peer", &lanes, true, 11);
+        observe(&observations, "peer", &lanes, true, 12);
+        observe(&observations, "peer", &lanes, false, 11);
+        let facts = observations.lock().unwrap();
+        let current = facts.get(&(String::from("peer"), scope)).unwrap();
+        assert!(current.connected);
+        assert_eq!(current.session_id, 12);
+    }
 }

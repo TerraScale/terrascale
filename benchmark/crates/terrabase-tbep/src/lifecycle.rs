@@ -6,6 +6,20 @@
 
 use crate::proto::terrabase::v1 as pb;
 
+/// Native lifecycle port composed by the serving process.
+///
+/// Implementations own durable idempotency and native side effects. The TBEP
+/// adapter only authenticates the channel and validates the signed assignment
+/// envelope before calling this port.
+pub trait LifecycleControl: Send + Sync {
+    fn ensure_snapshot(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
+    fn verify_snapshot_placement(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
+    fn close_database(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
+    fn stop_native_backup(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
+    fn reactivate(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
+    fn delete_owned_data(&self, context: &pb::LifecycleControlContext, operation: &str) -> Result<(), String>;
+}
+
 /// Bounded lifecycle refusal categories.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LifecycleError {
@@ -62,6 +76,10 @@ pub fn unavailable(operation_id: &str) -> pb::LifecycleControlResponse {
         operation_id: operation_id.to_owned(),
         detail: "native lifecycle owner is not composed".into(),
     }
+}
+
+pub fn applied(operation_id: &str) -> pb::LifecycleControlResponse {
+    pb::LifecycleControlResponse { status: pb::LifecycleStatus::Applied as i32, operation_id: operation_id.to_owned(), detail: String::new() }
 }
 
 /// Validates a same-database reactivation request before admission.

@@ -124,6 +124,37 @@ struct Entry {
 }
 
 impl ObjectDestination {
+    /// Publishes one bounded opaque member through the authenticated provider.
+    /// Export composition uses this seam for resumable artifact members; the
+    /// caller retains manifest and completion-marker ordering.
+    pub async fn put_member(&self, key: &str, bytes: Vec<u8>) -> Result<(), TransferError> {
+        if key.is_empty() || key.len() > 1024 || bytes.len() as u64 > self.max_artifact_bytes {
+            return Err(TransferError::InvalidPoint);
+        }
+        let key = ObjectPath::parse(key).map_err(|_| TransferError::InvalidPoint)?;
+        self.store.put(&key, bytes.into()).await.map_err(|_| TransferError::Unavailable)?;
+        Ok(())
+    }
+
+    /// Reads one bounded opaque member through the authenticated provider.
+    pub async fn get_member(&self, key: &str) -> Result<Vec<u8>, TransferError> {
+        if key.is_empty() || key.len() > 1024 {
+            return Err(TransferError::InvalidPoint);
+        }
+        let key = ObjectPath::parse(key).map_err(|_| TransferError::InvalidPoint)?;
+        let response = self.store.get(&key).await.map_err(|_| TransferError::Unavailable)?;
+        let mut stream = response.into_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| TransferError::Unavailable)?;
+            if bytes.len() as u64 + chunk.len() as u64 > self.max_artifact_bytes {
+                return Err(TransferError::InvalidPoint);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+
     /// Builds a SigV4-authenticated HTTPS client with bounded retries and timeouts.
     ///
     /// # Errors

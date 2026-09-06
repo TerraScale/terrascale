@@ -74,6 +74,36 @@ pub struct AdmittedDatabaseRegistry {
 }
 
 impl AdmittedDatabaseRegistry {
+    /// Durably pauses one admitted database while retaining its host and data.
+    pub fn pause(&self, database: &str) -> Result<(), String> {
+        let entry = self
+            .resolve_metadata(database)?
+            .ok_or_else(|| "database is not admitted".to_owned())?;
+        let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
+            .map_err(|_| "invalid admitted tenant")?;
+        entry
+            .host
+            .engine()
+            .lifecycle_pause(&entry.host.engine().scope_for(&tenant))
+            .map_err(|_| "database pause failed")?;
+        Ok(())
+    }
+
+    /// Resumes one paused admitted database without replacing its identity.
+    pub fn resume(&self, database: &str) -> Result<(), String> {
+        let entry = self
+            .resolve_metadata(database)?
+            .ok_or_else(|| "database is not admitted".to_owned())?;
+        let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
+            .map_err(|_| "invalid admitted tenant")?;
+        entry
+            .host
+            .engine()
+            .lifecycle_resume(&entry.host.engine().scope_for(&tenant))
+            .map_err(|_| "database resume failed")?;
+        Ok(())
+    }
+
     /// Binds every serving lookup to the complete Member's current readiness.
     #[must_use]
     pub fn new(ready: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
@@ -203,12 +233,26 @@ impl AdmittedDatabaseRegistry {
         if self.draining.load(Ordering::Acquire) {
             return Err("Member is not ready to serve".into());
         }
-        Ok(self
+        let entry = self
             .databases
             .read()
             .map_err(|_| "admitted registry unavailable")?
             .get(database)
-            .cloned())
+            .cloned();
+        if let Some(entry) = &entry {
+            let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
+                .map_err(|_| "invalid admitted tenant")?;
+            if entry
+                .host
+                .engine()
+                .lifecycle_state(&entry.host.engine().scope_for(&tenant))
+                .map_err(|_| "lifecycle source unavailable")?
+                .paused
+            {
+                return Ok(None);
+            }
+        }
+        Ok(entry)
     }
 
     /// Publishes a validated batch only after replication lanes are committed.
@@ -244,12 +288,26 @@ impl AdmittedDatabaseRegistry {
         if !serving.contains(database) {
             return Ok(None);
         }
-        Ok(self
+        let entry = self
             .databases
             .read()
             .map_err(|_| "admitted registry unavailable")?
             .get(database)
-            .cloned())
+            .cloned();
+        if let Some(entry) = &entry {
+            let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
+                .map_err(|_| "invalid admitted tenant")?;
+            if entry
+                .host
+                .engine()
+                .lifecycle_state(&entry.host.engine().scope_for(&tenant))
+                .map_err(|_| "lifecycle source unavailable")?
+                .paused
+            {
+                return Ok(None);
+            }
+        }
+        Ok(entry)
     }
 
     /// Metadata can describe a terminal deletion without reopening document access.
@@ -694,6 +752,32 @@ pub(crate) mod tests {
             let lease_ptr = std::ptr::from_ref::<terrabase::engine::Engine>(&*lease);
             assert!(std::ptr::eq(admitted.host.engine(), lease_ptr));
         }
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pause_hides_serving_database_and_resume_retains_identity() {
+        let (registry, member, records, root) = fixture();
+        let database = &records[0].database_id;
+        let admitted = registry.resolve(database).unwrap().unwrap();
+        let engine = admitted.host.engine();
+        let tenant = terrabase::types::TenantId::try_new(&records[0].tenant_id).unwrap();
+        let scope = engine.scope_for(&tenant);
+
+        registry.pause(database).unwrap();
+        assert!(engine.lifecycle_state(&scope).unwrap().paused);
+        assert!(registry.resolve(database).unwrap().is_none());
+        assert!(registry.resolve_serving(database).unwrap().is_none());
+        assert!(registry.resolve_metadata(database).unwrap().is_some());
+
+        registry.resume(database).unwrap();
+        assert!(!engine.lifecycle_state(&scope).unwrap().paused);
+        let resumed = registry.resolve(database).unwrap().unwrap();
+        assert!(Arc::ptr_eq(&admitted, &resumed));
+
+        drop(admitted);
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();

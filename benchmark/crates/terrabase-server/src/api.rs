@@ -543,6 +543,10 @@ fn regions_list(regions: &[RegionCode]) -> String {
 
 /// The public API's serving state.
 pub struct ApiState {
+    /// Native production backup owner retained for the serving lifetime.
+    pub native_backups: Option<Arc<crate::native_backup_runtime::NativeBackupRuntime>>,
+    /// Native recovery worker owner retained until bounded shutdown completes.
+    pub native_recovery: Option<Arc<crate::native_recovery::NativeRecoveryRuntime>>,
     /// Production-only authoritative database ownership and retained Member leases.
     pub admitted_databases: Option<Arc<crate::admitted_databases::AdmittedDatabaseRegistry>>,
     /// Actual peer acknowledgements; absent progress cannot certify durable writes.
@@ -605,6 +609,8 @@ impl ApiState {
     /// store while assembling the public API.
     #[allow(clippy::too_many_arguments, reason = "production ownership is explicit")]
     pub fn production(
+        native_backups: Arc<crate::native_backup_runtime::NativeBackupRuntime>,
+        native_recovery: Arc<crate::native_recovery::NativeRecoveryRuntime>,
         region: RegionCode,
         metrics: Arc<MetricsRegistry>,
         admitted_databases: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
@@ -622,6 +628,8 @@ impl ApiState {
         exports: Option<Arc<crate::export_api::ExportRuntime>>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            native_backups: Some(native_backups),
+            native_recovery: Some(native_recovery),
             admitted_databases: Some(admitted_databases),
             replication_progress: Some(replication_progress),
             development: Arc::default(),
@@ -4329,6 +4337,8 @@ mod tests {
         let timetravel =
             Arc::new(crate::backup::TimeTravelCache::new(Arc::clone(&backups), &backup_root));
         Arc::new(ApiState {
+            native_backups: None,
+            native_recovery: None,
             development: Arc::default(),
             provisioning: None,
             admitted_databases: None,
@@ -4377,6 +4387,8 @@ mod tests {
             &dir.join("backup-timetravel"),
         ));
         Arc::new(ApiState {
+            native_backups: None,
+            native_recovery: None,
             development: Arc::default(),
             provisioning: None,
             admitted_databases: None,

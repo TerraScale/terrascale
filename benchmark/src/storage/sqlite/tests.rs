@@ -198,6 +198,57 @@ fn rejected_error(outcome: CommitOutcome) -> CommitError {
         other => panic!("expected a rejected outcome, got {other:?}"),
     }
 }
+
+#[test]
+fn paused_lifecycle_rejects_writes_until_resume() {
+    let (dir, engine) = open_sqlite_engine("lifecycle-pause");
+    let scope = tenant_scope(&engine, "tenant-a");
+    committed_sequence(commit_put(
+        &engine,
+        "tenant-a",
+        "before-pause",
+        "doc-1",
+        "users",
+        "value-1",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+
+    engine.lifecycle_pause(&scope).expect("pause");
+    assert_eq!(
+        rejected_error(commit_put(
+            &engine,
+            "tenant-a",
+            "while-paused",
+            "doc-2",
+            "users",
+            "value-2",
+            ExpectedVersion::New,
+            LocalDurability::Synced,
+        )),
+        CommitError::StorageFailure
+    );
+    assert!(read_document(&engine, "tenant-a", "doc-2").is_none());
+
+    engine.lifecycle_resume(&scope).expect("resume");
+    committed_sequence(commit_put(
+        &engine,
+        "tenant-a",
+        "after-resume",
+        "doc-2",
+        "users",
+        "value-2",
+        ExpectedVersion::New,
+        LocalDurability::Synced,
+    ));
+    assert_eq!(
+        read_document(&engine, "tenant-a", "doc-2").unwrap().value(),
+        &DocumentValue::String("value-2".into())
+    );
+    engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
 #[test]
 fn engine_round_trips_and_persists_across_reopen() {
     let (dir, engine) = open_sqlite_engine("round-trip");

@@ -16,6 +16,17 @@ mod persistence;
 mod status;
 use checkpoint::Checkpoint;
 
+fn map_fleet_error(error: terrabase::backup::worker::FleetError) -> NativeRecoveryError {
+    match error {
+        terrabase::backup::worker::FleetError::Configuration => {
+            NativeRecoveryError::VerificationFailed
+        }
+        terrabase::backup::worker::FleetError::Capture
+        | terrabase::backup::worker::FleetError::Upload
+        | terrabase::backup::worker::FleetError::StagingFull => NativeRecoveryError::Unavailable,
+    }
+}
+
 /// Finite bounds for the durable recovery ledger.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeRecoveryLimits {
@@ -372,17 +383,7 @@ impl NativeRecoveryRuntime {
         };
         let admitted = match self.registry.resolve(&source) {
             Ok(Some(admitted)) => admitted,
-            Ok(None) | Err(_) => {
-                let connection =
-                    self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-                persistence::fail_row(
-                    &connection,
-                    &operation,
-                    &source,
-                    "native recovery source is temporarily unavailable; retry the existing operation",
-                )?;
-                return Ok(true);
-            }
+            Ok(None) | Err(_) => return Err(NativeRecoveryError::Unavailable),
         };
         if admitted.host.engine().database_id().to_text() != source {
             let connection =
@@ -396,27 +397,32 @@ impl NativeRecoveryRuntime {
             return Ok(true);
         }
         let placement = admitted.record.regions.clone();
-        let result = self.run_capture(&admitted.host, placement, &source, &operation);
-        if result.is_err() {
-            match self.status(&source, &operation)? {
-                Some(mut latest)
-                    if !matches!(
-                        latest.phase,
-                        NativeRecoveryPhase::Complete | NativeRecoveryPhase::Failed
-                    ) =>
-                {
+        match self.run_capture(&admitted.host, placement, &source, &operation) {
+            Ok(()) => {}
+            Err(NativeRecoveryError::Unavailable) => return Err(NativeRecoveryError::Unavailable),
+            Err(error) => {
+                let Some(mut latest) = self.status(&source, &operation)? else {
+                    return Err(NativeRecoveryError::Unavailable);
+                };
+                if !matches!(
+                    latest.phase,
+                    NativeRecoveryPhase::Complete | NativeRecoveryPhase::Failed
+                ) {
                     latest.phase = NativeRecoveryPhase::Failed;
                     latest.error = Some(
-                        "native recovery capture state is uncertain; retry the existing operation"
+                        "native recovery capture verification failed; retry the existing operation"
                             .into(),
                     );
                     self.save_record_only(&latest)?;
                 }
-                Some(_) => {}
-                None => return Err(NativeRecoveryError::Unavailable),
+                if !matches!(
+                    latest.phase,
+                    NativeRecoveryPhase::Failed | NativeRecoveryPhase::Complete
+                ) {
+                    return Err(error);
+                }
             }
         }
-        result?;
         self.notify.notify_one();
         Ok(true)
     }
@@ -460,7 +466,7 @@ impl NativeRecoveryRuntime {
                 let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
                 tokio::runtime::Handle::current()
                     .block_on(fleet.capture_snapshot(source))
-                    .map_err(|_| NativeRecoveryError::VerificationFailed)?
+                    .map_err(map_fleet_error)?
             };
             Ok(Checkpoint::from_manifest(&manifest, source, &placement))
         };
@@ -470,7 +476,7 @@ impl NativeRecoveryRuntime {
             let fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
             fleet
                 .retained_points(source)
-                .map_err(|_| NativeRecoveryError::VerificationFailed)?
+                .map_err(map_fleet_error)?
                 .into_iter()
                 .find(|manifest| point.matches_manifest(manifest))
                 .ok_or(NativeRecoveryError::VerificationFailed)?;

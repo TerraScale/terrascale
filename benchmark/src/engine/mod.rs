@@ -4752,6 +4752,9 @@ impl Transaction<'_> {
         let Ok(_barrier) = engine.origin_commit_barrier.read() else {
             return CommitOutcome::Rejected(CommitError::StorageFailure);
         };
+        if engine.lifecycle_is_paused(&self.scope).unwrap_or(true) {
+            return CommitOutcome::Rejected(CommitError::StorageFailure);
+        }
         let started = Instant::now();
         let metrics = Arc::clone(&self.engine.metrics);
         let outcome = self.commit_unobserved(durability);

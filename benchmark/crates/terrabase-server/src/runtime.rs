@@ -863,6 +863,8 @@ async fn serve_public_api(
         })
         .transpose()?;
     let state = Arc::new(crate::api::ApiState {
+        native_backups: None,
+        native_recovery: None,
         region,
         metrics,
         keys: Some(Arc::new(keys)),

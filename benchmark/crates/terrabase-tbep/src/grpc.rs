@@ -392,6 +392,7 @@ pub struct TbepGrpcServer {
     inflight: Arc<AtomicUsize>,
     background: Arc<AtomicUsize>,
     draining: Arc<std::sync::atomic::AtomicBool>,
+    lifecycle: Option<Arc<dyn crate::lifecycle::LifecycleControl>>,
 }
 
 fn authenticate_gateway_certificate(principal: &str, leaf: &[u8]) -> Result<(), Status> {
@@ -532,7 +533,18 @@ impl TbepGrpcServer {
             inflight: Arc::new(AtomicUsize::new(0)),
             background: Arc::new(AtomicUsize::new(0)),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            lifecycle: None,
         }
+    }
+
+    /// Composes the native lifecycle owner into the real TBEP listener.
+    #[must_use]
+    pub fn with_lifecycle_control(
+        mut self,
+        lifecycle: Arc<dyn crate::lifecycle::LifecycleControl>,
+    ) -> Self {
+        self.lifecycle = Some(lifecycle);
+        self
     }
 
     /// Returns the same bounded registry used by the request path so the

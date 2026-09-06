@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// One record per admitted tenant; absent activity is explicitly unknown.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LifecycleState {
+    /// Reversible owner-requested pause; retained data and accounting remain intact.
+    pub paused: bool,
     /// Monotonic durable state revision.
     pub generation: u64,
     /// Last flushed observed authorized request, Unix milliseconds.
@@ -67,6 +69,8 @@ pub(crate) enum LifecycleCommand {
     Protection(bool),
     Activity(u64),
     Delete(DeletionIntent),
+    Pause,
+    Resume,
 }
 
 impl Engine {
@@ -91,6 +95,10 @@ impl Engine {
     /// Returns an error on a scope mismatch or storage failure.
     pub fn lifecycle_state(&self, scope: &TenantScope) -> Result<LifecycleState, LifecycleError> {
         self.lifecycle_command(scope, LifecycleCommand::Read)
+    }
+
+    pub(crate) fn lifecycle_is_paused(&self, scope: &TenantScope) -> Result<bool, LifecycleError> {
+        Ok(self.lifecycle_state(scope)?.paused)
     }
     /// Caller must authenticate the database owner before changing protection.
     ///
@@ -125,6 +133,25 @@ impl Engine {
         intent: DeletionIntent,
     ) -> Result<LifecycleState, LifecycleError> {
         self.lifecycle_command(scope, LifecycleCommand::Delete(intent))
+    }
+
+    /// Pauses authorized activity for a tenant while retaining its data and accounting state.
+    /// The origin commit barrier drains before the durable pause is recorded.
+    ///
+    /// # Errors
+    /// Returns an invalid-scope or unavailable-storage error.
+    pub fn lifecycle_pause(&self, scope: &TenantScope) -> Result<LifecycleState, LifecycleError> {
+        let _barrier =
+            self.origin_commit_barrier.write().map_err(|_| LifecycleError::Unavailable)?;
+        self.lifecycle_command(scope, LifecycleCommand::Pause)
+    }
+
+    /// Resumes authorized activity for a tenant by clearing its durable pause state.
+    ///
+    /// # Errors
+    /// Returns an invalid-scope or unavailable-storage error.
+    pub fn lifecycle_resume(&self, scope: &TenantScope) -> Result<LifecycleState, LifecycleError> {
+        self.lifecycle_command(scope, LifecycleCommand::Resume)
     }
     fn lifecycle_command(
         &self,
@@ -176,6 +203,17 @@ mod tests {
         let observed = engine.lifecycle_flush_activity(&scope, 123).unwrap();
         assert_eq!(engine.lifecycle_flush_activity(&scope, 122).unwrap(), observed);
         engine.lifecycle_set_protection(&scope, true).unwrap();
+        let paused = engine.lifecycle_pause(&scope).unwrap();
+        assert!(paused.paused);
+        assert!(paused.deletion_protection);
+        assert_eq!(paused.last_authorized_request_at, Some(123));
+        engine.shutdown().unwrap();
+        let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
+        let scope = engine.scope_for(&tenant);
+        assert!(engine.lifecycle_state(&scope).unwrap().paused);
+        let resumed = engine.lifecycle_resume(&scope).unwrap();
+        assert!(!resumed.paused);
+        assert!(resumed.deletion_protection);
         let at = u64::try_from(
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
         )

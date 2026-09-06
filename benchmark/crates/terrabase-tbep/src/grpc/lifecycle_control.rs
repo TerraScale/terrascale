@@ -1,8 +1,8 @@
 //! Private lifecycle control RPCs.
 //!
 //! The service is wired into the real TBEP listener so callers cannot stop at
-//! an unused adapter. Native lifecycle composition is intentionally explicit;
-//! until supplied, validated requests receive a typed unavailable response.
+//! an unused adapter. Native lifecycle composition is explicit and invoked by
+//! the production listener when supplied.
 
 use tonic::{Code, Request, Response, Status};
 
@@ -42,28 +42,28 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch_unavailable(request).await
+        self.dispatch(request, |owner, context, operation| owner.ensure_snapshot(context, operation)).await
     }
 
     async fn verify_snapshot_placement(
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch_unavailable(request).await
+        self.dispatch(request, |owner, context, operation| owner.verify_snapshot_placement(context, operation)).await
     }
 
     async fn close_database(
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch_unavailable(request).await
+        self.dispatch(request, |owner, context, operation| owner.close_database(context, operation)).await
     }
 
     async fn stop_native_backup(
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch_unavailable(request).await
+        self.dispatch(request, |owner, context, operation| owner.stop_native_backup(context, operation)).await
     }
 
     async fn reactivate(
@@ -75,27 +75,36 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
         let operation = lifecycle::validate_reactivate(&request).map_err(|_| {
             Status::new(Code::InvalidArgument, "lifecycle restore target is invalid")
         })?;
-        Ok(Response::new(lifecycle::unavailable(operation)))
+        let inner = request.request.as_ref().expect("validated reactivation request");
+        let Some(owner) = self.lifecycle.as_ref() else { return Ok(Response::new(lifecycle::unavailable(operation))) };
+        owner.reactivate(inner.context.as_ref().expect("validated lifecycle context"), operation)
+            .map_err(|error| Status::new(Code::Unavailable, error))?;
+        Ok(Response::new(lifecycle::applied(operation)))
     }
 
     async fn delete_owned_data(
         &self,
         request: Request<pb::LifecycleControlRequest>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
-        self.dispatch_unavailable(request).await
+        self.dispatch(request, |owner, context, operation| owner.delete_owned_data(context, operation)).await
     }
 }
 
 impl TbepGrpcServer {
-    async fn dispatch_unavailable(
+    async fn dispatch(
         &self,
         request: Request<pb::LifecycleControlRequest>,
+        invoke: impl FnOnce(&dyn lifecycle::LifecycleControl, &pb::LifecycleControlContext, &str) -> Result<(), String>,
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
         self.authenticate_lifecycle(&request)?;
         let request = request.into_inner();
         let operation_id = lifecycle::validate_request(&request)
             .map_err(|_| Status::new(Code::InvalidArgument, "lifecycle identity is invalid"))?;
-        Ok(Response::new(lifecycle::unavailable(operation_id)))
+        let Some(owner) = self.lifecycle.as_ref() else { return Ok(Response::new(lifecycle::unavailable(operation_id))) };
+        let context = request.context.as_ref().expect("validated lifecycle context");
+        invoke(owner.as_ref(), context, operation_id)
+            .map_err(|error| Status::new(Code::Unavailable, error))?;
+        Ok(Response::new(lifecycle::applied(operation_id)))
     }
 }
 

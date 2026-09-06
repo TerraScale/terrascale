@@ -201,6 +201,8 @@ mod tests {
         let timetravel =
             Arc::new(crate::backup::TimeTravelCache::new(Arc::clone(&backups), &backup_root));
         Arc::new(crate::api::ApiState {
+            native_backups: None,
+            native_recovery: None,
             admitted_databases: None,
             replication_progress: None,
             development: Arc::default(),

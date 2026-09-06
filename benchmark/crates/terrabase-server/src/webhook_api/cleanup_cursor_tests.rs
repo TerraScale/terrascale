@@ -75,13 +75,15 @@ async fn cleanup_failure_does_not_block_multi_page_cursor_progress() {
     assert_eq!(second.publications, 44);
     assert!(second.attempted > 0);
     assert!(delivery.base.sent.load(Ordering::SeqCst) >= 1);
-    assert!(delivery
-        .base
-        .seen_events
-        .lock()
-        .expect("events lock")
-        .iter()
-        .any(|id| id.ends_with(":event-257")));
+    assert!(
+        delivery
+            .base
+            .seen_events
+            .lock()
+            .expect("events lock")
+            .iter()
+            .any(|id| id.ends_with(":event-257"))
+    );
     assert!(storage.endpoint(&scope, &live.id).expect("live lookup").is_some());
     drop(service);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
