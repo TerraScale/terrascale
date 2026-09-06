@@ -153,3 +153,52 @@ immutable release artifact.
 
 The regenerated bundle integrity regression passed in session `64131`, checking
 the served OpenAPI, included protobuf sources, and recorded content digests.
+
+The next auth integration series adds projection, exact scalar sorting and
+explicit one-level joins to the producer `Find` action and served OpenAPI.
+Queries retain at most 4 MiB, return at most 1 MiB, and share a 64 MiB/one-million
+row scan budget across base and related models. Unsorted pages stop when filled.
+Astra review caught and corrected unnecessary full scans, missing incremental
+bounds, and unsafe transaction error classification before qualification.
+
+Rust evidence: all 26 auth tests passed in `78007`; the four focused join tests
+passed in `8743` after adding retained-page bounds and one-to-one/duplicate-output
+coverage. Eight auth/OpenAPI server tests passed in `10052`. The real encrypted
+QUIC HTTP fixture now checks staged cross-model joins before projection,
+ordinary-read isolation, invalid query no-store headers and compound external
+identity uniqueness. Its final run passed in `68229`, including refusal to attach
+one `(issuer, accountId)` to another user. Exporter `82926` and bundle integrity
+regression `71506` passed; SDK metadata was regenerated from that local bundle.
+
+The SDK now exposes an official `@better-auth/core` 1.7.2 factory and a bounded
+transaction callback helper. Full adapter operations, including async official
+transforms, are serialized and poison the transaction on failure even if caught.
+The callback executes once; uncertain commit errors retain reconciliation
+identities. Independent cleanup cancellation allows rollback after caller abort.
+Schema readiness includes mapped field and compound unique constraints through
+named producer index operations; any failed provisioning blocks data operations
+and transaction begin. Astra re-review found no remaining material defect in
+these revised boundaries. Plugin-wide qualification, nonunique index/migration
+support, live dashboard composition, deterministic forwarding saturation and
+real cloud/Region release gates remain unfinished. The local SQLite bridge is
+still consumed and has not met its retirement gate.
+
+Final SDK verification for this series: `CONTRACT_SOURCE=../terrabase/contracts
+make check` passed in session `91534` (287 tests passed; 12 environment-gated
+tests skipped). The pinned official-factory regressions cover generated IDs,
+date transforms, custom names, normalized transactional joins, empty selection,
+failed schema provisioning, compound indexes, async transform invocation order,
+caught transform failure rollback and unawaited operation draining. These
+request-capture tests verify orchestration, not a live product boundary.
+
+The final diagnostic npm artifact qualification passed on Node 24.20.0 in
+session `3586`. Tarball SHA-256:
+`02742fd46997f90d1c375283c851b7648bca151abfa61ed8d5a44004e2204ff8`.
+Artifact and receipt are under
+`/tmp/terrascale-auth-factory-qualification-20260907-final/`.
+The clean auth consumer explicitly installs the pinned optional
+`@better-auth/core@1.7.2` peer (MIT in its installed package manifest).
+This was diagnostic mode with a dirty worktree; Node 22, immutable publication
+and release admission remain unqualified. The host's mise npm wrapper required
+a temporary PATH entry pointing to the actual npm-cli.js for CLI provenance
+inspection; no global toolchain files were modified.

@@ -825,6 +825,53 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     .await;
     assert_eq!(rolled_back_read.0, StatusCode::OK);
     assert_eq!(rolled_back_read.1["matched"], false);
+    // Better Auth 1.7.2 requires one owner per compound external identity.
+    for (operation, key, body, expected) in [
+        (
+            "index",
+            "account-identity-index",
+            serde_json::json!({"model":"account","fields":["issuer","accountId"]}),
+            StatusCode::OK,
+        ),
+        (
+            "insertUnique",
+            "external-first",
+            serde_json::json!({"model":"account","record":{"id":"external-a","issuer":"issuer","accountId":"subject","userId":"u1"}}),
+            StatusCode::OK,
+        ),
+        (
+            "insertUnique",
+            "external-duplicate",
+            serde_json::json!({"model":"account","record":{"id":"external-b","issuer":"issuer","accountId":"subject","userId":"other-user"}}),
+            StatusCode::CONFLICT,
+        ),
+    ] {
+        let response = admitted_fixture::request(
+            &fixture.runtime,
+            Request::post(format!("/api/v1/databases/{}/auth/{operation}", fixture.database))
+                .header("authorization", &auth)
+                .header("idempotency-key", key)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(response.0, expected, "{operation}: {:?}", response.1);
+        assert_eq!(response.2["cache-control"], "no-store");
+    }
+    let duplicate = admitted_fixture::request(
+        &fixture.runtime,
+        Request::get(format!(
+            "/api/v1/databases/{}/auth/records/account/external-b",
+            fixture.database
+        ))
+        .header("authorization", &auth)
+        .body(Body::empty())
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(duplicate.0, StatusCode::OK);
+    assert_eq!(duplicate.1["matched"], false);
     fixture.runtime.shutdown().await;
     fixture.local_receive.abort();
     fixture.remote_receive.abort();
