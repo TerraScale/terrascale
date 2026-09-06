@@ -1,8 +1,13 @@
 //! Logical physical replication I/O. Encrypted production files never pass
 //! through the operating system's plaintext SQLite stub.
 
-use std::{fs::{File, OpenOptions}, io::{self, Read, Seek, SeekFrom, Write}, path::Path, sync::{Arc, Mutex}};
 use super::sqlite::{encrypted_file::EncryptedFile, encrypted_vfs::EncryptedVfs};
+use std::{
+    fs::{File, OpenOptions},
+    io::{self, Read, Seek, SeekFrom, Write},
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 /// Keeps an authenticated database VFS available for offline follower or restore
 /// I/O. Production callers supply the same owner-bound source as EngineConfig.
@@ -15,9 +20,14 @@ impl EncryptedStorage {
     ///
     /// # Errors
     /// Fails on invalid locations or conflicting live key sources.
-    pub fn register(location: &Path, keys: Arc<dyn crate::encryption::DatabaseKeySource>) -> io::Result<Self> {
+    pub fn register(
+        location: &Path,
+        keys: Arc<dyn crate::encryption::DatabaseKeySource>,
+    ) -> io::Result<Self> {
         std::fs::create_dir_all(location)?;
-        Ok(Self { _registration: EncryptedVfs::register(&location.join("terrabase.sqlite3"), keys)? })
+        Ok(Self {
+            _registration: EncryptedVfs::register(&location.join("terrabase.sqlite3"), keys)?,
+        })
     }
 }
 
@@ -57,16 +67,31 @@ fn open(path: &Path, create: bool) -> io::Result<PhysicalFile> {
         }
         let companion_exists = super::sqlite::encrypted_file::companion(path).exists();
         if let Ok(metadata) = std::fs::symlink_metadata(path) {
-            if !metadata.is_file() || metadata.len() > 0 || (!path.as_os_str().as_encoded_bytes().ends_with(b"-wal") && !path.as_os_str().as_encoded_bytes().ends_with(b"-journal") && !companion_exists) {
-                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "invalid encrypted SQLite stub"));
+            if !metadata.is_file()
+                || metadata.len() > 0
+                || (!path.as_os_str().as_encoded_bytes().ends_with(b"-wal")
+                    && !path.as_os_str().as_encoded_bytes().ends_with(b"-journal")
+                    && !companion_exists)
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "invalid encrypted SQLite stub",
+                ));
             }
-        } else if create { File::create_new(path)?; }
+        } else if create {
+            File::create_new(path)?;
+        }
         Backend::Encrypted { file: guard.shared_file(path)?, _guard: guard }
     } else {
         if super::sqlite::encrypted_file::companion(path).exists() {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "encrypted storage keys unavailable"));
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "encrypted storage keys unavailable",
+            ));
         }
-        Backend::Plain(OpenOptions::new().read(true).write(true).create(create).truncate(false).open(path)?)
+        Backend::Plain(
+            OpenOptions::new().read(true).write(true).create(create).truncate(false).open(path)?,
+        )
     };
     Ok(PhysicalFile { inner, position: 0 })
 }
@@ -79,7 +104,9 @@ impl PhysicalFile {
     pub fn len(&self) -> io::Result<u64> {
         match &self.inner {
             Backend::Plain(file) => file.metadata().map(|metadata| metadata.len()),
-            Backend::Encrypted { file, .. } => Ok(file.lock().map_err(|_| io::Error::other("encrypted file poisoned"))?.size()),
+            Backend::Encrypted { file, .. } => {
+                Ok(file.lock().map_err(|_| io::Error::other("encrypted file poisoned"))?.size())
+            }
         }
     }
 
@@ -87,7 +114,9 @@ impl PhysicalFile {
     ///
     /// # Errors
     /// Fails when length cannot be obtained.
-    pub fn is_empty(&self) -> io::Result<bool> { self.len().map(|length| length == 0) }
+    pub fn is_empty(&self) -> io::Result<bool> {
+        self.len().map(|length| length == 0)
+    }
 
     /// Truncates or zero-extends the logical file.
     ///
@@ -96,7 +125,10 @@ impl PhysicalFile {
     pub fn set_len(&self, length: u64) -> io::Result<()> {
         match &self.inner {
             Backend::Plain(file) => file.set_len(length),
-            Backend::Encrypted { file, .. } => file.lock().map_err(|_| io::Error::other("encrypted file poisoned"))?.set_len(length),
+            Backend::Encrypted { file, .. } => file
+                .lock()
+                .map_err(|_| io::Error::other("encrypted file poisoned"))?
+                .set_len(length),
         }
     }
 
@@ -107,7 +139,9 @@ impl PhysicalFile {
     pub fn sync_all(&self) -> io::Result<()> {
         match &self.inner {
             Backend::Plain(file) => file.sync_all(),
-            Backend::Encrypted { file, .. } => file.lock().map_err(|_| io::Error::other("encrypted file poisoned"))?.sync(),
+            Backend::Encrypted { file, .. } => {
+                file.lock().map_err(|_| io::Error::other("encrypted file poisoned"))?.sync()
+            }
         }
     }
 }
@@ -115,10 +149,18 @@ impl PhysicalFile {
 impl Read for PhysicalFile {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let count = buffer.len().min(self.len()?.saturating_sub(self.position) as usize);
-        if count == 0 { return Ok(0); }
+        if count == 0 {
+            return Ok(0);
+        }
         match &mut self.inner {
-            Backend::Plain(file) => { file.seek(SeekFrom::Start(self.position))?; file.read_exact(&mut buffer[..count])?; },
-            Backend::Encrypted { file, .. } => file.lock().map_err(|_| io::Error::other("encrypted file poisoned"))?.read_exact_at(&mut buffer[..count], self.position)?,
+            Backend::Plain(file) => {
+                file.seek(SeekFrom::Start(self.position))?;
+                file.read_exact(&mut buffer[..count])?;
+            }
+            Backend::Encrypted { file, .. } => file
+                .lock()
+                .map_err(|_| io::Error::other("encrypted file poisoned"))?
+                .read_exact_at(&mut buffer[..count], self.position)?,
         }
         self.position += count as u64;
         Ok(count)
@@ -128,13 +170,24 @@ impl Read for PhysicalFile {
 impl Write for PhysicalFile {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         match &mut self.inner {
-            Backend::Plain(file) => { file.seek(SeekFrom::Start(self.position))?; file.write_all(buffer)?; },
-            Backend::Encrypted { file, .. } => file.lock().map_err(|_| io::Error::other("encrypted file poisoned"))?.write_all_at(buffer, self.position)?,
+            Backend::Plain(file) => {
+                file.seek(SeekFrom::Start(self.position))?;
+                file.write_all(buffer)?;
+            }
+            Backend::Encrypted { file, .. } => file
+                .lock()
+                .map_err(|_| io::Error::other("encrypted file poisoned"))?
+                .write_all_at(buffer, self.position)?,
         }
-        self.position = self.position.checked_add(buffer.len() as u64).ok_or_else(|| io::Error::other("file offset overflow"))?;
+        self.position = self
+            .position
+            .checked_add(buffer.len() as u64)
+            .ok_or_else(|| io::Error::other("file offset overflow"))?;
         Ok(buffer.len())
     }
-    fn flush(&mut self) -> io::Result<()> { self.sync_all() }
+    fn flush(&mut self) -> io::Result<()> {
+        self.sync_all()
+    }
 }
 
 impl Seek for PhysicalFile {
@@ -144,7 +197,8 @@ impl Seek for PhysicalFile {
             SeekFrom::Current(delta) => i128::from(self.position) + i128::from(delta),
             SeekFrom::End(delta) => i128::from(self.len()?) + i128::from(delta),
         };
-        self.position = u64::try_from(position).map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid file offset"))?;
+        self.position = u64::try_from(position)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid file offset"))?;
         Ok(self.position)
     }
 }
@@ -167,7 +221,8 @@ pub fn open_encrypted_sqlite(
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
         guard.name(),
     )?;
-    connection.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA mmap_size=0; PRAGMA synchronous=FULL;")?;
+    connection
+        .execute_batch("PRAGMA temp_store=MEMORY; PRAGMA mmap_size=0; PRAGMA synchronous=FULL;")?;
     Ok(connection)
 }
 
@@ -182,8 +237,13 @@ impl EncryptedStorage {
         if let Some(guard) = super::sqlite::encrypted_vfs::lookup(&source_file) {
             Self::register(destination, guard.keys()).map(Some)
         } else if super::sqlite::encrypted_file::companion(&source_file).exists() {
-            Err(io::Error::new(io::ErrorKind::PermissionDenied, "encrypted storage keys unavailable"))
-        } else { Ok(None) }
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "encrypted storage keys unavailable",
+            ))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -191,11 +251,16 @@ impl EncryptedStorage {
 ///
 /// # Errors
 /// Refuses encrypted companions without a live key source.
-pub fn open_physical_sqlite(path: &Path, flags: rusqlite::OpenFlags) -> Result<rusqlite::Connection, rusqlite::Error> {
+pub fn open_physical_sqlite(
+    path: &Path,
+    flags: rusqlite::OpenFlags,
+) -> Result<rusqlite::Connection, rusqlite::Error> {
     let connection = if let Some(guard) = super::sqlite::encrypted_vfs::lookup(path) {
         rusqlite::Connection::open_with_flags_and_vfs(path, flags, guard.name())?
     } else {
-        if super::sqlite::encrypted_file::companion(path).exists() { return Err(rusqlite::Error::InvalidPath(path.to_owned())); }
+        if super::sqlite::encrypted_file::companion(path).exists() {
+            return Err(rusqlite::Error::InvalidPath(path.to_owned()));
+        }
         rusqlite::Connection::open_with_flags(path, flags)?
     };
     connection.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA mmap_size=0;")?;
@@ -211,8 +276,10 @@ impl EncryptedStorage {
     /// # Errors
     /// Fails for out-of-scope paths, unavailable historical keys or I/O errors.
     pub fn reencrypt_file(&self, path: &Path) -> io::Result<()> {
-        self._registration.shared_file(path)?
-            .lock().map_err(|_| io::Error::other("encrypted file poisoned"))?
+        self._registration
+            .shared_file(path)?
+            .lock()
+            .map_err(|_| io::Error::other("encrypted file poisoned"))?
             .reencrypt()
     }
 }
@@ -223,7 +290,8 @@ mod tests {
 
     #[test]
     fn physical_handles_encrypt_seek_reopen_and_refuse_missing_keys() {
-        let root = std::env::temp_dir().join(format!("terrabase-physical-encrypted-{}", crate::identity::process_generator().generate().to_text()));
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-physical-encrypted-{}", crate::identity::generate()));
         let owner = crate::storage::DatabaseOwner::local_development();
         let keys = crate::engine::test_storage_keys(&owner, 111);
         let guard = EncryptedStorage::register(&root, keys.clone()).unwrap();
@@ -236,19 +304,23 @@ mod tests {
         file.read_exact(&mut bytes).unwrap();
         assert_eq!(&bytes, b"encrypted");
         assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
-        drop(file); drop(guard);
+        drop(file);
+        drop(guard);
         assert!(open_physical_file(&path).is_err());
         let guard = EncryptedStorage::register(&root, keys).unwrap();
         let mut file = open_physical_file(&path).unwrap();
-        let mut value = String::new(); file.read_to_string(&mut value).unwrap();
+        let mut value = String::new();
+        file.read_to_string(&mut value).unwrap();
         assert_eq!(value, "physical-encrypted-secret");
-        drop(file); drop(guard);
+        drop(file);
+        drop(guard);
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn physical_create_refuses_plaintext_adoption_and_missing_main_companion() {
-        let root = std::env::temp_dir().join(format!("terrabase-physical-refusal-{}", crate::identity::process_generator().generate().to_text()));
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-physical-refusal-{}", crate::identity::generate()));
         let owner = crate::storage::DatabaseOwner::local_development();
         let keys = crate::engine::test_storage_keys(&owner, 112);
         let guard = EncryptedStorage::register(&root, keys).unwrap();
@@ -258,6 +330,7 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"plaintext-existing");
         std::fs::write(&path, []).unwrap();
         assert!(create_physical_file(&path).is_err());
-        drop(guard); std::fs::remove_dir_all(root).unwrap();
+        drop(guard);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

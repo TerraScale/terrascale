@@ -2102,7 +2102,7 @@ impl SqliteStorage {
         transaction.execute_batch("DROP TRIGGER temp.pruning_watermark").map_err(|_| ())?;
         repair_summary::prune(&transaction, floor, now)?;
         accounting::settle_due(&transaction, accounting_now)?;
-            storage_intervals::prune_retired(&transaction)?;
+        storage_intervals::prune_retired(&transaction)?;
         transaction.commit().map_err(|_| ())?;
         u64::try_from(pruned).map_err(|_| ())
     }
@@ -2437,10 +2437,14 @@ fn stage_intent(
             return Ok(CommitResult::Rejected(CommitRejection::Conflict));
         }
         for (collection, expected) in &group.schema_observations {
-            let current: Option<String> = transaction.query_row(
-                "SELECT schema FROM merge_schemas WHERE collection = ?1",
-                [collection.as_str()], |row| row.get(0),
-            ).optional().map_err(|_| ())?;
+            let current: Option<String> = transaction
+                .query_row(
+                    "SELECT schema FROM merge_schemas WHERE collection = ?1",
+                    [collection.as_str()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|_| ())?;
             if current != *expected {
                 return Ok(CommitResult::Rejected(CommitRejection::Conflict));
             }
@@ -4534,22 +4538,42 @@ impl SqliteStorage {
 }
 
 impl StoragePort for SqliteStorage {
-    fn local_replication_origin(&self) -> &str { &self.local_origin }
-    fn replication_repair_frontier(&self, tenant: &TenantId, cut: u64) -> Result<std::collections::BTreeMap<String,u64>, ()> {
+    fn local_replication_origin(&self) -> &str {
+        &self.local_origin
+    }
+    fn replication_repair_frontier(
+        &self,
+        tenant: &TenantId,
+        cut: u64,
+    ) -> Result<std::collections::BTreeMap<String, u64>, ()> {
         let reader = self.reader();
         let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
         let result = repair_summary::frontier(&transaction, tenant, cut)?;
         transaction.commit().map_err(|_| ())?;
         Ok(result)
     }
-    fn replication_range_summary(&self, tenant: &TenantId, origin: &str, cut: u64, first: u64, last: u64) -> Result<terrabase_replication_core::anti_entropy::RangeFingerprint, ()> {
+    fn replication_range_summary(
+        &self,
+        tenant: &TenantId,
+        origin: &str,
+        cut: u64,
+        first: u64,
+        last: u64,
+    ) -> Result<terrabase_replication_core::anti_entropy::RangeFingerprint, ()> {
         let reader = self.reader();
         let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
         let result = repair_summary::summary(&transaction, tenant, origin, cut, first, last)?;
         transaction.commit().map_err(|_| ())?;
         Ok(result)
     }
-    fn replication_range_publications(&self, tenant: &TenantId, origin: &str, cut: u64, first: u64, last: u64) -> Result<Vec<crate::engine::ReplicatedPublication>, ()> {
+    fn replication_range_publications(
+        &self,
+        tenant: &TenantId,
+        origin: &str,
+        cut: u64,
+        first: u64,
+        last: u64,
+    ) -> Result<Vec<crate::engine::ReplicatedPublication>, ()> {
         let reader = self.reader();
         let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
         let result = repair_summary::publications(&transaction, tenant, origin, cut, first, last)?;
@@ -4690,7 +4714,9 @@ impl StoragePort for SqliteStorage {
         let tx =
             writer.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| ())?;
         let (current, was_closed) = origin_epoch_on(&tx)?;
-        if !closed && !lifecycle_state::permits_origin_activation(&tx)? { return Err(()); }
+        if !closed && !lifecycle_state::permits_origin_activation(&tx)? {
+            return Err(());
+        }
         if epoch < current || (epoch == current && was_closed && !closed) {
             return Err(());
         }

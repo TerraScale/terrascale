@@ -71,6 +71,13 @@ cryptographic entropy and the full 128-bit value keep identities independent
 across processes and Regions. Entropy overflow waits for a later millisecond
 instead of wrapping.
 
+Rust enables the `ulid` crate's `std` feature and uses its default `rand`
+cryptographic RNG, seeded by the operating system. A shared mutex protects the
+crate's `Generator`; entropy overflow retries after a short sleep. The crate
+owns random generation, monotonic increments, and clock rollback handling.
+TerraBase does not implement a random source or collect seed material. RNG
+initialization fails if OS entropy is unavailable. There is no weak seed fallback. Monotonic IDs are identifiers, not secrets.
+
 Caller-supplied TerraBase entity IDs and database mutation idempotency IDs must
 already be valid canonical ULIDs. Retry uses the same client-request ULID and
 request digest. An API never silently replaces a malformed or duplicated ID.
@@ -98,11 +105,13 @@ applies to view plans, schemas, snapshots, chunks, and artifacts.
 
 ## Libraries and evidence
 
-Rust uses the `ulid` crate behind a TerraScale-owned wrapper. Go bindings use a
-small repository-owned conversion layer over the fixed 16-byte protobuf field.
-Dependencies are pinned in their owning lockfiles. The wrappers fix
-cryptographically secure monotonic generation, strict parsing, 16-byte
-conversion, canonical text, equality, comparison, and serialization.
+Rust uses the `ulid` crate directly for ULID values and generation. Go bindings
+use a small repository-owned conversion layer over the fixed 16-byte protobuf
+field. Dependencies are pinned in their owning lockfiles. Boundary validation
+enforces strict parsing and fixed binary lengths. The
+crate supplies canonical text, binary conversion, equality, and comparison;
+typed entity IDs preserve distinctions between tenants, projects, and other
+entities.
 Application code cannot select alternate formats or random sources.
 
 One cross-language corpus covers the ULID specification vectors, minimum and

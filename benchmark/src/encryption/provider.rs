@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 
 use zeroize::Zeroize;
 
-use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid, Ulid, UlidError, process_generator};
+use crate::identity::{
+    DatabaseUlid, ProjectUlid, TenantUlid, Ulid, UlidError, from_text, generate,
+};
 use crate::regions::RegionCode;
 
 use super::{DatabaseKey, EncryptionError, valid_identity};
@@ -29,7 +31,7 @@ impl DatabaseKeyVersion {
     /// generator.
     #[must_use]
     pub fn generate() -> Self {
-        Self(process_generator().generate())
+        Self(generate())
     }
 
     /// Parses the canonical 26-character uppercase ULID form.
@@ -38,7 +40,7 @@ impl DatabaseKeyVersion {
     ///
     /// Returns the underlying ULID parse error for malformed text.
     pub fn from_text(text: &str) -> Result<Self, UlidError> {
-        Ok(Self(Ulid::from_text(text)?))
+        Ok(Self(from_text(text)?))
     }
 
     /// Constructs a version from a validated 16-byte wire value.
@@ -56,7 +58,7 @@ impl DatabaseKeyVersion {
     /// Returns the canonical text value.
     #[must_use]
     pub fn to_text(self) -> String {
-        self.0.to_text()
+        self.0.to_string()
     }
 }
 

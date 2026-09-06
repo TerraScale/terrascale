@@ -118,11 +118,9 @@ fn persist(
     let scope = document_scope(engine).map_err(|()| "database scope is unavailable".to_owned())?;
     let snapshot =
         engine.read_snapshot(&scope).map_err(|_| "schema status snapshot failed".to_owned())?;
-    let operation = OperationId::try_new(&format!(
-        "schema-progress-{}",
-        terrabase::identity::process_generator().generate().to_text(),
-    ))
-    .map_err(|_| "schema status operation identity failed".to_owned())?;
+    let operation =
+        OperationId::try_new(&format!("schema-progress-{}", terrabase::identity::generate(),))
+            .map_err(|_| "schema status operation identity failed".to_owned())?;
     let mut transaction = engine
         .begin(&scope, snapshot, operation.clone())
         .map_err(|_| "schema status transaction failed".to_owned())?;

@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
-use terrabase::identity::{Ulid, process_generator};
+use terrabase::identity::{from_text, generate};
 use terrabase_cluster::production::{DatabaseRouteScope, MemberWorkloadIdentity};
 
 /// Immutable host and configured database boundary for auth bootstrap control.
@@ -44,7 +44,7 @@ impl AuthBootstrapBoundary {
             return Err(PlacementError::Invalid);
         }
         for (member, region) in &seats {
-            Ulid::from_text(member).map_err(|_| PlacementError::Invalid)?;
+            from_text(member).map_err(|_| PlacementError::Invalid)?;
             if !["GRU", "SFO", "FRA"].contains(&region.as_str()) {
                 return Err(PlacementError::Invalid);
             }
@@ -63,7 +63,7 @@ impl AuthBootstrapBoundary {
         grant: &pb::AuthGroupBootstrapGrant,
         incarnation: &str,
     ) -> Result<(), PlacementError> {
-        Ulid::from_text(&grant.group_id).map_err(|_| PlacementError::Invalid)?;
+        from_text(&grant.group_id).map_err(|_| PlacementError::Invalid)?;
         let scope = DatabaseRouteScope::try_new(&grant.tenant, &grant.project, &grant.database)
             .map_err(|_| PlacementError::Invalid)?;
         if grant.environment != self.environment
@@ -93,7 +93,7 @@ impl AuthBootstrapBoundary {
             let expected =
                 MemberWorkloadIdentity::try_new(&self.environment, &self.cluster, &voter.member)
                     .map_err(|_| PlacementError::Invalid)?;
-            Ulid::from_text(&voter.storage_incarnation).map_err(|_| PlacementError::Invalid)?;
+            from_text(&voter.storage_incarnation).map_err(|_| PlacementError::Invalid)?;
             if voter.node_id == 0
                 || voter.spiffe_uri != expected.as_str()
                 || self.seats.get(&voter.member) != Some(&voter.region)
@@ -151,7 +151,7 @@ impl AuthBootstrapJournal {
                     boundary.environment,
                     boundary.cluster,
                     boundary.member,
-                    process_generator().generate().to_text()
+                    generate().to_string()
                 ],
             )
             .map_err(|_| PlacementError::Storage)?;
@@ -185,7 +185,7 @@ impl AuthBootstrapJournal {
         let incarnation: String = connection
             .query_row("SELECT incarnation FROM auth_identity WHERE id=1", [], |row| row.get(0))
             .map_err(|_| PlacementError::Storage)?;
-        Ulid::from_text(&incarnation).map_err(|_| PlacementError::Storage)?;
+        from_text(&incarnation).map_err(|_| PlacementError::Storage)?;
         Ok(pb::AuthStorageIdentity {
             environment: self.boundary.environment.clone(),
             cluster: self.boundary.cluster.clone(),
@@ -203,7 +203,7 @@ impl AuthBootstrapJournal {
         principal: &str,
         request: pb::AuthGroupBootstrapRequest,
     ) -> Result<pb::AuthGroupBootstrapReceipt, PlacementError> {
-        Ulid::from_text(&request.operation_id).map_err(|_| PlacementError::Invalid)?;
+        from_text(&request.operation_id).map_err(|_| PlacementError::Invalid)?;
         if principal.is_empty() || principal.len() > 1024 || principal.chars().any(char::is_control)
         {
             return Err(PlacementError::Invalid);

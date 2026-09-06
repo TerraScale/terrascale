@@ -1003,7 +1003,7 @@ mod tests {
     };
 
     fn value(number: u128) -> Ulid {
-        Ulid::from_parts(1, number).expect("test ULID")
+        Ulid::from_parts(1, number)
     }
 
     fn member(number: u128) -> MemberUlid {

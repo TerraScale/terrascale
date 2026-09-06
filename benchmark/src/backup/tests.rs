@@ -67,7 +67,7 @@ fn local_backup_encryption(
     let context = EncryptionContext::for_artifact(
         &scope,
         ArtifactKind::Backup,
-        crate::identity::process_generator().generate(),
+        crate::identity::generate(),
         version,
         3,
         Compression::None,

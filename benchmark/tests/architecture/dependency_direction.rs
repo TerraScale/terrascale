@@ -137,13 +137,12 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
 /// Review note (2026-08-30): `ulid` joined the engine core as the second
 /// external dependency. The accepting record is ADR 0027 'ULID object
 /// identities', whose 'Libraries and evidence' section mandates the `ulid`
-/// crate behind a TerraScale-owned wrapper (`src/identity/`). The dependency
-/// is built with `default-features = false` and no features at all, because
-/// every 1.x manifest of the crate declares `std = ["rand"]`: the engine
-/// takes the value/codec surface only, pulls no `rand` and no `serde`, and
-/// keeps cryptographically secure monotonic generation TerraScale-owned in
-/// `src/identity/generate.rs` (BLAKE3 keyed counter mode) rather than
-/// importing the crate's `rand`-backed generator.
+/// crate in `src/identity/`. The dependency
+/// enables `std` and its transitive `rand` dependency for OS-seeded
+/// cryptographic random generation. Review update (2026-09-05): replace the
+/// custom BLAKE3 entropy stream with the crate's Generator and value type.
+/// Boundary validation retains strict parsing; shared generation serializes
+/// access and retries entropy overflow.
 const ENGINE_CORE_EXTERNAL_DEPS: &[&str] = &["blake3", "ulid"];
 
 /// The workspace graph as read from the manifests.

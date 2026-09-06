@@ -38,10 +38,7 @@ impl Engine {
         crate::storage::validate_local_restore_source(source)
             .map_err(|_| EngineOpenError::InvalidConfig)?;
         let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
-        let staging = parent.join(format!(
-            ".terrabase-restore-{}",
-            crate::identity::process_generator().generate().to_text()
-        ));
+        let staging = parent.join(format!(".terrabase-restore-{}", crate::identity::generate()));
         let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         {
@@ -81,10 +78,8 @@ mod tests {
 
     #[test]
     fn physical_restore_verifies_source_and_preserves_existing_targets() {
-        let root = std::env::temp_dir().join(format!(
-            "terrabase-physical-restore-{}",
-            crate::identity::process_generator().generate().to_text()
-        ));
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-physical-restore-{}", crate::identity::generate()));
         let source = root.join("source");
         let engine = Engine::open(EngineConfig::durable(&source).expect("config")).expect("source");
         let source_id = engine.database_id();

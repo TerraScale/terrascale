@@ -3,10 +3,8 @@ use crate::regions::RegionCode;
 use crate::usage::{MAX_USAGE_PAGE_SIZE, UsagePageRequest, UsagePlacement};
 
 fn setup() -> (std::path::PathBuf, Engine, TenantScope) {
-    let path = std::env::temp_dir().join(format!(
-        "terrabase-write-usage-{}",
-        crate::identity::process_generator().generate().to_text()
-    ));
+    let path =
+        std::env::temp_dir().join(format!("terrabase-write-usage-{}", crate::identity::generate()));
     let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
     let tenant = TenantId::try_new("usage-tenant").unwrap();
     let scope = engine.scope_for(&tenant);
@@ -81,10 +79,8 @@ fn placement_cannot_be_rebound_or_claim_prebinding_writes() {
     engine.shutdown().unwrap();
     std::fs::remove_dir_all(path).unwrap();
 
-    let path = std::env::temp_dir().join(format!(
-        "terrabase-unbound-usage-{}",
-        crate::identity::process_generator().generate().to_text()
-    ));
+    let path = std::env::temp_dir()
+        .join(format!("terrabase-unbound-usage-{}", crate::identity::generate()));
     let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
     let tenant = TenantId::try_new("usage-tenant").unwrap();
     let scope = engine.scope_for(&tenant);

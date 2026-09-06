@@ -37,10 +37,10 @@ pub(crate) use intent::{
 pub(crate) use ownership::validate_local_restore_source;
 pub use ownership::{DatabaseOwner, EnvironmentName, OwnershipError};
 pub(crate) use ownership::{OwnershipMode, load_or_create};
-pub use sqlite::database_file;
-pub(crate) use sqlite::import_backup_file;
 pub(crate) use sqlite::branch_import::{copy_encrypted_snapshot, rebind_owner};
 pub(crate) use sqlite::branch_provenance::transform_provenance;
+pub use sqlite::database_file;
+pub(crate) use sqlite::import_backup_file;
 pub(crate) use sqlite::{SqliteStorage, decode_document_body};
 
 /// A retained journal page could not be served.
@@ -634,7 +634,10 @@ pub(crate) trait StoragePort: Send {
         &mut self,
         _tenant: &TenantId,
         _command: crate::engine::lifecycle_state::LifecycleCommand,
-    ) -> Result<crate::engine::lifecycle_state::LifecycleState, crate::engine::lifecycle_state::LifecycleError> {
+    ) -> Result<
+        crate::engine::lifecycle_state::LifecycleState,
+        crate::engine::lifecycle_state::LifecycleError,
+    > {
         Err(crate::engine::lifecycle_state::LifecycleError::Unavailable)
     }
 
@@ -653,9 +656,27 @@ pub(crate) trait StoragePort: Send {
 
     fn local_replication_origin(&self) -> &str;
 
-    fn replication_repair_frontier(&self, tenant: &TenantId, cut: u64) -> Result<std::collections::BTreeMap<String, u64>, ()>;
-    fn replication_range_summary(&self, tenant: &TenantId, origin: &str, cut: u64, first: u64, last: u64) -> Result<terrabase_replication_core::anti_entropy::RangeFingerprint, ()>;
-    fn replication_range_publications(&self, tenant: &TenantId, origin: &str, cut: u64, first: u64, last: u64) -> Result<Vec<crate::engine::ReplicatedPublication>, ()>;
+    fn replication_repair_frontier(
+        &self,
+        tenant: &TenantId,
+        cut: u64,
+    ) -> Result<std::collections::BTreeMap<String, u64>, ()>;
+    fn replication_range_summary(
+        &self,
+        tenant: &TenantId,
+        origin: &str,
+        cut: u64,
+        first: u64,
+        last: u64,
+    ) -> Result<terrabase_replication_core::anti_entropy::RangeFingerprint, ()>;
+    fn replication_range_publications(
+        &self,
+        tenant: &TenantId,
+        origin: &str,
+        cut: u64,
+        first: u64,
+        last: u64,
+    ) -> Result<Vec<crate::engine::ReplicatedPublication>, ()>;
 
     /// Reads complete retained source groups, including their original private controls.
     fn replication_publications(
@@ -767,12 +788,18 @@ pub(crate) trait StoragePort: Send {
     }
 
     /// Durable accepted-deletion fence.
-    fn storage_usage_stopped_at(&self, _tenant: &TenantId) -> Result<Option<u64>, UsageStorageError> {
+    fn storage_usage_stopped_at(
+        &self,
+        _tenant: &TenantId,
+    ) -> Result<Option<u64>, UsageStorageError> {
         Err(UsageStorageError::Unavailable)
     }
 
     /// Last complete immutable storage cut, absent before the first closure.
-    fn storage_usage_closed_through(&self, _tenant: &TenantId) -> Result<Option<u64>, UsageStorageError> {
+    fn storage_usage_closed_through(
+        &self,
+        _tenant: &TenantId,
+    ) -> Result<Option<u64>, UsageStorageError> {
         Err(UsageStorageError::Unavailable)
     }
 
@@ -1651,7 +1678,9 @@ pub(crate) use codec::{document_fingerprint, write_set_digest};
 /// Reports whether one document is inside the codec's structural limits.
 pub(crate) use codec::document_within_limits;
 
-pub(crate) use codec::{decode_private_changes, decode_private_value, encode_private_value, transaction_digest};
+pub(crate) use codec::{
+    decode_private_changes, decode_private_value, encode_private_value, transaction_digest,
+};
 pub(crate) use intent::{PrivateMetadataWrite, SchemaEnvelopeWrite};
 
 pub(crate) use intent::ReplicationPublicationIntent;

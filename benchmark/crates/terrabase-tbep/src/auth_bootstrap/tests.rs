@@ -10,11 +10,11 @@ pub(crate) fn grant(
     let mut members = proposal.regions[0].members.clone();
     members.sort();
     pb::AuthGroupBootstrapRequest {
-        operation_id: process_generator().generate().to_text(),
+        operation_id: generate().to_string(),
         grant: Some(pb::AuthGroupBootstrapGrant {
             environment: proposal.environment.clone(),
             cluster: proposal.cluster.clone(),
-            group_id: process_generator().generate().to_text(),
+            group_id: generate().to_string(),
             tenant: assignment.tenant.clone(),
             project: assignment.project.clone(),
             database: assignment.database.clone(),
@@ -38,7 +38,7 @@ pub(crate) fn grant(
                     storage_incarnation: if member == identity.member {
                         identity.storage_incarnation.clone()
                     } else {
-                        process_generator().generate().to_text()
+                        generate().to_string()
                     },
                     member,
                     region: "GRU".into(),
@@ -70,8 +70,8 @@ fn grant_replay_is_immutable_and_state_creation_is_not_reissued_after_restart() 
         Err(PlacementError::RetryMismatch)
     );
     let mut replacement = request;
-    replacement.operation_id = process_generator().generate().to_text();
-    replacement.grant.as_mut().unwrap().group_id = process_generator().generate().to_text();
+    replacement.operation_id = generate().to_string();
+    replacement.grant.as_mut().unwrap().group_id = generate().to_string();
     assert_eq!(reopened.bootstrap("gru-control", replacement), Err(PlacementError::RetryMismatch));
 }
 
@@ -110,6 +110,6 @@ fn grant_rejects_foreign_region_missing_voter_and_changed_local_identity() {
         .iter_mut()
         .find(|voter| voter.member == identity.member)
         .unwrap()
-        .storage_incarnation = process_generator().generate().to_text();
+        .storage_incarnation = generate().to_string();
     assert_eq!(journal.bootstrap("gru-control", malformed), Err(PlacementError::IdentityMismatch));
 }

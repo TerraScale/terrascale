@@ -193,11 +193,11 @@ fn a_re_pulled_record_replays_instead_of_double_writing() {
 
     // The same record applied directly — not through the tailer — also
     // resolves to the replay.
-    let (records, _) =
-        pull_origin_publications(source.engine_host(), &scope, None).expect("the source journal pulls");
+    let (records, _) = pull_origin_publications(source.engine_host(), &scope, None)
+        .expect("the source journal pulls");
     assert_eq!(records.len(), 1);
-    let applied =
-        apply_publications(target.engine_host(), &scope, &records).expect("the direct apply resolves");
+    let applied = apply_publications(target.engine_host(), &scope, &records)
+        .expect("the direct apply resolves");
     assert_eq!(applied, 0, "the direct re-apply replays too");
     assert_eq!(orders(&target).len(), 1);
 }
@@ -219,8 +219,8 @@ fn the_target_never_re_ships_its_replicated_rows() {
     assert_eq!(applied, 2);
     assert_eq!(orders(&target).len(), 2);
 
-    let (records, _next) =
-        pull_origin_publications(target.engine_host(), &scope, None).expect("the target journal pulls");
+    let (records, _next) = pull_origin_publications(target.engine_host(), &scope, None)
+        .expect("the target journal pulls");
     assert!(records.is_empty(), "replicated rows never re-ship: {records:?}");
 
     // And the drained source ships nothing new either.

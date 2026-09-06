@@ -350,7 +350,10 @@ async fn real_raft_rejects_partitioned_leader_and_serializes_competing_auth_writ
 }
 
 fn tx(id: &str, action: Action) -> Action {
-    Action::TransactionOperation { transaction_id: id.into(), action: Box::new(action) }
+    Action::TransactionOperation {
+        transaction_id: if id.contains('#') { id.into() } else { format!("{id}#1") },
+        action: Box::new(action),
+    }
 }
 
 #[tokio::test]
@@ -404,7 +407,7 @@ async fn transaction_reads_own_writes_and_commit_replay_survives_expiry_and_rest
 }
 
 #[tokio::test]
-async fn caught_inner_conflict_cannot_commit_partial_effects() {
+async fn caught_inner_conflict_poison_commit_without_partial_effects() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
     apply(
@@ -441,12 +444,238 @@ async fn caught_inner_conflict_cannot_commit_partial_effects() {
         apply(
             &mut store,
             4,
+            command(
+                "first",
+                tx(
+                    "tx",
+                    Action::InsertUnique { model: "user".into(), record: user("b", "two@test") }
+                )
+            )
+        )
+        .await,
+        Outcome::IdempotencyConflict
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            5,
             command("commit", Action::CommitTransaction { transaction_id: "tx".into() })
         )
         .await,
         Outcome::TransactionConflict
     );
     assert!(store.read_record("user", "a").unwrap().is_none());
+}
+
+#[tokio::test]
+async fn outer_idempotency_conflict_does_not_poison_transaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
+    apply(
+        &mut store,
+        1,
+        command("begin", Action::BeginTransaction { transaction_id: "tx".into() }),
+    )
+    .await;
+    apply(
+        &mut store,
+        2,
+        command(
+            "first",
+            tx("tx", Action::InsertUnique { model: "user".into(), record: user("a", "one@test") }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        apply(
+            &mut store,
+            3,
+            command(
+                "first",
+                tx(
+                    "tx",
+                    Action::InsertUnique { model: "user".into(), record: user("b", "two@test") }
+                )
+            )
+        )
+        .await,
+        Outcome::IdempotencyConflict
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            4,
+            command("commit", Action::CommitTransaction { transaction_id: "tx#1".into() })
+        )
+        .await,
+        Outcome::Applied
+    );
+    assert!(store.read_record("user", "a").unwrap().is_some());
+    assert!(store.read_record("user", "b").unwrap().is_none());
+}
+
+#[tokio::test]
+async fn transaction_generations_reject_delayed_ids_after_terminal_expiry_and_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("auth.sqlite");
+    let mut store = SqliteStore::open(&path, "group").unwrap();
+    assert!(matches!(
+        apply(&mut store, 1, command("begin-terminal", Action::BeginTransaction {
+            transaction_id: "terminal".into()
+        })).await,
+        Outcome::Transaction { transaction_id, .. } if transaction_id == "terminal#1"
+    ));
+    assert_eq!(
+        apply(
+            &mut store,
+            2,
+            command(
+                "commit-terminal",
+                Action::CommitTransaction { transaction_id: "terminal#1".into() }
+            )
+        )
+        .await,
+        Outcome::Applied
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            3,
+            command(
+                "delayed-terminal",
+                tx(
+                    "terminal#1",
+                    Action::InsertUnique {
+                        model: "user".into(),
+                        record: user("late", "late@test")
+                    },
+                )
+            )
+        )
+        .await,
+        Outcome::TransactionConflict
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            4,
+            command(
+                "reuse-terminal",
+                Action::BeginTransaction { transaction_id: "terminal".into() }
+            )
+        )
+        .await,
+        Outcome::Transaction { transaction_id, .. } if transaction_id == "terminal#2"
+    );
+
+    assert!(matches!(
+        apply(&mut store, 5, command("begin-expired", Action::BeginTransaction {
+            transaction_id: "expired".into()
+        })).await,
+        Outcome::Transaction { transaction_id, .. } if transaction_id == "expired#2"
+    ));
+    let mut delayed = command(
+        "delayed-expired",
+        tx(
+            "expired#2",
+            Action::InsertUnique { model: "user".into(), record: user("late2", "late2@test") },
+        ),
+    );
+    delayed.observed_at_ms = 40_000;
+    assert_eq!(apply(&mut store, 6, delayed).await, Outcome::TransactionConflict);
+    let mut gc = command("gc-expired", Action::BeginTransaction { transaction_id: "other".into() });
+    gc.observed_at_ms = 40_000;
+    assert!(matches!(apply(&mut store, 7, gc).await, Outcome::Transaction { .. }));
+    assert!(matches!(
+        apply(
+            &mut store,
+            8,
+            command("reuse-expired", Action::BeginTransaction { transaction_id: "expired".into() })
+        )
+        .await,
+        Outcome::Transaction { transaction_id, .. } if transaction_id == "expired#4"
+    ));
+    drop(store);
+    let mut reopened = SqliteStore::open(&path, "group").unwrap();
+    assert_eq!(
+        apply(
+            &mut reopened,
+            9,
+            command(
+                "delayed-after-restart",
+                tx(
+                    "terminal#1",
+                    Action::InsertUnique {
+                        model: "user".into(),
+                        record: user("late3", "late3@test")
+                    },
+                )
+            )
+        )
+        .await,
+        Outcome::TransactionConflict
+    );
+}
+
+#[tokio::test]
+async fn operation_limit_rejection_does_not_poison_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
+    assert!(matches!(
+        apply(
+            &mut store,
+            1,
+            command("begin", Action::BeginTransaction { transaction_id: "limited".into() })
+        )
+        .await,
+        Outcome::Transaction { .. }
+    ));
+    for index in 0..100 {
+        assert!(matches!(
+            apply(
+                &mut store,
+                index + 2,
+                command(
+                    &format!("find-{index}"),
+                    tx(
+                        "limited",
+                        Action::Find {
+                            model: "user".into(),
+                            predicates: vec![],
+                            offset: 0,
+                            limit: 1
+                        },
+                    )
+                )
+            )
+            .await,
+            Outcome::Records { .. }
+        ));
+    }
+    assert_eq!(
+        apply(
+            &mut store,
+            102,
+            command(
+                "limit",
+                tx(
+                    "limited",
+                    Action::Find { model: "user".into(), predicates: vec![], offset: 0, limit: 1 },
+                )
+            )
+        )
+        .await,
+        Outcome::TransactionConflict
+    );
+    assert_eq!(
+        apply(
+            &mut store,
+            103,
+            command("commit", Action::CommitTransaction { transaction_id: "limited".into() })
+        )
+        .await,
+        Outcome::Applied
+    );
 }
 
 #[tokio::test]
@@ -480,7 +709,7 @@ async fn competing_owner_departure_snapshots_allow_only_one_commit() {
             command(
                 &format!("read-{id}"),
                 tx(
-                    id,
+                    if id == "a" { "a#1" } else { "b#2" },
                     Action::Find {
                         model: "member".into(),
                         predicates: vec![],
@@ -500,7 +729,7 @@ async fn competing_owner_departure_snapshots_allow_only_one_commit() {
             command(
                 &format!("remove-{id}"),
                 tx(
-                    id,
+                    if id == "a" { "a#1" } else { "b#2" },
                     Action::ConsumeOne {
                         model: "member".into(),
                         id: id.into(),
@@ -515,7 +744,7 @@ async fn competing_owner_departure_snapshots_allow_only_one_commit() {
         apply(
             &mut store,
             9,
-            command("commit-a", Action::CommitTransaction { transaction_id: "a".into() })
+            command("commit-a", Action::CommitTransaction { transaction_id: "a#1".into() })
         )
         .await,
         Outcome::Applied
@@ -524,7 +753,7 @@ async fn competing_owner_departure_snapshots_allow_only_one_commit() {
         apply(
             &mut store,
             10,
-            command("commit-b", Action::CommitTransaction { transaction_id: "b".into() })
+            command("commit-b", Action::CommitTransaction { transaction_id: "b#2".into() })
         )
         .await,
         Outcome::TransactionConflict

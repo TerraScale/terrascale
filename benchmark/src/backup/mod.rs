@@ -326,7 +326,7 @@ impl BackupEncryption {
         if scope.purpose() != KeyPurpose::Backup {
             return Err(BackupEncryptionError::InvalidKeyPurpose);
         }
-        let artifact_id = crate::identity::process_generator().generate();
+        let artifact_id = crate::identity::generate();
         let context = EncryptionContext::for_artifact(
             &scope,
             ArtifactKind::Backup,

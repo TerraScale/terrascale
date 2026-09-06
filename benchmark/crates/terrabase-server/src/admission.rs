@@ -1,7 +1,10 @@
 //! Authenticated host admission with durable, immutable replay records.
 #[path = "admission_stop.rs"]
 mod stop;
-pub use stop::{StopPreflightReceipt,StorageStopPreflight,PrepareStopRequest,PrepareStopReceipt,StoragePrepareStop,StopReceipt, StopRequest, StorageStop};
+pub use stop::{
+    PrepareStopReceipt, PrepareStopRequest, StopPreflightReceipt, StopReceipt, StopRequest,
+    StoragePrepareStop, StorageStop, StorageStopPreflight,
+};
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -144,7 +147,9 @@ impl AdmissionHost {
         DatabaseUlid::from_text(&record.database_id).map_err(|_| "invalid database")?;
         if let Some(parent) = &record.parent_database_id {
             DatabaseUlid::from_text(parent).map_err(|_| "invalid parent database")?;
-            if parent == &record.database_id { return Err("branch cannot be its own parent".into()); }
+            if parent == &record.database_id {
+                return Err("branch cannot be its own parent".into());
+            }
         }
         DatabaseKeyVersion::from_text(&record.key_version).map_err(|_| "invalid key version")?;
         if record.environment != self.environment
@@ -263,15 +268,25 @@ impl AdmissionHost {
         }
         let identity_router =
             self.identity_delivery.as_ref().map(|delivery| delivery.clone().router());
-        async fn prepare_stop(State(host): State<Arc<AdmissionHost>>, body: axum::body::Bytes) -> axum::response::Response {
-            let Ok(request) = serde_json::from_slice::<PrepareStopRequest>(&body) else { return StatusCode::BAD_REQUEST.into_response(); };
+        async fn prepare_stop(
+            State(host): State<Arc<AdmissionHost>>,
+            body: axum::body::Bytes,
+        ) -> axum::response::Response {
+            let Ok(request) = serde_json::from_slice::<PrepareStopRequest>(&body) else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
             match tokio::task::spawn_blocking(move || host.prepare_stop(request)).await {
                 Ok(Ok(receipt)) => axum::Json(receipt).into_response(),
                 _ => StatusCode::CONFLICT.into_response(),
             }
         }
-        async fn preflight_stop(State(host): State<Arc<AdmissionHost>>, body: axum::body::Bytes) -> axum::response::Response {
-            let Ok(request) = serde_json::from_slice::<PrepareStopRequest>(&body) else { return StatusCode::BAD_REQUEST.into_response(); };
+        async fn preflight_stop(
+            State(host): State<Arc<AdmissionHost>>,
+            body: axum::body::Bytes,
+        ) -> axum::response::Response {
+            let Ok(request) = serde_json::from_slice::<PrepareStopRequest>(&body) else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
             match tokio::task::spawn_blocking(move || host.preflight_stop(request)).await {
                 Ok(Ok(receipt)) => axum::Json(receipt).into_response(),
                 _ => StatusCode::CONFLICT.into_response(),
@@ -334,7 +349,7 @@ mod tests {
             tenant_id: TenantUlid::generate().to_string(),
             project_id: ProjectUlid::generate().to_string(),
             database_id: DatabaseUlid::generate().to_string(),
-                parent_database_id: None,
+            parent_database_id: None,
             key_version: DatabaseKeyVersion::generate().to_string(),
             name: "orders".into(),
             regions: vec!["GRU".into()],

@@ -1796,7 +1796,7 @@ mod tests {
         let location = std::env::temp_dir().join(format!(
             "terrabase-index-adapter-{}-{}",
             std::process::id(),
-            terrabase::identity::process_generator().generate().to_text()
+            terrabase::identity::generate()
         ));
         let config = terrabase::EngineConfig::durable(&location).expect("durable config");
         let engine = terrabase::Engine::open(config).expect("durable engine");
@@ -1837,10 +1837,8 @@ mod tests {
             CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
             OperationId,
         };
-        let location = std::env::temp_dir().join(format!(
-            "terrabase-index-reads-{}",
-            terrabase::identity::process_generator().generate().to_text()
-        ));
+        let location = std::env::temp_dir()
+            .join(format!("terrabase-index-reads-{}", terrabase::identity::generate()));
         let engine = Engine::open(terrabase::EngineConfig::durable(&location).unwrap()).unwrap();
         let tenant = TenantId::try_new("tenant").unwrap();
         let tenant_scope = engine.scope_for(&tenant);
@@ -1933,7 +1931,7 @@ mod tests {
         let location = std::env::temp_dir().join(format!(
             "terrabase-index-adapter-{}-{}",
             std::process::id(),
-            terrabase::identity::process_generator().generate().to_text()
+            terrabase::identity::generate()
         ));
         let config = terrabase::EngineConfig::durable(&location).expect("durable config");
         let engine = terrabase::Engine::open(config).expect("durable engine");

@@ -3308,9 +3308,8 @@ impl Engine {
             let tenant = group[0].tenant.clone();
             let scope = self.scope_for(&tenant);
             let snapshot = self.read_snapshot(&scope)?;
-            let operation =
-                OperationId::try_new(&crate::identity::process_generator().generate().to_text())
-                    .map_err(|_| EngineError::StorageFailure)?;
+            let operation = OperationId::try_new(&crate::identity::generate().to_string())
+                .map_err(|_| EngineError::StorageFailure)?;
             let mut transaction = self.begin(&scope, snapshot, operation)?;
             transaction.internal_maintenance = true;
             for key in &group {

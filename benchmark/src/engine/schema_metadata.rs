@@ -206,7 +206,7 @@ mod ttl_tests {
         let directory = std::env::temp_dir().join(format!(
             "terrabase-declared-ttl-{}-{}",
             std::process::id(),
-            crate::identity::process_generator().generate().to_text()
+            crate::identity::generate()
         ));
         let open = || Engine::open(EngineConfig::durable(&directory).unwrap()).unwrap();
         let collection = CollectionName::try_new("items").unwrap();

@@ -126,7 +126,9 @@ impl Session {
                 .map_err(|_| ErrorCode::AuthenticationExpired)
             }
         };
-        if result.is_ok() { super::observe_authorized_activity(&self.state, &self.database); }
+        if result.is_ok() {
+            super::observe_authorized_activity(&self.state, &self.database);
+        }
         result
     }
 

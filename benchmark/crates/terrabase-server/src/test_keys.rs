@@ -19,7 +19,7 @@ pub(crate) fn storage_keys(
         .parent()
         .unwrap()
         .join("target")
-        .join(format!("tk-{}", terrabase::identity::process_generator().generate()));
+        .join(format!("tk-{}", terrabase::identity::generate()));
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o710)).unwrap();
     let socket = directory.join("k.sock");

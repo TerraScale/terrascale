@@ -708,7 +708,7 @@ impl WebhookStorage for EngineWebhookStorage {
     ) -> Result<WebhookEndpoint, StorageError> {
         let _guard = self.writes.lock().map_err(|_| StorageError::Unavailable)?;
         let record = WebhookEndpoint {
-            id: terrabase::identity::process_generator().generate().to_text(),
+            id: terrabase::identity::generate().to_string(),
             endpoint: endpoint.to_owned(),
             created_at: now,
             deleted: false,
@@ -1506,7 +1506,7 @@ impl WebhookService {
                     .map_err(|_| WebhookError::misconfigured())?;
             blake3::hash(&bytes).to_hex().to_string()
         } else {
-            terrabase::identity::process_generator().generate().to_text()
+            terrabase::identity::generate().to_string()
         };
         for existing in self.list(scope)? {
             self.guard.reserve(scope, &existing.id).map_err(|_| WebhookError::guard())?;
@@ -2601,10 +2601,8 @@ mod tests {
 
     #[test]
     fn engine_storage_round_trips_endpoint_and_delivery_rows() {
-        let root = std::env::temp_dir().join(format!(
-            "terrascale-webhook-{}",
-            terrabase::identity::process_generator().generate().to_text()
-        ));
+        let root = std::env::temp_dir()
+            .join(format!("terrascale-webhook-{}", terrabase::identity::generate()));
         let engine = Arc::new(
             Engine::open(
                 terrabase::EngineConfig::durable(root.clone()).expect("durable test location"),

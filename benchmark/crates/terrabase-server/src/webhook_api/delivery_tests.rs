@@ -126,10 +126,8 @@ fn service(engine: &Arc<Engine>, ports: &Arc<TestPorts>) -> WebhookService {
 
 #[tokio::test]
 async fn retries_survive_cursor_advance_and_restart_then_expire_without_sending() {
-    let root = std::env::temp_dir().join(format!(
-        "terrascale-webhook-retries-{}",
-        terrabase::identity::process_generator().generate().to_text()
-    ));
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-retries-{}", terrabase::identity::generate()));
     let open = || {
         Arc::new(
             Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
@@ -192,10 +190,8 @@ async fn retries_survive_cursor_advance_and_restart_then_expire_without_sending(
 
 #[test]
 fn durable_adapters_reject_every_foreign_owner_dimension_without_mutation() {
-    let root = std::env::temp_dir().join(format!(
-        "terrascale-webhook-scope-{}",
-        terrabase::identity::process_generator().generate().to_text()
-    ));
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-scope-{}", terrabase::identity::generate()));
     let engine = Arc::new(
         Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
             .expect("engine"),
@@ -293,10 +289,8 @@ impl WebhookAuthorizer for TestAuthorizer {
 
 #[tokio::test(flavor = "current_thread")]
 async fn create_handler_keeps_runtime_responsive_while_secret_provider_blocks() {
-    let root = std::env::temp_dir().join(format!(
-        "terrascale-webhook-blocking-{}",
-        terrabase::identity::process_generator().generate().to_text()
-    ));
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-blocking-{}", terrabase::identity::generate()));
     let engine = Arc::new(
         Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
             .expect("engine"),
@@ -334,10 +328,8 @@ async fn create_handler_keeps_runtime_responsive_while_secret_provider_blocks() 
 
 #[test]
 fn deletion_reports_secret_destruction_failure_and_remains_retryable() {
-    let root = std::env::temp_dir().join(format!(
-        "terrascale-webhook-delete-{}",
-        terrabase::identity::process_generator().generate().to_text()
-    ));
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-delete-{}", terrabase::identity::generate()));
     let engine = Arc::new(
         Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
             .expect("engine"),
@@ -371,10 +363,8 @@ fn deletion_reports_secret_destruction_failure_and_remains_retryable() {
 #[test]
 fn journal_page_resumes_inside_a_large_commit_after_restart() {
     use terrabase::types::{CollectionName, Document, DocumentId, DocumentValue};
-    let root = std::env::temp_dir().join(format!(
-        "terrascale-webhook-batch-{}",
-        terrabase::identity::process_generator().generate().to_text()
-    ));
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-batch-{}", terrabase::identity::generate()));
     let engine = Arc::new(
         Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
             .expect("engine"),
@@ -459,10 +449,8 @@ fn journal_page_resumes_inside_a_large_commit_after_restart() {
 
 #[test]
 fn creation_retry_keeps_the_same_endpoint_and_secret_and_rejects_request_reuse() {
-    let root = std::env::temp_dir().join(format!(
-        "terrascale-webhook-idempotency-{}",
-        terrabase::identity::process_generator().generate().to_text()
-    ));
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-idempotency-{}", terrabase::identity::generate()));
     let engine = Arc::new(
         Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
             .expect("engine"),
@@ -497,10 +485,8 @@ fn creation_retry_keeps_the_same_endpoint_and_secret_and_rejects_request_reuse()
 #[test]
 fn retained_journal_preserves_overwritten_events_and_pending_retry_after_restart() {
     use terrabase::types::{CollectionName, Document, DocumentId, DocumentValue};
-    let root = std::env::temp_dir().join(format!(
-        "terrascale-webhook-history-{}",
-        terrabase::identity::process_generator().generate().to_text()
-    ));
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-history-{}", terrabase::identity::generate()));
     let open = || {
         Arc::new(
             Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
@@ -632,10 +618,8 @@ async fn dispatcher_budget_and_cancellation_preserve_due_deliveries() {
             Ok(DeliveryResponse { status: 204 })
         }
     }
-    let root = std::env::temp_dir().join(format!(
-        "terrascale-webhook-budget-{}",
-        terrabase::identity::process_generator().generate().to_text()
-    ));
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-budget-{}", terrabase::identity::generate()));
     let engine = Arc::new(
         Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
             .expect("engine"),

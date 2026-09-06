@@ -185,13 +185,32 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     let production =
         config.production.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
 
-    // The control bootstrap owns only the intent journal. It must not open
-    // customer engines before encryption and membership have been admitted.
-    if production.control.is_some() {
-        return serve_pending_placement_control(&config, production).await.map_err(|error| {
-            Box::new(DaemonError::ProductionStartup(error)) as Box<dyn Error + Send + Sync>
-        });
-    }
+    // Pending control is separate from accepted data admission. Reuse the
+    // signed journal on restart and never infer membership from config.
+    let journal = if production.control.is_some() {
+        let journal = open_production_placement_journal(production).map_err(|detail| {
+            Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                crate::production::ProductionComponentError {
+                    component: crate::production::ProductionComponent::ControlApi,
+                    detail,
+                },
+            ))) as Box<dyn Error + Send + Sync>
+        })?;
+        match journal.accepted() {
+            Ok(_) => Some(journal),
+            Err(terrabase_tbep::placement::PlacementError::NotFound) => {
+                return serve_pending_placement_control(&config, production).await.map_err(|error| {
+                    Box::new(DaemonError::ProductionStartup(error)) as Box<dyn Error + Send + Sync>
+                });
+            }
+            Err(_) => return Err(Box::new(DaemonError::ProductionStartup(
+                ProductionStartupError::Component(crate::production::ProductionComponentError {
+                    component: crate::production::ProductionComponent::Membership,
+                    detail: "retained membership proof is unavailable or invalid",
+                }),
+            )))
+        }
+    } else { None };
 
     // This is the production storage boundary. It opens every enabled
     // database below one root and verifies the route and placement catalogs;
@@ -222,16 +241,33 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         }
     };
 
-    // Membership is deliberately not inferred from the static file. The
-    // orchestrator's durable admission record is the authority; until its
-    // source is wired, close the already-opened endpoint and catalog and
-    // identify that one missing dependency.
+    if let Some(journal) = journal {
+        if let Err(error) = member.admit_membership(&*journal) {
+            let report = member.drain().await;
+            let detail = match error {
+                terrabase_cluster::production::ProductionMemberError::MembershipSource(
+                    terrabase_cluster::production::MembershipSourceError::Unavailable,
+                ) => "durable orchestrator membership source unavailable",
+                _ => "durable orchestrator membership proof is invalid or mismatched",
+            };
+            let error = ProductionStartupError::Component(crate::production::ProductionComponentError {
+                component: crate::production::ProductionComponent::Membership, detail,
+            }).with_storage_cleanup(report.storage);
+            return Err(Box::new(DaemonError::ProductionStartup(error)));
+        }
+    } else {
+        let report = member.drain().await;
+        let error = ProductionStartupError::Component(crate::production::ProductionComponentError {
+            component: crate::production::ProductionComponent::Membership,
+            detail: "no durable orchestrator membership source is configured",
+        }).with_storage_cleanup(report.storage);
+        return Err(Box::new(DaemonError::ProductionStartup(error)));
+    }
     let report = member.drain().await;
     let error = ProductionStartupError::Component(crate::production::ProductionComponentError {
-        component: crate::production::ProductionComponent::Membership,
-        detail: "no durable orchestrator membership source is configured",
-    })
-    .with_storage_cleanup(report.storage);
+        component: crate::production::ProductionComponent::Replication,
+        detail: "durable production data plane is not composed",
+    }).with_storage_cleanup(report.storage);
     Err(Box::new(DaemonError::ProductionStartup(error)))
 }
 

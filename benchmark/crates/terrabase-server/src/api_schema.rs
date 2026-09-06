@@ -35,11 +35,9 @@ impl SchemaDurablePort for EngineSchemaStore {
         let engine = self.0.engine();
         let scope = document_scope(engine).map_err(|()| storage_error())?;
         let snapshot = engine.read_snapshot(&scope).map_err(|_| storage_error())?;
-        let operation = OperationId::try_new(&format!(
-            "schema-{}",
-            terrabase::identity::process_generator().generate().to_text(),
-        ))
-        .map_err(|_| storage_error())?;
+        let operation =
+            OperationId::try_new(&format!("schema-{}", terrabase::identity::generate(),))
+                .map_err(|_| storage_error())?;
         let mut transaction =
             engine.begin(&scope, snapshot, operation.clone()).map_err(|_| storage_error())?;
         if record.previous_schema.is_none()

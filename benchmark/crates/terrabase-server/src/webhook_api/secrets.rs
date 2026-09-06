@@ -94,7 +94,7 @@ impl WebhookSecrets for EngineWebhookSecrets {
     fn provision(&self, scope: &TenantScope, id: &str, region: &str) -> Result<(), SecretError> {
         let _lock = self.writes.lock().map_err(|_| SecretError::Unavailable)?;
         let lease = self.keys.lease(scope, region, None)?;
-        let artifact = terrabase::identity::process_generator().generate().to_text();
+        let artifact = terrabase::identity::generate().to_string();
         let mut cipher = self.cipher(scope, &format!("{id}-{artifact}"), &lease)?;
         if let Some(existing) = self
             .storage
@@ -205,7 +205,7 @@ impl WebhookSecrets for EngineWebhookSecrets {
         };
         previous.remove("previous");
         previous.remove("previous_until");
-        let artifact = terrabase::identity::process_generator().generate().to_text();
+        let artifact = terrabase::identity::generate().to_string();
         let mut cipher = self.cipher(scope, &format!("{id}-{artifact}"), &lease)?;
         let mut secret = vec![0_u8; 32];
         aws_lc_rs::rand::fill(&mut secret).map_err(|_| SecretError::Unavailable)?;
@@ -328,7 +328,7 @@ mod tests {
             .parent()
             .expect("workspace")
             .join("target")
-            .join(format!("wk-{}", terrabase::identity::process_generator().generate().to_text()));
+            .join(format!("wk-{}", terrabase::identity::generate()));
         std::fs::create_dir_all(&directory).expect("directory");
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o710))
             .expect("permissions");

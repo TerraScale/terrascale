@@ -9,6 +9,7 @@ const MAX_LIFETIME_MS: u64 = 30_000;
 // No committed user records are copied. Replay touches only staged writes.
 #[derive(Serialize, Deserialize)]
 struct Workspace {
+    generation: u64,
     commands: Vec<(Action, Outcome)>,
     revision: u64,
     expires: u64,
@@ -56,7 +57,7 @@ pub(super) fn execute_dispatched(
 ) -> Result<Outcome> {
     match action {
         Action::BeginTransaction { transaction_id } => {
-            if transaction_id.is_empty() || transaction_id.len() > 128 {
+            if transaction_id.is_empty() || transaction_id.len() > 100 {
                 return Ok(invalid("invalid transaction identity"));
             }
             // GC runs only as a committed, deterministic operation.
@@ -70,7 +71,8 @@ pub(super) fn execute_dispatched(
                 let mut expired = Vec::new();
                 for row in rows {
                     let (id, bytes) = row.map_err(storage)?;
-                    if decode::<Workspace>(&bytes)?.expires <= now {
+                    let workspace: Workspace = decode(&bytes)?;
+                    if workspace.expires <= now {
                         expired.push(id);
                     }
                 }
@@ -80,9 +82,6 @@ pub(super) fn execute_dispatched(
                 transaction
                     .execute("DELETE FROM auth_transactions WHERE id=?1", [id])
                     .map_err(storage)?;
-            }
-            if load(transaction, transaction_id)?.is_some() {
-                return Ok(Outcome::TransactionConflict);
             }
             let count: i64 = transaction
                 .query_row("SELECT COUNT(*) FROM auth_transactions", [], |row| row.get(0))
@@ -94,17 +93,21 @@ pub(super) fn execute_dispatched(
                 .checked_add(MAX_LIFETIME_MS)
                 .ok_or_else(|| storage("auth transaction time exhausted"))?;
             let workspace = Workspace {
+                generation: meta::<u64>(transaction, "transaction_generation")?
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or_else(|| storage("auth transaction generation exhausted"))?,
                 commands: Vec::new(),
                 revision: revision(transaction)?,
                 expires,
                 operations: 0,
                 failed: false,
             };
-            save(transaction, transaction_id, &workspace)?;
-            Ok(Outcome::Transaction {
-                transaction_id: transaction_id.clone(),
-                expires_at_ms: expires,
-            })
+            let generation = workspace.generation;
+            set_meta(transaction, "transaction_generation", &generation)?;
+            let canonical = format!("{}#{}", transaction_id, generation);
+            save(transaction, &canonical, &workspace)?;
+            Ok(Outcome::Transaction { transaction_id: canonical, expires_at_ms: expires })
         }
         Action::TransactionOperation { transaction_id, action } => {
             let Some(mut workspace) = load(transaction, transaction_id)? else {
@@ -124,17 +127,12 @@ pub(super) fn execute_dispatched(
                 .execute_batch("ROLLBACK TO auth_workspace; RELEASE auth_workspace;")
                 .map_err(storage)?;
             workspace.operations += 1;
-            if mutates(action, &outcome) {
+            if mutates(action, &outcome) || !matches!(&**action, Action::Find { .. }) {
                 workspace.commands.push((*action.clone(), outcome.clone()));
             }
-            // A caught inner error still poisons commit. Null conditional outcomes remain
-            // available to the callback to handle deliberately without partial writes.
             if matches!(
                 outcome,
-                Outcome::Invalid { .. }
-                    | Outcome::UniqueConflict
-                    | Outcome::IdempotencyConflict
-                    | Outcome::TransactionConflict
+                Outcome::Invalid { .. } | Outcome::UniqueConflict | Outcome::TransactionConflict
             ) {
                 workspace.failed = true;
             }
@@ -151,9 +149,6 @@ pub(super) fn execute_dispatched(
             let Some(workspace) = load(transaction, transaction_id)? else {
                 return Ok(Outcome::TransactionConflict);
             };
-            transaction
-                .execute("DELETE FROM auth_transactions WHERE id=?1", [transaction_id])
-                .map_err(storage)?;
             if workspace.failed
                 || workspace.expires <= now
                 || workspace.revision != revision(transaction)?
@@ -164,9 +159,15 @@ pub(super) fn execute_dispatched(
             if !workspace.commands.is_empty() {
                 advance(transaction)?;
             }
+            transaction
+                .execute("DELETE FROM auth_transactions WHERE id=?1", [transaction_id])
+                .map_err(storage)?;
             Ok(Outcome::Applied)
         }
         Action::RollbackTransaction { transaction_id } => {
+            let Some(_workspace) = load(transaction, transaction_id)? else {
+                return Ok(Outcome::TransactionConflict);
+            };
             transaction
                 .execute("DELETE FROM auth_transactions WHERE id=?1", [transaction_id])
                 .map_err(storage)?;

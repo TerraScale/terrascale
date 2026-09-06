@@ -830,7 +830,13 @@ impl PlacementJournal {
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
         let chain = self.verified_chain(&connection, trust)?;
         let (_, revision, _) = chain.last().ok_or(PlacementError::NotFound)?;
-        let bytes: Vec<u8> = connection.query_row("SELECT proposal FROM proposals WHERE revision=?1", [i64::try_from(*revision).map_err(|_| PlacementError::Storage)?], |row| row.get(0)).map_err(|_| PlacementError::Storage)?;
+        let bytes: Vec<u8> = connection
+            .query_row(
+                "SELECT proposal FROM proposals WHERE revision=?1",
+                [i64::try_from(*revision).map_err(|_| PlacementError::Storage)?],
+                |row| row.get(0),
+            )
+            .map_err(|_| PlacementError::Storage)?;
         self.response(*revision, &bytes)
     }
 }

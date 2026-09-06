@@ -765,10 +765,8 @@ impl BackupStreams {
         let parent = location
             .parent()
             .ok_or_else(|| RestoreError::Spawn(io::Error::other("restore target has no parent")))?;
-        let download = parent.join(format!(
-            ".terrabase-backup-{}",
-            terrabase::identity::process_generator().generate().to_text()
-        ));
+        let download =
+            parent.join(format!(".terrabase-backup-{}", terrabase::identity::generate()));
         std::fs::create_dir(&download).map_err(RestoreError::Spawn)?;
         let result = (|| {
             let snapshot = download.join("backup.sqlite3");

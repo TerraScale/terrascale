@@ -991,7 +991,10 @@ pub async fn attach_view(
         return error.into_response();
     }
     let owner = crate::api::database_owner_scope(&state, &request.database_id);
-    let (tenant, project) = match owner { Ok(owner) => owner, Err(error) => return error.into_response() };
+    let (tenant, project) = match owner {
+        Ok(owner) => owner,
+        Err(error) => return error.into_response(),
+    };
     let scope = format!("{tenant}:{project}:{}", request.database_id);
     let materialization = match prepare_view(&state, &host, &request, &scope, Some(&principal)) {
         Ok(materialization) => materialization,
@@ -1190,10 +1193,14 @@ fn observe_authorized_activity(state: &ApiState, database: &str) {
         && let Ok(Some(admitted)) = registry.resolve(database)
         && let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         && let Ok(millis) = u64::try_from(now.as_millis())
-    { admitted.activity.observe(millis); }
+    {
+        admitted.activity.observe(millis);
+    }
 }
 fn observe_authorized_view(state: &ApiState, view: &str) {
-    if let Ok(views) = store().views.lock() && let Some(view) = views.get(view) {
+    if let Ok(views) = store().views.lock()
+        && let Some(view) = views.get(view)
+    {
         observe_authorized_activity(state, &view.database);
     }
 }

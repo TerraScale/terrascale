@@ -336,7 +336,7 @@ impl EncryptionContext {
                 project.to_text(),
                 scope.database().to_text(),
                 artifact_kind.as_str(),
-                artifact_id.to_text(),
+                artifact_id,
                 key_version.to_text(),
                 format_major,
                 compression,
@@ -346,7 +346,7 @@ impl EncryptionContext {
                 scope.tenant().to_text(),
                 scope.database().to_text(),
                 artifact_kind.as_str(),
-                artifact_id.to_text(),
+                artifact_id,
                 key_version.to_text(),
                 format_major,
                 compression,
@@ -813,7 +813,7 @@ impl ArtifactCipher {
         }
         let artifact_id = std::str::from_utf8(parsed.artifact_id)
             .ok()
-            .and_then(|text| crate::identity::Ulid::from_text(text).ok())
+            .and_then(|text| crate::identity::from_text(text).ok())
             .ok_or(EncryptionError::MalformedEnvelope)?;
         let context = EncryptionContext::for_artifact(
             scope,

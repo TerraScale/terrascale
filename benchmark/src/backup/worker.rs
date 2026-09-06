@@ -525,10 +525,8 @@ impl NativeBackupFleet {
             .list_points(database, self.limits.points_per_stream)
             .await
             .map_err(|_| FleetError::Upload)?;
-        let staging = stream
-            .config
-            .staging
-            .join(format!("restore-{}", crate::identity::process_generator().generate()));
+        let staging =
+            stream.config.staging.join(format!("restore-{}", crate::identity::generate()));
         std::fs::create_dir(&staging).map_err(|_| FleetError::Capture)?;
         let result = async {
             for prefix in prefixes {

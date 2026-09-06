@@ -458,7 +458,7 @@ mod tests {
         let context = EncryptionContext::for_artifact(
             metadata.scope(),
             ArtifactKind::Database,
-            crate::identity::process_generator().generate(),
+            crate::identity::generate(),
             metadata.version(),
             1,
             Compression::None,

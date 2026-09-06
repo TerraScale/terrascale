@@ -509,6 +509,7 @@ struct SnapshotRows {
     transactions: Vec<(String, Vec<u8>)>,
     revision: u64,
     logical_time: u64,
+    transaction_generation: u64,
 }
 
 impl RaftSnapshotBuilder<TypeConfig> for SqliteStore {
@@ -518,6 +519,7 @@ impl RaftSnapshotBuilder<TypeConfig> for SqliteStore {
         let rows = SnapshotRows {
             revision: meta(&transaction, "revision")?.unwrap_or(0),
             logical_time: meta(&transaction, "logical_time")?.unwrap_or(0),
+            transaction_generation: meta(&transaction, "transaction_generation")?.unwrap_or(0),
             transactions: transaction
                 .prepare("SELECT id,workspace FROM auth_transactions ORDER BY id")
                 .map_err(storage)?
@@ -642,6 +644,7 @@ impl RaftStateMachine<TypeConfig> for SqliteStore {
         }
         set_meta(&transaction, "revision", &rows.revision)?;
         set_meta(&transaction, "logical_time", &rows.logical_time)?;
+        set_meta(&transaction, "transaction_generation", &rows.transaction_generation)?;
         if let Some(applied) = snapshot_meta.last_log_id {
             set_meta(&transaction, "applied", &applied)?;
         } else {

@@ -56,7 +56,7 @@ pub async fn upload_snapshot(
     let context = EncryptionContext::for_artifact(
         metadata.scope(),
         ArtifactKind::Backup,
-        terrabase::identity::process_generator().generate(),
+        terrabase::identity::generate(),
         metadata.version(),
         3,
         Compression::None,

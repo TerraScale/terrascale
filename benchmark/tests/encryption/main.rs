@@ -5,7 +5,7 @@ use terrabase::encryption::{
     ProductionCapabilityStatus, ProviderCapability, ProviderMode, UnconfiguredOciVaultProvider,
     WrappedDatabaseKey, production_capability_status,
 };
-use terrabase::identity::{DatabaseUlid, TenantUlid, Ulid};
+use terrabase::identity::{DatabaseUlid, TenantUlid, from_text};
 use terrabase::regions::RegionCode;
 
 #[test]
@@ -241,7 +241,7 @@ fn malformed_and_oversized_inputs_fail_before_crypto() {
 #[test]
 fn key_versions_and_purposes_are_bound_to_artifact_keys() {
     let scope = typed_scope(KeyPurpose::Data);
-    let artifact = Ulid::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap();
+    let artifact = from_text("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap();
     let first_version = DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAW").unwrap();
     let next_version = DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FAX").unwrap();
     let first_context = EncryptionContext::for_artifact(
