@@ -135,7 +135,7 @@ impl BackupDestination {
         match self {
             Self::File { root, .. } => !root.as_os_str().is_empty(),
             Self::ObjectStorage { endpoint, bucket, prefix, .. } => {
-                (endpoint.starts_with("https://") || endpoint.starts_with("http://"))
+                endpoint.starts_with("https://")
                     && !bucket.is_empty()
                     && !prefix.contains("..")
                     && !prefix.chars().any(char::is_control)
@@ -1156,6 +1156,25 @@ mod tests {
     use terrabase_tbep::engine_host::EngineHost;
 
     static NEXT_LOCATION: AtomicU64 = AtomicU64::new(1);
+
+    #[test]
+    fn object_storage_destination_requires_tls() {
+        let insecure = BackupDestination::ObjectStorage {
+            endpoint: "http://object-storage.example".into(),
+            bucket: "backups".into(),
+            prefix: "terrabase".into(),
+            region: RegionCode::GRU,
+        };
+        assert!(!insecure.valid(), "backup transport must not send credentials over plaintext");
+
+        let secure = BackupDestination::ObjectStorage {
+            endpoint: "https://object-storage.example".into(),
+            bucket: "backups".into(),
+            prefix: "terrabase".into(),
+            region: RegionCode::GRU,
+        };
+        assert!(secure.valid());
+    }
 
     struct TestLocation(PathBuf);
 
