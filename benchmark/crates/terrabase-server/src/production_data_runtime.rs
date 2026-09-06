@@ -25,8 +25,8 @@ mod host_readiness;
 mod public_server;
 mod readiness_inventory;
 
-pub use public_server::{PreparedProductionPublic, PublicServingStatus};
 pub use host_readiness::WriterHostReadiness;
+pub use public_server::{PreparedProductionPublic, PublicServingStatus};
 
 /// Filesystem and residency bounds of an authenticated admission record.
 /// Writer identity is deliberately obtained from the durable assignment source.
@@ -127,6 +127,7 @@ impl ProductionDataLifecycle {
     /// Checks activated writer hosts against the accepted assignment inventory.
     /// Uses retained leases without reentering the public readiness callback.
     /// Physical follower storage is qualified separately from writer journals.
+    /// This performs journal and key-lease I/O; async callers should use a blocking worker.
     #[must_use]
     pub fn writer_host_readiness(&self) -> WriterHostReadiness {
         let Some(data) = self.get() else {

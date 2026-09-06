@@ -111,6 +111,19 @@ mod tests {
         )
     }
 
+    struct Writer;
+    impl terrabase::member::DatabaseRoleAuthority for Writer {
+        fn accepted_role(
+            &self,
+            _: &terrabase::member::DatabaseId,
+        ) -> Option<terrabase::member::AcceptedDatabaseRole> {
+            Some(terrabase::member::AcceptedDatabaseRole {
+                epoch: 1,
+                role: terrabase::member::DatabaseRole::Writer,
+            })
+        }
+    }
+
     fn writer_fixture()
     -> (AdmittedDatabaseSnapshot, DatabaseRouteScope, terrabase::member::Member, std::path::PathBuf)
     {
@@ -136,19 +149,7 @@ mod tests {
             crate::test_keys::storage_keys(&database_scope),
         )
         .unwrap();
-        struct Writer;
-        impl terrabase::member::DatabaseRoleAuthority for Writer {
-            fn accepted_role(
-                &self,
-                _: &terrabase::member::DatabaseId,
-            ) -> Option<terrabase::member::AcceptedDatabaseRole> {
-                Some(terrabase::member::AcceptedDatabaseRole {
-                    epoch: 1,
-                    role: terrabase::member::DatabaseRole::Writer,
-                })
-            }
-        }
-        let id = terrabase::member::DatabaseId::try_new(&scope.database().to_text()).unwrap();
+        let id = terrabase::member::DatabaseId::try_new(scope.database().to_text()).unwrap();
         member.accept_database_role(&id, &Writer).unwrap();
         let lease = member.acquire(&id).unwrap();
         let record = crate::admission::AdmissionRecord {

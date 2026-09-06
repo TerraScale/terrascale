@@ -1028,3 +1028,75 @@ The final stale-repair fixture requires a representable expired Instant, so it
 cannot silently exercise missing evidence instead. Its focused real-repair test
 passed (`83613`); log: `/tmp/terrascale-readiness-stale-fixture-test.log`. Independent
 source review found no material defects in the final lint and fixture corrections.
+
+
+Production serving ownership now has separate prepared public and metrics
+listeners. Public preparation verifies shared registry/progress identity and
+binds TCP before spawning maintenance workers. Its owner no longer borrows the
+mutable admission coordinator during serving. Metrics preparation starts no
+tasks, and the pending production path uses this actual bounded listener owner.
+Serving observations are false before service and clear when shutdown begins,
+on completion, and on cancellation. Public observations also inspect retained
+maintenance task handles. These observations do not certify full Member/API
+capabilities.
+
+Cancellation guards stop export work and abort owned async maintenance tasks.
+Normal shutdown joins every required worker and preserves unexpected JoinErrors;
+intentional migration cancellation remains successful. Blocking work and export
+pages may outlive async cancellation, so storage release still depends on the
+enclosing Member lease/drain boundary. The export stopping observation denotes
+its fence only, not completed frontier persistence.
+
+Writer host readiness checks exact activated retained hosts against accepted
+assignments, enforced owner identity, current encrypted-storage authorization,
+and a bounded sync-journal replay. Missing or invalid inventory, failed workers,
+and drain suppress these facts. Physical followers need no writer Engine and
+are not qualified by writer-only encryption/journal facts. Async composition must
+run these journal/key-lease probes on a blocking worker.
+
+Independent review found that the webhook dispatcher stayed idle forever in
+production because it required the development control catalog. It now enumerates
+the admitted registry through database_records, whose public record names are
+canonical database IDs, and retains bounded regional/lifecycle filtering. Review
+also found discarded maintenance JoinErrors; these now propagate through public
+shutdown. Final independent source review found no remaining material defect in
+these changes.
+
+The production test group passed 46 tests (`7065`) before the final webhook and
+publication-panic additions. Both owned metrics tests passed (`42146`). Four
+dispatcher-related tests passed (`90455`), including a real encrypted Member
+write and actual native dispatcher cursor advancement with control=None. That
+regression installs the required usage placement and writer epoch; it has no
+webhook endpoints and does not qualify external HTTP delivery. Logs:
+`/tmp/terrascale-serving-ownership-reviewed-tests.log`,
+`/tmp/terrascale-owned-metrics-tests.log`, and
+`/tmp/terrascale-production-dispatcher-tests-fixed.log`.
+
+All new lint diagnostics were removed. Server all-target Clippy now reports
+74 existing diagnostics (`90522`), one fewer after extracting public serving;
+it still fails. Log: `/tmp/terrascale-serving-ownership-clippy-fixed.log`.
+The actual ProductionDataPlane adapter, accepted listener orchestration, native
+backup/export provider configuration, and signed PlacementDataControl adapter
+remain incomplete. Accepted startup still reports the missing data composition.
+ULID and concurrent agent work are retained.
+
+The broader server library suite passed (`64920`): 383 passed, three ignored,
+and the known 100k-document restore timing gate excluded. Log:
+`/tmp/terrascale-serving-ownership-server-library.log`. The time-travel test
+passed here; its earlier intermittent HTTP 500 remains unexplained.
+
+A subsequent dependency-source review found that Axum spawns the supplied
+graceful-shutdown waiter independently of its serving future. Dropping that
+future alone can retain the waiter and its captures. Both listener guards now
+signal cancellation to that waiter as well as clearing serving evidence. Tests
+observe the actual captured shutdown future being dropped after cancellation.
+The final production group passed 47 tests (`74512`), including the real
+dispatcher regression; log: `/tmp/terrascale-serving-cancellation-final-tests.log`.
+Independent review found no material defect in the final cancellation change.
+Connection drain remains asynchronous and must finish under the enclosing
+Member shutdown deadline. The earlier broader suite predates this final fix.
+
+Final all-target Clippy remains at 74 existing diagnostics after correcting two
+formatting lints in the shutdown-future fixtures (`70538`). Log:
+`/tmp/terrascale-serving-cancellation-clippy-cleanup.log`. No Cargo process is
+left running. Full workspace checks and production launch gates remain unpassed.

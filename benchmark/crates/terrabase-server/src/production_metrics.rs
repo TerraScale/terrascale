@@ -56,7 +56,12 @@ impl PreparedMetrics {
         self,
         shutdown: impl Future<Output = ()> + Send + 'static,
     ) -> std::io::Result<()> {
-        let guard = ServingGuard { observation: self.observation, metrics: self.metrics };
+        let (cancel, cancelled) = tokio::sync::oneshot::channel();
+        let guard = ServingGuard {
+            observation: self.observation,
+            metrics: self.metrics,
+            cancel: Some(cancel),
+        };
         let app = crate::http::router(guard.metrics.clone());
         guard.metrics.set_component_health(Component::Metrics, HealthStatus::Healthy);
         guard.observation.serving.store(true, Ordering::Release);
@@ -64,7 +69,7 @@ impl PreparedMetrics {
         let metrics = guard.metrics.clone();
         let result = axum::serve(self.listener, app)
             .with_graceful_shutdown(async move {
-                shutdown.await;
+                tokio::select! { () = shutdown => {}, _ = cancelled => {} }
                 observation.serving.store(false, Ordering::Release);
                 metrics.set_component_health(Component::Metrics, HealthStatus::Unhealthy);
             })
@@ -77,10 +82,14 @@ impl PreparedMetrics {
 struct ServingGuard {
     observation: MetricsServing,
     metrics: Arc<MetricsRegistry>,
+    cancel: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl Drop for ServingGuard {
     fn drop(&mut self) {
+        if let Some(cancel) = self.cancel.take() {
+            let _ = cancel.send(());
+        }
         self.observation.serving.store(false, Ordering::Release);
         self.metrics.set_component_health(Component::Metrics, HealthStatus::Unhealthy);
     }
@@ -89,6 +98,16 @@ impl Drop for ServingGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ShutdownDrop(Option<tokio::sync::oneshot::Sender<()>>);
+    impl Drop for ShutdownDrop {
+        fn drop(&mut self) {
+            if let Some(notice) = self.0.take() {
+                let _ = notice.send(());
+            }
+        }
+    }
+
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     #[tokio::test]
@@ -138,10 +157,19 @@ mod tests {
         let prepared =
             PreparedMetrics::bind("127.0.0.1:0".parse().unwrap(), metrics).await.unwrap();
         let observation = prepared.observation();
-        let mut serving = Box::pin(prepared.serve(std::future::pending()));
+        let (notice, released) = tokio::sync::oneshot::channel();
+        let notice = ShutdownDrop(Some(notice));
+        let mut serving = Box::pin(prepared.serve(async move {
+            let _notice = notice;
+            std::future::pending::<()>().await;
+        }));
         assert!(futures_util::poll!(&mut serving).is_pending());
         assert!(observation.is_serving());
         drop(serving);
         assert!(!observation.is_serving());
+        tokio::time::timeout(std::time::Duration::from_secs(1), released)
+            .await
+            .expect("shutdown waiter terminates after owner cancellation")
+            .unwrap();
     }
 }

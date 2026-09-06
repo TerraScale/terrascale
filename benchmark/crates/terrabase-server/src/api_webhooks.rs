@@ -222,9 +222,12 @@ impl DispatchWorker {
     }
 
     /// Stops admission immediately and waits for an in-flight bounded transport call.
+    ///
+    /// # Errors
+    /// Reports an unexpected dispatcher task failure.
     pub async fn shutdown(mut self) -> Result<(), tokio::task::JoinError> {
         self.stop.store(true, std::sync::atomic::Ordering::Release);
-        (&mut self.task).await.map(|_| ())
+        (&mut self.task).await
     }
 }
 impl Drop for DispatchWorker {
@@ -358,6 +361,21 @@ mod tests {
         let database = registry.resolve_serving(&records[0].database_id).unwrap().unwrap();
         let engine = database.host.engine();
         let tenant = TenantId::try_new(&records[0].tenant_id).unwrap();
+        engine
+            .configure_usage_placement(
+                terrabase::usage::UsagePlacement::try_new(
+                    tenant.clone(),
+                    &records[0].project_id,
+                    &records[0].database_id,
+                    "partition",
+                    terrabase::regions::RegionCode::GRU,
+                    vec![terrabase::regions::RegionCode::GRU],
+                    "accepted-test-placement",
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        engine.activate_origin_epoch(1).unwrap();
         let scope = engine.scope_for(&tenant);
         let mut transaction = engine
             .begin(
@@ -371,12 +389,13 @@ mod tests {
                 Document::new(
                     DocumentId::try_new("dispatch-event").unwrap(),
                     CollectionName::try_new("events").unwrap(),
-                    DocumentValue::Object(Default::default()),
+                    DocumentValue::Object(std::collections::BTreeMap::new()),
                 ),
                 ExpectedVersion::Any,
             )
             .unwrap();
-        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+        let committed = transaction.commit(LocalDurability::Synced);
+        assert!(matches!(committed, CommitOutcome::Committed(_)), "{committed:?}");
         let tenant_scope = TenantScope::new(
             database.host.engine().database_owner().tenant().to_text(),
             database.host.engine().database_owner().project().to_text(),

@@ -394,6 +394,17 @@ pub fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn publication_shutdown_reports_worker_panic() {
+        let (stop, _signal) = tokio::sync::oneshot::channel();
+        let join = tokio::spawn(async {
+            panic!("synthetic publication failure");
+        });
+        let worker = LifecyclePublicationTask { stop: Some(stop), join };
+        assert!(worker.shutdown().await.is_err());
+    }
+
     fn path() -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
             "terrabase-lifecycle-outbox-{}-{}.sqlite",

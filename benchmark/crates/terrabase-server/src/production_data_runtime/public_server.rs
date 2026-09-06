@@ -23,11 +23,17 @@ pub struct PublicServingStatus {
     workers: Arc<OnceLock<Vec<tokio::task::AbortHandle>>>,
 }
 
-struct ServingStatusGuard(PublicServingStatus);
+struct ServingStatusGuard {
+    status: PublicServingStatus,
+    cancel: Option<tokio::sync::oneshot::Sender<()>>,
+}
 
 impl Drop for ServingStatusGuard {
     fn drop(&mut self) {
-        self.0.serving.store(false, Ordering::Release);
+        self.status.serving.store(false, Ordering::Release);
+        if let Some(cancel) = self.cancel.take() {
+            let _ = cancel.send(());
+        }
     }
 }
 
@@ -144,15 +150,16 @@ impl PreparedProductionPublic {
         }
         let _ = status.workers.set(worker_handles);
         status.serving.store(true, Ordering::Release);
-        let _status_guard = ServingStatusGuard(status);
-        let serving = _status_guard.0.serving.clone();
+        let (cancel, cancelled) = tokio::sync::oneshot::channel();
+        let status_guard = ServingStatusGuard { status, cancel: Some(cancel) };
+        let serving = status_guard.status.serving.clone();
         let shutdown = async move {
-            shutdown.await;
+            tokio::select! { () = shutdown => {}, _ = cancelled => {} }
             serving.store(false, Ordering::Release);
         };
         let result =
             axum::serve(listener, router).with_graceful_shutdown(shutdown).await.map_err(failure);
-        _status_guard.0.serving.store(false, Ordering::Release);
+        status_guard.status.serving.store(false, Ordering::Release);
         let workers = workers.shutdown().await;
         result.and(workers)
     }
@@ -165,6 +172,16 @@ fn failure(error: impl std::fmt::Debug) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ShutdownDrop(Option<tokio::sync::oneshot::Sender<()>>);
+    impl Drop for ShutdownDrop {
+        fn drop(&mut self) {
+            if let Some(notice) = self.0.take() {
+                let _ = notice.send(());
+            }
+        }
+    }
+
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
     use axum::routing::get;
@@ -322,12 +339,21 @@ mod tests {
         let prepared =
             PreparedProductionPublic::new(listener, axum::Router::new(), state, None, registry());
         let status = prepared.status();
-        let task = tokio::spawn(prepared.serve(std::future::pending()));
+        let (notice, released) = oneshot::channel();
+        let notice = ShutdownDrop(Some(notice));
+        let task = tokio::spawn(prepared.serve(async move {
+            let _notice = notice;
+            std::future::pending::<()>().await;
+        }));
         wait_until_serving(&status).await;
         task.abort();
         let _ = task.await;
         assert!(!status.is_serving());
         assert!(exports.is_stopping());
+        timeout(Duration::from_secs(1), released)
+            .await
+            .expect("shutdown waiter terminates after owner cancellation")
+            .expect("shutdown closure released");
         let _ = std::fs::remove_dir_all(export_root);
     }
 
