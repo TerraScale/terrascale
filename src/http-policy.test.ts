@@ -308,6 +308,21 @@ describe("TerraScaleHttp request policy", () => {
     assert.deepEqual(requests.map(request => request.method), ["POST", "POST", "POST"]);
   });
 
+  test("rejects browser opaque redirects and preserves conditional 304 reads", async () => {
+    const opaque = new Response(null);
+    Object.defineProperty(opaque, "type", { value: "opaqueredirect" });
+    for (const response of [opaque, new Response(null, { status: 308 })]) {
+      const http = new TerraScaleHttp({ fetch: async () => response });
+      const result = await http.request({ method: "GET", path: "/api/v1/regions", routeName: "regions.list" });
+      assert.ok(!result.ok);
+      assert.match(result.error.message, /unsupported HTTP redirect/);
+    }
+    const http = new TerraScaleHttp({ fetch: async () => new Response(null, { status: 304 }) });
+    const result = await http.request({ method: "GET", path: "/api/v1/regions", routeName: "regions.list" });
+    assert.ok(result.ok);
+    assert.equal(result.status, 304);
+  });
+
   test("native fetch refuses redirects before credentials or mutation bodies reach another endpoint", async () => {
     let targetRequests = 0;
     const target = createServer((_request, response) => {

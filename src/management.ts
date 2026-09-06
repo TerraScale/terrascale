@@ -65,12 +65,20 @@ export type CreateDatabaseResult = TerraScaleFailure
   | (TerraScaleSuccess<ProvisioningOperation> & { readonly status: 202 });
 
 export type CreateDatabaseRequest = {
-  /** Required in production; reuse this identity when resubmitting the same create. */
-  readonly operation_id?: string;
   readonly name: string;
   readonly placement: readonly TerraScaleRegionCode[];
-  readonly residency?: string | null;
-};
+} & (
+  | {
+    /** Stable production provisioning identity; reuse it when resubmitting. */
+    readonly operation_id: string;
+    readonly residency: string;
+  }
+  | {
+    /** Direct development control-plane creation has no provisioning operation. */
+    readonly operation_id?: undefined;
+    readonly residency?: string | null;
+  }
+);
 export type DatabaseListResponse = { readonly databases: readonly Database[] };
 export type RestoreRequest = { readonly name: string; readonly at?: number };
 export type BranchListResponse = { readonly branches: readonly Database[] };

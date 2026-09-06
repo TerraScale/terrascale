@@ -25,6 +25,8 @@ export type DatabaseUsageSummary = {
   readonly tenant_id: string;
   readonly database_id: string;
   readonly snapshot_sequence: UInt64Value;
+  /** Closed authoritative storage interval boundary; null before the first interval. */
+  readonly storage_complete_through_millis: UInt64Value | null;
   readonly meters: readonly { readonly meter: "document_write_units" | "storage_byte_seconds"; readonly units: string }[];
   readonly reads: { readonly total_reads: UInt64Value };
 };

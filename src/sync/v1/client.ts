@@ -874,7 +874,11 @@ export class TerraScaleSyncV1Client {
   async #request(input: RequestInfo | URL, init: RequestInit, operation: string): Promise<Response> {
     if (this.#fetch === undefined) throw new TerraScaleSyncV1ClientError("transport", `no fetch implementation is available for ${operation}`);
     try {
-      return await this.#fetch(input, { ...init, redirect: "error" });
+      const response = await this.#fetch(input, { ...init, redirect: "manual" });
+      if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400 && response.status !== 304)) {
+        throw new TypeError("Reactive delivery returned an unsupported HTTP redirect.");
+      }
+      return response;
     } catch (error) {
       throw new TerraScaleSyncV1ClientError("transport", `${operation} failed`, { cause: error });
     }

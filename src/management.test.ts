@@ -166,7 +166,7 @@ it("distinguishes accepted production provisioning from a ready database", async
     expect("created_at" in result.value).toBe(false);
   } else throw new Error("expected pending provisioning");
   expect(await requests[0]?.json()).toEqual({ name: "primary", placement: ["GRU"], residency: "br-only", operation_id: "create-one" });
-  expect(() => client.databases.create({ name: "primary", placement: ["GRU"], operation_id: "create-one" })).toThrow(TypeError);
+  expect(() => client.databases.create({ name: "primary", placement: ["GRU"], operation_id: "create-one" } as never)).toThrow(TypeError);
   const mismatched = createTerraScaleManagementClient({ fetch: async () => Response.json(accepted, { status: 201 }) });
   const rejected = await mismatched.databases.create({ name: "primary", placement: ["GRU"] });
   expect(rejected.ok).toBe(false);

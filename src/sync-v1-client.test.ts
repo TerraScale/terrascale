@@ -384,7 +384,7 @@ describe("current reactive client", () => {
     assert.equal(live.view.getRevision(), 8n);
     assert.deepEqual(live.view.getItems()[0]!.value.value, encoder.encode("changed"));
     for (const request of requests) {
-      assert.equal(request.redirect, "error");
+      assert.equal(request.redirect, "manual");
       if (request.method === "GET") {
         assert.equal(request.headers.get("x-terrascale-tenant-id"), null);
         assert.equal(request.headers.get("x-terrascale-project-id"), null);

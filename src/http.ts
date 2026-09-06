@@ -146,7 +146,7 @@ export class TerraScaleHttp {
           const requestInit: RequestInit = {
             method: options.method,
             headers,
-            redirect: "error",
+            redirect: "manual",
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           };
           if (options.body !== undefined) {
@@ -158,6 +158,9 @@ export class TerraScaleHttp {
           fetchStarted = true;
           const response = await this.#fetch(request);
           responseReceived = true;
+          if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400 && response.status !== 304)) {
+            throw new TypeError("The TerraScale API returned an unsupported HTTP redirect.");
+          }
           const body = await readResponseBody(response, options.routeName);
           this.observeSession(response.headers);
           this.recordRequestMetric(base, options.routeName, response.status, performance.now() - startedAt);
@@ -609,7 +612,7 @@ function parseSuccessResponse(raw: string, routeName: TerraScaleRouteName): unkn
 const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly string[]>>> = {
   "databases.getSchema": ["generation", "schema_version", "migration.total", "migration.completed"],
   "databases.putSchema": ["generation", "schema_version", "migration.total", "migration.completed"],
-  "databases.databaseUsage": ["snapshot_sequence", "reads.total_reads"],
+  "databases.databaseUsage": ["snapshot_sequence", "storage_complete_through_millis", "reads.total_reads"],
   "databases.indexRecommendations": ["generation", "recommendations.*.generation", "recommendations.*.maintenance_cost"],
   "databases.listWebhooks": ["webhooks.*.created_at"],
   "databases.createWebhook": ["created_at"],
