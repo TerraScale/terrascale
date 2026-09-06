@@ -16,7 +16,7 @@ use terrabase::encryption::{
 use terrabase_cluster::production::{DatabaseRouteScope, ProductionMemberRuntime};
 use terrabase_cluster::wal_driver::{WalEngineHandle, WalWriterDriver};
 use terrabase_cluster::wal_follower::WalTail;
-use terrabase_cluster::wal_route::DurableWalAssignmentSource;
+use terrabase_cluster::wal_route::{DurableWalAssignmentSource, WalAssignment};
 use terrabase_cluster::wal_snapshot::WalSnapshotSource;
 use terrabase_tbep::production_causal::CausalDriver;
 use terrabase_tbep::registry::BoundScope;
@@ -350,54 +350,8 @@ pub async fn build_peer_databases(
             return Err("local member has no accepted physical seat".into());
         }
         let physical_peer = if is_writer { &assignment.follower } else { &assignment.writer };
-        let physical = if is_writer {
-            let lease: Arc<dyn WalEngineHandle> =
-                Arc::new(runtime.acquire_replication(&database.scope).map_err(failure)?);
-            lease.engine().activate_origin_epoch(assignment.epoch).map_err(failure)?;
-            let snapshot = WalSnapshotSource::capture(
-                binding.clone(),
-                lease.clone(),
-                database.snapshot_staging,
-            )
-            .await
-            .map_err(failure)?;
-            let snapshot_bytes = (0..3)
-                .try_fold(0u64, |total, slot| {
-                    total.checked_add(snapshot.manifest().file_bytes(slot).unwrap_or(0))
-                })
-                .ok_or("snapshot size overflow")?;
-            if snapshot_bytes > database.snapshot_max_bytes {
-                return Err("encrypted snapshot exceeds admission bound".into());
-            }
-            let checkpoint = snapshot.manifest().checkpoint();
-            let tail_lease = lease.clone();
-            let tail = tokio::task::spawn_blocking(move || {
-                WalTail::resume_engine(tail_lease.engine(), checkpoint)
-            })
-            .await
-            .map_err(failure)?
-            .map_err(failure)?;
-            PhysicalDriver::BootstrapWriter {
-                writer: WalWriterDriver::new(binding, lease, tail),
-                source: Box::new(snapshot),
-            }
-        } else {
-            let mut receiver =
-                SnapshotReceiver::new(binding, database.location, database.snapshot_max_bytes);
-            receiver.keys = Some(database.keys);
-            if receiver.destination.join("terrabase.sqlite3").try_exists().map_err(failure)? {
-                receiver.previous = Some(
-                    terrabase_cluster::wal_driver::WalFollowerDriver::recover(
-                        receiver.binding.clone(),
-                        receiver.destination.clone(),
-                        receiver.keys.clone(),
-                    )
-                    .await
-                    .map_err(failure)?,
-                );
-            }
-            PhysicalDriver::BootstrapFollower(Box::new(receiver))
-        };
+        let physical =
+            build_physical_driver(runtime, binding, &assignment, &database, is_writer).await?;
         lanes.entry(physical_peer.member().as_str().to_owned()).or_default().push(PeerDatabase {
             scope: database.scope,
             physical: Some(physical),
@@ -436,6 +390,63 @@ pub async fn build_peer_databases(
         selected_regions.insert(database.scope, database.selected_regions);
     }
     Ok(PeerDatabaseBatch { lanes, selected_regions })
+}
+
+async fn build_physical_driver(
+    runtime: &Arc<ProductionMemberRuntime>,
+    binding: terrabase_cluster::wal_route::WalReplicaBinding,
+    assignment: &WalAssignment,
+    database: &ProductionDatabaseAssignment,
+    is_writer: bool,
+) -> Result<PhysicalDriver, String> {
+    if is_writer {
+        let lease: Arc<dyn WalEngineHandle> =
+            Arc::new(runtime.acquire_replication(&database.scope).map_err(failure)?);
+        lease.engine().activate_origin_epoch(assignment.epoch).map_err(failure)?;
+        let snapshot = WalSnapshotSource::capture(
+            binding.clone(),
+            lease.clone(),
+            database.snapshot_staging.clone(),
+        )
+        .await
+        .map_err(failure)?;
+        let snapshot_bytes = (0..3)
+            .try_fold(0u64, |total, slot| {
+                total.checked_add(snapshot.manifest().file_bytes(slot).unwrap_or(0))
+            })
+            .ok_or("snapshot size overflow")?;
+        if snapshot_bytes > database.snapshot_max_bytes {
+            return Err("encrypted snapshot exceeds admission bound".into());
+        }
+        let checkpoint = snapshot.manifest().checkpoint();
+        let tail_lease = lease.clone();
+        let tail = tokio::task::spawn_blocking(move || {
+            WalTail::resume_engine(tail_lease.engine(), checkpoint)
+        })
+        .await
+        .map_err(failure)?
+        .map_err(failure)?;
+        Ok(PhysicalDriver::BootstrapWriter {
+            writer: WalWriterDriver::new(binding, lease, tail),
+            source: Box::new(snapshot),
+        })
+    } else {
+        let mut receiver =
+            SnapshotReceiver::new(binding, database.location.clone(), database.snapshot_max_bytes);
+        receiver.keys = Some(database.keys.clone());
+        if receiver.destination.join("terrabase.sqlite3").try_exists().map_err(failure)? {
+            receiver.previous = Some(
+                terrabase_cluster::wal_driver::WalFollowerDriver::recover(
+                    receiver.binding.clone(),
+                    receiver.destination.clone(),
+                    receiver.keys.clone(),
+                )
+                .await
+                .map_err(failure)?,
+            );
+        }
+        Ok(PhysicalDriver::BootstrapFollower(Box::new(receiver)))
+    }
 }
 
 fn failure(error: impl std::fmt::Debug) -> String {
@@ -498,93 +509,13 @@ impl ProductionAdmissionRuntime {
             runtime.transport().config().local_region().as_str().to_owned(),
             journal.clone(),
         )?);
-        let usage_authority = usage.clone();
-        let role_member = member.clone();
-        let role_runtime = runtime.clone();
-        let authority: crate::production_admission::AdmissionAuthority = Arc::new(move |record| {
-            let accepted = match authority_journal.accepted() {
-                Ok(accepted) => accepted,
-                Err(terrabase_tbep::placement::PlacementError::NotFound) => return Ok(None),
-                Err(error) => return Err(failure(error)),
-            };
-            let scope = record_scope(record)?;
-            let assignment = match authority_journal.load_assignment(scope) {
-                Ok(assignment) => assignment,
-                Err(terrabase_cluster::wal_route::WalAssignmentError::InvalidProof) => {
-                    return Ok(None);
-                }
-                Err(error) => return Err(failure(error)),
-            };
-            role_runtime.admit_membership(&*authority_journal).map_err(failure)?;
-            let id =
-                terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
-            let role = if assignment.writer.member().as_str() == local {
-                terrabase::member::DatabaseRole::Writer
-            } else if assignment.follower.member().as_str() == local {
-                terrabase::member::DatabaseRole::Follower
-            } else {
-                return Err("local member absent from accepted database assignment".into());
-            };
-            let origin = record.region.parse().map_err(|_| "invalid admitted Region")?;
-            let partition =
-                usage_authority.resolve(record, assignment.epoch, &accepted.proof_digest)?;
-            if partition.is_none() && assignment.writer.member().as_str() != local {
-                return Ok(None);
-            }
-            role_member
-                .accept_database_role(
-                    &id,
-                    &VerifiedRole {
-                        database: id.clone(),
-                        accepted: terrabase::member::AcceptedDatabaseRole {
-                            epoch: assignment.epoch,
-                            role,
-                        },
-                    },
-                )
-                .map_err(failure)?;
-            if assignment.writer.member().as_str() == local {
-                let lease = if partition.is_none() {
-                    let location = role_member.root().join(&record.database_id);
-                    match std::fs::symlink_metadata(&location) {
-                        Ok(metadata) if metadata.file_type().is_dir() => {}
-                        Ok(_) => return Err("existing database location is not a directory".into()),
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                            return Ok(None);
-                        }
-                        Err(error) => return Err(failure(error)),
-                    }
-                    role_member.acquire_existing(&id).map_err(failure)?
-                } else {
-                    role_member.acquire(&id).map_err(failure)?
-                };
-                let tenant =
-                    terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
-                if partition.is_none()
-                    && !crate::production_admission::lifecycle_allows_origin_activation(
-                        &lease, &tenant,
-                    )?
-                {
-                    return Ok(Some(crate::production_admission::AcceptedAdmission::Maintenance {
-                        origin,
-                        epoch: assignment.epoch,
-                        local_is_writer: true,
-                    }));
-                }
-            }
-            let Some(partition) = partition else {
-                // The private delivery listener must remain available while this
-                // accepted scope waits for its durable billing registration.
-                return Ok(None);
-            };
-            Ok(Some(crate::production_admission::AcceptedAdmission::Active {
-                partition,
-                revision: accepted.proof_digest,
-                origin,
-                epoch: assignment.epoch,
-                local_is_writer: assignment.writer.member().as_str() == local,
-            }))
-        });
+        let authority = build_admission_authority(
+            journal.clone(),
+            usage.clone(),
+            member.clone(),
+            runtime.clone(),
+            local.clone(),
+        );
         let storage = crate::production_admission::storage_admission(
             member.clone(),
             registry.clone(),
@@ -765,50 +696,7 @@ impl ProductionAdmissionRuntime {
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        // A stopped writer remains in the immutable admission journal for
-        // deletion/retry bookkeeping, but its live replication lane and
-        // customer route must be retired after the durable lifecycle fence.
-        // Do this before the active fast path below, otherwise a restart
-        // reconciliation would leave the old lane serving indefinitely.
-        let local_member = self.config.environment.member.to_text();
-        for record in &records {
-            if !self.active.contains(&record.database_id) {
-                continue;
-            }
-            let scope = record_scope(record)?;
-            let assignment = match self.journal.load_assignment(scope) {
-                Ok(assignment) => assignment,
-                Err(error @ terrabase_cluster::wal_route::WalAssignmentError::InvalidProof) => {
-                    let _ = self
-                        .lifecycle
-                        .record_inventory(Err(readiness_inventory::InventoryError::Invalid));
-                    return Err(failure(error));
-                }
-                Err(error) => return Err(failure(error)),
-            };
-            if assignment.writer.member().as_str() != local_member {
-                // Followers retain their physical maintenance ownership here;
-                // follower retirement is a separate exclusive-file workflow.
-                continue;
-            }
-            let id =
-                terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
-            let lease = self.member.acquire(&id).map_err(failure)?;
-            let tenant = terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
-            let lifecycle = lease
-                .engine()
-                .lifecycle_state(&lease.engine().scope_for(&tenant))
-                .map_err(failure)?;
-            if !lifecycle.access_revoked() {
-                continue;
-            }
-            if let Some(data) = self.lifecycle.get() {
-                data.peers.remove_database(scope).await?;
-            }
-            self.runtime.retire_route(scope).map_err(failure)?;
-            self.active.remove(&record.database_id);
-            self.pending_publication.remove(&scope);
-        }
+        self.retire_stopped_writers(&records).await?;
         self.publish_pending()?;
         let mut databases = Vec::new();
         let mut newly_active = Vec::new();
@@ -938,6 +826,50 @@ impl ProductionAdmissionRuntime {
         self.publish_pending()
     }
 
+    async fn retire_stopped_writers(
+        &mut self,
+        records: &[crate::admission::AdmissionRecord],
+    ) -> Result<(), String> {
+        let local_member = self.config.environment.member.to_text();
+        for record in records {
+            if !self.active.contains(&record.database_id) {
+                continue;
+            }
+            let scope = record_scope(record)?;
+            let assignment = match self.journal.load_assignment(scope) {
+                Ok(assignment) => assignment,
+                Err(error @ terrabase_cluster::wal_route::WalAssignmentError::InvalidProof) => {
+                    let _ = self
+                        .lifecycle
+                        .record_inventory(Err(readiness_inventory::InventoryError::Invalid));
+                    return Err(failure(error));
+                }
+                Err(error) => return Err(failure(error)),
+            };
+            if assignment.writer.member().as_str() != local_member {
+                continue;
+            }
+            let id =
+                terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
+            let lease = self.member.acquire(&id).map_err(failure)?;
+            let tenant = terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
+            let lifecycle = lease
+                .engine()
+                .lifecycle_state(&lease.engine().scope_for(&tenant))
+                .map_err(failure)?;
+            if !lifecycle.access_revoked() {
+                continue;
+            }
+            if let Some(data) = self.lifecycle.get() {
+                data.peers.remove_database(scope).await?;
+            }
+            self.runtime.retire_route(scope).map_err(failure)?;
+            self.active.remove(&record.database_id);
+            self.pending_publication.remove(&scope);
+        }
+        Ok(())
+    }
+
     fn refresh_inventory(
         &self,
     ) -> Result<Option<(terrabase_tbep::proto::terrabase::v1::PlacementProposal, String)>, String>
@@ -1050,6 +982,90 @@ impl ProductionAdmissionRuntime {
 fn record_scope(record: &crate::admission::AdmissionRecord) -> Result<DatabaseRouteScope, String> {
     DatabaseRouteScope::try_new(&record.tenant_id, &record.project_id, &record.database_id)
         .map_err(failure)
+}
+
+fn build_admission_authority(
+    journal: Arc<terrabase_tbep::placement::PlacementJournal>,
+    usage: Arc<crate::usage_admission::UsageAdmissionJournal>,
+    member: terrabase::member::Member,
+    runtime: Arc<ProductionMemberRuntime>,
+    local: String,
+) -> crate::production_admission::AdmissionAuthority {
+    Arc::new(move |record| {
+        let accepted = match journal.accepted() {
+            Ok(accepted) => accepted,
+            Err(terrabase_tbep::placement::PlacementError::NotFound) => return Ok(None),
+            Err(error) => return Err(failure(error)),
+        };
+        let scope = record_scope(record)?;
+        let assignment = match journal.load_assignment(scope) {
+            Ok(assignment) => assignment,
+            Err(terrabase_cluster::wal_route::WalAssignmentError::InvalidProof) => return Ok(None),
+            Err(error) => return Err(failure(error)),
+        };
+        runtime.admit_membership(&*journal).map_err(failure)?;
+        let id = terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
+        let role = if assignment.writer.member().as_str() == local {
+            terrabase::member::DatabaseRole::Writer
+        } else if assignment.follower.member().as_str() == local {
+            terrabase::member::DatabaseRole::Follower
+        } else {
+            return Err("local member absent from accepted database assignment".into());
+        };
+        let origin = record.region.parse().map_err(|_| "invalid admitted Region")?;
+        let partition = usage.resolve(record, assignment.epoch, &accepted.proof_digest)?;
+        if partition.is_none() && assignment.writer.member().as_str() != local {
+            return Ok(None);
+        }
+        member
+            .accept_database_role(
+                &id,
+                &VerifiedRole {
+                    database: id.clone(),
+                    accepted: terrabase::member::AcceptedDatabaseRole {
+                        epoch: assignment.epoch,
+                        role,
+                    },
+                },
+            )
+            .map_err(failure)?;
+        if assignment.writer.member().as_str() == local {
+            let lease = if partition.is_none() {
+                let location = member.root().join(&record.database_id);
+                match std::fs::symlink_metadata(&location) {
+                    Ok(metadata) if metadata.file_type().is_dir() => {}
+                    Ok(_) => return Err("existing database location is not a directory".into()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(error) => return Err(failure(error)),
+                }
+                member.acquire_existing(&id).map_err(failure)?
+            } else {
+                member.acquire(&id).map_err(failure)?
+            };
+            let tenant = terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
+            if partition.is_none()
+                && !crate::production_admission::lifecycle_allows_origin_activation(
+                    &lease, &tenant,
+                )?
+            {
+                return Ok(Some(crate::production_admission::AcceptedAdmission::Maintenance {
+                    origin,
+                    epoch: assignment.epoch,
+                    local_is_writer: true,
+                }));
+            }
+        }
+        let Some(partition) = partition else {
+            return Ok(None);
+        };
+        Ok(Some(crate::production_admission::AcceptedAdmission::Active {
+            partition,
+            revision: accepted.proof_digest,
+            origin,
+            epoch: assignment.epoch,
+            local_is_writer: assignment.writer.member().as_str() == local,
+        }))
+    })
 }
 
 struct VerifiedRole {

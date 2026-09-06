@@ -821,7 +821,7 @@ async fn serve_public_api(
                 .as_deref()
                 .map(read_secret_key)
                 .transpose()?;
-            crate::reactive_api::OriginProofKeyRing::new(current, previous)
+            crate::reactive_api::OriginProofKeyRing::new(current, previous.as_deref())
                 .ok_or_else(|| DaemonError::Engine("invalid origin-proof key ring".into()))?
         }
         None if public.origin_proof_previous_key_file.is_some() => {
@@ -836,7 +836,7 @@ async fn serve_public_api(
             let current = read_secret_key(current)?;
             let previous =
                 public.capability_previous_key_file.as_deref().map(read_secret_key).transpose()?;
-            crate::reactive_api::CapabilityKeyRing::new(current, previous)
+            crate::reactive_api::CapabilityKeyRing::new(current, previous.as_deref())
                 .ok_or_else(|| DaemonError::Engine("invalid capability key ring".into()))?
         }
         None if public.capability_previous_key_file.is_some() => {

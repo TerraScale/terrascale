@@ -116,6 +116,20 @@ fn complete_save_round_trips_facts_and_checkpoint() {
 }
 
 #[test]
+fn durable_checkpoint_cannot_be_replaced_or_cleared() {
+    let database = database();
+    let c = database.open();
+    let state = operation(NativeRecoveryPhase::Measuring);
+    insert(&c, &state);
+    save(&c, &state, Some(&point())).unwrap();
+
+    let replacement = Checkpoint { journal_cut: 8, ..point() };
+    assert_eq!(save(&c, &state, Some(&replacement)), Err(NativeRecoveryError::Unavailable));
+    assert_eq!(save(&c, &state, None), Err(NativeRecoveryError::Unavailable));
+    assert_eq!(load_checkpoint(&c, "db", "op").unwrap(), Some(point()));
+}
+
+#[test]
 fn update_abort_preserves_phase_record_and_checkpoint_atomically() {
     let database = database();
     let c = database.open();

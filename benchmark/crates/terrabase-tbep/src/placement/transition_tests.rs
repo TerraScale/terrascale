@@ -106,14 +106,14 @@ pub(super) fn proof(
 
 fn stage(
     journal: &PlacementJournal,
-    request: pb::PlacementStageRequest,
+    request: pb::PlacementControlServiceStageRequest,
     operation: &str,
 ) -> pb::PlacementProposal {
     journal.stage("authenticated-orchestrator", operation, request).unwrap().proposal.unwrap()
 }
 
-pub(super) fn acceptance(value: &Value, revision: u64) -> pb::PlacementAcceptRequest {
-    pb::PlacementAcceptRequest { proposal_revision: revision, proof: envelope(value) }
+pub(super) fn acceptance(value: &Value, revision: u64) -> pb::PlacementControlServiceAcceptRequest {
+    pb::PlacementControlServiceAcceptRequest { proposal_revision: revision, proof: envelope(value) }
 }
 
 #[test]
@@ -189,7 +189,7 @@ fn authenticated_wrong_tuple_digest_genesis_and_signer_never_admit() {
         journal
             .accept(
                 "first",
-                &pb::PlacementAcceptRequest {
+                &pb::PlacementControlServiceAcceptRequest {
                     proposal_revision: 1,
                     proof: serde_json::to_vec(&forged).unwrap()
                 }

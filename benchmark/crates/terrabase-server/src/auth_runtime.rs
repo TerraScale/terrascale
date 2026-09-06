@@ -169,104 +169,121 @@ impl AuthRuntime {
             {
                 continue;
             }
-            let local = grant
-                .voters
-                .iter()
-                .find(|voter| voter.member == self.production.environment.member.to_text())
-                .ok_or("auth local voter missing")?;
-            let local_node = local.node_id;
-            let database = self
-                .production
-                .databases
-                .iter()
-                .find(|database| {
-                    database.tenant.to_text() == grant.tenant
-                        && database.project.to_text() == grant.project
-                        && database.database.to_text() == grant.database
-                        && database.enabled
-                })
-                .ok_or("auth configured database missing")?
-                .clone();
-            let group = grant.group_id.clone();
-            let journal = Arc::clone(&self.journal);
-            let keys = self.production.keys.clone().ok_or("auth key delivery missing")?;
-            let environment = self.production.environment.name.as_str().to_owned();
-            let store = tokio::task::spawn_blocking(move || {
-                use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
-                use terrabase::encryption::{OciVaultDatabaseKeys, OciVaultKeyDelivery};
-                let provider =
-                    OciVaultKeyDelivery::new(keys.socket, keys.orchestrator_uid, keys.socket_gid)
-                        .map_err(|_| "auth key delivery unavailable")?;
-                let scope = KeyScope::new_with_project(
-                    environment,
-                    database.tenant,
-                    database.project,
-                    database.database,
-                    KeyPurpose::Data,
-                )
-                .map_err(|_| "auth key scope invalid")?;
-                let source = OciVaultDatabaseKeys::new(
-                    provider,
-                    KeyVersionMetadata::new(scope, database.encryption_key),
-                    database.region,
-                )
-                .map_err(|_| "auth key lease unavailable")?;
-                let path = database.location.join("auth-raft.sqlite");
-                std::fs::create_dir_all(&database.location)
-                    .map_err(|_| "auth directory unavailable")?;
-                let create = journal
-                    .reserve_state_creation(&group)
-                    .map_err(|_| "auth state creation reservation failed")?;
-                SqliteStore::open_encrypted(&path, &group, Arc::new(source), create)
-                    .map_err(|_| "auth encrypted state unavailable or identity mismatch")
-            })
-            .await
-            .map_err(|_| "auth state worker unavailable")??;
-            let voters = grant
-                .voters
-                .iter()
-                .map(|voter| {
-                    terrabase_cluster::production::MemberWorkloadIdentity::parse(&voter.spiffe_uri)
-                        .map(|identity| (voter.node_id, identity.member().clone()))
-                        .map_err(|_| "auth voter identity invalid")
-                })
-                .collect::<Result<BTreeMap<_, _>, _>>()?;
-            let placement = grant
-                .regions
-                .iter()
-                .map(|region| {
-                    ProductionRegion::try_new(region).map_err(|_| "auth placement invalid")
-                })
-                .collect::<Result<BTreeSet<_>, _>>()?;
-            let network =
-                AuthNetwork::new(Arc::clone(&self.endpoint), &grant.group_id, voters, &placement)
-                    .map_err(|_| "auth transport admission mismatch")?;
-            let config = terrabase_auth::consensus_config(&grant.group_id);
-            let authority = AuthAuthority::recover_admitted(
-                store,
-                network.clone(),
-                config,
-                Duration::from_secs(10),
-            )
-            .await
-            .map_err(|_| "auth consensus recovery failed")?;
-            if local_node == grant.genesis_node
-                && !authority
-                    .is_initialized()
-                    .await
-                    .map_err(|_| "auth consensus status unavailable")?
-            {
-                authority
-                    .initialize(network.initial_nodes())
-                    .await
-                    .map_err(|_| "auth authorized genesis failed")?;
-            }
+            let domain = self.recover_domain(&grant).await?;
             self.domains
                 .write()
                 .map_err(|_| "auth registry lock failed")?
-                .insert(grant.group_id.clone(), Arc::new(Domain { authority, network, grant }));
+                .insert(grant.group_id.clone(), Arc::new(domain));
         }
         Ok(())
+    }
+
+    async fn recover_domain(&self, grant: &AuthGroupBootstrapGrant) -> Result<Domain, String> {
+        let local_node = grant
+            .voters
+            .iter()
+            .find(|voter| voter.member == self.production.environment.member.to_text())
+            .ok_or("auth local voter missing")?
+            .node_id;
+        let database = self.database_for(grant)?;
+        let store = self.open_store(grant, database).await?;
+        let voters = grant
+            .voters
+            .iter()
+            .map(|voter| {
+                terrabase_cluster::production::MemberWorkloadIdentity::parse(&voter.spiffe_uri)
+                    .map(|identity| (voter.node_id, identity.member().clone()))
+                    .map_err(|_| "auth voter identity invalid")
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let placement = grant
+            .regions
+            .iter()
+            .map(|region| ProductionRegion::try_new(region).map_err(|_| "auth placement invalid"))
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let network =
+            AuthNetwork::new(Arc::clone(&self.endpoint), &grant.group_id, voters, &placement)
+                .map_err(|_| "auth transport admission mismatch")?;
+        let authority = AuthAuthority::recover_admitted(
+            store,
+            network.clone(),
+            terrabase_auth::consensus_config(&grant.group_id),
+            Duration::from_secs(10),
+        )
+        .await
+        .map_err(|_| "auth consensus recovery failed")?;
+        if local_node == grant.genesis_node
+            && !authority.is_initialized().await.map_err(|_| "auth consensus status unavailable")?
+        {
+            authority
+                .initialize(network.initial_nodes())
+                .await
+                .map_err(|_| "auth authorized genesis failed")?;
+        }
+        Ok(Domain { authority, network, grant: grant.clone() })
+    }
+
+    fn database_for(
+        &self,
+        grant: &AuthGroupBootstrapGrant,
+    ) -> Result<crate::config::ProductionDatabase, String> {
+        self.production
+            .databases
+            .iter()
+            .find(|database| {
+                database.tenant.to_text() == grant.tenant
+                    && database.project.to_text() == grant.project
+                    && database.database.to_text() == grant.database
+                    && database.enabled
+            })
+            .cloned()
+            .ok_or("auth configured database missing".into())
+    }
+
+    async fn open_store(
+        &self,
+        grant: &AuthGroupBootstrapGrant,
+        database: crate::config::ProductionDatabase,
+    ) -> Result<SqliteStore, String> {
+        let group = grant.group_id.clone();
+        let journal = Arc::clone(&self.journal);
+        let keys = self.production.keys.clone().ok_or("auth key delivery missing")?;
+        let environment = self.production.environment.name.as_str().to_owned();
+        tokio::task::spawn_blocking(move || {
+            use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
+            use terrabase::encryption::{OciVaultDatabaseKeys, OciVaultKeyDelivery};
+            let provider =
+                OciVaultKeyDelivery::new(keys.socket, keys.orchestrator_uid, keys.socket_gid)
+                    .map_err(|_| "auth key delivery unavailable")?;
+            let scope = KeyScope::new_with_project(
+                environment,
+                database.tenant,
+                database.project,
+                database.database,
+                KeyPurpose::Data,
+            )
+            .map_err(|_| "auth key scope invalid")?;
+            let source = OciVaultDatabaseKeys::new(
+                provider,
+                KeyVersionMetadata::new(scope, database.encryption_key),
+                database.region,
+            )
+            .map_err(|_| "auth key lease unavailable")?;
+            std::fs::create_dir_all(&database.location)
+                .map_err(|_| "auth directory unavailable")?;
+            let create = journal
+                .reserve_state_creation(&group)
+                .map_err(|_| "auth state creation reservation failed")?;
+            SqliteStore::open_encrypted(
+                &database.location.join("auth-raft.sqlite"),
+                &group,
+                Arc::new(source),
+                create,
+            )
+            .map_err(|_| "auth encrypted state unavailable or identity mismatch")
+        })
+        .await
+        .map_err(|_| "auth state worker unavailable")??
     }
 
     /// Serve authenticated connections when this runtime owns the member accept loop.
@@ -557,7 +574,8 @@ struct Increment {
     model: String,
     predicates: Vec<PredicateInput>,
     #[schema(value_type = BTreeMap<String, f64>)]
-    increment: BTreeMap<String, serde_json::Number>,
+    #[serde(rename = "increment")]
+    increments: BTreeMap<String, serde_json::Number>,
     #[serde(default)]
     set: BTreeMap<String, serde_json::Value>,
 }
@@ -894,7 +912,7 @@ async fn increment_one(
         Action::IncrementOne {
             model: input.model,
             predicates,
-            increment: input.increment,
+            increment: input.increments,
             set: input.set,
         },
     )

@@ -788,11 +788,11 @@ impl ExportService {
             Err(error) => return Err(error),
         }
         let Some(state) = self.store.load(job_id)? else { return Ok(None) };
-        self.public_status(state).map(Some)
+        self.public_status(&state).map(Some)
     }
 
-    fn public_status(&self, state: ExportJobState) -> Result<ExportStatus, ExportError> {
-        validate_state(&state)?;
+    fn public_status(&self, state: &ExportJobState) -> Result<ExportStatus, ExportError> {
+        validate_state(state)?;
         let cancellation = match state.status {
             JobStatus::Complete => ExportCancellation::Unavailable,
             JobStatus::Cancelled => ExportCancellation::Complete,

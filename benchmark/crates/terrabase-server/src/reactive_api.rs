@@ -73,11 +73,8 @@ pub struct CapabilityKeyRing {
 
 impl CapabilityKeyRing {
     /// Builds a validated capability key ring.
-    pub fn new(current: impl AsRef<[u8]>, previous: Option<impl AsRef<[u8]>>) -> Option<Self> {
-        let keys = crate::credential_rotation::KeyMaterial::new(
-            current.as_ref(),
-            previous.as_ref().map(AsRef::as_ref),
-        )?;
+    pub fn new(current: impl AsRef<[u8]>, previous: Option<&[u8]>) -> Option<Self> {
+        let keys = crate::credential_rotation::KeyMaterial::new(current.as_ref(), previous)?;
         Some(Self {
             live: Arc::new(std::sync::RwLock::new(crate::credential_rotation::LiveKeys::single(
                 keys,
@@ -85,6 +82,10 @@ impl CapabilityKeyRing {
         })
     }
     /// Deterministic ring used by conformance fixtures.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the fixed conformance key is changed to invalid material.
     #[must_use]
     pub fn conformance() -> Self {
         Self::new(CONFORMANCE_CAPABILITY_KEY, None::<&[u8]>).expect("conformance key is valid")
@@ -117,11 +118,8 @@ impl Default for CapabilityKeyRing {
 }
 impl OriginProofKeyRing {
     /// Builds a validated origin proof key ring.
-    pub fn new(current: impl AsRef<[u8]>, previous: Option<impl AsRef<[u8]>>) -> Option<Self> {
-        let keys = crate::credential_rotation::KeyMaterial::new(
-            current.as_ref(),
-            previous.as_ref().map(AsRef::as_ref),
-        )?;
+    pub fn new(current: impl AsRef<[u8]>, previous: Option<&[u8]>) -> Option<Self> {
+        let keys = crate::credential_rotation::KeyMaterial::new(current.as_ref(), previous)?;
         Some(Self {
             live: Arc::new(std::sync::RwLock::new(crate::credential_rotation::LiveKeys::single(
                 keys,

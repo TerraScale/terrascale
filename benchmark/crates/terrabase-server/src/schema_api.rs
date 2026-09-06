@@ -1146,6 +1146,28 @@ pub struct SchemaService {
     store: Option<Arc<dyn SchemaDurablePort>>,
 }
 
+enum ApplyPreparation {
+    Ready {
+        request: ApplySchemaRequest,
+        current: Option<DurableSchemaRecord>,
+        schema: CollectionSchema,
+        digest: String,
+    },
+    Replay(ApplySchemaResponse),
+}
+
+enum BackfillPreparation {
+    Ready { current: DurableSchemaRecord, migration: MigrationStatus, digest: String },
+    Replay(SchemaDocument),
+}
+
+fn trim_idempotency(idempotency: &mut BTreeMap<String, IdempotencyRecord>) {
+    while idempotency.len() > MAX_IDEMPOTENCY_KEYS {
+        let Some(key) = idempotency.keys().next().cloned() else { break };
+        idempotency.remove(&key);
+    }
+}
+
 impl SchemaService {
     /// Construct a service.  A missing port is retained as unavailable rather
     /// than replaced with process-local state.
@@ -1189,66 +1211,15 @@ impl SchemaService {
     /// Returns validation, identity, idempotency, migration-plan, generation-conflict,
     /// or durable store errors.
     pub fn apply(&self, request: ApplySchemaRequest) -> Result<ApplySchemaResponse, SchemaError> {
-        validate_target(&request.target)?;
-        validate_identity(&request.identity)?;
-        validate_idempotency_key(&request.idempotency_key)?;
-        let schema = normalize_schema(request.schema)?;
-        if schema.name != request.target.collection {
-            return Err(SchemaError::invalid(format!(
-                "schema collection '{}' does not match target '{}'",
-                schema.name, request.target.collection
-            )));
-        }
-        let digest = request_digest(
-            &request.target,
-            &request.identity,
-            request.expected_generation,
-            &schema,
-        )?;
-        let current = self.load(&request.target)?;
-        if let Some(record) = current.as_ref() {
-            ensure_identity(&record.document.identity, &request.identity)?;
-            if let Some(previous) = record.idempotency.get(&request.idempotency_key) {
-                if previous.digest == digest {
-                    return Ok(ApplySchemaResponse {
-                        document: previous.response.clone(),
-                        idempotent_replay: true,
-                    });
-                }
-                return Err(SchemaError::new(
-                    409,
-                    "idempotency_conflict",
-                    "idempotency key was already used for a different schema request",
-                    "retry with a new Idempotency-Key or replay the original request",
-                ));
+        let prepared = self.prepare_apply(request)?;
+        let (request, current, schema, digest) = match prepared {
+            ApplyPreparation::Ready { request, current, schema, digest } => {
+                (request, current, schema, digest)
             }
-        }
+            ApplyPreparation::Replay(response) => return Ok(response),
+        };
         let current_generation = current.as_ref().map_or(0, |record| record.document.generation);
-        if request.expected_generation.is_some_and(|expected| expected != current_generation) {
-            return Err(SchemaError::new(
-                412,
-                "generation_mismatch",
-                format!(
-                    "schema generation is {current_generation}, not the requested precondition"
-                ),
-                "GET the schema, then retry with its ETag in If-Match",
-            ));
-        }
         let next_version = next_schema_version(current.as_ref(), schema.version)?;
-        if current.as_ref().is_some_and(|record| {
-            record.document.migration.as_ref().is_some_and(|migration| {
-                matches!(migration.state, MigrationState::Pending | MigrationState::Running)
-                    || (migration.state == MigrationState::Failed
-                        && record.migration_plan.is_some())
-            })
-        }) {
-            return Err(SchemaError::new(
-                409,
-                "migration_in_progress",
-                "the current schema migration is still running",
-                "wait for migration completion before applying another schema",
-            ));
-        }
         let migration = plan_migration(
             current.as_ref().map(|record| &record.document.schema),
             &schema,
@@ -1268,17 +1239,87 @@ impl SchemaService {
             request.idempotency_key,
             IdempotencyRecord { digest, response: document.clone() },
         );
-        while idempotency.len() > MAX_IDEMPOTENCY_KEYS {
-            let Some(key) = idempotency.keys().next().cloned() else { break };
-            idempotency.remove(&key);
+        trim_idempotency(&mut idempotency);
+        self.commit_apply(&request, current.as_ref(), document, idempotency)
+    }
+
+    fn prepare_apply(&self, request: ApplySchemaRequest) -> Result<ApplyPreparation, SchemaError> {
+        validate_target(&request.target)?;
+        validate_identity(&request.identity)?;
+        validate_idempotency_key(&request.idempotency_key)?;
+        let schema = normalize_schema(request.schema)?;
+        if schema.name != request.target.collection {
+            return Err(SchemaError::invalid(format!(
+                "schema collection '{}' does not match target '{}'",
+                schema.name, request.target.collection
+            )));
         }
+        let digest = request_digest(
+            &request.target,
+            &request.identity,
+            request.expected_generation,
+            &schema,
+        )?;
+        let current = self.load(&request.target)?;
+        let current_generation = current.as_ref().map_or(0, |record| record.document.generation);
+        if let Some(record) = current.as_ref() {
+            ensure_identity(&record.document.identity, &request.identity)?;
+            if let Some(previous) = record.idempotency.get(&request.idempotency_key) {
+                if previous.digest == digest {
+                    return Ok(ApplyPreparation::Replay(ApplySchemaResponse {
+                        document: previous.response.clone(),
+                        idempotent_replay: true,
+                    }));
+                }
+                return Err(SchemaError::new(
+                    409,
+                    "idempotency_conflict",
+                    "idempotency key was already used for a different schema request",
+                    "retry with a new Idempotency-Key or replay the original request",
+                ));
+            }
+        }
+        if request.expected_generation.is_some_and(|expected| expected != current_generation) {
+            return Err(SchemaError::new(
+                412,
+                "generation_mismatch",
+                format!(
+                    "schema generation is {current_generation}, not the requested precondition"
+                ),
+                "GET the schema, then retry with its ETag in If-Match",
+            ));
+        }
+        if current.as_ref().is_some_and(|record| {
+            record.document.migration.as_ref().is_some_and(|migration| {
+                matches!(migration.state, MigrationState::Pending | MigrationState::Running)
+                    || (migration.state == MigrationState::Failed
+                        && record.migration_plan.is_some())
+            })
+        }) {
+            return Err(SchemaError::new(
+                409,
+                "migration_in_progress",
+                "the current schema migration is still running",
+                "wait for migration completion before applying another schema",
+            ));
+        }
+        Ok(ApplyPreparation::Ready { request, current, schema, digest })
+    }
+
+    fn commit_apply(
+        &self,
+        request: &ApplySchemaRequest,
+        current: Option<&DurableSchemaRecord>,
+        document: SchemaDocument,
+        idempotency: BTreeMap<String, IdempotencyRecord>,
+    ) -> Result<ApplySchemaResponse, SchemaError> {
         let outcome = self
             .store()?
             .commit(
                 &request.target,
-                current.as_ref(),
+                current,
                 DurableSchemaRecord {
-                    previous_schema: current.as_ref().filter(|_| document.migration.is_some()).map(
+                    previous_schema: current.filter(|_| document.migration.is_some()).map(
                         |record| {
                             let mut schema = record.document.schema.clone();
                             schema.version = Some(record.document.schema_version);
@@ -1314,64 +1355,16 @@ impl SchemaService {
         &self,
         progress: BackfillProgress,
     ) -> Result<SchemaDocument, SchemaError> {
-        validate_backfill_progress(&progress)?;
-        let digest = progress_digest(&progress)?;
-        let current = self.load(&progress.target)?.ok_or_else(|| {
-            SchemaError::new(
-                404,
-                "schema_not_found",
-                "cannot update backfill status without a schema",
-                "apply a schema before starting its backfill",
-            )
-        })?;
-        if current.document.generation != progress.generation {
-            return Err(SchemaError::new(
-                412,
-                "generation_mismatch",
-                "backfill reports an obsolete schema generation",
-                "restart the worker from the latest schema migration status",
-            ));
-        }
-        let Some(mut migration) = current.document.migration.clone() else {
-            return Err(SchemaError::new(
-                409,
-                "no_backfill",
-                "the schema has no resumable backfill",
-                "refresh migration status and apply a schema change that requires backfill",
-            ));
-        };
-        if migration.operation_id != progress.operation_id {
-            return Err(SchemaError::new(
-                409,
-                "backfill_mismatch",
-                "backfill operation does not match the pinned migration",
-                "use the operation_id returned by GET schema",
-            ));
-        }
-        if let Some(previous) = current.idempotency.get(&progress.idempotency_key) {
-            if previous.digest == digest {
-                return Ok(previous.response.clone());
+        let prepared = self.prepare_backfill(&progress)?;
+        let (current, mut migration, digest) = match prepared {
+            BackfillPreparation::Ready { current, migration, digest } => {
+                (current, migration, digest)
             }
-            return Err(SchemaError::new(
-                409,
-                "idempotency_conflict",
-                "backfill idempotency key was already used for a different progress update",
-                "retry the original progress update or use a new worker key",
-            ));
-        }
-        if progress.completed < migration.completed
-            || (migration.total != 0 && progress.total < migration.total)
-        {
-            return Err(SchemaError::new(
-                409,
-                "backfill_regression",
-                "backfill progress cannot move backwards",
-                "resume from the latest durable cursor and report monotonic counters",
-            ));
-        }
+            BackfillPreparation::Replay(document) => return Ok(document),
+        };
         migration.total = progress.total;
         migration.completed = progress.completed;
-        migration.next_cursor = progress.next_cursor;
+        migration.next_cursor = progress.next_cursor.clone();
         migration.state = if progress.failed {
             MigrationState::Failed
         } else if progress.completed == progress.total {
@@ -1393,10 +1386,7 @@ impl SchemaService {
             progress.idempotency_key,
             IdempotencyRecord { digest, response: document.clone() },
         );
-        while idempotency.len() > MAX_IDEMPOTENCY_KEYS {
-            let Some(key) = idempotency.keys().next().cloned() else { break };
-            idempotency.remove(&key);
-        }
+        trim_idempotency(&mut idempotency);
         let outcome = self
             .store()?
             .commit(
@@ -1435,6 +1425,68 @@ impl SchemaService {
             ));
         }
         Ok(document)
+    }
+
+    fn prepare_backfill(
+        &self,
+        progress: &BackfillProgress,
+    ) -> Result<BackfillPreparation, SchemaError> {
+        validate_backfill_progress(progress)?;
+        let digest = progress_digest(progress)?;
+        let current = self.load(&progress.target)?.ok_or_else(|| {
+            SchemaError::new(
+                404,
+                "schema_not_found",
+                "cannot update backfill status without a schema",
+                "apply a schema before starting its backfill",
+            )
+        })?;
+        if current.document.generation != progress.generation {
+            return Err(SchemaError::new(
+                412,
+                "generation_mismatch",
+                "backfill reports an obsolete schema generation",
+                "restart the worker from the latest schema migration status",
+            ));
+        }
+        let Some(migration) = current.document.migration.clone() else {
+            return Err(SchemaError::new(
+                409,
+                "no_backfill",
+                "the schema has no resumable backfill",
+                "refresh migration status and apply a schema change that requires backfill",
+            ));
+        };
+        if migration.operation_id != progress.operation_id {
+            return Err(SchemaError::new(
+                409,
+                "backfill_mismatch",
+                "backfill operation does not match the pinned migration",
+                "use the operation_id returned by GET schema",
+            ));
+        }
+        if let Some(previous) = current.idempotency.get(&progress.idempotency_key) {
+            if previous.digest == digest {
+                return Ok(BackfillPreparation::Replay(previous.response.clone()));
+            }
+            return Err(SchemaError::new(
+                409,
+                "idempotency_conflict",
+                "backfill idempotency key was already used for a different progress update",
+                "retry the original progress update or use a new worker key",
+            ));
+        }
+        if progress.completed < migration.completed
+            || (migration.total != 0 && progress.total < migration.total)
+        {
+            return Err(SchemaError::new(
+                409,
+                "backfill_regression",
+                "backfill progress cannot move backwards",
+                "resume from the latest durable cursor and report monotonic counters",
+            ));
+        }
+        Ok(BackfillPreparation::Ready { current, migration, digest })
     }
 
     fn store(&self) -> Result<&Arc<dyn SchemaDurablePort>, SchemaError> {

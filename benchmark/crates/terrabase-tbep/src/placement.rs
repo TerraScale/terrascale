@@ -555,8 +555,8 @@ impl PlacementJournal {
         &self,
         principal: &str,
         operation: &str,
-        mut request: pb::PlacementStageRequest,
-    ) -> Result<pb::PlacementProposalResponse, PlacementError> {
+        mut request: pb::PlacementControlServiceStageRequest,
+    ) -> Result<pb::PlacementControlServiceStageResponse, PlacementError> {
         if principal.is_empty()
             || principal.len() > 128
             || operation.is_empty()
@@ -646,7 +646,7 @@ impl PlacementJournal {
     ///
     /// # Errors
     /// Returns `NotFound` before the first proposal, or a journal/boundary failure.
-    pub fn latest(&self) -> Result<pb::PlacementProposalResponse, PlacementError> {
+    pub fn latest(&self) -> Result<pb::PlacementControlServiceStageResponse, PlacementError> {
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
         let head: Option<(u64, Vec<u8>)> = connection
             .query_row(
@@ -665,7 +665,7 @@ impl PlacementJournal {
         connection: &Connection,
         revision: u64,
         bytes: &[u8],
-    ) -> Result<pb::PlacementProposalResponse, PlacementError> {
+    ) -> Result<pb::PlacementControlServiceStageResponse, PlacementError> {
         if bytes.len() > MAX_PLACEMENT_PROPOSAL_BYTES
             || revision == 0
             || revision > MAX_PLACEMENT_PROPOSALS
@@ -681,7 +681,7 @@ impl PlacementJournal {
         if proposal.encode_to_vec() != bytes {
             return Err(PlacementError::Storage);
         }
-        Ok(pb::PlacementProposalResponse {
+        Ok(pb::PlacementControlServiceStageResponse {
             revision,
             proposal: Some(proposal),
             status: pb::PlacementProposalStatus::Pending as i32,
@@ -778,8 +778,8 @@ impl PlacementJournal {
     pub fn accept(
         &self,
         operation: &str,
-        request: &pb::PlacementAcceptRequest,
-    ) -> Result<pb::PlacementAcceptanceResponse, PlacementError> {
+        request: &pb::PlacementControlServiceAcceptRequest,
+    ) -> Result<pb::PlacementControlServiceAcceptResponse, PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
         let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
         let verified = trust.decode(&request.proof)?;
@@ -842,7 +842,7 @@ impl PlacementJournal {
     ///
     /// # Errors
     /// Rejects missing proofs or invalid retained chain.
-    pub fn accepted(&self) -> Result<pb::PlacementAcceptanceResponse, PlacementError> {
+    pub fn accepted(&self) -> Result<pb::PlacementControlServiceGetAcceptedResponse, PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
         let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
@@ -952,8 +952,8 @@ impl PlacementJournal {
 fn acceptance_response(
     revision: u64,
     proof: &transition::VerifiedProof,
-) -> pb::PlacementAcceptanceResponse {
-    pb::PlacementAcceptanceResponse {
+) -> pb::PlacementControlServiceGetAcceptedResponse {
+    pb::PlacementControlServiceGetAcceptedResponse {
         proposal_revision: revision,
         epoch: proof.proof.request.epoch,
         generation: proof.proof.request.generation,
@@ -1163,7 +1163,7 @@ impl PlacementJournal {
     ///
     /// # Errors
     /// Refuses absent or invalid accepted authority and unavailable durable storage.
-    pub fn accepted_proposal(&self) -> Result<pb::PlacementProposalResponse, PlacementError> {
+    pub fn accepted_proposal(&self) -> Result<pb::PlacementControlServiceStageResponse, PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
         let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;

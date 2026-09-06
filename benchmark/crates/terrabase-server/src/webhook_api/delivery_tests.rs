@@ -15,6 +15,58 @@ struct ProvisionGate {
     resume: std::sync::mpsc::Receiver<()>,
 }
 
+struct BudgetPorts {
+    base: TestPorts,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    stop_after_send: bool,
+}
+
+impl WebhookJournal for BudgetPorts {
+    fn page(
+        &self,
+        _: &TenantScope,
+        cursor: Option<ChangeCheckpoint>,
+        limit: usize,
+    ) -> Result<PublicationPage, StorageError> {
+        let publications = (1..=12_u32)
+            .filter(|index| {
+                cursor.is_none_or(|cursor| cursor.sequence() < 7 || cursor.write_index() < *index)
+            })
+            .take(limit)
+            .map(|write_index| Publication {
+                revision: 7,
+                write_index,
+                event_id: format!("event-{write_index}"),
+                body: b"payload".to_vec(),
+            })
+            .collect::<Vec<_>>();
+        let next = publications
+            .last()
+            .map(|row| ChangeCheckpoint::after(row.revision, row.write_index))
+            .or(cursor);
+        Ok(PublicationPage { publications, next })
+    }
+}
+
+impl WebhookDelivery for BudgetPorts {
+    fn validate_target(&self, _: &str) -> Result<(), DeliveryError> {
+        Ok(())
+    }
+
+    fn send(
+        &self,
+        _: &str,
+        _: &BTreeMap<String, String>,
+        _: &[u8],
+    ) -> Result<DeliveryResponse, DeliveryError> {
+        self.base.sent.fetch_add(1, Ordering::SeqCst);
+        if self.stop_after_send {
+            self.stop.store(true, Ordering::Release);
+        }
+        Ok(DeliveryResponse { status: 204 })
+    }
+}
+
 impl WebhookClock for TestPorts {
     fn now(&self) -> u64 {
         self.now.load(Ordering::SeqCst)
@@ -575,55 +627,6 @@ fn retained_journal_preserves_overwritten_events_and_pending_retry_after_restart
 
 #[tokio::test]
 async fn dispatcher_budget_and_cancellation_preserve_due_deliveries() {
-    struct BudgetPorts {
-        base: TestPorts,
-        stop: Arc<std::sync::atomic::AtomicBool>,
-        stop_after_send: bool,
-    }
-    impl WebhookJournal for BudgetPorts {
-        fn page(
-            &self,
-            _: &TenantScope,
-            cursor: Option<ChangeCheckpoint>,
-            limit: usize,
-        ) -> Result<PublicationPage, StorageError> {
-            let publications = (1..=12_u32)
-                .filter(|index| {
-                    cursor
-                        .is_none_or(|cursor| cursor.sequence() < 7 || cursor.write_index() < *index)
-                })
-                .take(limit)
-                .map(|write_index| Publication {
-                    revision: 7,
-                    write_index,
-                    event_id: format!("event-{write_index}"),
-                    body: b"payload".to_vec(),
-                })
-                .collect::<Vec<_>>();
-            let next = publications
-                .last()
-                .map(|row| ChangeCheckpoint::after(row.revision, row.write_index))
-                .or(cursor);
-            Ok(PublicationPage { publications, next })
-        }
-    }
-    impl WebhookDelivery for BudgetPorts {
-        fn validate_target(&self, _: &str) -> Result<(), DeliveryError> {
-            Ok(())
-        }
-        fn send(
-            &self,
-            _: &str,
-            _: &BTreeMap<String, String>,
-            _: &[u8],
-        ) -> Result<DeliveryResponse, DeliveryError> {
-            self.base.sent.fetch_add(1, Ordering::SeqCst);
-            if self.stop_after_send {
-                self.stop.store(true, Ordering::Release);
-            }
-            Ok(DeliveryResponse { status: 204 })
-        }
-    }
     let root = std::env::temp_dir()
         .join(format!("terrascale-webhook-budget-{}", terrabase::identity::generate()));
     let engine = Arc::new(

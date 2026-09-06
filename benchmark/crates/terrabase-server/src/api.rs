@@ -3245,14 +3245,8 @@ async fn patch_document(
     let Ok(scope) = document_scope(engine) else {
         return ApiError::control_unavailable().into_response();
     };
-    let Ok(collection) = CollectionName::try_new(&collection) else {
-        return invalid_identifier("collection name", &collection).into_response();
-    };
-    let Ok(id) = DocumentId::try_new(&id) else {
-        return invalid_identifier("document identifier", &id).into_response();
-    };
-    let value = match parse_merge_patch(&body) {
-        Ok(value) => value,
+    let (collection, id, value) = match patch_request_parts(&collection, &id, &body) {
+        Ok(parts) => parts,
         Err(error) => return error.into_response(),
     };
     let mut session = match open_session(engine, &scope, &headers) {
@@ -3340,6 +3334,18 @@ async fn patch_document(
         }
         .into_response(),
     }
+}
+
+fn patch_request_parts(
+    collection: &str,
+    id: &str,
+    body: &str,
+) -> Result<(CollectionName, DocumentId, serde_json::Value), ApiError> {
+    let collection = CollectionName::try_new(collection)
+        .map_err(|_| invalid_identifier("collection name", collection))?;
+    let id = DocumentId::try_new(id).map_err(|_| invalid_identifier("document identifier", id))?;
+    let value = parse_merge_patch(body)?;
+    Ok((collection, id, value))
 }
 
 fn parse_merge_patch(body: &str) -> Result<serde_json::Value, ApiError> {

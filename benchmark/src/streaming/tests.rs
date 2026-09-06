@@ -3579,7 +3579,28 @@ fn payload_less_family_kinds_never_mint_change_payloads() {
 
     let filter = ChangeFilter::try_new(None, None).expect("filter");
     let replayed = replay_all(&engine, &tenant_scope, &filter, None, 64);
+    let validation_key = "family:validation/sales";
+    let snapshot = engine.read_snapshot(&tenant_scope).expect("validation snapshot");
+    let transaction = engine
+        .begin(&tenant_scope, snapshot, operation("op-validation-observe"))
+        .expect("validation observation transaction");
+    assert!(
+        transaction
+            .read_private_metadata(validation_key)
+            .expect("validation metadata reads")
+            .is_some(),
+        "validation writes remain present as private metadata"
+    );
+    assert!(
+        replayed.iter().all(|event| {
+            !event.document().is_some_and(|id| id.as_str().starts_with("family:validation/"))
+        }),
+        "private validation metadata produces no published document event"
+    );
     for prefix in PAYLOAD_LESS_PREFIXES {
+        if prefix == "family:validation/" {
+            continue;
+        }
         let events: Vec<&ChangeEvent> = replayed
             .iter()
             .filter(|event| event.document().is_some_and(|id| id.as_str().starts_with(prefix)))

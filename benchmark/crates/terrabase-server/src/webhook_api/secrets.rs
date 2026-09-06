@@ -9,6 +9,88 @@ use std::sync::{Arc, Mutex};
 use terrabase::encryption::{
     ArtifactCipher, Compression, DatabaseKeyLease, DatabaseKeyVersion, EncryptionContext,
 };
+/// The admitted data plane supplies current placement authorization; config alone
+/// cannot grant a database permission to unwrap a regional signing key.
+pub trait WebhookPlacementAuthorization: Send + Sync + 'static {
+    /// Checks the current admitted database lease and placement generation.
+    ///
+    /// # Errors
+    /// Returns a refusal for missing admission or a revoked regional placement.
+    fn authorize(
+        &self,
+        scope: &TenantScope,
+        region: terrabase::regions::RegionCode,
+    ) -> Result<(), SecretError>;
+}
+
+/// Native OCI key delivery with exact configured identities and live admission.
+pub struct OciWebhookKeyLeases {
+    provider: terrabase::encryption::OciVaultKeyDelivery,
+    configuration: crate::config::ProductionConfig,
+    admission: Arc<dyn WebhookPlacementAuthorization>,
+}
+
+impl OciWebhookKeyLeases {
+    /// Opens the configured, authenticated orchestrator key-delivery socket.
+    ///
+    /// # Errors
+    /// Refuses missing configuration or an unsafe/unavailable socket.
+    pub fn new(
+        configuration: crate::config::ProductionConfig,
+        admission: Arc<dyn WebhookPlacementAuthorization>,
+    ) -> Result<Self, SecretError> {
+        let keys = configuration.keys.as_ref().ok_or(SecretError::Unavailable)?;
+        let provider = terrabase::encryption::OciVaultKeyDelivery::new(
+            keys.socket.clone(),
+            keys.orchestrator_uid,
+            keys.socket_gid,
+        )
+        .map_err(|_| SecretError::Unavailable)?;
+        Ok(Self { provider, configuration, admission })
+    }
+}
+
+impl WebhookKeyLeases for OciWebhookKeyLeases {
+    fn lease(
+        &self,
+        scope: &TenantScope,
+        region: &str,
+        version: Option<DatabaseKeyVersion>,
+    ) -> Result<DatabaseKeyLease, SecretError> {
+        use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
+        let region = terrabase::regions::RegionCode::from_text(region)
+            .map_err(|_| SecretError::Unavailable)?;
+        let database = self
+            .configuration
+            .databases
+            .iter()
+            .find(|database| {
+                database.enabled
+                    && database.tenant.to_text() == scope.tenant
+                    && database.project.to_text() == scope.project
+                    && database.database.to_text() == scope.database
+            })
+            .ok_or(SecretError::Unavailable)?;
+        if !self.configuration.placement.regions.contains_key(&region) {
+            return Err(SecretError::Unavailable);
+        }
+        self.admission.authorize(scope, region)?;
+        let key_scope = KeyScope::new_with_project(
+            self.configuration.environment.name.as_str(),
+            database.tenant,
+            database.project,
+            database.database,
+            KeyPurpose::Data,
+        )
+        .map_err(|_| SecretError::Unavailable)?;
+        // Historical ciphertext carries its exact key version. The orchestrator
+        // independently verifies that the version belongs to this database.
+        let metadata =
+            KeyVersionMetadata::new(key_scope, version.unwrap_or(database.encryption_key));
+        self.provider.lease(&metadata, region).map_err(|_| SecretError::Unavailable)
+    }
+}
+
 #[cfg(test)]
 use terrabase::engine::Engine;
 
@@ -324,6 +406,44 @@ mod tests {
         }
     }
 
+    fn start_key_server(
+        socket: &std::path::Path,
+        version: String,
+    ) -> (OciVaultKeyDelivery, std::thread::JoinHandle<()>) {
+        let listener = UnixListener::bind(socket).expect("socket");
+        std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o660))
+            .expect("socket permissions");
+        let provider = OciVaultKeyDelivery::new(
+            socket.to_owned(),
+            std::fs::metadata(socket).expect("metadata").uid(),
+            std::fs::metadata(socket).expect("metadata").gid(),
+        )
+        .expect("provider");
+        let server = std::thread::spawn(move || {
+            for _ in 0..8 {
+                let (mut connection, _) = listener.accept().expect("connection");
+                connection
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .expect("timeout");
+                let mut length = [0_u8; 4];
+                connection.read_exact(&mut length).expect("length");
+                let length = u32::from_be_bytes(length) as usize;
+                assert!(length < 2048);
+                let mut request = vec![0; length];
+                connection.read_exact(&mut request).expect("request");
+                assert_eq!(&request[..5], &[b'T', b'B', b'K', b'L', 1]);
+                let mut response = 68_u32.to_be_bytes().to_vec();
+                response.extend_from_slice(&[b'T', b'B', b'K', b'L', 1]);
+                response.push(0);
+                response.extend_from_slice(&60_u32.to_be_bytes());
+                response.extend_from_slice(version.as_bytes());
+                response.extend_from_slice(&[17; 32]);
+                connection.write_all(&response).expect("response");
+            }
+        });
+        (provider, server)
+    }
+
     #[test]
     fn encrypted_secrets_survive_restart_and_deny_placement_then_delete() {
         let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -337,15 +457,6 @@ mod tests {
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o710))
             .expect("permissions");
         let socket = directory.join("keys.sock");
-        let listener = UnixListener::bind(&socket).expect("socket");
-        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o660))
-            .expect("socket permissions");
-        let provider = OciVaultKeyDelivery::new(
-            socket.clone(),
-            std::fs::metadata(&socket).expect("metadata").uid(),
-            std::fs::metadata(&socket).expect("metadata").gid(),
-        )
-        .expect("provider");
         let engine_root = directory.join("database");
         let open = || {
             Arc::new(
@@ -375,28 +486,7 @@ mod tests {
             DatabaseKeyVersion::generate(),
         );
         let version = metadata.version().to_text();
-        let server = std::thread::spawn(move || {
-            for _ in 0..8 {
-                let (mut connection, _) = listener.accept().expect("connection");
-                connection
-                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-                    .expect("timeout");
-                let mut length = [0_u8; 4];
-                connection.read_exact(&mut length).expect("length");
-                let length = u32::from_be_bytes(length) as usize;
-                assert!(length < 2048);
-                let mut request = vec![0; length];
-                connection.read_exact(&mut request).expect("request");
-                assert_eq!(&request[..5], &[b'T', b'B', b'K', b'L', 1]);
-                let mut response = 68_u32.to_be_bytes().to_vec();
-                response.extend_from_slice(&[b'T', b'B', b'K', b'L', 1]);
-                response.push(0);
-                response.extend_from_slice(&60_u32.to_be_bytes());
-                response.extend_from_slice(version.as_bytes());
-                response.extend_from_slice(&[17; 32]);
-                connection.write_all(&response).expect("response");
-            }
-        });
+        let (provider, server) = start_key_server(&socket, version);
         let keys: Arc<dyn WebhookKeyLeases> = Arc::new(SocketKeys { provider, metadata });
         let secrets = EngineWebhookSecrets {
             storage: EngineWebhookStorage::new(Arc::clone(&engine)),
@@ -449,87 +539,5 @@ mod tests {
         engine.shutdown().expect("close");
         server.join().expect("adapter thread");
         std::fs::remove_dir_all(directory).expect("cleanup");
-    }
-}
-
-/// The admitted data plane supplies current placement authorization; config alone
-/// cannot grant a database permission to unwrap a regional signing key.
-pub trait WebhookPlacementAuthorization: Send + Sync + 'static {
-    /// Checks the current admitted database lease and placement generation.
-    ///
-    /// # Errors
-    /// Returns a refusal for missing admission or a revoked regional placement.
-    fn authorize(
-        &self,
-        scope: &TenantScope,
-        region: terrabase::regions::RegionCode,
-    ) -> Result<(), SecretError>;
-}
-
-/// Native OCI key delivery with exact configured identities and live admission.
-pub struct OciWebhookKeyLeases {
-    provider: terrabase::encryption::OciVaultKeyDelivery,
-    configuration: crate::config::ProductionConfig,
-    admission: Arc<dyn WebhookPlacementAuthorization>,
-}
-
-impl OciWebhookKeyLeases {
-    /// Opens the configured, authenticated orchestrator key-delivery socket.
-    ///
-    /// # Errors
-    /// Refuses missing configuration or an unsafe/unavailable socket.
-    pub fn new(
-        configuration: crate::config::ProductionConfig,
-        admission: Arc<dyn WebhookPlacementAuthorization>,
-    ) -> Result<Self, SecretError> {
-        let keys = configuration.keys.as_ref().ok_or(SecretError::Unavailable)?;
-        let provider = terrabase::encryption::OciVaultKeyDelivery::new(
-            keys.socket.clone(),
-            keys.orchestrator_uid,
-            keys.socket_gid,
-        )
-        .map_err(|_| SecretError::Unavailable)?;
-        Ok(Self { provider, configuration, admission })
-    }
-}
-
-impl WebhookKeyLeases for OciWebhookKeyLeases {
-    fn lease(
-        &self,
-        scope: &TenantScope,
-        region: &str,
-        version: Option<DatabaseKeyVersion>,
-    ) -> Result<DatabaseKeyLease, SecretError> {
-        use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
-        let region = terrabase::regions::RegionCode::from_text(region)
-            .map_err(|_| SecretError::Unavailable)?;
-        let database = self
-            .configuration
-            .databases
-            .iter()
-            .find(|database| {
-                database.enabled
-                    && database.tenant.to_text() == scope.tenant
-                    && database.project.to_text() == scope.project
-                    && database.database.to_text() == scope.database
-            })
-            .ok_or(SecretError::Unavailable)?;
-        if !self.configuration.placement.regions.contains_key(&region) {
-            return Err(SecretError::Unavailable);
-        }
-        self.admission.authorize(scope, region)?;
-        let key_scope = KeyScope::new_with_project(
-            self.configuration.environment.name.as_str(),
-            database.tenant,
-            database.project,
-            database.database,
-            KeyPurpose::Data,
-        )
-        .map_err(|_| SecretError::Unavailable)?;
-        // Historical ciphertext carries its exact key version. The orchestrator
-        // independently verifies that the version belongs to this database.
-        let metadata =
-            KeyVersionMetadata::new(key_scope, version.unwrap_or(database.encryption_key));
-        self.provider.lease(&metadata, region).map_err(|_| SecretError::Unavailable)
     }
 }

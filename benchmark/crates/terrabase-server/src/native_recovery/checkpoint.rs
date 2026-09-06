@@ -50,6 +50,15 @@ impl Checkpoint {
             && self.captured_at_millis == manifest.captured_unix_millis()
             && self.retained_until_millis == manifest.retain_until_unix_millis()
     }
+
+    pub(super) fn matches_facts(&self, facts: &RecoveryPointFacts) -> bool {
+        self.recovery_point_id == facts.recovery_point_id
+            && self.source_database_id == facts.source_database_id
+            && self.journal_cut == facts.journal_cut
+            && self.captured_at_millis == facts.captured_at_millis
+            && self.retained_until_millis == facts.retained_until_millis
+            && self.placement == facts.placement
+    }
 }
 
 pub(super) fn validate(
@@ -118,6 +127,9 @@ where
         persist(state, checkpoint.as_ref())?;
     }
     let facts = measure(checkpoint.as_ref().ok_or(NativeRecoveryError::VerificationFailed)?)?;
+    if !checkpoint.as_ref().is_some_and(|point| point.matches_facts(&facts)) {
+        return Err(NativeRecoveryError::VerificationFailed);
+    }
     state.facts = Some(facts);
     state.error = None;
     state.phase = NativeRecoveryPhase::Complete;

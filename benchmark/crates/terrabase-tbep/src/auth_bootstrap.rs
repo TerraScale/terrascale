@@ -180,13 +180,13 @@ impl AuthBootstrapJournal {
     ///
     /// # Errors
     /// Refuses corrupt or unavailable control state.
-    pub fn identity(&self) -> Result<pb::AuthStorageIdentity, PlacementError> {
+    pub fn identity(&self) -> Result<pb::AuthGroupBootstrapServiceIdentityResponse, PlacementError> {
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
         let incarnation: String = connection
             .query_row("SELECT incarnation FROM auth_identity WHERE id=1", [], |row| row.get(0))
             .map_err(|_| PlacementError::Storage)?;
         from_text(&incarnation).map_err(|_| PlacementError::Storage)?;
-        Ok(pb::AuthStorageIdentity {
+        Ok(pb::AuthGroupBootstrapServiceIdentityResponse {
             environment: self.boundary.environment.clone(),
             cluster: self.boundary.cluster.clone(),
             member: self.boundary.member.clone(),
@@ -201,8 +201,8 @@ impl AuthBootstrapJournal {
     pub fn bootstrap(
         &self,
         principal: &str,
-        request: pb::AuthGroupBootstrapRequest,
-    ) -> Result<pb::AuthGroupBootstrapReceipt, PlacementError> {
+        request: pb::AuthGroupBootstrapServiceBootstrapRequest,
+    ) -> Result<pb::AuthGroupBootstrapServiceBootstrapResponse, PlacementError> {
         from_text(&request.operation_id).map_err(|_| PlacementError::Invalid)?;
         if principal.is_empty() || principal.len() > 1024 || principal.chars().any(char::is_control)
         {
@@ -238,7 +238,7 @@ impl AuthBootstrapJournal {
             transaction.execute("INSERT INTO auth_grants(group_id,tenant,project,database_id,principal,operation,grant) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![grant.group_id,grant.tenant,grant.project,grant.database,principal,request.operation_id,encoded]).map_err(|_|PlacementError::Storage)?;
         }
         transaction.commit().map_err(|_| PlacementError::Storage)?;
-        Ok(pb::AuthGroupBootstrapReceipt {
+        Ok(pb::AuthGroupBootstrapServiceBootstrapResponse {
             group_id: grant.group_id.clone(),
             generation: grant.generation,
             authority_revision: grant.authority_revision,

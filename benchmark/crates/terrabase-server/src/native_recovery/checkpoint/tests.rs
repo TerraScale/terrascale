@@ -108,6 +108,26 @@ fn measuring_checkpoint_resumes_without_capture() {
 }
 
 #[test]
+fn mismatched_measurement_facts_cannot_complete() {
+    let mut operation = state(NativeRecoveryPhase::Measuring);
+    let mut mismatched = facts();
+    mismatched.journal_cut += 1;
+    assert_eq!(
+        advance(
+            &mut operation,
+            Some(point()),
+            &["GRU".into()],
+            || panic!("capture after durable checkpoint"),
+            |_, _| Ok(()),
+            |_| Ok(mismatched),
+        ),
+        Err(NativeRecoveryError::VerificationFailed)
+    );
+    assert_eq!(operation.phase, NativeRecoveryPhase::Measuring);
+    assert!(operation.facts.is_none());
+}
+
+#[test]
 fn accepted_checkpoint_retry_does_not_capture_and_complete_replay_does_nothing() {
     let mut operation = state(NativeRecoveryPhase::Accepted);
     let captures = Cell::new(0);

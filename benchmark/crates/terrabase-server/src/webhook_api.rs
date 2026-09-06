@@ -2669,22 +2669,7 @@ mod tests {
             storage.delivery_log(&scope, &endpoint.id, 10).expect("log").deliveries.len(),
             1
         );
-        let mut boundary_records = Vec::new();
-        for value in [0, i64::MAX.cast_unsigned(), i64::MAX.cast_unsigned() + 1, u64::MAX] {
-            let endpoint = storage
-                .create_endpoint(&scope, "https://hooks.example/events", value)
-                .expect("full-range endpoint timestamp");
-            let publication = Publication {
-                revision: value,
-                write_index: 1,
-                event_id: format!("event-{value}"),
-                body: b"body".to_vec(),
-            };
-            let delivery = storage
-                .ensure_delivery(&scope, &endpoint.id, &publication, value)
-                .expect("full-range delivery metadata");
-            boundary_records.push((endpoint, delivery));
-        }
+        let boundary_records = create_boundary_records(&storage, &scope);
         drop(storage);
         let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
         engine.shutdown().expect("flush");
@@ -2694,21 +2679,7 @@ mod tests {
         );
         let storage = EngineWebhookStorage::new(Arc::clone(&reopened));
         assert_eq!(storage.dispatch_cursor(&scope), Ok(Some(ChangeCheckpoint::after(7, 1))));
-        let engine_scope = webhook_engine_scope(&reopened, &scope).expect("scope");
-        assert!(
-            reopened
-                .streams()
-                .replay_sync_journal(
-                    &engine_scope,
-                    None,
-                    256,
-                    &terrabase::types::Cancellation::new()
-                )
-                .expect("retained journal")
-                .records()
-                .is_empty(),
-            "internal webhook state must not enter customer journal"
-        );
+        assert_internal_state_is_not_published(&reopened, &scope);
         for (endpoint, delivery) in boundary_records {
             assert_eq!(storage.endpoint(&scope, &endpoint.id), Ok(Some(endpoint.clone())));
             let log = storage.delivery_log(&scope, &endpoint.id, 10).expect("durable delivery");
@@ -2722,6 +2693,45 @@ mod tests {
         reopened.shutdown().expect("close reopened engine");
         let _ = std::fs::remove_dir_all(root);
     }
+}
+
+#[cfg(test)]
+fn create_boundary_records(
+    storage: &EngineWebhookStorage,
+    scope: &TenantScope,
+) -> Vec<(WebhookEndpoint, DeliveryRecord)> {
+    [0, i64::MAX.cast_unsigned(), i64::MAX.cast_unsigned() + 1, u64::MAX]
+        .into_iter()
+        .map(|value| {
+            let endpoint = storage
+                .create_endpoint(scope, "https://hooks.example/events", value)
+                .expect("full-range endpoint timestamp");
+            let publication = Publication {
+                revision: value,
+                write_index: 1,
+                event_id: format!("event-{value}"),
+                body: b"body".to_vec(),
+            };
+            let delivery = storage
+                .ensure_delivery(scope, &endpoint.id, &publication, value)
+                .expect("full-range delivery metadata");
+            (endpoint, delivery)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn assert_internal_state_is_not_published(engine: &Engine, scope: &TenantScope) {
+    let engine_scope = webhook_engine_scope(engine, scope).expect("scope");
+    assert!(
+        engine
+            .streams()
+            .replay_sync_journal(&engine_scope, None, 256, &terrabase::types::Cancellation::new(),)
+            .expect("retained journal")
+            .records()
+            .is_empty(),
+        "internal webhook state must not enter customer journal"
+    );
 }
 
 #[cfg(test)]

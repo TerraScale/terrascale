@@ -143,6 +143,10 @@ pub struct PeerDatabase {
 }
 /// Observations from live authenticated sessions; these do not certify repair completion.
 #[derive(Clone, Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent replication observations are combined by readiness proofs"
+)]
 pub struct PeerFacts {
     /// An authenticated session is currently active.
     pub connected: bool,
@@ -225,26 +229,7 @@ impl ReplicationPeers {
         dispatcher: Option<Arc<dyn PeerControlDispatcher>>,
     ) -> Result<Self, String> {
         let endpoint = runtime.transport();
-        if endpoint.config().limits().max_frame_bytes()
-            < terrabase_cluster::wal_wire::MAX_WAL_WIRE_BYTES + 1024
-        {
-            return Err("member frame limit cannot carry physical replication".into());
-        }
-        if peers.values().map(Vec::len).sum::<usize>() > terrabase::member::MAX_DATABASES * 20 {
-            return Err("replication database lane limit exceeded".into());
-        }
-        let mut validated = Vec::new();
-        for (name, lanes) in peers {
-            let id = MemberId::try_new(&name).map_err(failure)?;
-            if endpoint.config().peer(&id).is_none() {
-                return Err("replication peer is not admitted".into());
-            }
-            let mut scopes = std::collections::BTreeSet::new();
-            if lanes.iter().any(|lane| !scopes.insert(lane.scope)) {
-                return Err("duplicate replication database lane".into());
-            }
-            validated.push((id, lanes));
-        }
+        let validated = validate_peer_lanes(&runtime, peers)?;
         let observations: PeerObservations = Arc::default();
         for (id, lanes) in &validated {
             observe(&observations, id.as_str(), lanes, false);
@@ -277,79 +262,20 @@ impl ReplicationPeers {
         let runtime_handle = tokio::runtime::Handle::try_current()
             .map_err(|_| "replication startup requires an active Tokio runtime")?;
         progress.admit_many(selected_regions).map_err(failure)?;
-        let join = runtime_handle.spawn(async move {
-            let mut workers = tokio::task::JoinSet::new();
-            let mut incoming = BTreeMap::new();
-            for (id, lanes, new_lanes) in validated {
-                let (sender, receiver) = mpsc::channel(1);
-                incoming.insert(id.as_str().to_owned(), sender);
-                workers.spawn(peer_worker(
-                    runtime.clone(),
-                    progress.clone(),
-                    id.clone(),
-                    lanes,
-                    receiver,
-                    stopped.clone(),
-                    worker_observations.clone(),
-                    PeerInbox {
-                        receiver: Some(new_lanes),
-                        peer: id.as_str().to_owned(),
-                        live_workers: worker_lifecycle.clone(),
-                        progress: progress.clone(),
-                        observations: worker_observations.clone(),
-                        retirement: None,
-                    },
-                    worker_cuts.clone(),
-                ));
-            }
-            let incoming = Arc::new(incoming);
-            let mut classifiers = tokio::task::JoinSet::new();
-            let endpoint = runtime.transport();
-            let mut stopped = stopped;
-            let mut worker_error = None;
-            loop {
-                tokio::select! {
-                    _ = stopped.changed() => break,
-                    result = workers.join_next(), if !workers.is_empty() => {
-                        worker_error = Some(match result {
-                            Some(Err(error)) => failure(error),
-                            _ => "replication peer worker stopped unexpectedly".into(),
-                        });
-                        progress.fence();
-                        break;
-                    },
-                    _ = classifiers.join_next(), if !classifiers.is_empty() => {},
-                    accepted = endpoint.accept() => match accepted {
-                        Ok(Some(connection)) => {
-                            if classifiers.len() >= 64 { continue; }
-                            let incoming = incoming.clone();
-                            let dispatcher = dispatcher.clone();
-                            let local = endpoint.config().local_identity().member().as_str().to_owned();
-                            classifiers.spawn(async move {
-                                let Ok(bytes) = connection.receive_frame().await else { return; };
-                                if !accepts_peer_frame(connection.class(), &bytes) { return; }
-                                if bytes == PEER_HELLO {
-                                    if connection.peer().member().as_str() < local.as_str() && let Some(sender) = incoming.get(connection.peer().member().as_str()) { let _ = sender.try_send(connection); }
-                                } else if let Some(dispatcher) = dispatcher { let _ = dispatcher.dispatch(connection, bytes).await; }
-                            });
-                        }
-                        Ok(None) => break,
-                        Err(_) => { tokio::time::sleep(Duration::from_millis(100)).await; }
-                    }
-                }
-            }
-            let _ = worker_stop.send(true);
-            while classifiers.join_next().await.is_some() {}
-            drop(incoming);
-            // Workers observe the stop signal between bounded operations.
-            while let Some(result) = workers.join_next().await {
-                if let Err(error) = result {
-                    worker_error = Some(failure(error));
-                }
-            }
-            drop(runtime);
-            worker_error.map_or(Ok(()), Err)
-        });
+        let join = spawn_peer_owner(
+            PeerOwnerContext {
+                runtime,
+                progress,
+                validated,
+                stopped,
+                worker_stop,
+                worker_lifecycle,
+                worker_observations,
+                worker_cuts,
+                dispatcher,
+            },
+            runtime_handle,
+        );
         Ok(Self {
             stop,
             draining: AtomicBool::new(false),
@@ -608,17 +534,132 @@ impl ReplicationPeers {
     }
 }
 
-async fn peer_worker(
+struct PeerOwnerContext {
+    runtime: Arc<ProductionMemberRuntime>,
+    progress: Arc<ReplicationProgress>,
+    validated: Vec<(MemberId, Vec<PeerDatabase>, mpsc::Receiver<PeerCommand>)>,
+    stopped: watch::Receiver<bool>,
+    worker_stop: watch::Sender<bool>,
+    worker_lifecycle: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+    worker_observations: PeerObservations,
+    worker_cuts: Arc<ReplicationCuts>,
+    dispatcher: Option<Arc<dyn PeerControlDispatcher>>,
+}
+
+fn spawn_peer_owner(
+    context: PeerOwnerContext,
+    runtime_handle: tokio::runtime::Handle,
+) -> tokio::task::JoinHandle<Result<(), String>> {
+    runtime_handle.spawn(async move {
+        let PeerOwnerContext { runtime, progress, validated, stopped, worker_stop, worker_lifecycle, worker_observations, worker_cuts, dispatcher } = context;
+        let mut workers = tokio::task::JoinSet::new();
+        let mut incoming = BTreeMap::new();
+        for (id, lanes, new_lanes) in validated {
+            let (sender, receiver) = mpsc::channel(1);
+            incoming.insert(id.as_str().to_owned(), sender);
+            workers.spawn(peer_worker(PeerWorkerContext {
+                runtime: runtime.clone(), progress: progress.clone(), id: id.clone(), lanes,
+                incoming: receiver, stopped: stopped.clone(), observations: worker_observations.clone(),
+                new_lanes: PeerInbox { receiver: Some(new_lanes), peer: id.as_str().to_owned(), live_workers: worker_lifecycle.clone(), progress: progress.clone(), observations: worker_observations.clone(), retirement: None },
+                cuts: worker_cuts.clone(),
+            }));
+        }
+        let incoming = Arc::new(incoming);
+        let mut classifiers = tokio::task::JoinSet::new();
+        let endpoint = runtime.transport();
+        let mut stopped = stopped;
+        let mut worker_error = None;
+        loop {
+            tokio::select! {
+                _ = stopped.changed() => break,
+                result = workers.join_next(), if !workers.is_empty() => {
+                    worker_error = Some(match result { Some(Err(error)) => failure(error), _ => "replication peer worker stopped unexpectedly".into() });
+                    progress.fence(); break;
+                },
+                _ = classifiers.join_next(), if !classifiers.is_empty() => {},
+                accepted = endpoint.accept() => match accepted {
+                    Ok(Some(connection)) => {
+                        if classifiers.len() >= 64 { continue; }
+                        let incoming = incoming.clone();
+                        let dispatcher = dispatcher.clone();
+                        let local = endpoint.config().local_identity().member().as_str().to_owned();
+                        classifiers.spawn(async move {
+                            let Ok(bytes) = connection.receive_frame().await else { return; };
+                            if !accepts_peer_frame(connection.class(), &bytes) { return; }
+                            if bytes == PEER_HELLO {
+                                if connection.peer().member().as_str() < local.as_str() && let Some(sender) = incoming.get(connection.peer().member().as_str()) { let _ = sender.try_send(connection); }
+                            } else if let Some(dispatcher) = dispatcher { let _ = dispatcher.dispatch(connection, bytes).await; }
+                        });
+                    }
+                    Ok(None) => break,
+                    Err(_) => { tokio::time::sleep(Duration::from_millis(100)).await; }
+                }
+            }
+        }
+        let _ = worker_stop.send(true);
+        while classifiers.join_next().await.is_some() {}
+        drop(incoming);
+        while let Some(result) = workers.join_next().await {
+            if let Err(error) = result { worker_error = Some(failure(error)); }
+        }
+        drop(runtime);
+        worker_error.map_or(Ok(()), Err)
+    })
+}
+
+fn validate_peer_lanes(
+    runtime: &Arc<ProductionMemberRuntime>,
+    peers: BTreeMap<String, Vec<PeerDatabase>>,
+) -> Result<Vec<(MemberId, Vec<PeerDatabase>)>, String> {
+    let endpoint = runtime.transport();
+    if endpoint.config().limits().max_frame_bytes()
+        < terrabase_cluster::wal_wire::MAX_WAL_WIRE_BYTES + 1024
+    {
+        return Err("member frame limit cannot carry physical replication".into());
+    }
+    if peers.values().map(Vec::len).sum::<usize>() > terrabase::member::MAX_DATABASES * 20 {
+        return Err("replication database lane limit exceeded".into());
+    }
+    peers
+        .into_iter()
+        .map(|(name, lanes)| {
+            let id = MemberId::try_new(&name).map_err(failure)?;
+            if endpoint.config().peer(&id).is_none() {
+                return Err("replication peer is not admitted".into());
+            }
+            let mut scopes = std::collections::BTreeSet::new();
+            if lanes.iter().any(|lane| !scopes.insert(lane.scope)) {
+                return Err("duplicate replication database lane".into());
+            }
+            Ok((id, lanes))
+        })
+        .collect()
+}
+
+struct PeerWorkerContext {
     runtime: Arc<ProductionMemberRuntime>,
     progress: Arc<ReplicationProgress>,
     id: MemberId,
-    mut lanes: Vec<PeerDatabase>,
-    mut incoming: mpsc::Receiver<ProductionConnection>,
-    mut stopped: watch::Receiver<bool>,
+    lanes: Vec<PeerDatabase>,
+    incoming: mpsc::Receiver<ProductionConnection>,
+    stopped: watch::Receiver<bool>,
     observations: PeerObservations,
-    mut new_lanes: PeerInbox,
+    new_lanes: PeerInbox,
     cuts: Arc<ReplicationCuts>,
-) {
+}
+
+async fn peer_worker(context: PeerWorkerContext) {
+    let PeerWorkerContext {
+        runtime,
+        progress,
+        id,
+        mut lanes,
+        mut incoming,
+        mut stopped,
+        observations,
+        mut new_lanes,
+        cuts,
+    } = context;
     let endpoint = runtime.transport();
     let dial = endpoint.config().local_identity().member().as_str() < id.as_str();
     loop {
@@ -627,16 +668,7 @@ async fn peer_worker(
             command = new_lanes.recv() => {
                 if let Some(command) = command {
                     if let PeerCommand::Retire { done } = command {
-                        let result = match new_lanes.retirement.clone() {
-                            Some(result) => result,
-                            None => {
-                                let result = retirement::capture_lanes(&mut lanes).await;
-                                if result.is_ok() {
-                                    new_lanes.retirement = Some(result.clone());
-                                }
-                                result
-                            }
-                        };
+                        let result = capture_retirement(&mut lanes, &mut new_lanes).await;
                         let _ = done.send(result);
                         retirement_park(&mut new_lanes, &mut stopped, &mut lanes).await;
                         return;
@@ -656,13 +688,15 @@ async fn peer_worker(
             observe(&observations, id.as_str(), &lanes, true);
             let session_result = session(
                 connection,
-                &runtime,
-                &progress,
                 &mut lanes,
-                &stopped,
-                &observations,
+                SessionContext {
+                    runtime: &runtime,
+                    progress: &progress,
+                    stopped: &stopped,
+                    observations: &observations,
+                    cuts: &cuts,
+                },
                 &mut new_lanes,
-                &cuts,
             )
             .await;
             if matches!(session_result, Err(ref error) if error == "__retire__") {
@@ -690,16 +724,7 @@ async fn retirement_park(
             _ = stopped.changed() => return,
             command = inbox.recv() => match command {
                 Some(PeerCommand::Retire { done }) => {
-                    let result = match inbox.retirement.clone() {
-                        Some(result) => result,
-                        None => {
-                            let result = retirement::capture_lanes(lanes).await;
-                            if result.is_ok() {
-                                inbox.retirement = Some(result.clone());
-                            }
-                            result
-                        }
-                    };
+                    let result = capture_retirement(lanes, inbox).await;
                     let _ = done.send(result);
                 }
                 Some(PeerCommand::Remove { done, .. }) => { let _ = done.send(()); }
@@ -710,16 +735,35 @@ async fn retirement_park(
     }
 }
 
+async fn capture_retirement(
+    lanes: &mut [PeerDatabase],
+    inbox: &mut PeerInbox,
+) -> Result<Vec<(DatabaseRouteScope, RetiredPeerLane)>, String> {
+    if let Some(result) = inbox.retirement.clone() {
+        return result;
+    }
+    let result = retirement::capture_lanes(lanes).await;
+    if result.is_ok() {
+        inbox.retirement = Some(result.clone());
+    }
+    result
+}
+
+struct SessionContext<'a> {
+    runtime: &'a Arc<ProductionMemberRuntime>,
+    progress: &'a Arc<ReplicationProgress>,
+    stopped: &'a watch::Receiver<bool>,
+    observations: &'a PeerObservations,
+    cuts: &'a Arc<ReplicationCuts>,
+}
+
 async fn session(
     connection: ProductionConnection,
-    runtime: &Arc<ProductionMemberRuntime>,
-    progress: &Arc<ReplicationProgress>,
     lanes: &mut Vec<PeerDatabase>,
-    stopped: &watch::Receiver<bool>,
-    observations: &PeerObservations,
+    context: SessionContext<'_>,
     new_lanes: &mut PeerInbox,
-    cuts: &Arc<ReplicationCuts>,
 ) -> Result<(), String> {
+    let SessionContext { runtime, progress, stopped, observations, cuts } = context;
     let peer = WalAuthenticatedPeer::from_connection(&connection);
     let region = connection.peer_region().as_str();
     if let Ok(mut facts) = observations.lock() {
@@ -799,16 +843,7 @@ async fn session(
             command = new_lanes.recv() => {
                 match command {
                     Some(PeerCommand::Retire { done }) => {
-                        let result = match new_lanes.retirement.clone() {
-                            Some(result) => result,
-                            None => {
-                                let result = retirement::capture_lanes(lanes).await;
-                                if result.is_ok() {
-                                    new_lanes.retirement = Some(result.clone());
-                                }
-                                result
-                            }
-                        };
+                        let result = capture_retirement(lanes, new_lanes).await;
                         let _ = done.send(result);
                         return Err("__retire__".into());
                     }
@@ -1080,53 +1115,6 @@ fn observe(observations: &PeerObservations, peer: &str, lanes: &[PeerDatabase], 
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn physical_assignment_does_not_embed_snapshot_receive_buffers() {
-        assert!(std::mem::size_of::<PhysicalDriver>() < std::mem::size_of::<SnapshotReceiver>());
-        assert!(std::mem::size_of::<PhysicalDriver>() < std::mem::size_of::<WalSnapshotSource>());
-    }
-
-    #[test]
-    fn demultiplexer_rejects_foreign_versions_and_truncated_scopes() {
-        let id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-        let expected = DatabaseRouteScope::try_new(id, id, id).unwrap();
-        for magic in [b"TBWAL\0\0\x01", b"TBWACK\0\x01", b"TBWCP\0\0\x01"] {
-            let mut bytes = magic.to_vec();
-            for _ in 0..3 {
-                bytes.extend_from_slice(id.as_bytes());
-            }
-            assert_eq!(frame_scope(&bytes).unwrap(), expected);
-            bytes[7] = 2;
-            assert!(frame_scope(&bytes).is_err());
-        }
-        let mut bytes = b"TBCJ".to_vec();
-        for _ in 0..3 {
-            bytes.extend_from_slice(&26_u32.to_be_bytes());
-            bytes.extend_from_slice(id.as_bytes());
-        }
-        assert_eq!(frame_scope(&bytes).unwrap(), expected);
-        for end in 0..bytes.len() {
-            assert!(frame_scope(&bytes[..end]).is_err());
-        }
-        bytes[4..8].copy_from_slice(&u32::MAX.to_be_bytes());
-        assert!(frame_scope(&bytes).is_err());
-    }
-
-    #[test]
-    fn connection_class_routes_hello_only_to_replication_and_other_frames_to_control() {
-        assert!(accepts_peer_frame(ProductionConnectionClass::Replication, PEER_HELLO));
-        assert!(!accepts_peer_frame(ProductionConnectionClass::AuthClient, PEER_HELLO));
-        assert!(!accepts_peer_frame(ProductionConnectionClass::AuthConsensus, PEER_HELLO));
-        assert!(!accepts_peer_frame(ProductionConnectionClass::Replication, b"auth-frame"));
-        assert!(accepts_peer_frame(ProductionConnectionClass::AuthClient, b"auth-frame"));
-        assert!(accepts_peer_frame(ProductionConnectionClass::AuthConsensus, b"auth-frame"));
-    }
-}
-
 async fn snapshot_frame(
     lane: &mut PeerDatabase,
     peer: &WalAuthenticatedPeer,
@@ -1255,6 +1243,17 @@ async fn snapshot_frame(
                 .map_err(failure);
         }
     }
+    finish_snapshot(lane, peer, connection).await
+}
+
+async fn finish_snapshot(
+    lane: &mut PeerDatabase,
+    peer: &WalAuthenticatedPeer,
+    connection: &ProductionConnection,
+) -> Result<(), String> {
+    let Some(PhysicalDriver::BootstrapFollower(receiver)) = lane.physical.as_mut() else {
+        return Err("snapshot receiver lost".into());
+    };
     let sink = receiver.sink.take().ok_or("snapshot sink required")?;
     let (follower, receipt) = if let Some(previous) = receiver.previous.take() {
         sink.finish_replacing(peer, previous).await.map_err(failure)?
@@ -1366,4 +1365,51 @@ async fn select_cut(
     })
     .await
     .map_err(failure)?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_assignment_does_not_embed_snapshot_receive_buffers() {
+        assert!(std::mem::size_of::<PhysicalDriver>() < std::mem::size_of::<SnapshotReceiver>());
+        assert!(std::mem::size_of::<PhysicalDriver>() < std::mem::size_of::<WalSnapshotSource>());
+    }
+
+    #[test]
+    fn demultiplexer_rejects_foreign_versions_and_truncated_scopes() {
+        let id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let expected = DatabaseRouteScope::try_new(id, id, id).unwrap();
+        for magic in [b"TBWAL\0\0\x01", b"TBWACK\0\x01", b"TBWCP\0\0\x01"] {
+            let mut bytes = magic.to_vec();
+            for _ in 0..3 {
+                bytes.extend_from_slice(id.as_bytes());
+            }
+            assert_eq!(frame_scope(&bytes).unwrap(), expected);
+            bytes[7] = 2;
+            assert!(frame_scope(&bytes).is_err());
+        }
+        let mut bytes = b"TBCJ".to_vec();
+        for _ in 0..3 {
+            bytes.extend_from_slice(&26_u32.to_be_bytes());
+            bytes.extend_from_slice(id.as_bytes());
+        }
+        assert_eq!(frame_scope(&bytes).unwrap(), expected);
+        for end in 0..bytes.len() {
+            assert!(frame_scope(&bytes[..end]).is_err());
+        }
+        bytes[4..8].copy_from_slice(&u32::MAX.to_be_bytes());
+        assert!(frame_scope(&bytes).is_err());
+    }
+
+    #[test]
+    fn connection_class_routes_hello_only_to_replication_and_other_frames_to_control() {
+        assert!(accepts_peer_frame(ProductionConnectionClass::Replication, PEER_HELLO));
+        assert!(!accepts_peer_frame(ProductionConnectionClass::AuthClient, PEER_HELLO));
+        assert!(!accepts_peer_frame(ProductionConnectionClass::AuthConsensus, PEER_HELLO));
+        assert!(!accepts_peer_frame(ProductionConnectionClass::Replication, b"auth-frame"));
+        assert!(accepts_peer_frame(ProductionConnectionClass::AuthClient, b"auth-frame"));
+        assert!(accepts_peer_frame(ProductionConnectionClass::AuthConsensus, b"auth-frame"));
+    }
 }

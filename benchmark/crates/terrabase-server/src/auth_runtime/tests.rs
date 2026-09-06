@@ -253,6 +253,23 @@ mod admitted_fixture {
         }
     }
 
+    fn public_config(root: &std::path::Path, key_path: PathBuf) -> PublicApiConfig {
+        PublicApiConfig {
+            lifecycle_publication: None,
+            billing_closure: None,
+            credential_rotation: None,
+            provisioning: None,
+            identity: None,
+            listen: "127.0.0.1:0".parse().unwrap(),
+            data_root: root.to_owned(),
+            bootstrap_key_file: Some(key_path),
+            origin_proof_key_file: None,
+            origin_proof_previous_key_file: None,
+            capability_key_file: None,
+            capability_previous_key_file: None,
+        }
+    }
+
     pub async fn create() -> Fixture {
         create_with_limits(limits(16 * 1024 * 1024)).await
     }
@@ -435,20 +452,7 @@ mod admitted_fixture {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
         }
-        let public = PublicApiConfig {
-            lifecycle_publication: None,
-            billing_closure: None,
-            credential_rotation: None,
-            provisioning: None,
-            identity: None,
-            listen: "127.0.0.1:0".parse().unwrap(),
-            data_root: root.clone(),
-            bootstrap_key_file: Some(key_path),
-            origin_proof_key_file: None,
-            origin_proof_previous_key_file: None,
-            capability_key_file: None,
-            capability_previous_key_file: None,
-        };
+        let public = public_config(&root, key_path);
         let production =
             production_config((tenant, project, database), cluster, first, second, &root, &keys);
         let runtime =
@@ -528,28 +532,19 @@ async fn auth_http_errors_keep_status_envelope_and_headers() {
     let mut authorized = HeaderMap::new();
     authorized.insert("authorization", auth.parse().unwrap());
     let missing = fixture.runtime.domain(&fixture.database, &HeaderMap::new(), Verbs::READ);
-    let missing = match missing {
-        Err(error) => error,
-        Ok(_) => panic!("missing token admitted"),
-    };
+    let Err(missing) = missing else { panic!("missing token admitted") };
     assert_eq!(missing.status, StatusCode::UNAUTHORIZED);
     assert_eq!(missing.code, "unauthorized");
     let mut read_only_headers = HeaderMap::new();
     read_only_headers.insert("authorization", read_only_auth.parse().unwrap());
     let denied = fixture.runtime.domain(&fixture.database, &read_only_headers, Verbs::ADMIN);
-    let denied = match denied {
-        Err(error) => error,
-        Ok(_) => panic!("denied scope admitted"),
-    };
+    let Err(denied) = denied else { panic!("denied scope admitted") };
     assert_eq!(denied.status, StatusCode::FORBIDDEN);
     assert_eq!(denied.code, "forbidden");
     let domains = fixture.runtime.domains.read().unwrap().clone();
     fixture.runtime.domains.write().unwrap().clear();
     let unavailable = fixture.runtime.domain(&fixture.database, &authorized, Verbs::READ);
-    let unavailable = match unavailable {
-        Err(error) => error,
-        Ok(_) => panic!("missing domain admitted"),
-    };
+    let Err(unavailable) = unavailable else { panic!("missing domain admitted") };
     assert_eq!(unavailable.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(unavailable.code, "auth_authority_unavailable");
     *fixture.runtime.domains.write().unwrap() = domains;
@@ -854,6 +849,10 @@ async fn admitted_quic_http_transaction_reads_staged_and_committed_state() {
     .await;
     assert_eq!(ordinary_after_commit.0, StatusCode::OK);
     assert_eq!(ordinary_after_commit.1["record"]["id"], "u1");
+    exercise_concurrent_and_rollback(&fixture, &auth).await;
+}
+
+async fn exercise_concurrent_and_rollback(fixture: &admitted_fixture::Fixture, auth: &str) {
     // Exercise both admitted authorities concurrently. The elected follower
     // routes its operations over authenticated member transport.
     let mut forwarded = Vec::new();

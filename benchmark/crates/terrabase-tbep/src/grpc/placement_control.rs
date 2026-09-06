@@ -32,7 +32,7 @@ pub trait PlacementDataControl: Send + Sync {
     ///
     /// # Errors
     /// Refuses unavailable or fenced physical, causal, and assignment evidence.
-    fn readiness(&self, request: &pb::PlacementReadinessRequest)
+    fn readiness(&self, request: &pb::PlacementControlServiceReadinessRequest)
     -> Result<Vec<u8>, PlacementError>;
 }
 
@@ -296,8 +296,8 @@ impl PlacementControlListener {
 impl PlacementControlService for Arc<PlacementControlServer> {
     async fn stage(
         &self,
-        request: Request<pb::PlacementStageRequest>,
-    ) -> Result<Response<pb::PlacementProposalResponse>, Status> {
+        request: Request<pb::PlacementControlServiceStageRequest>,
+    ) -> Result<Response<pb::PlacementControlServiceStageResponse>, Status> {
         let principal = self.authenticate(&request)?;
         let operation = metadata_value(
             request.metadata(),
@@ -311,8 +311,8 @@ impl PlacementControlService for Arc<PlacementControlServer> {
 
     async fn accept(
         &self,
-        request: Request<pb::PlacementAcceptRequest>,
-    ) -> Result<Response<pb::PlacementAcceptanceResponse>, Status> {
+        request: Request<pb::PlacementControlServiceAcceptRequest>,
+    ) -> Result<Response<pb::PlacementControlServiceAcceptResponse>, Status> {
         self.authenticate(&request)?;
         let operation = metadata_value(
             request.metadata(),
@@ -326,8 +326,8 @@ impl PlacementControlService for Arc<PlacementControlServer> {
 
     async fn drain(
         &self,
-        request: Request<pb::PlacementDrainRequest>,
-    ) -> Result<Response<pb::PlacementDrainResponse>, Status> {
+        request: Request<pb::PlacementControlServiceDrainRequest>,
+    ) -> Result<Response<pb::PlacementControlServiceReadinessResponse>, Status> {
         self.authenticate(&request)?;
         let operation = metadata_value(
             request.metadata(),
@@ -346,13 +346,13 @@ impl PlacementControlService for Arc<PlacementControlServer> {
         }
         self.work(move || data.drain(&operation, &request.prepared_transition))
             .await
-            .map(|signed_receipt| Response::new(pb::PlacementDrainResponse { signed_receipt }))
+            .map(|signed_receipt| Response::new(pb::PlacementControlServiceReadinessResponse { signed_receipt }))
     }
 
     async fn readiness(
         &self,
-        request: Request<pb::PlacementReadinessRequest>,
-    ) -> Result<Response<pb::PlacementDrainResponse>, Status> {
+        request: Request<pb::PlacementControlServiceReadinessRequest>,
+    ) -> Result<Response<pb::PlacementControlServiceDrainResponse>, Status> {
         self.authenticate(&request)?;
         let data = self.data_control.clone().ok_or_else(|| {
             control_status(Code::FailedPrecondition, "durable readiness proof is unavailable")
@@ -368,13 +368,13 @@ impl PlacementControlService for Arc<PlacementControlServer> {
         }
         self.work(move || data.readiness(&request))
             .await
-            .map(|signed_receipt| Response::new(pb::PlacementDrainResponse { signed_receipt }))
+            .map(|signed_receipt| Response::new(pb::PlacementControlServiceDrainResponse { signed_receipt }))
     }
 
     async fn get_accepted(
         &self,
-        request: Request<pb::PlacementGetRequest>,
-    ) -> Result<Response<pb::PlacementAcceptanceResponse>, Status> {
+        request: Request<pb::PlacementControlServiceGetAcceptedRequest>,
+    ) -> Result<Response<pb::PlacementControlServiceGetAcceptedResponse>, Status> {
         self.authenticate(&request)?;
         let journal = Arc::clone(&self.journal);
         self.work(move || journal.accepted()).await.map(Response::new)
@@ -382,8 +382,8 @@ impl PlacementControlService for Arc<PlacementControlServer> {
 
     async fn get(
         &self,
-        request: Request<pb::PlacementGetRequest>,
-    ) -> Result<Response<pb::PlacementProposalResponse>, Status> {
+        request: Request<pb::PlacementControlServiceGetRequest>,
+    ) -> Result<Response<pb::PlacementControlServiceStageResponse>, Status> {
         self.authenticate(&request)?;
         let journal = Arc::clone(&self.journal);
         self.work(move || journal.latest()).await.map(Response::new)
@@ -425,16 +425,16 @@ impl pb::auth_group_bootstrap_service_server::AuthGroupBootstrapService
 {
     async fn identity(
         &self,
-        request: Request<pb::AuthStorageIdentityRequest>,
-    ) -> Result<Response<pb::AuthStorageIdentity>, Status> {
+        request: Request<pb::AuthGroupBootstrapServiceIdentityRequest>,
+    ) -> Result<Response<pb::AuthGroupBootstrapServiceIdentityResponse>, Status> {
         self.authenticate(&request)?;
         let journal = Arc::clone(&self.auth_journal);
         self.work(move || journal.identity()).await.map(Response::new)
     }
     async fn bootstrap(
         &self,
-        request: Request<pb::AuthGroupBootstrapRequest>,
-    ) -> Result<Response<pb::AuthGroupBootstrapReceipt>, Status> {
+        request: Request<pb::AuthGroupBootstrapServiceBootstrapRequest>,
+    ) -> Result<Response<pb::AuthGroupBootstrapServiceBootstrapResponse>, Status> {
         let principal = self.authenticate(&request)?;
         let journal = Arc::clone(&self.auth_journal);
         let request = request.into_inner();

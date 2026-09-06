@@ -1,7 +1,7 @@
 //! Durable native recovery-point operations bound to the running member fleet.
 
 use crate::admitted_databases::AdmittedDatabaseRegistry;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -11,7 +11,9 @@ use tokio::sync::Notify;
 
 mod admission;
 mod checkpoint;
+mod lifecycle;
 mod persistence;
+mod status;
 use checkpoint::Checkpoint;
 
 /// Finite bounds for the durable recovery ledger.
@@ -48,7 +50,12 @@ impl NativeRecoveryWorker {
     pub async fn shutdown(self) -> Result<(), NativeRecoveryError> {
         *self.runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? = true;
         let _ = self.stop.send(());
-        self.join.await.map_err(|_| NativeRecoveryError::Unavailable)
+        self.join.await.map_err(|_| NativeRecoveryError::Unavailable)?;
+        if self.runtime.worker_error.lock().map_err(|_| NativeRecoveryError::Unavailable)?.is_some()
+        {
+            return Err(NativeRecoveryError::Unavailable);
+        }
+        Ok(())
     }
 }
 
@@ -129,7 +136,8 @@ pub struct NativeRecoveryRuntime {
     registry: Arc<AdmittedDatabaseRegistry>,
     limits: NativeRecoveryLimits,
     lifecycle: Mutex<bool>,
-    notify: Notify,
+    notify: Arc<Notify>,
+    worker_error: Mutex<Option<NativeRecoveryError>>,
 }
 
 impl NativeRecoveryRuntime {
@@ -181,20 +189,35 @@ impl NativeRecoveryRuntime {
             registry,
             limits,
             lifecycle: Mutex::new(false),
-            notify: Notify::new(),
+            notify: Arc::new(Notify::new()),
+            worker_error: Mutex::new(None),
         });
-        let (stop, mut stopped) = tokio::sync::oneshot::channel();
+        let (stop, stopped) = tokio::sync::oneshot::channel();
         let worker_runtime = Arc::clone(&runtime);
+        let notify = Arc::clone(&runtime.notify);
         let join = executor.spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = &mut stopped => break,
-                    _ = worker_runtime.notify.notified() => {}
+            lifecycle::supervise::<NativeRecoveryError, _, _>(stopped, notify, move || {
+                let runtime = Arc::clone(&worker_runtime);
+                let observed = Arc::clone(&runtime);
+                async move {
+                    let result = tokio::task::spawn_blocking(move || runtime.process_pending())
+                        .await
+                        .map_err(|_| NativeRecoveryError::Unavailable)?;
+                    if let Ok(_) = result {
+                        *observed
+                            .worker_error
+                            .lock()
+                            .map_err(|_| NativeRecoveryError::Unavailable)? = None;
+                    } else if let Err(error) = result {
+                        *observed
+                            .worker_error
+                            .lock()
+                            .map_err(|_| NativeRecoveryError::Unavailable)? = Some(error);
+                    }
+                    result
                 }
-                if worker_runtime.process_pending().await.is_err() {
-                    break;
-                }
-            }
+            })
+            .await;
         });
         runtime.notify.notify_one();
         Ok((runtime.clone(), NativeRecoveryWorker { runtime, stop, join }))
@@ -272,15 +295,10 @@ impl NativeRecoveryRuntime {
         operation: &str,
     ) -> Result<Option<NativeRecoveryOperation>, NativeRecoveryError> {
         let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-        connection.query_row("SELECT length(record),record FROM native_recovery_operations WHERE source_database_id=?1 AND operation_id=?2",params![source,operation],|row| {
-            let size:i64=row.get(0)?;
-            if !(0..=262144).contains(&size) { return Err(rusqlite::Error::InvalidQuery); }
-            row.get::<_,Vec<u8>>(1)
-        }).optional().map_err(|_|NativeRecoveryError::Unavailable)?
-            .map(|bytes| serde_json::from_slice(&bytes).map_err(|_|NativeRecoveryError::Unavailable)).transpose()
+        status::read(&connection, source, operation)
     }
 
-    async fn process_pending(self: &Arc<Self>) -> Result<(), NativeRecoveryError> {
+    fn process_pending(self: &Arc<Self>) -> Result<bool, NativeRecoveryError> {
         let pending = {
             let connection =
                 self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
@@ -299,9 +317,18 @@ impl NativeRecoveryRuntime {
             for row in rows {
                 let (source, operation, phase, bytes) =
                     row.map_err(|_| NativeRecoveryError::Unavailable)?;
-                let state: NativeRecoveryOperation =
-                    serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::Unavailable)?;
                 if matches!(phase.as_str(), "accepted" | "capturing" | "measuring") {
+                    let state: NativeRecoveryOperation = serde_json::from_slice(&bytes)
+                        .map_err(|_| NativeRecoveryError::VerificationFailed)?;
+                    if status::validate(&state, &source, &operation, &phase).is_err() {
+                        if state.operation_id == operation && state.source_database_id == source {
+                            let mut failed = state;
+                            failed.phase = NativeRecoveryPhase::Failed;
+                            failed.error = Some("native recovery record verification failed; retry the existing operation".into());
+                            self.save_record_only(&failed)?;
+                        }
+                        return Ok(true);
+                    }
                     found = Some((source, operation, state));
                     break;
                 }
@@ -309,7 +336,7 @@ impl NativeRecoveryRuntime {
             found
         };
         let Some((source, operation, _state)) = pending else {
-            return Ok(());
+            return Ok(false);
         };
         let admitted = self
             .registry
@@ -320,28 +347,29 @@ impl NativeRecoveryRuntime {
             return Err(NativeRecoveryError::VerificationFailed);
         }
         let placement = admitted.record.regions.clone();
-        let runtime = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            let result = runtime.run_capture(&admitted.host, placement, &source, &operation);
-            if result.is_err() {
-                match runtime.status(&source, &operation)? {
-                    Some(mut latest)
-                        if !matches!(latest.phase, NativeRecoveryPhase::Complete | NativeRecoveryPhase::Failed) =>
-                    {
-                        latest.phase = NativeRecoveryPhase::Failed;
-                        latest.error = Some("native recovery capture state is uncertain; retry the existing operation".into());
-                        runtime.save_record_only(&latest)?;
-                    }
-                    Some(_) => {}
-                    None => return Err(NativeRecoveryError::Unavailable),
+        let result = self.run_capture(&admitted.host, placement, &source, &operation);
+        if result.is_err() {
+            match self.status(&source, &operation)? {
+                Some(mut latest)
+                    if !matches!(
+                        latest.phase,
+                        NativeRecoveryPhase::Complete | NativeRecoveryPhase::Failed
+                    ) =>
+                {
+                    latest.phase = NativeRecoveryPhase::Failed;
+                    latest.error = Some(
+                        "native recovery capture state is uncertain; retry the existing operation"
+                            .into(),
+                    );
+                    self.save_record_only(&latest)?;
                 }
+                Some(_) => {}
+                None => return Err(NativeRecoveryError::Unavailable),
             }
-            Ok::<(), NativeRecoveryError>(())
-        })
-        .await
-        .map_err(|_| NativeRecoveryError::Unavailable)??;
+        }
+        result?;
         self.notify.notify_one();
-        Ok(())
+        Ok(true)
     }
 
     fn save(
@@ -349,11 +377,7 @@ impl NativeRecoveryRuntime {
         operation: &NativeRecoveryOperation,
         checkpoint: Option<&Checkpoint>,
     ) -> Result<(), NativeRecoveryError> {
-        let connection = self
-            .operations
-            .lock()
-            .map_err(|_| NativeRecoveryError::Unavailable)?
-            ;
+        let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
         persistence::save(&connection, operation, checkpoint)
     }
 
@@ -447,5 +471,84 @@ impl NativeRecoveryRuntime {
     ) -> Result<(), NativeRecoveryError> {
         let connection = self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
         persistence::save_record_only(&connection, operation)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use terrabase::backup::worker::{FleetLimits, NativeBackupFleet};
+
+    fn limits() -> NativeRecoveryLimits {
+        NativeRecoveryLimits { pending_operations: 2, retained_operations: 4 }
+    }
+
+    fn fleet() -> Arc<Mutex<NativeBackupFleet>> {
+        Arc::new(Mutex::new(
+            NativeBackupFleet::new(FleetLimits {
+                streams: 2,
+                staging_bytes_per_stream: 3 * 1024 * 1024,
+                points_per_stream: 2,
+            })
+            .unwrap(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn real_constructor_idle_shutdown_closes_admission_fence() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let runtime_root = root.join("native-recovery-idle");
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+        )
+        .unwrap();
+        worker.shutdown().await.unwrap();
+        assert_eq!(
+            runtime.capture(records[0].database_id.clone(), "retry".into()).await,
+            Err(NativeRecoveryError::Unavailable)
+        );
+        drop(member);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn real_constructor_shutdown_drains_committed_accepted_row() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let runtime_root = root.join("native-recovery-drain");
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+        )
+        .unwrap();
+        let source = records[0].database_id.clone();
+        let state = NativeRecoveryOperation {
+            operation_id: "drain-operation".into(),
+            source_database_id: source.clone(),
+            phase: NativeRecoveryPhase::Accepted,
+            facts: None,
+            error: None,
+        };
+        {
+            let connection = runtime.operations.lock().unwrap();
+            connection
+                .execute(
+                    "INSERT INTO native_recovery_operations(operation_id,source_database_id,phase,record) VALUES(?1,?2,'accepted',?3)",
+                    rusqlite::params![state.operation_id, source, serde_json::to_vec(&state).unwrap()],
+                )
+                .unwrap();
+        }
+        runtime.notify.notify_one();
+        worker.shutdown().await.unwrap();
+        let result = runtime.status(&state.source_database_id, &state.operation_id).unwrap();
+        assert!(matches!(result.map(|value| value.phase), Some(NativeRecoveryPhase::Failed)));
+        drop(member);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

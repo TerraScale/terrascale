@@ -1,0 +1,142 @@
+diff --git a/crates/terrabase-server/src/native_recovery/checkpoint.rs b/crates/terrabase-server/src/native_recovery/checkpoint.rs
+index 19bfd983..fb3963f6 100644
+--- a/crates/terrabase-server/src/native_recovery/checkpoint.rs
++++ b/crates/terrabase-server/src/native_recovery/checkpoint.rs
+@@ -50,6 +50,15 @@ impl Checkpoint {
+             && self.captured_at_millis == manifest.captured_unix_millis()
+             && self.retained_until_millis == manifest.retain_until_unix_millis()
+     }
++
++    pub(super) fn matches_facts(&self, facts: &RecoveryPointFacts) -> bool {
++        self.recovery_point_id == facts.recovery_point_id
++            && self.source_database_id == facts.source_database_id
++            && self.journal_cut == facts.journal_cut
++            && self.captured_at_millis == facts.captured_at_millis
++            && self.retained_until_millis == facts.retained_until_millis
++            && self.placement == facts.placement
++    }
+ }
+ 
+ pub(super) fn validate(
+@@ -118,6 +127,9 @@ where
+         persist(state, checkpoint.as_ref())?;
+     }
+     let facts = measure(checkpoint.as_ref().ok_or(NativeRecoveryError::VerificationFailed)?)?;
++    if !checkpoint.as_ref().is_some_and(|point| point.matches_facts(&facts)) {
++        return Err(NativeRecoveryError::VerificationFailed);
++    }
+     state.facts = Some(facts);
+     state.error = None;
+     state.phase = NativeRecoveryPhase::Complete;
+diff --git a/crates/terrabase-server/src/native_recovery/checkpoint/tests.rs b/crates/terrabase-server/src/native_recovery/checkpoint/tests.rs
+index 25cd4097..e8136ea5 100644
+--- a/crates/terrabase-server/src/native_recovery/checkpoint/tests.rs
++++ b/crates/terrabase-server/src/native_recovery/checkpoint/tests.rs
+@@ -107,6 +107,26 @@ fn measuring_checkpoint_resumes_without_capture() {
+     assert_eq!(operation.phase, NativeRecoveryPhase::Complete);
+ }
+ 
++#[test]
++fn mismatched_measurement_facts_cannot_complete() {
++    let mut operation = state(NativeRecoveryPhase::Measuring);
++    let mut mismatched = facts();
++    mismatched.journal_cut += 1;
++    assert_eq!(
++        advance(
++            &mut operation,
++            Some(point()),
++            &["GRU".into()],
++            || panic!("capture after durable checkpoint"),
++            |_, _| Ok(()),
++            |_| Ok(mismatched),
++        ),
++        Err(NativeRecoveryError::VerificationFailed)
++    );
++    assert_eq!(operation.phase, NativeRecoveryPhase::Measuring);
++    assert!(operation.facts.is_none());
++}
++
+ #[test]
+ fn accepted_checkpoint_retry_does_not_capture_and_complete_replay_does_nothing() {
+     let mut operation = state(NativeRecoveryPhase::Accepted);
+diff --git a/crates/terrabase-server/src/native_recovery/persistence.rs b/crates/terrabase-server/src/native_recovery/persistence.rs
+index 7d0c3e14..6b3f41ab 100644
+--- a/crates/terrabase-server/src/native_recovery/persistence.rs
++++ b/crates/terrabase-server/src/native_recovery/persistence.rs
+@@ -1,5 +1,5 @@
+ use super::{Checkpoint, NativeRecoveryError, NativeRecoveryOperation};
+-use rusqlite::{params, Connection};
++use rusqlite::{Connection, params};
+ 
+ pub(super) fn load_checkpoint(
+     connection: &Connection,
+@@ -34,13 +34,18 @@ pub(super) fn save(
+         .map(Checkpoint::encode)
+         .transpose()
+         .map_err(|_| NativeRecoveryError::Unavailable)?;
++    if checkpoint.as_ref().is_some_and(|bytes| bytes.len() > 262_144) {
++        return Err(NativeRecoveryError::Unavailable);
++    }
+     let changed = connection
+         .execute(
+-            "UPDATE native_recovery_operations SET phase=?3, record=?4, checkpoint=?5 WHERE operation_id=?1 AND source_database_id=?2",
++            "UPDATE native_recovery_operations SET phase=?3, record=?4, checkpoint=?5 WHERE operation_id=?1 AND source_database_id=?2 AND (checkpoint IS NULL OR checkpoint=?5)",
+             params![operation.operation_id, operation.source_database_id, phase, bytes, checkpoint],
+         )
+         .map_err(|_| NativeRecoveryError::Unavailable)?;
+-    if changed != 1 { return Err(NativeRecoveryError::Unavailable); }
++    if changed != 1 {
++        return Err(NativeRecoveryError::Unavailable);
++    }
+     Ok(())
+ }
+ 
+@@ -49,14 +54,20 @@ pub(super) fn save_record_only(
+     operation: &NativeRecoveryOperation,
+ ) -> Result<(), NativeRecoveryError> {
+     let bytes = serde_json::to_vec(operation).map_err(|_| NativeRecoveryError::Unavailable)?;
+-    if bytes.len() > 262_144 { return Err(NativeRecoveryError::Unavailable); }
++    if bytes.len() > 262_144 {
++        return Err(NativeRecoveryError::Unavailable);
++    }
+     let phase = serde_json::to_string(&operation.phase)
+-        .map_err(|_| NativeRecoveryError::Unavailable)?.trim_matches('"').to_owned();
++        .map_err(|_| NativeRecoveryError::Unavailable)?
++        .trim_matches('"')
++        .to_owned();
+     let changed = connection.execute(
+         "UPDATE native_recovery_operations SET phase=?3, record=?4 WHERE operation_id=?1 AND source_database_id=?2",
+         params![operation.operation_id, operation.source_database_id, phase, bytes],
+     ).map_err(|_| NativeRecoveryError::Unavailable)?;
+-    if changed != 1 { return Err(NativeRecoveryError::Unavailable); }
++    if changed != 1 {
++        return Err(NativeRecoveryError::Unavailable);
++    }
+     Ok(())
+ }
+ 
+diff --git a/crates/terrabase-server/src/native_recovery/persistence/tests.rs b/crates/terrabase-server/src/native_recovery/persistence/tests.rs
+index 59a87e13..4d559eb6 100644
+--- a/crates/terrabase-server/src/native_recovery/persistence/tests.rs
++++ b/crates/terrabase-server/src/native_recovery/persistence/tests.rs
+@@ -115,6 +115,20 @@ fn complete_save_round_trips_facts_and_checkpoint() {
+     assert_eq!(load_checkpoint(&c, "db", "op").unwrap(), Some(point()));
+ }
+ 
++#[test]
++fn durable_checkpoint_cannot_be_replaced_or_cleared() {
++    let database = database();
++    let c = database.open();
++    let state = operation(NativeRecoveryPhase::Measuring);
++    insert(&c, &state);
++    save(&c, &state, Some(&point())).unwrap();
++
++    let replacement = Checkpoint { journal_cut: 8, ..point() };
++    assert_eq!(save(&c, &state, Some(&replacement)), Err(NativeRecoveryError::Unavailable));
++    assert_eq!(save(&c, &state, None), Err(NativeRecoveryError::Unavailable));
++    assert_eq!(load_checkpoint(&c, "db", "op").unwrap(), Some(point()));
++}
++
+ #[test]
+ fn update_abort_preserves_phase_record_and_checkpoint_atomically() {
+     let database = database();

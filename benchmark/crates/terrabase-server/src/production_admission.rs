@@ -46,6 +46,22 @@ pub enum AcceptedAdmission {
 pub type AdmissionAuthority =
     Arc<dyn Fn(&AdmissionRecord) -> Result<Option<AcceptedAdmission>, String> + Send + Sync>;
 
+#[cfg(test)]
+struct Writer(u64);
+
+#[cfg(test)]
+impl terrabase::member::DatabaseRoleAuthority for Writer {
+    fn accepted_role(
+        &self,
+        _: &terrabase::member::DatabaseId,
+    ) -> Option<terrabase::member::AcceptedDatabaseRole> {
+        Some(terrabase::member::AcceptedDatabaseRole {
+            epoch: self.0,
+            role: terrabase::member::DatabaseRole::Writer,
+        })
+    }
+}
+
 fn register_storage(
     member: &Member,
     provider: &OciVaultKeyDelivery,
@@ -192,7 +208,10 @@ pub(crate) fn lifecycle_allows_origin_activation(
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::{AcceptedAdmission, lifecycle_allows_origin_activation, storage_admission};
+    use super::{
+        AcceptedAdmission, AdmissionAuthority, lifecycle_allows_origin_activation,
+        storage_admission,
+    };
     use crate::{
         admission::{AdmissionHost, AdmissionRecord},
         admitted_databases::AdmittedDatabaseRegistry,
@@ -282,9 +301,7 @@ mod tests {
             member.set_clock_offset_seconds(0.0);
             member
         };
-        let authority: Arc<
-            dyn Fn(&AdmissionRecord) -> Result<Option<AcceptedAdmission>, String> + Send + Sync,
-        > = Arc::new(move |record| {
+        let authority: AdmissionAuthority = Arc::new(move |record| {
             if maintenance_mode.load(Ordering::Acquire) && record.database_id == fenced_text {
                 return Ok(Some(AcceptedAdmission::Maintenance {
                     origin: RegionCode::GRU,
@@ -434,13 +451,6 @@ mod tests {
     #[test]
     fn admission_host_restart_retains_accepted_deletion_fence_and_retry() {
         replay_case(true);
-    }
-
-    struct Writer(u64);
-    impl DatabaseRoleAuthority for Writer {
-        fn accepted_role(&self, _: &DatabaseId) -> Option<AcceptedDatabaseRole> {
-            Some(AcceptedDatabaseRole { epoch: self.0, role: DatabaseRole::Writer })
-        }
     }
 
     #[test]

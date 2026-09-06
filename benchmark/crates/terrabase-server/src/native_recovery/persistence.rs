@@ -1,5 +1,5 @@
 use super::{Checkpoint, NativeRecoveryError, NativeRecoveryOperation};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 pub(super) fn load_checkpoint(
     connection: &Connection,
@@ -34,13 +34,18 @@ pub(super) fn save(
         .map(Checkpoint::encode)
         .transpose()
         .map_err(|_| NativeRecoveryError::Unavailable)?;
+    if checkpoint.as_ref().is_some_and(|bytes| bytes.len() > 262_144) {
+        return Err(NativeRecoveryError::Unavailable);
+    }
     let changed = connection
         .execute(
-            "UPDATE native_recovery_operations SET phase=?3, record=?4, checkpoint=?5 WHERE operation_id=?1 AND source_database_id=?2",
+            "UPDATE native_recovery_operations SET phase=?3, record=?4, checkpoint=?5 WHERE operation_id=?1 AND source_database_id=?2 AND (checkpoint IS NULL OR checkpoint=?5)",
             params![operation.operation_id, operation.source_database_id, phase, bytes, checkpoint],
         )
         .map_err(|_| NativeRecoveryError::Unavailable)?;
-    if changed != 1 { return Err(NativeRecoveryError::Unavailable); }
+    if changed != 1 {
+        return Err(NativeRecoveryError::Unavailable);
+    }
     Ok(())
 }
 
@@ -49,14 +54,20 @@ pub(super) fn save_record_only(
     operation: &NativeRecoveryOperation,
 ) -> Result<(), NativeRecoveryError> {
     let bytes = serde_json::to_vec(operation).map_err(|_| NativeRecoveryError::Unavailable)?;
-    if bytes.len() > 262_144 { return Err(NativeRecoveryError::Unavailable); }
+    if bytes.len() > 262_144 {
+        return Err(NativeRecoveryError::Unavailable);
+    }
     let phase = serde_json::to_string(&operation.phase)
-        .map_err(|_| NativeRecoveryError::Unavailable)?.trim_matches('"').to_owned();
+        .map_err(|_| NativeRecoveryError::Unavailable)?
+        .trim_matches('"')
+        .to_owned();
     let changed = connection.execute(
         "UPDATE native_recovery_operations SET phase=?3, record=?4 WHERE operation_id=?1 AND source_database_id=?2",
         params![operation.operation_id, operation.source_database_id, phase, bytes],
     ).map_err(|_| NativeRecoveryError::Unavailable)?;
-    if changed != 1 { return Err(NativeRecoveryError::Unavailable); }
+    if changed != 1 {
+        return Err(NativeRecoveryError::Unavailable);
+    }
     Ok(())
 }
 

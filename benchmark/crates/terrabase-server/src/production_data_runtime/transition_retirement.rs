@@ -97,7 +97,7 @@ impl ProductionDataLifecycle {
             .get()
             .and_then(|data| data.runtime.upgrade())
             .ok_or("transition has no retained replication runtime")?;
-        if !Arc::ptr_eq(&owner, &runtime) {
+        if !Arc::ptr_eq(owner, runtime) {
             return Err("transition runtime does not own this lifecycle".into());
         }
         Ok(())

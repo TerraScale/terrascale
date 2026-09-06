@@ -4,7 +4,7 @@ use terrabase::identity::{ClusterUlid, DatabaseUlid, ProjectUlid, TenantUlid};
 pub(crate) struct Fixture {
     pub root: std::path::PathBuf,
     pub boundary: PlacementBoundary,
-    pub request: pb::PlacementStageRequest,
+    pub request: pb::PlacementControlServiceStageRequest,
 }
 
 impl Fixture {
@@ -48,7 +48,7 @@ impl Fixture {
             [(scope, local_region, selected_regions)],
         )
         .expect("boundary");
-        let request = pb::PlacementStageRequest {
+        let request = pb::PlacementControlServiceStageRequest {
             expected_revision: 0,
             proposal: Some(pb::PlacementProposal {
                 environment: "production".into(),

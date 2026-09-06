@@ -16,11 +16,41 @@ use std::{
 use terrabase::identity::{ClusterUlid, DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
 use terrabase_cluster::production::DatabaseRouteScope;
 use terrabase_tbep::{
-    placement::{PlacementBoundary, PlacementJournal, transition::TransitionTrust},
+    placement::{transition::TransitionTrust, PlacementBoundary, PlacementJournal},
     proto::terrabase::v1 as pb,
 };
 
 const DOMAIN: &[u8] = b"terrabase-placement-transition-v1\0";
+
+#[derive(Serialize)]
+struct Member {
+    identity: String,
+    region: String,
+    placement_digest: String,
+}
+
+#[derive(Serialize)]
+struct Request {
+    operation_id: String,
+    scope_id: String,
+    prior_epoch: u64,
+    epoch: u64,
+    generation: u64,
+    members: Vec<Member>,
+}
+
+struct RouteFixtures {
+    environment: String,
+    cluster: String,
+    member: String,
+    peer: String,
+    scope: DatabaseRouteScope,
+}
+
+struct KeyFixtures {
+    authority: Ed25519KeyPair,
+    genesis: Ed25519KeyPair,
+}
 
 struct Fixture {
     root: PathBuf,
@@ -35,151 +65,20 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let environment = "production".to_owned();
-        let cluster = ClusterUlid::generate().to_text();
-        let member = MemberUlid::generate().to_text();
-        let peer = MemberUlid::generate().to_text();
-        let scope = DatabaseRouteScope::new(
-            TenantUlid::generate(),
-            ProjectUlid::generate(),
-            DatabaseUlid::generate(),
-        );
-        let root = std::env::temp_dir().join(format!(
-            "terrabase-usage-placement-{}",
-            hex::encode(&digest::digest(&SHA256, member.as_bytes()).as_ref()[..8])
-        ));
-        let usage_root = root.join("usage");
-        fs::create_dir_all(&usage_root).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-            fs::set_permissions(&usage_root, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-        let boundary = PlacementBoundary::new(
-            &environment,
-            &cluster,
-            &member,
-            1,
-            1,
-            [(scope, Some("GRU".into()), BTreeSet::from(["GRU".into()]))],
-        )
-        .unwrap();
-        let placement_path = root.join("placement.sqlite");
-        let journal = Arc::new(PlacementJournal::open(&placement_path, boundary).unwrap());
-        let request = pb::PlacementStageRequest {
-            expected_revision: 0,
-            proposal: Some(pb::PlacementProposal {
-                environment: environment.clone(),
-                cluster: cluster.clone(),
-                generation: 1,
-                epoch: 1,
-                regions: vec![pb::PlacementRegionSeats {
-                    region: "GRU".into(),
-                    members: vec![member.clone(), peer.clone()],
-                }],
-                assignments: vec![pb::PlacementDatabaseAssignment {
-                    tenant: scope.tenant().to_text(),
-                    project: scope.project().to_text(),
-                    database: scope.database().to_text(),
-                    region: "GRU".into(),
-                    writer_member: member.clone(),
-                    follower_member: peer,
-                }],
-            }),
-            declarations: Vec::new(),
-        };
-        let proposal = journal.stage("fixture", "usage-op", request).unwrap().proposal.unwrap();
-        let authority = keypair();
-        let genesis = keypair();
-        let local = keypair();
-        journal
-            .configure_transition_trust(
-                TransitionTrust::new(
-                    BTreeMap::from([(
-                        "authority".into(),
-                        authority.public_key().as_ref().to_vec(),
-                    )]),
-                    BTreeMap::from([("genesis".into(), genesis.public_key().as_ref().to_vec())]),
-                    BTreeMap::from([
-                        (
-                            format!("spiffe://terrascale.tech/{environment}/terrabase-member/{cluster}/{member}"),
-                            local.public_key().as_ref().to_vec(),
-                        ),
-                        (
-                            format!("spiffe://terrascale.tech/{environment}/terrabase-member/{cluster}/{}", proposal.regions[0].members[1]),
-                            local.public_key().as_ref().to_vec(),
-                        ),
-                    ]),
-                )
-                .unwrap(),
-            )
-            .unwrap();
-        let encoded: Vec<u8> = Connection::open(&placement_path)
-            .unwrap()
-            .query_row("SELECT proposal FROM proposals WHERE revision=1", [], |row| row.get(0))
-            .unwrap();
-        let proposal_digest = hash(&encoded);
-        #[derive(Serialize)]
-        struct Member {
-            identity: String,
-            region: String,
-            placement_digest: String,
-        }
-        #[derive(Serialize)]
-        struct Request {
-            operation_id: String,
-            scope_id: String,
-            prior_epoch: u64,
-            epoch: u64,
-            generation: u64,
-            members: Vec<Member>,
-        }
-        let mut members = proposal
-            .regions
-            .iter()
-            .flat_map(|r| {
-                r.members.iter().map(|m| Member {
-                    identity: format!(
-                        "spiffe://terrascale.tech/{environment}/terrabase-member/{cluster}/{m}"
-                    ),
-                    region: r.region.clone(),
-                    placement_digest: proposal_digest.clone(),
-                })
-            })
-            .collect::<Vec<_>>();
-        members.sort_by(|a, b| a.identity.cmp(&b.identity));
-        let request = Request {
-            operation_id: "usage-op".into(),
-            scope_id: format!("{environment}/{cluster}"),
-            prior_epoch: 0,
-            epoch: 1,
-            generation: 1,
-            members,
-        };
-        let request_digest = hash(&serde_json::to_vec(&request).unwrap());
-        let grant_payload = serde_json::to_vec(
-            &json!({"kind":"genesis_grant","grant_id":"grant-one","request_digest":request_digest}),
-        )
-        .unwrap();
-        let proof = json!({"schema_version":1,"kind":"accepted_epoch","request":request,"request_digest":request_digest,"authority_epoch":1,"journal_revision":1,"genesis_grant_id":"grant-one","receipt_digests":[],"drain_receipts":[],"prior_generation":0,"previous_proof_digest":"","lease_id":"lease-one","genesis_grant":sign("genesis", &grant_payload, &genesis)});
-        let proof_payload = serde_json::to_vec(&proof).unwrap();
-        let envelope = serde_json::to_vec(&sign("authority", &proof_payload, &authority)).unwrap();
-        let accepted = journal
-            .accept(
-                "usage-op",
-                &pb::PlacementAcceptRequest { proposal_revision: 1, proof: envelope },
-            )
-            .unwrap();
+        let route = route_fixtures();
+        let (root, usage_root) = usage_roots(&route.member);
+        let (journal, placement_path, proposal) = setup_journal(&route, &root);
+        let keys = deliver_keys(&journal, &route, &proposal);
+        let proof_digest = accepted_proof(&journal, &placement_path, &route, &proposal, &keys);
         Self {
             root,
             usage_root,
             placement: journal,
-            environment,
-            member,
+            environment: route.environment,
+            member: route.member,
             region: "GRU".into(),
-            scope,
-            proof_digest: accepted.proof_digest,
+            scope: route.scope,
+            proof_digest,
         }
     }
 
@@ -211,6 +110,162 @@ impl Fixture {
         )
         .unwrap()
     }
+}
+
+fn route_fixtures() -> RouteFixtures {
+    RouteFixtures {
+        environment: "production".to_owned(),
+        cluster: ClusterUlid::generate().to_text(),
+        member: MemberUlid::generate().to_text(),
+        peer: MemberUlid::generate().to_text(),
+        scope: DatabaseRouteScope::new(
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+        ),
+    }
+}
+
+fn usage_roots(member: &str) -> (PathBuf, PathBuf) {
+    let root = std::env::temp_dir().join(format!(
+        "terrabase-usage-placement-{}",
+        hex::encode(&digest::digest(&SHA256, member.as_bytes()).as_ref()[..8])
+    ));
+    let usage_root = root.join("usage");
+    fs::create_dir_all(&usage_root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&usage_root, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    (root, usage_root)
+}
+
+fn setup_journal(
+    route: &RouteFixtures,
+    root: &std::path::Path,
+) -> (Arc<PlacementJournal>, PathBuf, pb::PlacementProposal) {
+    let boundary = PlacementBoundary::new(
+        &route.environment,
+        &route.cluster,
+        &route.member,
+        1,
+        1,
+        [(route.scope, Some("GRU".into()), BTreeSet::from(["GRU".into()]))],
+    )
+    .unwrap();
+    let placement_path = root.join("placement.sqlite");
+    let journal = Arc::new(PlacementJournal::open(&placement_path, boundary).unwrap());
+    let request = pb::PlacementStageRequest {
+        expected_revision: 0,
+        proposal: Some(pb::PlacementProposal {
+            environment: route.environment.clone(),
+            cluster: route.cluster.clone(),
+            generation: 1,
+            epoch: 1,
+            regions: vec![pb::PlacementRegionSeats {
+                region: "GRU".into(),
+                members: vec![route.member.clone(), route.peer.clone()],
+            }],
+            assignments: vec![pb::PlacementDatabaseAssignment {
+                tenant: route.scope.tenant().to_text(),
+                project: route.scope.project().to_text(),
+                database: route.scope.database().to_text(),
+                region: "GRU".into(),
+                writer_member: route.member.clone(),
+                follower_member: route.peer.clone(),
+            }],
+        }),
+        declarations: Vec::new(),
+    };
+    let proposal = journal.stage("fixture", "usage-op", request).unwrap().proposal.unwrap();
+    (journal, placement_path, proposal)
+}
+
+fn deliver_keys(
+    journal: &PlacementJournal,
+    route: &RouteFixtures,
+    proposal: &pb::PlacementProposal,
+) -> KeyFixtures {
+    let authority = keypair();
+    let genesis = keypair();
+    let local = keypair();
+    journal
+        .configure_transition_trust(
+            TransitionTrust::new(
+                BTreeMap::from([("authority".into(), authority.public_key().as_ref().to_vec())]),
+                BTreeMap::from([("genesis".into(), genesis.public_key().as_ref().to_vec())]),
+                BTreeMap::from([
+                    (
+                        format!(
+                            "spiffe://terrascale.tech/{}/terrabase-member/{}/{}",
+                            route.environment, route.cluster, route.member
+                        ),
+                        local.public_key().as_ref().to_vec(),
+                    ),
+                    (
+                        format!(
+                            "spiffe://terrascale.tech/{}/terrabase-member/{}/{}",
+                            route.environment, route.cluster, proposal.regions[0].members[1]
+                        ),
+                        local.public_key().as_ref().to_vec(),
+                    ),
+                ]),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    KeyFixtures { authority, genesis }
+}
+
+fn accepted_proof(
+    journal: &PlacementJournal,
+    placement_path: &std::path::Path,
+    route: &RouteFixtures,
+    proposal: &pb::PlacementProposal,
+    keys: &KeyFixtures,
+) -> String {
+    let encoded: Vec<u8> = Connection::open(placement_path)
+        .unwrap()
+        .query_row("SELECT proposal FROM proposals WHERE revision=1", [], |row| row.get(0))
+        .unwrap();
+    let proposal_digest = hash(&encoded);
+    let mut members = proposal
+        .regions
+        .iter()
+        .flat_map(|region| {
+            region.members.iter().map(|identity| Member {
+                identity: format!(
+                    "spiffe://terrascale.tech/{}/terrabase-member/{}/{}",
+                    route.environment, route.cluster, identity
+                ),
+                region: region.region.clone(),
+                placement_digest: proposal_digest.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    members.sort_by(|a, b| a.identity.cmp(&b.identity));
+    let request = Request {
+        operation_id: "usage-op".into(),
+        scope_id: format!("{}/{}", route.environment, route.cluster),
+        prior_epoch: 0,
+        epoch: 1,
+        generation: 1,
+        members,
+    };
+    let request_digest = hash(&serde_json::to_vec(&request).unwrap());
+    let grant_payload = serde_json::to_vec(
+        &json!({"kind":"genesis_grant","grant_id":"grant-one","request_digest":request_digest}),
+    )
+    .unwrap();
+    let proof = json!({"schema_version":1,"kind":"accepted_epoch","request":request,"request_digest":request_digest,"authority_epoch":1,"journal_revision":1,"genesis_grant_id":"grant-one","receipt_digests":[],"drain_receipts":[],"prior_generation":0,"previous_proof_digest":"","lease_id":"lease-one","genesis_grant":sign("genesis", &grant_payload, &keys.genesis)});
+    let proof_payload = serde_json::to_vec(&proof).unwrap();
+    let envelope = serde_json::to_vec(&sign("authority", &proof_payload, &keys.authority)).unwrap();
+    journal
+        .accept("usage-op", &pb::PlacementAcceptRequest { proposal_revision: 1, proof: envelope })
+        .unwrap()
+        .proof_digest
 }
 
 impl Drop for Fixture {
@@ -353,30 +408,28 @@ fn corrupt_stored_registration_is_rejected() {
         .execute("UPDATE registrations SET payload=?1", [b"invalid json".as_slice()])
         .unwrap();
     drop(connection);
-    assert!(
-        fixture
-            .open()
-            .resolve(
-                &crate::admission::AdmissionRecord {
-                    created_at: 1,
-                    environment: fixture.environment.clone(),
-                    tenant_id: fixture.scope.tenant().to_text(),
-                    project_id: fixture.scope.project().to_text(),
-                    database_id: fixture.scope.database().to_text(),
-                    parent_database_id: None,
-                    key_version: "v1".into(),
-                    name: "db".into(),
-                    regions: vec!["GRU".into()],
-                    residency: "GRU".into(),
-                    operation_id: "usage-registration".into(),
-                    region: "GRU".into(),
-                    member_id: fixture.member.clone()
-                },
-                1,
-                &fixture.proof_digest
-            )
-            .is_err()
-    );
+    assert!(fixture
+        .open()
+        .resolve(
+            &crate::admission::AdmissionRecord {
+                created_at: 1,
+                environment: fixture.environment.clone(),
+                tenant_id: fixture.scope.tenant().to_text(),
+                project_id: fixture.scope.project().to_text(),
+                database_id: fixture.scope.database().to_text(),
+                parent_database_id: None,
+                key_version: "v1".into(),
+                name: "db".into(),
+                regions: vec!["GRU".into()],
+                residency: "GRU".into(),
+                operation_id: "usage-registration".into(),
+                region: "GRU".into(),
+                member_id: fixture.member.clone()
+            },
+            1,
+            &fixture.proof_digest
+        )
+        .is_err());
 }
 
 #[cfg(unix)]
@@ -386,29 +439,25 @@ fn unsafe_usage_paths_are_refused() {
     let fixture = Fixture::new();
     let link = fixture.root.join("usage-link");
     std::os::unix::fs::symlink(&fixture.usage_root, &link).unwrap();
-    assert!(
-        UsageAdmissionJournal::open(
-            &link,
-            fixture.environment.clone(),
-            fixture.member.clone(),
-            fixture.region.clone(),
-            fixture.placement.clone()
-        )
-        .is_err()
-    );
+    assert!(UsageAdmissionJournal::open(
+        &link,
+        fixture.environment.clone(),
+        fixture.member.clone(),
+        fixture.region.clone(),
+        fixture.placement.clone()
+    )
+    .is_err());
     let world = fixture.root.join("world");
     fs::create_dir(&world).unwrap();
     fs::set_permissions(&world, fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(
-        UsageAdmissionJournal::open(
-            &world,
-            fixture.environment.clone(),
-            fixture.member.clone(),
-            fixture.region.clone(),
-            fixture.placement.clone()
-        )
-        .is_err()
-    );
+    assert!(UsageAdmissionJournal::open(
+        &world,
+        fixture.environment.clone(),
+        fixture.member.clone(),
+        fixture.region.clone(),
+        fixture.placement.clone()
+    )
+    .is_err());
     fs::set_permissions(&world, fs::Permissions::from_mode(0o700)).unwrap();
     drop(
         UsageAdmissionJournal::open(
@@ -422,27 +471,23 @@ fn unsafe_usage_paths_are_refused() {
     );
     let file = world.join("usage-admissions.sqlite");
     fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(
-        UsageAdmissionJournal::open(
-            &world,
-            fixture.environment.clone(),
-            fixture.member.clone(),
-            fixture.region.clone(),
-            fixture.placement.clone()
-        )
-        .is_err()
-    );
+    assert!(UsageAdmissionJournal::open(
+        &world,
+        fixture.environment.clone(),
+        fixture.member.clone(),
+        fixture.region.clone(),
+        fixture.placement.clone()
+    )
+    .is_err());
     fs::remove_file(&file).unwrap();
     drop(fixture.open());
     std::os::unix::fs::symlink(fixture.usage_root.join("usage-admissions.sqlite"), &file).unwrap();
-    assert!(
-        UsageAdmissionJournal::open(
-            &world,
-            fixture.environment.clone(),
-            fixture.member.clone(),
-            fixture.region.clone(),
-            fixture.placement.clone()
-        )
-        .is_err()
-    );
+    assert!(UsageAdmissionJournal::open(
+        &world,
+        fixture.environment.clone(),
+        fixture.member.clone(),
+        fixture.region.clone(),
+        fixture.placement.clone()
+    )
+    .is_err());
 }

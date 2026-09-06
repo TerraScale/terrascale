@@ -176,7 +176,7 @@ impl ProductionCatalogBootstrap {
     /// quotas cannot be represented without weakening them, storage refuses
     /// an entry, or placement does not cover every enabled database Region.
     pub fn open(config: &ProductionConfig) -> Result<Self, ProductionCatalogError> {
-        let (enabled, locations, root, limits) = catalog_inputs(config)?;
+        let CatalogInputs { enabled, locations, root, limits } = catalog_inputs(config)?;
         let mut specs = Vec::with_capacity(enabled.len());
         let mut route_scopes = Vec::with_capacity(enabled.len());
         for (database, location) in enabled.iter().zip(&locations) {
@@ -346,12 +346,14 @@ impl ProductionCatalogBootstrap {
     }
 }
 
-fn catalog_inputs(
-    config: &ProductionConfig,
-) -> Result<
-    (Vec<&ProductionDatabase>, Vec<PathBuf>, PathBuf, AdmissionLimits),
-    ProductionCatalogError,
-> {
+struct CatalogInputs<'a> {
+    enabled: Vec<&'a ProductionDatabase>,
+    locations: Vec<PathBuf>,
+    root: PathBuf,
+    limits: AdmissionLimits,
+}
+
+fn catalog_inputs(config: &ProductionConfig) -> Result<CatalogInputs<'_>, ProductionCatalogError> {
     let enabled = config.databases.iter().filter(|database| database.enabled).collect::<Vec<_>>();
     if enabled.is_empty() && config.member_admission.is_none() {
         return Err(ProductionCatalogError::EmptyCatalog);
@@ -375,7 +377,7 @@ fn catalog_inputs(
     } else {
         derive_limits(&enabled)?
     };
-    Ok((enabled, locations, root, limits))
+    Ok(CatalogInputs { enabled, locations, root, limits })
 }
 
 impl Drop for ProductionCatalogBootstrap {
@@ -1234,9 +1236,6 @@ pub(crate) mod tests {
 
     #[test]
     fn startup_refusal_preserves_failed_catalog_drain() {
-        let (bootstrap, root, spec) = opened_bootstrap("startup-drain-failure");
-        let parts = bootstrap.into_parts();
-        let database = parts.member.database_ids().next().expect("database");
         struct Writer;
         impl terrabase::member::DatabaseRoleAuthority for Writer {
             fn accepted_role(
@@ -1249,6 +1248,9 @@ pub(crate) mod tests {
                 })
             }
         }
+        let (bootstrap, root, spec) = opened_bootstrap("startup-drain-failure");
+        let parts = bootstrap.into_parts();
+        let database = parts.member.database_ids().next().expect("database");
         parts.member.accept_database_role(&database, &Writer).expect("writer role");
         let lease = parts.member.acquire(&database).expect("active operation");
         let refusal = super::ProductionStartupError::Component(ProductionComponentError {
