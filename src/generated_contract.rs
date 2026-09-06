@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "2a62ae267ee76ebb8dbfd16de01b52bc0f98c888544c4be77ff055da2a59633d";
-pub const OPENAPI_BLAKE3: &str = "1e001c10dfa9d9074b14b88ffd45ff91564375afdf4f3078e2ead32ba303d070";
+    "1d3da6073af6cc1b0bc779e41b7ab95b7a6dc867b573fc51891394da2ce12044";
+pub const OPENAPI_BLAKE3: &str = "b45d567ddf3b32638611e7b7c94ee27a9f21e93933bd1d946a0c402b6aa02d91";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
     "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
 pub const MSGPACK_PROTOCOL: &str = "terrascale.sync.v1.msgpack";
@@ -23,7 +23,7 @@ pub struct ContractArtifact {
 pub const ARTIFACTS: &[ContractArtifact] = &[
     ContractArtifact {
         path: "conformance/http.json",
-        blake3: "a130ab08dc16efc03d58be4fdd4b09520ae3de2b1aa5a8f3a5c56425dcda2b73",
+        blake3: "25dcc383b39fa5d14799e91522f2ea4ff0cf480a9a1efd74ef258269af7a8c35",
     },
     ContractArtifact {
         path: "conformance/msgpack/hostile-vectors.json",
@@ -35,7 +35,7 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "conformance/reactive.json",
-        blake3: "ab86a2633049f3c67a301503a4b960c52648d28c9a92e2dd4a79f7a91babd1d1",
+        blake3: "47d6439f9185d878fc4c168da4973dea0a809c78be97dd90ed2efd1572d3a41d",
     },
     ContractArtifact {
         path: "msgpack/hostile-vectors.json",
@@ -51,11 +51,11 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "openapi.json",
-        blake3: "1e001c10dfa9d9074b14b88ffd45ff91564375afdf4f3078e2ead32ba303d070",
+        blake3: "b45d567ddf3b32638611e7b7c94ee27a9f21e93933bd1d946a0c402b6aa02d91",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/engine.proto",
-        blake3: "1ef77f50a74d1be9a1ddc55b7ee283a37bc4db82f9a44d3ca7f952f3d3380ce8",
+        blake3: "6a7c5b26c5e964910fe87706cfe8c175366a88c986bba3e7cdff0af2ab8c7ed3",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/family.proto",
@@ -101,6 +101,62 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("BatchResponse"),
     },
     Route {
+        operation_id: "begin_transaction",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/transactions/begin",
+        request_model: Some("TransactionIdentity"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "cancel_export",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{name}/exports/{job_id}/cancel",
+        request_model: None,
+        response_model: Some("ExportStatus"),
+    },
+    Route {
+        operation_id: "clear_development_fault",
+        method: HttpMethod::Delete,
+        path: "/api/v1/databases/{name}/dev/faults",
+        request_model: None,
+        response_model: Some("DevelopmentFaultResponse"),
+    },
+    Route {
+        operation_id: "commit_transaction",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/transactions/commit",
+        request_model: Some("TransactionIdentity"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "compare_and_swap",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/compareAndSwap",
+        request_model: Some("ConditionalUpdate"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "consume_matching",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/consumeMatching",
+        request_model: Some("PredicateOnly"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "consume_one",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/consumeOne",
+        request_model: Some("Consume"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "count",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/count",
+        request_model: Some("PredicateOnly"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
         operation_id: "create_branch",
         method: HttpMethod::Post,
         path: "/api/v1/databases/{name}/branches",
@@ -115,11 +171,32 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("DatabaseRecord"),
     },
     Route {
+        operation_id: "create_export",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{name}/exports",
+        request_model: Some("CreateExport"),
+        response_model: Some("ExportAccepted"),
+    },
+    Route {
         operation_id: "create_index",
         method: HttpMethod::Post,
         path: "/api/v1/databases/{name}/collections/{collection}/indexes",
         request_model: Some("CreateIndexRequest"),
         response_model: Some("IndexCreatedResponse"),
+    },
+    Route {
+        operation_id: "create_webhook",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{name}/webhooks",
+        request_model: Some("CreateWebhook"),
+        response_model: Some("WebhookSecretResponse"),
+    },
+    Route {
+        operation_id: "database_usage",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/usage",
+        request_model: None,
+        response_model: Some("UsageSummary"),
     },
     Route {
         operation_id: "delete_database",
@@ -136,6 +213,48 @@ pub const ROUTES: &[Route] = &[
         response_model: None,
     },
     Route {
+        operation_id: "delete_index",
+        method: HttpMethod::Delete,
+        path: "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
+        request_model: None,
+        response_model: None,
+    },
+    Route {
+        operation_id: "delete_many",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/deleteMany",
+        request_model: Some("PredicateOnly"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "delete_one",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/deleteOne",
+        request_model: Some("PredicateOnly"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "delete_webhook",
+        method: HttpMethod::Delete,
+        path: "/api/v1/databases/{name}/webhooks/{id}",
+        request_model: None,
+        response_model: Some("WebhookEndpoint"),
+    },
+    Route {
+        operation_id: "development_fault",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{name}/dev/faults",
+        request_model: Some("DevelopmentFaultRequest"),
+        response_model: Some("DevelopmentFaultResponse"),
+    },
+    Route {
+        operation_id: "development_logs",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/dev/logs",
+        request_model: None,
+        response_model: Some("DevelopmentLogResponse"),
+    },
+    Route {
         operation_id: "document_history",
         method: HttpMethod::Get,
         path: "/api/v1/databases/{name}/collections/{collection}/documents/{id}/history",
@@ -143,11 +262,32 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("HistoryResponse"),
     },
     Route {
+        operation_id: "download_export",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/exports/{job_id}/artifacts/{member}",
+        request_model: None,
+        response_model: None,
+    },
+    Route {
         operation_id: "execute_sql",
         method: HttpMethod::Post,
         path: "/api/v1/databases/{name}/sql",
         request_model: Some("SqlRequest"),
         response_model: Some("SqlResultResponse"),
+    },
+    Route {
+        operation_id: "find_one",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{database}/auth/records/{model}/{id}",
+        request_model: None,
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "find_page",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/findPage",
+        request_model: Some("PageQuery"),
+        response_model: Some("AuthResult"),
     },
     Route {
         operation_id: "get_database",
@@ -164,11 +304,60 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("JsonValue"),
     },
     Route {
+        operation_id: "get_export",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/exports/{job_id}",
+        request_model: None,
+        response_model: Some("ExportStatus"),
+    },
+    Route {
+        operation_id: "get_provisioning_operation",
+        method: HttpMethod::Get,
+        path: "/api/v1/operations/{operation_id}",
+        request_model: None,
+        response_model: Some("ProvisioningOperation"),
+    },
+    Route {
+        operation_id: "get_schema",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/collections/{collection}/schema",
+        request_model: None,
+        response_model: Some("SchemaDocument"),
+    },
+    Route {
         operation_id: "health",
         method: HttpMethod::Get,
         path: "/api/v1/health",
         request_model: None,
         response_model: Some("HealthResponse"),
+    },
+    Route {
+        operation_id: "increment_one",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/incrementOne",
+        request_model: Some("Increment"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "index",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/index",
+        request_model: Some("UniqueIndex"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "index_recommendations",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
+        request_model: None,
+        response_model: Some("RecommendationList"),
+    },
+    Route {
+        operation_id: "insert_unique",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/insertUnique",
+        request_model: Some("UniqueInsert"),
+        response_model: Some("AuthResult"),
     },
     Route {
         operation_id: "list_backups",
@@ -199,6 +388,13 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("DatabaseListResponse"),
     },
     Route {
+        operation_id: "list_deliveries",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/webhooks/{id}/deliveries",
+        request_model: None,
+        response_model: Some("DeliveryLog"),
+    },
+    Route {
         operation_id: "list_documents",
         method: HttpMethod::Get,
         path: "/api/v1/databases/{name}/collections/{collection}/documents",
@@ -206,11 +402,25 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("DocumentsResponse"),
     },
     Route {
+        operation_id: "list_exports",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/exports",
+        request_model: None,
+        response_model: Some("ExportList"),
+    },
+    Route {
         operation_id: "list_indexes",
         method: HttpMethod::Get,
         path: "/api/v1/databases/{name}/collections/{collection}/indexes",
         request_model: None,
         response_model: Some("IndexListResponse"),
+    },
+    Route {
+        operation_id: "list_webhooks",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/webhooks",
+        request_model: None,
+        response_model: Some("WebhookList"),
     },
     Route {
         operation_id: "patch_document",
@@ -227,11 +437,25 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("DocumentWriteResponse"),
     },
     Route {
+        operation_id: "put_schema",
+        method: HttpMethod::Put,
+        path: "/api/v1/databases/{name}/collections/{collection}/schema",
+        request_model: Some("CollectionSchema"),
+        response_model: Some("SchemaDocument"),
+    },
+    Route {
         operation_id: "regions",
         method: HttpMethod::Get,
         path: "/api/v1/regions",
         request_model: None,
         response_model: Some("HealthResponse"),
+    },
+    Route {
+        operation_id: "replay_webhook",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{name}/webhooks/{id}/deliveries/{delivery_id}/replay",
+        request_model: None,
+        response_model: Some("DeliveryRecord"),
     },
     Route {
         operation_id: "restore_backup",
@@ -248,11 +472,46 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("DatabaseRecord"),
     },
     Route {
+        operation_id: "resume_export",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{name}/exports/{job_id}/resume",
+        request_model: Some("ResumeExport"),
+        response_model: Some("ExportStatus"),
+    },
+    Route {
+        operation_id: "rollback_transaction",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/transactions/rollback",
+        request_model: Some("TransactionIdentity"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "rotate_secret",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{name}/webhooks/{id}/rotate-secret",
+        request_model: None,
+        response_model: Some("WebhookSecretResponse"),
+    },
+    Route {
         operation_id: "snapshot",
         method: HttpMethod::Get,
         path: "/api/v1/reactive/views/{view}/{generation}/snapshot/{chunk}",
         request_model: None,
         response_model: Some("ReactiveEnvelope"),
+    },
+    Route {
+        operation_id: "update_many",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/updateMany",
+        request_model: Some("PredicateUpdate"),
+        response_model: Some("AuthResult"),
+    },
+    Route {
+        operation_id: "update_one",
+        method: HttpMethod::Post,
+        path: "/api/v1/databases/{database}/auth/updateOne",
+        request_model: Some("PredicateUpdate"),
+        response_model: Some("AuthResult"),
     },
     Route {
         operation_id: "view_log",
@@ -282,6 +541,13 @@ pub mod models {
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct ArtifactFact {
+        pub checksum: String,
+        pub length: u64,
+        pub path: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct AttachViewRequest {
         pub checkpoint: Option<String>,
         #[serde(rename = "databaseId")]
@@ -305,6 +571,18 @@ pub mod models {
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct AuthResult {
+        pub count: Option<i64>,
+        #[serde(rename = "expiresAtMs")]
+        pub expires_at_ms: Option<i64>,
+        pub matched: bool,
+        pub record: Option<std::collections::BTreeMap<String, serde_json::Value>>,
+        pub records: Option<Vec<std::collections::BTreeMap<String, serde_json::Value>>>,
+        #[serde(rename = "transactionId")]
+        pub transaction_id: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct BackupStatusResponse {
         pub ready: bool,
         pub streaming: bool,
@@ -321,9 +599,26 @@ pub mod models {
         pub count: i64,
     }
 
+    pub type BillableMeter = serde_json::Value;
+
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct BranchListResponse {
         pub branches: Vec<DatabaseRecord>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct CollectionSchema {
+        pub fields: Option<Vec<FieldDescriptor>>,
+        pub fts: Option<FtsDescriptor>,
+        #[serde(rename = "historyRetentionDays")]
+        pub history_retention_days: Option<i32>,
+        pub indexes: Option<Vec<SchemaIndexDescriptor>>,
+        #[serde(rename = "mergePolicy")]
+        pub merge_policy: Option<MergePolicy>,
+        pub name: String,
+        pub renames: Option<Vec<FieldRename>>,
+        pub ttl: Option<TtlDescriptor>,
+        pub version: Option<i64>,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -332,15 +627,58 @@ pub mod models {
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct ConditionalUpdate {
+        pub expected: std::collections::BTreeMap<String, serde_json::Value>,
+        pub id: String,
+        pub model: String,
+        pub update: std::collections::BTreeMap<String, serde_json::Value>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct Consume {
+        pub expected: std::collections::BTreeMap<String, serde_json::Value>,
+        pub id: String,
+        pub model: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct CoordinatorRecommendation {
+        pub candidate_id: String,
+        pub collection: String,
+        pub fields: Vec<String>,
+        pub generation: u64,
+        pub maintenance_cost: u64,
+        pub needs_descriptor: bool,
+        pub score: f64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct CreateDatabaseRequest {
         pub name: String,
+        pub operation_id: Option<String>,
         pub placement: Vec<String>,
         pub residency: Option<String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct CreateExport {
+        pub idempotency_key: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct CreateIndexRequest {
         pub field: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct CreateWebhook {
+        pub endpoint: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DatabaseIdentity {
+        pub database_id: String,
+        pub placement: Vec<String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -359,6 +697,59 @@ pub mod models {
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DeliveryLog {
+        pub deliveries: Vec<DeliveryRecord>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DeliveryRecord {
+        pub attempts: i32,
+        pub delivered: bool,
+        pub event_id: String,
+        pub id: String,
+        pub next_attempt_at: i64,
+        pub retry_started_at: i64,
+        pub revision: i64,
+        pub status: Option<i32>,
+        pub terminal: bool,
+        pub write_index: i32,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DevelopmentFaultRequest {
+        #[serde(rename = "confirmBranch")]
+        pub confirm_branch: String,
+        #[serde(rename = "delayMs")]
+        pub delay_ms: i64,
+        #[serde(rename = "durationMs")]
+        pub duration_ms: i64,
+        pub fault: FaultKind,
+        #[serde(rename = "maxOperations")]
+        pub max_operations: i32,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DevelopmentFaultResponse {
+        pub active: bool,
+        #[serde(rename = "expiresAtMillis")]
+        pub expires_at_millis: i64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DevelopmentLogEntry {
+        pub action: String,
+        #[serde(rename = "atMillis")]
+        pub at_millis: i64,
+        pub sequence: i64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DevelopmentLogResponse {
+        pub entries: Vec<DevelopmentLogEntry>,
+        pub truncated: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct DocumentWriteResponse {
         pub revision: String,
     }
@@ -374,6 +765,67 @@ pub mod models {
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct ExportAccepted {
+        pub job_id: String,
+        pub resume_cursor: String,
+        pub status_path: String,
+    }
+
+    pub type ExportCancellation = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct ExportList {
+        pub exports: Vec<ExportStatus>,
+        pub next_cursor: Option<String>,
+    }
+
+    pub type ExportPhase = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct ExportStatus {
+        pub cancellation: ExportCancellation,
+        pub created_at_millis: u64,
+        pub error: Option<String>,
+        pub estimated_records: Option<u64>,
+        pub job_id: String,
+        pub manifest: Option<ArtifactFact>,
+        pub pages: u64,
+        pub phase: ExportPhase,
+        pub progress_basis_points: i32,
+        pub records: u64,
+        pub resume_cursor: String,
+        pub status: JobStatus,
+    }
+
+    pub type FaultKind = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct FieldDescriptor {
+        pub fts: Option<bool>,
+        pub indexed: Option<bool>,
+        #[serde(rename = "mergePolicy")]
+        pub merge_policy: Option<FieldType>,
+        pub name: String,
+        pub required: Option<bool>,
+        #[serde(rename = "type")]
+        pub type_: FieldType,
+        pub unique: Option<bool>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct FieldRename {
+        pub from: String,
+        pub to: String,
+    }
+
+    pub type FieldType = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct FtsDescriptor {
+        pub fields: Vec<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct HealthResponse {
         pub healthy: bool,
         pub region: String,
@@ -382,6 +834,14 @@ pub mod models {
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct HistoryResponse {
         pub history: Vec<std::collections::BTreeMap<String, serde_json::Value>>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct Increment {
+        pub increment: std::collections::BTreeMap<String, serde_json::Value>,
+        pub model: String,
+        pub predicates: Vec<PredicateInput>,
+        pub set: Option<std::collections::BTreeMap<String, serde_json::Value>>,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -397,19 +857,177 @@ pub mod models {
         pub state: String,
     }
 
+    pub type IndexKind = serde_json::Value;
+
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct IndexListResponse {
         pub indexes: Vec<IndexDescriptor>,
     }
 
+    pub type JobStatus = serde_json::Value;
+
     pub type JsonValue = serde_json::Value;
 
+    pub type MergePolicy = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct MeterTotal {
+        pub meter: BillableMeter,
+        pub units: String,
+    }
+
+    pub type MigrationState = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct MigrationStatus {
+        pub completed: u64,
+        pub message: String,
+        pub next_cursor: Option<String>,
+        pub operation_id: String,
+        pub state: MigrationState,
+        pub steps: Vec<MigrationStep>,
+        pub total: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct MigrationStep {
+        pub from: Option<String>,
+        pub index: Option<String>,
+        pub kind: String,
+        pub to: Option<String>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct PageJoin {
+        #[serde(rename = "fromField")]
+        pub from_field: String,
+        pub limit: i32,
+        pub model: String,
+        #[serde(rename = "outputField")]
+        pub output_field: String,
+        pub relation: PageJoinRelation,
+        #[serde(rename = "toField")]
+        pub to_field: String,
+    }
+
+    pub type PageJoinRelation = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct PageQuery {
+        pub joins: Option<Vec<PageJoin>>,
+        pub limit: i32,
+        pub model: String,
+        pub offset: i32,
+        pub predicates: Vec<PredicateInput>,
+        pub select: Option<Vec<String>>,
+        #[serde(rename = "sortBy")]
+        pub sort_by: Option<PageSort>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct PageSort {
+        pub direction: PageSortDirection,
+        pub field: String,
+    }
+
+    pub type PageSortDirection = serde_json::Value;
+
+    pub type PredicateConnectorSchema = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct PredicateInput {
+        pub connector: Option<PredicateConnectorSchema>,
+        pub field: String,
+        pub mode: Option<PredicateModeSchema>,
+        pub operator: Option<PredicateOperatorSchema>,
+        pub value: serde_json::Value,
+    }
+
+    pub type PredicateModeSchema = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct PredicateOnly {
+        pub model: String,
+        pub predicates: Vec<PredicateInput>,
+    }
+
+    pub type PredicateOperatorSchema = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct PredicateUpdate {
+        pub model: String,
+        pub predicates: Vec<PredicateInput>,
+        pub update: std::collections::BTreeMap<String, serde_json::Value>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct ProvisioningOperation {
+        pub database_id: String,
+        pub environment: String,
+        pub key_version: String,
+        pub name: String,
+        pub operation_id: String,
+        pub parent_database_id: Option<String>,
+        pub project_id: String,
+        pub regions: Vec<String>,
+        pub residency: String,
+        pub state: String,
+        pub tenant_id: String,
+    }
+
     pub type ReactiveEnvelope = serde_json::Value;
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct ReadAttribution {
+        pub total_reads: u64,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct RecommendationList {
+        pub generation: u64,
+        pub recommendations: Vec<CoordinatorRecommendation>,
+        pub truncated: bool,
+    }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct RestoreRequest {
         pub at: Option<i64>,
         pub name: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct ResumeExport {
+        pub resume_cursor: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct RotateWebhookSecret {
+        pub overlap_seconds: Option<i64>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct SchemaDocument {
+        pub generation: u64,
+        pub identity: DatabaseIdentity,
+        pub migration: Option<MigrationStatus>,
+        pub schema: CollectionSchema,
+        pub schema_version: u64,
+        pub target: SchemaTarget,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct SchemaIndexDescriptor {
+        pub fields: Vec<String>,
+        pub kind: Option<IndexKind>,
+        pub name: String,
+        pub unique: Option<bool>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct SchemaTarget {
+        pub branch: String,
+        pub collection: String,
+        pub database: String,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -437,7 +1055,53 @@ pub mod models {
 
     pub type SqlResultResponse = serde_json::Value;
 
-    pub type WebhookRequest = serde_json::Value;
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct TransactionIdentity {
+        #[serde(rename = "transactionId")]
+        pub transaction_id: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct TtlDescriptor {
+        pub field: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct UniqueIndex {
+        pub fields: Vec<String>,
+        pub model: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct UniqueInsert {
+        pub model: String,
+        pub record: std::collections::BTreeMap<String, serde_json::Value>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct UsageSummary {
+        pub database_id: String,
+        pub meters: Vec<MeterTotal>,
+        pub reads: ReadAttribution,
+        pub snapshot_sequence: u64,
+        pub storage_complete_through_millis: Option<u64>,
+        pub tenant_id: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct WebhookEndpoint {
+        pub created_at: i64,
+        pub deleted: bool,
+        pub endpoint: String,
+        pub id: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct WebhookList {
+        pub webhooks: Vec<WebhookEndpoint>,
+    }
+
+    pub type WebhookSecretResponse = serde_json::Value;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -619,6 +1283,6 @@ pub const MESSAGE_VECTOR_SHA256: &str =
 pub const HOSTILE_VECTOR_SHA256: &str =
     "e6d8e6d92a87fe4d37fb00e5b441d0c351eecaf6117e5ac50631ce94d18890f5";
 pub const HTTP_CONFORMANCE_SHA256: &str =
-    "e46c8c192f4a7c4b1ec4aaf4621ae0a63c266167aa962aae29bed98718cdc502";
+    "60801bac610c64402f5f7a7a3aa70ec0975e05981cec9419535e0fc231f136af";
 pub const REACTIVE_CONFORMANCE_SHA256: &str =
-    "203d98748989122b81da26504cb73bb17009968d571744bbd2456f3f2abbe425";
+    "cbccfdda07ebd7a4a9b49a85d2135bc77de69a9f60ce5cfd7444ecfcc1b25d05";

@@ -792,8 +792,32 @@ service ReplicationService {
   rpc Denials(ReplicationServiceDenialsRequest) returns (ReplicationServiceDenialsResponse);
 }
 
+// Host-wide observation of the complete immutable admitted database scope set.
+message MaintenanceServiceCatchUpStatusRequest {}
+message DatabaseCatchUpStatus {
+  string tenant = 1;
+  string project = 2;
+  string database = 3;
+  uint64 source_sequence = 4;
+  uint64 regional_sequence = 5;
+  bool regional_measured = 6;
+  bool causal_measured = 7;
+  bool causal_caught_up = 8;
+  uint64 backup_source_sequence = 9;
+  uint64 backup_protected_sequence = 10;
+  bool backup_measured = 11;
+  bool backup_caught_up = 12;
+}
+message MaintenanceServiceCatchUpStatusResponse {
+  bool complete = 1;
+  string assignment_revision = 2;
+  uint64 observed_at_unix_ms = 3;
+  repeated DatabaseCatchUpStatus databases = 4;
+}
+
 // Topology, administration, and supervision.
 service MaintenanceService {
+  rpc CatchUpStatus(MaintenanceServiceCatchUpStatusRequest) returns (MaintenanceServiceCatchUpStatusResponse);
   rpc TopologyRead(MaintenanceServiceTopologyReadRequest) returns (MaintenanceServiceTopologyReadResponse);
   rpc AdminStatus(MaintenanceServiceAdminStatusRequest) returns (MaintenanceServiceAdminStatusResponse);
   rpc SupervisionHealth(MaintenanceServiceSupervisionHealthRequest) returns (MaintenanceServiceSupervisionHealthResponse);
@@ -814,6 +838,14 @@ service PlacementControlService {
   // request and authenticated principal. A retry returns its original revision.
   rpc Stage(PlacementStageRequest) returns (PlacementProposalResponse);
   rpc Get(PlacementGetRequest) returns (PlacementProposalResponse);
+  // Verifies and durably retains a signed GRU epoch proof matching staged intent.
+  // Admission permits catch-up only; it does not assert data readiness.
+  rpc Accept(PlacementAcceptRequest) returns (PlacementAcceptanceResponse);
+  rpc GetAccepted(PlacementGetRequest) returns (PlacementAcceptanceResponse);
+  // Executes a durably authorized old-epoch fence and returns a member-signed
+  // frontier receipt only after origin+physical work has durably drained.
+  rpc Drain(PlacementDrainRequest) returns (PlacementDrainResponse);
+  rpc Readiness(PlacementReadinessRequest) returns (PlacementDrainResponse);
 }
 
 message PlacementRegionSeats {
@@ -836,12 +868,22 @@ message PlacementProposal {
   uint64 generation = 3; // Positive; replacement strictly increases this and epoch.
   uint64 epoch = 4;
   repeated PlacementRegionSeats regions = 5; // 1..3; disjoint Member identities.
-  repeated PlacementDatabaseAssignment assignments = 6; // 1..1024; unique scope/Region.
+  repeated PlacementDatabaseAssignment assignments = 6; // Up to 1024 scopes x 3 Regions; unique scope/Region, subject to proposal byte limit.
+}
+
+// Immutable database residency supplied by authenticated provisioning authority.
+// This declares control metadata only; it grants no local storage or writer seat.
+message PlacementDatabaseDeclaration {
+  string tenant = 1;
+  string project = 2;
+  string database = 3;
+  repeated string selected_regions = 4;
 }
 
 message PlacementStageRequest {
   uint64 expected_revision = 1; // Local journal CAS revision, zero before first Stage.
   PlacementProposal proposal = 2;
+  repeated PlacementDatabaseDeclaration declarations = 3; // Exact provisioning scope/residency; committed with proposal CAS.
 }
 
 message PlacementGetRequest {}
@@ -856,4 +898,91 @@ message PlacementProposalResponse {
   uint64 revision = 1;
   PlacementProposal proposal = 2;
   PlacementProposalStatus status = 3;
+}
+
+// Dedicated GRU-authorized auth consensus bootstrap control. No user data.
+// A pending placement proposal never authorizes this service's grants.
+service AuthGroupBootstrapService {
+  rpc Identity(AuthStorageIdentityRequest) returns (AuthStorageIdentity);
+  rpc Bootstrap(AuthGroupBootstrapRequest) returns (AuthGroupBootstrapReceipt);
+}
+message AuthStorageIdentityRequest {}
+message AuthStorageIdentity {
+  string environment = 1;
+  string cluster = 2;
+  string member = 3;
+  // Persisted engine-generated ULID. Changes after storage loss.
+  string storage_incarnation = 4;
+}
+message AuthGroupVoter {
+  uint64 node_id = 1;
+  string member = 2;
+  string spiffe_uri = 3;
+  string region = 4;
+  string storage_incarnation = 5;
+}
+message AuthGroupBootstrapGrant {
+  string environment = 1;
+  string cluster = 2;
+  string group_id = 3; // Canonical ULID, allocated once by GRU control authority.
+  string tenant = 4;
+  string project = 5;
+  string database = 6;
+  uint64 generation = 7; // Exactly one; this API cannot change membership.
+  repeated string regions = 8; // Immutable placement, sorted and unique.
+  repeated AuthGroupVoter voters = 9; // Sorted by positive unique node_id.
+  uint64 authority_revision = 10; // Exact committed GRU control journal sequence.
+  uint64 genesis_node = 11; // Only this voter may initialize the new Raft group.
+}
+message AuthGroupBootstrapRequest {
+  string operation_id = 1; // Stable control retry identity.
+  AuthGroupBootstrapGrant grant = 2;
+}
+enum AuthGroupBootstrapStatus {
+  AUTH_GROUP_BOOTSTRAP_STATUS_UNSPECIFIED = 0;
+  // Persisted grant; this does not report quorum, durability, or API readiness.
+  AUTH_GROUP_BOOTSTRAP_STATUS_PERSISTED = 1;
+}
+message AuthGroupBootstrapReceipt {
+  string group_id = 1;
+  uint64 generation = 2;
+  uint64 authority_revision = 3;
+  string storage_incarnation = 4;
+  AuthGroupBootstrapStatus status = 5;
+  AuthGroupBootstrapGrant grant = 6; // Exact immutable request grant echo.
+  string operation_id = 7;
+}
+
+// Exact Signed JSON envelope from the GRU placementtransition producer.
+message PlacementAcceptRequest {
+  uint64 proposal_revision = 1;
+  bytes proof = 2; // <=256 KiB; raw signed payload authenticated before decoding.
+}
+
+enum PlacementAcceptanceStatus {
+  PLACEMENT_ACCEPTANCE_STATUS_UNSPECIFIED = 0;
+  PLACEMENT_ACCEPTANCE_STATUS_ADMITTED_CATCHING_UP = 1;
+}
+
+message PlacementAcceptanceResponse {
+  uint64 proposal_revision = 1;
+  uint64 epoch = 2;
+  uint64 generation = 3;
+  string proof_digest = 4; // SHA256 of authenticated raw proof payload, lowercase hex.
+  PlacementAcceptanceStatus status = 5;
+}
+
+message PlacementDrainRequest {
+  bytes prepared_transition = 1; // <=256KiB Signed prepared_epoch GRU envelope.
+}
+message PlacementDrainResponse {
+  bytes signed_receipt = 1; // Signed old_epoch_drained_fenced envelope.
+}
+
+message PlacementReadinessRequest {
+  string tenant = 1; // Canonical tenant ULID.
+  string project = 2; // Canonical project ULID.
+  string database = 3; // Canonical database ULID.
+  string operation_id = 4; // Exact durable provisioning operation.
+  string nonce = 5; // Fresh challenge, exactly64 lowercase hex characters.
 }

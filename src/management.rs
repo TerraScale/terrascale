@@ -216,8 +216,16 @@ pub enum CreateDatabaseResult {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProvisioningOperation {
+    /// Deployment environment owning the operation.
+    pub environment: String,
+    /// Authoritatively bound tenant identity.
+    pub tenant_id: String,
+    /// Authoritatively bound project identity.
+    pub project_id: String,
     pub operation_id: String,
     pub database_id: String,
+    /// Parent identity of a provisioned branch, when applicable.
+    pub parent_database_id: Option<String>,
     pub key_version: String,
     pub name: String,
     pub regions: Vec<String>,
