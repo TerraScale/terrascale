@@ -329,11 +329,19 @@ func (d *DatabasesClient) DownloadExport(ctx context.Context, database, jobID, m
 	if err := d.c.do(ctx, "GET", path+"/artifacts/"+url.PathEscape(member), nil, nil, &out, "download_export", opts...); err != nil {
 		return nil, err
 	}
-	length, err := strconv.ParseUint(headers.Get("X-TerraScale-Artifact-Length"), 10, 64)
-	if err != nil || strconv.FormatUint(length, 10) != headers.Get("X-TerraScale-Artifact-Length") {
+	lengthValues := headers.Values("X-TerraScale-Artifact-Length")
+	if len(lengthValues) != 1 {
 		return nil, fmt.Errorf("sdk: invalid artifact length header")
 	}
-	checksum := headers.Get("X-TerraScale-Artifact-Checksum")
+	length, err := strconv.ParseUint(lengthValues[0], 10, 64)
+	if err != nil || strconv.FormatUint(length, 10) != lengthValues[0] {
+		return nil, fmt.Errorf("sdk: invalid artifact length header")
+	}
+	checksumValues := headers.Values("X-TerraScale-Artifact-Checksum")
+	if len(checksumValues) != 1 {
+		return nil, fmt.Errorf("sdk: invalid artifact checksum header")
+	}
+	checksum := checksumValues[0]
 	if len(checksum) != 64 || strings.Trim(checksum, "0123456789abcdefABCDEF") != "" {
 		return nil, fmt.Errorf("sdk: invalid artifact checksum header")
 	}
