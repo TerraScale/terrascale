@@ -645,11 +645,15 @@ impl EngineConfig {
         self
     }
 
-    pub(crate) fn owner(&self) -> Option<&crate::storage::DatabaseOwner> {
+    /// Returns the explicitly bound production owner, if one was supplied.
+    #[must_use]
+    pub fn owner(&self) -> Option<&crate::storage::DatabaseOwner> {
         self.owner.as_ref()
     }
 
-    pub(crate) fn has_encrypted_owner(&self) -> bool {
+    /// Reports whether this target carries both an owner and storage keys.
+    #[must_use]
+    pub fn has_encrypted_owner(&self) -> bool {
         self.owner.is_some() && self.storage_keys.is_some()
     }
 

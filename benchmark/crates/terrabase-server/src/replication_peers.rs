@@ -1465,24 +1465,42 @@ mod tests {
     }
 
     #[test]
-    fn stale_worker_cannot_clear_newer_connected_observation() {
+    fn dropped_worker_fences_only_its_receipts_and_leaves_survivor_live() {
         let scope = DatabaseRouteScope::try_new(
             "01ARZ3NDEKTSV4RRFFQ69G5FAV",
             "01ARZ3NDEKTSV4RRFFQ69G5FAW",
             "01ARZ3NDEKTSV4RRFFQ69G5FAX",
         )
         .unwrap();
+        let progress = Arc::new(ReplicationProgress::default());
+        progress
+            .admit(scope, std::collections::BTreeSet::from(["GRU".into(), "SFO".into()]))
+            .unwrap();
+        progress.advance_regional_from_peer(scope, "peer-old", 8);
+        progress.advance_regional_from_peer(scope, "peer-survivor", 11);
         let observations: PeerObservations = Arc::default();
         observations.lock().unwrap().insert(
-            ("peer".into(), scope),
-            PeerFacts { connected: true, session_id: 2, ..PeerFacts::default() },
+            ("peer-old".into(), scope),
+            PeerFacts { connected: true, session_id: 1, ..PeerFacts::default() },
         );
-        let facts = observations.lock().unwrap();
-        assert!(facts.iter().any(|((peer, _), facts)| {
-            peer == "peer" && facts.connected && facts.session_id != 1
-        }));
-        assert!(!facts.iter().any(|((peer, _), facts)| {
-            peer == "peer" && facts.connected && facts.session_id != 2
-        }));
+        let (sender, receiver) = mpsc::channel(1);
+        let live_workers = Arc::new(std::sync::Mutex::new(
+            ["peer-old".to_owned(), "peer-survivor".to_owned()].into_iter().collect(),
+        ));
+        let inbox = PeerInbox {
+            receiver: Some(receiver),
+            peer: "peer-old".into(),
+            worker_id: 1,
+            live_workers: live_workers.clone(),
+            progress: progress.clone(),
+            observations: observations.clone(),
+            retirement: None,
+        };
+        drop(sender);
+        drop(inbox);
+        assert_eq!(progress.boundaries().unwrap()[&scope].regional_sequence, 11);
+        assert!(!observations.lock().unwrap().contains_key(&("peer-old".into(), scope)));
+        assert!(!live_workers.lock().unwrap().contains("peer-old"));
+        assert!(live_workers.lock().unwrap().contains("peer-survivor"));
     }
 }

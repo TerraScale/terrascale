@@ -61,6 +61,7 @@ impl Engine {
                     row.get(0)
                 })
                 .map_err(|_| EngineOpenError::FormatMismatch)?;
+            sync_parent(target)?;
             return Ok(StorageSequence::new(
                 u64::try_from(sequence).map_err(|_| EngineOpenError::FormatMismatch)?,
             ));
@@ -71,6 +72,13 @@ impl Engine {
         match fs::remove_dir(target) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
+                if let Some(existing) = installed_cut(config, &marker) {
+                    sync_parent(target)?;
+                    return Ok(StorageSequence::new(existing));
+                }
+                return Err(EngineOpenError::InvalidConfig);
+            }
             Err(_) => return Err(EngineOpenError::StorageUnavailable),
         }
         let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
@@ -129,9 +137,7 @@ impl Engine {
                 }
                 return Err(EngineOpenError::StorageUnavailable);
             }
-            fs::File::open(parent)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|_| EngineOpenError::StorageUnavailable)?;
+            sync_parent(target)?;
             Ok(StorageSequence::new(
                 u64::try_from(cut).map_err(|_| EngineOpenError::FormatMismatch)?,
             ))
@@ -141,6 +147,13 @@ impl Engine {
         }
         result
     }
+}
+
+fn sync_parent(target: &Path) -> Result<(), EngineOpenError> {
+    let parent = target.parent().ok_or(EngineOpenError::InvalidConfig)?;
+    fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| EngineOpenError::StorageUnavailable)
 }
 
 fn installed_cut(config: &EngineConfig, marker: &str) -> Option<u64> {

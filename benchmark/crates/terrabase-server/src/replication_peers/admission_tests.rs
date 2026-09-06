@@ -200,11 +200,10 @@ async fn receiver_closed_after_reservation_cannot_publish_partial_admission() {
         .try_send(PeerCommand::Add(Vec::new()))
         .unwrap();
     synthetic.progress.admit(a, std::collections::BTreeSet::from(["GRU".into()])).unwrap();
-    synthetic
-        .observations
-        .lock()
-        .unwrap()
-        .insert(("peer-a".into(), a), PeerFacts { connected: true, ..PeerFacts::default() });
+    synthetic.observations.lock().unwrap().insert(
+        ("peer-a".into(), a),
+        PeerFacts { connected: true, session_id: 1, ..PeerFacts::default() },
+    );
     let add = synthetic.peers.add_databases(batch(request(a, b)));
     tokio::pin!(add);
     for _ in 0..100 {

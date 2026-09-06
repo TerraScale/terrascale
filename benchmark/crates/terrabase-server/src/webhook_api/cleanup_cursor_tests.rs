@@ -30,10 +30,19 @@ impl WebhookJournal for LargeJournal {
 
 #[tokio::test]
 async fn cleanup_failure_does_not_block_multi_page_cursor_progress() {
-    let root = std::env::temp_dir().join(format!("terrascale-webhook-cursor-{}", terrabase::identity::generate()));
-    let engine = Arc::new(Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config")).expect("engine"));
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-cursor-{}", terrabase::identity::generate()));
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("engine"),
+    );
     let owner = engine.database_owner();
-    let scope = TenantScope::new(owner.tenant().to_text(), owner.project().to_text(), owner.database().to_text()).expect("scope");
+    let scope = TenantScope::new(
+        owner.tenant().to_text(),
+        owner.project().to_text(),
+        owner.database().to_text(),
+    )
+    .expect("scope");
     let storage = Arc::new(EngineWebhookStorage::new(Arc::clone(&engine)));
     let secrets = Arc::new(crate::webhook_api::delivery_tests::TestPorts::default());
     secrets.destruction_unavailable.store(true, Ordering::SeqCst);
@@ -43,11 +52,17 @@ async fn cleanup_failure_does_not_block_multi_page_cursor_progress() {
         stop_after_send: false,
     });
     let service = WebhookService::new(
-        storage.clone(), Arc::new(LargeJournal), secrets.clone(),
+        storage.clone(),
+        Arc::new(LargeJournal),
+        secrets.clone(),
         Arc::new(AbuseGuardWebhookGuard::new(Arc::new(AbuseGuards::new()))),
-        delivery.clone(), secrets.clone(), "GRU",
-    ).expect("service");
-    let deleted = storage.create_endpoint(&scope, "https://hooks.example/deleted", 0).expect("deleted");
+        delivery.clone(),
+        secrets.clone(),
+        "GRU",
+    )
+    .expect("service");
+    let deleted =
+        storage.create_endpoint(&scope, "https://hooks.example/deleted", 0).expect("deleted");
     storage.delete_endpoint(&scope, &deleted.id).expect("tombstone");
     let live = storage.create_endpoint(&scope, "https://hooks.example/live", 0).expect("live");
 
@@ -60,6 +75,13 @@ async fn cleanup_failure_does_not_block_multi_page_cursor_progress() {
     assert_eq!(second.publications, 44);
     assert!(second.attempted > 0);
     assert!(delivery.base.sent.load(Ordering::SeqCst) >= 1);
+    assert!(delivery
+        .base
+        .seen_events
+        .lock()
+        .expect("events lock")
+        .iter()
+        .any(|id| id.ends_with(":event-257")));
     assert!(storage.endpoint(&scope, &live.id).expect("live lookup").is_some());
     drop(service);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };

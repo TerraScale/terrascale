@@ -97,11 +97,15 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
     let (same_first, same_second) = std::thread::scope(|threads| {
         let first_config = child_config.clone();
         let second_config = child_config.clone();
+        let source_ref = &source;
+        let first_operation = operation.clone();
+        let second_operation = operation.clone();
         let first = threads.spawn(move || {
-            Engine::restore_encrypted_sqlite_branch(&source, &first_config, &operation)
+            Engine::restore_encrypted_sqlite_branch(source_ref, &first_config, &first_operation)
         });
+        let source_ref = &source;
         let second = threads.spawn(move || {
-            Engine::restore_encrypted_sqlite_branch(&source, &second_config, &operation)
+            Engine::restore_encrypted_sqlite_branch(source_ref, &second_config, &second_operation)
         });
         (first.join().unwrap(), second.join().unwrap())
     });
@@ -134,11 +138,19 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
     let (distinct_first, distinct_second) = std::thread::scope(|threads| {
         let first_config = distinct_config.clone();
         let second_config = distinct_config.clone();
+        let first_operation_ref = &first_operation;
+        let second_operation_ref = &second_operation;
+        let source_ref = &source;
         let first = threads.spawn(move || {
-            Engine::restore_encrypted_sqlite_branch(&source, &first_config, &first_operation)
+            Engine::restore_encrypted_sqlite_branch(source_ref, &first_config, first_operation_ref)
         });
+        let source_ref = &source;
         let second = threads.spawn(move || {
-            Engine::restore_encrypted_sqlite_branch(&source, &second_config, &second_operation)
+            Engine::restore_encrypted_sqlite_branch(
+                source_ref,
+                &second_config,
+                second_operation_ref,
+            )
         });
         (first.join().unwrap(), second.join().unwrap())
     });

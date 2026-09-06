@@ -502,7 +502,14 @@ mod tests {
         ];
         let fenced_id = DatabaseId::from(fenced.database());
         let unrelated_id = DatabaseId::from(unrelated.database());
-        prepare_fenced_database(&root, &specs, &fenced, &unrelated, fenced_id, unrelated_id);
+        prepare_fenced_database(
+            &root,
+            &specs,
+            &fenced,
+            &unrelated,
+            fenced_id.clone(),
+            unrelated_id.clone(),
+        );
 
         let mut keys = crate::test_keys::storage_keys(&fenced);
         keys.extend(crate::test_keys::storage_keys(&unrelated));

@@ -6,6 +6,7 @@ use std::time::Duration;
 pub(crate) struct TestPorts {
     now: AtomicU64,
     pub(crate) sent: AtomicU64,
+    pub(crate) seen_events: std::sync::Mutex<Vec<String>>,
     destruction_attempts: AtomicU64,
     pub(crate) destruction_unavailable: std::sync::atomic::AtomicBool,
     destruction_not_found: std::sync::atomic::AtomicBool,
@@ -60,10 +61,13 @@ impl WebhookDelivery for BudgetPorts {
     fn send(
         &self,
         _: &str,
-        _: &BTreeMap<String, String>,
+        headers: &BTreeMap<String, String>,
         _: &[u8],
     ) -> Result<DeliveryResponse, DeliveryError> {
         self.base.sent.fetch_add(1, Ordering::SeqCst);
+        if let Some(key) = headers.get("idempotency-key") {
+            self.base.seen_events.lock().expect("events lock").push(key.clone());
+        }
         if self.stop_after_send {
             self.stop.store(true, Ordering::Release);
         }
@@ -638,11 +642,11 @@ async fn failed_cleanup_is_retried_from_deleted_tombstone_after_restart() {
     )
     .expect("scope");
     let ports = Arc::new(TestPorts::default());
-    let service = service(&engine, &ports);
+    let initial_service = service(&engine, &ports);
     ports.creation_unavailable.store(true, Ordering::SeqCst);
     ports.destruction_unavailable.store(true, Ordering::SeqCst);
     assert!(
-        service
+        initial_service
             .create_with_secret(
                 &scope,
                 &CreateWebhook { endpoint: "https://hooks.example/events".into() },
@@ -651,8 +655,8 @@ async fn failed_cleanup_is_retried_from_deleted_tombstone_after_restart() {
             .is_err()
     );
     assert_eq!(ports.destruction_attempts.load(Ordering::SeqCst), 1);
-    assert!(service.list(&scope).expect("active list").is_empty());
-    drop(service);
+    assert!(initial_service.list(&scope).expect("active list").is_empty());
+    drop(initial_service);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
     engine.shutdown().expect("shutdown");
 

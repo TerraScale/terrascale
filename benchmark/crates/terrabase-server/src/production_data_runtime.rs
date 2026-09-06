@@ -781,6 +781,85 @@ impl ProductionAdmissionRuntime {
             .map_err(|error| error.to_string())
     }
 
+    /// Resolves one already-serving database into the native backup owner input.
+    /// The caller must supply the accepted database identity; pending entries
+    /// and unknown identities fail closed.
+    pub fn resolve_native_backup_input(
+        &self,
+        database: &str,
+    ) -> Result<crate::native_backup_runtime::NativeBackupInput, String> {
+        use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
+        use terrabase::backup::{PlacementLock, worker::OciBackupKeys};
+        use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
+        let snapshot = self
+            .registry
+            .retained_snapshot()?
+            .into_iter()
+            .find(|snapshot| snapshot.activated && snapshot.database.record.database_id == database)
+            .ok_or("database is not actively admitted")?;
+        let record = self
+            .admitted_records()?
+            .into_iter()
+            .find(|record| record.database_id == database)
+            .ok_or("admitted backup record unavailable")?;
+        let configured = self
+            .config
+            .databases
+            .iter()
+            .find(|entry| entry.database.to_text() == database)
+            .ok_or("configured database unavailable")?;
+        let policy = configured.backup.as_ref().ok_or("native backup policy missing")?;
+        let key_config = self.config.keys.as_ref().ok_or("production key delivery missing")?;
+        let provider = OciVaultKeyDelivery::new(
+            key_config.socket.clone(),
+            key_config.orchestrator_uid,
+            key_config.socket_gid,
+        )
+        .map_err(failure)?;
+        let scope = KeyScope::new_with_project(
+            &record.environment,
+            terrabase::identity::TenantUlid::from_text(&record.tenant_id).map_err(failure)?,
+            terrabase::identity::ProjectUlid::from_text(&record.project_id).map_err(failure)?,
+            terrabase::identity::DatabaseUlid::from_text(&record.database_id).map_err(failure)?,
+            KeyPurpose::Backup,
+        )
+        .map_err(failure)?;
+        let source = OciVaultDatabaseKeys::new(
+            provider,
+            KeyVersionMetadata::new(
+                scope,
+                DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?,
+            ),
+            record.region.parse().map_err(|_| "invalid admitted Region")?,
+        )
+        .map_err(failure)?;
+        let region = record.region.parse().map_err(|_| "invalid admitted Region")?;
+        let destinations =
+            crate::production_backup::destinations_from_config(&policy.destinations, region)
+                .map_err(|_| "native backup destination unavailable")?;
+        let placement = PlacementLock::explicit(
+            record
+                .regions
+                .iter()
+                .map(|region| region.parse())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| "invalid admitted placement")?,
+        )
+        .map_err(|_| "invalid admitted placement")?;
+        Ok(NativeBackupInput {
+            engine: Arc::new(AdmittedBackupEngine::new(snapshot.database.host.clone())),
+            keys: Arc::new(
+                OciBackupKeys::new(Arc::new(source))
+                    .map_err(|_| "backup key authorization unavailable")?,
+            ),
+            destinations,
+            policy_revision: policy.policy_revision.clone(),
+            retention_days: policy.retention_days,
+            staging: configured.backup_root.clone(),
+            placement,
+        })
+    }
+
     /// Reconciles retained acceptance and starts the actual role-specific workers.
     ///
     /// # Errors
