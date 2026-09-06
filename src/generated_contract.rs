@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "288215aceaef5d97d00b4ae9dcb20ec31ee32573ed8f68a4b38ce925e1a78cd2";
-pub const OPENAPI_BLAKE3: &str = "f51146b13ae8a7217342d0d4c9e7d14c645f56c07c9f3365d9b2a3895d58e7a9";
+    "2a62ae267ee76ebb8dbfd16de01b52bc0f98c888544c4be77ff055da2a59633d";
+pub const OPENAPI_BLAKE3: &str = "1e001c10dfa9d9074b14b88ffd45ff91564375afdf4f3078e2ead32ba303d070";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
     "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
 pub const MSGPACK_PROTOCOL: &str = "terrascale.sync.v1.msgpack";
@@ -23,7 +23,7 @@ pub struct ContractArtifact {
 pub const ARTIFACTS: &[ContractArtifact] = &[
     ContractArtifact {
         path: "conformance/http.json",
-        blake3: "1235130c1318d3d2d772913b09c34b241ca0bb1085666570da63c8af947e79ca",
+        blake3: "a130ab08dc16efc03d58be4fdd4b09520ae3de2b1aa5a8f3a5c56425dcda2b73",
     },
     ContractArtifact {
         path: "conformance/msgpack/hostile-vectors.json",
@@ -35,7 +35,7 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "conformance/reactive.json",
-        blake3: "a6e2a9016aa78863dc88daa1660062ed4a169b77890bf5c3c279c6f8df78ade4",
+        blake3: "ab86a2633049f3c67a301503a4b960c52648d28c9a92e2dd4a79f7a91babd1d1",
     },
     ContractArtifact {
         path: "msgpack/hostile-vectors.json",
@@ -51,11 +51,11 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "openapi.json",
-        blake3: "f51146b13ae8a7217342d0d4c9e7d14c645f56c07c9f3365d9b2a3895d58e7a9",
+        blake3: "1e001c10dfa9d9074b14b88ffd45ff91564375afdf4f3078e2ead32ba303d070",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/engine.proto",
-        blake3: "697966a9c2673bdf745c3cd1a3885994877575b852736727e1b3201965c4de16",
+        blake3: "1ef77f50a74d1be9a1ddc55b7ee283a37bc4db82f9a44d3ca7f952f3d3380ce8",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/family.proto",
@@ -115,32 +115,11 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("DatabaseRecord"),
     },
     Route {
-        operation_id: "create_export",
-        method: HttpMethod::Post,
-        path: "/api/v1/databases/{name}/exports",
-        request_model: None,
-        response_model: None,
-    },
-    Route {
         operation_id: "create_index",
         method: HttpMethod::Post,
         path: "/api/v1/databases/{name}/collections/{collection}/indexes",
         request_model: Some("CreateIndexRequest"),
         response_model: Some("IndexCreatedResponse"),
-    },
-    Route {
-        operation_id: "create_webhook",
-        method: HttpMethod::Post,
-        path: "/api/v1/databases/{name}/webhooks",
-        request_model: Some("WebhookRequest"),
-        response_model: None,
-    },
-    Route {
-        operation_id: "database_usage",
-        method: HttpMethod::Get,
-        path: "/api/v1/databases/{name}/usage",
-        request_model: None,
-        response_model: None,
     },
     Route {
         operation_id: "delete_database",
@@ -153,20 +132,6 @@ pub const ROUTES: &[Route] = &[
         operation_id: "delete_document",
         method: HttpMethod::Delete,
         path: "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
-        request_model: None,
-        response_model: None,
-    },
-    Route {
-        operation_id: "delete_index",
-        method: HttpMethod::Delete,
-        path: "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
-        request_model: None,
-        response_model: None,
-    },
-    Route {
-        operation_id: "delete_webhook",
-        method: HttpMethod::Delete,
-        path: "/api/v1/databases/{name}/webhooks/{id}",
         request_model: None,
         response_model: None,
     },
@@ -199,25 +164,11 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("JsonValue"),
     },
     Route {
-        operation_id: "get_schema",
-        method: HttpMethod::Get,
-        path: "/api/v1/databases/{name}/collections/{collection}/schema",
-        request_model: None,
-        response_model: None,
-    },
-    Route {
         operation_id: "health",
         method: HttpMethod::Get,
         path: "/api/v1/health",
         request_model: None,
         response_model: Some("HealthResponse"),
-    },
-    Route {
-        operation_id: "index_recommendations",
-        method: HttpMethod::Get,
-        path: "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
-        request_model: None,
-        response_model: None,
     },
     Route {
         operation_id: "list_backups",
@@ -262,13 +213,6 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("IndexListResponse"),
     },
     Route {
-        operation_id: "list_webhooks",
-        method: HttpMethod::Get,
-        path: "/api/v1/databases/{name}/webhooks",
-        request_model: None,
-        response_model: None,
-    },
-    Route {
         operation_id: "patch_document",
         method: HttpMethod::Patch,
         path: "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
@@ -276,25 +220,11 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("DocumentWriteResponse"),
     },
     Route {
-        operation_id: "poll",
-        method: HttpMethod::Post,
-        path: "/api/v1/databases/{name}/reactive/poll",
-        request_model: Some("ReactivePollRequest"),
-        response_model: None,
-    },
-    Route {
         operation_id: "put_document",
         method: HttpMethod::Put,
         path: "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
         request_model: Some("JsonValue"),
         response_model: Some("DocumentWriteResponse"),
-    },
-    Route {
-        operation_id: "put_schema",
-        method: HttpMethod::Put,
-        path: "/api/v1/databases/{name}/collections/{collection}/schema",
-        request_model: Some("JsonValue"),
-        response_model: None,
     },
     Route {
         operation_id: "regions",
@@ -330,6 +260,13 @@ pub const ROUTES: &[Route] = &[
         path: "/api/v1/reactive/views/{view}/{generation}/log",
         request_model: None,
         response_model: Some("ReactiveEnvelope"),
+    },
+    Route {
+        operation_id: "view_websocket",
+        method: HttpMethod::Get,
+        path: "/api/v1/reactive/views/{view}/{generation}/websocket",
+        request_model: None,
+        response_model: None,
     },
     Route {
         operation_id: "websocket",
@@ -467,24 +404,7 @@ pub mod models {
 
     pub type JsonValue = serde_json::Value;
 
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    pub struct ReactiveCondition {
-        pub field: String,
-        pub op: String,
-        pub value: serde_json::Value,
-    }
-
     pub type ReactiveEnvelope = serde_json::Value;
-
-    pub type ReactiveFramesResponse = serde_json::Value;
-
-    pub type ReactivePollRequest = serde_json::Value;
-
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    pub struct ReactiveResume {
-        pub revision: i64,
-        pub subscription: i64,
-    }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct RestoreRequest {
@@ -699,6 +619,6 @@ pub const MESSAGE_VECTOR_SHA256: &str =
 pub const HOSTILE_VECTOR_SHA256: &str =
     "e6d8e6d92a87fe4d37fb00e5b441d0c351eecaf6117e5ac50631ce94d18890f5";
 pub const HTTP_CONFORMANCE_SHA256: &str =
-    "16eacb64b21bf7696c0c3dfa167db76bedcbb9177652e1f6fe46fdc8e5d57645";
+    "e46c8c192f4a7c4b1ec4aaf4621ae0a63c266167aa962aae29bed98718cdc502";
 pub const REACTIVE_CONFORMANCE_SHA256: &str =
-    "a617860259b2d1acc8edd7964f76eed34c9dca3990b07bfc987700c8dd09176b";
+    "203d98748989122b81da26504cb73bb17009968d571744bbd2456f3f2abbe425";
