@@ -585,10 +585,15 @@ pub struct RecoveryReceipt {
 /// Durable identity binding a restore publication to its admitted operation.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RestoreIdentity {
+    /// Durable caller operation identity.
     pub operation_id: String,
+    /// Authenticated source database incarnation.
     pub source_database_id: String,
+    /// Authenticated paused target database incarnation.
     pub target_database_id: String,
+    /// Independently selected provider identity.
     pub provider: String,
+    /// Canonical point or timestamp selection.
     pub selection: String,
 }
 
@@ -974,7 +979,14 @@ impl RestorePlan {
         identity: &RestoreIdentity,
     ) -> Result<RecoveryReceipt, BackupError> {
         let chain = resolve_timestamp_chain(destination, cipher, requested_unix_millis)?;
-        execute_configured_restore(destination, target, cipher, &chain, Some(requested_unix_millis), identity)
+        execute_configured_restore(
+            destination,
+            target,
+            cipher,
+            &chain,
+            Some(requested_unix_millis),
+            identity,
+        )
     }
 
     /// Restores the destination's newest recovery point, consuming the
@@ -1372,16 +1384,27 @@ impl StagingDir {
 /// the caller discards the staging tree on that path.
 fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
     if rustix::fs::renameat_with(
-        rustix::fs::CWD, staging.path(), rustix::fs::CWD, target,
+        rustix::fs::CWD,
+        staging.path(),
+        rustix::fs::CWD,
+        target,
         rustix::fs::RenameFlags::NOREPLACE,
-    ).is_err() {
+    )
+    .is_err()
+    {
         return Err(BackupError::DestinationUnavailable);
     }
-    if let Some(parent) = target.parent() { super::sync_directory(parent)?; }
+    if let Some(parent) = target.parent() {
+        super::sync_directory(parent)?;
+    }
     Ok(())
 }
 
-fn publish_with_identity(staging: &StagingDir, target: &Path, identity: &RestoreIdentity) -> Result<(), BackupError> {
+fn publish_with_identity(
+    staging: &StagingDir,
+    target: &Path,
+    identity: &RestoreIdentity,
+) -> Result<(), BackupError> {
     let marker = serde_json::to_vec(identity).map_err(|_| BackupError::DestinationUnavailable)?;
     std::fs::write(staging.path().join(".terrabase-restore-marker"), marker)
         .map_err(|_| BackupError::DestinationUnavailable)?;

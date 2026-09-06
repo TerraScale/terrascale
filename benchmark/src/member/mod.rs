@@ -1592,11 +1592,15 @@ pub struct RestorePermit {
 impl RestorePermit {
     /// Returns the database identity protected by this permit.
     #[must_use]
-    pub fn database_id(&self) -> &DatabaseId { &self.database }
+    pub fn database_id(&self) -> &DatabaseId {
+        &self.database
+    }
 
     /// Returns the protected durable location.
     #[must_use]
-    pub fn location(&self) -> &Path { &self.location }
+    pub fn location(&self) -> &Path {
+        &self.location
+    }
 }
 
 impl Drop for RestorePermit {
@@ -1633,10 +1637,8 @@ impl DatabaseLease {
         let location = self.location.clone();
         let database = self.database.clone();
         let path_guard = Arc::clone(&self.restore_paths);
-        let mut paths = self
-            .restore_paths
-            .lock()
-            .map_err(|_| MemberError::DatabaseBusy(database.clone()))?;
+        let mut paths =
+            self.restore_paths.lock().map_err(|_| MemberError::DatabaseBusy(database.clone()))?;
         if !paths.insert(location.clone()) {
             return Err(MemberError::DatabaseBusy(database));
         }
@@ -2567,6 +2569,25 @@ mod tests {
         assert_eq!(*lock_unpoisoned(&events), ["pause"]);
         drop(member.acquire(&id).expect("reopen"));
         assert_eq!(*lock_unpoisoned(&events), ["pause", "resume"]);
+        member.close(Duration::from_secs(5)).expect("close");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn restore_permit_fences_generic_acquire_until_authorized_reopen() {
+        let root = root("restore-permit");
+        let member =
+            Member::open(&root, [DatabaseSpec::new("db", "db")], AdmissionLimits::new(4, 2))
+                .expect("member");
+        let id = DatabaseId::try_new("db").expect("id");
+        let lease = member.acquire(&id).expect("lease");
+        let permit = lease.reserve_restore().expect("exclusive restore permit");
+        assert!(matches!(member.acquire_existing(&id), Err(MemberError::DatabaseBusy(_))));
+        let reopened =
+            member.acquire_existing_for_restore(&id, &permit).expect("authorized reopen");
+        drop(reopened);
+        drop(permit);
+        assert!(member.acquire_existing(&id).is_ok());
         member.close(Duration::from_secs(5)).expect("close");
         let _ = fs::remove_dir_all(root);
     }

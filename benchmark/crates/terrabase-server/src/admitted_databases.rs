@@ -72,7 +72,8 @@ pub struct RestoreReservation {
     record: AdmissionRecord,
     location: PathBuf,
     activated: bool,
-    permit: terrabase::member::RestorePermit,
+    permit: Option<terrabase::member::RestorePermit>,
+    path_guard: Arc<std::sync::Mutex<BTreeSet<PathBuf>>>,
 }
 
 impl RestoreReservation {
@@ -90,20 +91,17 @@ impl RestoreReservation {
 
     /// Reacquires the target through the owning Member while retaining the
     /// exclusion. Only this reservation may cross the restore boundary.
-    pub fn reacquire(
-        &self,
-        member: &terrabase::member::Member,
-    ) -> Result<DatabaseLease, String> {
+    pub fn reacquire(&self, member: &terrabase::member::Member) -> Result<DatabaseLease, String> {
         let id = terrabase::member::DatabaseId::try_new(&self.record.database_id)
             .map_err(|_| "restore target identity is invalid")?;
         member
-            .acquire_existing_for_restore(&id, &self.permit)
+            .acquire_existing_for_restore(&id, self.permit.as_ref().ok_or("restore permit released")?)
             .map_err(|_| "restore target reacquisition refused".to_owned())
     }
 
     /// Reinstalls the same admitted identity after a successful restore.
     pub fn complete(
-        self,
+        mut self,
         registry: &AdmittedDatabaseRegistry,
         lease: DatabaseLease,
         instance: u64,
@@ -119,8 +117,19 @@ impl RestoreReservation {
         }
         // Dropping the owned permit releases the exclusion only after the
         // admitted host has been republished (and activated when required).
-        drop(self.permit);
+        if let Ok(mut paths) = self.path_guard.lock() {
+            paths.remove(&location);
+        }
+        drop(self.permit.take());
         result
+    }
+}
+
+impl Drop for RestoreReservation {
+    fn drop(&mut self) {
+        if let Ok(mut paths) = self.path_guard.lock() {
+            paths.remove(&self.location);
+        }
     }
 }
 
@@ -195,14 +204,22 @@ impl AdmittedDatabaseRegistry {
             }
         };
         let lease = host.into_admitted_lease().map_err(|_| "restore target lease is not exclusive")?;
-        let permit = lease
-            .reserve_restore()
-            .map_err(|_| "restore target lease is not exclusive")?;
+        let permit = match lease.reserve_restore() {
+            Ok(permit) => permit,
+            Err(_) => {
+                let host = Arc::new(MemberHost::from_admitted(lease, location.clone(), 1));
+                databases.insert(database.to_owned(), Arc::new(AdmittedDatabase { activity, record, host }));
+                if activated { serving.insert(database.to_owned()); }
+                paths.remove(&location);
+                return Err("restore target lease is not exclusive".into());
+            }
+        };
         let result = RestoreReservation {
             record,
             location,
             activated,
-            permit,
+            permit: Some(permit),
+            path_guard: Arc::clone(&self.restore_paths),
         };
         drop(databases);
         drop(serving);
@@ -788,6 +805,24 @@ pub(crate) mod tests {
             .activate(&records.iter().map(|record| record.database_id.clone()).collect::<Vec<_>>())
             .unwrap();
         (registry, member, records, root)
+    }
+
+    #[test]
+    fn restore_reservation_is_unique_and_republishes_after_guarded_reopen() {
+        let (registry, member, records, root) = fixture();
+        let database = &records[0].database_id;
+        registry.pause(database, "restore-pause").unwrap();
+        let reservation = registry.reserve_restore(database).unwrap();
+        assert!(registry.reserve_restore(database).is_err());
+        let id = terrabase::member::DatabaseId::try_new(database).unwrap();
+        assert!(matches!(member.acquire_existing(&id), Err(terrabase::member::MemberError::DatabaseBusy(_))));
+        let lease = reservation.reacquire(&member).unwrap();
+        reservation.complete(&registry, lease, 2).unwrap();
+        registry.activate(&[database.clone()]).unwrap();
+        assert!(registry.resolve_serving(database).unwrap().is_some());
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

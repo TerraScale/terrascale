@@ -46,6 +46,7 @@ mod replication_dependencies;
 mod replication_wire;
 mod schema_indexes;
 mod schema_metadata;
+mod shard_split;
 mod webhook_metadata;
 
 #[cfg(test)]
@@ -56,6 +57,8 @@ mod metadata_tests;
 
 #[cfg(test)]
 mod patch_tests;
+#[cfg(test)]
+mod shard_split_tests;
 
 #[cfg(test)]
 mod tests;
@@ -86,6 +89,7 @@ pub use patch::{
 };
 pub use recovery_statistics::RecoveryStatistics;
 pub(crate) use recovery_statistics::{logical_document_digest, logical_state_hasher};
+pub(crate) use shard_split::{RouteCatalog, RouteCatalogError};
 
 use crate::{
     families::FamilyStore,

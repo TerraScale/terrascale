@@ -387,7 +387,10 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             pending_operations: 128,
             retained_operations: 512,
         },
-        admission.native_restore_target_resolver(),
+        Arc::new(crate::production_data_runtime::ProductionRestoreExecutor::new(
+            Arc::clone(&admission),
+            Arc::clone(&native),
+        )),
     )
     .map_err(|_| {
         Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
@@ -575,14 +578,14 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         }),
     ));
     let grpc_metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
-    let grpc = TbepGrpcServer::with_config_and_metrics(
+    let grpc = Arc::new(TbepGrpcServer::with_config_and_metrics(
         grpc_host as Arc<dyn TbepHost>,
         pb::BindingKind::NetworkMtls,
         grpc_config,
         config.region,
         grpc_metrics,
     )
-    .with_lifecycle_control(lifecycle);
+    .with_lifecycle_control(lifecycle));
     let certificate = read_pem(&production.transport.server_certificate, false)?;
     let private_key = read_pem(&production.transport.server_private_key, true)?;
     let client_ca = read_pem(&production.transport.client_ca, false)?;

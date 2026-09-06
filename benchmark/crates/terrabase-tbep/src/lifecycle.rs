@@ -22,6 +22,7 @@ pub enum LifecycleGrantAction {
     StopNativeBackup,
     Reactivate,
     DeleteOwnedData,
+    RestoreToTarget,
 }
 
 /// Strict, scoped lifecycle effect grant payload.
@@ -43,6 +44,8 @@ pub struct LifecycleOperationGrant {
     pub accepted_placement_revision: u64,
     pub authority_epoch: u64,
     pub authority_lease: String,
+    #[serde(default)]
+    pub accepted_restore_request_digest: String,
     pub issued_at_unix_millis: i64,
     pub expires_at_unix_millis: i64,
 }
@@ -70,6 +73,10 @@ impl LifecycleOperationGrant {
             || self.accepted_placement_revision == 0
             || self.authority_epoch == 0
             || self.authority_lease.is_empty()
+            || (matches!(self.action, LifecycleGrantAction::RestoreToTarget)
+                && !is_lower_hex_digest(&self.accepted_restore_request_digest))
+            || (!matches!(self.action, LifecycleGrantAction::RestoreToTarget)
+                && !self.accepted_restore_request_digest.is_empty())
             || self.issued_at_unix_millis > self.expires_at_unix_millis
             || self.expires_at_unix_millis.saturating_sub(self.issued_at_unix_millis) > 300_000
             || now_unix_millis < self.issued_at_unix_millis
@@ -139,7 +146,8 @@ pub trait LifecycleControl: Send + Sync {
     ) -> LifecycleFuture<'_>;
 }
 /// Async result returned by the native restore facts owner.
-pub type RestoreStatsFuture<'a> = Pin<Box<dyn Future<Output = Result<pb::RestoreStatsResponse, String>> + Send + 'a>>;
+pub type RestoreStatsFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<pb::RestoreStatsResponse, String>> + Send + 'a>>;
 
 /// Bounded lifecycle refusal categories.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

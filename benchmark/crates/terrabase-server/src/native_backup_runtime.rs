@@ -167,7 +167,8 @@ impl NativeBackupRuntime {
         point: Option<&str>,
         target: &terrabase::engine::EngineConfig,
         operation_id: &str,
-        _placement: &PlacementLock,
+        placement: &PlacementLock,
+        identity: &terrabase::backup::RestoreIdentity,
     ) -> Result<terrabase::backup::RecoveryReceipt, NativeBackupRuntimeError> {
         validate_operation_id(operation_id)?;
         if !self
@@ -180,7 +181,7 @@ impl NativeBackupRuntime {
         }
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet
-            .restore_from_provider(database, provider, point, target)
+            .restore_from_provider(database, provider, point, target, identity)
             .await
             .map_err(NativeBackupRuntimeError::Fleet)
     }
@@ -193,7 +194,8 @@ impl NativeBackupRuntime {
         at_seconds: u64,
         target: &terrabase::engine::EngineConfig,
         operation_id: &str,
-        _placement: &PlacementLock,
+        placement: &PlacementLock,
+        identity: &terrabase::backup::RestoreIdentity,
     ) -> Result<terrabase::backup::RecoveryReceipt, NativeBackupRuntimeError> {
         validate_operation_id(operation_id)?;
         let millis = Self::unix_seconds_to_millis(at_seconds)?;
@@ -207,7 +209,7 @@ impl NativeBackupRuntime {
         }
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         fleet
-            .restore_at_from_provider(database, provider, millis, target)
+            .restore_at_from_provider(database, provider, millis, target, identity)
             .await
             .map_err(NativeBackupRuntimeError::Fleet)
     }

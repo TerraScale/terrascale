@@ -3,10 +3,10 @@
 use crate::admitted_databases::AdmittedDatabaseRegistry;
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
-use std::{fs::File, path::Path};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::{fs::File, path::Path};
 use terrabase::backup::worker::NativeBackupFleet;
 use terrabase_tbep::member_host::MemberHost;
 use tokio::sync::Notify;
@@ -139,41 +139,65 @@ pub enum NativeRecoveryPhase {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeRestoreRequest {
+    /// Durable restore operation identity.
     pub operation_id: String,
+    /// Authenticated source owner.
     pub source_owner: String,
+    /// Authenticated source database identity.
     pub source_database_id: String,
+    /// Selected recovery point identity.
     pub recovery_point_id: String,
+    /// Selected recovery point digest.
     pub recovery_point_digest: String,
+    /// Authenticated target owner.
     pub target_owner: String,
+    /// Upstream-admitted paused target identity.
     pub target_database_id: String,
+    /// Source journal boundary.
     pub journal_cut: String,
+    /// Restore epoch.
     pub restore_epoch: u64,
+    /// Selected provider name.
     pub provider: String,
+    /// Point or exact millisecond selection.
     pub selection: NativeRestoreSelection,
+    /// Inherited immutable placement.
     pub placement: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum NativeRestoreSelection {
+    /// Named retained recovery point.
     PointId(String),
+    /// Inclusive Unix millisecond cutoff.
     AtUnixMillis(u64),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum NativeRestorePhase {
+    /// Request is durably admitted.
     Accepted,
+    /// Provider restore is in progress.
     Restoring,
+    /// Returned receipt is being checked.
     Verifying,
+    /// Target marker and receipt are verified.
     Complete,
+    /// Provider outcome is unknown and requires readback.
     Uncertain,
+    /// Terminal failure requiring explicit retry.
     Failed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NativeRestoreOperation {
+    /// Immutable restore request identity.
     pub request: NativeRestoreRequest,
+    /// Durable execution phase.
     pub phase: NativeRestorePhase,
+    /// Secret-safe rendered receipt after successful restore.
     pub receipt: Option<String>,
+    /// Safe failure classification.
     pub error: Option<String>,
 }
 
@@ -185,7 +209,10 @@ pub struct NativeRestoreOutcome {
 /// Production restore owner. Implementations reserve the target and publish
 /// only after provider installation and authorized reacquisition.
 pub trait RestoreExecutor: Send + Sync {
-    fn execute<'a>(&'a self, request: &'a NativeRestoreRequest) -> Pin<Box<dyn Future<Output = Result<NativeRestoreOutcome, String>> + Send + 'a>>;
+    fn execute<'a>(
+        &'a self,
+        request: &'a NativeRestoreRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<NativeRestoreOutcome, String>> + Send + 'a>>;
 }
 
 /// Compact authoritative operation record. It contains no customer values or keys.
@@ -619,7 +646,8 @@ impl NativeRecoveryRuntime {
             Ok(outcome) => outcome.receipt,
             Err(_) => {
                 operation.phase = NativeRestorePhase::Uncertain;
-                operation.error = Some("native restore remains repairable; retry the operation".into());
+                operation.error =
+                    Some("native restore remains repairable; retry the operation".into());
                 self.save_restore(&operation)?;
                 return Ok(true);
             }
@@ -776,7 +804,11 @@ mod tests {
 
     struct RejectRestore;
     impl RestoreExecutor for RejectRestore {
-        fn execute<'a>(&'a self, _request: &'a NativeRestoreRequest) -> Pin<Box<dyn Future<Output = Result<NativeRestoreOutcome, String>> + Send + 'a>> {
+        fn execute<'a>(
+            &'a self,
+            _request: &'a NativeRestoreRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<NativeRestoreOutcome, String>> + Send + 'a>>
+        {
             Box::pin(async { Err("restore target unavailable in capture fixture".into()) })
         }
     }

@@ -96,6 +96,7 @@
 mod manifest;
 mod records;
 mod restore;
+pub use restore::RestoreIdentity;
 mod sha256;
 #[cfg(test)]
 mod tests;

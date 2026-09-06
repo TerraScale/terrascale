@@ -297,6 +297,17 @@ impl NativeBackupFleet {
             return Err(FleetError::Configuration);
         }
         config.keys.lease().map_err(|_| FleetError::Capture)?;
+        let owner = config.engine.engine().database_owner();
+        let tenant = crate::types::TenantId::try_new(&owner.tenant().to_text())
+            .map_err(|_| FleetError::Capture)?;
+        let lifecycle = config
+            .engine
+            .engine()
+            .lifecycle_state(&config.engine.engine().scope_for(&tenant))
+            .map_err(|_| FleetError::Capture)?;
+        if lifecycle.access_revoked() {
+            return Err(FleetError::Configuration);
+        }
         std::fs::create_dir_all(&config.staging).map_err(|_| FleetError::Capture)?;
         config
             .engine
@@ -311,7 +322,7 @@ impl NativeBackupFleet {
                 due: Instant::now(),
                 pending_since: None,
                 closing: false,
-                paused: false,
+                paused: lifecycle.paused,
             },
         );
         Ok(())
@@ -328,6 +339,19 @@ impl NativeBackupFleet {
     ) -> Result<super::BackupManifest, FleetError> {
         let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
         if stream.closing || stream.paused {
+            return Err(FleetError::Configuration);
+        }
+        let owner = stream.config.engine.engine().database_owner();
+        let tenant = crate::types::TenantId::try_new(&owner.tenant().to_text())
+            .map_err(|_| FleetError::Capture)?;
+        let lifecycle = stream
+            .config
+            .engine
+            .engine()
+            .lifecycle_state(&stream.config.engine.engine().scope_for(&tenant))
+            .map_err(|_| FleetError::Capture)?;
+        if lifecycle.paused || lifecycle.access_revoked() {
+            stream.paused = lifecycle.paused;
             return Err(FleetError::Configuration);
         }
         stream.health.protected = false;
@@ -547,6 +571,28 @@ impl NativeBackupFleet {
             if stream.closing || stream.paused || stream.due > Instant::now() {
                 continue;
             }
+            let owner = stream.config.engine.engine().database_owner();
+            let Ok(tenant) = crate::types::TenantId::try_new(&owner.tenant().to_text()) else {
+                failures.push((identity.clone(), FleetError::Capture));
+                continue;
+            };
+            let Ok(lifecycle) = stream
+                .config
+                .engine
+                .engine()
+                .lifecycle_state(&stream.config.engine.engine().scope_for(&tenant))
+            else {
+                failures.push((identity.clone(), FleetError::Capture));
+                continue;
+            };
+            if lifecycle.access_revoked() {
+                failures.push((identity.clone(), FleetError::Configuration));
+                continue;
+            }
+            if lifecycle.paused {
+                stream.paused = true;
+                continue;
+            }
             let source = stream.config.engine.engine().journaled_high_water();
             if let Ok(sequence) = source {
                 stream.health.source_sequence = sequence.unwrap_or_default().get();
@@ -603,7 +649,8 @@ impl NativeBackupFleet {
         target: &crate::engine::EngineConfig,
         identity: &super::restore::RestoreIdentity,
     ) -> Result<super::RecoveryReceipt, FleetError> {
-        self.restore_selected(database, provider, None, Some(at_unix_millis), target, identity).await
+        self.restore_selected(database, provider, None, Some(at_unix_millis), target, identity)
+            .await
     }
 
     async fn restore_selected(
@@ -1234,6 +1281,13 @@ mod tests {
                     Provider::Oci,
                     None,
                     &restore_config("fleet-outage-restore", engine.database_owner()),
+                    &crate::backup::restore::RestoreIdentity {
+                        operation_id: "fleet-outage-restore-op".into(),
+                        source_database_id: identity.clone(),
+                        target_database_id: "fleet-outage-restore".into(),
+                        provider: "oci".into(),
+                        selection: "latest".into(),
+                    },
                 )
                 .await
                 .unwrap();
@@ -1362,6 +1416,13 @@ mod tests {
                     provider,
                     None,
                     &restore_config("retained-root-restore", engine.database_owner()),
+                    &crate::backup::restore::RestoreIdentity {
+                        operation_id: format!("retained-root-restore-{provider:?}"),
+                        source_database_id: identity.clone(),
+                        target_database_id: "retained-root-restore".into(),
+                        provider: format!("{provider:?}").to_lowercase(),
+                        selection: "latest".into(),
+                    },
                 )
                 .await
                 .unwrap();
@@ -1442,6 +1503,13 @@ mod tests {
                         provider,
                         None,
                         &restore_config("fleet-restore", engine.database_owner()),
+                        &crate::backup::restore::RestoreIdentity {
+                            operation_id: format!("fleet-restore-{provider:?}"),
+                            source_database_id: identity.clone(),
+                            target_database_id: "fleet-restore".into(),
+                            provider: format!("{provider:?}").to_lowercase(),
+                            selection: "latest".into(),
+                        },
                     )
                     .await
                     .unwrap();

@@ -543,7 +543,17 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
     fn execute<'a>(
         &'a self,
         request: &'a crate::native_recovery::NativeRestoreRequest,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<crate::native_recovery::NativeRestoreOutcome, String>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<crate::native_recovery::NativeRestoreOutcome, String>,
+                > + Send
+                + 'a,
+        >,
+    > {
+        let request = request.clone();
+        let runtime = Arc::clone(&self.runtime);
+        let backups = Arc::clone(&self.backups);
         Box::pin(async move {
             let provider = match request.provider.as_str() {
                 "oci" => terrabase::backup::object_store::Provider::Oci,
@@ -551,19 +561,23 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                 _ => return Err("restore provider is not approved".into()),
             };
             let point = match &request.selection {
-                crate::native_recovery::NativeRestoreSelection::PointId(point) => Some(point.as_str()),
+                crate::native_recovery::NativeRestoreSelection::PointId(point) => {
+                    Some(point.as_str())
+                }
                 crate::native_recovery::NativeRestoreSelection::AtUnixMillis(_) => {
-                    return Err("timestamp restore executor is unavailable".into())
+                    return Err("timestamp restore executor is unavailable".into());
                 }
             };
-            let receipt = self.runtime.restore_native_to_target(
-                &self.backups,
-                &request.source_database_id,
-                &request.target_database_id,
-                provider,
-                point,
-                &request.operation_id,
-            ).await?;
+            let receipt = tokio::task::spawn_blocking(move || {
+                tokio::runtime::Handle::current().block_on(runtime.restore_native_to_target(
+                    &backups,
+                    &request.source_database_id,
+                    &request.target_database_id,
+                    provider,
+                    point,
+                    &request.operation_id,
+                ))
+            }).await.map_err(|_| "restore executor unavailable")??;
             Ok(crate::native_recovery::NativeRestoreOutcome { receipt: receipt.render() })
         })
     }
@@ -1208,6 +1222,13 @@ impl ProductionAdmissionRuntime {
                 &target_config,
                 operation_id,
                 &placement,
+                &terrabase::backup::RestoreIdentity {
+                    operation_id: operation_id.to_owned(),
+                    source_database_id: source.to_owned(),
+                    target_database_id: target.to_owned(),
+                    provider: format!("{provider:?}").to_lowercase(),
+                    selection: point.unwrap_or("latest").to_owned(),
+                },
             )
             .await
             .map_err(|_| "native restore failed or target authority was unavailable".to_owned());

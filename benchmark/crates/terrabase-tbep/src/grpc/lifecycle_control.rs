@@ -44,14 +44,27 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
     ) -> Result<Response<pb::RestoreStatsResponse>, Status> {
         self.authenticate_lifecycle(&request)?;
         let request = request.into_inner();
-        if request.operation_id.is_empty() || request.target_owner.is_empty() || request.target_database.is_empty() || request.journal_cut.is_empty() || request.restore_epoch == 0 {
+        if request.operation_id.is_empty()
+            || request.target_owner.is_empty()
+            || request.target_database.is_empty()
+            || request.journal_cut.is_empty()
+            || request.restore_epoch == 0
+        {
             return Err(Status::invalid_argument("restore stats request is incomplete"));
         }
         let Some(owner) = self.lifecycle.as_ref() else {
             return Err(Status::unavailable("native restore stats owner is not composed"));
         };
         let response = owner.restore_stats(&request).await.map_err(Status::unavailable)?;
-        Ok(Response::new(pb::RestoreStatsResponse { operation_id: response.operation_id, target_owner: response.target_owner, target_database: response.target_database, checksum: response.checksum, row_count: response.row_count, journal_cut: response.journal_cut, placement: response.placement }))
+        Ok(Response::new(pb::RestoreStatsResponse {
+            operation_id: response.operation_id,
+            target_owner: response.target_owner,
+            target_database: response.target_database,
+            checksum: response.checksum,
+            row_count: response.row_count,
+            journal_cut: response.journal_cut,
+            placement: response.placement,
+        }))
     }
 
     async fn restore_to_target(
