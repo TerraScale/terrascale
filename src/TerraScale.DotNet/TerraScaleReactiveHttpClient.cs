@@ -30,6 +30,7 @@ public sealed class TerraScaleReactiveHttpClient
     private readonly TerraScaleReactiveHttpClientOptions options;
 
     /// <summary>Creates a reactive HTTP client over a caller-owned <see cref="HttpClient"/>.</summary>
+    /// <remarks>The caller-owned HTTP handler must disable automatic redirects to protect credentials and view capabilities.</remarks>
     public TerraScaleReactiveHttpClient(HttpClient httpClient, TerraScaleReactiveHttpClientOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(httpClient);

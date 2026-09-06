@@ -25,7 +25,7 @@ deprecated: this SDK ships only the launch surface above.
 using TerraScale.DotNet;
 
 var client = new TerraScaleClient(
-    new HttpClient(),
+    new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }),
     new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.terrascale.tech"),
@@ -34,6 +34,11 @@ var client = new TerraScaleClient(
 
 var databases = await client.Databases.ListAsync(cancellationToken);
 ```
+
+Caller-supplied `HttpClient` handlers must set `AllowAutoRedirect = false`.
+The SDK cannot inspect or reconfigure an existing handler; dependency-injection
+registration supplies a handler with redirects disabled. Ordinary HTTP redirects
+are errors; regional routing uses the explicit 421 repair contract.
 
 `BearerToken` or `BearerTokenProvider` replaces `ApiKey` for token
 authentication; the provider is called before each request and retry.

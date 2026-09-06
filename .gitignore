@@ -4,3 +4,6 @@
 **/__pycache__/
 *.py[cod]
 contracts/
+
+# Private generated CI release candidates and signatures
+/.terrascale-develop-release/

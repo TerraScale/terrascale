@@ -32,6 +32,7 @@ public sealed class TerraScaleClient
 
     /// <summary>
     /// Creates a TerraScale client over a caller-owned <see cref="HttpClient"/>.
+    /// Its underlying handler must disable automatic redirects; only explicit TerraScale 421 routing repair is supported.
     /// </summary>
     public TerraScaleClient(HttpClient httpClient, TerraScaleClientOptions options)
     {

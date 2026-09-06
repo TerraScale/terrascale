@@ -8,7 +8,7 @@ namespace TerraScale.DotNet;
 public static class TerraScaleServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers a singleton <see cref="TerraScaleClient"/> using <see cref="IHttpClientFactory"/>.
+    /// Registers a typed <see cref="TerraScaleClient"/> using <see cref="IHttpClientFactory"/>.
     /// </summary>
     public static IServiceCollection AddTerraScaleClient(
         this IServiceCollection services,
@@ -26,7 +26,7 @@ public static class TerraScaleServiceCollectionExtensions
         services.AddHttpClient<TerraScaleClient>(httpClient =>
         {
             httpClient.BaseAddress = optionSnapshot.BaseAddress;
-        });
+        }).ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler { AllowAutoRedirect = false });
 
         return services;
     }
