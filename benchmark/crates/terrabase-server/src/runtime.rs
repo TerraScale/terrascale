@@ -550,11 +550,13 @@ fn prepare_pending_tls(
                 &rotation.socket,
                 &rotation.state_file,
                 token,
-                crate::reactive_api::OriginProofKeyRing::disabled(),
-                crate::reactive_api::CapabilityKeyRing::disabled(),
-                live_tls.clone(),
-                format!("{certificate}\n{key}").into_bytes(),
-                ca.as_bytes().to_vec(),
+                &crate::reactive_api::OriginProofKeyRing::disabled(),
+                &crate::reactive_api::CapabilityKeyRing::disabled(),
+                crate::credential_rotation::RotationTlsConfig {
+                    controller: live_tls.clone(),
+                    workload: format!("{certificate}\n{key}").into_bytes(),
+                    trust: ca.as_bytes().to_vec(),
+                },
             )
             .map_err(|_| {
                 pending_control_error("durable credential rotation controller unavailable")
@@ -852,11 +854,13 @@ async fn serve_public_api(
                 &rotation.socket,
                 &rotation.state_file,
                 read_secret_key(&rotation.token_file)?,
-                origin_proof_keys.clone(),
-                capability_keys.clone(),
-                live_tls,
-                workload_tls,
-                trust_bundle,
+                &origin_proof_keys,
+                &capability_keys,
+                crate::credential_rotation::RotationTlsConfig {
+                    controller: live_tls,
+                    workload: workload_tls,
+                    trust: trust_bundle,
+                },
             )
             .map_err(|_| DaemonError::Engine("credential rotation receiver unavailable".into()))
         })

@@ -396,7 +396,7 @@ pub async fn build_peer_databases(
                     .map_err(failure)?,
                 );
             }
-            PhysicalDriver::BootstrapFollower(receiver)
+            PhysicalDriver::BootstrapFollower(Box::new(receiver))
         };
         lanes.entry(physical_peer.member().as_str().to_owned()).or_default().push(PeerDatabase {
             scope: database.scope,

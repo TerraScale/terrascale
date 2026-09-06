@@ -84,6 +84,16 @@ struct TlsMaterial {
     trust: Vec<u8>,
     expires_at: u64,
 }
+
+/// Initial TLS listener and certificate material used to restore rotation state.
+pub struct RotationTlsConfig {
+    /// Live reload target used to install or fence rotated listener credentials.
+    pub controller: terrabase_tbep::grpc::reloadable_tls::ReloadableTls,
+    /// Workload certificate and private key in PEM form.
+    pub workload: Vec<u8>,
+    /// Trusted workload certificate authority in PEM form.
+    pub trust: Vec<u8>,
+}
 impl std::fmt::Debug for TlsMaterial {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("TlsMaterial([REDACTED])")
@@ -221,8 +231,8 @@ pub fn bind(
     socket: &Path,
     state_file: &Path,
     token: Vec<u8>,
-    origin: OriginProofKeyRing,
-    capability: CapabilityKeyRing,
+    origin: &OriginProofKeyRing,
+    capability: &CapabilityKeyRing,
 ) -> io::Result<BoundRotation> {
     bind_inner(socket, state_file, token, origin, capability, None)
 }
@@ -234,22 +244,20 @@ pub fn bind_with_tls(
     socket: &Path,
     state_file: &Path,
     token: Vec<u8>,
-    origin: OriginProofKeyRing,
-    capability: CapabilityKeyRing,
-    tls: terrabase_tbep::grpc::reloadable_tls::ReloadableTls,
-    workload: Vec<u8>,
-    trust: Vec<u8>,
+    origin: &OriginProofKeyRing,
+    capability: &CapabilityKeyRing,
+    tls: RotationTlsConfig,
 ) -> io::Result<BoundRotation> {
-    let material = TlsMaterial { workload, trust, expires_at: u64::MAX };
+    let material = TlsMaterial { workload: tls.workload, trust: tls.trust, expires_at: u64::MAX };
     material.prepare()?;
-    bind_inner(socket, state_file, token, origin, capability, Some((tls, material)))
+    bind_inner(socket, state_file, token, origin, capability, Some((tls.controller, material)))
 }
 fn bind_inner(
     socket: &Path,
     state_file: &Path,
     token: Vec<u8>,
-    origin: OriginProofKeyRing,
-    capability: CapabilityKeyRing,
+    origin: &OriginProofKeyRing,
+    capability: &CapabilityKeyRing,
     tls: Option<(terrabase_tbep::grpc::reloadable_tls::ReloadableTls, TlsMaterial)>,
 ) -> io::Result<BoundRotation> {
     if token.len() < 32 || token.len() > 4096 {
@@ -587,6 +595,9 @@ mod tests {
     use super::*;
     use crate::reactive_api::{ORIGIN_PROOF_HEADER, origin_proof_for, verify_origin_proof};
     use axum::http::{HeaderValue, Method, Uri};
+    use rcgen::{
+        BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair,
+    };
     fn request(action: &str, operation: &str) -> Request {
         Request {
             operation_id: operation.into(),
@@ -636,8 +647,8 @@ mod tests {
                 &dir.join("control.sock"),
                 &dir.join("state.json"),
                 vec![42; 32],
-                OriginProofKeyRing::new(old, None::<&[u8]>).unwrap(),
-                CapabilityKeyRing::new(old, None::<&[u8]>).unwrap(),
+                &OriginProofKeyRing::new(old, None::<&[u8]>).unwrap(),
+                &CapabilityKeyRing::new(old, None::<&[u8]>).unwrap(),
             )
             .unwrap()
         };
@@ -697,5 +708,86 @@ mod tests {
         keys.expires_at = now();
         assert!(keys.usable().is_none());
         assert!(!format!("{keys:?}").contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn malformed_initial_tls_is_rejected_before_private_state_creation() {
+        let dir = std::env::temp_dir().join(format!(
+            "rotation-tls-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .unwrap();
+        let ca_key = KeyPair::generate().unwrap();
+        let mut ca_params = CertificateParams::new(Vec::new()).unwrap();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let ca = ca_params.self_signed(&ca_key).unwrap();
+        let key = KeyPair::generate().unwrap();
+        let mut params = CertificateParams::new(vec!["localhost".into()]).unwrap();
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        let leaf = params.signed_by(&key, &ca, &ca_key).unwrap();
+        let workload = format!("{}{}", leaf.pem(), key.serialize_pem());
+        let trust = ca.pem();
+        let controller = terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(
+            &leaf.pem(),
+            &key.serialize_pem(),
+            &trust,
+        )
+        .unwrap();
+        let origin = OriginProofKeyRing::disabled();
+        let capability = CapabilityKeyRing::disabled();
+        let valid_dir = dir.join("valid");
+        std::fs::create_dir(&valid_dir).unwrap();
+        std::fs::set_permissions(&valid_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let valid = bind_with_tls(
+            &valid_dir.join("control.sock"),
+            &valid_dir.join("state.json"),
+            vec![42; 32],
+            &origin,
+            &capability,
+            RotationTlsConfig {
+                controller: controller.clone(),
+                workload: workload.clone().into_bytes(),
+                trust: trust.clone().into_bytes(),
+            },
+        )
+        .unwrap();
+        drop(valid);
+        std::fs::remove_dir_all(valid_dir).unwrap();
+        let result = bind_with_tls(
+            &dir.join("control.sock"),
+            &dir.join("state.json"),
+            vec![42; 32],
+            &origin,
+            &capability,
+            RotationTlsConfig {
+                controller: controller.clone(),
+                workload: b"malformed".to_vec(),
+                trust: trust.clone().into_bytes(),
+            },
+        );
+        assert!(result.is_err());
+        assert!(!dir.join("control.sock").exists());
+        assert!(!dir.join("state.json").exists());
+        assert!(!dir.join("state.rotation-lock").exists());
+        let result = bind_with_tls(
+            &dir.join("control.sock"),
+            &dir.join("state.json"),
+            vec![42; 32],
+            &origin,
+            &capability,
+            RotationTlsConfig {
+                controller,
+                workload: workload.into_bytes(),
+                trust: b"malformed".to_vec(),
+            },
+        );
+        assert!(result.is_err());
+        assert!(!dir.join("control.sock").exists());
+        assert!(!dir.join("state.json").exists());
+        assert!(!dir.join("state.rotation-lock").exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

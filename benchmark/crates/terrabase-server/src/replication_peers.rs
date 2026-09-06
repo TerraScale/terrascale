@@ -83,13 +83,13 @@ pub enum PhysicalDriver {
         source: WalSnapshotSource,
     },
     /// An empty physical seat awaiting an authenticated snapshot.
-    BootstrapFollower(SnapshotReceiver),
+    BootstrapFollower(Box<SnapshotReceiver>),
     /// Installed follower retaining replacement authorization for WAL rotation.
     InstalledFollower {
         /// Exclusive physical follower.
         driver: WalFollowerDriver,
         /// Fixed catalog destination and key access.
-        receiver: SnapshotReceiver,
+        receiver: Box<SnapshotReceiver>,
     },
     /// The engine lease is acquired from the production Member.
     Writer(WalWriterDriver),
@@ -1083,6 +1083,11 @@ fn observe(observations: &PeerObservations, peer: &str, lanes: &[PeerDatabase], 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn physical_assignment_does_not_embed_snapshot_receive_buffers() {
+        assert!(std::mem::size_of::<PhysicalDriver>() < std::mem::size_of::<SnapshotReceiver>());
+    }
 
     #[test]
     fn demultiplexer_rejects_foreign_versions_and_truncated_scopes() {
