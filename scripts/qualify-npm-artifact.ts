@@ -25,12 +25,14 @@ const startedAt = new Date().toISOString();
 const consumerJourney = String.raw`import assert from "node:assert/strict";
 import { createTerraScaleClient } from "@terrascale/sdk";
 import { createTerraScaleAdminClient } from "@terrascale/sdk/admin";
-import { createTerraScaleBetterAuthAdapter } from "@terrascale/sdk/better-auth";
+import { createTerraScaleBetterAuthAdapter, createTerraScaleAuthAdapter, AuthPersistenceClient, runAuthTransaction } from "@terrascale/sdk/better-auth";
 
 const options = { apiBaseUrl: "https://api.example.test" };
 assert.equal(typeof createTerraScaleClient(options), "object");
 assert.equal(typeof createTerraScaleAdminClient(options), "object");
 assert.equal(typeof createTerraScaleBetterAuthAdapter, "function");
+assert.equal(typeof runAuthTransaction, "function");
+assert.equal(typeof createTerraScaleAuthAdapter(new AuthPersistenceClient(options), "auth"), "function");
 `;
 
 try {
@@ -83,7 +85,12 @@ try {
   };
 
   await mkdir(consumer);
-  await writeFile(path.join(consumer, "package.json"), JSON.stringify({ private: true, type: "module" }));
+  await writeFile(path.join(consumer, "package.json"), JSON.stringify({
+    private: true,
+    type: "module",
+    // The clean auth consumer explicitly installs the documented optional peer.
+    dependencies: { "@better-auth/core": manifest.peerDependencies["@better-auth/core"] },
+  }));
   await runNpm(npmCli, ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], consumer);
   const journey = path.join(consumer, "qualify.ts");
   await writeFile(journey, consumerJourney);

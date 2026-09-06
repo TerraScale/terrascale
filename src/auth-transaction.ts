@@ -325,7 +325,7 @@ function identity(value: unknown, name: string, maximum: number): string {
 
 function validateTransactionResult(result: AuthPersistenceResult, operation: string): string {
   validateControlResult(result, operation);
-  if (typeof result.transactionId !== "string" || !result.transactionId.includes("#")) {
+  if (typeof result.transactionId !== "string" || !/^.+#[1-9][0-9]{0,19}$/u.test(result.transactionId) || BigInt(result.transactionId.slice(result.transactionId.lastIndexOf("#") + 1)) > 18_446_744_073_709_551_615n) {
     throw new AuthTransactionError(`Auth transaction ${operation} returned no canonical identity.`, result);
   }
   validateU64(result.expiresAtMs, `${operation}.expiresAtMs`);
@@ -335,7 +335,7 @@ function validateTransactionResult(result: AuthPersistenceResult, operation: str
 function validateU64(value: number | bigint | undefined, name: string): void {
   if (value === undefined) throw new AuthTransactionError(`Auth transaction ${name} is missing.`, value);
   if (typeof value === "bigint") {
-    if (value < 0n) throw new AuthTransactionError(`Auth transaction ${name} is invalid.`, value);
+    if (value < 0n || value > 18_446_744_073_709_551_615n) throw new AuthTransactionError(`Auth transaction ${name} is invalid.`, value);
     return;
   }
   if (!Number.isSafeInteger(value) || value < 0) throw new AuthTransactionError(`Auth transaction ${name} is invalid.`, value);

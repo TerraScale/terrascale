@@ -21830,6 +21830,106 @@
                 "resolved": {
                   "additionalProperties": false,
                   "properties": {
+                    "joins": {
+                      "description": "At most eight explicit relations, read from the same authority snapshot.",
+                      "items": {
+                        "$ref": "#/components/schemas/PageJoin",
+                        "siblings": {
+                          "resolved": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "fromField": {
+                                "type": "string"
+                              },
+                              "limit": {
+                                "format": "int32",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "outputField": {
+                                "type": "string"
+                              },
+                              "relation": {
+                                "$ref": "#/components/schemas/PageJoinRelation",
+                                "siblings": {
+                                  "resolved": {
+                                    "enum": [
+                                      "one-to-one",
+                                      "one-to-many"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "resolved": {
+                                  "enum": [
+                                    "one-to-one",
+                                    "one-to-many"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "toField": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "model",
+                              "outputField",
+                              "fromField",
+                              "toField",
+                              "relation",
+                              "limit"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "resolved": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "fromField": {
+                              "type": "string"
+                            },
+                            "limit": {
+                              "format": "int32",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "type": "string"
+                            },
+                            "outputField": {
+                              "type": "string"
+                            },
+                            "relation": {
+                              "$ref": "#/components/schemas/PageJoinRelation",
+                              "resolved": {
+                                "enum": [
+                                  "one-to-one",
+                                  "one-to-many"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "toField": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "model",
+                            "outputField",
+                            "fromField",
+                            "toField",
+                            "relation",
+                            "limit"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "type": "array"
+                    },
                     "limit": {
                       "format": "int32",
                       "minimum": 0,
@@ -22034,6 +22134,86 @@
                         }
                       },
                       "type": "array"
+                    },
+                    "select": {
+                      "description": "Return these base fields after sorting; absent selects the full record.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
+                    "sortBy": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/PageSort",
+                          "siblings": {
+                            "resolved": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "direction": {
+                                  "$ref": "#/components/schemas/PageSortDirection",
+                                  "siblings": {
+                                    "resolved": {
+                                      "enum": [
+                                        "asc",
+                                        "desc"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "resolved": {
+                                    "enum": [
+                                      "asc",
+                                      "desc"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "field": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "field",
+                                "direction"
+                              ],
+                              "type": "object"
+                            },
+                            "siblings": {
+                              "description": "Deterministic scalar order with ascending ID ties."
+                            }
+                          },
+                          "resolved": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "direction": {
+                                "$ref": "#/components/schemas/PageSortDirection",
+                                "resolved": {
+                                  "enum": [
+                                    "asc",
+                                    "desc"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "field": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "field",
+                              "direction"
+                            ],
+                            "type": "object"
+                          }
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -22048,6 +22228,167 @@
                   "resolved": {
                     "additionalProperties": false,
                     "properties": {
+                      "joins": {
+                        "description": "At most eight explicit relations, read from the same authority snapshot.",
+                        "items": {
+                          "$ref": "#/components/schemas/PageJoin",
+                          "siblings": {
+                            "resolved": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "fromField": {
+                                  "type": "string"
+                                },
+                                "limit": {
+                                  "format": "int32",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "model": {
+                                  "type": "string"
+                                },
+                                "outputField": {
+                                  "type": "string"
+                                },
+                                "relation": {
+                                  "$ref": "#/components/schemas/PageJoinRelation",
+                                  "siblings": {
+                                    "resolved": {
+                                      "enum": [
+                                        "one-to-one",
+                                        "one-to-many"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "resolved": {
+                                    "enum": [
+                                      "one-to-one",
+                                      "one-to-many"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "toField": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "model",
+                                "outputField",
+                                "fromField",
+                                "toField",
+                                "relation",
+                                "limit"
+                              ],
+                              "type": "object"
+                            },
+                            "siblings": {
+                              "resolved": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "fromField": {
+                                    "type": "string"
+                                  },
+                                  "limit": {
+                                    "format": "int32",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "model": {
+                                    "type": "string"
+                                  },
+                                  "outputField": {
+                                    "type": "string"
+                                  },
+                                  "relation": {
+                                    "$ref": "#/components/schemas/PageJoinRelation",
+                                    "siblings": {
+                                      "resolved": {
+                                        "enum": [
+                                          "one-to-one",
+                                          "one-to-many"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "siblings": {
+                                        "resolved": {
+                                          "enum": [
+                                            "one-to-one",
+                                            "one-to-many"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      }
+                                    },
+                                    "resolved": {
+                                      "enum": [
+                                        "one-to-one",
+                                        "one-to-many"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "toField": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "model",
+                                  "outputField",
+                                  "fromField",
+                                  "toField",
+                                  "relation",
+                                  "limit"
+                                ],
+                                "type": "object"
+                              }
+                            }
+                          },
+                          "resolved": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "fromField": {
+                                "type": "string"
+                              },
+                              "limit": {
+                                "format": "int32",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "outputField": {
+                                "type": "string"
+                              },
+                              "relation": {
+                                "$ref": "#/components/schemas/PageJoinRelation",
+                                "resolved": {
+                                  "enum": [
+                                    "one-to-one",
+                                    "one-to-many"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "toField": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "model",
+                              "outputField",
+                              "fromField",
+                              "toField",
+                              "relation",
+                              "limit"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "type": "array"
+                      },
                       "limit": {
                         "format": "int32",
                         "minimum": 0,
@@ -22400,6 +22741,129 @@
                           }
                         },
                         "type": "array"
+                      },
+                      "select": {
+                        "description": "Return these base fields after sorting; absent selects the full record.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
+                      "sortBy": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/PageSort",
+                            "siblings": {
+                              "resolved": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "direction": {
+                                    "$ref": "#/components/schemas/PageSortDirection",
+                                    "siblings": {
+                                      "resolved": {
+                                        "enum": [
+                                          "asc",
+                                          "desc"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "resolved": {
+                                      "enum": [
+                                        "asc",
+                                        "desc"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "field": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "field",
+                                  "direction"
+                                ],
+                                "type": "object"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "direction": {
+                                      "$ref": "#/components/schemas/PageSortDirection",
+                                      "siblings": {
+                                        "resolved": {
+                                          "enum": [
+                                            "asc",
+                                            "desc"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "siblings": {
+                                          "resolved": {
+                                            "enum": [
+                                              "asc",
+                                              "desc"
+                                            ],
+                                            "type": "string"
+                                          }
+                                        }
+                                      },
+                                      "resolved": {
+                                        "enum": [
+                                          "asc",
+                                          "desc"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "direction"
+                                  ],
+                                  "type": "object"
+                                },
+                                "siblings": {
+                                  "description": "Deterministic scalar order with ascending ID ties."
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "direction": {
+                                  "$ref": "#/components/schemas/PageSortDirection",
+                                  "resolved": {
+                                    "enum": [
+                                      "asc",
+                                      "desc"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "field": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "field",
+                                "direction"
+                              ],
+                              "type": "object"
+                            }
+                          }
+                        ]
                       }
                     },
                     "required": [
@@ -22415,6 +22879,54 @@
               "resolved": {
                 "additionalProperties": false,
                 "properties": {
+                  "joins": {
+                    "description": "At most eight explicit relations, read from the same authority snapshot.",
+                    "items": {
+                      "$ref": "#/components/schemas/PageJoin",
+                      "resolved": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "fromField": {
+                            "type": "string"
+                          },
+                          "limit": {
+                            "format": "int32",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "outputField": {
+                            "type": "string"
+                          },
+                          "relation": {
+                            "$ref": "#/components/schemas/PageJoinRelation",
+                            "resolved": {
+                              "enum": [
+                                "one-to-one",
+                                "one-to-many"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "toField": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "model",
+                          "outputField",
+                          "fromField",
+                          "toField",
+                          "relation",
+                          "limit"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "type": "array"
+                  },
                   "limit": {
                     "format": "int32",
                     "minimum": 0,
@@ -22507,6 +23019,52 @@
                       }
                     },
                     "type": "array"
+                  },
+                  "select": {
+                    "description": "Return these base fields after sorting; absent selects the full record.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
+                  },
+                  "sortBy": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/PageSort",
+                        "siblings": {
+                          "description": "Deterministic scalar order with ascending ID ties."
+                        },
+                        "resolved": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "direction": {
+                              "$ref": "#/components/schemas/PageSortDirection",
+                              "resolved": {
+                                "enum": [
+                                  "asc",
+                                  "desc"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "field": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "field",
+                            "direction"
+                          ],
+                          "type": "object"
+                        }
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -22529,6 +23087,106 @@
                   "resolved": {
                     "additionalProperties": false,
                     "properties": {
+                      "joins": {
+                        "description": "At most eight explicit relations, read from the same authority snapshot.",
+                        "items": {
+                          "$ref": "#/components/schemas/PageJoin",
+                          "siblings": {
+                            "resolved": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "fromField": {
+                                  "type": "string"
+                                },
+                                "limit": {
+                                  "format": "int32",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "model": {
+                                  "type": "string"
+                                },
+                                "outputField": {
+                                  "type": "string"
+                                },
+                                "relation": {
+                                  "$ref": "#/components/schemas/PageJoinRelation",
+                                  "siblings": {
+                                    "resolved": {
+                                      "enum": [
+                                        "one-to-one",
+                                        "one-to-many"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "resolved": {
+                                    "enum": [
+                                      "one-to-one",
+                                      "one-to-many"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "toField": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "model",
+                                "outputField",
+                                "fromField",
+                                "toField",
+                                "relation",
+                                "limit"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "resolved": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "fromField": {
+                                "type": "string"
+                              },
+                              "limit": {
+                                "format": "int32",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "outputField": {
+                                "type": "string"
+                              },
+                              "relation": {
+                                "$ref": "#/components/schemas/PageJoinRelation",
+                                "resolved": {
+                                  "enum": [
+                                    "one-to-one",
+                                    "one-to-many"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "toField": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "model",
+                              "outputField",
+                              "fromField",
+                              "toField",
+                              "relation",
+                              "limit"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "type": "array"
+                      },
                       "limit": {
                         "format": "int32",
                         "minimum": 0,
@@ -22733,6 +23391,86 @@
                           }
                         },
                         "type": "array"
+                      },
+                      "select": {
+                        "description": "Return these base fields after sorting; absent selects the full record.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
+                      "sortBy": {
+                        "oneOf": [
+                          {
+                            "type": "null"
+                          },
+                          {
+                            "$ref": "#/components/schemas/PageSort",
+                            "siblings": {
+                              "resolved": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "direction": {
+                                    "$ref": "#/components/schemas/PageSortDirection",
+                                    "siblings": {
+                                      "resolved": {
+                                        "enum": [
+                                          "asc",
+                                          "desc"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "resolved": {
+                                      "enum": [
+                                        "asc",
+                                        "desc"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "field": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "field",
+                                  "direction"
+                                ],
+                                "type": "object"
+                              },
+                              "siblings": {
+                                "description": "Deterministic scalar order with ascending ID ties."
+                              }
+                            },
+                            "resolved": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "direction": {
+                                  "$ref": "#/components/schemas/PageSortDirection",
+                                  "resolved": {
+                                    "enum": [
+                                      "asc",
+                                      "desc"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "field": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "field",
+                                "direction"
+                              ],
+                              "type": "object"
+                            }
+                          }
+                        ]
                       }
                     },
                     "required": [
@@ -22747,6 +23485,167 @@
                     "resolved": {
                       "additionalProperties": false,
                       "properties": {
+                        "joins": {
+                          "description": "At most eight explicit relations, read from the same authority snapshot.",
+                          "items": {
+                            "$ref": "#/components/schemas/PageJoin",
+                            "siblings": {
+                              "resolved": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "fromField": {
+                                    "type": "string"
+                                  },
+                                  "limit": {
+                                    "format": "int32",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "model": {
+                                    "type": "string"
+                                  },
+                                  "outputField": {
+                                    "type": "string"
+                                  },
+                                  "relation": {
+                                    "$ref": "#/components/schemas/PageJoinRelation",
+                                    "siblings": {
+                                      "resolved": {
+                                        "enum": [
+                                          "one-to-one",
+                                          "one-to-many"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "resolved": {
+                                      "enum": [
+                                        "one-to-one",
+                                        "one-to-many"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "toField": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "model",
+                                  "outputField",
+                                  "fromField",
+                                  "toField",
+                                  "relation",
+                                  "limit"
+                                ],
+                                "type": "object"
+                              },
+                              "siblings": {
+                                "resolved": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "fromField": {
+                                      "type": "string"
+                                    },
+                                    "limit": {
+                                      "format": "int32",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    "model": {
+                                      "type": "string"
+                                    },
+                                    "outputField": {
+                                      "type": "string"
+                                    },
+                                    "relation": {
+                                      "$ref": "#/components/schemas/PageJoinRelation",
+                                      "siblings": {
+                                        "resolved": {
+                                          "enum": [
+                                            "one-to-one",
+                                            "one-to-many"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "siblings": {
+                                          "resolved": {
+                                            "enum": [
+                                              "one-to-one",
+                                              "one-to-many"
+                                            ],
+                                            "type": "string"
+                                          }
+                                        }
+                                      },
+                                      "resolved": {
+                                        "enum": [
+                                          "one-to-one",
+                                          "one-to-many"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "toField": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "model",
+                                    "outputField",
+                                    "fromField",
+                                    "toField",
+                                    "relation",
+                                    "limit"
+                                  ],
+                                  "type": "object"
+                                }
+                              }
+                            },
+                            "resolved": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "fromField": {
+                                  "type": "string"
+                                },
+                                "limit": {
+                                  "format": "int32",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "model": {
+                                  "type": "string"
+                                },
+                                "outputField": {
+                                  "type": "string"
+                                },
+                                "relation": {
+                                  "$ref": "#/components/schemas/PageJoinRelation",
+                                  "resolved": {
+                                    "enum": [
+                                      "one-to-one",
+                                      "one-to-many"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "toField": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "model",
+                                "outputField",
+                                "fromField",
+                                "toField",
+                                "relation",
+                                "limit"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "type": "array"
+                        },
                         "limit": {
                           "format": "int32",
                           "minimum": 0,
@@ -23099,6 +23998,129 @@
                             }
                           },
                           "type": "array"
+                        },
+                        "select": {
+                          "description": "Return these base fields after sorting; absent selects the full record.",
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
+                        },
+                        "sortBy": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "$ref": "#/components/schemas/PageSort",
+                              "siblings": {
+                                "resolved": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "direction": {
+                                      "$ref": "#/components/schemas/PageSortDirection",
+                                      "siblings": {
+                                        "resolved": {
+                                          "enum": [
+                                            "asc",
+                                            "desc"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "resolved": {
+                                        "enum": [
+                                          "asc",
+                                          "desc"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "field": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "direction"
+                                  ],
+                                  "type": "object"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "direction": {
+                                        "$ref": "#/components/schemas/PageSortDirection",
+                                        "siblings": {
+                                          "resolved": {
+                                            "enum": [
+                                              "asc",
+                                              "desc"
+                                            ],
+                                            "type": "string"
+                                          },
+                                          "siblings": {
+                                            "resolved": {
+                                              "enum": [
+                                                "asc",
+                                                "desc"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          }
+                                        },
+                                        "resolved": {
+                                          "enum": [
+                                            "asc",
+                                            "desc"
+                                          ],
+                                          "type": "string"
+                                        }
+                                      },
+                                      "field": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "field",
+                                      "direction"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "siblings": {
+                                    "description": "Deterministic scalar order with ascending ID ties."
+                                  }
+                                }
+                              },
+                              "resolved": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "direction": {
+                                    "$ref": "#/components/schemas/PageSortDirection",
+                                    "resolved": {
+                                      "enum": [
+                                        "asc",
+                                        "desc"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "field": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "field",
+                                  "direction"
+                                ],
+                                "type": "object"
+                              }
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -23114,6 +24136,54 @@
                 "resolved": {
                   "additionalProperties": false,
                   "properties": {
+                    "joins": {
+                      "description": "At most eight explicit relations, read from the same authority snapshot.",
+                      "items": {
+                        "$ref": "#/components/schemas/PageJoin",
+                        "resolved": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "fromField": {
+                              "type": "string"
+                            },
+                            "limit": {
+                              "format": "int32",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "type": "string"
+                            },
+                            "outputField": {
+                              "type": "string"
+                            },
+                            "relation": {
+                              "$ref": "#/components/schemas/PageJoinRelation",
+                              "resolved": {
+                                "enum": [
+                                  "one-to-one",
+                                  "one-to-many"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "toField": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "model",
+                            "outputField",
+                            "fromField",
+                            "toField",
+                            "relation",
+                            "limit"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "type": "array"
+                    },
                     "limit": {
                       "format": "int32",
                       "minimum": 0,
@@ -23206,6 +24276,52 @@
                         }
                       },
                       "type": "array"
+                    },
+                    "select": {
+                      "description": "Return these base fields after sorting; absent selects the full record.",
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
+                    "sortBy": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/components/schemas/PageSort",
+                          "siblings": {
+                            "description": "Deterministic scalar order with ascending ID ties."
+                          },
+                          "resolved": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "direction": {
+                                "$ref": "#/components/schemas/PageSortDirection",
+                                "resolved": {
+                                  "enum": [
+                                    "asc",
+                                    "desc"
+                                  ],
+                                  "type": "string"
+                                }
+                              },
+                              "field": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "field",
+                              "direction"
+                            ],
+                            "type": "object"
+                          }
+                        }
+                      ]
                     }
                   },
                   "required": [
@@ -47544,7 +48660,7 @@
     }
   ],
   "sources": {
-    "openApiSha256": "b6372b590409906d9b87db3c3852e27d79a6f1c48c203360ec3c618b9fdff18f",
+    "openApiSha256": "a0c1c6df925b3cc1a7514145382e7c576b592fd6d6e006e381c8f95138d669b0",
     "routeManifestSha256": "d17509fb2f1cfbbc30de40176461c2047472161964b587581774ffd5c0926973"
   }
 }

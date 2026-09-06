@@ -38,9 +38,32 @@ tests where available, exact core/plugin and license evidence, migration,
 revocation, uniqueness, compare-and-swap, one-time consume, Region contention,
 retry, denial, and live integration receipts.
 
-The generated public API binding remains absent. TerraBase must publish and
-qualify that contract before production use. Exact Better Auth core/plugin
-compatibility and license evidence also remain qualification requirements.
+The named `AuthPersistenceClient` now binds the producer's auth routes, and
+`createTerraScaleAuthAdapter(client, database)` returns the official
+`@better-auth/core` 1.7.2 adapter factory under the existing server-only export.
+It receives the final Better Auth options, applies the maintained schema, ID,
+date, and field transformations, and sends normalized explicit joins to the
+producer. The internal options copy enables native joins for both ordinary and
+transactional operations so related reads use the same producer snapshot.
+Schema fields marked unique are provisioned through named index operations
+before data operations or transaction begin; provisioning failures block use.
+Fresh provisioning attempts use bounded keys, with each transport retry retaining
+its original key, so a persisted failed index attempt cannot permanently poison
+later schema repair.
+
+`runAuthTransaction` uses the server-issued generation-qualified identity,
+serializes at most 100 operations, and drains accepted work before commit or
+rollback. The factory extends that ordered boundary around Better Auth's full
+input/output transformations. Any failed operation poisons the callback even
+if application code catches its error. The callback executes once. Lost or
+malformed commit responses carry the original transaction and commit identities
+for reconciliation; the helper neither reruns the callback nor rolls back an
+uncertain commit. Rollback after cancellation has an independent bounded cleanup
+signal and reports reconciliation identities if cleanup cannot be confirmed.
+
+Producer publication, maintained upstream adapter suites, exact plugin/license
+evidence, dashboard composition, schema migration beyond unique constraints,
+and real multi-Region qualification remain required before production use.
 
 The temporary local SQLite bridge is still consumed by dashboard development
 and cannot be retired before that replacement is qualified. Both its direct

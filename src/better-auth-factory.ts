@@ -77,8 +77,8 @@ export function createTerraScaleAuthAdapter(
         supportsUUIDs: false,
         transaction: async (callback) => {
           await ensureSchema();
-          return runAuthTransaction(client, database, async (transactionOperations) => callback(
-            transactionAdapter(factoryOptions, transactionOperations),
+          return runAuthTransaction(client, database, async (transactionOperations) => serializedTransactionCallback(
+            transactionAdapter(factoryOptions, transactionOperations), callback,
           ));
         },
       },
@@ -90,6 +90,51 @@ export function createTerraScaleAuthAdapter(
     });
     return factory(factoryOptions);
   };
+}
+
+async function serializedTransactionCallback<T>(
+  adapter: Omit<DBAdapter<BetterAuthOptions>, "transaction">,
+  callback: (adapter: Omit<DBAdapter<BetterAuthOptions>, "transaction">) => Promise<T>,
+): Promise<T> {
+  let queue = Promise.resolve();
+  let closed = false;
+  let failed = false;
+  let failure: unknown;
+  let accepted = 0;
+  const poison = (error: unknown) => {
+    if (!failed) failure = error;
+    failed = true;
+  };
+  const scoped = new Proxy(adapter, {
+    get(target, property, receiver) {
+      const method: unknown = Reflect.get(target, property, receiver);
+      if (typeof method !== "function") return method;
+      return (...args: unknown[]) => {
+        if (closed) return Promise.reject(new Error("Auth transaction callback has settled."));
+        if (accepted >= 100) {
+          const error = new Error("Auth transaction exceeds 100 adapter operations.");
+          poison(error);
+          return Promise.reject(error);
+        }
+        accepted += 1;
+        // Include official input/output transforms in the ordered operation.
+        const result = queue.then(() => Reflect.apply(method, target, args));
+        queue = result.then(() => undefined, poison);
+        return result;
+      };
+    },
+  });
+  let value: T;
+  try {
+    value = await callback(scoped);
+  } catch (error) {
+    poison(error);
+  } finally {
+    closed = true;
+    await queue;
+  }
+  if (failed) throw failure;
+  return value!;
 }
 
 function transactionAdapter(
@@ -152,7 +197,7 @@ function customAdapter(
         .map(([field]) => {
           const physicalModel = config.getModelName(model);
           const physicalField = config.getFieldName({ model, field });
-          return port.index({ model: physicalModel, fields: [physicalField] }, { idempotencyKey: `better-auth-index-${physicalModel}-${physicalField}` });
+          return port.index({ model: physicalModel, fields: [physicalField] }, { idempotencyKey: `better-auth-index-${globalThis.crypto.randomUUID()}` });
         })))
         .then((results) => {
           for (const result of results) {
@@ -185,12 +230,12 @@ function customAdapter(
     },
     findOne: async <T>(input: FindOneInput) => {
       await ensure();
-      const records = await page(input.model, { model: input.model, predicates: where(input.model, input.where, "findOne"), offset: 0, limit: 1, ...(input.select === undefined ? {} : { select: input.select.map((field) => config.getFieldName({ model: input.model, field })) }), ...(input.join === undefined ? {} : { joins: joins(input.join) }) }, queryOptions());
+      const records = await page(input.model, { model: input.model, predicates: where(input.model, input.where, "findOne"), offset: 0, limit: 1, ...(input.select === undefined || input.select.length === 0 ? {} : { select: input.select.map((field) => config.getFieldName({ model: input.model, field })) }), ...(input.join === undefined ? {} : { joins: joins(input.join) }) }, queryOptions());
       return outputRecord(records[0] ?? null) as T | null;
     },
     findMany: async <T>(input: FindManyInput) => {
       await ensure();
-      const records = await page(input.model, { model: input.model, predicates: where(input.model, input.where ?? [], "findMany"), offset: input.offset ?? 0, limit: input.limit, ...(input.select === undefined ? {} : { select: input.select.map((field) => config.getFieldName({ model: input.model, field })) }), ...(input.sortBy === undefined ? {} : { sortBy: { ...input.sortBy, field: config.getFieldName({ model: input.model, field: input.sortBy.field }) } }), ...(input.join === undefined ? {} : { joins: joins(input.join) }) }, queryOptions());
+      const records = await page(input.model, { model: input.model, predicates: where(input.model, input.where ?? [], "findMany"), offset: input.offset ?? 0, limit: input.limit, ...(input.select === undefined || input.select.length === 0 ? {} : { select: input.select.map((field) => config.getFieldName({ model: input.model, field })) }), ...(input.sortBy === undefined ? {} : { sortBy: { ...input.sortBy, field: config.getFieldName({ model: input.model, field: input.sortBy.field }) } }), ...(input.join === undefined ? {} : { joins: joins(input.join) }) }, queryOptions());
       return [...records] as T[];
     },
     delete: async (input: DeleteInput) => { await ensure(); unwrap(await port.deleteOne({ model: input.model, predicates: where(input.model, input.where, "delete") }, mutationOptions())); },

@@ -34,8 +34,23 @@ is `https://api.terrascale.tech`. Keep server credentials out of browser bundles
 
 The export map in [package.json](package.json) is authoritative. Public clients
 expose named operations, not arbitrary request paths or a generic transport.
-The Better Auth adapter maps named atomic operations; production requires a
-qualified public HTTP implementation of its operation port.
+The server-only Better Auth factory uses the named public auth operations:
+
+```ts
+import { AuthPersistenceClient, createTerraScaleAuthAdapter } from "@terrascale/sdk/better-auth";
+
+const database = createTerraScaleAuthAdapter(
+  new AuthPersistenceClient({ apiBaseUrl, accessToken: apiKey }),
+  authDatabaseId,
+);
+// Supply `database` as the database option to Better Auth.
+```
+
+Install the pinned optional peer `@better-auth/core@1.7.2` when using this
+entrypoint with Better Auth 1.7.2. It supports the official schema transforms,
+explicit joins, atomic token consumption and serialized transaction callbacks.
+Producer deployment, schema migration and real multi-Region qualification are
+still required; this integration does not establish production readiness.
 
 The temporary local SQLite runtime is separate from TerraBase's production
 SQLite engine. It cannot qualify production behavior and is forbidden in
