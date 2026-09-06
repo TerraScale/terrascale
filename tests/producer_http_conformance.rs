@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -62,7 +63,7 @@ where
                 .map(|(_, v)| v.as_str()),
             Some("Bearer conformance-key")
         );
-        if status >= 200 && status < 300 {
+        if (200..300).contains(&status) {
             let actual = result
                 .unwrap_or_else(|e| panic!("{} status {status}: {e}", operation["operationId"]));
             assert_eq!(
@@ -327,16 +328,8 @@ fn concrete_path(template: &str) -> String {
 fn producer_corpus_binds_to_pinned_openapi_and_exact_generated_inventory() {
     let corpus = corpus();
     let openapi = include_bytes!("../contracts/v1/openapi.json");
-    let digest = std::process::Command::new("sha256sum")
-        .arg("contracts/v1/openapi.json")
-        .output()
-        .expect("sha256sum is required for contract verification");
-    assert!(digest.status.success());
-    let actual = String::from_utf8(digest.stdout).unwrap();
-    assert_eq!(
-        actual.split_whitespace().next().unwrap(),
-        corpus["openapiSha256"]
-    );
+    let actual = format!("{:x}", Sha256::digest(openapi));
+    assert_eq!(actual, corpus["openapiSha256"]);
     assert_eq!(
         openapi.len(),
         std::fs::metadata("contracts/v1/openapi.json")
