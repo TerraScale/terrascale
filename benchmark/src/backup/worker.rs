@@ -1210,6 +1210,45 @@ mod tests {
         )))
     }
 
+    #[tokio::test]
+    async fn paused_lifecycle_is_restored_across_fleet_restart() {
+        let (_, engine) = open_engine("fleet-pause-restart");
+        let owner = engine.database_owner();
+        let tenant = crate::types::TenantId::try_new(&owner.tenant().to_text()).unwrap();
+        let scope = engine.scope_for(&tenant);
+        engine.lifecycle_pause(&scope, "pause-a").unwrap();
+        let engine = Arc::new(engine);
+        let destination = Arc::new(ObjectDestination::for_test(
+            Provider::Oci,
+            Arc::new(object_store::memory::InMemory::new()),
+            4 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+        let config = || StreamConfig {
+            engine: engine.clone(),
+            keys: keys(&engine),
+            destinations: vec![(Provider::Oci, destination.clone())],
+            policy_revision: "policy-1".into(),
+            retention_days: 1,
+            staging: location("fleet-pause-restart-staging"),
+            placement: PlacementLock::explicit([owner.region()]).unwrap(),
+        };
+        let mut fleet = NativeBackupFleet::new(FleetLimits {
+            streams: 1,
+            staging_bytes_per_stream: 16 * 1024 * 1024,
+            points_per_stream: 8,
+        })
+        .unwrap();
+        fleet.attach(config()).unwrap();
+        assert!(fleet.sync_once().await.is_empty());
+        assert_eq!(
+            engine.lifecycle_pause(&scope, "pause-a"),
+            Err(crate::engine::lifecycle_state::LifecycleError::Conflict)
+        );
+        engine.lifecycle_resume(&scope, "resume-b").unwrap();
+        fleet.resume(&owner.database().to_string()).unwrap();
+    }
+
     fn restore_config(
         label: &str,
         owner: &crate::storage::DatabaseOwner,
@@ -1299,24 +1338,26 @@ mod tests {
                         target_database_id: "fleet-outage-restore".into(),
                         provider: "oci".into(),
                         selection: "latest".into(),
-                        expected_manifest_digest: crate::backup::restore::discover_encrypted_points(
-                            &staging,
-                            fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
-                        )
-                        .unwrap()
-                        .last()
-                        .unwrap()
-                        .identity()
-                        .to_owned(),
-                        expected_journal_boundary: crate::backup::restore::discover_encrypted_points(
-                            &staging,
-                            fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
-                        )
-                        .unwrap()
-                        .last()
-                        .unwrap()
-                        .boundary_sequence()
-                        .get(),
+                        expected_manifest_digest:
+                            crate::backup::restore::discover_encrypted_points(
+                                &staging,
+                                fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
+                            )
+                            .unwrap()
+                            .last()
+                            .unwrap()
+                            .identity()
+                            .to_owned(),
+                        expected_journal_boundary:
+                            crate::backup::restore::discover_encrypted_points(
+                                &staging,
+                                fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
+                            )
+                            .unwrap()
+                            .last()
+                            .unwrap()
+                            .boundary_sequence()
+                            .get(),
                         restore_epoch: 1,
                     },
                 )
@@ -1543,24 +1584,26 @@ mod tests {
                             target_database_id: "fleet-restore".into(),
                             provider: format!("{provider:?}").to_lowercase(),
                             selection: "latest".into(),
-                            expected_manifest_digest: crate::backup::restore::discover_encrypted_points(
-                                &staging,
-                                fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
-                            )
-                            .unwrap()
-                            .last()
-                            .unwrap()
-                            .identity()
-                            .to_owned(),
-                            expected_journal_boundary: crate::backup::restore::discover_encrypted_points(
-                                &staging,
-                                fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
-                            )
-                            .unwrap()
-                            .last()
-                            .unwrap()
-                            .boundary_sequence()
-                            .get(),
+                            expected_manifest_digest:
+                                crate::backup::restore::discover_encrypted_points(
+                                    &staging,
+                                    fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
+                                )
+                                .unwrap()
+                                .last()
+                                .unwrap()
+                                .identity()
+                                .to_owned(),
+                            expected_journal_boundary:
+                                crate::backup::restore::discover_encrypted_points(
+                                    &staging,
+                                    fleet.streams.get(&identity).unwrap().config.keys.as_ref(),
+                                )
+                                .unwrap()
+                                .last()
+                                .unwrap()
+                                .boundary_sequence()
+                                .get(),
                             restore_epoch: 1,
                         },
                     )

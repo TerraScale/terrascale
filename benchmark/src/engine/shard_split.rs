@@ -3,8 +3,8 @@
 use super::{CommitError, CommitOutcome, Engine, EngineError};
 use crate::{
     shard_split::{
-        CommittedSplitRoute, CutoverContext, DurableSplitState, RouteTable, ShardRoute, ShardSplit,
-        SplitPhase,
+        AtomicSplitCutover, CommittedSplitRoute, CutoverContext, DurableSplitState, RouteTable,
+        ShardRoute, ShardSplit, SplitContext, SplitPhase,
     },
     types::{DocumentValue, LocalDurability, OperationId, TenantScope},
 };
@@ -12,6 +12,58 @@ use crate::{
 const VERSION: u8 = 1;
 const MAX_ROUTES: usize = 1024;
 const MAX_BYTES: usize = 1024 * 1024;
+
+/// Engine cutover adapter bound to one admitted tenant and database
+/// incarnation. The scope prevents a split from crossing database owners.
+pub(crate) struct ScopedShardEngine {
+    engine: std::sync::Arc<Engine>,
+    scope: TenantScope,
+    incarnation: u128,
+}
+
+impl ScopedShardEngine {
+    pub(crate) fn new(engine: std::sync::Arc<Engine>, scope: TenantScope) -> Result<Self, RouteCatalogError> {
+        let incarnation = u128::from_be_bytes(engine.database_id().as_bytes().to_owned());
+        Ok(Self { engine, scope, incarnation })
+    }
+    fn operation(split: SplitContext) -> Result<OperationId, RouteCatalogError> {
+        OperationId::try_new(&format!("shard-split-{:032x}", split.split_id()))
+            .map_err(|_| RouteCatalogError::Malformed)
+    }
+}
+
+impl AtomicSplitCutover for ScopedShardEngine {
+    type Error = RouteCatalogError;
+
+    fn install_split_route(
+        &mut self,
+        context: &CutoverContext,
+        state: &DurableSplitState,
+    ) -> Result<u64, Self::Error> {
+        if context.split.database_incarnation() != self.incarnation {
+            return Err(RouteCatalogError::Conflict);
+        }
+        self.engine.install_shard_split_route(
+            &self.scope,
+            context,
+            state,
+            Self::operation(context.split)?,
+        )
+    }
+
+    fn recover_split_route(
+        &mut self,
+        split: &SplitContext,
+    ) -> Result<Option<CommittedSplitRoute>, Self::Error> {
+        if split.database_incarnation() != self.incarnation {
+            return Err(RouteCatalogError::Conflict);
+        }
+        Ok(self
+            .engine
+            .recover_shard_split_route(&self.scope, split)?
+            .map(|(receipt, _catalog)| receipt))
+    }
+}
 
 /// A validated route catalog with its durable generation.
 #[derive(Clone, Debug, Eq, PartialEq)]

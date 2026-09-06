@@ -89,7 +89,7 @@ pub use patch::{
 };
 pub use recovery_statistics::RecoveryStatistics;
 pub(crate) use recovery_statistics::{logical_document_digest, logical_state_hasher};
-pub(crate) use shard_split::{RouteCatalog, RouteCatalogError};
+pub(crate) use shard_split::{RouteCatalog, RouteCatalogError, ScopedShardEngine};
 
 use crate::{
     families::FamilyStore,

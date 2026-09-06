@@ -872,7 +872,7 @@ impl ProductionAdmissionRuntime {
         limits: FleetLimits,
     ) -> Result<crate::native_backup_runtime::NativeBackupRuntime, String> {
         use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
-        use terrabase::backup::worker::OciBackupKeys;
+        use terrabase::backup::{PlacementLock, worker::OciBackupKeys};
         use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
         let key_config = self.config.keys.as_ref().ok_or("production key delivery missing")?;
         let provider = OciVaultKeyDelivery::new(
@@ -1081,7 +1081,7 @@ impl ProductionAdmissionRuntime {
         Arc::new(move |database| admission.resolve_native_restore_target(database))
     }
 
-    /// Resolves an already admitted, quiescent target for native restore.
+    /// Resolves an already admitted target for native restore readback.
     ///
     /// The target must be retained by admission but not serving; its owner,
     /// location, placement, and data key version all come from the durable
@@ -1107,8 +1107,8 @@ impl ProductionAdmissionRuntime {
             .engine()
             .lifecycle_state(&snapshot.database.host.engine().scope_for(&tenant))
             .map_err(|_| "restore target lifecycle unavailable")?;
-        if !lifecycle.paused || lifecycle.access_revoked() {
-            return Err("native restore target must be paused and quiescent".into());
+        if lifecycle.access_revoked() {
+            return Err("native restore target access is revoked".into());
         }
         let record = self
             .admitted_records()?

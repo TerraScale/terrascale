@@ -543,6 +543,25 @@ impl NativeRecoveryRuntime {
         Ok(Some(operation.request))
     }
 
+    /// Explicitly retries authenticated target readback for an uncertain
+    /// restore. This never authorizes another provider execution.
+    pub fn retry_restore_readback(
+        &self,
+        operation_id: &str,
+    ) -> Result<NativeRestoreOperation, NativeRecoveryError> {
+        let mut operation = self
+            .restore_status(operation_id)?
+            .ok_or(NativeRecoveryError::InvalidRequest)?;
+        if operation.phase != NativeRestorePhase::Uncertain {
+            return Ok(operation);
+        }
+        operation.phase = NativeRestorePhase::Verifying;
+        operation.error = None;
+        self.save_restore(&operation)?;
+        self.notify.notify_one();
+        Ok(operation)
+    }
+
     /// Returns facts only for a complete restore with exact identity binding.
     pub fn verified_restore_stats(
         &self,
@@ -673,7 +692,7 @@ impl NativeRecoveryRuntime {
                 self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
             connection
                 .query_row(
-                    "SELECT record FROM native_restore_operations WHERE phase IN ('accepted','restoring','verifying','uncertain') ORDER BY operation_id LIMIT 1",
+                    "SELECT record FROM native_restore_operations WHERE phase IN ('accepted','restoring','verifying') ORDER BY operation_id LIMIT 1",
                     [],
                     |row| row.get::<_, Vec<u8>>(0),
                 )
@@ -683,6 +702,22 @@ impl NativeRecoveryRuntime {
         let Some(bytes) = row else { return Ok(false) };
         let mut operation: NativeRestoreOperation =
             serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::VerificationFailed)?;
+        // Validate immutable source admission before inspecting or executing
+        // any target operation. This is authorization metadata, not provider
+        // I/O, and binds the marker to the original source owner and placement.
+        let request = &operation.request;
+        let admitted = self
+            .registry
+            .resolve(&request.source_database_id)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .ok_or(NativeRecoveryError::Unavailable)?;
+        if admitted.host.engine().database_id().to_text() != request.source_database_id
+            || admitted.record.regions != request.placement
+            || format!("{}/{}", admitted.record.tenant_id, admitted.record.project_id)
+                != request.source_owner
+        {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
         if matches!(operation.phase, NativeRestorePhase::Restoring | NativeRestorePhase::Verifying | NativeRestorePhase::Uncertain) {
             if let Some(receipt) = self.read_published_restore(&operation)? {
                 operation.receipt = Some(receipt);
@@ -694,17 +729,6 @@ impl NativeRecoveryRuntime {
             }
             self.save_restore(&operation)?;
             return Ok(true);
-        }
-        let request = &operation.request;
-        let admitted = self
-            .registry
-            .resolve(&request.source_database_id)
-            .map_err(|_| NativeRecoveryError::Unavailable)?
-            .ok_or(NativeRecoveryError::Unavailable)?;
-        if admitted.host.engine().database_id().to_text() != request.source_database_id
-            || admitted.record.regions != request.placement
-        {
-            return Err(NativeRecoveryError::VerificationFailed);
         }
         operation.phase = NativeRestorePhase::Restoring;
         self.save_restore(&operation)?;
@@ -730,6 +754,9 @@ impl NativeRecoveryRuntime {
         let engine = terrabase::engine::Engine::open(config)
             .map_err(|_| NativeRecoveryError::Unavailable)?;
         let request = &operation.request;
+        if engine.database_id().to_text() != request.target_database_id {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
         let journal_cut = request.journal_cut.parse().map_err(|_| NativeRecoveryError::VerificationFailed)?;
         let identity = terrabase::backup::RestoreIdentity {
             operation_id: request.operation_id.clone(),

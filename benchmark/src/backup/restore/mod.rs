@@ -657,6 +657,9 @@ pub fn read_restore_marker(
     if marker.identity != *identity {
         return Err(BackupError::ChecksumMismatch);
     }
+    if marker.target_sequence == 0 || marker.target_sequence > snapshot.get() {
+        return Err(BackupError::ChecksumMismatch);
+    }
     Ok(Some(RestoreMarkerFacts {
         identity: marker.identity,
         target_sequence: marker.target_sequence,

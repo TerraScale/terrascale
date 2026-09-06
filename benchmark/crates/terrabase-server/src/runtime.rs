@@ -257,7 +257,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         },
     );
 
-    if let Some(journal) = journal {
+    if let Some(journal) = journal.as_ref() {
         if let Err(error) = member.admit_membership(&*journal) {
             let report = member.drain().await;
             let detail = match error {
