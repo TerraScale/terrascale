@@ -19,7 +19,8 @@ owner's legal review are complete.]
 - [Privacy Policy](./privacy.md) — what we store, sub-processors, residency, retention, and deletion.
 - [Data Processing Addendum](./dpa.md) — processing scope, sub-processors (OCI, Cloudflare), and security measures.
 - [Security](./security.md) — vulnerability disclosure and `security.txt`.
-- [Support policy](./support.md) — Discord, email, Scale shared channel; no ticketing product, no phone.
+- [Support policy](./support.md) — current support availability, self-service
+  diagnostics, and the absence of launch response commitments.
 
 These pages describe the intended public self-service launch. They are not an
 offer, contract, or notice until the placeholders are replaced and the pages

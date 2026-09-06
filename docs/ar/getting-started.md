@@ -24,9 +24,9 @@ npm run dev
 source, and selected region; it does not print credentials or a database id.
 Use the dashboard/API response to obtain the branch database id, then put that
 id, the API URL, and a scoped API key in `.env.local`. The starter subscribes
-with the schema-bound, read-only SQL builder over CDN-backed HTTP. Document
-writes remain outside the starter until the typed Database API contract is
-published. Writes and logical document/history storage are billed; reads,
+with the schema-bound, read-only SQL builder over CDN-backed HTTP and writes
+posts through the published typed document API. Writes and logical
+document/history storage are billed; reads,
 queries, egress, delivery, fan-out, and subscribers are free. A write
 replicated to another selected region costs one additional write per region.
 

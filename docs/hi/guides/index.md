@@ -23,20 +23,24 @@ published are retained as non-runnable references.
 - **Branches** — `branch-per-developer`, `branch-per-preview`; branches share
   their organization’s normal plan allowances and billing cycle, with no
   separate branch allowance. See [pricing](/hi/pricing/).
-- **Backups and PITR** — continuous backup, restore-to-new-database, and
-  branching from any point in the retention window.
+- **Backups and PITR** — intended continuous backup, restore-to-new-database,
+  and branching from the retention window; the producer workflow is awaiting
+  qualification.
 - **Regions and placement** — select regions per database; placement is the
   residency guarantee (`eu-only`, `br-only`, or an explicit list) and can
   never be widened. Replicated writes cost one write per region.
-- **Tenants** — a database per customer: `ts.tenants.create(key)`,
-  tenant-scoped keys, per-tenant usage and branching.
+- **Tenants** — the intended database-per-customer model, with
+  `ts.tenants.create(key)`, tenant-scoped keys, per-tenant usage and
+  branching. Tenant provisioning is awaiting its producer contract.
 - **Webhooks** — change streams with retries and signing; delivery is free.
 
 ## Tooling
 
-- **`terrascale dev`** — a personal cloud dev branch with `--seed`, log tail,
-  codegen watch, and `--faults`.
-- **`terrascale push` / `diff`** — schema evolution with resumable backfills
-  and field renames as first-class migrations.
+- **`terrascale dev`** — a personal cloud dev branch. Seed execution, log tail,
+  codegen watch, and fault injection remain unavailable until their CLI
+  contracts are published.
+- **`terrascale push` / `diff`** — intended schema evolution with resumable
+  backfills and field renames; the full workflow is awaiting qualification.
 - **`terrascale doctor`** — self-service diagnosis.
-- **MCP** — full read-write, AI-friendly, scoped per call, audited.
+- **MCP** — intended scoped, audited access; the public read-write workflow is
+  awaiting qualification.

@@ -61,8 +61,8 @@ review.]
 - Server binaries run under hardened systemd units on plain Linux hosts; no
   containers.
 - Members refuse new writes when a host's clock offset exceeds 500 ms.
-- Daily automated restore drills verify backups; failures page an engineer.
-- On-call paging fires on customer-visible SLO burn.
+- Restore drills and incident paging are intended operational controls; their
+  launch availability remains awaiting qualification.
 
 On account deletion, we revoke access, stop new writes, request purge of
 Cloudflare cache entries carrying the database's cache tags, and then
