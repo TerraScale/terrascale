@@ -539,7 +539,10 @@ async fn reactive_methods_reject_invalid_queries_before_transport() {
 #[tokio::test]
 async fn region_pinning_and_421_repair() {
     // Failover without a pin uses global first contact.
-    let mock = Mock::new(vec![Response::json(200, &json!([]))]);
+    let mock = Mock::new(vec![Response::json(
+        200,
+        &json!({"region": "GRU", "healthy": true}),
+    )]);
     let sdk = client(Arc::clone(&mock));
     sdk.management().regions().list().await.expect("regions");
     assert!(mock
@@ -548,7 +551,10 @@ async fn region_pinning_and_421_repair() {
         .starts_with("https://api.terrascale.tech"));
 
     // Strict affinity pins REST to the regional hostname.
-    let mock = Mock::new(vec![Response::json(200, &json!([]))]);
+    let mock = Mock::new(vec![Response::json(
+        200,
+        &json!({"region": "GRU", "healthy": true}),
+    )]);
     let transport: Arc<dyn HttpTransport> = mock;
     let strict = TerraScaleClient::with_transport(
         ClientConfig::builder()

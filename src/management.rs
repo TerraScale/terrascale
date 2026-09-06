@@ -1119,43 +1119,10 @@ impl UsageClient {
 // Member health and root
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub region: String,
     pub healthy: bool,
-}
-impl<'de> Deserialize<'de> for HealthResponse {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match value {
-            serde_json::Value::Object(object) => {
-                #[derive(Deserialize)]
-                struct Wire {
-                    region: String,
-                    healthy: bool,
-                }
-                let wire = serde_json::from_value::<Wire>(serde_json::Value::Object(object))
-                    .map_err(serde::de::Error::custom)?;
-                Ok(Self {
-                    region: wire.region,
-                    healthy: wire.healthy,
-                })
-            }
-            // The pre-contract mock used an empty array for this endpoint.
-            // Preserve that compatibility shape; a real member's published
-            // response remains the object form above.
-            serde_json::Value::Array(_) => Ok(Self {
-                region: String::new(),
-                healthy: false,
-            }),
-            _ => Err(serde::de::Error::custom(
-                "health response must be an object",
-            )),
-        }
-    }
 }
 #[derive(Debug, Clone)]
 pub struct Regions {
