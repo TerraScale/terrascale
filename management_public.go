@@ -322,13 +322,17 @@ func (d *DatabasesClient) DownloadExport(ctx context.Context, database, jobID, m
 
 // ProvisioningOperation acknowledges durable work; it does not imply readiness.
 type ProvisioningOperation struct {
-	OperationID string        `json:"operation_id"`
-	DatabaseID  string        `json:"database_id"`
-	KeyVersion  string        `json:"key_version"`
-	Name        string        `json:"name"`
-	Regions     []RegionCode  `json:"regions"`
-	Residency   PlacementLock `json:"residency"`
-	State       string        `json:"state"`
+	Environment      string        `json:"environment"`
+	TenantID         string        `json:"tenant_id"`
+	ProjectID        string        `json:"project_id"`
+	OperationID      string        `json:"operation_id"`
+	DatabaseID       string        `json:"database_id"`
+	ParentDatabaseID *string       `json:"parent_database_id"`
+	KeyVersion       string        `json:"key_version"`
+	Name             string        `json:"name"`
+	Regions          []RegionCode  `json:"regions"`
+	Residency        PlacementLock `json:"residency"`
+	State            string        `json:"state"`
 }
 
 // CreateDatabaseResult distinguishes immediate creation from accepted work.
@@ -356,7 +360,7 @@ func (r *CreateDatabaseResult) decodeHTTPResponse(status int, body []byte) error
 		if err := json.Unmarshal(body, &operation); err != nil {
 			return err
 		}
-		if operation.OperationID == "" || operation.DatabaseID == "" || operation.KeyVersion == "" || operation.Name == "" || len(operation.Regions) == 0 || (operation.State != "accepted" && operation.State != "pending") {
+		if operation.Environment == "" || operation.TenantID == "" || operation.ProjectID == "" || operation.OperationID == "" || operation.DatabaseID == "" || operation.KeyVersion == "" || operation.Name == "" || len(operation.Regions) == 0 || (operation.State != "accepted" && operation.State != "pending") {
 			return fmt.Errorf("sdk: accepted create response has no valid provisioning operation")
 		}
 		r.Operation = &operation

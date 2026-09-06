@@ -395,3 +395,25 @@ func TestUsageStorageIntervalCompletenessIsNullable(t *testing.T) {
 		}
 	}
 }
+
+func TestProvisioningOperationMatchesProducerScopeAndState(t *testing.T) {
+	operation := []byte(`{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"op-1","database_id":"db-1","parent_database_id":null,"key_version":"key-1","name":"demo","regions":["GRU"],"residency":"br-only","state":"pending"}`)
+	var got ProvisioningOperation
+	if err := json.Unmarshal(operation, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Environment != "production" || got.TenantID != "tenant-1" || got.ProjectID != "project-1" || got.ParentDatabaseID != nil {
+		t.Fatalf("provisioning scope = %+v", got)
+	}
+	var result CreateDatabaseResult
+	if err := result.decodeHTTPResponse(http.StatusAccepted, operation); err != nil {
+		t.Fatalf("canonical pending response rejected: %v", err)
+	}
+	if result.Operation == nil || result.Operation.State != "pending" {
+		t.Fatalf("accepted operation = %+v", result.Operation)
+	}
+	titleCase := []byte(`{"environment":"production","tenant_id":"tenant-1","project_id":"project-1","operation_id":"op-1","database_id":"db-1","key_version":"key-1","name":"demo","regions":["GRU"],"residency":"br-only","state":"Pending"}`)
+	if err := result.decodeHTTPResponse(http.StatusAccepted, titleCase); err == nil {
+		t.Fatal("non-canonical title-case state was accepted")
+	}
+}
