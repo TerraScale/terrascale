@@ -652,7 +652,7 @@ fn close_with<T>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -910,6 +910,13 @@ mod tests {
         });
         runtime.attach_data_plane(plane.clone()).expect("data plane attachment");
         (runtime, root, spec, plane)
+    }
+
+    pub(crate) fn runtime_for_readiness(
+        label: &str,
+    ) -> (ProductionMemberRuntime, PathBuf, DatabaseSpec) {
+        let (runtime, root, spec, _) = runtime_with_async_drain(label, false);
+        (runtime, root, spec)
     }
 
     struct NoDatabaseAssignments;

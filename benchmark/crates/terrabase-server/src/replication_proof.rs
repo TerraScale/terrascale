@@ -492,6 +492,29 @@ fn unix_millis() -> Result<u64, ReadinessProofError> {
         .ok_or(ReadinessProofError::Encoding)
 }
 
+#[cfg(test)]
+pub(crate) fn test_verified_readiness_cut(
+    scope: DatabaseRouteScope,
+    generation: u64,
+    epoch: u64,
+    local_source: bool,
+    frontier: BTreeMap<String, u64>,
+) -> VerifiedReadinessCut {
+    VerifiedReadinessCut {
+        scope,
+        generation,
+        epoch,
+        physical: PhysicalBoundary {
+            snapshot_digest: hex(&[2; 32]),
+            wal_checkpoint_digest: hex(&[3; 32]),
+        },
+        causal: CausalBoundary { cut_digest: hex(&[4; 32]), frontier, root_digest: hex(&[5; 32]) },
+        sequence: 1,
+        observed_at_unix_ms: unix_millis().unwrap(),
+        local_source,
+    }
+}
+
 /// Issues a challenge-bound receipt from the live driver evidence ledger.
 ///
 /// The caller must supply the immutable binding from durable admission and the

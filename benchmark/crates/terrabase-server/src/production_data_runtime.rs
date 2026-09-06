@@ -20,6 +20,8 @@ use terrabase_cluster::wal_snapshot::WalSnapshotSource;
 use terrabase_tbep::production_causal::CausalDriver;
 use terrabase_tbep::registry::BoundScope;
 
+mod readiness_inventory;
+
 /// Filesystem and residency bounds of an authenticated admission record.
 /// Writer identity is deliberately obtained from the durable assignment source.
 pub struct ProductionDatabaseAssignment {
@@ -52,6 +54,8 @@ pub struct ProductionDataLifecycle {
     draining: AtomicBool,
     progress: Arc<ReplicationProgress>,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+    expected:
+        Mutex<Option<BTreeMap<DatabaseRouteScope, crate::production_readiness::ExpectedScope>>>,
 }
 
 impl ProductionDataLifecycle {
@@ -67,6 +71,7 @@ impl ProductionDataLifecycle {
             draining: AtomicBool::new(false),
             progress,
             registry,
+            expected: Mutex::new(None),
         }
     }
 
@@ -80,6 +85,60 @@ impl ProductionDataLifecycle {
     #[must_use]
     pub fn is_draining(&self) -> bool {
         self.draining.load(Ordering::Acquire)
+    }
+
+    /// Evaluates every accepted database lane using current durable receipts.
+    /// Missing inventory, failed workers, or draining never report readiness.
+    #[must_use]
+    pub fn replication_readiness(&self) -> crate::production_readiness::ReplicationReadinessFacts {
+        if self.is_draining() {
+            return Default::default();
+        }
+        let Some(data) = self.get() else {
+            return Default::default();
+        };
+        if data.ensure_running().is_err() {
+            return Default::default();
+        }
+        let Ok(expected) = self.expected.lock().map(|expected| expected.clone()) else {
+            return Default::default();
+        };
+        let Ok(boundaries) = self.progress.active_boundaries() else {
+            return Default::default();
+        };
+        let facts = crate::production_readiness::evaluate(
+            expected.as_ref(),
+            &data.observations(),
+            &boundaries,
+        );
+        if self.is_draining() || data.ensure_running().is_err() {
+            Default::default()
+        } else {
+            facts
+        }
+    }
+
+    fn record_inventory(
+        &self,
+        inventory: Result<
+            BTreeMap<DatabaseRouteScope, crate::production_readiness::ExpectedScope>,
+            readiness_inventory::InventoryError,
+        >,
+    ) -> Result<(), String> {
+        let mut expected = self.expected.lock().map_err(|_| "readiness inventory unavailable")?;
+        match inventory {
+            Ok(inventory) => {
+                *expected = Some(inventory);
+                Ok(())
+            }
+            Err(readiness_inventory::InventoryError::Unavailable) => {
+                Err("accepted inventory temporarily unavailable".into())
+            }
+            Err(readiness_inventory::InventoryError::Invalid) => {
+                *expected = None;
+                Err("accepted inventory is invalid".into())
+            }
+        }
     }
 
     /// Fences new progress and lane startup without consuming the owner.
@@ -641,17 +700,9 @@ impl ProductionAdmissionRuntime {
         if let Some(data) = self.lifecycle.get() {
             data.ensure_running()?;
         }
-        let accepted = match self.journal.accepted_proposal() {
-            Ok(accepted) => accepted,
-            Err(terrabase_tbep::placement::PlacementError::NotFound) => return Ok(()),
-            Err(error) => return Err(failure(error)),
+        let Some(proposal) = self.refresh_inventory()? else {
+            return Ok(());
         };
-        let proposal = accepted.proposal.ok_or("accepted proposal missing")?;
-        let proof = self.journal.accepted().map_err(failure)?;
-        if proof.proposal_revision != accepted.revision {
-            return Err("accepted placement changed during reconciliation".into());
-        }
-        self.runtime.admit_membership(&*self.journal).map_err(failure)?;
         // Auth groups need the shared accept owner even before a database lane is admitted.
         if self.lifecycle.get().is_none() {
             self.lifecycle
@@ -833,6 +884,49 @@ impl ProductionAdmissionRuntime {
             self.pending_publication.insert(scope, writer.then_some(database));
         }
         self.publish_pending()
+    }
+
+    fn refresh_inventory(
+        &self,
+    ) -> Result<Option<terrabase_tbep::proto::terrabase::v1::PlacementProposal>, String> {
+        use readiness_inventory::InventoryError;
+        use terrabase_tbep::placement::PlacementError;
+        let classify = |error| match error {
+            PlacementError::Storage => InventoryError::Unavailable,
+            _ => InventoryError::Invalid,
+        };
+        let loaded = (|| {
+            let accepted = match self.journal.accepted_proposal() {
+                Ok(accepted) => accepted,
+                Err(PlacementError::NotFound) => return Ok(None),
+                Err(error) => return Err(classify(error)),
+            };
+            let proposal = accepted.proposal.ok_or(InventoryError::Invalid)?;
+            let proof = self.journal.accepted().map_err(classify)?;
+            if proof.proposal_revision != accepted.revision {
+                return Err(InventoryError::Invalid);
+            }
+            self.runtime.admit_membership(&*self.journal).map_err(|error| match error {
+                terrabase_cluster::production::ProductionMemberError::MembershipSource(
+                    terrabase_cluster::production::MembershipSourceError::Unavailable,
+                ) => InventoryError::Unavailable,
+                _ => InventoryError::Invalid,
+            })?;
+            let inventory =
+                readiness_inventory::accepted_inventory(&self.runtime, &*self.journal, &proposal)?;
+            Ok(Some((proposal, inventory)))
+        })();
+        match loaded {
+            Ok(Some((proposal, inventory))) => {
+                self.lifecycle.record_inventory(Ok(inventory))?;
+                Ok(Some(proposal))
+            }
+            Ok(None) => {
+                let _ = self.lifecycle.record_inventory(Err(InventoryError::Invalid));
+                Ok(None)
+            }
+            Err(error) => self.lifecycle.record_inventory(Err(error)).map(|()| None),
+        }
     }
 
     fn publish_pending(&mut self) -> Result<(), String> {
