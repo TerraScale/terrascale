@@ -449,4 +449,39 @@ describe("current reactive client", () => {
     assert.deepEqual(live.view.getItems().map(entry => entry.identity), ["fresh"]);
     assert.ok(notifications > 0);
   });
+
+  test("records an authoritative reset reason while replacing rows", async () => {
+    let pollCount = 0;
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      if (request.method === "POST") {
+        return Response.json({
+          viewId: "reset-view",
+          generation: 1,
+          capability: "cap-reset",
+          snapshot: {
+            view_generation: 1,
+            authorization_generation: 1,
+            revision: 1,
+            items: [{ identity: "old", fields: [{ path: "value", value: "b2xk" }] }],
+            digest: syncV1ResultDigest([item("old", "old")]),
+            checkpoint: "Y3AtMQ==",
+          },
+        });
+      }
+      pollCount++;
+      return new Response(serverFrame({
+        kind: "reset",
+        subscription: "reset-view",
+        reason: "generation_changed",
+        snapshot: wireSnapshot([item("new", "new")], 1n, 2n, 1n),
+      }).buffer as ArrayBuffer, { headers: { "content-type": "application/msgpack" } });
+    };
+    const client = new TerraScaleSyncV1Client({ apiBaseUrl: "https://member.example", fetch });
+    const live = await client.subscribe({ subscription: "reset", databaseId: "db", query: "select * from docs", parameters: new Uint8Array(), autoStart: false });
+    await live.poll();
+    assert.equal(pollCount, 1);
+    assert.deepEqual(live.view.getItems().map(entry => entry.identity), ["new"]);
+    assert.deepEqual(live.reset, { reason: "generation-changed", subscription: "reset" });
+  });
 });

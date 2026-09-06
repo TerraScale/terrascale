@@ -436,6 +436,9 @@ export class TerraScaleSyncV1Client {
         break;
       }
       case "reset":
+        if (state !== undefined) {
+          state.reset = { reason: normalizeResetReason(envelope.message.reason), subscription: state.opened.subscription.id };
+        }
         subscription(envelope.message.subscription).view.reset(
           resultSnapshot(envelope.message.snapshot),
         );
@@ -789,6 +792,10 @@ export class TerraScaleSyncV1Client {
             if (frame === undefined) throw new TerraScaleSyncV1ClientError("protocol_error", "WebSocket data was not binary MessagePack");
             if (state.closed || state.socket !== socket) return;
             this.#receive(frame, state);
+            if (state.regionMoved && !state.closed && state.socket === socket) {
+              await delay(this.#reconnectDelayMs, state.abortController.signal);
+              if (!state.closed && state.socket === socket) await this.#reconnect(state);
+            }
           } catch (error) {
             this.setOnline(false);
             socket.close(1002, "invalid reactive frame");
