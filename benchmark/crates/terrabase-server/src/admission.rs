@@ -363,7 +363,7 @@ mod tests {
             }
         });
         let record = AdmissionRecord {
-            created_at: 1,
+            created_at: 1_700_000_000_123,
             environment: "production".into(),
             tenant_id: TenantUlid::generate().to_string(),
             project_id: ProjectUlid::generate().to_string(),
@@ -393,6 +393,12 @@ mod tests {
             callback.clone(),
         )
         .unwrap();
+        let mut zero_time = record.clone();
+        zero_time.created_at = 0;
+        assert!(host.admit(zero_time).is_err());
+        let mut negative_time = record.clone();
+        negative_time.created_at = -1;
+        assert!(host.admit(negative_time).is_err());
         assert!(host.admit(record.clone()).is_err());
         drop(host);
         let host =

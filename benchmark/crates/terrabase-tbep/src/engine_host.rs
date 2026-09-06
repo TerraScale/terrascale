@@ -288,7 +288,7 @@ impl EngineHost {
             EngineConfig::durable(location)
                 .map_err(|_| HostingError::EngineFailure("location refused".into()))?,
         )
-        .map_err(|error| HostingError::EngineFailure(format!("engine open refused: {error:?}")))?;
+        .map_err(|_| HostingError::EngineFailure("engine open refused".into()))?;
         Ok(Self {
             engine: HostEngine::Local(engine),
             location: location.to_path_buf(),

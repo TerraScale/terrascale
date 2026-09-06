@@ -95,6 +95,12 @@ pub(crate) fn transform_provenance(
         if changed != 0 {
             transaction
                 .execute(
+                    "DELETE FROM operation_kind_markers WHERE tenant=?1 AND operation=?2",
+                    params![tenant, original],
+                )
+                .map_err(|_| ())?;
+            transaction
+                .execute(
                     "INSERT INTO branch_snapshot_receipts VALUES(?1,?2)",
                     params![tenant, replacement],
                 )

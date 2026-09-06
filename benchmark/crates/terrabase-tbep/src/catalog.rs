@@ -178,7 +178,6 @@ impl HostCatalog {
                 MemberHostOptions::tb1a(),
             )
             .map_err(|error| {
-                eprintln!("catalog host open failed: {}", error.detail());
                 CatalogError::OpenFailed(error.detail())
             })?,
         );

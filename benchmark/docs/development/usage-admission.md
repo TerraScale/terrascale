@@ -32,6 +32,14 @@ Proposal intent and cluster-wide Region membership cannot grant a stream.
 The authenticated orchestrator supplies the billing partition; the engine never
 derives one from a database name or ID.
 
+The private storage admission payload also contains the required numeric
+`created_at` field: the original Unix timestamp in milliseconds from the
+orchestrator's durable admission journal. It is an immutable part of the
+`AdmissionRecord`, must be positive, and is persisted and replayed verbatim.
+The engine rejects a missing field, a nonnumeric value, or a retry that changes
+the timestamp. The engine does not replace it with a host clock or derive it
+from a ULID.
+
 A successful response repeats every request field and adds `state: registered`.
 That acknowledgment follows a SQLite transaction with FULL synchronization.
 It proves registration persistence, not database readiness. Retries retain the

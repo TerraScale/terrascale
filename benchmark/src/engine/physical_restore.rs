@@ -49,8 +49,10 @@ impl Engine {
         let result = (|| {
             let mut staged_config = config;
             staged_config.location.clone_from(&staging);
-            drop(Self::open(staged_config.clone())?);
-            crate::storage::import_backup_file(source, backup, &staging)
+            let staged = Self::open(staged_config.clone())?;
+            let child_owner = staged.database_owner().clone();
+            drop(staged);
+            crate::storage::import_backup_file(source, backup, &staging, &child_owner)
                 .map_err(|()| EngineOpenError::FormatMismatch)?;
             drop(Self::open(staged_config)?);
             fs::File::open(&staging)

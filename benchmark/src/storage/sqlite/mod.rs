@@ -751,7 +751,10 @@ fn validate_operation_facts(connection: &Connection) -> Result<(), ()> {
             "SELECT digest, committed, rejection, sequence, requested, root, writes, bytes,
                     EXISTS(SELECT 1 FROM branch_snapshot_receipts AS imported
                            WHERE imported.tenant = operation_facts.tenant
-                             AND imported.operation = operation_facts.client_request_ulid)
+                             AND imported.operation = operation_facts.client_request_ulid),
+                    EXISTS(SELECT 1 FROM operation_kind_markers AS marker
+                           WHERE marker.tenant = operation_facts.tenant
+                             AND marker.operation = operation_facts.client_request_ulid)
              FROM operation_facts",
         )
         .map_err(|_| ())?;
@@ -767,12 +770,23 @@ fn validate_operation_facts(connection: &Connection) -> Result<(), ()> {
                 row.get::<_, i64>(6)?,
                 row.get::<_, i64>(7)?,
                 row.get::<_, bool>(8)?,
+                row.get::<_, bool>(9)?,
             ))
         })
         .map_err(|_| ())?;
     for row in rows {
-        let (_digest, committed, rejection, sequence, requested, root, writes, bytes, imported) =
-            row.map_err(|_| ())?;
+        let (
+            _digest,
+            committed,
+            rejection,
+            sequence,
+            requested,
+            root,
+            writes,
+            bytes,
+            imported,
+            marked,
+        ) = row.map_err(|_| ())?;
         if writes < 0 || bytes < 0 || !matches!(committed, 0 | 1) {
             return Err(());
         }
@@ -783,8 +797,8 @@ fn validate_operation_facts(connection: &Connection) -> Result<(), ()> {
         if committed == 1 {
             if sequence <= 0
                 || root.is_empty()
-                || (writes == 0 && !imported)
-                || (imported && (writes != 0 || bytes != 0))
+                || (writes == 0 && !imported && !marked)
+                || ((imported || marked) && (writes != 0 || bytes != 0))
             {
                 return Err(());
             }
@@ -794,6 +808,23 @@ fn validate_operation_facts(connection: &Connection) -> Result<(), ()> {
         {
             return Err(());
         }
+    }
+    let invalid_markers: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM operation_kind_markers AS marker
+             LEFT JOIN operation_facts AS fact
+               ON fact.tenant=marker.tenant AND fact.client_request_ulid=marker.operation
+             WHERE marker.kind NOT IN ('metadata_only','internal_maintenance','replication')
+                OR fact.client_request_ulid IS NULL OR fact.committed <> 1
+                OR fact.writes <> 0 OR fact.bytes <> 0
+                OR EXISTS (SELECT 1 FROM branch_snapshot_receipts AS imported
+                           WHERE imported.tenant=marker.tenant AND imported.operation=marker.operation)",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| ())?;
+    if invalid_markers != 0 {
+        return Err(());
     }
     drop(statement);
     let mismatched_rows = connection
@@ -1081,6 +1112,12 @@ CREATE TABLE IF NOT EXISTS branch_snapshot_receipts (
     operation TEXT NOT NULL,
     PRIMARY KEY (tenant, operation)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS operation_kind_markers (
+    tenant TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('metadata_only', 'internal_maintenance', 'replication')),
+    PRIMARY KEY (tenant, operation)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS operation_facts (
     tenant              TEXT    NOT NULL,
     client_request_ulid TEXT    NOT NULL,
@@ -1276,7 +1313,12 @@ const INITIAL_ROOT_HEAD: &str = "sqlite3-00000000000000000000000000000000";
 const SCHEMA_BINDING_KEY: &str = "sqlite_schema_binding";
 
 /// Rebinds a verified backup inside a fresh, private staging location.
-pub(crate) fn import_backup_file(source: &Path, backup: &Path, target: &Path) -> Result<(), ()> {
+pub(crate) fn import_backup_file(
+    source: &Path,
+    backup: &Path,
+    target: &Path,
+    child_owner: &crate::storage::DatabaseOwner,
+) -> Result<(), ()> {
     let source_binding = database_binding(source).map_err(|_| ())?.ok_or(())?;
     let target_binding = database_binding(target).map_err(|_| ())?.ok_or(())?;
     let file = target.join(DATABASE_FILE);
@@ -1301,6 +1343,7 @@ pub(crate) fn import_backup_file(source: &Path, backup: &Path, target: &Path) ->
         return Err(());
     }
     let transaction = connection.transaction().map_err(|_| ())?;
+    branch_provenance::transform_provenance(&transaction, child_owner)?;
     transaction
         .execute(
             "UPDATE meta SET value = ?1 WHERE key = ?2",
@@ -1308,7 +1351,11 @@ pub(crate) fn import_backup_file(source: &Path, backup: &Path, target: &Path) ->
         )
         .map_err(|_| ())?;
     transaction
-        .execute("UPDATE meta SET value = ?1 WHERE key = 'local_origin'", [target_origin])
+        .execute(
+            "INSERT INTO meta(key,value) VALUES('local_origin',?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [target_origin],
+        )
         .map_err(|_| ())?;
     transaction.commit().map_err(|_| ())?;
     connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").map_err(|_| ())?;
@@ -2880,6 +2927,23 @@ fn stage_intent(
     if intent.internal_maintenance || provenance.kind() == JournalKind::Replicated {
         billed_writes = 0;
         billed_bytes = 0;
+    }
+    let marker_kind = if provenance.kind() == JournalKind::Replicated {
+        Some("replication")
+    } else if intent.internal_maintenance {
+        Some("internal_maintenance")
+    } else if intent.writes.is_empty() {
+        Some("metadata_only")
+    } else {
+        None
+    };
+    if let Some(kind) = marker_kind {
+        transaction
+            .execute(
+                "INSERT INTO operation_kind_markers(tenant,operation,kind) VALUES(?1,?2,?3)",
+                rusqlite::params![intent.tenant.as_str(), binding_identity.as_str(), kind],
+            )
+            .map_err(|_| ())?;
     }
     write_usage::mint(transaction, intent, sequence, billed_writes, &provenance)?;
     let published = PublishedCommit::new(

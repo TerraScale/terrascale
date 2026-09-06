@@ -629,3 +629,18 @@ fixture, Region/origin confusion in durability fixtures, and a discarded RF2
 bootstrap checkpoint. Fixes retain the security and physical-receipt assertions
 and received an independent review. Reopen/restore failures remain under
 investigation. Full daemon fault injection and launch qualification remain open.
+
+### Admission creation timestamps
+
+The Go admission journal already owns the immutable creation timestamp. Private
+install, branch capture, and restore now send its exact Unix-millisecond value.
+Rust requires a positive integer `AdmissionRecord.created_at`, retains it through
+replay, rejects changed retries, and returns it in public database metadata.
+Missing and string timestamps are rejected; tests also cover zero and negative
+values. Deletion metadata uses checked conversion of its durable stop timestamp.
+
+Independent cross-repository review found no material contract mismatch. The
+orchestrator admission package tests passed, followed by full `make check`
+including race tests (`98145`, exit 0). Rust timestamp tests await the next
+server run while the reopen failure is investigated. The earlier creation-time
+contract gap is implemented but is not yet fully verified in Rust.
