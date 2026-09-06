@@ -5,10 +5,16 @@ import { defineSchema } from "../src/schema.js";
 import { generateSchemaTypes } from "./generate-schema-types.js";
 
 describe("schema type generator", () => {
-  test("generates branded IDs, metadata, and field document types", () => {
+  test("generates branded IDs and canonical document read types", () => {
     const source = defineSchema({
       posts: {
         fields: {
+          bytes: { type: "bytes", required: true },
+          count: { type: "int", required: true },
+          ratio: { type: "float", required: true },
+          enabled: { type: "bool", required: true },
+          register: { type: "register-mv", required: true },
+          additions: { type: "set-add-wins", required: true },
           title: { type: "text", required: true },
           publishedAt: { type: "timestamp", required: false },
           views: { type: "counter-pn", required: true },
@@ -19,11 +25,17 @@ describe("schema type generator", () => {
     }).toJSON();
     const generated = generateSchemaTypes(source);
     assert.match(generated, /export type PostsId = Brand<string, "PostsId">;/u);
-    assert.match(generated, /readonly _id: PostsId;/u);
-    assert.match(generated, /readonly publishedAt\?: Timestamp \| null;/u);
-    assert.match(generated, /readonly views: number;/u);
-    assert.match(generated, /readonly tags: ReadonlySet<JsonValue>;/u);
-    assert.match(generated, /readonly payload: JsonValue;/u);
+    assert.doesNotMatch(generated, /readonly _(id|rev|hlc|created|updated):/u);
+    assert.match(generated, /readonly bytes: string;/u);
+    assert.match(generated, /readonly count: number \| bigint;/u);
+    assert.match(generated, /readonly ratio: number;/u);
+    assert.match(generated, /readonly enabled: boolean;/u);
+    assert.match(generated, /readonly register: DocumentValue;/u);
+    assert.match(generated, /readonly additions: readonly DocumentValue\[\];/u);
+    assert.match(generated, /readonly publishedAt\?: number \| bigint \| null;/u);
+    assert.match(generated, /readonly views: number \| bigint;/u);
+    assert.match(generated, /readonly tags: readonly DocumentValue\[\];/u);
+    assert.match(generated, /readonly payload: DocumentValue;/u);
     assert.match(generated, /readonly posts: PostsDocument;/u);
   });
 

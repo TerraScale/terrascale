@@ -6,3 +6,6 @@ test-results/
 /.tools/
 *.tsbuildinfo
 /artifacts/
+
+# Private generated CI release candidates and signatures
+/.terrascale-develop-release/

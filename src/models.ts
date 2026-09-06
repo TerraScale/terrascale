@@ -245,6 +245,8 @@ export type ProjectDatabase = {
   readonly backupRegion: TerraScaleRegionCode;
   readonly createdAt: Timestamp;
   readonly version: number;
+  /** Durable provisioning acceptance is pending until its operation reports ready. */
+  readonly provisioning?: { readonly operationId: string; readonly state: string };
 };
 
 export type CreateDatabaseRequest = {

@@ -146,6 +146,7 @@ export class TerraScaleHttp {
           const requestInit: RequestInit = {
             method: options.method,
             headers,
+            redirect: "error",
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           };
           if (options.body !== undefined) {
@@ -607,6 +608,10 @@ const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly
   "databases.indexRecommendations": ["generation", "recommendations.*.generation", "recommendations.*.maintenance_cost"],
   "databases.listWebhooks": ["webhooks.*.created_at"],
   "databases.createWebhook": ["created_at"],
+  "databases.rotateSecret": ["created_at"],
+  "databases.developmentFault": ["expiresAtMillis"],
+  "databases.clearDevelopmentFault": ["expiresAtMillis"],
+  "databases.developmentLogs": ["entries.*.sequence", "entries.*.atMillis"],
   "databases.deleteWebhook": ["created_at"],
   "databases.listDeliveries": ["deliveries.*.revision", "deliveries.*.retry_started_at", "deliveries.*.next_attempt_at"],
   "databases.replayWebhook": ["revision", "retry_started_at", "next_attempt_at"],

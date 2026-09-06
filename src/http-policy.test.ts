@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import { createServer } from "node:http";
 import { describe, test } from "vitest";
 
 import { createTerraScaleClient } from "./index.js";
@@ -278,6 +280,50 @@ describe("TerraScaleHttp request policy", () => {
       assert.equal(result.error.code, "status_400");
     }
     assert.deepEqual(requests.map(request => request.method), ["POST", "POST", "POST"]);
+  });
+
+  test("native fetch refuses redirects before credentials or mutation bodies reach another endpoint", async () => {
+    let targetRequests = 0;
+    const target = createServer((_request, response) => {
+      targetRequests++;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+    target.listen(0, "127.0.0.1");
+    await once(target, "listening");
+    const targetAddress = target.address();
+    assert.ok(targetAddress && typeof targetAddress === "object");
+    const source = createServer((request, response) => {
+      response.writeHead(request.method === "POST" ? 307 : 302, {
+        location: `http://127.0.0.1:${targetAddress.port}/api/v1/regions`,
+      });
+      response.end();
+    });
+    source.listen(0, "127.0.0.1");
+    await once(source, "listening");
+    const sourceAddress = source.address();
+    assert.ok(sourceAddress && typeof sourceAddress === "object");
+    try {
+      const http = new TerraScaleHttp({
+        apiBaseUrl: `http://127.0.0.1:${sourceAddress.port}`, accessToken: "private-credential",
+      });
+      for (const method of ["GET", "POST"] as const) {
+        const result = await http.request({
+          method, path: "/api/v1/regions", routeName: "regions.list",
+          ...(method === "POST" ? { body: { privateValue: "mutation" } } : {}),
+        });
+        assert.ok(!result.ok);
+        assert.equal(result.error.kind, "transport");
+      }
+      assert.equal(targetRequests, 0);
+    } finally {
+      source.closeAllConnections();
+      target.closeAllConnections();
+      await Promise.all([
+        new Promise<void>(resolve => source.close(() => resolve())),
+        new Promise<void>(resolve => target.close(() => resolve())),
+      ]);
+    }
   });
 
   test("preserves export artifact bytes and rejects an unexpected successful media type", async () => {

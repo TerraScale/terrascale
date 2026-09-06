@@ -9,7 +9,10 @@ function fixtureFetch(requests: Request[]): typeof fetch {
   return async (input) => {
     const request = new Request(input);
     requests.push(request);
-    return Response.json({}, { status: request.method === "POST" ? 201 : 200 });
+    const body = request.method === "POST" && new URL(request.url).pathname === "/api/v1/databases"
+      ? { created_at: 1, deleted: false, name: "primary", placement: "GRU", residency: "", parent: null }
+      : {};
+    return Response.json(body, { status: request.method === "POST" ? 201 : 200 });
   };
 }
 
@@ -122,4 +125,50 @@ it("bounds recommendations and keeps export idempotency in the published request
   expect(requests[1]?.headers.has("idempotency-key")).toBe(false);
   expect(() => client.webhooks.create("db", { endpoint: "http://example.test/hook" })).toThrow(TypeError);
   expect(requests).toHaveLength(2);
+});
+
+it("cancels an in-flight export download through its typed options", async () => {
+  const controller = new AbortController();
+  let requestStarted: (() => void) | undefined;
+  const started = new Promise<void>(resolve => { requestStarted = resolve; });
+  const client = createTerraScaleManagementClient({
+    fetch: async input => {
+      const request = new Request(input);
+      requestStarted!();
+      return new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+      });
+    },
+  });
+  const pending = client.exports.download("db", "job", "manifest.json", { signal: controller.signal });
+  await started;
+  controller.abort();
+  const result = await pending;
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.kind).toBe("transport");
+});
+
+it("distinguishes accepted production provisioning from a ready database", async () => {
+  const accepted = {
+    operation_id: "create-one", database_id: "database-id", key_version: "key-version",
+    name: "primary", regions: ["GRU"], residency: "br-only", state: "pending",
+  };
+  const requests: Request[] = [];
+  const client = createTerraScaleManagementClient({ fetch: async input => {
+    requests.push(new Request(input));
+    return Response.json(accepted, { status: 202 });
+  } });
+  const result = await client.databases.create({ name: "primary", placement: ["GRU"], residency: "br-only", operation_id: "create-one" });
+  expect(result.ok).toBe(true);
+  if (result.ok && result.status === 202) {
+    expect(result.value.operation_id).toBe("create-one");
+    expect(result.value.state).toBe("pending");
+    expect("created_at" in result.value).toBe(false);
+  } else throw new Error("expected pending provisioning");
+  expect(await requests[0]?.json()).toEqual({ name: "primary", placement: ["GRU"], residency: "br-only", operation_id: "create-one" });
+  expect(() => client.databases.create({ name: "primary", placement: ["GRU"], operation_id: "create-one" })).toThrow(TypeError);
+  const mismatched = createTerraScaleManagementClient({ fetch: async () => Response.json(accepted, { status: 201 }) });
+  const rejected = await mismatched.databases.create({ name: "primary", placement: ["GRU"] });
+  expect(rejected.ok).toBe(false);
+  if (!rejected.ok) expect(rejected.error.kind).toBe("invalid-response");
 });

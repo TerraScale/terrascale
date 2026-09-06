@@ -38,16 +38,20 @@ test("public HTTP clients consume the pinned producer response and error corpus"
       }
       return { route, vector };
     });
-    const statuses = [undefined, ...new Set(vectors.flatMap(({ vector }) => vector.errors.map(error => error.status)))];
-    for (const status of statuses) {
-      const selected = vectors.filter(({ vector }) => status === undefined || vector.errors.some(error => error.status === status));
+    const scenarios = [
+      ...Array.from({ length: Math.max(...vectors.map(({ vector }) => vector.responses.length)) }, (_, successIndex) => ({ successIndex, status: undefined })),
+      ...[...new Set(vectors.flatMap(({ vector }) => vector.errors.map(error => error.status)))].map(status => ({ successIndex: undefined, status })),
+    ];
+    for (const { status, successIndex } of scenarios) {
+      const responseFor = (vector: Vector) => successIndex === undefined ? vector.errors.find(error => error.status === status) : vector.responses[successIndex];
+      const selected = vectors.filter(({ vector }) => responseFor(vector) !== undefined);
       let cursor = 0;
       let expected: WireResponse | undefined;
       await exercisePublicClientRoutes(async input => {
         const request = new Request(input);
         const entry = vectors.find(({ route }) => route.method === request.method && matchesPath(route.pathTemplate, new URL(request.url).pathname));
         assert.ok(entry, `${request.method} ${request.url}`);
-        expected = status === undefined ? entry.vector.response : entry.vector.errors.find(error => error.status === status);
+        expected = responseFor(entry.vector);
         assert.ok(expected, `Missing producer status ${status}: ${entry.route.routeName}`);
         return new Response(expected.body === undefined || expected.status === 204 ? null : expected.mediaType === "application/octet-stream" ? String(expected.body) : JSON.stringify(expected.body), {
           status: expected.status,
@@ -74,7 +78,7 @@ test("public HTTP clients consume the pinned producer response and error corpus"
 });
 
 type WireResponse = { status: number; body?: unknown; mediaType?: string; headers?: Record<string, string> };
-type Vector = { operationId: string; request: { method: string }; response: WireResponse; errors: WireResponse[] };
+type Vector = { operationId: string; request: { method: string }; response: WireResponse; responses: WireResponse[]; errors: WireResponse[] };
 
 function matchesPath(template: string, pathname: string): boolean {
   const expected = template.split("/");

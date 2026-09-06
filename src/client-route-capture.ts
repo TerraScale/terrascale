@@ -10,7 +10,7 @@ const pathTemplateSegments = new Map<string, string>([
   [sampleIds.database, "{name}"],
   [sampleIds.collection, "{collection}"],
   [sampleIds.documentId, "{id}"],
-]).set("SFO", "{regionCode}").set("email", "{field}").set("export-1", "{job_id}").set("delivery-1", "{delivery_id}").set("manifest.json", "{member}");
+]).set("SFO", "{regionCode}").set("email", "{field}").set("export-1", "{job_id}").set("delivery-1", "{delivery_id}").set("manifest.json", "{member}").set("operation-1", "{operation_id}");
 
 /** Canonical producer operations not implemented by this SDK slice. */
 export const expectedContractGapRouteNames = [
@@ -145,6 +145,26 @@ function pathToTemplate(pathname: string): string {
 
 const captureOperations: readonly CaptureOperation[] = [
   {
+    client: "databases", operation: "getProvisioningOperation", routeName: "databases.getProvisioningOperation",
+    invoke: (_client, management) => management.operations.get("operation-1"),
+  },
+  {
+    client: "databases", operation: "developmentFault", routeName: "databases.developmentFault",
+    invoke: (_client, management) => management.development.setFault(sampleIds.database, { confirmBranch: sampleIds.database, fault: "latency", durationMs: 1000, maxOperations: 1, delayMs: 25 }),
+  },
+  {
+    client: "databases", operation: "clearDevelopmentFault", routeName: "databases.clearDevelopmentFault",
+    invoke: (_client, management) => management.development.clearFault(sampleIds.database),
+  },
+  {
+    client: "databases", operation: "developmentLogs", routeName: "databases.developmentLogs",
+    invoke: (_client, management) => management.development.logs(sampleIds.database, { limit: 25 }),
+  },
+  {
+    client: "databases", operation: "rotateSecret", routeName: "databases.rotateSecret",
+    invoke: (_client, management) => management.webhooks.rotateSecret(sampleIds.database, sampleIds.documentId, { overlap_seconds: 300 }),
+  },
+  {
     client: "databases", operation: "downloadExport", routeName: "databases.downloadExport",
     invoke: (_client, management) => management.exports.download(sampleIds.database, "export-1", "manifest.json"),
   },
@@ -207,7 +227,7 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "databases", operation: "createDatabase", routeName: "databases.createDatabase",
-    invoke: (_client, management) => management.databases.create({ name: sampleIds.database, placement: ["GRU"], residency: null }),
+    invoke: (_client, management) => management.databases.create({ name: sampleIds.database, placement: ["GRU"], residency: "br-only", operation_id: "create-primary-1" }),
   },
   {
     client: "databases", operation: "getDatabase", routeName: "databases.getDatabase",

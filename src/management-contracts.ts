@@ -44,6 +44,9 @@ export type IndexRecommendations = {
 
 export type CreateWebhookRequest = { readonly endpoint: string };
 export type WebhookEndpoint = { readonly id: string; readonly endpoint: string; readonly created_at: UInt64Value; readonly deleted: boolean };
+/** Signing secret returned only by creation or rotation; list responses omit it. */
+export type WebhookSecretResponse = WebhookEndpoint & { readonly secret: string };
+export type RotateWebhookSecretRequest = { readonly overlap_seconds?: number };
 export type WebhookList = { readonly webhooks: readonly WebhookEndpoint[] };
 export type WebhookDelivery = {
   readonly id: string;
@@ -70,4 +73,17 @@ export type ExportStatus = {
   readonly resume_cursor: string;
   readonly manifest: { readonly path: string; readonly length: UInt64Value; readonly checksum: string } | null;
   readonly error: string | null;
+};
+
+export type DevelopmentFaultRequest = {
+  readonly confirmBranch: string;
+  readonly fault: "unavailable" | "latency";
+  readonly durationMs: number;
+  readonly maxOperations: number;
+  readonly delayMs: number;
+};
+export type DevelopmentFaultResponse = { readonly active: boolean; readonly expiresAtMillis: UInt64Value };
+export type DevelopmentLogResponse = {
+  readonly entries: readonly { readonly sequence: UInt64Value; readonly action: string; readonly atMillis: UInt64Value }[];
+  readonly truncated: boolean;
 };
