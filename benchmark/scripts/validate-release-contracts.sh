@@ -184,12 +184,14 @@ for item in operations:
     if not isinstance(fixture_responses, list) or not fixture_responses:
         raise SystemExit(f"HTTP fixture {item.get('operationId')} has no response")
     response_by_status = {response.get("status"): response for response in fixture_responses if isinstance(response, dict)}
-    expected_successes = [int(status) for status in response_spec if status.isdigit() and 200 <= int(status) < 300]
+    expected_successes = [int(status) for status in response_spec if status.isdigit() and (int(status) == 101 or 200 <= int(status) < 300)]
     if expected_successes:
         for status in expected_successes:
             response = response_by_status.get(status)
             if not isinstance(response, dict) or "mediaType" not in response or "body" not in response:
-                raise SystemExit(f"HTTP fixture {operation_id} is missing 2xx JSON details for {status}")
+                raise SystemExit(f"HTTP fixture {operation_id} is missing response details for {status}")
+            if status == 101 and (response["mediaType"] is not None or response["body"] is not None):
+                raise SystemExit(f"HTTP fixture {operation_id} gives a WebSocket upgrade a response body or media type")
             spec = response_spec[str(status)]
             content = spec.get("content", {}) if isinstance(spec, dict) else {}
             if content and response["mediaType"] not in content:
@@ -201,6 +203,9 @@ for item in operations:
             raise SystemExit(f"HTTP fixture {operation_id} has no OpenAPI response")
     if not isinstance(item.get("errors"), list):
         raise SystemExit(f"HTTP fixture {item.get('operationId')} has no error corpus")
+    for error in item["errors"]:
+        if not isinstance(error, dict) or not isinstance(error.get("status"), int) or not 400 <= error["status"] <= 599:
+            raise SystemExit(f"HTTP fixture {operation_id} classifies a non-error status as an error")
 
 for relative in ("conformance/reactive.json",):
     reactive = load(relative)

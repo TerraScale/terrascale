@@ -80,67 +80,6 @@ impl std::fmt::Display for ProductionComponentError {
 
 impl std::error::Error for ProductionComponentError {}
 
-/// Integration seam for dependencies that are owned by the Member runtime.
-///
-/// The catalog is opened before this callback and is transferred only after
-/// the callback succeeds. Implementations must not claim readiness here;
-/// callers do that only after their membership, transport, replication,
-/// backup, metrics, logging, and clock observations are all active.
-pub trait ProductionDependencyProvider: Send + Sync {
-    /// Initializes the complete production serving composition.
-    ///
-    /// # Errors
-    ///
-    /// Returns the exact component that is unavailable. A provider must not
-    /// collapse an individual missing integration into a generic production
-    /// mode refusal.
-    fn initialize(
-        &self,
-        config: &ProductionConfig,
-        catalog: &ProductionCatalogParts,
-    ) -> Result<(), ProductionComponentError>;
-}
-
-/// Default provider used by the binary until the real Member host adapter is
-/// linked. It deliberately identifies the absent integration precisely.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct MissingProductionDependencyProvider;
-
-impl ProductionDependencyProvider for MissingProductionDependencyProvider {
-    fn initialize(
-        &self,
-        _config: &ProductionConfig,
-        _catalog: &ProductionCatalogParts,
-    ) -> Result<(), ProductionComponentError> {
-        Err(ProductionComponentError {
-            component: ProductionComponent::Replication,
-            detail: "the durable RF=2 data-plane and complete Member host adapter is not installed",
-        })
-    }
-}
-
-/// Opens the authoritative production catalog and invokes an injected
-/// dependency provider before transferring ownership of its engines.
-///
-/// This function is the testable composition boundary used by the daemon and
-/// by the local harness. It has no development fallback and performs no
-/// listener bind when a required provider is absent.
-///
-/// # Errors
-///
-/// Returns `Catalog` if the authoritative catalog cannot be opened or validated,
-/// or `Component` if a required dependency cannot be initialized.
-pub fn prepare_production<P: ProductionDependencyProvider>(
-    config: &ProductionConfig,
-    provider: &P,
-) -> Result<ProductionCatalogParts, ProductionStartupError> {
-    let bootstrap =
-        ProductionCatalogBootstrap::open(config).map_err(ProductionStartupError::Catalog)?;
-    let parts = bootstrap.into_parts();
-    provider.initialize(config, &parts).map_err(ProductionStartupError::Component)?;
-    Ok(parts)
-}
-
 /// Failure before a production Member can make a serving claim.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProductionStartupError {
@@ -152,6 +91,13 @@ pub enum ProductionStartupError {
     Member(terrabase_cluster::production::ProductionMemberError),
     /// One required integration seam is unavailable.
     Component(ProductionComponentError),
+    /// Startup failed and the opened catalog could not be durably closed.
+    Cleanup {
+        /// The original startup refusal.
+        startup: Box<ProductionStartupError>,
+        /// The durable storage cleanup failure.
+        storage: MemberError,
+    },
 }
 
 impl std::fmt::Display for ProductionStartupError {
@@ -161,11 +107,25 @@ impl std::fmt::Display for ProductionStartupError {
             Self::Transport(error) => write!(formatter, "production transport: {error}"),
             Self::Member(error) => write!(formatter, "production Member: {error:?}"),
             Self::Component(error) => write!(formatter, "production component: {error}"),
+            Self::Cleanup { startup, storage } => {
+                write!(formatter, "{startup}; production catalog cleanup failed: {storage:?}")
+            }
         }
     }
 }
 
 impl std::error::Error for ProductionStartupError {}
+
+impl ProductionStartupError {
+    /// Keeps both the startup refusal and any durable shutdown failure.
+    #[must_use]
+    pub(crate) fn with_storage_cleanup(self, cleanup: Result<(), MemberError>) -> Self {
+        match cleanup {
+            Ok(()) => self,
+            Err(storage) => Self::Cleanup { startup: Box::new(self), storage },
+        }
+    }
+}
 
 /// A fully opened production storage catalog and its static cluster bindings.
 ///
@@ -707,6 +667,35 @@ mod tests {
         let member = Member::open_production(root, [spec], AdmissionLimits::new(2, 2))
             .expect("reopen after cleanup");
         member.close(Duration::from_secs(1)).expect("close reopened member");
+    }
+
+    #[test]
+    fn startup_refusal_preserves_failed_catalog_drain() {
+        let (bootstrap, root, spec) = opened_bootstrap("startup-drain-failure");
+        let parts = bootstrap.into_parts();
+        let database = parts.member.database_ids().next().expect("database");
+        let lease = parts.member.acquire(&database).expect("active operation");
+        let refusal = super::ProductionStartupError::Component(ProductionComponentError {
+            component: ProductionComponent::Membership,
+            detail: "membership unavailable",
+        });
+        let error = refusal.clone().with_storage_cleanup(parts.member.close(Duration::ZERO));
+        assert_eq!(
+            error,
+            super::ProductionStartupError::Cleanup {
+                startup: Box::new(refusal.clone()),
+                storage: terrabase::member::MemberError::DrainTimeout,
+            }
+        );
+        assert!(error.to_string().contains("membership unavailable"));
+        assert!(error.to_string().contains("cleanup failed"));
+        drop(lease);
+        assert_eq!(
+            refusal.clone().with_storage_cleanup(parts.member.close(Duration::from_secs(1))),
+            refusal
+        );
+        reopen(&root, spec);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

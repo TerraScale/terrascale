@@ -27,6 +27,9 @@ use terrabase::{CommitError, CommitOutcome, EngineError, LocalDurability, Operat
 
 use crate::guards::AbuseGuards;
 
+mod https;
+pub use https::NativeHttpsTransport;
+
 /// Maximum endpoint URL length accepted by the service.
 pub const MAX_ENDPOINT_BYTES: usize = 2_048;
 /// Maximum webhook request body accepted by the HTTP router.
@@ -969,10 +972,9 @@ pub trait WebhookDelivery: Send + Sync + 'static {
 
 /// TLS-capable egress hook used by [`HttpsWebhookDelivery`].
 ///
-/// The server crate intentionally does not ship a second HTTP client. A
-/// member host supplies the audited HTTPS implementation (certificate and
-/// hostname validation, connect/read deadlines, and bounded response reads),
-/// while this adapter owns the DNS rebinding/SSRF admission check.
+/// [`NativeHttpsTransport`] supplies certificate and hostname validation,
+/// pinned connections, deadlines, and bounded response reads. The delivery
+/// adapter owns the DNS rebinding/SSRF admission check on every attempt.
 pub trait HttpsTransport: Send + Sync + 'static {
     /// Resolves the endpoint immediately before use. Implementations must not
     /// return cached addresses beyond the request's lifetime.
@@ -1057,6 +1059,28 @@ pub struct WebhookPorts {
 }
 
 impl WebhookPorts {
+    /// Composes durable webhook ports with the native, bounded HTTPS transport.
+    /// The caller supplies the member runtime and its authorized durable ports.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted failure if the production TLS provider cannot initialize.
+    pub fn native_https(
+        storage: Arc<dyn WebhookStorage>,
+        journal: Arc<dyn WebhookJournal>,
+        secrets: Arc<dyn WebhookSecrets>,
+        guard: Arc<dyn WebhookGuard>,
+        runtime: tokio::runtime::Handle,
+    ) -> Result<Self, DeliveryError> {
+        Ok(Self::production(
+            storage,
+            journal,
+            secrets,
+            guard,
+            Arc::new(HttpsWebhookDelivery::new(Arc::new(NativeHttpsTransport::new(runtime)?))),
+        ))
+    }
+
     /// Installs all five production ports in one explicit bundle.
     #[must_use]
     pub fn production(
@@ -1897,12 +1921,15 @@ fn is_public_ip(address: IpAddr) -> bool {
                 return is_public_ip(IpAddr::V4(mapped));
             }
             let segments = ip.segments();
-            !ip.is_loopback()
-                && !ip.is_unspecified()
-                && (segments[0] & 0xfe00 != 0xfc00)
-                && (segments[0] & 0xffc0 != 0xfe80)
-                && !ip.is_multicast()
-                && !is_ipv6_documentation(ip)
+            // Admit native global unicast only. Translation/tunnel prefixes can
+            // reach an embedded private IPv4 address despite looking like IPv6
+            // (NAT64, IPv4-compatible, Teredo, and 6to4). The special-purpose
+            // 2001::/23 block and documentation ranges are not webhook targets.
+            (segments[0] & 0xe000 == 0x2000)
+                && !(segments[0] == 0x2001 && segments[1] < 0x0200)
+                && segments[0] != 0x2002
+                && !(segments[0] == 0x2001 && segments[1] == 0x0db8)
+                && !(segments[0] == 0x3fff && segments[1] < 0x1000)
         }
     }
 }
@@ -1911,9 +1938,6 @@ fn is_ipv4_documentation(ip: Ipv4Addr) -> bool {
     ip.octets()[0] == 192 && ip.octets()[1] == 0 && ip.octets()[2] == 2
         || ip.octets()[0] == 198 && ip.octets()[1] == 51 && ip.octets()[2] == 100
         || ip.octets()[0] == 203 && ip.octets()[1] == 0 && ip.octets()[2] == 113
-}
-fn is_ipv6_documentation(ip: Ipv6Addr) -> bool {
-    ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8
 }
 
 /// Computes the `v1` delivery MAC over `timestamp + "." + body`.
@@ -2063,6 +2087,48 @@ mod tests {
     }
 
     #[test]
+    fn https_adapter_rechecks_dns_after_a_successful_public_delivery() {
+        struct RebindingTransport {
+            address: Mutex<IpAddr>,
+            sent: Mutex<usize>,
+        }
+        impl HttpsTransport for RebindingTransport {
+            fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, DeliveryError> {
+                Ok(vec![*self.address.lock().expect("address")])
+            }
+            fn send_https(
+                &self,
+                _: &str,
+                addresses: &[IpAddr],
+                _: &BTreeMap<String, String>,
+                _: &[u8],
+            ) -> Result<DeliveryResponse, DeliveryError> {
+                assert_eq!(addresses, &[*self.address.lock().expect("address")]);
+                *self.sent.lock().expect("sent") += 1;
+                Ok(DeliveryResponse { status: 503 })
+            }
+        }
+        let transport = Arc::new(RebindingTransport {
+            address: Mutex::new("2606:4700:4700::1111".parse().expect("public IPv6")),
+            sent: Mutex::new(0),
+        });
+        let delivery = HttpsWebhookDelivery::new(Arc::clone(&transport));
+        let endpoint = "https://hooks.example/events";
+        delivery.validate_target(endpoint).expect("public IPv6 creation");
+        assert_eq!(
+            delivery.send(endpoint, &BTreeMap::new(), b"body").expect("initial attempt").status,
+            503
+        );
+        *transport.address.lock().expect("address") =
+            "64:ff9b::a00:1".parse().expect("translated private address");
+        assert_eq!(
+            delivery.send(endpoint, &BTreeMap::new(), b"body"),
+            Err(DeliveryError::TargetRejected)
+        );
+        assert_eq!(*transport.sent.lock().expect("sent"), 1);
+    }
+
+    #[test]
     fn https_adapter_rejects_nonpublic_dns_answers_before_sending() {
         for address in [
             "10.0.0.1",
@@ -2087,12 +2153,27 @@ mod tests {
             "ff02::1",
             "2001:db8::1",
             "::ffff:10.0.0.1",
+            "::10.0.0.1",
+            "64:ff9b::a00:1",
+            "64:ff9b:1::a00:1",
+            "fec0::1",
+            "100::1",
+            "2001::a00:1",
+            "2001:2::1",
+            "2001:10::1",
+            "2002:a00:1::1",
+            "3fff::1",
         ] {
             let transport = Arc::new(TestHttpsTransport {
                 addresses: vec!["1.1.1.1".parse().expect("public"), address.parse().expect("ip")],
                 sent: Mutex::new(Vec::new()),
             });
             let delivery = HttpsWebhookDelivery::new(Arc::clone(&transport));
+            assert_eq!(
+                delivery.validate_target("https://hooks.example/events"),
+                Err(DeliveryError::TargetRejected),
+                "rejects endpoint creation resolving to {address}"
+            );
             assert_eq!(
                 delivery.send("https://hooks.example/events", &BTreeMap::new(), b"body"),
                 Err(DeliveryError::TargetRejected),

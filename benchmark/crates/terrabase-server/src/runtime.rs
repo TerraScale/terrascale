@@ -190,10 +190,9 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     let transport = match build_production_transport(production) {
         Ok(transport) => transport,
         Err(error) => {
-            let _ = parts.member.close(config.shutdown_grace);
-            return Err(Box::new(DaemonError::ProductionStartup(
-                ProductionStartupError::Transport(error),
-            )));
+            let error = ProductionStartupError::Transport(error)
+                .with_storage_cleanup(parts.member.close(config.shutdown_grace));
+            return Err(Box::new(DaemonError::ProductionStartup(error)));
         }
     };
     let member_for_cleanup = parts.member.clone();
@@ -205,10 +204,9 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     ) {
         Ok(member) => member,
         Err(error) => {
-            let _ = member_for_cleanup.close(config.shutdown_grace);
-            return Err(Box::new(DaemonError::ProductionStartup(ProductionStartupError::Member(
-                error,
-            ))));
+            let error = ProductionStartupError::Member(error)
+                .with_storage_cleanup(member_for_cleanup.close(config.shutdown_grace));
+            return Err(Box::new(DaemonError::ProductionStartup(error)));
         }
     };
 
@@ -216,13 +214,13 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     // orchestrator's durable admission record is the authority; until its
     // source is wired, close the already-opened endpoint and catalog and
     // identify that one missing dependency.
-    let _ = member.drain().await;
-    Err(Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
-        crate::production::ProductionComponentError {
-            component: crate::production::ProductionComponent::Membership,
-            detail: "no durable orchestrator membership source is configured",
-        },
-    ))))
+    let report = member.drain().await;
+    let error = ProductionStartupError::Component(crate::production::ProductionComponentError {
+        component: crate::production::ProductionComponent::Membership,
+        detail: "no durable orchestrator membership source is configured",
+    })
+    .with_storage_cleanup(report.storage);
+    Err(Box::new(DaemonError::ProductionStartup(error)))
 }
 
 fn build_production_transport(
