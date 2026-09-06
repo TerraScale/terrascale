@@ -1165,7 +1165,7 @@ func (s *Subscription) pollOnce(ctx context.Context) ([]Update, Checkpoint, stri
 				}
 				return nil, "", "", "", reset, nil
 			}
-			return nil, "", "", "", nil, &APIError{Method: http.MethodGet, Path: u.Path, Status: resp.StatusCode, Message: string(body)}
+			return nil, "", "", "", nil, errorFromResponse("reactive.log", http.MethodGet, u.Path, resp.StatusCode, resp.Header, body)
 		}
 		updates, cp, nextOffset, reset, decodeErr := decodeReactiveMessagePack(body, s.viewID, s.generation)
 		if decodeErr != nil {
@@ -1194,7 +1194,7 @@ func (s *Subscription) pollOnce(ctx context.Context) ([]Update, Checkpoint, stri
 			}
 			return nil, "", "", "", reset, nil
 		}
-		return nil, "", "", "", nil, &APIError{Method: http.MethodGet, Path: u.Path, Status: resp.StatusCode, Message: string(body)}
+		return nil, "", "", "", nil, errorFromResponse("reactive.log", http.MethodGet, u.Path, resp.StatusCode, resp.Header, body)
 	}
 	return nil, "", "", "", nil, fmt.Errorf("sdk: reactive log returned unsupported content type %q", contentType)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -280,6 +281,30 @@ func TestSubscribeMapsRetentionHTTPReset(t *testing.T) {
 		t.Fatalf("reset = %+v", ev)
 	}
 	sub.Close()
+}
+
+func TestPollPreservesStructuredAPIErrorDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-ID", "reactive-request-1")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"invalid_checkpoint","message":"checkpoint rejected","fix":"start a fresh snapshot"}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(Config{APIBaseURL: server.URL, HTTPClient: server.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Subscription{c: client, logURL: server.URL + "/log", viewID: "view-1", generation: 3}
+	_, _, _, _, _, err = s.pollOnce(t.Context())
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("poll error = %T %v, want APIError", err, err)
+	}
+	if apiErr.Code != "invalid_checkpoint" || apiErr.Message != "checkpoint rejected" || apiErr.Fix != "start a fresh snapshot" || apiErr.RequestID != "reactive-request-1" {
+		t.Fatalf("poll API error = %+v", apiErr)
+	}
 }
 
 func TestPollRevalidatesImmutableOffsetButDropsNoStoreETag(t *testing.T) {
