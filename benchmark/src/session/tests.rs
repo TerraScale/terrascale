@@ -880,6 +880,10 @@ fn post_commit_frontier_retry_reuses_one_any_operation() {
     session.store(collection("users"), doc_id("u1"), text("v1")).expect("stages");
     session.arm_post_commit_frontier_fault();
     assert!(matches!(session.save_changes(), Err(SessionError::WriteFrontierUnavailable)));
+    assert!(matches!(
+        session.store(collection("users"), doc_id("u1"), text("v2")),
+        Err(SessionError::WriteFrontierUnavailable)
+    ));
 
     committed(session.save_changes().expect("resolves the published operation"));
     let scope = scope(&engine, "tenant-a");

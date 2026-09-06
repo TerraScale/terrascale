@@ -1350,9 +1350,8 @@ impl Drop for PeerInbox {
             // A replacement authenticated session may have published fresh
             // evidence before this stale inbox is dropped. Its cleanup must
             // not revoke that newer session's receipts.
-            let replacement_live = observations.iter().any(|((peer, _), facts)| {
-                peer == &self.peer && facts.connected
-            });
+            let replacement_live =
+                observations.iter().any(|((peer, _), facts)| peer == &self.peer && facts.connected);
             if !replacement_live {
                 self.progress.fence_peer(&self.peer);
                 for ((peer, _), facts) in observations.iter_mut() {

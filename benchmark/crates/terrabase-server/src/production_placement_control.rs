@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use terrabase_cluster::production::DatabaseRouteScope;
 use terrabase_tbep::grpc::PlacementDataControl;
-use terrabase_tbep::placement::transition::{TransitionReceiptSigner, VerifiedPreparedTransition};
+use terrabase_tbep::placement::transition::TransitionReceiptSigner;
 use terrabase_tbep::{placement::PlacementJournal, proto::terrabase::v1 as pb};
 
 use crate::admitted_databases::AdmittedDatabaseRegistry;
@@ -47,7 +47,12 @@ impl ProductionPlacementDataControl {
             .iter()
             .map(|(scope, frontier)| {
                 (
-                    scope.to_string(),
+                    format!(
+                        "{}/{}/{}",
+                        scope.tenant().to_text(),
+                        scope.project().to_text(),
+                        scope.database().to_text()
+                    ),
                     serde_json::json!({
                         "fence_sequence": frontier.fence_sequence.get(),
                         "origins": frontier.origins,
@@ -65,7 +70,15 @@ impl ProductionPlacementDataControl {
                     crate::replication_peers::RetiredPhysicalLane::Follower(_) => "follower",
                 });
                 (
-                    (peer.clone(), scope.to_string()),
+                    (
+                        peer.clone(),
+                        format!(
+                            "{}/{}/{}",
+                            scope.tenant().to_text(),
+                            scope.project().to_text(),
+                            scope.database().to_text()
+                        ),
+                    ),
                     serde_json::json!({
                         "physical": physical,
                         "causal": lane.causal_frontier,
@@ -138,7 +151,8 @@ impl PlacementDataControl for ProductionPlacementDataControl {
             .map_err(|_| terrabase_tbep::placement::PlacementError::Invalid)?;
         let observations = self
             .lifecycle
-            .observations()
+            .get()
+            .map(|data| data.observations())
             .ok_or(terrabase_tbep::placement::PlacementError::Conflict)?;
         let binding = replication_proof::ReadinessBinding {
             environment: self
@@ -152,7 +166,7 @@ impl PlacementDataControl for ProductionPlacementDataControl {
             key_version: database.record.key_version.clone(),
             operation_id: request.operation_id.clone(),
             member_identity: self.member_identity.clone(),
-            region: assignment.writer.region().as_str().to_owned(),
+            region: self.runtime.transport().config().local_region().as_str().to_owned(),
             membership_epoch: assignment.epoch,
             generation: assignment.generation,
             placement_digest: digest,

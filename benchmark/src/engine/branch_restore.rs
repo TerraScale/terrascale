@@ -17,12 +17,12 @@ impl Engine {
     /// Refuses foreign owners, plaintext sources, reused target operations,
     /// invalid history/schema transforms, or unavailable encryption keys.
     pub fn restore_encrypted_sqlite_branch(
-        source: &Path,
-        source_owner: &DatabaseOwner,
+        source: &Engine,
         config: &EngineConfig,
         operation: &OperationId,
     ) -> Result<StorageSequence, EngineOpenError> {
         config.validate_storage_keys()?;
+        let source_owner = source.database_owner();
         let child = config.owner.as_ref().ok_or(EngineOpenError::InvalidConfig)?;
         let keys = config.storage_keys.as_ref().ok_or(EngineOpenError::InvalidConfig)?;
         if child.database() == source_owner.database()
@@ -80,14 +80,26 @@ impl Engine {
                 crate::storage::OwnershipMode::Production,
             )
             .map_err(|_| EngineOpenError::FormatMismatch)?;
-            let registration = crate::storage::copy_encrypted_snapshot(
-                source,
+            let source_owner = source.database_owner();
+            let registration = source
+                .with_quiescent_wal(|source_location| {
+                    crate::storage::copy_encrypted_snapshot(
+                        source_location,
+                        &staging,
+                        source_owner,
+                        keys.clone(),
+                    )
+                })
+                .map_err(|_| EngineOpenError::StorageUnavailable)?
+                .map_err(|()| EngineOpenError::StorageUnavailable)?;
+            let cut = transform_snapshot(
+                source.location(),
                 &staging,
                 source_owner,
-                keys.clone(),
-            )
-            .map_err(|()| EngineOpenError::StorageUnavailable)?;
-            let cut = transform_snapshot(source, &staging, source_owner, child, config, &marker)?;
+                child,
+                config,
+                &marker,
+            )?;
             drop(registration);
             let mut staged = config.clone();
             staged.location.clone_from(&staging);
@@ -95,7 +107,16 @@ impl Engine {
             fs::File::open(&staging)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
-            fs::rename(&staging, target).map_err(|_| EngineOpenError::StorageUnavailable)?;
+            if fs::rename(&staging, target).is_err() {
+                // Another restore may have won the target rename while this
+                // source was quiesced. Re-read the durable marker to make an
+                // exact same-operation loser idempotent; a different marker
+                // remains a conflict.
+                if let Some(existing) = installed_cut(target, &marker) {
+                    return Ok(StorageSequence::new(existing));
+                }
+                return Err(EngineOpenError::StorageUnavailable);
+            }
             fs::File::open(parent)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|_| EngineOpenError::StorageUnavailable)?;
@@ -108,6 +129,28 @@ impl Engine {
         }
         result
     }
+}
+
+fn installed_cut(target: &Path, marker: &str) -> Option<u64> {
+    let connection = crate::storage::open_physical_sqlite(
+        &crate::storage::database_file(target),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .ok()?;
+    let found: String = connection
+        .query_row("SELECT value FROM meta WHERE key='branch_restore_operation'", [], |row| {
+            row.get(0)
+        })
+        .ok()?;
+    if found != marker {
+        return None;
+    }
+    let cut = connection
+        .query_row("SELECT value FROM meta WHERE key='branch_restore_cut'", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .ok()?;
+    u64::try_from(cut).ok()
 }
 
 fn transform_snapshot(

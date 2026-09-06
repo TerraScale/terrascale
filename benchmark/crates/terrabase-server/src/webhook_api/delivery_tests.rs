@@ -8,6 +8,7 @@ struct TestPorts {
     sent: AtomicU64,
     destruction_attempts: AtomicU64,
     destruction_unavailable: std::sync::atomic::AtomicBool,
+    destruction_not_found: std::sync::atomic::AtomicBool,
     provision_unavailable: std::sync::atomic::AtomicBool,
     creation_unavailable: std::sync::atomic::AtomicBool,
     provision_gate: std::sync::Mutex<Option<ProvisionGate>>,
@@ -116,6 +117,9 @@ impl WebhookSecrets for TestPorts {
     }
     fn destroy(&self, _: &TenantScope, _: &str, _: &str) -> Result<(), SecretError> {
         self.destruction_attempts.fetch_add(1, Ordering::SeqCst);
+        if self.destruction_not_found.load(Ordering::SeqCst) {
+            return Err(SecretError::NotFound);
+        }
         if self.destruction_unavailable.load(Ordering::SeqCst) {
             Err(SecretError::Unavailable)
         } else {
@@ -664,6 +668,48 @@ fn failed_cleanup_is_retried_from_deleted_tombstone_after_restart() {
     drop(reopened);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole reopened engine") };
     engine.shutdown().expect("shutdown reopened");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[tokio::test]
+async fn missing_tombstone_secret_does_not_block_live_endpoint_progress() {
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-missing-secret-{}", terrabase::identity::generate()));
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("engine"),
+    );
+    let owner = engine.database_owner();
+    let scope = TenantScope::new(
+        owner.tenant().to_text(),
+        owner.project().to_text(),
+        owner.database().to_text(),
+    )
+    .expect("scope");
+    let ports = Arc::new(TestPorts::default());
+    let service = service(&engine, &ports);
+    ports.creation_unavailable.store(true, Ordering::SeqCst);
+    ports.destruction_not_found.store(true, Ordering::SeqCst);
+    assert!(
+        service
+            .create_with_secret(
+                &scope,
+                &CreateWebhook { endpoint: "https://hooks.example/missing".into() },
+                None,
+            )
+            .is_err()
+    );
+    let storage = EngineWebhookStorage::new(Arc::clone(&engine));
+    let live =
+        storage.create_endpoint(&scope, "https://hooks.example/live", 0).expect("live endpoint");
+    let report = service.dispatch(&scope, None).await.expect("live progress");
+    assert_eq!(report.attempted, 1);
+    assert_eq!(ports.destruction_attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(storage.endpoint(&scope, &live.id).expect("live lookup"), Some(live));
+    drop(service);
+    drop(storage);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
+    engine.shutdown().expect("shutdown");
     std::fs::remove_dir_all(root).expect("cleanup");
 }
 

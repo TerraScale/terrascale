@@ -64,24 +64,12 @@ pub fn unavailable(operation_id: &str) -> pb::LifecycleControlResponse {
     }
 }
 
-/// Validates a reactivation target before restore admission.
+/// Validates a same-database reactivation request before admission.
 pub fn validate_reactivate(
     request: &pb::LifecycleReactivateRequest,
-) -> Result<(&str, &str), LifecycleError> {
-    let Some(source) = request.source.as_ref() else { return Err(LifecycleError::Invalid) };
-    let Some(target) = request.target.as_ref() else { return Err(LifecycleError::Invalid) };
-    let source_operation = validate_request(source)?;
-    validate_context(target.context.as_ref())?;
-    if target.target_incarnation.is_empty()
-        || target.target_incarnation.len() > 255
-        || target.operation_id.is_empty()
-        || target.operation_id.len() > 128
-        || target.context.as_ref().map(|context| context.database.as_str())
-            != source.context.as_ref().map(|context| context.database.as_str())
-    {
-        return Err(LifecycleError::Invalid);
-    }
-    Ok((source_operation, &target.operation_id))
+) -> Result<&str, LifecycleError> {
+    let Some(inner) = request.request.as_ref() else { return Err(LifecycleError::Invalid) };
+    validate_request(inner)
 }
 
 #[cfg(test)]

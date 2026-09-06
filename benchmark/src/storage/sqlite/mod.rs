@@ -115,6 +115,8 @@ mod storage_closure;
 mod storage_intervals;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod sql_readonly_tests;
 pub(crate) mod usage_seal;
 mod webhook_metadata;
 mod write_usage;
@@ -4169,6 +4171,29 @@ fn open_connection(
     Ok(connection)
 }
 
+/// Opens an existing database for a read-only operation.
+///
+/// Unlike the writer opener, this must not run `journal_mode` or any schema
+/// setup: those pragmas can create or alter durable SQLite sidecars. Temporary
+/// views remain available because they live in SQLite's connection-local temp
+/// schema.
+fn open_read_connection(
+    path: &Path,
+    expected_binding: &str,
+    encryption: Option<&encrypted_vfs::EncryptedVfs>,
+) -> Result<Connection, StorageOpenError> {
+    let connection = raw_connection(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        encryption,
+    )?;
+    if validate_database_binding(&connection, expected_binding)? {
+        return Err(StorageOpenError::Unavailable);
+    }
+    configure_read_connection(&connection)?;
+    Ok(connection)
+}
+
 /// Applies the production pairing to one connection: WAL, 60s busy timeout,
 /// foreign keys, `synchronous=FULL`, and the per-file resource budget.
 fn configure_connection(connection: &Connection) -> Result<(), StorageOpenError> {
@@ -4189,6 +4214,17 @@ fn configure_connection(connection: &Connection) -> Result<(), StorageOpenError>
     );
     connection.execute_batch(&pragmas).map_err(|_| StorageOpenError::Unavailable)?;
     Ok(())
+}
+
+/// Applies only connection-local settings to a read-only handle.
+fn configure_read_connection(connection: &Connection) -> Result<(), StorageOpenError> {
+    connection.busy_timeout(BUSY_TIMEOUT).map_err(|_| StorageOpenError::Unavailable)?;
+    let pragmas = format!(
+        "PRAGMA foreign_keys = ON; PRAGMA temp_store = MEMORY; PRAGMA cache_size = -{}; PRAGMA mmap_size = {};",
+        cache_kib(),
+        mmap_bytes(),
+    );
+    connection.execute_batch(&pragmas).map_err(|_| StorageOpenError::Unavailable)
 }
 
 /// The reserved family collection, spelled as `spec.rs` spells it: family
@@ -4558,8 +4594,12 @@ impl StoragePort for SqliteStorage {
         // A dedicated read handle inherits the already-opened, ownership-
         // validated database path. SQLite WAL gives it a coherent snapshot;
         // the query layer additionally pins the requested Engine sequence.
-        open_connection(&self.database_path, &self.expected_binding, self.encryption.as_deref())
-            .map_err(|_| ())
+        open_read_connection(
+            &self.database_path,
+            &self.expected_binding,
+            self.encryption.as_deref(),
+        )
+        .map_err(|_| ())
     }
 
     fn origin_epoch(&self) -> Result<(u64, bool), ()> {

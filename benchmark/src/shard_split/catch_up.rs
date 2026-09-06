@@ -136,7 +136,9 @@ impl JournalCatchUp {
         lower: Option<Vec<u8>>,
         upper: Vec<u8>,
     ) -> Result<Self, CatchUpError> {
-        if upper.is_empty() || lower.as_deref().is_some_and(|lower| lower.is_empty() || lower >= upper.as_slice()) {
+        if upper.is_empty()
+            || lower.as_deref().is_some_and(|lower| lower.is_empty() || lower >= upper.as_slice())
+        {
             return Err(CatchUpError::EmptyKey);
         }
         Ok(Self { applied_through, lower, upper: Some(upper) })

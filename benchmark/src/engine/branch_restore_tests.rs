@@ -94,21 +94,10 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
         .with_owner(child_owner.clone())
         .with_storage_keys(child_keys);
     let operation = OperationId::try_new("restore-branch").unwrap();
-    let cut = Engine::restore_encrypted_sqlite_branch(
-        &source_path,
-        &source_owner,
-        &child_config,
-        &operation,
-    )
-    .unwrap();
+    let cut = Engine::restore_encrypted_sqlite_branch(&source, &child_config, &operation).unwrap();
     assert!(cut.get() > 0);
-    let retry = Engine::restore_encrypted_sqlite_branch(
-        &source_path,
-        &source_owner,
-        &child_config,
-        &operation,
-    )
-    .unwrap();
+    let retry =
+        Engine::restore_encrypted_sqlite_branch(&source, &child_config, &operation).unwrap();
     assert_eq!(retry, cut);
     let child = Engine::open(child_config).unwrap();
     assert_eq!(child.database_id(), child_owner.database());
@@ -127,21 +116,12 @@ fn encrypted_branch_restore_rebinds_owner_and_replays_idempotently() {
         .with_owner(grandchild_owner.clone())
         .with_storage_keys(test_storage_keys(&grandchild_owner, 143));
     let grandchild_operation = OperationId::try_new("restore-grandchild").unwrap();
-    let grandchild_cut = Engine::restore_encrypted_sqlite_branch(
-        &target_path,
-        &child_owner,
-        &grandchild_config,
-        &grandchild_operation,
-    )
-    .unwrap();
+    let grandchild_cut =
+        Engine::restore_encrypted_sqlite_branch(&child, &grandchild_config, &grandchild_operation)
+            .unwrap();
     assert_eq!(
-        Engine::restore_encrypted_sqlite_branch(
-            &target_path,
-            &child_owner,
-            &grandchild_config,
-            &grandchild_operation,
-        )
-        .unwrap(),
+        Engine::restore_encrypted_sqlite_branch(&child, &grandchild_config, &grandchild_operation,)
+            .unwrap(),
         grandchild_cut
     );
     let grandchild = Engine::open(grandchild_config).unwrap();
@@ -173,15 +153,7 @@ fn encrypted_branch_restore_rejects_plaintext_source() {
         .unwrap()
         .with_owner(child_owner.clone())
         .with_storage_keys(test_storage_keys(&child_owner, 143));
-    assert!(
-        Engine::restore_encrypted_sqlite_branch(
-            &source,
-            &source_owner,
-            &config,
-            &OperationId::try_new("plain-branch").unwrap(),
-        )
-        .is_err()
-    );
+    assert!(Engine::open(config).is_err());
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -190,6 +162,14 @@ fn encrypted_branch_rejects_wrong_owner_keys_before_reading_source() {
     let root = std::env::temp_dir()
         .join(format!("terrabase-branch-key-scope-{}", crate::identity::generate()));
     let source_owner = crate::storage::DatabaseOwner::local_development();
+    let source_path = root.join("source");
+    let source = Engine::open(
+        EngineConfig::durable(&source_path)
+            .unwrap()
+            .with_owner(source_owner.clone())
+            .with_storage_keys(test_storage_keys(&source_owner, 145)),
+    )
+    .unwrap();
     let child_owner = crate::storage::DatabaseOwner::new(
         source_owner.environment().clone(),
         source_owner.tenant(),
@@ -204,8 +184,7 @@ fn encrypted_branch_rejects_wrong_owner_keys_before_reading_source() {
         .with_storage_keys(test_storage_keys(&source_owner, 144));
     assert!(matches!(
         Engine::restore_encrypted_sqlite_branch(
-            &root.join("absent-source"),
-            &source_owner,
+            &source,
             &config,
             &OperationId::try_new("wrong-key").unwrap(),
         ),
@@ -213,5 +192,6 @@ fn encrypted_branch_rejects_wrong_owner_keys_before_reading_source() {
     ));
     assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
     assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    drop(source);
     std::fs::remove_dir_all(root).unwrap();
 }

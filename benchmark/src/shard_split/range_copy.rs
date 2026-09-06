@@ -51,7 +51,9 @@ pub struct CopyCheckpoint {
 impl CopyCheckpoint {
     /// Returns the lower-inclusive bound, when the range is bounded below.
     #[must_use]
-    pub fn lower(&self) -> Option<&[u8]> { self.lower.as_deref() }
+    pub fn lower(&self) -> Option<&[u8]> {
+        self.lower.as_deref()
+    }
     /// Returns the upper-exclusive bound.
     #[must_use]
     pub fn upper(&self) -> &[u8] {
@@ -182,7 +184,9 @@ impl RangeCopier {
     ///
     /// Returns [`CopyError::EmptyKey`] when `upper` is empty.
     pub fn new(lower: Option<Vec<u8>>, upper: Vec<u8>) -> Result<Self, CopyError> {
-        if upper.is_empty() || lower.as_deref().is_some_and(|lower| lower.is_empty() || lower >= upper.as_slice()) {
+        if upper.is_empty()
+            || lower.as_deref().is_some_and(|lower| lower.is_empty() || lower >= upper.as_slice())
+        {
             return Err(CopyError::EmptyKey);
         }
         Ok(Self { lower, upper, after_key: None, through: 0, copied: 0, done: false })
@@ -191,7 +195,10 @@ impl RangeCopier {
     /// Resumes from a previously durable cursor.
     pub fn resume(checkpoint: CopyCheckpoint) -> Result<Self, CopyError> {
         if checkpoint.upper.is_empty()
-            || checkpoint.lower.as_deref().is_some_and(|lower| lower.is_empty() || lower >= checkpoint.upper.as_slice())
+            || checkpoint
+                .lower
+                .as_deref()
+                .is_some_and(|lower| lower.is_empty() || lower >= checkpoint.upper.as_slice())
             || checkpoint
                 .after_key
                 .as_deref()
@@ -217,7 +224,9 @@ impl RangeCopier {
 
     /// Returns the lower-inclusive bound, when the range is bounded below.
     #[must_use]
-    pub fn lower(&self) -> Option<&[u8]> { self.lower.as_deref() }
+    pub fn lower(&self) -> Option<&[u8]> {
+        self.lower.as_deref()
+    }
 
     /// Returns the last durable source checkpoint.
     #[must_use]

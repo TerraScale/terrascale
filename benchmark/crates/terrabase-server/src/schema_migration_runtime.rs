@@ -236,6 +236,15 @@ fn advance(engine: &terrabase::Engine, record: &mut DurableSchemaRecord) -> Resu
 fn drive_database(state: &ApiState, database: &str, after: Option<&str>) -> Option<String> {
     let host = document_host(state, database).ok()?;
     let engine = host.engine();
+    // Index descriptor backfills and lifecycle maintenance share this fair
+    // database pass.  Run before reading schema metadata so a database with
+    // no pending schema operation still makes progress.  Both Engine calls
+    // are bounded; failures are surfaced to the member log and the database
+    // remains eligible on the next tick rather than being silently dropped.
+    if let Err(error) = engine.maintain_index_backfills() {
+        eprintln!("index backfill maintenance failed for database {database}: {error:?}");
+    }
+    engine.maintain_indexes();
     let rows = engine.schema_metadata_list(database, "main", after, 1).ok()?;
     let (collection, expected) = rows.into_iter().next()?;
     let Ok(mut record) = serde_json::from_slice::<DurableSchemaRecord>(&expected) else {
@@ -439,3 +448,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "schema_migration_runtime_index_tests.rs"]
+mod runtime_index_tests;

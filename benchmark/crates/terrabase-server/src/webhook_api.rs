@@ -1709,11 +1709,13 @@ impl WebhookService {
         // temporarily unavailable. Retry destruction from the durable worker
         // so a failed create/delete cannot strand encrypted material after a
         // process restart.
+        let mut cleanup_error = None;
         for endpoint in self.storage.list_endpoints(scope, true).map_err(WebhookError::storage)? {
             if endpoint.deleted {
-                self.secrets
-                    .destroy(scope, &endpoint.id, &self.region)
-                    .map_err(WebhookError::secret)?;
+                match self.secrets.destroy(scope, &endpoint.id, &self.region) {
+                    Ok(()) | Err(SecretError::NotFound) => {}
+                    Err(error) => cleanup_error = Some(WebhookError::secret(error)),
+                }
             }
         }
         let page =
@@ -1755,6 +1757,9 @@ impl WebhookService {
                     report.attempted = report.attempted.saturating_add(1);
                 }
             }
+        }
+        if let Some(error) = cleanup_error {
+            return Err(error);
         }
         report.cursor = page.next.or(cursor);
         report.publications = publications.len();
@@ -2793,3 +2798,7 @@ fn assert_internal_state_is_not_published(engine: &Engine, scope: &TenantScope) 
 
 #[cfg(test)]
 mod delivery_tests;
+
+#[cfg(test)]
+#[path = "webhook_api/boundary_tests.rs"]
+mod boundary_tests;

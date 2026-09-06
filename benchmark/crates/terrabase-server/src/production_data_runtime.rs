@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use terrabase::backup::worker::FleetLimits;
 use terrabase::encryption::{
     DatabaseKeySource, DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata,
     OciVaultDatabaseKeys, OciVaultKeyDelivery,
@@ -174,9 +175,9 @@ impl ProductionDataLifecycle {
     /// Reports whether the live worker and progress ledger can persist a drain frontier.
     #[must_use]
     pub fn frontiers_persistable(&self) -> bool {
-        self.data.get().is_some_and(|data| {
-            data.ensure_running().is_ok() && self.progress.boundaries().is_ok()
-        })
+        self.data
+            .get()
+            .is_some_and(|data| data.ensure_running().is_ok() && self.progress.boundaries().is_ok())
     }
 
     fn record_inventory(
@@ -685,6 +686,93 @@ impl ProductionAdmissionRuntime {
     #[must_use]
     pub fn journal(&self) -> Arc<terrabase_tbep::placement::PlacementJournal> {
         self.journal.clone()
+    }
+
+    /// Composes native backup streams from the retained serving hosts.
+    ///
+    /// Every input is resolved from the admitted registry and the effective
+    /// per-database policy; no engine or destination is opened by location.
+    pub fn compose_native_backup(
+        &self,
+        limits: FleetLimits,
+    ) -> Result<crate::native_backup_runtime::NativeBackupRuntime, String> {
+        use crate::native_backup_runtime::{AdmittedBackupEngine, NativeBackupInput};
+        use terrabase::backup::{PlacementLock, worker::OciBackupKeys};
+        use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
+        let key_config = self.config.keys.as_ref().ok_or("production key delivery missing")?;
+        let provider = OciVaultKeyDelivery::new(
+            key_config.socket.clone(),
+            key_config.orchestrator_uid,
+            key_config.socket_gid,
+        )
+        .map_err(failure)?;
+        let snapshots = self.registry.retained_snapshot()?;
+        let records = self.admitted_records()?;
+        let mut inputs = Vec::new();
+        for snapshot in snapshots.into_iter().filter(|snapshot| snapshot.activated) {
+            let record = records
+                .iter()
+                .find(|record| record.database_id == snapshot.database.record.database_id)
+                .ok_or("admitted backup record unavailable")?;
+            let policy = self
+                .config
+                .databases
+                .iter()
+                .find(|database| database.database.to_text() == record.database_id)
+                .and_then(|database| database.backup.as_ref())
+                .ok_or("native backup policy missing")?;
+            let scope = KeyScope::new_with_project(
+                &record.environment,
+                terrabase::identity::TenantUlid::from_text(&record.tenant_id).map_err(failure)?,
+                terrabase::identity::ProjectUlid::from_text(&record.project_id).map_err(failure)?,
+                terrabase::identity::DatabaseUlid::from_text(&record.database_id)
+                    .map_err(failure)?,
+                KeyPurpose::Backup,
+            )
+            .map_err(failure)?;
+            let version = DatabaseKeyVersion::from_text(&record.key_version).map_err(failure)?;
+            let source = OciVaultDatabaseKeys::new(
+                provider.clone(),
+                KeyVersionMetadata::new(scope, version),
+                record.region.parse().map_err(|_| "invalid admitted Region")?,
+            )
+            .map_err(failure)?;
+            let destinations = crate::production_backup::destinations_from_config(
+                &policy.destinations,
+                record.region.parse().map_err(|_| "invalid admitted Region")?,
+            )
+            .map_err(|_| "native backup destination unavailable")?;
+            let placement = PlacementLock::explicit(
+                record
+                    .regions
+                    .iter()
+                    .map(|region| region.parse())
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|_| "invalid admitted placement")?,
+            )
+            .map_err(|_| "invalid admitted placement")?;
+            inputs.push(NativeBackupInput {
+                engine: Arc::new(AdmittedBackupEngine::new(snapshot.database.host.clone())),
+                keys: Arc::new(
+                    OciBackupKeys::new(Arc::new(source))
+                        .map_err(|_| "backup key authorization unavailable")?,
+                ),
+                destinations,
+                policy_revision: policy.policy_revision.clone(),
+                retention_days: policy.retention_days,
+                staging: self
+                    .config
+                    .databases
+                    .iter()
+                    .find(|database| database.database.to_text() == record.database_id)
+                    .ok_or("configured database unavailable")?
+                    .backup_root
+                    .clone(),
+                placement,
+            });
+        }
+        crate::production_backup::compose_native_backup(limits, inputs)
+            .map_err(|error| error.to_string())
     }
 
     /// Reconciles retained acceptance and starts the actual role-specific workers.

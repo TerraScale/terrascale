@@ -72,12 +72,10 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
     ) -> Result<Response<pb::LifecycleControlResponse>, Status> {
         self.authenticate_lifecycle(&request)?;
         let request = request.into_inner();
-        lifecycle::validate_reactivate(&request).map_err(|_| {
+        let operation = lifecycle::validate_reactivate(&request).map_err(|_| {
             Status::new(Code::InvalidArgument, "lifecycle restore target is invalid")
         })?;
-        Ok(Response::new(lifecycle::unavailable(
-            request.target.as_ref().map_or("", |target| target.operation_id.as_str()),
-        )))
+        Ok(Response::new(lifecycle::unavailable(operation)))
     }
 
     async fn delete_owned_data(

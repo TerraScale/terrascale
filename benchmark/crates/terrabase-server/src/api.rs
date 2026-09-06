@@ -57,6 +57,8 @@ use crate::api_keys::Verbs;
 mod development;
 #[path = "api_exports.rs"]
 mod exports;
+#[path = "api_lifecycle.rs"]
+mod lifecycle;
 
 pub use development::DevelopmentRuntime;
 pub use webhooks::DispatchWorker;
@@ -604,6 +606,7 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(list_databases, create_database))
         .routes(routes!(get_provisioning_operation))
         .routes(routes!(get_database, delete_database))
+        .routes(routes!(lifecycle::deletion_status))
         .routes(routes!(restore_database))
         .routes(routes!(list_collections))
         .routes(routes!(schema::get_schema, schema::put_schema))
@@ -1348,6 +1351,7 @@ async fn authenticate(
             request.uri(),
             &state.origin_proof_keys,
             unix_seconds(),
+            state.region,
         )
     {
         request.extensions_mut().insert(crate::reactive_api::OriginProofVerified);
@@ -6204,6 +6208,40 @@ mod tests {
                 .expect("answers");
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
         }
+    }
+
+    #[tokio::test]
+    async fn deletion_status_location_is_mounted_and_reaches_authority_guard() {
+        use axum::body::Body;
+        use axum::http::Request;
+        let auth = "authorization";
+        let key = "Bearer tskey_test_abcdefghijklmnop";
+        let router = router(state_with_keys_and_control());
+        let response = router
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header(auth, key)
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        // The route emitted by DELETE is mounted even when this test fixture
+        // has no provisioning authority; a mounted handler returns the typed
+        // dependency error instead of the fallback 404.
+        let response = router
+            .oneshot(
+                Request::get("/api/v1/databases/prod/deletions/delete-1")
+                    .header(auth, key)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("answers");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[tokio::test]

@@ -196,14 +196,14 @@ mod tests {
     /// An empty split key is refused: a range must name a real bound.
     #[test]
     fn empty_split_key_is_refused() {
-        assert_eq!(ShardSplit::plan(Vec::new()), Err(SplitPlanError::EmptySplitKey));
+        assert_eq!(ShardSplit::plan(None, Vec::new()), Err(SplitPlanError::EmptySplitKey));
     }
 
     /// Cutover refuses while the shard trails an acknowledged write, then
     /// succeeds once the tail drains — zero acknowledged-write loss.
     #[test]
     fn cutover_gate_holds_until_acked_writes_are_applied() {
-        let mut split = ShardSplit::plan(b"m".to_vec()).expect("split key");
+        let mut split = ShardSplit::plan(None, b"m".to_vec()).expect("split key");
         split.begin_backfill().expect("backfill");
         split.begin_catch_up(100).expect("catch-up");
         split.note_source_high_water(120);
@@ -225,7 +225,7 @@ mod tests {
     /// Cutover before catch-up, and abort after cutover, both fail closed.
     #[test]
     fn phase_violations_fail_closed() {
-        let mut split = ShardSplit::plan(b"m".to_vec()).expect("split key");
+        let mut split = ShardSplit::plan(None, b"m".to_vec()).expect("split key");
         assert_eq!(split.cut_over(), Err(SplitCutoverError::WrongPhase(SplitPhase::Planned)));
         split.begin_backfill().expect("backfill");
         split.begin_catch_up(0).expect("catch-up");
@@ -236,7 +236,7 @@ mod tests {
     /// Abort before cutover is legal and routing never moved.
     #[test]
     fn abort_before_cutover_is_legal() {
-        let mut split = ShardSplit::plan(b"m".to_vec()).expect("split key");
+        let mut split = ShardSplit::plan(None, b"m".to_vec()).expect("split key");
         split.abort().expect("abort while planned");
         assert_eq!(split.phase(), SplitPhase::Aborted);
     }
@@ -244,7 +244,7 @@ mod tests {
     /// Durable state round-trips without losing the cutover gate facts.
     #[test]
     fn durable_state_round_trips() {
-        let mut split = ShardSplit::plan(b"m".to_vec()).expect("split key");
+        let mut split = ShardSplit::plan(None, b"m".to_vec()).expect("split key");
         split.begin_backfill().expect("backfill");
         split.begin_catch_up(7).expect("catch-up");
         split.note_source_high_water(9);
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn split_context_round_trips_durably() {
         let context = SplitContext::new(7, 9, 1, 2, 11, 13);
-        let split = ShardSplit::plan_with_context(b"m".to_vec(), context).expect("plan");
+        let split = ShardSplit::plan_with_context(None, b"m".to_vec(), context).expect("plan");
         let restored = ShardSplit::from_durable_state(
             DurableSplitState::decode(&split.durable_state().encode()).expect("decode"),
         )

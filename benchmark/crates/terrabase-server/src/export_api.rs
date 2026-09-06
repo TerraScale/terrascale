@@ -245,8 +245,12 @@ pub enum ExportRecord {
         collection: String,
         /// Document identity.
         id: String,
+        /// Publication operation identifier.
+        operation_id: String,
         /// Revision identity.
         revision: u64,
+        /// Durability achieved by the publication.
+        durability: terrabase::LocalDurability,
         /// Whether this revision is a delete.
         deleted: bool,
         /// Canonical JSON bytes when the revision was a put.
@@ -1366,9 +1370,17 @@ fn encode_page(records: &[ExportRecord]) -> Result<(Vec<u8>, Vec<u8>), ExportErr
                         "document exceeds page bound",
                     )));
                 }
-                append_json_line(&mut documents, collection, id, *version, canonical_json, None)?;
+                append_json_line(&mut documents, collection, id, *version, canonical_json, None, None)?;
             }
-            ExportRecord::History { collection, id, revision, deleted, canonical_json } => {
+            ExportRecord::History {
+                collection,
+                id,
+                operation_id,
+                revision,
+                durability,
+                deleted,
+                canonical_json,
+            } => {
                 if canonical_json.as_ref().is_some_and(|bytes| bytes.len() > MAX_PAGE_BYTES) {
                     return Err(ExportError::Source(ExportSourceError::InvalidPage(
                         "history value exceeds page bound",
@@ -1381,6 +1393,7 @@ fn encode_page(records: &[ExportRecord]) -> Result<(Vec<u8>, Vec<u8>), ExportErr
                     *revision,
                     canonical_json.as_deref().unwrap_or(b"null"),
                     Some(*deleted),
+                    Some((operation_id, *durability)),
                 )?;
             }
         }
@@ -1400,6 +1413,7 @@ fn append_json_line(
     version: u64,
     value: &[u8],
     deleted: Option<bool>,
+    history: Option<(&str, terrabase::LocalDurability)>,
 ) -> Result<(), ExportError> {
     let mut line = String::new();
     line.push_str("{\"collection\":");
@@ -1411,6 +1425,12 @@ fn append_json_line(
     if let Some(deleted) = deleted {
         line.push_str(",\"deleted\":");
         line.push_str(if deleted { "true" } else { "false" });
+    }
+    if let Some((operation_id, durability)) = history {
+        line.push_str(",\"operation_id\":");
+        append_json_string(&mut line, operation_id)?;
+        line.push_str(",\"durability\":");
+        append_json_string(&mut line, durability_name(durability))?;
     }
     line.push_str(",\"value\":");
     if value.is_empty() {
@@ -1424,6 +1444,14 @@ fn append_json_line(
     line.push_str("}\n");
     output.extend_from_slice(line.as_bytes());
     Ok(())
+}
+
+fn durability_name(durability: terrabase::LocalDurability) -> &'static str {
+    match durability {
+        terrabase::LocalDurability::Buffered => "buffered",
+        terrabase::LocalDurability::Written => "written",
+        terrabase::LocalDurability::Synced => "synced",
+    }
 }
 
 fn append_json_string(out: &mut String, value: &str) -> Result<(), ExportError> {
@@ -2571,6 +2599,36 @@ mod tests {
         assert_eq!(
             std::str::from_utf8(&documents).expect("utf8"),
             "{\"collection\":\"a\\\"b\",\"id\":\"1\",\"version\":3,\"value\":{\"x\":true}}\n"
+        );
+    }
+
+    #[test]
+    fn jsonl_history_retains_operation_and_durability_provenance() {
+        let (documents, history) = encode_page(&[
+            ExportRecord::History {
+                collection: "orders".into(),
+                id: "one".into(),
+                operation_id: "write-42".into(),
+                revision: 7,
+                durability: terrabase::LocalDurability::Written,
+                deleted: false,
+                canonical_json: Some(br#"{"total":3}"#.to_vec()),
+            },
+            ExportRecord::History {
+                collection: "orders".into(),
+                id: "one".into(),
+                operation_id: "delete-43".into(),
+                revision: 8,
+                durability: terrabase::LocalDurability::Synced,
+                deleted: true,
+                canonical_json: None,
+            },
+        ])
+        .expect("jsonl");
+        assert!(documents.is_empty());
+        assert_eq!(
+            std::str::from_utf8(&history).expect("utf8"),
+            "{\"collection\":\"orders\",\"id\":\"one\",\"version\":7,\"deleted\":false,\"operation_id\":\"write-42\",\"durability\":\"written\",\"value\":{\"total\":3}}\n{\"collection\":\"orders\",\"id\":\"one\",\"version\":8,\"deleted\":true,\"operation_id\":\"delete-43\",\"durability\":\"synced\",\"value\":null}\n"
         );
     }
 

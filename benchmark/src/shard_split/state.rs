@@ -3,8 +3,7 @@
 use super::SplitPhase;
 
 /// Version of the durable split record encoding.
-pub const SPLIT_STATE_VERSION: u8 = 2;
-const LEGACY_SPLIT_STATE_VERSION: u8 = 1;
+pub const SPLIT_STATE_VERSION: u8 = 3;
 
 /// Identity and placement facts that must travel with a split.
 ///
@@ -85,6 +84,7 @@ impl SplitContext {
 /// A storage-neutral, restart-safe snapshot of a split lifecycle.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DurableSplitState {
+    lower: Option<Vec<u8>>,
     split_key: Vec<u8>,
     source_high_water: u64,
     target_applied_through: u64,
@@ -94,9 +94,10 @@ pub struct DurableSplitState {
 }
 
 impl DurableSplitState {
-    /// Creates a state snapshot. The split key must be non-empty.
+    /// Creates a state snapshot with a lower-inclusive and upper-exclusive range.
     #[must_use]
     pub fn new(
+        lower: Option<Vec<u8>>,
         split_key: Vec<u8>,
         source_high_water: u64,
         target_applied_through: u64,
@@ -104,6 +105,7 @@ impl DurableSplitState {
         phase: SplitPhase,
     ) -> Self {
         Self {
+            lower,
             split_key,
             source_high_water,
             target_applied_through,
@@ -130,6 +132,11 @@ impl DurableSplitState {
     #[must_use]
     pub fn split_key(&self) -> &[u8] {
         &self.split_key
+    }
+
+    #[must_use]
+    pub fn lower(&self) -> Option<&[u8]> {
+        self.lower.as_deref()
     }
 
     /// Returns the source journal high-water mark.
@@ -160,11 +167,15 @@ impl DurableSplitState {
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let key_len = u32::try_from(self.split_key.len()).unwrap_or(u32::MAX);
-        let context_len = self.context.map_or(0, |_| 1 + 16 + 16 + 8 + 8 + 8 + 8);
-        let version =
-            if self.context.is_some() { SPLIT_STATE_VERSION } else { LEGACY_SPLIT_STATE_VERSION };
-        let mut bytes = Vec::with_capacity(1 + 4 + self.split_key.len() + 25 + context_len);
-        bytes.push(version);
+        let lower_len = self.lower.as_ref().map_or(0, Vec::len);
+        let context_len = 1 + self.context.map_or(0, |_| 16 + 16 + 8 + 8 + 8 + 8);
+        let mut bytes =
+            Vec::with_capacity(1 + 8 + lower_len + self.split_key.len() + 25 + context_len);
+        bytes.push(SPLIT_STATE_VERSION);
+        bytes.extend_from_slice(&u32::try_from(lower_len).unwrap_or(u32::MAX).to_be_bytes());
+        if let Some(lower) = &self.lower {
+            bytes.extend_from_slice(lower);
+        }
         bytes.extend_from_slice(&key_len.to_be_bytes());
         bytes.extend_from_slice(&self.split_key);
         bytes.extend_from_slice(&self.source_high_water.to_be_bytes());
@@ -179,6 +190,8 @@ impl DurableSplitState {
             bytes.extend_from_slice(&context.target_shard.to_be_bytes());
             bytes.extend_from_slice(&context.placement_epoch.to_be_bytes());
             bytes.extend_from_slice(&context.session_frontier.to_be_bytes());
+        } else {
+            bytes.push(0);
         }
         bytes
     }
@@ -197,33 +210,47 @@ impl DurableSplitState {
     /// for any input that reaches them.
     pub fn decode(bytes: &[u8]) -> Result<Self, SplitStateError> {
         let version = bytes.first().copied();
-        if !matches!(version, Some(value) if value == LEGACY_SPLIT_STATE_VERSION || value == SPLIT_STATE_VERSION)
-        {
+        if version != Some(SPLIT_STATE_VERSION) {
             return Err(SplitStateError::UnsupportedVersion(version));
         }
         if bytes.len() < 5 {
             return Err(SplitStateError::Truncated);
         }
-        let key_len = u32::from_be_bytes(bytes[1..5].try_into().expect("length checked")) as usize;
+        let lower_len =
+            u32::from_be_bytes(bytes[1..5].try_into().expect("length checked")) as usize;
+        let upper_len_start = 5usize.checked_add(lower_len).ok_or(SplitStateError::Malformed)?;
+        let upper_len_end = upper_len_start.checked_add(4).ok_or(SplitStateError::Malformed)?;
+        let key_len = u32::from_be_bytes(
+            bytes
+                .get(upper_len_start..upper_len_end)
+                .ok_or(SplitStateError::Truncated)?
+                .try_into()
+                .expect("length checked"),
+        ) as usize;
         // Trailing fixed fields: source (8) + target (8) + acked (8) + phase (1) = 25.
         // The 4-byte key-len prefix lives in bytes[1..5], so it must not be
         // counted again here.
         let tail = 8 + 8 + 8 + 1;
         debug_assert_eq!(tail, 25);
-        let end = 5usize.checked_add(key_len).ok_or(SplitStateError::Malformed)?;
-        let expected_len =
-            end.saturating_add(tail).saturating_add(if version == Some(SPLIT_STATE_VERSION) {
-                1 + 16 + 16 + 8 + 8 + 8 + 8
-            } else {
-                0
-            });
+        let end = upper_len_end.checked_add(key_len).ok_or(SplitStateError::Malformed)?;
+        let context_start = end + tail;
+        let marker = *bytes.get(context_start).ok_or(SplitStateError::Truncated)?;
+        if marker > 1 {
+            return Err(SplitStateError::Malformed);
+        }
+        let expected_len = end.saturating_add(tail).saturating_add(if marker == 1 {
+            1 + 16 + 16 + 8 + 8 + 8 + 8
+        } else {
+            1
+        });
         if bytes.len() != expected_len {
             return Err(SplitStateError::Malformed);
         }
         if key_len == 0 {
             return Err(SplitStateError::EmptySplitKey);
         }
-        let key = bytes[5..end].to_vec();
+        let lower = (lower_len > 0).then(|| bytes[5..upper_len_start].to_vec());
+        let key = bytes[upper_len_end..end].to_vec();
         let source = u64::from_be_bytes(bytes[end..end + 8].try_into().expect("length checked"));
         let target =
             u64::from_be_bytes(bytes[end + 8..end + 16].try_into().expect("length checked"));
@@ -238,10 +265,9 @@ impl DurableSplitState {
             5 => SplitPhase::Aborted,
             other => return Err(SplitStateError::UnknownPhase(other)),
         };
-        let mut state = Self::new(key, source, target, acked, phase);
-        if version == Some(SPLIT_STATE_VERSION) {
+        let mut state = Self::new(lower, key, source, target, acked, phase);
+        if marker == 1 {
             let context_start = end + tail;
-            let marker = *bytes.get(context_start).ok_or(SplitStateError::Truncated)?;
             if marker != 1 {
                 return Err(SplitStateError::Malformed);
             }

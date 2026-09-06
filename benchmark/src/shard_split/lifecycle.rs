@@ -49,6 +49,7 @@ pub enum SplitCutoverError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShardSplit {
     split_key: Vec<u8>,
+    lower: Option<Vec<u8>>,
     source_high_water: u64,
     target_applied_through: u64,
     acked_through: u64,
@@ -58,12 +59,17 @@ pub struct ShardSplit {
 
 impl ShardSplit {
     /// Plans a split moving keys below the upper-exclusive `split_key`.
-    pub fn plan(split_key: Vec<u8>) -> Result<Self, SplitPlanError> {
-        if split_key.is_empty() {
+    pub fn plan(lower: Option<Vec<u8>>, split_key: Vec<u8>) -> Result<Self, SplitPlanError> {
+        if split_key.is_empty()
+            || lower
+                .as_deref()
+                .is_some_and(|value| value.is_empty() || value >= split_key.as_slice())
+        {
             return Err(SplitPlanError::EmptySplitKey);
         }
         Ok(Self {
             split_key,
+            lower,
             source_high_water: 0,
             target_applied_through: 0,
             acked_through: 0,
@@ -75,10 +81,11 @@ impl ShardSplit {
     /// Plans a split with the identity and placement context required for a
     /// restart-safe orchestration attempt.
     pub fn plan_with_context(
+        lower: Option<Vec<u8>>,
         split_key: Vec<u8>,
         context: super::SplitContext,
     ) -> Result<Self, SplitPlanError> {
-        let mut split = Self::plan(split_key)?;
+        let mut split = Self::plan(lower, split_key)?;
         split.context = Some(context);
         Ok(split)
     }
@@ -90,6 +97,7 @@ impl ShardSplit {
         }
         Ok(Self {
             split_key: state.split_key().to_vec(),
+            lower: state.lower().map(ToOwned::to_owned),
             source_high_water: state.source_high_water(),
             target_applied_through: state.target_applied_through(),
             acked_through: state.acked_through(),
@@ -102,6 +110,7 @@ impl ShardSplit {
     #[must_use]
     pub fn durable_state(&self) -> DurableSplitState {
         let state = DurableSplitState::new(
+            self.lower.clone(),
             self.split_key.clone(),
             self.source_high_water,
             self.target_applied_through,
@@ -118,6 +127,11 @@ impl ShardSplit {
     #[must_use]
     pub fn split_key(&self) -> &[u8] {
         &self.split_key
+    }
+
+    #[must_use]
+    pub fn lower(&self) -> Option<&[u8]> {
+        self.lower.as_deref()
     }
 
     /// Returns the current lifecycle phase.

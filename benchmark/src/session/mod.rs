@@ -1334,6 +1334,7 @@ impl<'engine> Session<'engine> {
         value: DocumentValue,
     ) -> Result<(), SessionError> {
         self.require_tracking()?;
+        self.require_no_pending_commit()?;
         self.pending_generated.push((collection, value));
         Ok(())
     }
@@ -1346,6 +1347,7 @@ impl<'engine> Session<'engine> {
         expected: ExpectedVersion,
     ) -> Result<(), SessionError> {
         self.require_tracking()?;
+        self.require_no_pending_commit()?;
         let key = (collection, id);
         if let Some(pending) = self.pending_puts.get_mut(&key) {
             pending.value = value;
@@ -1410,6 +1412,7 @@ impl<'engine> Session<'engine> {
         expected: ExpectedVersion,
     ) -> Result<(), SessionError> {
         self.require_tracking()?;
+        self.require_no_pending_commit()?;
         let key = (collection, id);
         // Delete replaces an earlier store. The identity leaves the map and
         // registers known-missing, so a pending put cannot reach the batch or
@@ -1524,6 +1527,7 @@ impl<'engine> Session<'engine> {
         collection: &CollectionName,
         id: &DocumentId,
     ) -> Result<(), SessionError> {
+        self.require_no_pending_commit()?;
         let key = (collection.clone(), id.clone());
         if !self.tracked.contains_key(&key) {
             return Err(SessionError::NotTracked { document: id.clone() });
@@ -1707,6 +1711,7 @@ impl<'engine> Session<'engine> {
         id: &DocumentId,
     ) -> Result<(), SessionError> {
         self.require_tracking()?;
+        self.require_no_pending_commit()?;
         self.pending_lazy.insert((collection.clone(), id.clone()));
         Ok(())
     }
@@ -1757,6 +1762,7 @@ impl<'engine> Session<'engine> {
     /// Returns [`SessionError::NoTrackingRefused`] on a no-tracking session.
     pub fn defer(&mut self, command: SessionCommand) -> Result<(), SessionError> {
         self.require_tracking()?;
+        self.require_no_pending_commit()?;
         let SessionCommand::Family(request) = command;
         self.deferred.push(request);
         Ok(())
@@ -2221,6 +2227,13 @@ impl<'engine> Session<'engine> {
     fn require_tracking(&self) -> Result<(), SessionError> {
         if self.options.tracking == SessionTracking::NoTracking {
             return Err(SessionError::NoTrackingRefused);
+        }
+        Ok(())
+    }
+
+    fn require_no_pending_commit(&self) -> Result<(), SessionError> {
+        if self.pending_commit.is_some() {
+            return Err(SessionError::WriteFrontierUnavailable);
         }
         Ok(())
     }

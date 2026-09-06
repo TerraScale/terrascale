@@ -214,19 +214,19 @@ fn origin_proofs_accept_current_previous_and_reject_expired_or_wrong_scope() {
             "x-terrascale-origin-proof",
             HeaderValue::from_str(&proof).expect("proof header"),
         );
-        verify_origin_proof(&headers, &Method::GET, &Uri::try_from(uri).expect("uri"), &keys, now)
+        verify_origin_proof(&headers, &Method::GET, &Uri::try_from(uri).expect("uri"), &keys, now, terrabase::regions::RegionCode::GRU)
     };
-    assert!(verify(origin_proof_for(&Method::GET, target, bucket, current), target));
+    assert!(verify(origin_proof_for(&Method::GET, target, bucket, current, terrabase::regions::RegionCode::GRU), target));
     assert!(verify(
-        origin_proof_for(&Method::GET, target, bucket.saturating_sub(600), previous),
+        origin_proof_for(&Method::GET, target, bucket.saturating_sub(600), previous, terrabase::regions::RegionCode::GRU),
         target
     ));
     assert!(!verify(
-        origin_proof_for(&Method::GET, target, bucket.saturating_sub(1200), current),
+        origin_proof_for(&Method::GET, target, bucket.saturating_sub(1200), current, terrabase::regions::RegionCode::GRU),
         target
     ));
     assert!(!verify(
-        origin_proof_for(&Method::GET, target, bucket, current),
+        origin_proof_for(&Method::GET, target, bucket, current, terrabase::regions::RegionCode::GRU),
         "/api/v1/reactive/views/other/1/log?offset=0"
     ));
 }
@@ -331,7 +331,7 @@ async fn origin_proof_admits_only_the_real_reactive_delivery_route() {
     let path = format!("/api/v1/reactive/views/{view}/{generation}/snapshot/0?cut=0");
     let now = unix_seconds();
     let bucket = now / 600 * 600;
-    let proof = origin_proof_for(&Method::GET, &path, bucket, b"e17-origin-current-key");
+    let proof = origin_proof_for(&Method::GET, &path, bucket, b"e17-origin-current-key", terrabase::regions::RegionCode::GRU);
     let mut request = security_support::request(Method::GET, &path, Body::empty());
     request
         .headers_mut()

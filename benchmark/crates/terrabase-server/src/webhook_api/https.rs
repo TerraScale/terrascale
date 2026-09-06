@@ -36,6 +36,7 @@ pub struct NativeHttpsTransport {
     admission: Arc<Semaphore>,
     tls: Arc<rustls::ClientConfig>,
     timeout: Duration,
+    resolver: Arc<dyn Fn(String, u16) -> Result<Vec<IpAddr>, DeliveryError> + Send + Sync>,
 }
 
 impl NativeHttpsTransport {
@@ -58,7 +59,28 @@ impl NativeHttpsTransport {
             admission: Arc::clone(ADMISSION.get_or_init(|| Arc::new(Semaphore::new(MAX_INFLIGHT)))),
             tls: Arc::new(tls),
             timeout: ATTEMPT_TIMEOUT,
+            resolver: Arc::new(|host, port| {
+                (host.as_str(), port)
+                    .to_socket_addrs()
+                    .map_err(|_| DeliveryError::Retryable)
+                    .map(|addresses| addresses.map(|address| address.ip()).collect())
+            }),
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn new_for_test(
+        runtime: Handle,
+        tls: Arc<rustls::ClientConfig>,
+        resolver: Arc<dyn Fn(String, u16) -> Result<Vec<IpAddr>, DeliveryError> + Send + Sync>,
+    ) -> Self {
+        Self {
+            runtime,
+            admission: Arc::clone(ADMISSION.get_or_init(|| Arc::new(Semaphore::new(MAX_INFLIGHT)))),
+            tls,
+            timeout: ATTEMPT_TIMEOUT,
+            resolver,
+        }
     }
 
     fn wait<T: Send + 'static>(
@@ -99,16 +121,14 @@ impl HttpsTransport for NativeHttpsTransport {
         let permit =
             self.admission.clone().try_acquire_owned().map_err(|_| DeliveryError::Retryable)?;
         let (sender, receiver) = mpsc::sync_channel(1);
+        let resolver = Arc::clone(&self.resolver);
         self.runtime.spawn_blocking(move || {
             // Keep the permit inside the resolver work, not the waiting caller.
             let _permit = permit;
-            let result = (host.as_str(), port)
-                .to_socket_addrs()
-                .map_err(|_| DeliveryError::Retryable)
-                .and_then(|addresses| {
+            let result = resolver(host, port).and_then(|addresses| {
                     let mut ips = Vec::new();
-                    for address in addresses.take(MAX_ADDRESSES + 1) {
-                        ips.push(address.ip());
+                    for address in addresses.into_iter().take(MAX_ADDRESSES + 1) {
+                        ips.push(address);
                     }
                     if ips.is_empty() || ips.len() > MAX_ADDRESSES {
                         return Err(DeliveryError::TargetRejected);

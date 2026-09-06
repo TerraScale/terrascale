@@ -48,12 +48,10 @@ pub trait NativeLifecycleWorker: Send + Sync {
         assignment: &AcceptedLifecycleAssignment,
         operation: &str,
     ) -> Result<(), String>;
-    /// Restores into a fresh target incarnation without overwriting a database.
+    /// Resumes the same retained database without replacing its identity.
     fn reactivate(
         &self,
-        source: &AcceptedLifecycleAssignment,
-        target: &AcceptedLifecycleAssignment,
-        target_incarnation: &str,
+        assignment: &AcceptedLifecycleAssignment,
         operation: &str,
     ) -> Result<(), String>;
 }
@@ -110,21 +108,14 @@ impl ProductionLifecycleControl {
         self.worker.stop_native_backup(assignment, operation)
     }
 
-    /// Verifies source and target proofs before a fresh-target restore.
+    /// Verifies accepted authority before resuming the same retained database.
     pub fn reactivate(
         &self,
-        source: &AcceptedLifecycleAssignment,
-        target: &AcceptedLifecycleAssignment,
-        source_signature: &[u8],
-        target_signature: &[u8],
-        target_incarnation: &str,
+        assignment: &AcceptedLifecycleAssignment,
+        signature: &[u8],
         operation: &str,
     ) -> Result<(), String> {
-        if target_incarnation.is_empty() || target.database != source.database {
-            return Err("restore target is invalid".into());
-        }
-        self.authority.verify(source, source_signature)?;
-        self.authority.verify(target, target_signature)?;
-        self.worker.reactivate(source, target, target_incarnation, operation)
+        self.authority.verify(assignment, signature)?;
+        self.worker.reactivate(assignment, operation)
     }
 }

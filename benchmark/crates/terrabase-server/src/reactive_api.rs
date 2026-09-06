@@ -149,12 +149,18 @@ pub fn verify_origin_proof(
     uri: &Uri,
     keys: &OriginProofKeyRing,
     now: u64,
+    region: terrabase::regions::RegionCode,
 ) -> bool {
     let Some(raw) = headers.get(ORIGIN_PROOF_HEADER).and_then(|value| value.to_str().ok()) else {
         return false;
     };
     let fields = raw.split('.').collect::<Vec<_>>();
-    if fields.len() != 3 || fields[0] != "v1" || fields[1].is_empty() || fields[2].len() != 64 {
+    if fields.len() != 4
+        || fields[0] != "v1"
+        || fields[1].is_empty()
+        || fields[2] != region.as_str()
+        || fields[3].len() != 64
+    {
         return false;
     }
     let Ok(bucket) = fields[1].parse::<u64>() else { return false };
@@ -167,8 +173,8 @@ pub fn verify_origin_proof(
     let target = uri
         .path_and_query()
         .map_or_else(|| uri.path().to_owned(), |value| value.as_str().to_owned());
-    let message = format!("v1.{}.{}.{}", method.as_str().to_ascii_uppercase(), target, bucket);
-    let presented = fields[2].as_bytes();
+    let message = format!("v1.{}.{}.{}.{}", method.as_str().to_ascii_uppercase(), target, bucket, region.as_str());
+    let presented = fields[3].as_bytes();
     if !presented.iter().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
         return false;
     }
@@ -184,9 +190,21 @@ pub fn verify_origin_proof(
 /// Production callers receive this value from the sync edge, never from the
 /// member API.
 #[must_use]
-pub fn origin_proof_for(method: &Method, target: &str, bucket: u64, key: &[u8]) -> String {
-    let message = format!("v1.{}.{}.{}", method.as_str().to_ascii_uppercase(), target, bucket);
-    format!("v1.{bucket}.{}", hmac_sha256_hex(key, message.as_bytes()))
+pub fn origin_proof_for(
+    method: &Method,
+    target: &str,
+    bucket: u64,
+    key: &[u8],
+    region: terrabase::regions::RegionCode,
+) -> String {
+    let message = format!(
+        "v1.{}.{}.{}.{}",
+        method.as_str().to_ascii_uppercase(),
+        target,
+        bucket,
+        region.as_str()
+    );
+    format!("v1.{bucket}.{}.{}", region.as_str(), hmac_sha256_hex(key, message.as_bytes()))
 }
 
 /// Canonical SQL attach input. Legacy collection-condition fields are absent.
@@ -2128,7 +2146,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             ORIGIN_PROOF_HEADER,
-            HeaderValue::from_str(&origin_proof_for(&Method::GET, target, bucket, current))
+            HeaderValue::from_str(&origin_proof_for(&Method::GET, target, bucket, current, terrabase::regions::RegionCode::GRU))
                 .expect("proof header"),
         );
         assert!(verify_origin_proof(
@@ -2137,6 +2155,7 @@ mod tests {
             &target.parse::<Uri>().expect("target"),
             &keys,
             now,
+            terrabase::regions::RegionCode::GRU,
         ));
 
         headers.insert(
@@ -2146,6 +2165,7 @@ mod tests {
                 target,
                 bucket.saturating_sub(CAPABILITY_BUCKET),
                 previous,
+                terrabase::regions::RegionCode::GRU,
             ))
             .expect("previous proof header"),
         );
@@ -2155,6 +2175,7 @@ mod tests {
             &target.parse::<Uri>().expect("target"),
             &keys,
             now,
+            terrabase::regions::RegionCode::GRU,
         ));
     }
 }

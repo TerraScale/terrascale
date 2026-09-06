@@ -332,7 +332,9 @@ impl MemberSource {
                 Ok(export::ExportRecord::History {
                     collection: row.collection,
                     id: row.id,
+                    operation_id: row.operation_id,
                     revision: row.version,
+                    durability: row.durability,
                     deleted: row.deleted,
                     canonical_json,
                 })

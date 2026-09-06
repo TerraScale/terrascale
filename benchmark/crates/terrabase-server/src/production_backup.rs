@@ -101,7 +101,7 @@ pub fn compose_native_backup(
     limits: FleetLimits,
     mut inputs: Vec<NativeBackupInput>,
 ) -> Result<NativeBackupRuntime, NativeBackupRuntimeError> {
-    inputs.sort_by_key(|input| input.engine.database_id());
+    inputs.sort_by_key(|input| input.engine.engine().database_id());
     NativeBackupRuntime::new(limits, inputs)
 }
 

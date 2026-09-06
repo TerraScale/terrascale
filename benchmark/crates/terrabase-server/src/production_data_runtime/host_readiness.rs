@@ -89,9 +89,7 @@ pub(super) fn evaluate_writer_hosts(
 }
 
 /// Validates encryption for every activated retained host, including followers.
-pub(super) fn all_activated_hosts_encrypted(
-    snapshots: &[AdmittedDatabaseSnapshot],
-) -> bool {
+pub(super) fn all_activated_hosts_encrypted(snapshots: &[AdmittedDatabaseSnapshot]) -> bool {
     snapshots.iter().filter(|snapshot| snapshot.activated).all(|snapshot| {
         let engine = snapshot.database.host.engine();
         let owner = engine.database_owner();
