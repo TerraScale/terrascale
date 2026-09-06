@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "1d3da6073af6cc1b0bc779e41b7ab95b7a6dc867b573fc51891394da2ce12044";
-pub const OPENAPI_BLAKE3: &str = "b45d567ddf3b32638611e7b7c94ee27a9f21e93933bd1d946a0c402b6aa02d91";
+    "b5ed25d097b7991030df5c4841dd5f29b9d1125c550ac668eb949f3e0dd369ea";
+pub const OPENAPI_BLAKE3: &str = "742cfc08269cebdf7d486f8606fab0154fb3b828bf774c13524f4f30d3b69da0";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
     "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
 pub const MSGPACK_PROTOCOL: &str = "terrascale.sync.v1.msgpack";
@@ -23,7 +23,7 @@ pub struct ContractArtifact {
 pub const ARTIFACTS: &[ContractArtifact] = &[
     ContractArtifact {
         path: "conformance/http.json",
-        blake3: "25dcc383b39fa5d14799e91522f2ea4ff0cf480a9a1efd74ef258269af7a8c35",
+        blake3: "ea2ecc502f645b8cb6b5e4c5c6d2994dbe6e4e1054ca2a60b9abbff0d15c791c",
     },
     ContractArtifact {
         path: "conformance/msgpack/hostile-vectors.json",
@@ -35,7 +35,7 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "conformance/reactive.json",
-        blake3: "47d6439f9185d878fc4c168da4973dea0a809c78be97dd90ed2efd1572d3a41d",
+        blake3: "4d4ccbf1a8bbc4bb2545f30977ab42d80c6e618ea127f3c5e8dc631a0a96aad4",
     },
     ContractArtifact {
         path: "msgpack/hostile-vectors.json",
@@ -51,7 +51,7 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "openapi.json",
-        blake3: "b45d567ddf3b32638611e7b7c94ee27a9f21e93933bd1d946a0c402b6aa02d91",
+        blake3: "742cfc08269cebdf7d486f8606fab0154fb3b828bf774c13524f4f30d3b69da0",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/engine.proto",
@@ -1283,6 +1283,6 @@ pub const MESSAGE_VECTOR_SHA256: &str =
 pub const HOSTILE_VECTOR_SHA256: &str =
     "e6d8e6d92a87fe4d37fb00e5b441d0c351eecaf6117e5ac50631ce94d18890f5";
 pub const HTTP_CONFORMANCE_SHA256: &str =
-    "60801bac610c64402f5f7a7a3aa70ec0975e05981cec9419535e0fc231f136af";
+    "df3708eb9537f190b4beb00c0152216f202bef020dbb60049f1cf2dbcb93137e";
 pub const REACTIVE_CONFORMANCE_SHA256: &str =
-    "cbccfdda07ebd7a4a9b49a85d2135bc77de69a9f60ce5cfd7444ecfcc1b25d05";
+    "5e6c87a3fc3fef237174dfec7b78e994c4f14b18348fa1965b698e897ff70370";

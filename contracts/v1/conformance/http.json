@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
-  "openapiBlake3": "b45d567ddf3b32638611e7b7c94ee27a9f21e93933bd1d946a0c402b6aa02d91",
-  "openapiSha256": "22eb23ef8075d8f8a31167f8bf58e7992ee7b98327ad141a7ad85e83e0864a68",
+  "openapiBlake3": "742cfc08269cebdf7d486f8606fab0154fb3b828bf774c13524f4f30d3b69da0",
+  "openapiSha256": "0c14374467957a836e24e4e3aef554aff5d1405c6d08cf7323938c288f7e1833",
   "operations": [
     {
       "errors": [
@@ -2508,7 +2508,8 @@
           "created_at": 0,
           "deleted": false,
           "endpoint": "sample",
-          "id": "sample"
+          "id": "sample",
+          "secret": ""
         },
         "mediaType": "application/json",
         "status": 201
@@ -2519,7 +2520,8 @@
             "created_at": 0,
             "deleted": false,
             "endpoint": "sample",
-            "id": "sample"
+            "id": "sample",
+            "secret": ""
           },
           "mediaType": "application/json",
           "status": 201
@@ -9497,7 +9499,8 @@
           "created_at": 0,
           "deleted": false,
           "endpoint": "sample",
-          "id": "sample"
+          "id": "sample",
+          "secret": ""
         },
         "mediaType": "application/json",
         "status": 200
@@ -9508,7 +9511,8 @@
             "created_at": 0,
             "deleted": false,
             "endpoint": "sample",
-            "id": "sample"
+            "id": "sample",
+            "secret": ""
           },
           "mediaType": "application/json",
           "status": 200

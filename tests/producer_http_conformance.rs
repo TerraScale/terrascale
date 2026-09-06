@@ -72,10 +72,27 @@ where
                 operation["operationId"]
             );
         } else {
+            let error = result.expect_err("producer error accepted");
+            assert_eq!(error.status, Some(status));
+            let expected_kind = match status {
+                400 | 422 => ErrorKind::Validation,
+                401 => ErrorKind::Authentication,
+                403 => ErrorKind::Authorization,
+                404 => ErrorKind::NotFound,
+                409 => ErrorKind::Conflict,
+                421 => ErrorKind::RegionRedirect,
+                429 => ErrorKind::RateLimit,
+                500 => ErrorKind::Server,
+                503 | 504 => ErrorKind::Unavailable,
+                _ => panic!("unhandled producer status {status}"),
+            };
+            assert_eq!(error.kind, expected_kind);
+            assert_eq!(error.code, vector["body"]["error"]["code"]);
             assert_eq!(
-                result.expect_err("producer error accepted").status,
-                Some(status)
+                error.fix.as_deref(),
+                vector["body"]["error"]["fix"].as_str()
             );
+            assert_eq!(error.request_id.as_deref(), Some("producer-conformance"));
         }
     }
 }
@@ -248,6 +265,13 @@ impl Mock {
             responses: Mutex::new(VecDeque::from([response])),
         })
     }
+
+    fn queued(responses: Vec<Response>) -> Arc<Self> {
+        Arc::new(Self {
+            requests: Mutex::new(Vec::new()),
+            responses: Mutex::new(responses.into()),
+        })
+    }
 }
 
 #[async_trait]
@@ -322,6 +346,53 @@ fn concrete_path(template: &str) -> String {
         .replace("{offset}", "sample")
         .replace("{generation}", "sample")
         .replace("{chunk}", "sample")
+}
+
+#[tokio::test]
+async fn producer_421_diagnostics_and_placement_repair_are_preserved() {
+    let error_body = json!({"error":{"code":"misdirected_request","message":"conformance 421 response","fix":"follow the contract and retry when safe"}});
+    let success_body = json!({"name":"sample","placement":"sample","residency":"sample","created_at":0,"deleted":false,"parent":null});
+    let mock = Mock::queued(vec![
+        Response {
+            status: 421,
+            headers: vec![
+                ("content-type".into(), "application/json".into()),
+                ("x-request-id".into(), "producer-conformance".into()),
+                ("x-terrascale-placement".into(), "GRU".into()),
+            ],
+            body: serde_json::to_vec(&error_body).unwrap(),
+        },
+        response(
+            200,
+            &json!({"status":200,"mediaType":"application/json","body":success_body}),
+        ),
+    ]);
+    let client = TerraScaleClient::with_transport(
+        ClientConfig::builder()
+            .api_key("conformance-key")
+            .project_id("proj")
+            .build()
+            .unwrap(),
+        mock.clone(),
+    );
+    let error = client
+        .management()
+        .databases()
+        .get("sample", None)
+        .await
+        .expect_err("421");
+    assert_eq!(error.kind, ErrorKind::RegionRedirect);
+    assert_eq!(error.code, "misdirected_request");
+    assert_eq!(
+        error.fix.as_deref(),
+        Some("follow the contract and retry when safe")
+    );
+    assert_eq!(error.request_id.as_deref(), Some("producer-conformance"));
+    assert_eq!(error.placement.as_deref(), Some("GRU"));
+    let _ = client.management().databases().get("sample", None).await;
+    assert!(mock.requests.lock().unwrap()[1]
+        .url
+        .contains("gru.api.terrascale.tech"));
 }
 
 #[test]
@@ -457,19 +528,25 @@ async fn public_database_create_consumes_every_producer_response_and_error_once(
                     _ => panic!("unhandled corpus error status {status}"),
                 }
             );
-            if status != 421 {
-                assert_eq!(error.code, body["error"]["code"]);
-                assert_eq!(
-                    error.message,
-                    format!(
-                        "{} Fix: {}",
-                        body["error"]["message"].as_str().unwrap(),
-                        body["error"]["fix"].as_str().unwrap()
-                    )
-                );
-                assert_eq!(error.fix.as_deref(), body["error"]["fix"].as_str());
-                assert_eq!(error.request_id.as_deref(), Some("producer-conformance"));
-            }
+            assert_eq!(error.code, body["error"]["code"]);
+            assert_eq!(
+                error.message,
+                format!(
+                    "{} Fix: {}",
+                    body["error"]["message"].as_str().unwrap(),
+                    body["error"]["fix"].as_str().unwrap()
+                )
+            );
+            assert_eq!(error.fix.as_deref(), body["error"]["fix"].as_str());
+            assert_eq!(error.request_id.as_deref(), Some("producer-conformance"));
+            assert_eq!(
+                error.message,
+                format!(
+                    "{} Fix: {}",
+                    body["error"]["message"].as_str().unwrap(),
+                    body["error"]["fix"].as_str().unwrap()
+                )
+            );
         }
     }
 }

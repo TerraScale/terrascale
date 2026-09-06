@@ -326,11 +326,7 @@ impl Shared {
                     }
                 }
             }
-            let mut error = Error::for_status(
-                421,
-                "misdirected_region".to_owned(),
-                "The region does not host this database. Check X-TerraScale-Placement and the configured region affinity.".to_owned(),
-            );
+            let mut error = decode_error(route_name, response);
             error.placement = placement;
             return Err(error);
         }
