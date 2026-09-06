@@ -36,6 +36,28 @@ pub trait PeerControlDispatcher: Send + Sync {
         bytes: Vec<u8>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool, String>> + Send + 'a>>;
 }
+
+/// Atomically admitted replication lanes and their accepted residency metadata.
+pub struct PeerDatabaseBatch {
+    /// Lanes grouped by authenticated peer.
+    pub lanes: BTreeMap<String, Vec<PeerDatabase>>,
+    /// Exact selected Regions for every lane scope.
+    pub selected_regions: BTreeMap<DatabaseRouteScope, std::collections::BTreeSet<String>>,
+}
+
+impl PeerDatabaseBatch {
+    fn validate(&self) -> Result<(), String> {
+        let scopes = self
+            .lanes
+            .values()
+            .flat_map(|lanes| lanes.iter().map(|lane| lane.scope))
+            .collect::<std::collections::BTreeSet<_>>();
+        if scopes != self.selected_regions.keys().copied().collect() {
+            return Err("replication batch metadata does not match lanes".into());
+        }
+        Ok(())
+    }
+}
 const PEER_HELLO: &[u8] = b"TBPEER\0\x01";
 
 fn accepts_peer_frame(class: ProductionConnectionClass, bytes: &[u8]) -> bool {
@@ -155,31 +177,30 @@ fn failure(error: impl std::fmt::Debug) -> String {
     format!("replication peer: {error:?}")
 }
 impl ReplicationPeers {
-    /// Starts one persistent worker per admitted peer and one bounded accept loop.
-    /// # Errors
-    /// Rejects unadmitted peers and duplicate database lanes before spawning.
+    /// Starts workers after atomically validating and admitting one batch.
     pub fn start(
         runtime: Arc<ProductionMemberRuntime>,
         progress: Arc<ReplicationProgress>,
-        peers: BTreeMap<String, Vec<PeerDatabase>>,
+        batch: PeerDatabaseBatch,
     ) -> Result<Self, String> {
-        Self::start_inner(runtime, progress, peers, None)
+        Self::start_with_dispatch(runtime, progress, batch, None)
     }
-    /// Starts replication and application control with exactly one endpoint accept loop.
-    /// # Errors
-    /// Rejects unadmitted or duplicate database peer assignments.
+
+    /// Starts workers with an application-control dispatcher.
     pub fn start_with_dispatch(
         runtime: Arc<ProductionMemberRuntime>,
         progress: Arc<ReplicationProgress>,
-        peers: BTreeMap<String, Vec<PeerDatabase>>,
-        dispatcher: Arc<dyn PeerControlDispatcher>,
+        batch: PeerDatabaseBatch,
+        dispatcher: Option<Arc<dyn PeerControlDispatcher>>,
     ) -> Result<Self, String> {
-        Self::start_inner(runtime, progress, peers, Some(dispatcher))
+        batch.validate()?;
+        Self::start_inner(runtime, progress, batch.lanes, batch.selected_regions, dispatcher)
     }
     fn start_inner(
         runtime: Arc<ProductionMemberRuntime>,
         progress: Arc<ReplicationProgress>,
         peers: BTreeMap<String, Vec<PeerDatabase>>,
+        selected_regions: BTreeMap<DatabaseRouteScope, std::collections::BTreeSet<String>>,
         dispatcher: Option<Arc<dyn PeerControlDispatcher>>,
     ) -> Result<Self, String> {
         let endpoint = runtime.transport();
@@ -203,6 +224,7 @@ impl ReplicationPeers {
             }
             validated.push((id, lanes));
         }
+        progress.admit_many(selected_regions).map_err(failure)?;
         let observations: PeerObservations = Arc::default();
         for (id, lanes) in &validated {
             observe(&observations, id.as_str(), lanes, false);

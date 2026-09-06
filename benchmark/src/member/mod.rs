@@ -1957,9 +1957,7 @@ fn open_database_engine(
                 } else {
                     EngineConfig::existing_durable(location)
                 }
-                .map_err(|error| {
-                    MemberError::EngineConfig { database: database.clone(), error }
-                })?;
+                .map_err(|error| MemberError::EngineConfig { database: database.clone(), error })?;
                 // Production entries stay closed until writer acceptance. Their
                 // first acquisition creates the directory, then checks it again
                 // before SQLite can open any files.
@@ -2187,6 +2185,40 @@ mod tests {
                 &TestRole(AcceptedDatabaseRole { epoch: 1, role: DatabaseRole::Writer }),
             )
             .unwrap();
+    }
+
+    #[test]
+    fn existing_acquisition_never_materializes_missing_production_storage() {
+        let root = root("existing-only");
+        let scope = DatabaseScope::new(
+            "production",
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+        .unwrap();
+        let id = DatabaseId::from(scope.database());
+        let member = Member::open_production(
+            &root,
+            [DatabaseSpec::scoped(scope.clone(), "db")],
+            AdmissionLimits::new(2, 1),
+            storage_keys(&scope),
+        )
+        .unwrap();
+        assert!(matches!(member.acquire_existing(&id), Err(MemberError::DatabaseNotWriter(_))));
+        accept_writer(&member, &id);
+        assert!(member.acquire_existing(&id).is_err());
+        assert!(!root.join("db").exists());
+        assert_eq!(member.open_database_count(), 0);
+
+        // Even an existing empty directory must not gain an owner or database.
+        fs::create_dir(root.join("db")).unwrap();
+        assert!(member.acquire_existing(&id).is_err());
+        assert_eq!(fs::read_dir(root.join("db")).unwrap().count(), 0);
+        assert_eq!(member.open_database_count(), 0);
+        member.close(Duration::from_secs(1)).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

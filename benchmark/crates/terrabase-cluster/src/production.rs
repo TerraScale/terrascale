@@ -510,6 +510,7 @@ pub struct ProductionMemberRuntime {
     wal_bindings: Mutex<WalBindings>,
     placement: ProductionPlacement,
     routes: Mutex<DatabaseRoutingCatalog>,
+    published_routes: Mutex<BTreeSet<DatabaseRouteScope>>,
     member: Member,
     transport: Arc<ProductionQuicEndpoint>,
     membership_admission: Mutex<MembershipAdmission>,
@@ -570,6 +571,30 @@ impl ProductionMemberRuntime {
         Ok(())
     }
 
+    /// Publishes staged routes as one atomic public-admission batch.
+    ///
+    /// Replication may use a route after [`Self::register_route`], but public
+    /// acquisition remains closed until this method succeeds for the whole
+    /// batch. Unknown scopes never publish a partial batch.
+    pub fn activate_routes(
+        &self,
+        scopes: &[DatabaseRouteScope],
+    ) -> Result<(), ProductionMemberError> {
+        let admission = lock_unpoisoned(&self.membership_admission);
+        if *admission != MembershipAdmission::Admitted || self.draining.load(Ordering::Acquire) {
+            return Err(ProductionMemberError::MembershipMismatch);
+        }
+        let routes = lock_unpoisoned(&self.routes);
+        let requested = scopes.iter().copied().collect::<BTreeSet<_>>();
+        if requested.len() != scopes.len()
+            || requested.iter().any(|scope| routes.resolve(scope).is_none())
+        {
+            return Err(ProductionMemberError::InvalidRoutingCatalog);
+        }
+        lock_unpoisoned(&self.published_routes).extend(requested);
+        Ok(())
+    }
+
     /// Retires a customer route after its replication workers have drained.
     /// The root Member catalog remains intact for deletion and maintenance;
     /// removing this route only prevents new public acquisitions.
@@ -582,6 +607,7 @@ impl ProductionMemberRuntime {
             return Err(ProductionMemberError::MembershipMismatch);
         }
         lock_unpoisoned(&self.routes).routes.remove(&scope);
+        lock_unpoisoned(&self.published_routes).remove(&scope);
         Ok(())
     }
 
@@ -629,9 +655,11 @@ impl ProductionMemberRuntime {
             return Err(ProductionMemberError::TransportMismatch);
         }
 
+        let published_routes = routes.routes.keys().copied().collect();
         Ok(Self {
             placement,
             routes: Mutex::new(routes),
+            published_routes: Mutex::new(published_routes),
             member,
             transport: Arc::new(transport),
             membership_admission: Mutex::new(MembershipAdmission::Pending),
@@ -836,7 +864,11 @@ impl ProductionMemberRuntime {
         if !facts.ready {
             return Err(ProductionAdmissionError::NotReady(facts.blockers));
         }
-        let database = lock_unpoisoned(&self.routes)
+        let routes = lock_unpoisoned(&self.routes);
+        if !lock_unpoisoned(&self.published_routes).contains(scope) {
+            return Err(ProductionAdmissionError::UnknownDatabaseScope);
+        }
+        let database = routes
             .resolve(scope)
             .cloned()
             .ok_or(ProductionAdmissionError::UnknownDatabaseScope)?;

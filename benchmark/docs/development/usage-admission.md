@@ -45,6 +45,14 @@ unsigned epoch range. Earlier rows remain retained; stale registration attempts
 cannot replace the latest epoch. Deletion uses the engine's durable lifecycle
 fence; retained registration metadata never revives a writer.
 
+An accepted successor may reopen an already revoked database for maintenance
+without a fresh billing stream. This uses existing-only acquisition through the
+Member, ownership record, SQLite main database, and encrypted manifest/generation.
+It cannot create a missing database or synthesize a partition. The callback
+rechecks revocation before retaining the maintenance lease and never activates
+the successor origin epoch. Only an absent location stays pending; malformed
+paths, ownership failures, and corrupt storage are errors.
+
 The root, SQLite file, and sidecars must be private to their owner. Symlinks,
 hard-linked files, and files accessible to other users are refused. Reads bound
 the serialized payload and validate it against its database/epoch key.
@@ -62,3 +70,10 @@ The daemon entrypoint, signed successor epoch test, and pending-registration
 recovery through the complete production runtime remain unqualified. Go transport
 tests use authenticated NATS and a Unix HTTP fake engine. These focused tests do
 not pass the production launch or billing release gates.
+
+Focused maintenance replay tests preserve the fenced origin at epoch 1 after
+accepting role epoch 2 and retain deletion retries alongside an unrelated live
+writer. Their admission authority is a test callback, not a real signed successor
+journal. Existing-only Member and encrypted-file regressions verify that missing
+directories, owner records, and encrypted manifests are not recreated. The
+`cargo test --locked -p terrabase --lib existing_` selection passed 11 tests.

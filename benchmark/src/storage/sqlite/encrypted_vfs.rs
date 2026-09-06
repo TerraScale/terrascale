@@ -886,7 +886,8 @@ mod tests {
         file.write_all_at(&[42; 4096], 0).unwrap();
         file.sync().unwrap();
         drop(file);
-        let mut file = EncryptedFile::open_existing(&path, keys(25), ArtifactKind::Database).unwrap();
+        let mut file =
+            EncryptedFile::open_existing(&path, keys(25), ArtifactKind::Database).unwrap();
         let mut retained_bytes = [0; 4096];
         file.read_exact_at(&mut retained_bytes, 0).unwrap();
         assert_eq!(retained_bytes, [42; 4096]);

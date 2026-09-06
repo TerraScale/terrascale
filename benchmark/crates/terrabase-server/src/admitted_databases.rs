@@ -20,8 +20,15 @@ pub struct AdmittedDatabase {
 
 impl AdmittedDatabase {
     /// Public record addressed exclusively by canonical database identity.
-    pub fn public_record(&self) -> DatabaseRecord {
-        DatabaseRecord {
+    pub fn public_record(&self) -> Result<DatabaseRecord, String> {
+        let tenant = terrabase::types::TenantId::try_new(&self.record.tenant_id)
+            .map_err(|_| "invalid admitted tenant")?;
+        let state = self
+            .host
+            .engine()
+            .lifecycle_state(&self.host.engine().scope_for(&tenant))
+            .map_err(|_| "lifecycle source unavailable")?;
+        Ok(DatabaseRecord {
             name: self.record.database_id.clone(),
             placement: self
                 .record
@@ -30,11 +37,11 @@ impl AdmittedDatabase {
                 .filter_map(|region| region.parse().ok())
                 .collect(),
             residency: Some(self.record.residency.clone()),
-            deleted: false,
+            deleted: state.deletion.is_some(),
             created_at: 0,
-            deleted_at: None,
+            deleted_at: state.deletion.as_ref().map(|deletion| deletion.usage_stopped_at as i64),
             parent: self.record.parent_database_id.clone(),
-        }
+        })
     }
 }
 
@@ -127,7 +134,10 @@ pub(crate) mod tests {
     use super::*;
     use terrabase::{
         identity::{DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid},
-        member::{AdmissionLimits, DatabaseScope, DatabaseSpec, Member},
+        member::{
+            AcceptedDatabaseRole, AdmissionLimits, DatabaseRole, DatabaseRoleAuthority,
+            DatabaseScope, DatabaseSpec, Member,
+        },
         regions::RegionCode,
     };
 
@@ -175,6 +185,16 @@ pub(crate) mod tests {
         let registry = AdmittedDatabaseRegistry::new(Arc::new(|| true));
         for record in &records {
             let id = terrabase::member::DatabaseId::try_new(&record.database_id).unwrap();
+            struct Writer;
+            impl DatabaseRoleAuthority for Writer {
+                fn accepted_role(
+                    &self,
+                    _: &terrabase::member::DatabaseId,
+                ) -> Option<AcceptedDatabaseRole> {
+                    Some(AcceptedDatabaseRole { epoch: 1, role: DatabaseRole::Writer })
+                }
+            }
+            member.accept_database_role(&id, &Writer).unwrap();
             let lease = member.acquire(&id).unwrap();
             registry.publish(record.clone(), lease, root.join(&record.database_id), 1).unwrap();
         }
@@ -207,6 +227,48 @@ pub(crate) mod tests {
             let lease = member.acquire(&id).unwrap();
             assert!(std::ptr::eq(admitted.host.engine(), &*lease));
         }
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn public_records_reflect_durable_deletion_and_retain_maintenance_lease() {
+        let (registry, member, records, root) = fixture();
+        let first = registry.resolve(&records[0].database_id).unwrap().unwrap();
+        let engine = first.host.engine();
+        let tenant = terrabase::types::TenantId::try_new(&records[0].tenant_id).unwrap();
+        let scope = engine.scope_for(&tenant);
+
+        let before = first.public_record().unwrap();
+        assert!(!before.deleted);
+        assert_eq!(before.deleted_at, None);
+
+        engine.lifecycle_prepare_deletion(&scope, "delete-1").unwrap();
+        let prepared = first.public_record().unwrap();
+        assert!(!prepared.deleted);
+        assert!(registry.resolve(&records[0].database_id).unwrap().is_some());
+
+        engine
+            .lifecycle_accept_deletion(
+                &scope,
+                terrabase::engine::lifecycle_state::DeletionIntent {
+                    operation_id: "delete-1".into(),
+                    usage_stopped_at: 42,
+                    retain_until: Some(100),
+                },
+            )
+            .unwrap();
+        let deleted = first.public_record().unwrap();
+        assert!(deleted.deleted);
+        assert_eq!(deleted.deleted_at, Some(42));
+        assert!(registry.resolve(&records[0].database_id).unwrap().is_some());
+
+        let unrelated =
+            registry.resolve(&records[1].database_id).unwrap().unwrap().public_record().unwrap();
+        assert!(!unrelated.deleted);
+        assert_eq!(unrelated.deleted_at, None);
+
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();

@@ -155,37 +155,54 @@ impl ReplicationProgress {
         scope: DatabaseRouteScope,
         selected: BTreeSet<String>,
     ) -> Result<(), ReplicationWaitError> {
-        if selected.is_empty()
-            || selected.len() > 20
-            || selected.iter().any(|region| {
-                region.is_empty()
-                    || region.len() > 32
-                    || !region.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            })
-        {
-            return Err(ReplicationWaitError::NotAdmitted);
+        self.admit_many(std::iter::once((scope, selected)).collect())
+    }
+
+    /// Atomically registers a batch of immutable selected-region assignments.
+    /// Validation completes before any ledger mutation.
+    pub fn admit_many(
+        &self,
+        entries: BTreeMap<DatabaseRouteScope, BTreeSet<String>>,
+    ) -> Result<(), ReplicationWaitError> {
+        for selected in entries.values() {
+            if selected.is_empty()
+                || selected.len() > 20
+                || selected.iter().any(|region| {
+                    region.is_empty()
+                        || region.len() > 32
+                        || !region.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                })
+            {
+                return Err(ReplicationWaitError::NotAdmitted);
+            }
         }
         let mut databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
-        if let Some(existing) = databases.get(&scope) {
-            return if !existing.fenced && existing.selected == selected {
-                Ok(())
-            } else {
-                Err(ReplicationWaitError::NotAdmitted)
-            };
-        }
-        if databases.len() >= terrabase::member::MAX_DATABASES {
+        let new_count = entries
+            .iter()
+            .filter(|(scope, selected)| match databases.get(scope) {
+                Some(existing) => !(!existing.fenced && existing.selected == *selected),
+                None => true,
+            })
+            .count();
+        if databases.len().saturating_add(new_count) > terrabase::member::MAX_DATABASES {
             return Err(ReplicationWaitError::NotAdmitted);
         }
-        databases.insert(
-            scope,
-            DatabaseProgress {
+        for (scope, selected) in &entries {
+            if let Some(existing) = databases.get(scope) {
+                if existing.fenced || existing.selected != *selected {
+                    return Err(ReplicationWaitError::NotAdmitted);
+                }
+            }
+        }
+        for (scope, selected) in entries {
+            databases.entry(scope).or_insert_with(|| DatabaseProgress {
                 selected,
                 regional_sequence: 0,
                 regional_observed: false,
                 regions: BTreeMap::new(),
                 fenced: false,
-            },
-        );
+            });
+        }
         Ok(())
     }
 

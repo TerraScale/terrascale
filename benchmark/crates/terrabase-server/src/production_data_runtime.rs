@@ -282,10 +282,9 @@ impl ProductionAdmissionRuntime {
                 return Err("local member absent from accepted database assignment".into());
             };
             let origin = record.region.parse().map_err(|_| "invalid admitted Region")?;
-            let partition = usage_authority.resolve(record, assignment.epoch, &accepted.proof_digest)?;
-            if partition.is_none()
-                && assignment.writer.member().as_str() != local
-            {
+            let partition =
+                usage_authority.resolve(record, assignment.epoch, &accepted.proof_digest)?;
+            if partition.is_none() && assignment.writer.member().as_str() != local {
                 return Ok(None);
             }
             role_member
@@ -303,16 +302,24 @@ impl ProductionAdmissionRuntime {
             if assignment.writer.member().as_str() == local {
                 let lease = if partition.is_none() {
                     let location = role_member.root().join(&record.database_id);
-                    if !location.is_dir() {
-                        return Ok(None);
+                    match std::fs::symlink_metadata(&location) {
+                        Ok(metadata) if metadata.file_type().is_dir() => {}
+                        Ok(_) => return Err("existing database location is not a directory".into()),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            return Ok(None);
+                        }
+                        Err(error) => return Err(failure(error)),
                     }
                     role_member.acquire_existing(&id).map_err(failure)?
                 } else {
                     role_member.acquire(&id).map_err(failure)?
                 };
-                let tenant = terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
+                let tenant =
+                    terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
                 if partition.is_none()
-                    && !crate::production_admission::lifecycle_allows_origin_activation(&lease, &tenant)?
+                    && !crate::production_admission::lifecycle_allows_origin_activation(
+                        &lease, &tenant,
+                    )?
                 {
                     return Ok(Some(crate::production_admission::AcceptedAdmission::Maintenance {
                         origin,
@@ -321,8 +328,7 @@ impl ProductionAdmissionRuntime {
                     }));
                 }
             }
-            let Some(partition) = partition
-            else {
+            let Some(partition) = partition else {
                 // The private delivery listener must remain available while this
                 // accepted scope waits for its durable billing registration.
                 return Ok(None);

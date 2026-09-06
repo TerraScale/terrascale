@@ -570,3 +570,37 @@ server strict-Clippy backlog remains unpassed. Follow-up review must also resolv
 partial database route/progress publication before lane activation and deleted
 database metadata that is currently synthesized as live; retained maintenance
 leases and deletion tombstones must be preserved.
+
+### Usage producer delivery and maintenance replay
+
+Go now delivers usage registrations over the existing authenticated host NATS
+subject and UID-checked Unix HTTP connection. It requires exact complete receipts,
+rejects redirects and oversized responses, and retains the larger install message
+limit on the shared subject. The planner reads persisted lifecycle streams for
+every live database in the successor proposal, validates immutable identities,
+and delivers to both regional seats before transition completion. Missing,
+ambiguous, stopped, future, or wrong-epoch streams prevent delivery. Authority
+loss and lifecycle changes stop the remaining batch. Deleted retained scopes are
+validated and skipped. The full orchestrator `make check` passed (`61358`); final
+verification notes and test fix were pushed on develop as `086cd49d`.
+
+Review caught deleted maintenance replay being blocked by the absent successor
+usage row. Admission now separates active and maintenance authority. Revoked
+databases reopen through an existing-only Member/Engine/ownership/SQLite path,
+including actual encrypted manifest and generation opens. Maintenance cannot
+create storage, invent a billing partition, or activate an origin epoch. Only a
+missing location returns pending; unsafe paths and storage failures are errors.
+The callback rechecks revocation before publishing the maintenance lease.
+
+Final verification: 27 server admission tests passed (`21244`), including replay
+with accepted role epoch 2 while the deleted origin remains fenced at epoch 1.
+The existing-storage selection passed 11 tests (`95605`), including new missing
+directory/owner/manifest regressions. The worker also reported all 18 encrypted
+VFS tests passing. Independent final review found no remaining material issue.
+The successor replay fixture uses an authority callback, not a real signed
+placement journal. All root execution handles are terminal.
+
+Normal production lifecycle stream allocation is still absent; no fallback
+partition was introduced. Full daemon composition, real Go-to-Rust delivery,
+signed successor qualification, the previously recorded partial route/progress
+publication issues, deleted public metadata, and launch gates remain unfinished.

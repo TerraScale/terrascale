@@ -101,12 +101,19 @@ pub fn storage_admission(
                 if !local_is_writer {
                     return Ok(());
                 }
-                let id = DatabaseId::try_new(&record.database_id).map_err(|_| "invalid database")?;
-                let lease = member.acquire_existing(&id).map_err(|_| "encrypted database unavailable")?;
+                let id =
+                    DatabaseId::try_new(&record.database_id).map_err(|_| "invalid database")?;
+                let lease =
+                    member.acquire_existing(&id).map_err(|_| "encrypted database unavailable")?;
                 if lifecycle_allows_origin_activation(&lease, &tenant_id)? {
                     return Err("maintenance admission is not access-revoked".into());
                 }
-                registry.publish(record.clone(), lease, member.root().join(&record.database_id), instance)
+                registry.publish(
+                    record.clone(),
+                    lease,
+                    member.root().join(&record.database_id),
+                    instance,
+                )
             }
             AcceptedAdmission::Active { partition, revision, origin, epoch, local_is_writer } => {
                 if epoch == 0 || origin != region {
@@ -115,12 +122,18 @@ pub fn storage_admission(
                 if !local_is_writer {
                     return Ok(());
                 }
-                let id = DatabaseId::try_new(&record.database_id).map_err(|_| "invalid database")?;
+                let id =
+                    DatabaseId::try_new(&record.database_id).map_err(|_| "invalid database")?;
                 let lease = member.acquire(&id).map_err(|_| "encrypted database unavailable")?;
                 // Preparation and acceptance are durable origin fences. Replay
                 // retains revoked encrypted entries for authorized maintenance.
                 if !lifecycle_allows_origin_activation(&lease, &tenant_id)? {
-                    registry.publish(record.clone(), lease, member.root().join(&record.database_id), instance)?;
+                    registry.publish(
+                        record.clone(),
+                        lease,
+                        member.root().join(&record.database_id),
+                        instance,
+                    )?;
                     return Ok(());
                 }
                 let placement = UsagePlacement::try_new(
@@ -138,9 +151,16 @@ pub fn storage_admission(
                     &revision,
                 )
                 .map_err(|_| "invalid usage placement")?;
-                lease.configure_usage_placement(placement).map_err(|_| "usage placement refused")?;
+                lease
+                    .configure_usage_placement(placement)
+                    .map_err(|_| "usage placement refused")?;
                 lease.activate_origin_epoch(epoch).map_err(|_| "writer epoch refused")?;
-                registry.publish(record.clone(), lease, member.root().join(&record.database_id), instance)
+                registry.publish(
+                    record.clone(),
+                    lease,
+                    member.root().join(&record.database_id),
+                    instance,
+                )
             }
         }
     })
@@ -166,7 +186,14 @@ mod tests {
         admission::{AdmissionHost, AdmissionRecord},
         admitted_databases::AdmittedDatabaseRegistry,
     };
-    use std::{fs, sync::{Arc, atomic::{AtomicBool, Ordering}}, time::Duration};
+    use std::{
+        fs,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        time::Duration,
+    };
     use terrabase::{
         engine::lifecycle_state::DeletionIntent,
         identity::{DatabaseUlid, ProjectUlid, TenantUlid},
@@ -261,8 +288,8 @@ mod tests {
             }))
         });
         let member = open();
-        member.accept_database_role(&fenced_id, &Writer).unwrap();
-        member.accept_database_role(&unrelated_id, &Writer).unwrap();
+        member.accept_database_role(&fenced_id, &Writer(1)).unwrap();
+        member.accept_database_role(&unrelated_id, &Writer(1)).unwrap();
         let registry = Arc::new(AdmittedDatabaseRegistry::new(Arc::new(|| true)));
         let callback = storage_admission(
             member.clone(),
@@ -309,8 +336,8 @@ mod tests {
         member.close(Duration::from_secs(1)).unwrap();
 
         let reopened = open();
-        reopened.accept_database_role(&fenced_id, &Writer).unwrap();
-        reopened.accept_database_role(&unrelated_id, &Writer).unwrap();
+        reopened.accept_database_role(&fenced_id, &Writer(if accepted { 2 } else { 1 })).unwrap();
+        reopened.accept_database_role(&unrelated_id, &Writer(1)).unwrap();
         let registry = Arc::new(AdmittedDatabaseRegistry::new(Arc::new(|| true)));
         let callback = storage_admission(
             reopened.clone(),
@@ -394,10 +421,10 @@ mod tests {
         replay_case(true);
     }
 
-    struct Writer;
+    struct Writer(u64);
     impl DatabaseRoleAuthority for Writer {
         fn accepted_role(&self, _: &DatabaseId) -> Option<AcceptedDatabaseRole> {
-            Some(AcceptedDatabaseRole { epoch: 1, role: DatabaseRole::Writer })
+            Some(AcceptedDatabaseRole { epoch: self.0, role: DatabaseRole::Writer })
         }
     }
 
@@ -427,7 +454,7 @@ mod tests {
         let member =
             Member::open_production(&root, specs.clone(), AdmissionLimits::new(4, 2), keys)
                 .unwrap();
-        let writer = Writer;
+        let writer = Writer(1);
         let fenced_id = DatabaseId::from(fenced.database());
         let unrelated_id = DatabaseId::from(unrelated.database());
         member.accept_database_role(&fenced_id, &writer).unwrap();

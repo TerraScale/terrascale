@@ -2612,7 +2612,7 @@ pub(crate) fn document_host(
             .resolve(name)
             .map_err(|_| ApiError::storage_failure())?
             .ok_or_else(|| ApiError::database_not_found(name))?;
-        let record = database.public_record();
+        let record = database.public_record().map_err(|_| ApiError::storage_failure())?;
         if !record.placement.contains(&state.region) {
             return Err(ApiError::misdirected(&record.placement, record.residency_header()));
         }
@@ -2664,7 +2664,8 @@ pub(crate) fn database_record(
         return admitted
             .resolve(name)
             .map_err(|_| ApiError::storage_failure())?
-            .map(|database| database.public_record())
+            .map(|database| database.public_record().map_err(|_| ApiError::storage_failure()))
+            .transpose()?
             .ok_or_else(|| ApiError::database_not_found(name));
     }
     state
