@@ -530,6 +530,37 @@ public sealed class TerraScaleClient
             allowUnkeyedPutRetry: false,
             expectedStatusCode: HttpStatusCode.NoContent);
 
+    internal Task SendNoContentAsync(
+        HttpMethod method,
+        TerraScaleBoundRoute route,
+        Action<HttpRequestMessage>? configureRequest,
+        string? idempotencyKey,
+        CancellationToken cancellationToken) =>
+        SendNoContentAsync(method, route.RequestUri, configureRequest, idempotencyKey, cancellationToken);
+
+    internal async Task SendNoContentAsync(
+        HttpMethod method,
+        string requestUri,
+        Action<HttpRequestMessage>? configureRequest,
+        string? idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        using var response = await SendWithRetriesAsync(
+            method,
+            requestUri,
+            CreateJsonContentFactory(body: null),
+            RequestAuthenticationMode.Authenticated,
+            configureRequest,
+            activity: null,
+            cancellationToken,
+            idempotencyKey,
+            allowUnkeyedPutRetry: false).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+            throw await TerraScaleApiException.CreateAsync(response, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode != HttpStatusCode.NoContent)
+            throw new TerraScaleApiException(response.StatusCode, "TerraScale document deletion requires HTTP 204.", null, ReadRequestId(response), null, response.Headers.RetryAfter?.Delta);
+    }
+
     internal Task<TResult> SendAsync<TResponse, TResult>(
         HttpMethod method,
         TerraScaleBoundRoute route,

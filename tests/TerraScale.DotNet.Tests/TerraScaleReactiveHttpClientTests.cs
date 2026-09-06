@@ -182,6 +182,26 @@ public sealed class TerraScaleReactiveHttpClientTests
     }
 
     [Test]
+    public async Task AuthorizationChangeRejectsEnvelopeGenerationMismatch()
+    {
+        using var handler = new ReactiveHandler(pollFrame: Envelope(8, body: AuthorizationChanged(8, 7)));
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+    }
+
+    [Test]
+    public async Task ReattachRejectsOlderAuthorizationGeneration()
+    {
+        using var handler = new ReactiveHandler(pollStatus: HttpStatusCode.Conflict, staleReattachAuthorization: true);
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+    }
+
+    [Test]
     public async Task DeltaOperationsUpdateTheCurrentSnapshot()
     {
         var insert = new byte[] { 0x91, 0x94, 0x01, 0xa1, (byte)'x', 0x00, 0x90 };
@@ -299,11 +319,12 @@ public sealed class TerraScaleReactiveHttpClientTests
         await Assert.That(regionSubscription.SessionState).IsEqualTo(TerraScaleViewSessionState.Live);
     }
 
-    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false) : HttpMessageHandler
+    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false, bool staleReattachAuthorization = false) : HttpMessageHandler
     {
         public List<RequestObservation> Requests { get; } = [];
         public TaskCompletionSource PollStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string? AttachBody { get; private set; }
+        private int attachCount;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -311,12 +332,14 @@ public sealed class TerraScaleReactiveHttpClientTests
             Requests.Add(new RequestObservation(request.Method, request.RequestUri!, headers));
             if (request.Method == HttpMethod.Post)
             {
+                attachCount++;
                 AttachBody = await request.Content!.ReadAsStringAsync(cancellationToken);
                 return Json("{\"view\":\"view-1\",\"generation\":3,\"snapshot_chunks\":[\"/api/v1/reactive/views/view-1/3/snapshot/0?cut=0\"],\"log\":\"/api/v1/reactive/views/view-1/3/log?offset=0\",\"checkpoint\":\"Y3AtMA==\",\"capability\":\"capability\",\"capability_header\":\"X-TerraScale-View-Capability\",\"offset\":0}", HttpStatusCode.Created);
             }
             if (request.RequestUri!.AbsolutePath.EndsWith("/snapshot/0", StringComparison.Ordinal))
             {
-                var response = Binary(Envelope(3, 0, SnapshotMessage(subscription, Snapshot(3, 0, 0, "Y3AtMA=="))));
+                var auth = staleReattachAuthorization && attachCount > 1 ? 0u : 1u;
+                var response = Binary(Envelope(3, 0, SnapshotMessage(subscription, Snapshot(3, 0, auth, "Y3AtMA=="))));
                 if (weakSnapshotEtag) response.Headers.ETag = new EntityTagHeaderValue("\"snapshot-0\"", isWeak: true);
                 else if (wildcardSnapshotEtag) response.Headers.ETag = EntityTagHeaderValue.Any;
                 else response.Headers.ETag = new EntityTagHeaderValue("\"snapshot-0\"");
@@ -385,6 +408,13 @@ public sealed class TerraScaleReactiveHttpClientTests
         var bytes = Convert.FromBase64String(checkpoint);
         var result = new List<byte> { 0x96, (byte)generation, (byte)auth, (byte)revision, 0x90, 0xa1, (byte)'d', 0xc4, (byte)bytes.Length };
         result.AddRange(bytes);
+        return result.ToArray();
+    }
+
+    private static byte[] AuthorizationChanged(uint envelopeGeneration, uint snapshotAuth)
+    {
+        var result = new List<byte> { 0x94, 0xa3, (byte)'s', (byte)'u', (byte)'b', (byte)envelopeGeneration, 0x90 };
+        result.AddRange(Snapshot(3, 0, snapshotAuth, "Y3AtMA=="));
         return result.ToArray();
     }
 

@@ -81,6 +81,17 @@ public sealed class TerraScaleDocumentsClientTests
     }
 
     [Test]
+    public async Task ConditionalDeleteAcceptsThePublishedBodylessResponse()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.NoContent, "");
+        using var http = new HttpClient(handler);
+        var client = CreateClient(http);
+
+        await client.Documents.DeleteAsync("db", "items", "stable-id", new TerraScaleDocumentMutationOptions(IdempotencyKey: "delete-1"));
+        await Assert.That(handler.Request).IsNotNull();
+    }
+
+    [Test]
     public async Task NativeTimestampAndBytesUseCanonicalSchemaValues()
     {
         using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"revision\":\"1\"}", "\"1\"");

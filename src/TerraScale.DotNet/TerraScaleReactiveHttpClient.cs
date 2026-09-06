@@ -187,6 +187,8 @@ public sealed class TerraScaleReactiveHttpClient
     {
         subscription.SetSessionState(TerraScaleViewSessionState.Resuming);
         var replacement = await AttachCoreAsync(subscription.Attachment.DatabaseId, subscription.Attachment.Subscription, subscription.Attachment.Statement, subscription.Attachment.Parameters, subscription.CurrentSnapshot.Checkpoint, subscription.Attachment.Transport, cancellationToken).ConfigureAwait(false);
+        if (replacement.CurrentSnapshot.AuthorizationGeneration < subscription.CurrentSnapshot.AuthorizationGeneration)
+            throw new TerraScaleReactiveProtocolException("The reattached snapshot moved to an older authorization generation.");
         subscription.Replace(replacement.Attachment, replacement.CurrentSnapshot);
         return TerraScaleReactivePollResult.Reset(reason, replacement.CurrentSnapshot);
     }
@@ -331,7 +333,9 @@ public sealed class TerraScaleReactiveHttpClient
             // failure does not prove that the server did not commit them.
             catch (HttpRequestException) when (attempt < options.MaxRetryAttempts && request.Method != HttpMethod.Post) { await DelayAsync(null, attempt++, cancellationToken).ConfigureAwait(false); continue; }
             if (!IsTransient(response.StatusCode) || attempt >= options.MaxRetryAttempts || request.Method == HttpMethod.Post) return response;
-            var delay = RetryAfter(response); response.Dispose(); await DelayAsync(delay, attempt++, cancellationToken).ConfigureAwait(false);
+            var delay = RetryAfter(response);
+            if (delay > TimeSpan.FromSeconds(30)) return response;
+            response.Dispose(); await DelayAsync(delay, attempt++, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -347,6 +351,7 @@ public sealed class TerraScaleReactiveHttpClient
     {
         var delay = retryAfter.GetValueOrDefault();
         if (delay <= TimeSpan.Zero) delay = TimeSpan.FromMilliseconds(options.RetryDelay.TotalMilliseconds * Math.Pow(2, attempt));
+        if (delay > TimeSpan.FromSeconds(30)) delay = TimeSpan.FromSeconds(30);
         await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
     }
 
@@ -408,7 +413,7 @@ public sealed class TerraScaleReactiveHttpClient
     private static ReactiveWireMessage ReadDeltaMessage(ref ReactiveMsgpackReader reader) { CheckArray(ref reader, 7); var subscription = reader.Text(1, 128); var generation = reader.U64(); var from = reader.U64(); var to = reader.U64(); var operations = ReadOperations(ref reader); var digest = reader.Text(0, 64); var checkpoint = NewCheckpoint(reader.Binary(1, TerraScaleReactiveHttpClient.MaxCheckpointBytes)); return new ReactiveWireDelta(subscription, generation, from, to, operations, digest, checkpoint); }
     private static ReactiveWireMessage ReadResetMessage(ref ReactiveMsgpackReader reader) { CheckArray(ref reader, 3); return new ReactiveWireReset(reader.Text(1, 128), ReadReason(ref reader), ReadSnapshot(ref reader)); }
     private static ReactiveWireMessage ReadHeartbeat(ref ReactiveMsgpackReader reader) { CheckArray(ref reader, 0); return new ReactiveWireHeartbeat(); }
-    private static ReactiveWireMessage ReadAuthorizationChanged(ref ReactiveMsgpackReader reader) { CheckArray(ref reader, 4); var subscription = reader.Text(1, 128); _ = reader.U64(); var count = reader.Array(MaxArrayItems); for (var i = 0; i < count; i++) _ = reader.Text(1, 256); return new ReactiveWireAuthorizationChanged(subscription, ReadSnapshot(ref reader)); }
+    private static ReactiveWireMessage ReadAuthorizationChanged(ref ReactiveMsgpackReader reader) { CheckArray(ref reader, 4); var subscription = reader.Text(1, 128); var authorizationGeneration = reader.U64(); var count = reader.Array(MaxArrayItems); for (var i = 0; i < count; i++) _ = reader.Text(1, 256); return new ReactiveWireAuthorizationChanged(subscription, authorizationGeneration, ReadSnapshot(ref reader)); }
     private static ReactiveWireMessage ReadRegion(ref ReactiveMsgpackReader reader) { CheckArray(ref reader, 1); return new ReactiveWireRegion(reader.Text(1, 64)); }
     private static ReactiveWireMessage ReadError(ref ReactiveMsgpackReader reader) { CheckArray(ref reader, 2); return new ReactiveWireError(reader.U32(), reader.NilOrText(256)); }
     private static ReactiveWireMessage ReadBackpressure(ref ReactiveMsgpackReader reader) { CheckArray(ref reader, 1); var mode = reader.U32(); if (mode is not 1 and not 2) throw new TerraScaleReactiveProtocolException("The reactive backpressure mode is unknown."); return new ReactiveWireBackpressure(mode); }
@@ -459,7 +464,7 @@ public sealed class TerraScaleReactiveHttpClient
         ReactiveWireDelta => throw new TerraScaleReactiveProtocolException("The reactive delta belongs to another view or generation."),
         ReactiveWireReset reset when reset.Subscription == attachment.Subscription => new TerraScaleReactiveReset(reset.Reason, ConvertSnapshot(reset.Subscription, reset.Snapshot, attachment)),
         ReactiveWireReset => throw new TerraScaleReactiveProtocolException("The reactive reset belongs to another subscription."),
-        ReactiveWireAuthorizationChanged changed when changed.Subscription == attachment.Subscription => new TerraScaleReactiveReset(TerraScaleReactiveResetReason.PermissionChanged, ConvertSnapshot(changed.Subscription, changed.Snapshot, attachment)),
+        ReactiveWireAuthorizationChanged changed when changed.Subscription == attachment.Subscription => new TerraScaleReactiveReset(TerraScaleReactiveResetReason.PermissionChanged, ConvertAuthorizationChanged(changed, attachment)),
         ReactiveWireAuthorizationChanged => throw new TerraScaleReactiveProtocolException("The authorization change belongs to another subscription."),
         ReactiveWireHeartbeat => new TerraScaleReactiveHeartbeat(),
         ReactiveWireRegion region => new TerraScaleReactiveRouteChange(region.Region),
@@ -468,6 +473,7 @@ public sealed class TerraScaleReactiveHttpClient
         _ => throw new TerraScaleReactiveProtocolException("The reactive frame is not recognized."),
     };
     private static TerraScaleReactiveSnapshot ConvertSnapshot(string subscription, ReactiveWireSnapshotValue value, TerraScaleReactiveAttachment attachment) { if (subscription != attachment.Subscription) throw new TerraScaleReactiveProtocolException("The reactive snapshot belongs to another subscription."); if (value.Generation != attachment.Generation) throw new TerraScaleReactiveProtocolException("The reactive snapshot belongs to another view generation."); attachment.ValidateCheckpoint(value.Checkpoint); return new TerraScaleReactiveSnapshot(value.Generation, value.AuthorizationGeneration, value.Revision, value.Items, value.Digest, value.Checkpoint); }
+    private static TerraScaleReactiveSnapshot ConvertAuthorizationChanged(ReactiveWireAuthorizationChanged changed, TerraScaleReactiveAttachment attachment) { if (changed.AuthorizationGeneration != changed.Snapshot.AuthorizationGeneration) throw new TerraScaleReactiveProtocolException("The authorization change generation does not match its snapshot."); return ConvertSnapshot(changed.Subscription, changed.Snapshot, attachment); }
     private static TerraScaleReactiveSnapshotFrame ConvertSnapshotFrame(string subscription, ReactiveWireSnapshotValue value, TerraScaleReactiveAttachment attachment) => new(ConvertSnapshot(subscription, value, attachment));
     private static void CheckArray(ref ReactiveMsgpackReader reader, int expected) { if (reader.Array(expected) != expected) throw new TerraScaleReactiveProtocolException("The reactive frame has an invalid shape."); }
     private static void CheckArrayCount(int actual, int expected) { if (actual != expected) throw new TerraScaleReactiveProtocolException("The reactive operation has an invalid shape."); }
@@ -500,7 +506,7 @@ public sealed class TerraScaleReactiveHttpClient
     internal sealed record ReactiveWireSnapshot(string Subscription, ReactiveWireSnapshotValue Snapshot) : ReactiveWireMessage;
     internal sealed record ReactiveWireDelta(string Subscription, ulong Generation, ulong From, ulong To, IReadOnlyList<TerraScaleReactiveOperation> Operations, string Digest, TerraScaleViewCheckpoint Checkpoint) : ReactiveWireMessage;
     internal sealed record ReactiveWireReset(string Subscription, TerraScaleReactiveResetReason Reason, ReactiveWireSnapshotValue Snapshot) : ReactiveWireMessage;
-    internal sealed record ReactiveWireAuthorizationChanged(string Subscription, ReactiveWireSnapshotValue Snapshot) : ReactiveWireMessage;
+    internal sealed record ReactiveWireAuthorizationChanged(string Subscription, ulong AuthorizationGeneration, ReactiveWireSnapshotValue Snapshot) : ReactiveWireMessage;
     internal sealed record ReactiveWireHeartbeat : ReactiveWireMessage;
     internal sealed record ReactiveWireRegion(string Region) : ReactiveWireMessage;
     internal sealed record ReactiveWireError(uint Code, string? Detail) : ReactiveWireMessage;
