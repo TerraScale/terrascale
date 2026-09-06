@@ -413,6 +413,7 @@ const internalHeaderNames = new Set([
   "x-terrascale-allow-stale",
   "x-terrascale-delete-confirmation",
   "x-terrascale-preferred-region",
+  "x-terrascale-auth-transaction",
 ]);
 
 function validateInternalHeaders(headers: HeadersInit | undefined): void {
@@ -610,6 +611,15 @@ function parseSuccessResponse(raw: string, routeName: TerraScaleRouteName): unkn
 }
 
 const responseUint64Paths: Readonly<Partial<Record<TerraScaleRouteName, readonly string[]>>> = {
+  "databases.insertUnique": ["expiresAtMs"],
+  "databases.compareAndSwap": ["expiresAtMs"],
+  "databases.consumeOne": ["expiresAtMs"],
+  "databases.index": ["expiresAtMs"],
+  "databases.findOne": ["expiresAtMs"],
+  "databases.findPage": ["expiresAtMs"],
+  "databases.beginTransaction": ["expiresAtMs"],
+  "databases.commitTransaction": ["expiresAtMs"],
+  "databases.rollbackTransaction": ["expiresAtMs"],
   "databases.getSchema": ["generation", "schema_version", "migration.total", "migration.completed"],
   "databases.putSchema": ["generation", "schema_version", "migration.total", "migration.completed"],
   "databases.databaseUsage": ["snapshot_sequence", "storage_complete_through_millis", "reads.total_reads"],

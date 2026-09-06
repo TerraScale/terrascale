@@ -1,3 +1,4 @@
+import { createAuthPersistenceClient, type AuthPersistenceClient } from "./auth-persistence.js";
 import { createTerraScaleClient, type TerraScaleClient } from "./factory.js";
 import { createTerraScaleManagementClient, type TerraScaleManagementClient } from "./management.js";
 import type { FetchLike } from "./config.js";
@@ -10,7 +11,7 @@ const pathTemplateSegments = new Map<string, string>([
   [sampleIds.database, "{name}"],
   [sampleIds.collection, "{collection}"],
   [sampleIds.documentId, "{id}"],
-]).set("SFO", "{regionCode}").set("email", "{field}").set("export-1", "{job_id}").set("delivery-1", "{delivery_id}").set("manifest.json", "{member}").set("operation-1", "{operation_id}");
+]).set("SFO", "{regionCode}").set("email", "{field}").set("export-1", "{job_id}").set("delivery-1", "{delivery_id}").set("manifest.json", "{member}").set("operation-1", "{operation_id}").set("auth-user", "{model}");
 
 /** Canonical producer operations not implemented by this SDK slice. */
 export const expectedContractGapRouteNames = [
@@ -50,7 +51,7 @@ export type CapturedSdkRoute = {
 
 type CaptureOperation = {
   readonly client: string;
-  readonly invoke: (client: TerraScaleClient, management: TerraScaleManagementClient) => Promise<unknown>;
+  readonly invoke: (client: TerraScaleClient, management: TerraScaleManagementClient, auth: AuthPersistenceClient) => Promise<unknown>;
   readonly operation: string;
   readonly routeName: TerraScaleRouteName;
 };
@@ -87,7 +88,8 @@ async function captureRoute(operation: CaptureOperation, routeFetch?: FetchLike,
   };
   const client = createTerraScaleClient(config);
   const management = createTerraScaleManagementClient(config);
-  const result = await operation.invoke(client, management);
+  const auth = createAuthPersistenceClient(config);
+  const result = await operation.invoke(client, management, auth);
   onResult?.(operation.routeName, result);
   if (assertRouted && onResult === undefined && isRoutingFailure(result)) {
     throw new Error(`Local route exercise failed for ${operation.client}.${operation.operation}: ${result.error.code} (${result.error.kind}).`);
@@ -100,7 +102,7 @@ async function captureRoute(operation: CaptureOperation, routeFetch?: FetchLike,
     client: operation.client,
     method: capturedRequest.method,
     operation: operation.operation,
-    pathTemplate: pathToTemplate(new URL(capturedRequest.url).pathname),
+    pathTemplate: pathToTemplate(new URL(capturedRequest.url).pathname).replace(/\{name\}(?=\/auth\/)/u, "{database}"),
     routeName: operation.routeName,
     sourceContract: await capturedSourceContract(capturedRequest),
   };
@@ -144,6 +146,43 @@ function pathToTemplate(pathname: string): string {
 }
 
 const captureOperations: readonly CaptureOperation[] = [
+  {
+    client: "databases", operation: "insertUnique", routeName: "databases.insertUnique",
+    invoke: (_client, _management, auth) => auth.insertUnique(sampleIds.database, { model: "user", record: { id: sampleIds.documentId } }, { idempotencyKey: "auth-insert-1", transactionId: "tx-1" }),
+  },
+  {
+    client: "databases", operation: "compareAndSwap", routeName: "databases.compareAndSwap",
+    invoke: (_client, _management, auth) => auth.compareAndSwap(sampleIds.database, { model: "user", id: sampleIds.documentId, expected: { active: false }, update: { active: true } }, { idempotencyKey: "auth-cas-1", transactionId: "tx-1" }),
+  },
+  {
+    client: "databases", operation: "consumeOne", routeName: "databases.consumeOne",
+    invoke: (_client, _management, auth) => auth.consumeOne(sampleIds.database, { model: "verification", id: sampleIds.documentId, expected: {} }, { idempotencyKey: "auth-consume-1", transactionId: "tx-1" }),
+  },
+  {
+    client: "databases", operation: "index", routeName: "databases.index",
+    invoke: (_client, _management, auth) => auth.index(sampleIds.database, { model: "user", fields: ["email"] }, { idempotencyKey: "auth-index-1" }),
+  },
+  {
+    client: "databases", operation: "findOne", routeName: "databases.findOne",
+    invoke: (_client, _management, auth) => auth.findOne(sampleIds.database, "auth-user", sampleIds.documentId),
+  },
+  {
+    client: "databases", operation: "findPage", routeName: "databases.findPage",
+    invoke: (_client, _management, auth) => auth.findPage(sampleIds.database, { model: "user", predicates: [{ field: "active", value: true }], offset: 0, limit: 25 }, { idempotencyKey: "auth-page-1", transactionId: "tx-1" }),
+  },
+  {
+    client: "databases", operation: "beginTransaction", routeName: "databases.beginTransaction",
+    invoke: (_client, _management, auth) => auth.beginTransaction(sampleIds.database, { transactionId: "tx-1" }, { idempotencyKey: "auth-begin-1" }),
+  },
+  {
+    client: "databases", operation: "commitTransaction", routeName: "databases.commitTransaction",
+    invoke: (_client, _management, auth) => auth.commitTransaction(sampleIds.database, { transactionId: "tx-1" }, { idempotencyKey: "auth-commit-1" }),
+  },
+  {
+    client: "databases", operation: "rollbackTransaction", routeName: "databases.rollbackTransaction",
+    invoke: (_client, _management, auth) => auth.rollbackTransaction(sampleIds.database, { transactionId: "tx-1" }, { idempotencyKey: "auth-rollback-1" }),
+  },
+
   {
     client: "databases", operation: "listExports", routeName: "databases.listExports",
     invoke: (_client, management) => management.exports.list(sampleIds.database, { limit: 25, after: "export-previous" }),
