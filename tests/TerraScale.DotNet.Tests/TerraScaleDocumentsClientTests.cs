@@ -53,6 +53,33 @@ public sealed class TerraScaleDocumentsClientTests
         await Assert.That(exception).IsNotNull();
     }
 
+    [Test]
+    public async Task CreateOnlyUsesTheDurablePutPrecondition()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.OK, "{\"revision\":\"1\"}", "\"1\"");
+        using var http = new HttpClient(handler);
+        var client = CreateClient(http);
+        await client.Documents.CreateAsync("db", "items", "stable-id", new { ok = true });
+        await Assert.That(handler.Request!.IfNoneMatch).IsEqualTo("*");
+
+        var createOnly = new TerraScaleDocumentMutationOptions(CreateOnly: true);
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Documents.PatchAsync("db", "items", "stable-id", new { ok = true }, createOnly));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Documents.DeleteAsync("db", "items", "stable-id", createOnly));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Documents.BatchAsync("db", "items", [TerraScaleDocumentBatchOperation.Delete("stable-id")], createOnly));
+        await Assert.ThrowsAsync<ArgumentException>(() => client.Documents.PutAsync("db", "items", "stable-id", new { ok = true }, createOnly with { ExpectedChangeToken = "\"1\"" }));
+    }
+
+    [Test]
+    public async Task ExistingDocumentCreateOnlyFailureRemainsTyped()
+    {
+        using var handler = new RecordingHandler(HttpStatusCode.PreconditionFailed, "{\"error\":{\"code\":\"precondition_failed\",\"message\":\"exists\",\"fix\":\"read existing document\"}}");
+        using var http = new HttpClient(handler);
+        var client = CreateClient(http);
+        var error = await Assert.ThrowsAsync<TerraScaleApiException>(() => client.Documents.PutAsync("db", "items", "stable-id", new { ok = true }, new TerraScaleDocumentMutationOptions(CreateOnly: true)));
+        await Assert.That(error!.StatusCode).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That(handler.Request!.IfNoneMatch).IsEqualTo("*");
+    }
+
     private static TerraScaleClient CreateClient(HttpClient httpClient) => new(httpClient, new TerraScaleClientOptions
     {
         BaseAddress = new Uri("https://api.example.invalid/"),

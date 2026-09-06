@@ -802,6 +802,11 @@ public sealed class TerraScaleClient
             if (authenticationMode == RequestAuthenticationMode.Authenticated)
             {
                 await ApplyAuthenticationAsync(request, cancellationToken).ConfigureAwait(false);
+                if (options.TenantId is { } tenant && options.ProjectId is { } project)
+                {
+                    request.Headers.Add("X-TerraScale-Tenant-Id", tenant);
+                    request.Headers.Add("X-TerraScale-Project-Id", project);
+                }
                 if (options.RegionAffinity == TerraScaleRegionAffinity.Failover &&
                     options.PreferredRegion is { } preferredRegion)
                 {

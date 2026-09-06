@@ -15,6 +15,12 @@ public sealed record TerraScaleClientOptions
     /// </summary>
     public Uri BaseAddress { get; set; } = new("https://api.terrascale.tech", UriKind.Absolute);
 
+    /// <summary>Tenant selector for project-scoped operations; the server verifies membership.</summary>
+    public string? TenantId { get; set; }
+
+    /// <summary>Project selector for project-scoped operations; the server verifies authority.</summary>
+    public string? ProjectId { get; set; }
+
     /// <summary>
     /// Optional selected region. Failover affinity sends it as a routing hint.
     /// </summary>
@@ -75,6 +81,11 @@ public sealed record TerraScaleClientOptions
         }
         ValidateEndpoint(BaseAddress, nameof(BaseAddress));
 
+        if ((TenantId is null) != (ProjectId is null))
+            throw new ArgumentException("TenantId and ProjectId must be configured together.");
+        TenantId = ValidateScopeSelector(TenantId, nameof(TenantId));
+        ProjectId = ValidateScopeSelector(ProjectId, nameof(ProjectId));
+
         if (!Enum.IsDefined(RegionAffinity))
         {
             throw new ArgumentOutOfRangeException(nameof(RegionAffinity), "Unknown regional affinity mode.");
@@ -134,6 +145,14 @@ public sealed record TerraScaleClientOptions
                 nameof(RetryDelay),
                 $"Retry delay must be less than or equal to {MaximumRetryDelay.TotalSeconds:0} seconds.");
         }
+    }
+
+    private static string? ValidateScopeSelector(string? value, string name)
+    {
+        if (value is null) return null;
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 255 || value.Any(character => character < 33 || character > 126))
+            throw new ArgumentException("Scope selectors must contain 1 to 255 visible ASCII characters.", name);
+        return value;
     }
 
     private static void ValidateEndpoint(Uri endpoint, string name)

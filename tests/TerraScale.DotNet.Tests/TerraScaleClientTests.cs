@@ -45,6 +45,36 @@ public sealed class TerraScaleClientTests
     }
 
     [Test]
+    public async Task ProjectScopeSelectorsAreExplicitAndRequireBothIdentities()
+    {
+        var handler = new RecordingHandler("{\"matched\":0,\"rows\":[]}");
+        using var http = new HttpClient(handler);
+        var client = new TerraScaleClient(http, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://api.example.invalid/"),
+            ApiKey = "project-key",
+            TenantId = "tenant-scope",
+            ProjectId = "project-scope",
+        });
+        await client.Sql.ExecuteAsync("database-a", TerraScaleSqlQuery.Raw("SELECT * FROM docs"));
+        await Assert.That(handler.TenantId).IsEqualTo("tenant-scope");
+        await Assert.That(handler.ProjectId).IsEqualTo("project-scope");
+
+        foreach (var options in new[]
+        {
+            new TerraScaleClientOptions { TenantId = "tenant-scope" },
+            new TerraScaleClientOptions { TenantId = "tenant\r\nheader", ProjectId = "project-scope" },
+        })
+        {
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+            {
+                _ = new TerraScaleClient(http, options);
+                return Task.CompletedTask;
+            });
+        }
+    }
+
+    [Test]
     public async Task RootSqlSurfaceReusesCallerIdempotencyAcrossRetries()
     {
         var handler = new RetryHandler();
@@ -122,12 +152,16 @@ public sealed class TerraScaleClientTests
         public string? Authorization { get; private set; }
 
         public string? ApiKeyHeader { get; private set; }
+        public string? TenantId { get; private set; }
+        public string? ProjectId { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             Authorization = request.Headers.Authorization?.ToString();
+            TenantId = request.Headers.TryGetValues("X-TerraScale-Tenant-Id", out var tenant) ? tenant.Single() : null;
+            ProjectId = request.Headers.TryGetValues("X-TerraScale-Project-Id", out var project) ? project.Single() : null;
             ApiKeyHeader = request.Headers.TryGetValues("X-TerraScale-Auth-Key", out var values)
                 ? values.Single()
                 : null;
