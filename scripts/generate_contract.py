@@ -66,6 +66,8 @@ class OpenApiGenerator:
         self.inline: dict[str, dict] = {}
 
     def resolve(self, schema: dict) -> dict:
+        if isinstance(schema, bool):
+            return {}
         reference = schema.get("$ref")
         if reference:
             name = reference.rsplit("/", 1)[-1]
@@ -93,6 +95,8 @@ class OpenApiGenerator:
                         self._collect_schema(item, name)
 
     def type_name(self, schema: dict, owner: str, nullable: bool = False) -> str:
+        if isinstance(schema, bool):
+            return "JsonElement?" if nullable else "JsonElement"
         if "$ref" in schema:
             target = self.resolve(schema)
             if schema["$ref"].endswith("/JsonValue"):

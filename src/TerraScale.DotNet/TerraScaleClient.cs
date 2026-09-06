@@ -56,6 +56,7 @@ public sealed class TerraScaleClient
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
         Databases = new TerraScaleDatabasesClient(this);
         Operations = new TerraScaleOperationsClient(this);
+        AuthPersistence = new TerraScaleAuthPersistenceClient(this);
         Collections = new TerraScaleCollectionsClient(this);
         Documents = new TerraScaleDocumentsClient(this);
         Regions = new TerraScaleRegionsClient(this);
@@ -90,6 +91,9 @@ public sealed class TerraScaleClient
 
     /// <summary>Authoritative provisioning operation lookup.</summary>
     public TerraScaleOperationsClient Operations { get; }
+
+    /// <summary>Named public authentication persistence operations.</summary>
+    public TerraScaleAuthPersistenceClient AuthPersistence { get; }
 
     /// <summary>
     /// Database collection operations.
@@ -208,6 +212,17 @@ public sealed class TerraScaleClient
             configureRequest,
             static (response, _) => response,
             cancellationToken);
+
+    internal async Task<AuthResult> SendAuthPersistenceAsync<T>(HttpMethod method, string route, T? body, JsonTypeInfo<T>? metadata, string? idempotencyKey, string? transactionId, CancellationToken cancellationToken)
+    {
+        using var response = await SendWithRetriesAsync(method, route,
+            body is null ? static () => null : CreateJsonContentFactory(body, metadata!), RequestAuthenticationMode.Authenticated,
+            request =>
+            {
+                if (transactionId is not null) request.Headers.Add("X-TerraScale-Auth-Transaction", transactionId);
+            }, activity: null, cancellationToken, idempotencyKey).ConfigureAwait(false);
+        return await ReadJsonResponseAsync(response, TerraScaleContractJsonContext.Default.AuthResult, null, cancellationToken).ConfigureAwait(false);
+    }
 
     internal async Task<SchemaDocument> PutCollectionSchemaAsync(string route, CollectionSchema schema, string idempotencyKey, ulong? expectedGeneration, CancellationToken cancellationToken)
     {

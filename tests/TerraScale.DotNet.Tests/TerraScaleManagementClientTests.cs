@@ -10,6 +10,7 @@ public sealed class TerraScaleManagementClientTests
 {
     private static readonly string[] Operations =
     [
+        "insert_unique", "compare_and_swap", "consume_one", "index", "find_page", "find_one", "begin_transaction", "commit_transaction", "rollback_transaction",
         "database_usage", "get_schema", "put_schema", "list_indexes", "create_index", "delete_index", "index_recommendations",
         "list_webhooks", "create_webhook", "delete_webhook", "list_deliveries", "replay_webhook", "rotate_secret",
         "list_exports", "create_export", "get_export", "resume_export", "download_export", "cancel_export",
@@ -68,6 +69,22 @@ public sealed class TerraScaleManagementClientTests
         }
     }
 
+    [Test]
+    public async Task UInt64UsageAndRequiredFieldsRetainThePublishedContract()
+    {
+        const string json = "{\"tenant_id\":\"tenant\",\"database_id\":\"database\",\"snapshot_sequence\":18446744073709551615,\"storage_complete_through_millis\":null,\"meters\":[{\"meter\":\"document_write_units\",\"units\":\"18446744073709551616\"},{\"meter\":\"storage_byte_seconds\",\"units\":\"0\"}],\"reads\":{\"total_reads\":18446744073709551615}}";
+        var summary = JsonSerializer.Deserialize(json, TerraScaleContractJsonContext.Default.UsageSummary)!;
+        await Assert.That(summary.SnapshotSequence).IsEqualTo(ulong.MaxValue);
+        await Assert.That(summary.Reads.TotalReads).IsEqualTo(ulong.MaxValue);
+        await Assert.That(summary.Meters[0].Units).IsEqualTo("18446744073709551616");
+        await Assert.That(summary.StorageCompleteThroughMillis).IsNull();
+        await Assert.ThrowsAsync<JsonException>(() =>
+        {
+            _ = JsonSerializer.Deserialize("{}", TerraScaleContractJsonContext.Default.UsageSummary);
+            return Task.CompletedTask;
+        });
+    }
+
     private static T Request<T>(JsonElement operation, JsonTypeInfo<T> type) =>
         JsonSerializer.Deserialize(operation.GetProperty("request").GetProperty("body").GetProperty("value").GetRawText(), type)!;
 
@@ -76,6 +93,15 @@ public sealed class TerraScaleManagementClientTests
         var management = client.Management;
         switch (operationId)
         {
+            case "insert_unique": return await client.AuthPersistence.InsertUniqueAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.UniqueInsert), "auth-key", "transaction-key");
+            case "compare_and_swap": return await client.AuthPersistence.CompareAndSwapAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.ConditionalUpdate), "auth-key", "transaction-key");
+            case "consume_one": return await client.AuthPersistence.ConsumeOneAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.Consume), "auth-key", "transaction-key");
+            case "index": return await client.AuthPersistence.CreateIndexAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.UniqueIndex), "auth-key", "transaction-key");
+            case "find_page": return await client.AuthPersistence.FindPageAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.PageQuery), "auth-key", "transaction-key");
+            case "find_one": return await client.AuthPersistence.GetAsync("sample", "sample", "sample");
+            case "begin_transaction": return await client.AuthPersistence.BeginTransactionAsync("sample", "transaction-key", "auth-key");
+            case "commit_transaction": return await client.AuthPersistence.CommitTransactionAsync("sample", "transaction-key", "auth-key");
+            case "rollback_transaction": return await client.AuthPersistence.RollbackTransactionAsync("sample", "transaction-key", "auth-key");
             case "database_usage": return await management.Usage.GetAsync("sample");
             case "get_schema": return await management.Schema.GetAsync("sample", "sample");
             case "put_schema": return await management.Schema.PutAsync("sample", "sample", Request(operation, TerraScaleContractJsonContext.Default.CollectionSchema), "schema-key", 1);
