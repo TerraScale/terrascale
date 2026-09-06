@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { createAuthPersistenceClient } from "./auth-persistence.js";
+import { AuthTransactionOutcomeUnknownError, AuthTransactionPoisonedError, runAuthTransaction } from "./auth-transaction.js";
 
 it("stages named auth operations with stable keys and commits without the staging header", async () => {
   const requests: Request[] = [];
@@ -98,4 +99,73 @@ it("preserves full-width auth result counts as bigint", async () => {
   const result = await client.count("db", { model: "user", predicates: [] });
   expect(result.ok).toBe(true);
   if (result.ok) expect(result.value.count).toBe(18446744073709551615n);
+});
+
+it("serializes transaction operations, preserves keys, and commits once", async () => {
+  const paths: string[] = [];
+  const keys: string[] = [];
+  const client = createAuthPersistenceClient({ fetch: async input => {
+    const request = new Request(input);
+    const path = new URL(request.url).pathname;
+    paths.push(path);
+    const key = request.headers.get("idempotency-key");
+    if (key !== null) keys.push(key);
+    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "canonical-tx" });
+    return Response.json({ record: null, matched: true });
+  } });
+  const value = await runAuthTransaction(client, "db", async operations => {
+    await Promise.all([
+      operations.count({ model: "user", predicates: [] }, { idempotencyKey: "read-key" }),
+      operations.incrementOne({ model: "user", predicates: [], increment: { attempts: 1 } }, { idempotencyKey: "increment-key" }),
+    ]);
+    return "done";
+  }, {
+    transactionIdFactory: () => "client-label",
+    beginIdempotencyKeyFactory: () => "begin-key",
+    commitIdempotencyKeyFactory: () => "commit-key",
+    rollbackIdempotencyKeyFactory: () => "rollback-key",
+  });
+  expect(value).toBe("done");
+  expect(paths).toEqual([
+    "/api/v1/databases/db/auth/transactions/begin",
+    "/api/v1/databases/db/auth/count",
+    "/api/v1/databases/db/auth/incrementOne",
+    "/api/v1/databases/db/auth/transactions/commit",
+  ]);
+  expect(keys).toEqual(["begin-key", "read-key", "increment-key", "commit-key"]);
+});
+
+it("rolls back a poisoned transaction even when callback catches the failed result", async () => {
+  const paths: string[] = [];
+  const client = createAuthPersistenceClient({ fetch: async input => {
+    const path = new URL(new Request(input).url).pathname;
+    paths.push(path);
+    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "tx" });
+    if (path.endsWith("/count")) return Response.json({ error: { code: "transaction_conflict", message: "poisoned" } }, { status: 409 });
+    return Response.json({ record: null, matched: true });
+  } });
+  await expect(runAuthTransaction(client, "db", async operations => {
+    const result = await operations.count({ model: "user", predicates: [] }, { idempotencyKey: "count-key" });
+    expect(result.ok).toBe(false);
+    return undefined;
+  }, { transactionIdFactory: () => "label", beginIdempotencyKeyFactory: () => "begin", rollbackIdempotencyKeyFactory: () => "rollback" })).rejects.toBeInstanceOf(AuthTransactionPoisonedError);
+  expect(paths.at(-1)).toBe("/api/v1/databases/db/auth/transactions/rollback");
+});
+
+it("exposes uncertain commit identity without replaying the callback", async () => {
+  let callbackCalls = 0;
+  const client = createAuthPersistenceClient({ fetch: async input => {
+    const path = new URL(new Request(input).url).pathname;
+    if (path.endsWith("/begin")) return Response.json({ record: null, matched: true, transactionId: "canonical-tx" });
+    if (path.endsWith("/commit")) return Response.json({ error: { code: "auth_outcome_unknown", message: "resolve" } }, { status: 503 });
+    return Response.json({ record: null, matched: true });
+  } });
+  await expect(runAuthTransaction(client, "db", async operations => {
+    callbackCalls++;
+    await operations.count({ model: "user", predicates: [] }, { idempotencyKey: "count" });
+  }, { transactionIdFactory: () => "label", beginIdempotencyKeyFactory: () => "begin", commitIdempotencyKeyFactory: () => "commit" })).rejects.toMatchObject({
+    transactionId: "canonical-tx",
+    commitIdempotencyKey: "commit",
+  } satisfies Partial<AuthTransactionOutcomeUnknownError>);
+  expect(callbackCalls).toBe(1);
 });

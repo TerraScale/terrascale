@@ -81,9 +81,16 @@
     "test:browser": "playwright test"
   },
   "peerDependencies": {
+    "@better-auth/core": "1.7.2",
     "react": ">=18.2.0 <20.0.0"
   },
+  "peerDependenciesMeta": {
+    "@better-auth/core": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@better-auth/core": "^1.7.2",
     "@playwright/test": "^1.62.1",
     "@types/node": "^26.0.0",
     "typescript": "^5.9.3",

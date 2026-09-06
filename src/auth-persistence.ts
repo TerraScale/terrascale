@@ -14,7 +14,23 @@ export type AuthUniqueInsert = { readonly model: string; readonly record: JsonOb
 export type AuthConditionalUpdate = { readonly model: string; readonly id: string; readonly expected: JsonObject; readonly update: JsonObject };
 export type AuthConsume = { readonly model: string; readonly id: string; readonly expected: JsonObject };
 export type AuthUniqueIndex = { readonly model: string; readonly fields: readonly string[] };
-export type AuthPageQuery = { readonly model: string; readonly predicates: readonly AuthPersistencePredicate[]; readonly offset: number; readonly limit: number };
+export type AuthQueryJoin = {
+  readonly model: string;
+  readonly outputField: string;
+  readonly fromField: string;
+  readonly toField: string;
+  readonly relation: "one-to-one" | "one-to-many";
+  readonly limit: number;
+};
+export type AuthPageQuery = {
+  readonly model: string;
+  readonly predicates: readonly AuthPersistencePredicate[];
+  readonly offset: number;
+  readonly limit: number;
+  readonly select?: readonly string[];
+  readonly sortBy?: { readonly field: string; readonly direction: "asc" | "desc" };
+  readonly joins?: readonly AuthQueryJoin[];
+};
 export type AuthPredicateOnly = { readonly model: string; readonly predicates: readonly AuthPersistencePredicate[] };
 export type AuthPredicateUpdate = AuthPredicateOnly & { readonly update: JsonObject };
 export type AuthIncrement = AuthPredicateOnly & { readonly increment: Record<string, number>; readonly set?: JsonObject | undefined };

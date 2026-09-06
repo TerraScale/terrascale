@@ -1,6 +1,17 @@
 import type { TerraScaleResult } from "./result.js";
 
 export {
+  AuthTransactionOutcomeUnknownError,
+  AuthTransactionPoisonedError,
+  runAuthTransaction,
+} from "./auth-transaction.js";
+export type {
+  AuthTransactionMutationOptions,
+  AuthTransactionOperations,
+  AuthTransactionQueryOptions,
+} from "./auth-transaction.js";
+
+export {
   AuthPersistenceClient,
   createAuthPersistenceClient,
 } from "./auth-persistence.js";

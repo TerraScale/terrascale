@@ -6,7 +6,7 @@
     "bundle": "contracts",
     "openapi": "openapi.json"
   },
-  "routeCount": 27,
+  "routeCount": 64,
   "routes": [
     {
       "base": "api",
@@ -28,7 +28,183 @@
       "method": "POST",
       "pathTemplate": "/api/v1/databases",
       "requestType": "CreateDatabaseRequest",
-      "responseType": "DatabaseRecord"
+      "responseType": "DatabaseRecord | ProvisioningOperation"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "compareAndSwap",
+      "operationId": "compare_and_swap",
+      "routeName": "databases.compareAndSwap",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/compareAndSwap",
+      "requestType": "ConditionalUpdate",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "consumeMatching",
+      "operationId": "consume_matching",
+      "routeName": "databases.consumeMatching",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/consumeMatching",
+      "requestType": "PredicateOnly",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "consumeOne",
+      "operationId": "consume_one",
+      "routeName": "databases.consumeOne",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/consumeOne",
+      "requestType": "Consume",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "count",
+      "operationId": "count",
+      "routeName": "databases.count",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/count",
+      "requestType": "PredicateOnly",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "deleteMany",
+      "operationId": "delete_many",
+      "routeName": "databases.deleteMany",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/deleteMany",
+      "requestType": "PredicateOnly",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "deleteOne",
+      "operationId": "delete_one",
+      "routeName": "databases.deleteOne",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/deleteOne",
+      "requestType": "PredicateOnly",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "findPage",
+      "operationId": "find_page",
+      "routeName": "databases.findPage",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/findPage",
+      "requestType": "PageQuery",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "incrementOne",
+      "operationId": "increment_one",
+      "routeName": "databases.incrementOne",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/incrementOne",
+      "requestType": "Increment",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "index",
+      "operationId": "index",
+      "routeName": "databases.index",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/index",
+      "requestType": "UniqueIndex",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "insertUnique",
+      "operationId": "insert_unique",
+      "routeName": "databases.insertUnique",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/insertUnique",
+      "requestType": "UniqueInsert",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "findOne",
+      "operationId": "find_one",
+      "routeName": "databases.findOne",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{database}/auth/records/{model}/{id}",
+      "requestType": "void",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "beginTransaction",
+      "operationId": "begin_transaction",
+      "routeName": "databases.beginTransaction",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/transactions/begin",
+      "requestType": "TransactionIdentity",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "commitTransaction",
+      "operationId": "commit_transaction",
+      "routeName": "databases.commitTransaction",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/transactions/commit",
+      "requestType": "TransactionIdentity",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "rollbackTransaction",
+      "operationId": "rollback_transaction",
+      "routeName": "databases.rollbackTransaction",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/transactions/rollback",
+      "requestType": "TransactionIdentity",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "updateMany",
+      "operationId": "update_many",
+      "routeName": "databases.updateMany",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/updateMany",
+      "requestType": "PredicateUpdate",
+      "responseType": "AuthResult"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "updateOne",
+      "operationId": "update_one",
+      "routeName": "databases.updateOne",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{database}/auth/updateOne",
+      "requestType": "PredicateUpdate",
+      "responseType": "AuthResult"
     },
     {
       "base": "api",
@@ -209,6 +385,149 @@
     {
       "base": "api",
       "client": "databases",
+      "operation": "deleteIndex",
+      "operationId": "delete_index",
+      "routeName": "databases.deleteIndex",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/indexes/{field}",
+      "requestType": "void",
+      "responseType": "void"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "indexRecommendations",
+      "operationId": "index_recommendations",
+      "routeName": "databases.indexRecommendations",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/indexes/recommendations",
+      "requestType": "void",
+      "responseType": "RecommendationList"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "getSchema",
+      "operationId": "get_schema",
+      "routeName": "databases.getSchema",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
+      "requestType": "void",
+      "responseType": "SchemaDocument"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "putSchema",
+      "operationId": "put_schema",
+      "routeName": "databases.putSchema",
+      "method": "PUT",
+      "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
+      "requestType": "CollectionSchema",
+      "responseType": "SchemaDocument"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "clearDevelopmentFault",
+      "operationId": "clear_development_fault",
+      "routeName": "databases.clearDevelopmentFault",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/databases/{name}/dev/faults",
+      "requestType": "void",
+      "responseType": "DevelopmentFaultResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "developmentFault",
+      "operationId": "development_fault",
+      "routeName": "databases.developmentFault",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/dev/faults",
+      "requestType": "DevelopmentFaultRequest",
+      "responseType": "DevelopmentFaultResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "developmentLogs",
+      "operationId": "development_logs",
+      "routeName": "databases.developmentLogs",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/dev/logs",
+      "requestType": "void",
+      "responseType": "DevelopmentLogResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "listExports",
+      "operationId": "list_exports",
+      "routeName": "databases.listExports",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/exports",
+      "requestType": "void",
+      "responseType": "ExportList"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "createExport",
+      "operationId": "create_export",
+      "routeName": "databases.createExport",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/exports",
+      "requestType": "CreateExport",
+      "responseType": "ExportAccepted"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "getExport",
+      "operationId": "get_export",
+      "routeName": "databases.getExport",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/exports/{job_id}",
+      "requestType": "void",
+      "responseType": "ExportStatus"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "downloadExport",
+      "operationId": "download_export",
+      "routeName": "databases.downloadExport",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/exports/{job_id}/artifacts/{member}",
+      "requestType": "void",
+      "responseType": "Uint8Array"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "cancelExport",
+      "operationId": "cancel_export",
+      "routeName": "databases.cancelExport",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/exports/{job_id}/cancel",
+      "requestType": "void",
+      "responseType": "ExportStatus"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "resumeExport",
+      "operationId": "resume_export",
+      "routeName": "databases.resumeExport",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/exports/{job_id}/resume",
+      "requestType": "ResumeExport",
+      "responseType": "ExportStatus"
+    },
+    {
+      "base": "api",
+      "client": "databases",
       "operation": "websocket",
       "operationId": "websocket",
       "routeName": "databases.websocket",
@@ -241,6 +560,83 @@
     },
     {
       "base": "api",
+      "client": "databases",
+      "operation": "databaseUsage",
+      "operationId": "database_usage",
+      "routeName": "databases.databaseUsage",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/usage",
+      "requestType": "void",
+      "responseType": "UsageSummary"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "listWebhooks",
+      "operationId": "list_webhooks",
+      "routeName": "databases.listWebhooks",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/webhooks",
+      "requestType": "void",
+      "responseType": "WebhookList"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "createWebhook",
+      "operationId": "create_webhook",
+      "routeName": "databases.createWebhook",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/webhooks",
+      "requestType": "CreateWebhook",
+      "responseType": "WebhookSecretResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "deleteWebhook",
+      "operationId": "delete_webhook",
+      "routeName": "databases.deleteWebhook",
+      "method": "DELETE",
+      "pathTemplate": "/api/v1/databases/{name}/webhooks/{id}",
+      "requestType": "void",
+      "responseType": "WebhookEndpoint"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "listDeliveries",
+      "operationId": "list_deliveries",
+      "routeName": "databases.listDeliveries",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/webhooks/{id}/deliveries",
+      "requestType": "void",
+      "responseType": "DeliveryLog"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "replayWebhook",
+      "operationId": "replay_webhook",
+      "routeName": "databases.replayWebhook",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/webhooks/{id}/deliveries/{delivery_id}/replay",
+      "requestType": "void",
+      "responseType": "DeliveryRecord"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "rotateSecret",
+      "operationId": "rotate_secret",
+      "routeName": "databases.rotateSecret",
+      "method": "POST",
+      "pathTemplate": "/api/v1/databases/{name}/webhooks/{id}/rotate-secret",
+      "requestType": "json",
+      "responseType": "WebhookSecretResponse"
+    },
+    {
+      "base": "api",
       "client": "health",
       "operation": "health",
       "operationId": "health",
@@ -249,6 +645,17 @@
       "pathTemplate": "/api/v1/health",
       "requestType": "void",
       "responseType": "HealthResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "getProvisioningOperation",
+      "operationId": "get_provisioning_operation",
+      "routeName": "databases.getProvisioningOperation",
+      "method": "GET",
+      "pathTemplate": "/api/v1/operations/{operation_id}",
+      "requestType": "void",
+      "responseType": "ProvisioningOperation"
     },
     {
       "base": "api",
