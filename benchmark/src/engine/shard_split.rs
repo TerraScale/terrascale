@@ -4,7 +4,7 @@ use super::{CommitError, CommitOutcome, Engine, EngineError};
 use crate::{
     shard_split::{
         AtomicSplitCutover, CommittedSplitRoute, CutoverContext, DurableSplitState, RouteTable,
-        ShardRoute, ShardSplit, SplitContext, SplitPhase,
+        ShardAdmissionToken, ShardRoute, ShardSplit, SplitContext, SplitPhase,
     },
     types::{DocumentValue, LocalDurability, OperationId, TenantScope},
 };
@@ -22,7 +22,10 @@ pub(crate) struct ScopedShardEngine {
 }
 
 impl ScopedShardEngine {
-    pub(crate) fn new(engine: std::sync::Arc<Engine>, scope: TenantScope) -> Result<Self, RouteCatalogError> {
+    pub(crate) fn new(
+        engine: std::sync::Arc<Engine>,
+        scope: TenantScope,
+    ) -> Result<Self, RouteCatalogError> {
         let incarnation = u128::from_be_bytes(engine.database_id().as_bytes().to_owned());
         Ok(Self { engine, scope, incarnation })
     }
@@ -191,12 +194,67 @@ fn value(bytes: &[u8]) -> DocumentValue {
     DocumentValue::String(hex::encode(bytes))
 }
 fn bytes(value: Option<DocumentValue>) -> Result<Option<Vec<u8>>, RouteCatalogError> {
-    let Some(value) = value else { return Ok(None); };
-    let DocumentValue::String(value) = value else { return Err(RouteCatalogError::Malformed); };
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let DocumentValue::String(value) = value else {
+        return Err(RouteCatalogError::Malformed);
+    };
     hex::decode(value).map(Some).map_err(|_| RouteCatalogError::Malformed)
 }
 
 impl Engine {
+    /// Loads the authoritative serving router for an admitted database.
+    /// Catalog decoding remains engine-owned; callers receive only the
+    /// validated router and its durable generation.
+    pub fn load_shard_router(
+        &self,
+        scope: &TenantScope,
+    ) -> Result<Option<(crate::shard_split::ShardRouter, u64)>, EngineError> {
+        let incarnation = u128::from_be_bytes(self.database_id().as_bytes().to_owned());
+        Ok(self
+            .load_shard_route_catalog(scope, incarnation)
+            .map_err(|_| EngineError::StorageFailure)?
+            .map(|catalog| {
+                (crate::shard_split::ShardRouter::from_table(catalog.table), catalog.generation)
+            }))
+    }
+
+    pub(crate) fn validate_shard_admission(
+        &self,
+        scope: &TenantScope,
+        token: &ShardAdmissionToken,
+        writes: &[crate::storage::StagedWrite],
+    ) -> Result<(), EngineError> {
+        let incarnation = u128::from_be_bytes(self.database_id().as_bytes().to_owned());
+        if token.database_incarnation != incarnation || token.shard_id == 0 || token.keys.is_empty()
+        {
+            return Err(EngineError::Conflict);
+        }
+        let Some(catalog) = self
+            .load_shard_route_catalog(scope, token.database_incarnation)
+            .map_err(|_| EngineError::StorageFailure)?
+        else {
+            return Err(EngineError::Conflict);
+        };
+        (catalog.generation == token.route_generation
+            && token.keys.iter().all(|key| catalog.table.route(key) == Some(token.shard_id))
+            && writes.iter().all(|write| {
+                token.keys.iter().any(|key| write.document_id().as_str().as_bytes() == key)
+            }))
+        .then_some(())
+        .ok_or(EngineError::Conflict)
+    }
+
+    pub(crate) fn shard_catalog_exists(&self, scope: &TenantScope) -> Result<bool, EngineError> {
+        Ok(self
+            .load_shard_route_catalog(
+                scope,
+                u128::from_be_bytes(self.database_id().as_bytes().to_owned()),
+            )
+            .map_err(|_| EngineError::StorageFailure)?
+            .is_some())
+    }
     /// Loads the route catalog for a database incarnation from a snapshot.
     pub(crate) fn load_shard_route_catalog(
         &self,
@@ -281,8 +339,8 @@ impl Engine {
         let mut tx = self.begin(scope, self.read_snapshot(scope)?, operation)?;
         tx.internal_maintenance = true;
         let route_key = key(context.split.database_incarnation());
-        let current = bytes(tx.read_private_metadata(&route_key)?)?
-            .ok_or(RouteCatalogError::Malformed)?;
+        let current =
+            bytes(tx.read_private_metadata(&route_key)?)?.ok_or(RouteCatalogError::Malformed)?;
         let catalog = decode_catalog(&current)?;
         if catalog.generation != context.route_generation {
             return Err(RouteCatalogError::Conflict);
@@ -300,9 +358,7 @@ impl Engine {
         let replacement = encode_catalog(&RouteCatalog { table, generation })?;
         let mut lifecycle = ShardSplit::from_durable_state(state.clone())
             .map_err(|_| RouteCatalogError::Malformed)?;
-        lifecycle
-            .cut_over_with_permit(context.permit)
-            .map_err(|_| RouteCatalogError::Conflict)?;
+        lifecycle.cut_over_with_permit(context.permit).map_err(|_| RouteCatalogError::Conflict)?;
         tx.put_private_metadata(&route_key, value(&replacement))?;
         tx.put_private_metadata(
             &split_key(context.split.database_incarnation()),
@@ -319,7 +375,9 @@ impl Engine {
                 CommitError::StorageFailure => EngineError::StorageFailure,
                 CommitError::Conflict => EngineError::Conflict,
             })),
-            CommitOutcome::Unknown(_) => Err(RouteCatalogError::Engine(EngineError::StorageFailure)),
+            CommitOutcome::Unknown(_) => {
+                Err(RouteCatalogError::Engine(EngineError::StorageFailure))
+            }
         }
     }
 
@@ -337,8 +395,11 @@ impl Engine {
         let catalog = bytes(tx.read_private_metadata(&key(split.database_incarnation()))?)?
             .map(|raw| decode_catalog(&raw))
             .transpose()?;
-        let Some(catalog) = catalog else { return Ok(None); };
-        let Some(raw) = bytes(tx.read_private_metadata(&split_key(split.database_incarnation()))?)? else {
+        let Some(catalog) = catalog else {
+            return Ok(None);
+        };
+        let Some(raw) = bytes(tx.read_private_metadata(&split_key(split.database_incarnation()))?)?
+        else {
             return Ok(None);
         };
         let state = DurableSplitState::decode(&raw).map_err(|_| RouteCatalogError::Malformed)?;
@@ -348,7 +409,11 @@ impl Engine {
             return Ok(None);
         }
         Ok(Some((
-            CommittedSplitRoute { split: *split, generation: catalog.generation, route: catalog.table.clone() },
+            CommittedSplitRoute {
+                split: *split,
+                generation: catalog.generation,
+                route: catalog.table.clone(),
+            },
             catalog,
         )))
     }

@@ -165,7 +165,11 @@ impl LifecycleControlService for std::sync::Arc<TbepGrpcServer> {
 
 fn valid_owner(value: &str) -> bool {
     let Some((tenant, project)) = value.split_once('/') else { return false };
-    !tenant.is_empty() && !project.is_empty() && !project.contains('/') && tenant.len() <= 64 && project.len() <= 255
+    !tenant.is_empty()
+        && !project.is_empty()
+        && !project.contains('/')
+        && tenant.len() <= 64
+        && project.len() <= 255
 }
 
 impl TbepGrpcServer {

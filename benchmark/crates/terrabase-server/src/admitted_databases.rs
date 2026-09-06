@@ -72,11 +72,22 @@ pub struct RestoreReservation {
     record: AdmissionRecord,
     location: PathBuf,
     activated: bool,
+    rollback: Option<(terrabase::member::Member, Arc<AdmittedDatabaseRegistry>)>,
     permit: Option<terrabase::member::RestorePermit>,
     path_guard: Arc<std::sync::Mutex<BTreeSet<PathBuf>>>,
 }
 
 impl RestoreReservation {
+    /// Restores registry admission when the async restore future is cancelled.
+    pub fn rollback_on_drop(
+        mut self,
+        member: terrabase::member::Member,
+        registry: Arc<AdmittedDatabaseRegistry>,
+    ) -> Self {
+        self.rollback = Some((member, registry));
+        self
+    }
+
     /// Returns the admitted record being restored.
     #[must_use]
     pub fn record(&self) -> &AdmissionRecord {
@@ -95,7 +106,10 @@ impl RestoreReservation {
         let id = terrabase::member::DatabaseId::try_new(&self.record.database_id)
             .map_err(|_| "restore target identity is invalid")?;
         member
-            .acquire_existing_for_restore(&id, self.permit.as_ref().ok_or("restore permit released")?)
+            .acquire_existing_for_restore(
+                &id,
+                self.permit.as_ref().ok_or("restore permit released")?,
+            )
             .map_err(|_| "restore target reacquisition refused".to_owned())
     }
 
@@ -106,6 +120,7 @@ impl RestoreReservation {
         lease: DatabaseLease,
         instance: u64,
     ) -> Result<(), String> {
+        self.rollback = None;
         let activated = self.activated;
         let location = self.location.clone();
         let database_id = self.record.database_id.clone();
@@ -127,6 +142,12 @@ impl RestoreReservation {
 
 impl Drop for RestoreReservation {
     fn drop(&mut self) {
+        if let Some((member, registry)) = self.rollback.take() {
+            if let Ok(lease) = self.reacquire(&member) {
+                // Publication remains fenced until this drop releases the permit.
+                let _ = registry.publish(self.record.clone(), lease, self.location.clone(), 1);
+            }
+        }
         if let Ok(mut paths) = self.path_guard.lock() {
             paths.remove(&self.location);
         }
@@ -203,13 +224,19 @@ impl AdmittedDatabaseRegistry {
                 return Err("restore target engine is still referenced".into());
             }
         };
-        let lease = host.into_admitted_lease().map_err(|_| "restore target lease is not exclusive")?;
+        let lease =
+            host.into_admitted_lease().map_err(|_| "restore target lease is not exclusive")?;
         let permit = match lease.reserve_restore() {
             Ok(permit) => permit,
             Err((lease, _)) => {
                 let host = Arc::new(MemberHost::from_admitted(lease, location.clone(), 1));
-                databases.insert(database.to_owned(), Arc::new(AdmittedDatabase { activity, record, host }));
-                if activated { serving.insert(database.to_owned()); }
+                databases.insert(
+                    database.to_owned(),
+                    Arc::new(AdmittedDatabase { activity, record, host }),
+                );
+                if activated {
+                    serving.insert(database.to_owned());
+                }
                 paths.remove(&location);
                 return Err("restore target lease is not exclusive".into());
             }
@@ -218,6 +245,7 @@ impl AdmittedDatabaseRegistry {
             record,
             location,
             activated,
+            rollback: None,
             permit: Some(permit),
             path_guard: Arc::clone(&self.restore_paths),
         };
@@ -808,6 +836,30 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn cancelled_restore_republishes_paused_target_for_retry() {
+        let (registry, member, records, root) = fixture();
+        let registry = Arc::new(registry);
+        let database = &records[0].database_id;
+        registry.pause(database, "restore-pause").unwrap();
+        let reservation = registry
+            .reserve_restore(database)
+            .unwrap()
+            .rollback_on_drop(member.clone(), Arc::clone(&registry));
+        drop(reservation);
+        assert!(registry.resolve_serving(database).unwrap().is_none());
+        let retry = registry
+            .reserve_restore(database)
+            .expect("cancelled target remains admitted")
+            .rollback_on_drop(member.clone(), Arc::clone(&registry));
+        drop(retry);
+        registry.resume(database, "resume-after-cancel").unwrap();
+        assert!(registry.resolve_serving(database).unwrap().is_some());
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn restore_reservation_is_unique_and_republishes_after_guarded_reopen() {
         let (registry, member, records, root) = fixture();
         let database = &records[0].database_id;
@@ -815,7 +867,10 @@ pub(crate) mod tests {
         let reservation = registry.reserve_restore(database).unwrap();
         assert!(registry.reserve_restore(database).is_err());
         let id = terrabase::member::DatabaseId::try_new(database).unwrap();
-        assert!(matches!(member.acquire_existing(&id), Err(terrabase::member::MemberError::DatabaseBusy(_))));
+        assert!(matches!(
+            member.acquire_existing(&id),
+            Err(terrabase::member::MemberError::DatabaseBusy(_))
+        ));
         let lease = reservation.reacquire(&member).unwrap();
         reservation.complete(&registry, lease, 2).unwrap();
         registry.activate(&[database.clone()]).unwrap();

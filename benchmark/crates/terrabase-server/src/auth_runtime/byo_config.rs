@@ -61,6 +61,7 @@ where
     F: JwksFetcher + 'static,
     V: JwtSignatureVerifier + 'static,
 {
+    /// Validates a bearer and returns its bounded verified context.
     fn authenticate<'a>(
         &'a self,
         token: &'a str,
@@ -114,6 +115,7 @@ where
     V: JwtSignatureVerifier + 'static,
     H: ParentAuthenticationHook + 'static,
 {
+    /// Validates a bearer and returns its bounded verified context.
     fn authenticate<'a>(
         &'a self,
         token: &'a str,
@@ -129,13 +131,21 @@ where
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileTenantJwtConfig {
+    /// Tenant that owns this issuer configuration.
     pub tenant: String,
+    /// Expected token issuer.
     pub issuer: String,
+    /// Expected token audience.
     pub audience: String,
+    /// Pinned JWKS URL.
     pub jwks_endpoint: String,
+    /// Permitted signature algorithms.
     pub algorithms: Vec<String>,
+    /// Allowed clock skew in seconds.
     pub clock_skew_secs: u64,
+    /// JWKS cache lifetime in seconds.
     pub cache_ttl_secs: u64,
+    /// Configuration generation.
     pub generation: u64,
 }
 

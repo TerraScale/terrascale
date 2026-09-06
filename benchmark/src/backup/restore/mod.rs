@@ -1357,17 +1357,34 @@ fn execute_configured_restore(
         return Err(BackupError::DestinationUnavailable);
     }
     let path = target.location();
-    if target
-        .owner()
-        .is_none_or(|owner| owner.database().to_text() != identity.target_database_id)
+    if target.owner().is_none_or(|owner| owner.database().to_text() != identity.target_database_id)
     {
         return Err(BackupError::DestinationUnavailable);
     }
-    admit_target(path)?;
-    // Config construction creates an empty directory. Remove only that admitted
-    // empty placeholder so failed restores leave no target and NOREPLACE works.
-    if path.exists() {
-        std::fs::remove_dir(path).map_err(|_| BackupError::TargetNotEmpty)?;
+    let replace_existing = path.exists()
+        && std::fs::read_dir(path)
+            .map_err(|_| BackupError::DestinationUnavailable)?
+            .next()
+            .is_some();
+    if replace_existing {
+        let existing =
+            Engine::open(target.clone()).map_err(|_| BackupError::DestinationUnavailable)?;
+        let tenant = TenantId::try_new(existing.database_owner().tenant().to_text().as_str())
+            .map_err(|_| BackupError::DestinationUnavailable)?;
+        let state = existing
+            .lifecycle_state(&existing.scope_for(&tenant))
+            .map_err(|_| BackupError::DestinationUnavailable)?;
+        if !state.paused
+            || state.access_revoked()
+            || read_restore_marker(&existing, identity)?.is_some()
+        {
+            return Err(BackupError::TargetNotEmpty);
+        }
+    } else {
+        admit_target(path)?;
+        if path.exists() {
+            std::fs::remove_dir(path).map_err(|_| BackupError::TargetNotEmpty)?;
+        }
     }
     let staging = StagingDir::create(path)?;
     let config = target.clone().at_location(staging.path());
@@ -1394,8 +1411,18 @@ fn execute_configured_restore(
         let facts = replay.into_facts(verification);
         write_restore_metadata(&reopened, identity, &facts)?;
         verify_restore_metadata(&reopened, identity, &facts)?;
+        if replace_existing {
+            let tenant = TenantId::try_new(reopened.database_owner().tenant().to_text().as_str())
+                .map_err(|_| BackupError::DestinationUnavailable)?;
+            reopened
+                .lifecycle_pause(
+                    &reopened.scope_for(&tenant),
+                    &format!("restore-pause-{}", identity.operation_id),
+                )
+                .map_err(|_| BackupError::DestinationUnavailable)?;
+        }
         drop(reopened);
-        publish_with_identity(&staging, path, identity)?;
+        publish_with_identity(&staging, path, replace_existing)?;
         Ok(facts)
     })();
     match outcome {
@@ -1457,7 +1484,7 @@ impl StagingDir {
     }
 
     /// Removes the staging tree: nothing was published from it.
-    fn discard(self) {
+    fn discard(&self) {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
@@ -1566,13 +1593,21 @@ fn verify_restore_metadata(
     Ok(())
 }
 
-fn publish_with_identity(staging: &StagingDir, target: &Path, _identity: &RestoreIdentity) -> Result<(), BackupError> {
+fn publish_with_identity(
+    staging: &StagingDir,
+    target: &Path,
+    replace_existing: bool,
+) -> Result<(), BackupError> {
     if rustix::fs::renameat_with(
         rustix::fs::CWD,
         staging.path(),
         rustix::fs::CWD,
         target,
-        rustix::fs::RenameFlags::NOREPLACE,
+        if replace_existing {
+            rustix::fs::RenameFlags::EXCHANGE
+        } else {
+            rustix::fs::RenameFlags::NOREPLACE
+        },
     )
     .is_err()
     {

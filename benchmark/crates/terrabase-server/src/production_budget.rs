@@ -23,6 +23,7 @@ pub struct AcceptedAdmissionBindingResolver {
 }
 
 impl AcceptedAdmissionBindingResolver {
+    /// Creates a budget view over admission records and placement authority.
     #[must_use]
     pub fn new(
         records: Arc<Mutex<BTreeMap<String, crate::admission::AdmissionRecord>>>,

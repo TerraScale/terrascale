@@ -2093,6 +2093,7 @@ impl Engine {
             merge_conflict: None,
             replication_fingerprint: None,
             replication_publication: None,
+            shard_admission: None,
             writes: Vec::new(),
             metadata: Vec::new(),
             schema_envelopes: Vec::new(),
@@ -4749,6 +4750,7 @@ pub struct Transaction<'engine> {
     merge_conflict: Option<(CollectionName, DocumentId, storage::MergeConflictEntry)>,
     replication_fingerprint: Option<[u8; 32]>,
     replication_publication: Option<storage::ReplicationPublicationIntent>,
+    shard_admission: Option<crate::shard_split::ShardAdmissionToken>,
     writes: Vec<StagedWrite>,
     metadata: Vec<storage::PrivateMetadataWrite>,
     schema_envelopes: Vec<storage::SchemaEnvelopeWrite>,
@@ -4819,6 +4821,18 @@ impl Transaction<'_> {
             return Err(UsageCommandError::InvalidRequest);
         }
         self.usage_admission = Some(context);
+        Ok(())
+    }
+
+    /// Binds the serving router's owner and generation to this origin write.
+    pub fn bind_shard_admission(
+        &mut self,
+        token: crate::shard_split::ShardAdmissionToken,
+    ) -> Result<(), EngineError> {
+        if self.shard_admission.is_some() || token.shard_id == 0 {
+            return Err(EngineError::InvalidDocument);
+        }
+        self.shard_admission = Some(token);
         Ok(())
     }
 
@@ -5095,6 +5109,13 @@ impl Transaction<'_> {
             let Ok(_barrier) = engine.origin_commit_barrier.read() else {
                 return CommitOutcome::Rejected(CommitError::StorageFailure);
             };
+            if let Some(token) = self.shard_admission.as_ref() {
+                if engine.validate_shard_admission(&self.scope, token, &self.writes).is_err() {
+                    return CommitOutcome::Rejected(CommitError::Conflict);
+                }
+            } else if engine.shard_catalog_exists(&self.scope).unwrap_or(true) {
+                return CommitOutcome::Rejected(CommitError::Conflict);
+            }
             self.commit_unobserved(durability)
         };
         let metric_result = match &outcome {

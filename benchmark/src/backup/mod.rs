@@ -105,7 +105,7 @@ pub mod worker;
 
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
 pub use restore::{
-    read_restore_marker, RecoveryReceipt, RestoreChainLink, RestoreMarkerFacts, RestoredTenant,
+    RecoveryReceipt, RestoreChainLink, RestoreMarkerFacts, RestoredTenant, read_restore_marker,
     verify_latest_chain_encrypted,
 };
 

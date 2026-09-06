@@ -355,6 +355,28 @@ impl EngineHost {
         &self.engine
     }
 
+    /// Begins a named document write through the authoritative serving
+    /// router and binds its generation to the Engine transaction.
+    pub fn begin_routed_transaction(
+        &self,
+        scope: &TenantScope,
+        router: &terrabase::shard_split::ShardRouter,
+        key: &[u8],
+        operation: OperationId,
+    ) -> Result<terrabase::engine::Transaction<'_>, terrabase::engine::EngineError> {
+        let shard = router.route(key).ok_or(terrabase::engine::EngineError::Conflict)?;
+        let token = terrabase::shard_split::ShardAdmissionToken::for_key(
+            u128::from_be_bytes(self.engine.database_id().as_bytes().to_owned()),
+            router.table().generation(),
+            shard,
+            key,
+        );
+        let mut transaction =
+            self.engine.begin(scope, self.engine.read_snapshot(scope)?, operation)?;
+        transaction.bind_shard_admission(token)?;
+        Ok(transaction)
+    }
+
     /// Takes a read snapshot for a validated engine scope.
     pub(crate) fn read_snapshot(
         &self,

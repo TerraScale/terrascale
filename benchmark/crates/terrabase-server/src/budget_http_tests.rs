@@ -42,6 +42,12 @@ impl AllocationBindingResolver for Binding {
     }
 }
 
+impl AllocationBindingResolver for std::sync::Mutex<Binding> {
+    fn binding(&self, database: &str) -> Result<(String, String, String, u64), String> {
+        self.lock().unwrap().binding(database)
+    }
+}
+
 struct Fixture {
     root: PathBuf,
     journal: Arc<UsageAdmissionJournal>,
@@ -54,6 +60,10 @@ impl Fixture {
     }
 
     fn new_with_holder(holder: &str) -> Self {
+        Self::with_verifier(holder, None)
+    }
+
+    fn with_verifier(holder: &str, verifier: Option<AllocationVerifierConfig>) -> Self {
         let nonce =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let root = std::env::temp_dir().join(format!("terrabase-budget-http-{nonce}"));
@@ -91,25 +101,29 @@ impl Fixture {
             placement,
         )
         .unwrap()
-        .with_allocation_verifier(AllocationVerifierConfig {
-            key_id: serde_json::from_str::<Value>(VECTORS).unwrap()["keyID"]
-                .as_str()
-                .unwrap()
-                .into(),
-            public_key_spki: STANDARD
-                .decode(
-                    serde_json::from_str::<Value>(VECTORS).unwrap()["publicSPKI"].as_str().unwrap(),
-                )
-                .unwrap(),
-            policy_epoch: 1,
-            consent_epoch: 1,
-            resolver: Arc::new(Binding {
-                organization: "org".into(),
-                holder: holder.into(),
-                placement: "db-placement".into(),
-                writer_epoch: 9,
-            }),
-        })
+        .with_allocation_verifier(verifier.unwrap_or_else(|| {
+            AllocationVerifierConfig {
+                key_id: serde_json::from_str::<Value>(VECTORS).unwrap()["keyID"]
+                    .as_str()
+                    .unwrap()
+                    .into(),
+                public_key_spki: STANDARD
+                    .decode(
+                        serde_json::from_str::<Value>(VECTORS).unwrap()["publicSPKI"]
+                            .as_str()
+                            .unwrap(),
+                    )
+                    .unwrap(),
+                policy_epoch: 1,
+                consent_epoch: 1,
+                resolver: Arc::new(Binding {
+                    organization: "org".into(),
+                    holder: holder.into(),
+                    placement: "db-placement".into(),
+                    writer_epoch: 9,
+                }),
+            }
+        }))
         .unwrap();
         Self { root, journal: Arc::new(journal), vector }
     }
@@ -136,7 +150,7 @@ impl Drop for Fixture {
 /// The public PUT route derives its operation identity from this key.
 /// Build the producer envelope with the test-only P256 signer so the test
 /// exercises the same wire verifier as production delivery.
-fn signed_for(tenant: &str, _project: &str, database: &str) -> (Value, Vec<u8>) {
+fn signed_for(tenant: &str, database: &str, operation: &str, paid: bool) -> (Value, Vec<u8>) {
     let key_der =
         EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &SystemRandom::new())
             .unwrap();
@@ -152,17 +166,17 @@ fn signed_for(tenant: &str, _project: &str, database: &str) -> (Value, Vec<u8>) 
         grant: terrabase::usage::AllocationGrant {
             cycle_id: "cycle".into(),
             rate_nano_dollar: 1000,
-            operation_id: "api-put-idem-budget".into(),
+            operation_id: operation.into(),
             organization_id: tenant.into(),
             database_id: database.into(),
             branch_id: "main".into(),
             holder_id: "holder".into(),
             requested_units: 1,
-            included_units: 1,
-            paid_units: 0,
-            regions: vec!["gru".into()],
+            included_units: i64::from(!paid),
+            paid_units: i64::from(paid),
+            regions: vec!["GRU".into()],
             units: 1,
-            cost_nano_dollar: 0,
+            cost_nano_dollar: if paid { 1000 } else { 0 },
             policy_epoch: 1,
             consent_epoch: 1,
             writer_epoch: 1,
@@ -229,7 +243,7 @@ async fn canonical_retry_is_idempotent_and_binding_mismatch_is_denied() {
     assert_eq!(fixture.router().oneshot(request()).await.unwrap().status(), StatusCode::OK);
     let connection =
         rusqlite::Connection::open(fixture.root.join("usage-admissions.sqlite")).unwrap();
-    let count: u64 =
+    let count: i64 =
         connection.query_row("SELECT COUNT(*) FROM allocations", [], |row| row.get(0)).unwrap();
     assert_eq!(count, 1);
 }
@@ -248,4 +262,107 @@ async fn canonical_delivery_is_denied_when_holder_binding_changes() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn public_put_consumes_signed_included_and_paid_allocations_once() {
+    for paid in [false, true] {
+        let mut state = super::state_with_keys_and_control();
+        let response = super::router(state.clone())
+            .oneshot(
+                Request::post("/api/v1/databases")
+                    .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                    .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let host = super::super::document_host(&state, "prod").unwrap();
+        let database = host.engine().database_owner().database().to_text();
+        let (signed, spki) = signed_for("terrabase-local", &database, "api-put-idem-budget", paid);
+        let binding = Arc::new(std::sync::Mutex::new(Binding {
+            organization: "terrabase-local".into(),
+            holder: "holder".into(),
+            placement: "db-placement".into(),
+            writer_epoch: 1,
+        }));
+        let fixture = Fixture::with_verifier(
+            "holder",
+            Some(AllocationVerifierConfig {
+                key_id: signed["key_id"].as_str().unwrap().into(),
+                public_key_spki: spki,
+                policy_epoch: 1,
+                consent_epoch: 1,
+                resolver: binding.clone(),
+            }),
+        );
+        Arc::get_mut(&mut state).unwrap().budget = Some(Arc::new(
+            crate::production_budget::ProductionBudgetRuntime::new(fixture.journal.clone()),
+        ));
+        let app = super::router(state.clone());
+        let put = || {
+            Request::put("/api/v1/databases/prod/collections/users/documents/doc-1")
+                .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                .header("idempotency-key", "budget")
+                .body(Body::from(r#"{"name":"Ada"}"#))
+                .unwrap()
+        };
+        assert_eq!(
+            app.clone().oneshot(put()).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        let deliver = || {
+            Request::post("/internal/v1/databases/usage/allocation")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&signed).unwrap()))
+                .unwrap()
+        };
+        for _ in 0..2 {
+            let response = fixture.router().oneshot(deliver()).await.unwrap();
+            let status = response.status();
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        }
+        let mut first = None;
+        for _ in 0..2 {
+            let response = app.clone().oneshot(put()).await.unwrap();
+            let status = response.status();
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+            if let Some(expected) = &first {
+                assert_eq!(&body, expected);
+            } else {
+                first = Some(body);
+            }
+        }
+        binding.lock().unwrap().holder = "another-writer".into();
+        assert_eq!(
+            fixture.router().oneshot(deliver()).await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            app.clone().oneshot(put()).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        let path = state
+            .catalog
+            .as_ref()
+            .unwrap()
+            .location_for("terrabase-local", "local", "prod")
+            .join("terrabase.sqlite3");
+        let connection = rusqlite::Connection::open(path).unwrap();
+        let consumption: (i64, i64, i64) = connection.query_row(
+            "SELECT COUNT(*), SUM(units_total), SUM(units_remaining) FROM usage_budget_allocations WHERE operation='api-put-idem-budget'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+        assert_eq!(consumption, (1, 1, 0), "paid={paid}");
+        let facts: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM usage_facts WHERE fact_id='api-put-idem-budget'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(facts, 1, "retry must not duplicate billed usage; paid={paid}");
+    }
 }

@@ -258,7 +258,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     );
 
     if let Some(journal) = journal.as_ref() {
-        if let Err(error) = member.admit_membership(&*journal) {
+        if let Err(error) = member.admit_membership(&**journal) {
             let report = member.drain().await;
             let detail = match error {
                 terrabase_cluster::production::ProductionMemberError::MembershipSource(
@@ -378,6 +378,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         .with_native_deletion(native.fleet())
         .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
     let admission = Arc::new(admission);
+    let native_shutdown = Arc::clone(&native);
     let recovery_root = parts_root_for_recovery(production);
     let (recovery, recovery_worker) = crate::native_recovery::NativeRecoveryRuntime::new(
         &recovery_root,
@@ -391,7 +392,6 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             Arc::clone(&admission),
             Arc::clone(&native),
         )),
-        admission.native_restore_target_resolver(),
     )
     .map_err(|_| {
         Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
@@ -579,14 +579,16 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         }),
     ));
     let grpc_metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
-    let grpc = Arc::new(TbepGrpcServer::with_config_and_metrics(
-        grpc_host as Arc<dyn TbepHost>,
-        pb::BindingKind::NetworkMtls,
-        grpc_config,
-        config.region,
-        grpc_metrics,
-    )
-    .with_lifecycle_control(lifecycle));
+    let grpc = Arc::new(
+        TbepGrpcServer::with_config_and_metrics(
+            grpc_host as Arc<dyn TbepHost>,
+            pb::BindingKind::NetworkMtls,
+            grpc_config,
+            config.region,
+            grpc_metrics,
+        )
+        .with_lifecycle_control(lifecycle),
+    );
     let certificate = read_pem(&production.transport.server_certificate, false)?;
     let private_key = read_pem(&production.transport.server_private_key, true)?;
     let client_ca = read_pem(&production.transport.client_ca, false)?;
@@ -631,6 +633,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         .map_err(|_| DaemonError::ShutdownTimeout)?
         .map_err(|_| DaemonError::ShutdownTimeout)?;
     let _ = recovery_worker.shutdown().await;
+    native_shutdown.drain().map_err(|_| DaemonError::ShutdownTimeout)?;
     admission.drain().await.map_err(|_| DaemonError::ShutdownTimeout)?;
     serving.store(false, std::sync::atomic::Ordering::Release);
     let report = member.drain().await;

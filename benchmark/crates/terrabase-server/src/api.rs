@@ -4672,6 +4672,7 @@ mod tests {
             budget: None,
             native_backups: None,
             native_recovery: None,
+            native_restore_target: None,
             development: Arc::default(),
             provisioning: None,
             admitted_databases: None,

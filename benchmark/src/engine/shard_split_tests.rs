@@ -1,4 +1,4 @@
-use super::shard_split::{decode_catalog, encode_catalog, RouteCatalog, RouteCatalogError};
+use super::shard_split::{RouteCatalog, RouteCatalogError, decode_catalog, encode_catalog};
 use crate::shard_split::{RouteTable, ShardRoute};
 
 #[test]

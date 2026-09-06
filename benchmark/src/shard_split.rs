@@ -15,8 +15,8 @@ mod trigger;
 mod verification;
 
 pub use adapters::{
-    AtomicSplitCutover, CommittedSplitRoute, CutoverContext, SplitEngineAdapter,
-    SplitOrchestratorAdapter, SplitWiringReport,
+    AtomicSplitCutover, CommittedSplitRoute, CutoverContext, ShardAdmissionToken,
+    SplitEngineAdapter, SplitOrchestratorAdapter, SplitWiringReport,
 };
 pub use cutover::{CutoverPermit, FenceError, WriterFence, WriterFenceState};
 pub use journal::{

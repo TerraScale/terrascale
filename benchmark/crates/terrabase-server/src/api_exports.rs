@@ -379,8 +379,8 @@ pub(crate) async fn recover_exports(state: &ApiState) -> Result<(), ApiError> {
 
 #[utoipa::path(get, path = "/api/v1/databases/{name}/exports/{job_id}/artifacts/{member}",
     responses((status = 200, description = "Decrypted immutable export member", content_type = "application/octet-stream", body = String,
-        headers(("X-TerraScale-Artifact-Length" = String, description = "Plaintext byte length"),
-                ("X-TerraScale-Artifact-Checksum" = String, description = "BLAKE3 checksum of plaintext bytes")))))]
+        headers(("X-TerraScale-Artifact-Length" = String, description = "Canonical unsigned decimal plaintext byte length"),
+                ("X-TerraScale-Artifact-Checksum" = String, description = "Lowercase 64-hex-character BLAKE3 checksum of plaintext bytes")))))]
 pub(super) async fn download_export(
     State(state): State<Arc<ApiState>>,
     Path((name, job, member)): Path<(String, String, String)>,
@@ -390,20 +390,13 @@ pub(super) async fn download_export(
         Err(error) => return error.into_response(),
     };
     match service.download_with_format(&job, &member).await {
-        Ok((bytes, format)) => {
+        Ok((bytes, _format)) => {
             let length = bytes.len().to_string();
             let checksum = blake3::hash(&bytes).to_hex().to_string();
             let mut response = bytes.into_response();
-            let member_type = if member.ends_with(".csv") {
-                "text/csv"
-            } else if member.ends_with(".json") {
-                "application/json"
-            } else if member.ends_with(".txt") {
-                "text/plain"
-            } else {
-                content_type(format)
-            };
-            response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(member_type));
+            response
+                .headers_mut()
+                .insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
             if let Ok(value) = HeaderValue::from_str(&format!(
                 "attachment; filename=\"{}\"",
                 member.rsplit('/').next().unwrap_or("export")

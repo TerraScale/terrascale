@@ -530,6 +530,7 @@ pub struct ProductionRestoreExecutor {
 }
 
 impl ProductionRestoreExecutor {
+    /// Connects the admitted target owner and native backup provider fleet.
     #[must_use]
     pub fn new(
         runtime: Arc<ProductionAdmissionRuntime>,
@@ -610,10 +611,8 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                     return Err("timestamp restore executor is unavailable".into());
                 }
             };
-            let expected_cut = request
-                .journal_cut
-                .parse::<u64>()
-                .map_err(|_| "restore journal cut is invalid")?;
+            let expected_cut =
+                request.journal_cut.parse::<u64>().map_err(|_| "restore journal cut is invalid")?;
             let receipt = tokio::task::spawn_blocking(move || {
                 tokio::runtime::Handle::current().block_on(runtime.restore_native_to_target(
                     &backups,
@@ -626,13 +625,22 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                     expected_cut,
                     request.restore_epoch,
                 ))
-            }).await.map_err(|_| "restore executor unavailable")??;
+            })
+            .await
+            .map_err(|_| "restore executor unavailable")??;
             if receipt.selected_identity() != request.recovery_point_id
                 || receipt.selected().boundary_sequence().get() != expected_cut
             {
                 return Err("authenticated recovery manifest facts do not match request".into());
             }
-            Ok(crate::native_recovery::NativeRestoreOutcome { receipt: crate::native_recovery::NativeRestoreReceipt { selected_identity: receipt.selected_identity().to_owned(), logical_content_checksum: receipt.logical_checksum().to_owned(), restored_documents: receipt.restored_documents(), journal_cut: receipt.selected_boundary().get() } })
+            Ok(crate::native_recovery::NativeRestoreOutcome {
+                receipt: crate::native_recovery::NativeRestoreReceipt {
+                    selected_identity: receipt.selected_identity().to_owned(),
+                    logical_content_checksum: receipt.logical_checksum().to_owned(),
+                    restored_documents: receipt.restored_documents(),
+                    journal_cut: receipt.selected_boundary().get(),
+                },
+            })
         })
     }
 }
@@ -1083,7 +1091,7 @@ impl ProductionAdmissionRuntime {
 
     /// Resolves an already admitted target for native restore readback.
     ///
-    /// The target must be retained by admission but not serving; its owner,
+    /// The target must be retained by admission; its owner,
     /// location, placement, and data key version all come from the durable
     /// admission/configuration pair. No source key or generated identity is
     /// reused.
@@ -1095,10 +1103,8 @@ impl ProductionAdmissionRuntime {
             .registry
             .retained_snapshot()?
             .into_iter()
-            .find(|snapshot| {
-                !snapshot.activated && snapshot.database.record.database_id == database
-            })
-            .ok_or("native restore target is not retained and quiescent")?;
+            .find(|snapshot| snapshot.database.record.database_id == database)
+            .ok_or("native restore target is not retained")?;
         let tenant = terrabase::types::TenantId::try_new(&snapshot.database.record.tenant_id)
             .map_err(|_| "invalid restore target tenant")?;
         let lifecycle = snapshot
@@ -1180,7 +1186,12 @@ impl ProductionAdmissionRuntime {
         expected_journal_boundary: u64,
         restore_epoch: u64,
     ) -> Result<terrabase::backup::RecoveryReceipt, String> {
-        let reservation = self.registry.reserve_restore(target)?;
+        let reservation = self
+            .registry
+            .reserve_restore(target)?
+            .rollback_on_drop(self.member.clone(), Arc::clone(&self.registry));
+        let id = terrabase::member::DatabaseId::try_new(target).map_err(failure)?;
+        self.member.close_database(&id).map_err(failure)?;
         let record = reservation.record().clone();
         let target_location = reservation.location().to_path_buf();
         let recover = |reservation: crate::admitted_databases::RestoreReservation,

@@ -428,6 +428,20 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
         .unwrap()
         .with_owner(owner.clone())
         .with_storage_keys(crate::engine::test_storage_keys(&owner, 72));
+    let previous = Engine::open(config.clone()).expect("existing target opens");
+    previous.activate_origin_epoch(1).unwrap();
+    committed(put(
+        &previous,
+        owner.tenant().to_text().as_str(),
+        "old-target-put",
+        "old-doc",
+        "users",
+        text("old"),
+        LocalDurability::Synced,
+    ));
+    let target_scope = scope(&previous, owner.tenant().to_text().as_str());
+    previous.lifecycle_pause(&target_scope, "pause-for-restore").unwrap();
+    drop(previous);
     let receipt = RestorePlan::restore_latest_encrypted_with_config(
         &destination,
         &config,
@@ -435,7 +449,7 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
         &crate::backup::restore::RestoreIdentity {
             operation_id: "test".into(),
             source_database_id: "source".into(),
-            target_database_id: "target".into(),
+            target_database_id: owner.database().to_text(),
             provider: "oci".into(),
             selection: "latest".into(),
             expected_manifest_digest: backup.manifest().identity().into(),
@@ -457,6 +471,15 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
     );
     let reopened = Engine::open(config).unwrap();
     assert_eq!(reopened.database_owner(), &owner);
+    let restored_scope = scope(&reopened, owner.tenant().to_text().as_str());
+    assert!(reopened.lifecycle_state(&restored_scope).unwrap().paused);
+    reopened.lifecycle_resume(&restored_scope, "resume-restored").unwrap();
+    let snapshot = reopened.read_snapshot(&restored_scope).unwrap();
+    let transaction =
+        reopened.begin(&restored_scope, snapshot, operation("read-restored-target")).unwrap();
+    assert!(transaction.read(&document_id("old-doc")).unwrap().is_none());
+    assert!(transaction.read(&document_id("doc-1")).unwrap().is_some());
+    drop(transaction);
     drop(reopened);
     let rejected = location("encrypted-restore-unavailable-key");
     let unavailable = EngineConfig::durable(&rejected)
@@ -471,7 +494,7 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
             &crate::backup::restore::RestoreIdentity {
                 operation_id: "test".into(),
                 source_database_id: "source".into(),
-                target_database_id: "target".into(),
+                target_database_id: owner.database().to_text(),
                 provider: "oci".into(),
                 selection: "latest".into(),
                 expected_manifest_digest: backup.manifest().identity().into(),

@@ -1213,7 +1213,7 @@ mod tests {
     #[tokio::test]
     async fn paused_lifecycle_is_restored_across_fleet_restart() {
         let (_, engine) = open_engine("fleet-pause-restart");
-        let owner = engine.database_owner();
+        let owner = engine.database_owner().clone();
         let tenant = crate::types::TenantId::try_new(&owner.tenant().to_text()).unwrap();
         let scope = engine.scope_for(&tenant);
         engine.lifecycle_pause(&scope, "pause-a").unwrap();

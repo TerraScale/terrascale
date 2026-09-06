@@ -245,7 +245,7 @@ impl NativeBackupRuntime {
     ///
     /// # Errors
     /// Returns an error if the runtime state mutex is poisoned.
-    pub fn drain(&mut self) -> Result<(), NativeBackupRuntimeError> {
+    pub fn drain(&self) -> Result<(), NativeBackupRuntimeError> {
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;
         let databases =
             self.databases.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?.clone();

@@ -23,7 +23,9 @@ use std::{
 use crate::engine::EngineConfigError;
 use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
 use crate::regions::RegionCode;
+use crate::shard_split::{ShardAdmissionToken, ShardRouter};
 pub use crate::storage::{DatabaseOwner, EnvironmentName};
+use crate::types::{OperationId, TenantScope};
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 
 /// The maximum UTF-8 byte length of a database identity.
@@ -1302,10 +1304,13 @@ impl Member {
                 .databases
                 .get(database)
                 .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?;
-            let restoring = lock_unpoisoned(&self.inner.restore_paths).contains(&entry.location);
+            let restore_paths = lock_unpoisoned(&self.inner.restore_paths);
+            let restoring = restore_paths.contains(&entry.location);
             if restoring
                 && !restore.is_some_and(|permit| {
-                    permit.database == *database && permit.location == entry.location
+                    permit.database == *database
+                        && permit.location == entry.location
+                        && Arc::ptr_eq(&permit.path_guard, &self.inner.restore_paths)
                 })
             {
                 return Err(MemberError::DatabaseBusy(database.clone()));
@@ -1631,6 +1636,29 @@ impl DatabaseLease {
         self.engine.database_owner()
     }
 
+    /// Begins an origin transaction after routing its key through the
+    /// admitted serving mirror. The token is checked again by Engine commit,
+    /// so a cutover racing this call fails with a stale generation conflict.
+    pub fn begin_routed_transaction(
+        &self,
+        scope: &TenantScope,
+        router: &ShardRouter,
+        key: &[u8],
+        operation: OperationId,
+    ) -> Result<crate::engine::Transaction<'_>, crate::engine::EngineError> {
+        let shard_id = router.route(key).ok_or(crate::engine::EngineError::Conflict)?;
+        let token = ShardAdmissionToken::for_key(
+            u128::from_be_bytes(self.engine.database_id().as_bytes().to_owned()),
+            router.table().generation(),
+            shard_id,
+            key,
+        );
+        let mut transaction =
+            self.engine.begin(scope, self.engine.read_snapshot(scope)?, operation)?;
+        transaction.bind_shard_admission(token)?;
+        Ok(transaction)
+    }
+
     /// Converts this sole admitted lease into an exclusive restore permit.
     /// The engine and admission permits are dropped before the permit returns.
     pub fn reserve_restore(self) -> Result<RestorePermit, (DatabaseLease, MemberError)> {
@@ -1642,7 +1670,7 @@ impl DatabaseLease {
             Ok(paths) => paths,
             Err(_) => return Err((self, MemberError::DatabaseBusy(database.clone()))),
         };
-        if !paths.insert(location.clone()) {
+        if self._local.counter.active() != 1 || !paths.insert(location.clone()) {
             drop(paths);
             return Err((self, MemberError::DatabaseBusy(database)));
         }
@@ -2585,7 +2613,18 @@ mod tests {
                 .expect("member");
         let id = DatabaseId::try_new("db").expect("id");
         let lease = member.acquire(&id).expect("lease");
-        let permit = lease.reserve_restore().expect("exclusive restore permit");
+        let competing = member.acquire(&id).expect("competing lease");
+        let (lease, error) = match lease.reserve_restore() {
+            Err(error) => error,
+            Ok(_) => panic!("restore requires sole lease"),
+        };
+        assert!(matches!(error, MemberError::DatabaseBusy(_)));
+        drop(competing);
+        let permit = match lease.reserve_restore() {
+            Ok(permit) => permit,
+            Err(_) => panic!("exclusive restore permit"),
+        };
+        assert!(matches!(member.acquire(&id), Err(MemberError::DatabaseBusy(_))));
         assert!(matches!(member.acquire_existing(&id), Err(MemberError::DatabaseBusy(_))));
         let reopened =
             member.acquire_existing_for_restore(&id, &permit).expect("authorized reopen");

@@ -167,6 +167,7 @@ pub struct NativeRestoreRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// Inclusive selection bound to a retained recovery point.
 pub enum NativeRestoreSelection {
     /// Named retained recovery point.
     PointId(String),
@@ -175,6 +176,7 @@ pub enum NativeRestoreSelection {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// Durable restore execution and reconciliation phase.
 pub enum NativeRestorePhase {
     /// Request is durably admitted.
     Accepted,
@@ -191,6 +193,7 @@ pub enum NativeRestorePhase {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// Durable request, phase and verified restore outcome.
 pub struct NativeRestoreOperation {
     /// Immutable restore request identity.
     pub request: NativeRestoreRequest,
@@ -216,13 +219,16 @@ pub struct NativeRestoreReceipt {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Verified result of native restore execution.
 pub struct NativeRestoreOutcome {
+    /// Authenticated native restore facts.
     pub receipt: NativeRestoreReceipt,
 }
 
 /// Production restore owner. Implementations reserve the target and publish
 /// only after provider installation and authorized reacquisition.
 pub trait RestoreExecutor: Send + Sync {
+    /// Installs the selected recovery point under exclusive target admission.
     fn execute<'a>(
         &'a self,
         request: &'a NativeRestoreRequest,
@@ -268,7 +274,6 @@ pub struct NativeRecoveryRuntime {
     worker_error: Mutex<Option<NativeRecoveryError>>,
     _worker_lease: Arc<File>,
     restore_executor: Arc<dyn RestoreExecutor>,
-    restore_target_resolver: Arc<dyn Fn(&str) -> Result<(terrabase::engine::EngineConfig, terrabase::backup::PlacementLock), String> + Send + Sync>,
 }
 
 impl NativeRecoveryRuntime {
@@ -282,7 +287,6 @@ impl NativeRecoveryRuntime {
         registry: Arc<AdmittedDatabaseRegistry>,
         limits: NativeRecoveryLimits,
         restore_executor: Arc<dyn RestoreExecutor>,
-        restore_target_resolver: Arc<dyn Fn(&str) -> Result<(terrabase::engine::EngineConfig, terrabase::backup::PlacementLock), String> + Send + Sync>,
     ) -> Result<(Arc<Self>, NativeRecoveryWorker), NativeRecoveryError> {
         let limits = limits.validate()?;
         let executor =
@@ -337,7 +341,6 @@ impl NativeRecoveryRuntime {
             worker_error: Mutex::new(None),
             _worker_lease: Arc::new(worker_lease),
             restore_executor,
-            restore_target_resolver,
         });
         let (stop, stopped) = tokio::sync::oneshot::channel();
         let worker_runtime = Arc::clone(&runtime);
@@ -549,9 +552,8 @@ impl NativeRecoveryRuntime {
         &self,
         operation_id: &str,
     ) -> Result<NativeRestoreOperation, NativeRecoveryError> {
-        let mut operation = self
-            .restore_status(operation_id)?
-            .ok_or(NativeRecoveryError::InvalidRequest)?;
+        let mut operation =
+            self.restore_status(operation_id)?.ok_or(NativeRecoveryError::InvalidRequest)?;
         if operation.phase != NativeRestorePhase::Uncertain {
             return Ok(operation);
         }
@@ -718,14 +720,23 @@ impl NativeRecoveryRuntime {
         {
             return Err(NativeRecoveryError::VerificationFailed);
         }
-        if matches!(operation.phase, NativeRestorePhase::Restoring | NativeRestorePhase::Verifying | NativeRestorePhase::Uncertain) {
+        if matches!(
+            operation.phase,
+            NativeRestorePhase::Restoring
+                | NativeRestorePhase::Verifying
+                | NativeRestorePhase::Uncertain
+        ) {
             if let Some(receipt) = self.read_published_restore(&operation)? {
+                self.registry
+                    .resume(&operation.request.target_database_id, &operation.request.operation_id)
+                    .map_err(|_| NativeRecoveryError::Unavailable)?;
                 operation.receipt = Some(receipt);
                 operation.phase = NativeRestorePhase::Complete;
                 operation.error = None;
             } else {
                 operation.phase = NativeRestorePhase::Uncertain;
-                operation.error = Some("native restore outcome requires authenticated target readback".into());
+                operation.error =
+                    Some("native restore outcome requires authenticated target readback".into());
             }
             self.save_restore(&operation)?;
             return Ok(true);
@@ -748,32 +759,62 @@ impl NativeRecoveryRuntime {
         Ok(true)
     }
 
-    fn read_published_restore(&self, operation: &NativeRestoreOperation) -> Result<Option<NativeRestoreReceipt>, NativeRecoveryError> {
-        let (config, _) = (self.restore_target_resolver)(&operation.request.target_database_id)
-            .map_err(|_| NativeRecoveryError::Unavailable)?;
-        let engine = terrabase::engine::Engine::open(config)
-            .map_err(|_| NativeRecoveryError::Unavailable)?;
+    fn read_published_restore(
+        &self,
+        operation: &NativeRestoreOperation,
+    ) -> Result<Option<NativeRestoreReceipt>, NativeRecoveryError> {
+        // Read through the retained admitted MemberHost lease. Opening a
+        // second Engine by path would bypass restore exclusion.
         let request = &operation.request;
+        let target = self
+            .registry
+            .retained_snapshot()
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == request.target_database_id)
+            .ok_or(NativeRecoveryError::Unavailable)?;
+        if format!("{}/{}", target.database.record.tenant_id, target.database.record.project_id)
+            != request.target_owner
+            || target.database.record.regions != request.placement
+        {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
+        let engine = target.database.host.engine();
         if engine.database_id().to_text() != request.target_database_id {
             return Err(NativeRecoveryError::VerificationFailed);
         }
-        let journal_cut = request.journal_cut.parse().map_err(|_| NativeRecoveryError::VerificationFailed)?;
+        if let NativeRestoreSelection::PointId(point) = &request.selection {
+            if point != &request.recovery_point_id {
+                return Err(NativeRecoveryError::VerificationFailed);
+            }
+        }
+        let journal_cut =
+            request.journal_cut.parse().map_err(|_| NativeRecoveryError::VerificationFailed)?;
         let identity = terrabase::backup::RestoreIdentity {
             operation_id: request.operation_id.clone(),
             source_database_id: request.source_database_id.clone(),
             target_database_id: request.target_database_id.clone(),
             provider: request.provider.clone(),
-            selection: match &request.selection { NativeRestoreSelection::PointId(value) => value.clone(), NativeRestoreSelection::AtUnixMillis(value) => value.to_string() },
+            selection: match &request.selection {
+                NativeRestoreSelection::PointId(value) => value.clone(),
+                NativeRestoreSelection::AtUnixMillis(value) => value.to_string(),
+            },
             expected_manifest_digest: request.recovery_point_digest.clone(),
             expected_journal_boundary: journal_cut,
             restore_epoch: request.restore_epoch,
         };
-        let Some(marker) = terrabase::backup::read_restore_marker(&engine, &identity)
-            .map_err(|_| NativeRecoveryError::VerificationFailed)? else { return Ok(None) };
+        let Some(marker) = terrabase::backup::read_restore_marker(engine, &identity)
+            .map_err(|_| NativeRecoveryError::VerificationFailed)?
+        else {
+            return Ok(None);
+        };
         Ok(Some(NativeRestoreReceipt {
             selected_identity: request.recovery_point_id.clone(),
             logical_content_checksum: marker.logical_checksum,
-            restored_documents: marker.restored_documents,
+            restored_documents: marker
+                .restored_documents
+                .checked_add(marker.restored_family_records)
+                .ok_or(NativeRecoveryError::VerificationFailed)?,
             journal_cut,
         }))
     }
@@ -942,7 +983,6 @@ mod tests {
             Arc::clone(&registry),
             limits(),
             Arc::new(RejectRestore),
-            Arc::new(|_| Err("target unavailable".into())),
         )
         .unwrap();
         worker.shutdown().await.unwrap();
@@ -965,7 +1005,6 @@ mod tests {
             Arc::clone(&registry),
             limits(),
             Arc::new(RejectRestore),
-            Arc::new(|_| Err("target unavailable".into())),
         )
         .unwrap();
         let source = records[0].database_id.clone();
@@ -989,6 +1028,95 @@ mod tests {
         worker.shutdown().await.unwrap();
         let result = runtime.status(&state.source_database_id, &state.operation_id).unwrap();
         assert!(matches!(result.map(|value| value.phase), Some(NativeRecoveryPhase::Failed)));
+        drop(member);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn uncertain_restore_requires_explicit_readback_retry() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let runtime_root = root.join("native-recovery-uncertain");
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+            Arc::new(RejectRestore),
+        )
+        .unwrap();
+        let request = NativeRestoreRequest {
+            operation_id: "uncertain-operation".into(),
+            source_owner: "tenant/project".into(),
+            source_database_id: records[0].database_id.clone(),
+            recovery_point_id: "point".into(),
+            recovery_point_digest: "a".repeat(64),
+            target_owner: "tenant/project".into(),
+            target_database_id: "target-database".into(),
+            journal_cut: "1".into(),
+            restore_epoch: 1,
+            provider: "oci".into(),
+            selection: NativeRestoreSelection::PointId("point".into()),
+            placement: records[0].regions.clone(),
+        };
+        let operation = NativeRestoreOperation {
+            request,
+            phase: NativeRestorePhase::Uncertain,
+            receipt: None,
+            error: Some("unknown".into()),
+        };
+        runtime
+            .operations
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO native_restore_operations(operation_id,source_database_id,target_database_id,phase,record) VALUES(?1,?2,?3,'uncertain',?4)",
+                rusqlite::params!["uncertain-operation", records[0].database_id, "target-database", serde_json::to_vec(&operation).unwrap()],
+            )
+            .unwrap();
+        let retried = runtime.retry_restore_readback("uncertain-operation").unwrap();
+        assert_eq!(retried.phase, NativeRestorePhase::Verifying);
+        assert!(retried.receipt.is_none());
+        worker.shutdown().await.unwrap();
+        drop(member);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn readback_uses_retained_active_host_without_reopening_target() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let runtime_root = root.join("native-recovery-active-readback");
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+            Arc::new(RejectRestore),
+        )
+        .unwrap();
+        let record = &records[0];
+        let operation = NativeRestoreOperation {
+            request: NativeRestoreRequest {
+                operation_id: "active-readback".into(),
+                source_owner: format!("{}/{}", record.tenant_id, record.project_id),
+                source_database_id: record.database_id.clone(),
+                recovery_point_id: "point".into(),
+                recovery_point_digest: "a".repeat(64),
+                target_owner: format!("{}/{}", record.tenant_id, record.project_id),
+                target_database_id: record.database_id.clone(),
+                journal_cut: "1".into(),
+                restore_epoch: 1,
+                provider: "oci".into(),
+                selection: NativeRestoreSelection::PointId("point".into()),
+                placement: record.regions.clone(),
+            },
+            phase: NativeRestorePhase::Verifying,
+            receipt: None,
+            error: None,
+        };
+        assert!(runtime.read_published_restore(&operation).unwrap().is_none());
+        worker.shutdown().await.unwrap();
         drop(member);
         let _ = std::fs::remove_dir_all(root);
     }

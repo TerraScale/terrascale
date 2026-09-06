@@ -21,6 +21,48 @@ pub struct CutoverContext {
     pub permit: CutoverPermit,
 }
 
+/// Route admission attached by Member to one origin transaction.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShardAdmissionToken {
+    /// Database incarnation that issued the token.
+    pub database_incarnation: u128,
+    /// Route generation observed by the serving router.
+    pub route_generation: u64,
+    /// Shard selected by that router.
+    pub shard_id: u64,
+    /// Keys routed by the serving request, all to `shard_id`.
+    pub keys: Vec<Vec<u8>>,
+}
+
+impl ShardAdmissionToken {
+    /// Creates a token for one router-selected key.
+    #[must_use]
+    pub fn for_key(
+        database_incarnation: u128,
+        route_generation: u64,
+        shard_id: u64,
+        key: &[u8],
+    ) -> Self {
+        Self::for_keys(database_incarnation, route_generation, shard_id, [key])
+    }
+
+    /// Creates a token for a bounded set of keys on one shard.
+    #[must_use]
+    pub fn for_keys<'a>(
+        database_incarnation: u128,
+        route_generation: u64,
+        shard_id: u64,
+        keys: impl IntoIterator<Item = &'a [u8]>,
+    ) -> Self {
+        Self {
+            database_incarnation,
+            route_generation,
+            shard_id,
+            keys: keys.into_iter().map(<[u8]>::to_vec).collect(),
+        }
+    }
+}
+
 /// Durable route receipt returned while recovering an already committed split.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommittedSplitRoute {

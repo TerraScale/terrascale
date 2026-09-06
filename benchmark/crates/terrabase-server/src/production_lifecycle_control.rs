@@ -9,9 +9,11 @@ use terrabase_tbep::lifecycle::LifecycleGrantAction;
 
 /// Receipt of a completed native lifecycle effect.
 pub enum NativeLifecycleReceipt {
+    /// Verified recovery point facts.
     Snapshot(crate::native_recovery::RecoveryPointFacts),
-    Restore(crate::native_recovery::NativeRestoreReceipt),
+    /// Completed database lifecycle transition.
     State(terrabase::engine::lifecycle_state::LifecycleOperationOutcome),
+    /// Completed native backup operation.
     Backup(terrabase::backup::worker::LifecycleReceipt),
 }
 
@@ -28,6 +30,7 @@ pub struct PlacementLifecycleAuthority {
 
 impl PlacementLifecycleAuthority {
     #[must_use]
+    /// Creates a verifier over the retained placement journal.
     pub fn new(journal: Arc<terrabase_tbep::placement::PlacementJournal>) -> Self {
         Self { journal }
     }
@@ -72,6 +75,10 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
             .map_err(|_| "accepted lifecycle placement digest is unavailable")?;
         if grant.action != action
             || grant.operation_id != operation
+            || (expected_restore_digest
+                .is_some_and(|expected| grant.accepted_restore_request_digest != expected)
+                || (expected_restore_digest.is_none()
+                    && !grant.accepted_restore_request_digest.is_empty()))
             || grant.environment != assignment.environment
             || grant.tenant != assignment.tenant
             || grant.project != assignment.project
@@ -82,8 +89,6 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
             || grant.accepted_proof_digest != digest
             || grant.authority_epoch != assignment.authority_epoch
             || grant.authority_lease != assignment.authority_lease
-            || expected_restore_digest.is_some_and(|expected| grant.accepted_restore_request_digest != expected)
-            || (expected_restore_digest.is_none() && !grant.accepted_restore_request_digest.is_empty())
         {
             return Err("lifecycle operation grant does not bind the accepted assignment".into());
         }
@@ -94,10 +99,20 @@ impl LifecycleAuthority for PlacementLifecycleAuthority {
     }
 }
 
-fn restore_request_digest(request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest) -> Result<String, String> {
-    use aws_lc_rs::digest::{digest, SHA256};
+fn restore_request_digest(
+    request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
+) -> Result<String, String> {
+    use aws_lc_rs::digest::{SHA256, digest};
     let mut bytes = Vec::new();
-    for value in [&request.source_owner, &request.source_database, &request.recovery_point_id, &request.recovery_point_digest, &request.target_owner, &request.target_database, &request.journal_cut] {
+    for value in [
+        &request.source_owner,
+        &request.source_database,
+        &request.recovery_point_id,
+        &request.recovery_point_digest,
+        &request.target_owner,
+        &request.target_database,
+        &request.journal_cut,
+    ] {
         let len = u32::try_from(value.len()).map_err(|_| "restore request is too large")?;
         bytes.extend_from_slice(&len.to_be_bytes());
         bytes.extend_from_slice(value.as_bytes());
@@ -111,6 +126,7 @@ fn restore_request_digest(request: &terrabase_tbep::proto::terrabase::v1::Restor
 
 impl TbepLifecycleControl {
     #[must_use]
+    /// Creates the authenticated TBEP lifecycle adapter.
     pub fn new(control: Arc<ProductionLifecycleControl>) -> Self {
         Self { control }
     }
@@ -124,7 +140,8 @@ impl TbepLifecycleControl {
     ) -> Result<terrabase_tbep::proto::terrabase::v1::LifecycleControlResponse, String> {
         let context = request.context.as_ref().ok_or("restore context is missing")?;
         if request.target_database != context.database
-            || request.target_owner != format!("{}/{}", context.tenant, context.project) {
+            || request.target_owner != format!("{}/{}", context.tenant, context.project)
+        {
             return Err("restore target is outside the admitted lifecycle scope".into());
         }
         let assignment = Self::assignment(context);
@@ -136,10 +153,34 @@ impl TbepLifecycleControl {
             &context.operation_grant,
             Some(&restore_request_digest(request)?),
         )?;
-        let receipt = self.control.worker.restore_to_target(request).await?;
-        match receipt {
-            NativeLifecycleReceipt::Restore(facts) => Ok(terrabase_tbep::proto::terrabase::v1::LifecycleControlResponse { status: 1, operation_id: request.operation_id.clone(), detail: String::new(), recovery_point_id: facts.selected_identity, recovery_point_digest: facts.logical_content_checksum, placement: Vec::new() }),
-            _ => Err("native restore has no verified receipt".into()),
+        let operation = self.control.worker.restore_to_target(request).await?;
+        use crate::native_recovery::NativeRestorePhase;
+        use terrabase_tbep::proto::terrabase::v1::{LifecycleControlResponse, LifecycleStatus};
+        match operation.phase {
+            NativeRestorePhase::Complete => {
+                let receipt =
+                    operation.receipt.ok_or("complete restore has no verified receipt")?;
+                Ok(LifecycleControlResponse {
+                    status: LifecycleStatus::Applied as i32,
+                    operation_id: operation.request.operation_id,
+                    detail: String::new(),
+                    recovery_point_id: receipt.selected_identity.clone(),
+                    recovery_point_digest: receipt.selected_identity,
+                    placement: operation.request.placement,
+                })
+            }
+            NativeRestorePhase::Failed => Err("native restore failed".into()),
+            NativeRestorePhase::Accepted
+            | NativeRestorePhase::Restoring
+            | NativeRestorePhase::Verifying
+            | NativeRestorePhase::Uncertain => Ok(LifecycleControlResponse {
+                status: LifecycleStatus::Accepted as i32,
+                operation_id: operation.request.operation_id,
+                detail: String::new(),
+                recovery_point_id: String::new(),
+                recovery_point_digest: String::new(),
+                placement: Vec::new(),
+            }),
         }
     }
 
@@ -180,7 +221,7 @@ impl TbepLifecycleControl {
                             status: 1,
                             operation_id: operation.to_owned(),
                             detail: String::new(),
-                            recovery_point_id: facts.recovery_point_id,
+                            recovery_point_id: facts.recovery_point_id.clone(),
                             // The wire digest is the authenticated backup
                             // manifest identity. Logical content checksum is
                             // returned by RestoreStats after restore.
@@ -224,7 +265,10 @@ impl TbepLifecycleControl {
 }
 
 impl terrabase_tbep::lifecycle::LifecycleControl for TbepLifecycleControl {
-    fn restore_stats(&self, request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest) -> terrabase_tbep::lifecycle::RestoreStatsFuture<'_> {
+    fn restore_stats(
+        &self,
+        request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest,
+    ) -> terrabase_tbep::lifecycle::RestoreStatsFuture<'_> {
         let request = request.clone();
         Box::pin(async move { self.control.restore_stats(&request).await })
     }
@@ -330,19 +374,28 @@ pub struct AcceptedLifecycleAssignment {
 #[async_trait::async_trait]
 pub trait NativeLifecycleWorker: Send + Sync {
     /// Reads complete verified restore facts for an exact target identity.
-    async fn restore_stats(&self, request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest) -> Result<crate::native_recovery::NativeRestoreReceipt, String> {
+    async fn restore_stats(
+        &self,
+        request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest,
+    ) -> Result<crate::native_recovery::NativeRestoreReceipt, String> {
         let _ = request;
         Err("native restore stats owner is not composed".into())
     }
     /// Returns the digest of the durably recorded restore request.
-    async fn restore_request_digest(&self, _operation: &str, _target: &str, _owner: &str) -> Result<String, String> {
+    async fn restore_request_digest(
+        &self,
+        _operation: &str,
+        _target: &str,
+        _owner: &str,
+    ) -> Result<String, String> {
         Err("native restore request is unavailable".into())
     }
+    /// Admits an exact native restore operation into the durable recovery owner.
     /// Admits an exact native restore operation into the durable recovery owner.
     async fn restore_to_target(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
-    ) -> Result<(), String> {
+    ) -> Result<crate::native_recovery::NativeRestoreOperation, String> {
         let _ = request;
         Err("native restore owner is not composed".into())
     }
@@ -403,22 +456,65 @@ pub struct RegistryLifecycleWorker {
 
 #[async_trait::async_trait]
 impl NativeLifecycleWorker for RegistryLifecycleWorker {
-    async fn restore_stats(&self, request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest) -> Result<crate::native_recovery::NativeRestoreReceipt, String> {
-        let recovery = self.recovery.as_ref().ok_or("native restore stats owner is not composed")?;
-        recovery.verified_restore_stats(&request.operation_id, &request.target_database, &request.target_owner, &request.journal_cut, request.restore_epoch).map_err(|_| "native restore stats unavailable".to_owned())?.ok_or_else(|| "native restore is not complete or identity mismatched".to_owned())
+    async fn restore_stats(
+        &self,
+        request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest,
+    ) -> Result<crate::native_recovery::NativeRestoreReceipt, String> {
+        let recovery =
+            self.recovery.as_ref().ok_or("native restore stats owner is not composed")?;
+        recovery
+            .verified_restore_stats(
+                &request.operation_id,
+                &request.target_database,
+                &request.target_owner,
+                &request.journal_cut,
+                request.restore_epoch,
+            )
+            .map_err(|_| "native restore stats unavailable".to_owned())?
+            .ok_or_else(|| "native restore is not complete or identity mismatched".to_owned())
     }
-    async fn restore_request_digest(&self, operation: &str, target: &str, owner: &str) -> Result<String, String> {
+    async fn restore_request_digest(
+        &self,
+        operation: &str,
+        target: &str,
+        owner: &str,
+    ) -> Result<String, String> {
         let recovery = self.recovery.as_ref().ok_or("native restore owner is not composed")?;
-        let request = recovery.restore_request(operation, target, owner).map_err(|_| "native restore request unavailable")?.ok_or("native restore request not found")?;
-        let provider = if request.provider == "oci" { 1 } else if request.provider == "tigris" { 2 } else { return Err("restore provider is not approved".into()) };
-        let wire = terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest { operation_id: request.operation_id, source_owner: request.source_owner, source_database: request.source_database_id, recovery_point_id: request.recovery_point_id, recovery_point_digest: request.recovery_point_digest, target_owner: request.target_owner, target_database: request.target_database_id, journal_cut: request.journal_cut, restore_epoch: request.restore_epoch, provider, ..Default::default() };
+        let request = recovery
+            .restore_request(operation, target, owner)
+            .map_err(|_| "native restore request unavailable")?
+            .ok_or("native restore request not found")?;
+        let provider = if request.provider == "oci" {
+            1
+        } else if request.provider == "tigris" {
+            2
+        } else {
+            return Err("restore provider is not approved".into());
+        };
+        let wire = terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest {
+            operation_id: request.operation_id,
+            source_owner: request.source_owner,
+            source_database: request.source_database_id,
+            recovery_point_id: request.recovery_point_id,
+            recovery_point_digest: request.recovery_point_digest,
+            target_owner: request.target_owner,
+            target_database: request.target_database_id,
+            journal_cut: request.journal_cut,
+            restore_epoch: request.restore_epoch,
+            provider,
+            ..Default::default()
+        };
         restore_request_digest(&wire)
     }
     async fn restore_to_target(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
-    ) -> Result<(), String> {
+    ) -> Result<crate::native_recovery::NativeRestoreOperation, String> {
         let recovery = self.recovery.as_ref().ok_or("native recovery owner is not composed")?;
+        let source = self
+            .registry
+            .resolve(&request.source_database)?
+            .ok_or("restore source is not admitted")?;
         let operation = crate::native_recovery::NativeRestoreRequest {
             operation_id: request.operation_id.clone(),
             source_owner: request.source_owner.clone(),
@@ -429,7 +525,9 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             target_database_id: request.target_database.clone(),
             journal_cut: request.journal_cut.clone(),
             restore_epoch: request.restore_epoch,
-            provider: match terrabase_tbep::proto::terrabase::v1::RestoreProvider::try_from(request.provider) {
+            provider: match terrabase_tbep::proto::terrabase::v1::RestoreProvider::try_from(
+                request.provider,
+            ) {
                 Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::Oci) => "oci",
                 Ok(terrabase_tbep::proto::terrabase::v1::RestoreProvider::Tigris) => "tigris",
                 _ => return Err("restore provider is not approved".into()),
@@ -438,14 +536,17 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             selection: crate::native_recovery::NativeRestoreSelection::PointId(
                 request.recovery_point_id.clone(),
             ),
-            placement: vec![
-                request.context.as_ref().ok_or("restore context is missing")?.region.clone(),
-            ],
+            placement: source.record.regions.clone(),
         };
-        let admitted = recovery.admit_restore(operation).map_err(|_| "native restore admission refused".to_owned())?;
-        match admitted.receipt {
-            Some(receipt) => Ok(NativeLifecycleReceipt::Restore(receipt)),
-            None => Err("native restore admitted; retry for terminal verified facts".into()),
+        let admitted = recovery
+            .admit_restore(operation)
+            .map_err(|_| "native restore admission refused".to_owned())?;
+        if matches!(admitted.phase, crate::native_recovery::NativeRestorePhase::Uncertain) {
+            recovery
+                .retry_restore_readback(&request.operation_id)
+                .map_err(|_| "native restore readback unavailable".into())
+        } else {
+            Ok(admitted)
         }
     }
 
@@ -525,12 +626,41 @@ pub struct ProductionLifecycleControl {
 }
 
 impl ProductionLifecycleControl {
-    pub async fn restore_stats(&self, request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest) -> Result<terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse, String> {
+    /// Returns durable restore progress for the authorized request.
+    pub async fn restore_stats(
+        &self,
+        request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest,
+    ) -> Result<terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse, String> {
         let context = request.context.as_ref().ok_or("restore stats context is missing")?;
         let assignment = TbepLifecycleControl::assignment(context);
-        self.authority.verify(&assignment, LifecycleGrantAction::RestoreToTarget, &request.operation_id, &context.authority_signature, &context.operation_grant, Some(&self.worker.restore_request_digest(&request.operation_id, &request.target_database, &request.target_owner).await?))?;
+        self.authority.verify(
+            &assignment,
+            LifecycleGrantAction::RestoreToTarget,
+            &request.operation_id,
+            &context.authority_signature,
+            &context.operation_grant,
+            Some(
+                &self
+                    .worker
+                    .restore_request_digest(
+                        &request.operation_id,
+                        &request.target_database,
+                        &request.target_owner,
+                    )
+                    .await?,
+            ),
+        )?;
         let receipt = self.worker.restore_stats(request).await?;
-        Ok(terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse { operation_id: request.operation_id.clone(), target_owner: request.target_owner.clone(), target_database: request.target_database.clone(), checksum: receipt.logical_content_checksum, row_count: receipt.restored_documents, journal_cut: request.journal_cut.clone(), placement: vec![context.region.clone()] })
+        Ok(terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse {
+            operation_id: request.operation_id.clone(),
+            target_owner: request.target_owner.clone(),
+            target_database: request.target_database.clone(),
+            checksum: receipt.logical_content_checksum,
+            row_count: i64::try_from(receipt.restored_documents)
+                .map_err(|_| "restore row count exceeds the wire range")?,
+            journal_cut: request.journal_cut.clone(),
+            placement: vec![context.region.clone()],
+        })
     }
     /// Ensures a complete snapshot after verifying accepted authority.
     pub async fn ensure_snapshot(
@@ -584,6 +714,7 @@ impl ProductionLifecycleControl {
         self.worker.reactivate(assignment, operation).await
     }
 
+    /// Verifies snapshot authority against accepted placement.
     pub async fn verify_snapshot_placement(
         &self,
         assignment: &AcceptedLifecycleAssignment,
@@ -591,11 +722,12 @@ impl ProductionLifecycleControl {
         operation: &str,
         signature: &[u8],
         operation_grant: &[u8],
-    ) -> Result<NativeLifecycleReceipt, String> {
+    ) -> Result<(), String> {
         self.authority.verify(assignment, action, operation, signature, operation_grant, None)?;
         self.worker.verify_snapshot_placement(assignment, operation).await
     }
 
+    /// Deletes owned data after validating lifecycle authority.
     pub async fn delete_owned_data(
         &self,
         assignment: &AcceptedLifecycleAssignment,

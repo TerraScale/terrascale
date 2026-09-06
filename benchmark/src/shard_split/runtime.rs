@@ -215,10 +215,8 @@ where
         // The engine route is authoritative after a lost response. Reconcile
         // the complete table before attempting another cutover transaction;
         // retrying against this worker's stale mirror could fence a new route.
-        if let Some(recovered) = self
-            .engine
-            .recover_split_route(&context)
-            .map_err(SplitRuntimeError::Cutover)?
+        if let Some(recovered) =
+            self.engine.recover_split_route(&context).map_err(SplitRuntimeError::Cutover)?
         {
             if recovered.split != context {
                 return Err(SplitRuntimeError::MissingCommittedGeneration);
@@ -234,12 +232,15 @@ where
         }
         let generation = self
             .engine
-            .install_split_route(&CutoverContext {
-                split: context,
-                route_generation: self.router.table().generation(),
-                drained_through,
-                permit,
-            }, &split.durable_state())
+            .install_split_route(
+                &CutoverContext {
+                    split: context,
+                    route_generation: self.router.table().generation(),
+                    drained_through,
+                    permit,
+                },
+                &split.durable_state(),
+            )
             .map_err(SplitRuntimeError::Cutover)?;
         let routing_result = self.router.cut_over(
             context.source_shard(),
@@ -256,14 +257,7 @@ where
             if recovered.split != context || recovered.generation != generation {
                 return Err(SplitRuntimeError::Routing(original));
             }
-            self.router
-                .cut_over(
-                    context.source_shard(),
-                    context.target_shard(),
-                    split.split_key().to_vec(),
-                    permit,
-                )
-                .map_err(SplitRuntimeError::Routing)?;
+            self.router = ShardRouter::from_table(recovered.route);
         }
         self.committed_generation = Some(generation);
         split.cut_over().map_err(|_| SplitRuntimeError::MissingCommittedGeneration)?;
