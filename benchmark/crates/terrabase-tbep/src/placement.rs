@@ -16,6 +16,8 @@ use terrabase_cluster::production::{DatabaseRouteScope, MemberWorkloadIdentity};
 
 use crate::proto::terrabase::v1 as pb;
 
+mod drain;
+
 /// Maximum retained operation receipts before explicit lifecycle maintenance is required.
 pub const MAX_PLACEMENT_PROPOSALS: u64 = 1024;
 /// Maximum canonical proposal bytes, independently of the transport message bound.
@@ -510,6 +512,7 @@ impl PlacementJournal {
             "CREATE TABLE IF NOT EXISTS identity (id INTEGER PRIMARY KEY CHECK(id=1), environment TEXT NOT NULL, cluster TEXT NOT NULL, member TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS proposals (revision INTEGER PRIMARY KEY, operation TEXT NOT NULL UNIQUE, principal TEXT NOT NULL, expected_revision INTEGER NOT NULL, proposal BLOB NOT NULL);
              CREATE TABLE IF NOT EXISTS accepted (sequence INTEGER PRIMARY KEY, proposal_revision INTEGER NOT NULL, proof BLOB NOT NULL, digest TEXT NOT NULL UNIQUE);
+             CREATE TABLE IF NOT EXISTS transition_drains (prior_digest TEXT PRIMARY KEY, operation TEXT NOT NULL UNIQUE, prepared BLOB NOT NULL, prepared_digest TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS declared (tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL PRIMARY KEY, region TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS selected_regions (tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL, region TEXT NOT NULL, PRIMARY KEY(tenant,project,database,region));
              PRAGMA user_version=1;"
@@ -810,6 +813,12 @@ impl PlacementJournal {
         }
         self.match_proposal(&transaction, request.proposal_revision, &verified)?;
         verified.follows(chain.last().map(|(_, _, prior)| prior))?;
+        drain::match_successor(
+            &transaction,
+            trust,
+            chain.last().map(|(_, _, prior)| prior),
+            &verified,
+        )?;
         if chain.len() >= usize::try_from(MAX_PLACEMENT_PROPOSALS).unwrap_or(usize::MAX) {
             return Err(PlacementError::Exhausted);
         }
@@ -871,8 +880,15 @@ impl PlacementJournal {
             }
             self.match_proposal(connection, revision, &verified)?;
             verified.follows(chain.last().map(|(_, _, previous)| previous))?;
+            drain::match_successor(
+                connection,
+                trust,
+                chain.last().map(|(_, _, previous)| previous),
+                &verified,
+            )?;
             chain.push((sequence, revision, verified));
         }
+        drain::validate_intents(connection, trust, &chain)?;
         Ok(chain)
     }
 
@@ -961,7 +977,8 @@ impl terrabase_cluster::production::DurableMembershipSource for PlacementJournal
             let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
             let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
             let chain = self.verified_chain(&connection, trust)?;
-            let (_, revision, _) = chain.last().ok_or(PlacementError::NotFound)?;
+            let (_, revision, accepted) = chain.last().ok_or(PlacementError::NotFound)?;
+            drain::refuse_draining(&connection, trust, accepted)?;
             let bytes: Vec<u8> = connection
                 .query_row(
                     "SELECT proposal FROM proposals WHERE revision=?1",
@@ -1020,7 +1037,8 @@ impl terrabase_cluster::wal_route::DurableWalAssignmentSource for PlacementJourn
             let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
             let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
             let chain = self.verified_chain(&connection, trust)?;
-            let (_, revision, _) = chain.last().ok_or(PlacementError::NotFound)?;
+            let (_, revision, accepted) = chain.last().ok_or(PlacementError::NotFound)?;
+            drain::refuse_draining(&connection, trust, accepted)?;
             let bytes: Vec<u8> = connection
                 .query_row(
                     "SELECT proposal FROM proposals WHERE revision=?1",
@@ -1073,6 +1091,8 @@ impl terrabase_cluster::wal_route::DurableWalAssignmentSource for PlacementJourn
     }
 }
 
+#[cfg(test)]
+mod drain_tests;
 #[cfg(test)]
 mod transition_tests;
 

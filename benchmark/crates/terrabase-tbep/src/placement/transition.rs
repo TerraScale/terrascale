@@ -75,6 +75,20 @@ pub(super) struct FenceReceipt {
     pub frontier_digest: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Prepared {
+    schema_version: u32,
+    kind: String,
+    request: Request,
+    request_digest: String,
+    prior_generation: u64,
+    previous_proof_digest: String,
+    authority_epoch: u64,
+    lease_id: String,
+    journal_revision: u64,
+}
+
 /// Explicitly provisioned public signing pins for GRU grants and member fences.
 /// These are independent of endpoint health, proposal bytes, and supplied keys.
 #[derive(Clone)]
@@ -203,12 +217,156 @@ impl TransitionTrust {
         }
         Ok(VerifiedProof { proof, digest: hash(&payload), fences })
     }
+
+    /// Verifies an authority-signed prepared transition against the exact
+    /// previously accepted proof. The returned descriptor is sealed so callers
+    /// cannot manufacture transition authority from decoded JSON.
+    pub(super) fn decode_prepared(
+        &self,
+        encoded: &[u8],
+        prior: &VerifiedProof,
+    ) -> Result<VerifiedPreparedTransition, PlacementError> {
+        if encoded.len() > MAX_PROOF_BYTES {
+            return Err(PlacementError::Invalid);
+        }
+        let signed: Signed =
+            serde_json::from_slice(encoded).map_err(|_| PlacementError::Invalid)?;
+        let payload = verify(&signed, &self.authority)?;
+        let prepared: Prepared =
+            serde_json::from_slice(&payload).map_err(|_| PlacementError::Invalid)?;
+        let request_payload =
+            serde_json::to_vec(&prepared.request).map_err(|_| PlacementError::Invalid)?;
+        if prepared.schema_version != 1
+            || prepared.kind != "prepared_epoch"
+            || prepared.authority_epoch == 0
+            || prepared.journal_revision == 0
+            || !token(&prepared.lease_id)
+            || !token(&prepared.request.operation_id)
+            || !token(&prepared.request.scope_id)
+            || prepared.request.prior_epoch != prior.proof.request.epoch
+            || prepared.request.epoch <= prepared.request.prior_epoch
+            || prepared.request.generation <= prior.proof.request.generation
+            || prepared.prior_generation != prior.proof.request.generation
+            || prepared.request.scope_id != prior.proof.request.scope_id
+            || prepared.request_digest != hash(&request_payload)
+            || prepared.previous_proof_digest != prior.digest
+            || prepared.authority_epoch < prior.proof.authority_epoch
+            || prepared.journal_revision <= prior.proof.journal_revision
+            || prepared.request.members.len() < 2
+            || prepared.request.members.len() > 40
+        {
+            return Err(PlacementError::Invalid);
+        }
+        let mut regions: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut previous: Option<&str> = None;
+        for member in &prepared.request.members {
+            if !token(&member.identity)
+                || !valid_hash(&member.placement_digest)
+                || !matches!(member.region.as_str(), "GRU" | "SFO" | "FRA")
+                || previous.is_some_and(|old| old >= member.identity.as_str())
+            {
+                return Err(PlacementError::Invalid);
+            }
+            previous = Some(&member.identity);
+            *regions.entry(&member.region).or_default() += 1;
+        }
+        if regions.values().any(|count| *count != 2) {
+            return Err(PlacementError::Invalid);
+        }
+        Ok(VerifiedPreparedTransition {
+            operation_id: prepared.request.operation_id,
+            scope_id: prepared.request.scope_id,
+            prior_epoch: prepared.request.prior_epoch,
+            prior_generation: prepared.prior_generation,
+            epoch: prepared.request.epoch,
+            generation: prepared.request.generation,
+            request_digest: prepared.request_digest,
+            previous_proof_digest: prepared.previous_proof_digest,
+            proof_digest: hash(&payload),
+            authority_epoch: prepared.authority_epoch,
+            journal_revision: prepared.journal_revision,
+        })
+    }
 }
 
 pub(super) struct VerifiedProof {
     pub proof: Proof,
     pub digest: String,
     pub fences: Vec<FenceReceipt>,
+}
+
+/// Authenticated authority evidence authorizing one exact next transition.
+#[derive(Clone, Debug)]
+pub struct VerifiedPreparedTransition {
+    operation_id: String,
+    scope_id: String,
+    prior_epoch: u64,
+    prior_generation: u64,
+    epoch: u64,
+    generation: u64,
+    request_digest: String,
+    previous_proof_digest: String,
+    proof_digest: String,
+    authority_epoch: u64,
+    journal_revision: u64,
+}
+
+impl VerifiedPreparedTransition {
+    /// Authority operation identifier bound to this transition.
+    #[must_use]
+    pub fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+    /// Canonical placement scope bound to this transition.
+    #[must_use]
+    pub fn scope_id(&self) -> &str {
+        &self.scope_id
+    }
+    /// Prior replica-set epoch.
+    #[must_use]
+    pub const fn prior_epoch(&self) -> u64 {
+        self.prior_epoch
+    }
+    /// Prior placement generation.
+    #[must_use]
+    pub const fn prior_generation(&self) -> u64 {
+        self.prior_generation
+    }
+    /// New replica-set epoch.
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    /// New placement generation.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+    /// Digest of the canonical transition request.
+    #[must_use]
+    pub fn request_digest(&self) -> &str {
+        &self.request_digest
+    }
+    /// Digest of the exact prior accepted proof payload.
+    #[must_use]
+    pub fn previous_proof_digest(&self) -> &str {
+        &self.previous_proof_digest
+    }
+    /// Digest of the authenticated raw prepared payload.
+    #[must_use]
+    pub fn proof_digest(&self) -> &str {
+        &self.proof_digest
+    }
+    /// Authority epoch that issued this prepared transition.
+    #[must_use]
+    pub const fn authority_epoch(&self) -> u64 {
+        self.authority_epoch
+    }
+    /// Monotonic authority journal revision for this prepared transition.
+    #[must_use]
+    pub const fn journal_revision(&self) -> u64 {
+        self.journal_revision
+    }
 }
 
 impl VerifiedProof {
