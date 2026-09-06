@@ -110,8 +110,15 @@ describe("Better Auth 1.7.2 TerraScale adapter factory", () => {
     const beforeRejectedIndex = indexes.length;
     await assert.rejects(adapter.index({ model: "user", fields: ["email"], unique: false }), /must be unique/u);
     assert.equal(requests.filter(request => new URL(request.url).pathname.endsWith("/index")).length, beforeRejectedIndex);
-    const directRequest = indexes.filter(request => !request.headers.has("x-terrascale-auth-transaction")).at(-1)!;
+    const directRequests = indexes.filter(request => !request.headers.has("x-terrascale-auth-transaction"));
     const transactionRequest = indexes.find(request => request.headers.has("x-terrascale-auth-transaction"))!;
+    const directRequest = directRequests[await (async () => {
+      for (let index = 0; index < directRequests.length; index++) {
+        const body = await directRequests[index]!.clone().json() as { model: string; fields: string[] };
+        if (body.model === "members" && body.fields.join(",") === "email_address") return index;
+      }
+      return -1;
+    })()]!;
     const directBody = await directRequest.clone().json() as { model: string; fields: string[] };
     assert.deepEqual(directBody, { model: "members", fields: ["email_address"] });
     assert.match(directRequest.headers.get("idempotency-key")!, /^better-auth-index-/u);
@@ -146,5 +153,53 @@ describe("Better Auth 1.7.2 TerraScale adapter factory", () => {
     await assert.rejects(adapter.transaction(async transaction => transaction.index({ model: "user", fields: ["email"] })), /invalid success result/u);
     assert.equal(paths.filter(path => path.endsWith("/transactions/rollback")).length, 1);
     assert.equal(paths.filter(path => path.endsWith("/transactions/commit")).length, 0);
+  });
+
+  test("shares successful index installs across factory instances and clears failures", async () => {
+    const requests: Request[] = [];
+    const client = new AuthPersistenceClient({
+      apiBaseUrl: "https://api.example.test",
+      fetch: async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({ matched: true, record: null });
+      },
+    });
+    const factory = createTerraScaleAuthAdapter(client, "auth");
+    const options = { appName: "test", secret: "test-secret-test-secret-test-secret" };
+    await Promise.all([
+      factory(options).create({ model: "user", data: { name: "one" } }),
+      factory(options).create({ model: "user", data: { name: "two" } }),
+    ]);
+    const targetCount = async (model: string, field: string) => {
+      let count = 0;
+      for (const request of requests.filter(request => new URL(request.url).pathname.endsWith("/index"))) {
+        const body = await request.clone().json() as { model: string; fields: string[] };
+        if (body.model === model && body.fields.join(",") === field) count += 1;
+      }
+      return count;
+    };
+    assert.equal(await targetCount("user", "email"), 1);
+    await createTerraScaleAuthAdapter(client, "auth")({ ...options, user: { modelName: "members", fields: { email: "email_address" } } }).create({ model: "user", data: { name: "three" } });
+    assert.equal(await targetCount("members", "email_address"), 1);
+
+    let targetAttempts = 0;
+    const retryClient = new AuthPersistenceClient({
+      apiBaseUrl: "https://api.example.test",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        if (new URL(request.url).pathname.endsWith("/index")) {
+          const body = await request.clone().json() as { model: string; fields: string[] };
+          if (body.model === "user" && body.fields.join(",") === "email") {
+            targetAttempts += 1;
+            if (targetAttempts === 1) return Response.json({ matched: false, record: { id: "bad" } });
+          }
+        }
+        return Response.json({ matched: true, record: null });
+      },
+    });
+    const retryFactory = createTerraScaleAuthAdapter(retryClient, "auth");
+    await assert.rejects(retryFactory(options).create({ model: "user", data: { name: "retry" } }), /invalid success result/u);
+    await retryFactory(options).create({ model: "user", data: { name: "retry-again" } });
+    assert.equal(targetAttempts, 2);
   });
 });

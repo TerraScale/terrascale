@@ -12,12 +12,25 @@ const runner = await startVitest("test", ["src/integration/auth-authority.test.t
   pool: "threads",
   maxWorkers: 1,
   fileParallelism: false,
+  reporters: ["verbose"],
+  disableConsoleIntercept: true,
   testTimeout: 30_000,
   hookTimeout: 30_000,
 });
 try {
   const files = runner.state.getFiles();
-  if (files.length !== 1 || files.some(file => file.result?.state !== "pass") || runner.state.getUnhandledErrors().length > 0) {
+  const counts = { passed: 0, failed: 0, skipped: 0 };
+  const visit = task => {
+    if (task.type === "test") {
+      if (task.result?.state === "pass") counts.passed += 1;
+      else if (task.result?.state === "fail") counts.failed += 1;
+      else counts.skipped += 1;
+    }
+    for (const child of task.tasks ?? []) visit(child);
+  };
+  for (const file of files) visit(file);
+  console.log(JSON.stringify({ qualification: "better-auth-1.7.2-public-authority", ...counts }));
+  if (files.length !== 1 || counts.passed === 0 || counts.failed !== 0 || counts.skipped !== 0 || files.some(file => file.result?.state !== "pass") || runner.state.getUnhandledErrors().length > 0) {
     process.exitCode = 1;
   }
 } finally {

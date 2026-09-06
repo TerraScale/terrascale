@@ -79,6 +79,7 @@ export function createTerraScaleAuthAdapter(
   client: AuthPersistenceClient,
   database: string,
 ): TerraScaleAuthAdapterFactory {
+  const indexCache = new Map<string, Promise<void> | true>();
   return (options: BetterAuthOptions): TerraScaleAuthDatabaseAdapter => {
     const factoryOptions: BetterAuthOptions = {
       ...options,
@@ -106,7 +107,7 @@ export function createTerraScaleAuthAdapter(
         },
       },
       adapter: (factoryConfig) => {
-        const result = customAdapter(factoryConfig, directPort(client, database), true);
+        const result = customAdapter(factoryConfig, directPort(client, database), true, indexCache);
         ensureSchema = result.ensure;
         directIndex = result.index;
         return result.adapter;
@@ -167,6 +168,39 @@ async function serializedTransactionCallback<T>(
   return value!;
 }
 
+async function installIndex(
+  port: Port,
+  request: AuthUniqueIndex,
+  cache: Map<string, Promise<void> | true> | undefined,
+): Promise<void> {
+  const identity = JSON.stringify(request);
+  if (cache !== undefined) {
+    const prior = cache.get(identity);
+    if (prior === true) return;
+    if (prior !== undefined) return prior;
+    const attempt = installIndexRequest(port, request);
+    cache.set(identity, attempt);
+    try {
+      await attempt;
+      cache.set(identity, true);
+    } catch (error) {
+      if (cache.get(identity) === attempt) cache.delete(identity);
+      throw error;
+    }
+    return;
+  }
+  await installIndexRequest(port, request);
+}
+
+async function installIndexRequest(port: Port, request: AuthUniqueIndex): Promise<void> {
+  const value = unwrap(await port.index(request, {
+    idempotencyKey: `better-auth-index-${globalThis.crypto.randomUUID()}`,
+  }));
+  if (value.matched !== true || value.record !== null) {
+    throw new TypeError("Auth index operation returned an invalid success result.");
+  }
+}
+
 function transactionAdapter(
   options: BetterAuthOptions,
   operations: AuthTransactionOperations,
@@ -199,6 +233,7 @@ function customAdapter(
   config: Parameters<NonNullable<Parameters<typeof createAdapterFactory>[0]["adapter"]>>[0],
   port: Port,
   provisionIndexes: boolean,
+  indexCache?: Map<string, Promise<void> | true>,
 ): {
   readonly adapter: CustomAdapter;
   readonly ensure: () => Promise<void>;
@@ -233,7 +268,6 @@ function customAdapter(
     if (!provisionIndexes) return;
     if (ready === undefined) {
       const attempt = (async () => {
-        const provisioned = new Set<string>();
         for (const [model, table] of Object.entries(config.schema)) {
           const indexes = [
             ...Object.entries(table.fields).filter(([, field]) => field.unique === true)
@@ -246,17 +280,9 @@ function customAdapter(
               model: config.getModelName(model),
               fields: fields.map(field => config.getFieldName({ model, field })),
             };
-            const identity = JSON.stringify(request);
-            if (provisioned.has(identity)) continue;
             // Provision sequentially so cold-start schema work cannot saturate
             // the same bounded consensus lane required to install the indexes.
-            const value = unwrap(await port.index(request, {
-              idempotencyKey: `better-auth-index-${globalThis.crypto.randomUUID()}`,
-            }));
-            if (value.matched !== true || value.record !== null) {
-              throw new TypeError("Auth index operation returned an invalid success result.");
-            }
-            provisioned.add(identity);
+            await installIndex(port, request, indexCache);
           }
         }
       })();
@@ -274,10 +300,7 @@ function customAdapter(
       model: config.getModelName(input.model),
       fields: input.fields.map(field => config.getFieldName({ model: input.model, field })),
     };
-    const result = unwrap(await port.index(request, { idempotencyKey: `better-auth-index-${globalThis.crypto.randomUUID()}` }));
-    if (result.matched !== true || result.record !== null) {
-      throw new TypeError("Auth index operation returned an invalid success result.");
-    }
+    await installIndexRequest(port, request);
   };
   const adapter: CustomAdapter = {
     create: async <T extends Record<string, any>>(input: CreateInput & { data: T }) => {
