@@ -503,7 +503,12 @@ async fn public_database_create_consumes_every_producer_response_and_error_once(
             .management()
             .databases()
             .create_with_placement(
-                CreateDatabaseRequest::new("sample", vec![RegionCode::Gru]).unwrap(),
+                CreateDatabaseRequest::new("sample", vec![RegionCode::Gru])
+                    .unwrap()
+                    .operation_id("op")
+                    .unwrap()
+                    .residency("br-only")
+                    .unwrap(),
                 None,
                 OperationOptions::default(),
             )

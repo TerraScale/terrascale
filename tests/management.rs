@@ -79,6 +79,8 @@ async fn databases_use_direct_contract_routes_and_metadata() {
 
     let request = CreateDatabaseRequest::new("orders", vec![RegionCode::Gru])
         .expect("placement")
+        .operation_id("op")
+        .expect("operation id")
         .residency("br-only")
         .expect("residency");
     sdk.management()
@@ -476,6 +478,37 @@ async fn provisioning_acceptance_is_distinct_from_database_creation() {
             .unwrap(),
         CreateDatabaseResult::Created(_)
     ));
+}
+
+#[tokio::test]
+async fn database_delete_decodes_accepted_provisioning_lifecycle() {
+    use terrascale::DeleteDatabaseResult;
+    let mock = Mock::new(vec![Response {
+        status: 202,
+        headers: vec![(
+            "location".into(),
+            "/api/v1/databases/orders/deletions/op".into(),
+        )],
+        body: serde_json::to_vec(&json!({
+            "request": {"operation_id": "op"},
+            "state": "preparing",
+            "cutoff": "2026-09-06T00:00:00Z",
+            "targets": []
+        }))
+        .unwrap(),
+    }]);
+    let result = client(Arc::clone(&mock))
+        .management()
+        .databases()
+        .delete("orders", true, None)
+        .await
+        .unwrap();
+    let DeleteDatabaseResult::Accepted(accepted) = result else {
+        panic!("202 must remain an accepted deletion")
+    };
+    assert_eq!(accepted.operation_id, "op");
+    assert_eq!(accepted.state, "preparing");
+    assert_eq!(accepted.location, "/api/v1/databases/orders/deletions/op");
 }
 
 #[tokio::test]

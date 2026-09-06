@@ -214,6 +214,19 @@ pub enum CreateDatabaseResult {
     Created(DatabaseRecord),
     Accepted(ProvisioningOperation),
 }
+/// Result of database deletion. Provisioned deployments acknowledge deletion
+/// asynchronously and return a durable operation plus its status location.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeleteDatabaseResult {
+    Deleted(DatabaseRecord),
+    Accepted(DeleteDatabaseAccepted),
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeleteDatabaseAccepted {
+    pub operation_id: String,
+    pub state: String,
+    pub location: String,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProvisioningOperation {
     /// Deployment environment owning the operation.
@@ -404,6 +417,13 @@ impl Databases {
         options: OperationOptions,
     ) -> Result<CreateDatabaseResult> {
         request.validate()?;
+        if request.operation_id.is_none() || request.residency.is_none() {
+            return Err(Error::new(
+                ErrorKind::Validation,
+                "provisioning_fields_required",
+                "provisioned database creation requires operation_id and residency.",
+            ));
+        }
         let request = request_with_options(
             "databases.create",
             Method::Post,
@@ -448,7 +468,7 @@ impl Databases {
         database_id: &str,
         confirm: bool,
         _project_id: Option<&str>,
-    ) -> Result<DatabaseRecord> {
+    ) -> Result<DeleteDatabaseResult> {
         let options = OperationOptions {
             idempotency_key: Some(format!(
                 "ts_database_delete_{}",
@@ -467,7 +487,7 @@ impl Databases {
         confirm: bool,
         _project_id: Option<&str>,
         options: OperationOptions,
-    ) -> Result<DatabaseRecord> {
+    ) -> Result<DeleteDatabaseResult> {
         if !confirm {
             return Err(Error::new(
                 ErrorKind::Validation,
@@ -490,7 +510,51 @@ impl Databases {
             "x-terrascale-delete-confirmation".to_owned(),
             database_id.trim().to_owned(),
         ));
-        send_with_options(&self.shared, request, &options).await
+        options.validate()?;
+        let response = if let Some(token) = options.cancellation.clone() {
+            tokio::select! {
+                response = self.shared.send_response(request) => response?,
+                () = wait_cancelled(token) => return Err(Error::new(ErrorKind::Transport, "cancelled", "The management operation was cancelled.")),
+            }
+        } else {
+            self.shared.send_response(request).await?
+        };
+        let body: serde_json::Value = response.json_body()?;
+        if response.status == 200 {
+            return serde_json::from_value(body)
+                .map(DeleteDatabaseResult::Deleted)
+                .map_err(|error| {
+                    Error::invalid_response(format!(
+                        "database deletion response does not match the contract: {error}"
+                    ))
+                });
+        }
+        if response.status == 202 {
+            let operation_id = body
+                .get("request")
+                .and_then(|request| request.get("operation_id"))
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    Error::invalid_response("accepted database deletion has no operation_id")
+                })?;
+            let state = body
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    Error::invalid_response("accepted database deletion has no state")
+                })?;
+            let location = response.header("location").ok_or_else(|| {
+                Error::invalid_response("accepted database deletion has no Location header")
+            })?;
+            return Ok(DeleteDatabaseResult::Accepted(DeleteDatabaseAccepted {
+                operation_id: operation_id.to_owned(),
+                state: state.to_owned(),
+                location: location.to_owned(),
+            }));
+        }
+        Err(Error::invalid_response(
+            "database deletion returned an unsupported success status",
+        ))
     }
     pub async fn restore(
         &self,
