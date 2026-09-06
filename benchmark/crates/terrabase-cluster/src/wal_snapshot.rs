@@ -5,11 +5,12 @@
 //! every file hash, SQLite integrity, and the scoped WAL checkpoint agree.
 //! Destination paths are local configuration, never supplied by network frames.
 
-use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use terrabase::storage::{open_physical_file, create_physical_file, PhysicalFile, EncryptedStorage};
 use std::sync::{Arc, Mutex};
+use terrabase::storage::{
+    create_physical_file, open_physical_file, EncryptedStorage, PhysicalFile,
+};
 
 use crate::production::DatabaseRouteScope;
 use crate::wal_driver::{
@@ -79,6 +80,7 @@ pub struct WalSnapshotManifest {
 struct ManifestContents {
     files: [Option<FileManifest>; 3],
     checkpoint: WalCheckpoint,
+    sequence: u64,
 }
 
 impl WalSnapshotManifest {
@@ -86,6 +88,12 @@ impl WalSnapshotManifest {
     #[must_use]
     pub fn identity(&self) -> [u8; 32] {
         self.identity
+    }
+
+    /// Conservative sequence observed before capturing the consistent snapshot.
+    #[must_use]
+    pub fn sequence(&self) -> u64 {
+        self.contents.sequence
     }
 
     /// Returns the exact durable position installed with this file snapshot.
@@ -151,6 +159,103 @@ impl WalSnapshotManifest {
             )));
         }
         self.validate()
+    }
+}
+
+/// Local evidence produced only by successful durable snapshot installation.
+/// It is not a serving proof: live catch-up and cross-region reconciliation
+/// still need independent observations under the same accepted assignment.
+#[derive(Clone, Debug)]
+pub struct WalInstalledSnapshotProof {
+    scope: DatabaseRouteScope,
+    epoch: u64,
+    snapshot: [u8; 32],
+    checkpoint: [u8; 32],
+    sequence: u64,
+}
+
+impl WalInstalledSnapshotProof {
+    /// Database whose files were durably installed.
+    #[must_use]
+    pub fn scope(&self) -> DatabaseRouteScope {
+        self.scope
+    }
+    /// Accepted replica epoch of installation.
+    #[must_use]
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    /// Scoped snapshot manifest content identity.
+    #[must_use]
+    pub fn snapshot_digest(&self) -> [u8; 32] {
+        self.snapshot
+    }
+    /// Durable WAL checkpoint content identity.
+    #[must_use]
+    pub fn checkpoint_digest(&self) -> [u8; 32] {
+        self.checkpoint
+    }
+    /// Conservative SQLite sequence included in the installed snapshot.
+    #[must_use]
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+/// Snapshot-specific durable installation receipt, sent only after sink finish.
+#[derive(Clone, Debug)]
+pub struct WalSnapshotAck {
+    proof: WalInstalledSnapshotProof,
+}
+
+impl WalSnapshotAck {
+    /// Encodes installation evidence for its authenticated writer.
+    ///
+    /// # Errors
+    /// Rejects an invalid replica epoch.
+    pub fn encode(&self) -> Result<Vec<u8>, WalSnapshotError> {
+        let mut bytes = prefix(b"TBWSA\0\0\x01", self.proof.scope, self.proof.epoch)?;
+        bytes.extend_from_slice(&self.proof.snapshot);
+        bytes.extend_from_slice(&self.proof.checkpoint);
+        bytes.extend_from_slice(&self.proof.sequence.to_be_bytes());
+        Ok(bytes)
+    }
+
+    /// Decodes untrusted receipt bytes; only source authentication can produce
+    /// install evidence from this wire object.
+    ///
+    /// # Errors
+    /// Rejects wrong framing, invalid scope, epoch, and trailing bytes.
+    pub fn decode(bytes: &[u8]) -> Result<Self, WalSnapshotError> {
+        if bytes.len() != PREFIX + 72 {
+            return Err(WalSnapshotError::InvalidSnapshot);
+        }
+        let (scope, epoch) = decode_prefix(bytes, b"TBWSA\0\0\x01")?;
+        let snapshot =
+            bytes[PREFIX..PREFIX + 32].try_into().map_err(|_| WalSnapshotError::InvalidSnapshot)?;
+        let checkpoint = bytes[PREFIX + 32..PREFIX + 64]
+            .try_into()
+            .map_err(|_| WalSnapshotError::InvalidSnapshot)?;
+        let sequence = u64::from_be_bytes(
+            bytes[PREFIX + 64..].try_into().map_err(|_| WalSnapshotError::InvalidSnapshot)?,
+        );
+        Ok(Self {
+            proof: WalInstalledSnapshotProof { scope, epoch, snapshot, checkpoint, sequence },
+        })
+    }
+
+    /// Database scope used by the endpoint dispatcher before authentication.
+    #[must_use]
+    pub fn scope(&self) -> DatabaseRouteScope {
+        self.proof.scope
+    }
+}
+
+impl WalInstalledSnapshotProof {
+    /// Produces a scoped receipt from this successfully installed snapshot.
+    #[must_use]
+    pub fn acknowledgment(&self) -> WalSnapshotAck {
+        WalSnapshotAck { proof: self.clone() }
     }
 }
 
@@ -287,6 +392,7 @@ pub struct WalSnapshotSource {
 
 struct SnapshotDirectory {
     path: PathBuf,
+    _encryption: Option<EncryptedStorage>,
 }
 impl Drop for SnapshotDirectory {
     fn drop(&mut self) {
@@ -305,17 +411,32 @@ impl WalSnapshotSource {
         engine: Arc<dyn WalEngineHandle>,
         staging: PathBuf,
     ) -> Result<Self, WalSnapshotError> {
-        let permit = binding.reserve_worker().map_err(|error| WalQuicError::Route(error))?;
+        binding.authorize_local(true).map_err(WalQuicError::Route)?;
+        let permit = binding.reserve_worker().map_err(WalQuicError::Route)?;
         let worker_binding = binding.clone();
         let (snapshot, manifest) = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             worker_binding
                 .with_admission(|| {
+                    let tenant = terrabase::types::TenantId::try_new(
+                        &worker_binding.scope().tenant().to_text(),
+                    )
+                    .map_err(|_| WalRouteError::Unauthorized)?;
+                    let scope = engine.engine().scope_for(&tenant);
+                    let sequence = engine
+                        .engine()
+                        .read_snapshot(&scope)
+                        .map_err(|_| WalRouteError::Unauthorized)?
+                        .sequence()
+                        .get();
                     let (follower, checkpoint) =
                         WalFollower::bootstrap_engine(engine.engine(), &staging)
                             .map_err(WalRouteError::Storage)?;
+                    let encryption = EncryptedStorage::for_related_location(&staging, &staging)
+                        .map_err(|error| WalRouteError::Storage(error.into()))?;
                     drop(follower);
-                    let snapshot = Arc::new(SnapshotDirectory { path: staging });
+                    let snapshot =
+                        Arc::new(SnapshotDirectory { path: staging, _encryption: encryption });
                     let mut files: [Option<FileManifest>; 3] = [None, None, None];
                     for (slot, name) in FILES.iter().enumerate() {
                         let path = snapshot.path.join(name);
@@ -323,9 +444,8 @@ impl WalSnapshotSource {
                             Ok(mut file) => {
                                 files[slot] = Some(FileManifest {
                                     bytes: file
-                                        .metadata()
-                                        .map_err(|error| WalRouteError::Storage(error.into()))?
-                                        .len(),
+                                        .len()
+                                        .map_err(|error| WalRouteError::Storage(error.into()))?,
                                     digest: file_digest(&mut file)
                                         .map_err(WalRouteError::Storage)?,
                                 });
@@ -335,7 +455,7 @@ impl WalSnapshotSource {
                             Err(error) => return Err(WalRouteError::Storage(error.into())),
                         }
                     }
-                    Ok((snapshot, ManifestContents { files, checkpoint }))
+                    Ok((snapshot, ManifestContents { files, checkpoint, sequence }))
                 })
                 .map_err(|error| WalSnapshotError::Admission(WalQuicError::Route(error)))
         })
@@ -358,6 +478,33 @@ impl WalSnapshotSource {
         &self.manifest
     }
 
+    /// Verifies that the admitted follower installed this exact immutable
+    /// snapshot and its durable checkpoint before granting writer-side evidence.
+    ///
+    /// # Errors
+    /// Rejects wrong identity, epoch, manifest, checkpoint, or sequence.
+    pub fn authenticate_ack(
+        &self,
+        peer: &WalAuthenticatedPeer,
+        ack: WalSnapshotAck,
+    ) -> Result<WalInstalledSnapshotProof, WalSnapshotError> {
+        peer.authorize(&self.binding, true)?;
+        let expected = *blake3::hash(
+            &serde_json::to_vec(&self.manifest.contents.checkpoint)
+                .map_err(|_| WalSnapshotError::InvalidSnapshot)?,
+        )
+        .as_bytes();
+        if ack.proof.scope != self.manifest.scope
+            || ack.proof.epoch != self.manifest.replica_epoch
+            || ack.proof.snapshot != self.manifest.identity
+            || ack.proof.checkpoint != expected
+            || ack.proof.sequence != self.manifest.contents.sequence
+        {
+            return Err(WalSnapshotError::InvalidSnapshot);
+        }
+        Ok(ack.proof)
+    }
+
     /// Reads one bounded chunk for the authenticated follower, permitting exact
     /// offset retries without retaining per-request network buffers.
     ///
@@ -369,6 +516,27 @@ impl WalSnapshotSource {
         request: WalSnapshotRequest,
     ) -> Result<WalSnapshotChunk, WalSnapshotError> {
         peer.authorize(&self.binding, true)?;
+        self.read_request(request).await
+    }
+
+    /// Reads immutable bytes for native backup under the existing admitted
+    /// writer binding; no synthetic network identity is created.
+    ///
+    /// # Errors
+    /// Rejects fences, invalid slots or offsets, and disk failures.
+    pub async fn read_local(
+        &self,
+        file: u8,
+        offset: u64,
+    ) -> Result<WalSnapshotChunk, WalSnapshotError> {
+        self.binding.authorize_local(true).map_err(WalQuicError::Route)?;
+        self.read_request(WalSnapshotRequest::new(&self.manifest, file, offset)).await
+    }
+
+    async fn read_request(
+        &self,
+        request: WalSnapshotRequest,
+    ) -> Result<WalSnapshotChunk, WalSnapshotError> {
         authorize_request(&self.manifest, &request)?;
         let size =
             self.manifest.file_bytes(request.file).ok_or(WalSnapshotError::InvalidSnapshot)?;
@@ -384,8 +552,9 @@ impl WalSnapshotSource {
             let _permit = permit;
             binding
                 .with_admission(|| {
-                    let mut file = open_physical_file(&snapshot.path.join(FILES[usize::from(request.file)]))
-                        .map_err(|error| WalRouteError::Storage(error.into()))?;
+                    let mut file =
+                        open_physical_file(&snapshot.path.join(FILES[usize::from(request.file)]))
+                            .map_err(|error| WalRouteError::Storage(error.into()))?;
                     file.seek(SeekFrom::Start(request.offset))
                         .map_err(|error| WalRouteError::Storage(error.into()))?;
                     let mut bytes = vec![0; length];
@@ -425,8 +594,26 @@ impl WalSnapshotSink {
         manifest: WalSnapshotManifest,
         destination: PathBuf,
         max_bytes: u64,
+        keys: Option<Arc<dyn terrabase::encryption::DatabaseKeySource>>,
     ) -> Result<Self, WalSnapshotError> {
         peer.authorize(&binding, false)?;
+        Self::begin_local(binding, manifest, destination, max_bytes, keys).await
+    }
+
+    /// Starts local installation of an authenticated native backup artifact.
+    /// The caller verifies its backup manifest before handing physical bytes to
+    /// this admitted follower assignment.
+    ///
+    /// # Errors
+    /// Rejects invalid authority, manifests, quotas, or storage failures.
+    pub async fn begin_local(
+        binding: WalReplicaBinding,
+        manifest: WalSnapshotManifest,
+        destination: PathBuf,
+        max_bytes: u64,
+        keys: Option<Arc<dyn terrabase::encryption::DatabaseKeySource>>,
+    ) -> Result<Self, WalSnapshotError> {
+        binding.authorize_local(false).map_err(WalQuicError::Route)?;
         manifest.authorize(&binding)?;
         let total = manifest
             .contents
@@ -458,19 +645,24 @@ impl WalSnapshotSink {
                     builder
                         .create(&staging_path)
                         .map_err(|error| WalRouteError::Storage(error.into()))?;
-                    let staging = SnapshotDirectory { path: staging_path };
+                    let encryption = keys
+                        .map(|keys| EncryptedStorage::register(&staging_path, keys))
+                        .transpose()
+                        .map_err(|error| WalRouteError::Storage(error.into()))?;
+                    let staging = SnapshotDirectory { path: staging_path, _encryption: encryption };
                     for (slot, file) in manifest.contents.files.iter().enumerate() {
                         if file.is_some() {
-                            let mut options = OpenOptions::new();
-                            options.write(true).create_new(true);
+                            create_physical_file(&staging.path.join(FILES[slot]))
+                                .map_err(|error| WalRouteError::Storage(error.into()))?;
                             #[cfg(unix)]
                             {
-                                use std::os::unix::fs::OpenOptionsExt as _;
-                                options.mode(0o600);
-                            }
-                            options
-                                .open(staging.path.join(FILES[slot]))
+                                use std::os::unix::fs::PermissionsExt as _;
+                                std::fs::set_permissions(
+                                    staging.path.join(FILES[slot]),
+                                    std::fs::Permissions::from_mode(0o600),
+                                )
                                 .map_err(|error| WalRouteError::Storage(error.into()))?;
+                            }
                         }
                     }
                     Ok(SinkState { staging, destination, manifest, received: [0; 3] })
@@ -493,6 +685,15 @@ impl WalSnapshotSink {
         chunk: WalSnapshotChunk,
     ) -> Result<u64, WalSnapshotError> {
         peer.authorize(&self.binding, false)?;
+        self.write_local(chunk).await
+    }
+
+    /// Writes an authenticated native backup chunk to the admitted local sink.
+    ///
+    /// # Errors
+    /// Rejects fences, invalid chunk ranges or hashes, and disk failures.
+    pub async fn write_local(&mut self, chunk: WalSnapshotChunk) -> Result<u64, WalSnapshotError> {
+        self.binding.authorize_local(false).map_err(WalQuicError::Route)?;
         let permit = self.binding.reserve_worker().map_err(WalQuicError::Route)?;
         let binding = self.binding.clone();
         let state = self.state.clone();
@@ -524,10 +725,22 @@ impl WalSnapshotSink {
         peer: &WalAuthenticatedPeer,
     ) -> Result<(WalFollowerDriver, WalCheckpointMessage), WalSnapshotError> {
         peer.authorize(&self.binding, false)?;
+        self.finish_local().await
+    }
+
+    /// Verifies and installs authenticated native backup bytes under the
+    /// accepted follower assignment. This does not admit public serving.
+    ///
+    /// # Errors
+    /// Rejects incomplete data, invalid checksums, fences, and disk failures.
+    pub async fn finish_local(
+        self,
+    ) -> Result<(WalFollowerDriver, WalCheckpointMessage), WalSnapshotError> {
+        self.binding.authorize_local(false).map_err(WalQuicError::Route)?;
         let permit = self.binding.reserve_worker().map_err(WalQuicError::Route)?;
         let binding = self.binding.clone();
         let state = self.state.clone();
-        let (follower, receipt) = tokio::task::spawn_blocking(move || {
+        let (follower, receipt, proof) = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             binding
                 .with_admission(|| {
@@ -537,8 +750,9 @@ impl WalSnapshotSink {
                             if state.received[slot] != expected.bytes {
                                 return Err(WalRouteError::Unauthorized);
                             }
-                            let mut file = open_physical_file(&state.staging.path.join(FILES[slot]))
-                                .map_err(|error| WalRouteError::Storage(error.into()))?;
+                            let mut file =
+                                open_physical_file(&state.staging.path.join(FILES[slot]))
+                                    .map_err(|error| WalRouteError::Storage(error.into()))?;
                             if file_digest(&mut file).map_err(WalRouteError::Storage)?
                                 != expected.digest
                             {
@@ -562,13 +776,25 @@ impl WalSnapshotSink {
                         replica_epoch: state.manifest.replica_epoch,
                         checkpoint: Some(checkpoint),
                     };
-                    Ok((follower, receipt))
+                    let checkpoint_bytes =
+                        serde_json::to_vec(&installed).map_err(|_| WalRouteError::Unauthorized)?;
+                    let proof = WalInstalledSnapshotProof {
+                        scope: state.manifest.scope,
+                        epoch: state.manifest.replica_epoch,
+                        snapshot: state.manifest.identity,
+                        checkpoint: *blake3::hash(&checkpoint_bytes).as_bytes(),
+                        sequence: state.manifest.contents.sequence,
+                    };
+                    Ok((follower, receipt, proof))
                 })
                 .map_err(|error| WalSnapshotError::Admission(WalQuicError::Route(error)))
         })
         .await
         .map_err(|_| WalQuicError::WorkerUnavailable)??;
-        Ok((WalFollowerDriver::new(self.binding.clone(), follower), receipt))
+        Ok((
+            WalFollowerDriver::new(self.binding.clone(), follower).with_installed_snapshot(proof),
+            receipt,
+        ))
     }
 }
 
@@ -586,8 +812,7 @@ fn apply_chunk(state: &mut SinkState, chunk: WalSnapshotChunk) -> Result<u64, Wa
         .checked_add(chunk.bytes.len() as u64)
         .filter(|end| *end <= size)
         .ok_or(WalSnapshotError::InvalidSnapshot)?;
-    let mut file =
-        OpenOptions::new().read(true).write(true).open(state.staging.path.join(FILES[slot]))?;
+    let mut file = open_physical_file(&state.staging.path.join(FILES[slot]))?;
     file.seek(SeekFrom::Start(chunk.request.offset))?;
     if chunk.request.offset < state.received[slot] {
         if end > state.received[slot] {
@@ -684,4 +909,130 @@ fn decode_prefix(
         return Err(WalSnapshotError::Admission(WalQuicError::Wire(WalWireError::InvalidScope)));
     }
     Ok((scope, epoch))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::production::{MemberWorkloadIdentity, ProductionPlacement, ProductionRegionSeats};
+    use terrabase::identity::MemberUlid;
+    use terrabase::types::{
+        CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
+        OperationId, TenantId,
+    };
+    use terrabase::{Engine, EngineConfig, RegionCode};
+
+    #[test]
+    fn native_snapshot_transfer_is_bounded_verified_and_durable() {
+        let writer_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let follower_id = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+        let scope = DatabaseRouteScope::try_new(writer_id, writer_id, writer_id).unwrap();
+        let binding = |local| {
+            WalReplicaBinding::new(
+                scope,
+                &ProductionPlacement::try_new(
+                    MemberUlid::from_text(local).unwrap(),
+                    1,
+                    7,
+                    [ProductionRegionSeats::try_new(
+                        RegionCode::GRU,
+                        [
+                            MemberUlid::from_text(writer_id).unwrap(),
+                            MemberUlid::from_text(follower_id).unwrap(),
+                        ],
+                    )
+                    .unwrap()],
+                )
+                .unwrap(),
+                MemberWorkloadIdentity::try_new("prod", "cluster", writer_id).unwrap(),
+                MemberWorkloadIdentity::try_new("prod", "cluster", follower_id).unwrap(),
+            )
+            .unwrap()
+        };
+        let root = std::env::temp_dir().join(format!(
+            "tb-snapshot-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let engine =
+            Arc::new(Engine::open(EngineConfig::durable(root.join("writer")).unwrap()).unwrap());
+        let tenant = engine.scope_for(&TenantId::try_new(writer_id).unwrap());
+        let mut tx = engine
+            .begin(
+                &tenant,
+                engine.read_snapshot(&tenant).unwrap(),
+                OperationId::try_new("snapshot-doc").unwrap(),
+            )
+            .unwrap();
+        tx.put(
+            Document::new(
+                DocumentId::try_new("doc").unwrap(),
+                CollectionName::try_new("docs").unwrap(),
+                DocumentValue::String("snapshot-content".into()),
+            ),
+            ExpectedVersion::New,
+        )
+        .unwrap();
+        assert!(matches!(
+            tx.commit(LocalDurability::Synced),
+            terrabase::engine::CommitOutcome::Committed(_)
+        ));
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        runtime.block_on(async {
+            let source =
+                WalSnapshotSource::capture(binding(writer_id), engine.clone(), root.join("source"))
+                    .await
+                    .unwrap();
+            let manifest =
+                WalSnapshotManifest::decode(&source.manifest().encode().unwrap()).unwrap();
+            assert!(manifest.sequence() > 0);
+            assert!(WalSnapshotSink::begin_local(
+                binding(follower_id),
+                manifest.clone(),
+                root.join("too-small"),
+                1,
+                None
+            )
+            .await
+            .is_err());
+            let mut sink = WalSnapshotSink::begin_local(
+                binding(follower_id),
+                manifest.clone(),
+                root.join("installed"),
+                64 * 1024 * 1024,
+                None,
+            )
+            .await
+            .unwrap();
+            for slot in 0..3 {
+                let mut offset = 0;
+                while let Some(size) = manifest.file_bytes(slot) {
+                    if offset == size {
+                        break;
+                    }
+                    let chunk = source.read_local(slot, offset).await.unwrap();
+                    assert!(chunk.bytes().len() <= MAX_WAL_BATCH_BYTES);
+                    let encoded = chunk.encode().unwrap();
+                    let mut corrupt = encoded.clone();
+                    *corrupt.last_mut().unwrap() ^= 1;
+                    assert!(WalSnapshotChunk::decode(&corrupt).is_err());
+                    let wire = WalSnapshotChunk::decode(&encoded).unwrap();
+                    offset = sink.write_local(wire.clone()).await.unwrap();
+                    assert_eq!(sink.write_local(wire).await.unwrap(), offset);
+                }
+            }
+            let (follower, receipt) = sink.finish_local().await.unwrap();
+            assert_eq!(receipt.checkpoint, Some(manifest.checkpoint()));
+            let proof = follower.installed_snapshot().unwrap();
+            assert_eq!(proof.snapshot_digest(), manifest.identity());
+            assert_eq!(proof.scope(), scope);
+            assert_eq!(proof.sequence(), manifest.sequence());
+            drop(follower);
+            let (_, recovered) = WalFollower::open_existing(&root.join("installed")).unwrap();
+            assert_eq!(recovered, manifest.checkpoint());
+        });
+        drop(runtime);
+        drop(engine);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

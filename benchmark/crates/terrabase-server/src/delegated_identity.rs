@@ -39,7 +39,8 @@ pub struct IdentityVerifier {
     endpoint: Uri,
     issuer: String,
     audience: String,
-    service_key: HeaderValue,
+    service_key: Option<HeaderValue>,
+    service_key_file: Option<std::path::PathBuf>,
     tls: Arc<rustls::ClientConfig>,
     permits: tokio::sync::Semaphore,
 }
@@ -89,6 +90,31 @@ impl IdentityVerifier {
         Self::with_tls(config, Arc::new(tls))
     }
 
+    /// Configures file-only credentials for authenticated first-key delivery.
+    /// Missing files never authenticate; production must compose the private receiver.
+    ///
+    /// # Errors
+    /// Rejects invalid endpoint pins or a relative credential destination.
+    pub fn new_file(
+        endpoint: String,
+        issuer: String,
+        audience: String,
+        path: std::path::PathBuf,
+    ) -> Result<Self, IdentityError> {
+        if !path.is_absolute() {
+            return Err(IdentityError::Configuration);
+        }
+        let mut verifier = Self::new(IdentityConfig {
+            endpoint,
+            issuer,
+            audience,
+            service_key: "file-only-constructor-validation".repeat(2),
+        })?;
+        verifier.service_key = None;
+        verifier.service_key_file = Some(path);
+        Ok(verifier)
+    }
+
     fn with_tls(
         config: IdentityConfig,
         tls: Arc<rustls::ClientConfig>,
@@ -112,10 +138,42 @@ impl IdentityVerifier {
             endpoint,
             issuer: config.issuer,
             audience: config.audience,
-            service_key,
+            service_key: Some(service_key),
+            service_key_file: None,
             tls,
             permits: tokio::sync::Semaphore::new(32),
         })
+    }
+
+    /// Reloads the owner-only service credential on every authority request.
+    /// Atomic replacement adopts rotation without retaining stale credentials.
+    #[must_use]
+    pub fn with_service_key_file(mut self, path: std::path::PathBuf) -> Self {
+        self.service_key_file = Some(path);
+        self
+    }
+
+    /// Configured private credential destination used by atomic rotation delivery.
+    #[must_use]
+    pub fn service_key_file(&self) -> Option<&std::path::Path> {
+        self.service_key_file.as_deref()
+    }
+
+    /// Proves the current credential file authenticates to the pinned authority.
+    /// No user credential is supplied and an active response is refused.
+    ///
+    /// # Errors
+    /// Refuses authority failure, malformed response, or unexpected admission.
+    pub async fn probe_service_key(&self) -> Result<(), IdentityError> {
+        let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
+        let body = serde_json::to_vec(&serde_json::json!({"token":"identity-key-adoption-probe",
+            "audience":self.audience,"organizationId":"probe","projectId":"probe",
+            "databaseId":"probe","action":"read"}))
+        .map_err(|_| IdentityError::Unavailable)?;
+        let response = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
+            .await
+            .map_err(|_| IdentityError::Unavailable)??;
+        if response.active { Err(IdentityError::Denied) } else { Ok(()) }
     }
 
     /// Revalidates one credential and its current permission on a server-owned tenant.
@@ -241,12 +299,25 @@ impl IdentityVerifier {
             .handshake(TokioIo::new(stream))
             .await
             .map_err(|_| IdentityError::Unavailable)?;
+        let service_key = if let Some(path) = &self.service_key_file {
+            let bytes =
+                crate::runtime::read_secret_key(path).map_err(|_| IdentityError::Unavailable)?;
+            if bytes.len() < 32 {
+                return Err(IdentityError::Unavailable);
+            }
+            let mut key =
+                HeaderValue::from_bytes(&bytes).map_err(|_| IdentityError::Unavailable)?;
+            key.set_sensitive(true);
+            key
+        } else {
+            self.service_key.clone().ok_or(IdentityError::Unavailable)?
+        };
         let request = hyper::Request::builder()
             .method("POST")
             .uri(self.endpoint.path())
             .header("host", self.endpoint.authority().ok_or(IdentityError::Configuration)?.as_str())
             .header("content-type", "application/json")
-            .header("x-terrascale-identity-service-key", self.service_key.clone())
+            .header("x-terrascale-identity-service-key", service_key)
             .body(Full::new(Bytes::from(body)))
             .map_err(|_| IdentityError::Configuration)?;
         let response = async {
@@ -372,6 +443,38 @@ pub(crate) mod tests {
         )
         .unwrap();
         (verifier, reply, task)
+    }
+
+    #[tokio::test]
+    async fn identity_service_file_is_reloaded_without_stale_fallback() {
+        let (verifier, _, task) = authority().await;
+        let directory = std::env::temp_dir()
+            .join(format!("identity-reload-{}", terrabase::identity::DatabaseUlid::generate()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("credential");
+        std::fs::write(&path, "s".repeat(32)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let verifier = verifier.with_service_key_file(path.clone());
+        assert!(
+            verifier
+                .admit("delegated-token", "terrabase-local", "local", "db-a", None, Verbs::READ)
+                .await
+                .is_ok()
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            verifier
+                .admit("delegated-token", "terrabase-local", "local", "db-a", None, Verbs::READ)
+                .await
+                .unwrap_err(),
+            IdentityError::Unavailable
+        );
+        task.abort();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]

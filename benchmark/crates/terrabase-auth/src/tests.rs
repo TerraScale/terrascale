@@ -35,7 +35,7 @@ fn maintained_openraft_storage_suite() {
 }
 
 fn command(key: &str, action: Action) -> Command {
-    Command { idempotency_key: key.into(), action }
+    Command { idempotency_key: key.into(), observed_at_ms: 1000, action }
 }
 fn user(id: &str, email: &str) -> Record {
     serde_json::from_value(json!({"id":id,"email":email,"version":1})).unwrap()

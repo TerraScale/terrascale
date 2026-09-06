@@ -137,6 +137,7 @@ pub struct WalWriterDriver {
     binding: WalReplicaBinding,
     engine: Arc<dyn WalEngineHandle>,
     tail: Arc<Mutex<WalTail>>,
+    installed: Option<crate::wal_snapshot::WalInstalledSnapshotProof>,
 }
 
 impl WalWriterDriver {
@@ -147,7 +148,61 @@ impl WalWriterDriver {
         engine: Arc<dyn WalEngineHandle>,
         tail: WalTail,
     ) -> Self {
-        Self { binding, engine, tail: Arc::new(Mutex::new(tail)) }
+        Self { binding, engine, tail: Arc::new(Mutex::new(tail)), installed: None }
+    }
+
+    /// Attaches installation evidence verified against the assigned follower.
+    ///
+    /// # Errors
+    /// Rejects an installation for a different scope or replica epoch.
+    pub fn adopt_installed_snapshot(
+        &mut self,
+        proof: crate::wal_snapshot::WalInstalledSnapshotProof,
+    ) -> Result<(), WalQuicError> {
+        self.binding.authorize_local(true).map_err(WalQuicError::Route)?;
+        if proof.scope() != self.binding.scope() || proof.epoch() != self.binding.epoch() {
+            return Err(WalQuicError::Route(WalRouteError::Unauthorized));
+        }
+        self.installed = Some(proof);
+        Ok(())
+    }
+
+    /// Combines actual install evidence with the current acknowledged WAL
+    /// checkpoint and conservative durable SQLite sequence.
+    ///
+    /// # Errors
+    /// Returns fencing or storage failure. `None` means no installed evidence
+    /// or unsent bytes; it never manufactures a serving boundary.
+    pub async fn physical_boundary(
+        &mut self,
+        scope: terrabase::types::TenantScope,
+    ) -> Result<Option<WalPhysicalBoundary>, WalQuicError> {
+        let Some(installed) = self.installed.clone() else {
+            return Ok(None);
+        };
+        let Some(sequence) = self.durable_sequence(scope).await? else {
+            return Ok(None);
+        };
+        let permit = self.binding.reserve_worker().map_err(WalQuicError::Route)?;
+        let binding = self.binding.clone();
+        let tail = self.tail.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            binding
+                .with_admission(|| {
+                    let checkpoint = tail.lock().map_err(|_| WalRouteError::Fenced)?.checkpoint();
+                    let bytes =
+                        serde_json::to_vec(&checkpoint).map_err(|_| WalRouteError::Unauthorized)?;
+                    Ok(Some(WalPhysicalBoundary {
+                        installed,
+                        checkpoint: *blake3::hash(&bytes).as_bytes(),
+                        sequence: sequence.get(),
+                    }))
+                })
+                .map_err(WalQuicError::Route)
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)?
     }
 
     /// Creates the restart request for this admitted database assignment.
@@ -282,17 +337,169 @@ impl WalWriterDriver {
     }
 }
 
+/// Sealed combination of installed snapshot and actual durable WAL progress.
+#[derive(Clone, Debug)]
+pub struct WalPhysicalBoundary {
+    installed: crate::wal_snapshot::WalInstalledSnapshotProof,
+    checkpoint: [u8; 32],
+    sequence: u64,
+}
+impl WalPhysicalBoundary {
+    /// Exact database scope.
+    #[must_use]
+    pub fn scope(&self) -> DatabaseRouteScope {
+        self.installed.scope()
+    }
+    /// Accepted replica epoch.
+    #[must_use]
+    pub fn epoch(&self) -> u64 {
+        self.installed.epoch()
+    }
+    /// Installed base snapshot identity.
+    #[must_use]
+    pub fn snapshot_digest(&self) -> [u8; 32] {
+        self.installed.snapshot_digest()
+    }
+    /// Current durable WAL checkpoint identity.
+    #[must_use]
+    pub fn checkpoint_digest(&self) -> [u8; 32] {
+        self.checkpoint
+    }
+    /// Conservative SQLite sequence known included in durable files.
+    #[must_use]
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+}
+
+/// An authenticated writer cut whose physical checkpoint exactly matches the
+/// follower's installed base and synced WAL. The cut digest is opaque here;
+/// its canonical causal/root frame belongs to the readiness protocol.
+#[derive(Clone, Debug)]
+pub struct WalVerifiedCut {
+    boundary: WalPhysicalBoundary,
+    cut: [u8; 32],
+}
+impl WalVerifiedCut {
+    /// Database scope verified against this follower assignment.
+    #[must_use]
+    pub fn scope(&self) -> DatabaseRouteScope {
+        self.boundary.scope()
+    }
+    /// Accepted replica epoch.
+    #[must_use]
+    pub fn epoch(&self) -> u64 {
+        self.boundary.epoch()
+    }
+    /// Installed base snapshot identity.
+    #[must_use]
+    pub fn snapshot_digest(&self) -> [u8; 32] {
+        self.boundary.snapshot_digest()
+    }
+    /// Synced WAL checkpoint identity verified locally.
+    #[must_use]
+    pub fn checkpoint_digest(&self) -> [u8; 32] {
+        self.boundary.checkpoint_digest()
+    }
+    /// Writer's sequence asserted at this exact physical cut.
+    #[must_use]
+    pub fn sequence(&self) -> u64 {
+        self.boundary.sequence()
+    }
+    /// Digest of the full canonical readiness challenge bytes.
+    #[must_use]
+    pub fn cut_digest(&self) -> [u8; 32] {
+        self.cut
+    }
+}
+
 /// Persistent disk follower owned exclusively by one accepted assignment.
 pub struct WalFollowerDriver {
     binding: WalReplicaBinding,
     follower: Arc<Mutex<WalFollower>>,
+    installed: Option<crate::wal_snapshot::WalInstalledSnapshotProof>,
 }
 
 impl WalFollowerDriver {
     /// Attaches a physically installed or recovered follower file.
     #[must_use]
     pub fn new(binding: WalReplicaBinding, follower: WalFollower) -> Self {
-        Self { binding, follower: Arc::new(Mutex::new(follower)) }
+        Self { binding, follower: Arc::new(Mutex::new(follower)), installed: None }
+    }
+
+    /// Evidence from this driver's actual durable network/native snapshot install.
+    #[must_use]
+    pub fn installed_snapshot(&self) -> Option<&crate::wal_snapshot::WalInstalledSnapshotProof> {
+        self.installed.as_ref()
+    }
+
+    pub(crate) fn with_installed_snapshot(
+        mut self,
+        proof: crate::wal_snapshot::WalInstalledSnapshotProof,
+    ) -> Self {
+        self.installed = Some(proof);
+        self
+    }
+
+    /// Captures the current synced checkpoint plus installed physical base.
+    /// Follower sequence remains conservative at the snapshot's sequence until
+    /// a separately verified commit-to-WAL mapping is available.
+    ///
+    /// # Errors
+    /// Returns fencing or worker failure; absent installation yields `None`.
+    pub async fn physical_boundary(&mut self) -> Result<Option<WalPhysicalBoundary>, WalQuicError> {
+        let Some(installed) = self.installed.clone() else {
+            return Ok(None);
+        };
+        let permit = self.binding.reserve_worker().map_err(WalQuicError::Route)?;
+        let binding = self.binding.clone();
+        let follower = self.follower.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            binding
+                .with_admission(|| {
+                    let checkpoint =
+                        follower.lock().map_err(|_| WalRouteError::Fenced)?.checkpoint();
+                    let bytes =
+                        serde_json::to_vec(&checkpoint).map_err(|_| WalRouteError::Unauthorized)?;
+                    Ok(Some(WalPhysicalBoundary {
+                        sequence: installed.sequence(),
+                        installed,
+                        checkpoint: *blake3::hash(&bytes).as_bytes(),
+                    }))
+                })
+                .map_err(WalQuicError::Route)
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)?
+    }
+
+    /// Verifies an authenticated writer's causal/root challenge against the
+    /// follower's actual installed snapshot and durable WAL checkpoint. The
+    /// higher layer hashes the complete canonical challenge into `cut_digest`.
+    ///
+    /// # Errors
+    /// Rejects wrong writer authority, fences, or a different physical cut.
+    pub async fn verify_boundary(
+        &mut self,
+        peer: &WalAuthenticatedPeer,
+        snapshot_digest: [u8; 32],
+        checkpoint_digest: [u8; 32],
+        sequence: u64,
+        cut_digest: [u8; 32],
+    ) -> Result<WalVerifiedCut, WalQuicError> {
+        peer.authorize(&self.binding, false)?;
+        let Some(mut boundary) = self.physical_boundary().await? else {
+            return Err(WalQuicError::Route(WalRouteError::Unauthorized));
+        };
+        if boundary.snapshot_digest() != snapshot_digest
+            || boundary.checkpoint_digest() != checkpoint_digest
+            || sequence < boundary.sequence()
+        {
+            return Err(WalQuicError::Route(WalRouteError::Unauthorized));
+        }
+        boundary.sequence = sequence;
+        Ok(WalVerifiedCut { boundary, cut: cut_digest })
     }
 
     /// Applies a demultiplexed batch on the blocking pool and returns only a

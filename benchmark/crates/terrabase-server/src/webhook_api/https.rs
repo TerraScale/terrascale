@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -21,6 +21,7 @@ const MAX_ADDRESSES: usize = 16;
 const MAX_INFLIGHT: usize = 16;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
+static ADMISSION: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 /// Native webhook transport using Mozilla trust roots and the member's runtime.
 ///
@@ -54,7 +55,7 @@ impl NativeHttpsTransport {
         .with_no_client_auth();
         Ok(Self {
             runtime,
-            admission: Arc::new(Semaphore::new(MAX_INFLIGHT)),
+            admission: Arc::clone(ADMISSION.get_or_init(|| Arc::new(Semaphore::new(MAX_INFLIGHT)))),
             tls: Arc::new(tls),
             timeout: ATTEMPT_TIMEOUT,
         })
@@ -314,6 +315,7 @@ mod tests {
     async fn native_transport_bounds_attempt_time_and_admission() {
         let mut transport = NativeHttpsTransport::new(Handle::current()).expect("transport");
         transport.timeout = Duration::from_millis(10);
+        transport.admission = Arc::new(Semaphore::new(MAX_INFLIGHT));
         let transport = Arc::new(transport);
         let worker = Arc::clone(&transport);
         let result = tokio::task::spawn_blocking(move || {
@@ -333,6 +335,13 @@ mod tests {
             Err(DeliveryError::Retryable)
         );
         assert_eq!(transport.wait(async { Ok(()) }), Err(DeliveryError::Retryable));
+    }
+
+    #[tokio::test]
+    async fn native_transports_share_one_process_admission_budget() {
+        let first = NativeHttpsTransport::new(Handle::current()).expect("first");
+        let second = NativeHttpsTransport::new(Handle::current()).expect("second");
+        assert!(Arc::ptr_eq(&first.admission, &second.admission));
     }
 
     #[tokio::test]

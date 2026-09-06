@@ -792,8 +792,32 @@ service ReplicationService {
   rpc Denials(ReplicationServiceDenialsRequest) returns (ReplicationServiceDenialsResponse);
 }
 
+// Host-wide observation of the complete immutable admitted database scope set.
+message MaintenanceServiceCatchUpStatusRequest {}
+message DatabaseCatchUpStatus {
+  string tenant = 1;
+  string project = 2;
+  string database = 3;
+  uint64 source_sequence = 4;
+  uint64 regional_sequence = 5;
+  bool regional_measured = 6;
+  bool causal_measured = 7;
+  bool causal_caught_up = 8;
+  uint64 backup_source_sequence = 9;
+  uint64 backup_protected_sequence = 10;
+  bool backup_measured = 11;
+  bool backup_caught_up = 12;
+}
+message MaintenanceServiceCatchUpStatusResponse {
+  bool complete = 1;
+  string assignment_revision = 2;
+  uint64 observed_at_unix_ms = 3;
+  repeated DatabaseCatchUpStatus databases = 4;
+}
+
 // Topology, administration, and supervision.
 service MaintenanceService {
+  rpc CatchUpStatus(MaintenanceServiceCatchUpStatusRequest) returns (MaintenanceServiceCatchUpStatusResponse);
   rpc TopologyRead(MaintenanceServiceTopologyReadRequest) returns (MaintenanceServiceTopologyReadResponse);
   rpc AdminStatus(MaintenanceServiceAdminStatusRequest) returns (MaintenanceServiceAdminStatusResponse);
   rpc SupervisionHealth(MaintenanceServiceSupervisionHealthRequest) returns (MaintenanceServiceSupervisionHealthResponse);

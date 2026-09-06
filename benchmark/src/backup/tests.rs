@@ -221,7 +221,10 @@ fn backup_plan_refuses_a_key_from_another_residency_region() {
     let owner = DatabaseOwner::local_development();
     let dir = location("encryption-region");
     let engine = Engine::open(
-        EngineConfig::durable(&dir).expect("durable location").with_owner(owner.clone()),
+        EngineConfig::durable(&dir)
+            .expect("durable location")
+            .with_owner(owner.clone())
+            .with_storage_keys(crate::engine::test_storage_keys(&owner, 23)),
     )
     .expect("engine opens");
     let destination = location("encryption-region-dest");
@@ -246,7 +249,10 @@ fn an_explicit_database_key_produces_only_the_encrypted_manifest() {
     let owner = DatabaseOwner::local_development();
     let dir = location("encryption-manifest");
     let engine = Engine::open(
-        EngineConfig::durable(&dir).expect("durable location").with_owner(owner.clone()),
+        EngineConfig::durable(&dir)
+            .expect("durable location")
+            .with_owner(owner.clone())
+            .with_storage_keys(crate::engine::test_storage_keys(&owner, 23)),
     )
     .expect("engine opens");
     let destination = location("encryption-manifest-dest");
@@ -369,9 +375,13 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
     let owner = DatabaseOwner::local_development();
     let source_dir = location("encrypted-restore-source");
     let source = Engine::open(
-        EngineConfig::durable(&source_dir).expect("source config").with_owner(owner.clone()),
+        EngineConfig::durable(&source_dir)
+            .expect("source config")
+            .with_owner(owner.clone())
+            .with_storage_keys(crate::engine::test_storage_keys(&owner, 23)),
     )
     .expect("source opens");
+    source.activate_origin_epoch(1).expect("test writer epoch");
     committed(put(
         &source,
         owner.tenant().to_text().as_str(),
@@ -1230,8 +1240,13 @@ fn a_torn_publish_orphan_is_repaired_by_the_identical_retry() {
 
     // The identical retry must succeed and seal that same point: the crash
     // window must not brick the destination against its own recovery point.
-    let retry = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
-        .expect("retry seals");
+    let retry = run_backup(
+        &engine,
+        BackupPlan::local_test_full_plaintext()
+            .with_capture_unix_millis(reference.manifest().captured_unix_millis()),
+        &destination,
+    )
+    .expect("retry seals");
     assert_eq!(retry.manifest().identity(), identity);
     assert!(retry.archive().verify(&destination).is_ok(), "the retry's archive verifies");
     assert!(load_recovery_point(&destination, &identity).is_ok(), "the point reloads");
@@ -1544,8 +1559,13 @@ fn identical_retry_does_not_accept_missing_or_corrupt_published_members() {
         } else {
             std::fs::remove_file(&member).expect("remove member");
         }
-        let error = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination)
-            .expect_err("matching manifest alone cannot establish successful publication");
+        let error = run_backup(
+            &engine,
+            BackupPlan::local_test_full_plaintext()
+                .with_capture_unix_millis(backup.manifest().captured_unix_millis()),
+            &destination,
+        )
+        .expect_err("matching manifest alone cannot establish successful publication");
         assert_eq!(
             error,
             if corrupt { BackupError::ChecksumMismatch } else { BackupError::ChainIncomplete }
@@ -1654,4 +1674,210 @@ fn staging_byte_limit_preserves_preexisting_recovery_point() {
     );
     assert_eq!(verify_latest_chain(&destination).unwrap().len(), 1);
     full.archive().verify(&destination).unwrap();
+}
+
+#[test]
+fn timestamp_pitr_replays_whole_commits_at_exact_cutoffs_and_rejects_retention_gaps() {
+    let owner = DatabaseOwner::local_development();
+    let source_dir = location("timestamp-source");
+    let source = Engine::open(
+        EngineConfig::durable(&source_dir)
+            .unwrap()
+            .with_owner(owner.clone())
+            .with_storage_keys(crate::engine::test_storage_keys(&owner, 23)),
+    )
+    .unwrap();
+    source.activate_origin_epoch(1).unwrap();
+    let tenant_name = owner.tenant().to_text();
+    let connection = crate::storage::open_physical_sqlite(
+        &crate::engine::database_file(&source_dir),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+    )
+    .unwrap();
+    let set_time =
+        |sequence: StorageSequence, millis: i64| {
+            assert_eq!(connection.execute(
+            "UPDATE replication_publications SET committed_at = ?1 WHERE local_seq = ?2",
+            rusqlite::params![millis, sequence.get() as i64],
+        ).unwrap(), 1);
+        };
+    let first = committed(put(
+        &source,
+        &tenant_name,
+        "time-root",
+        "root",
+        "users",
+        text("root"),
+        LocalDurability::Synced,
+    ));
+    set_time(first, 1_000);
+    let encryption = local_backup_encryption(&owner, RegionCode::GRU);
+    let destination = location("timestamp-archive");
+    let root = run_backup(
+        &source,
+        BackupPlan::full(encryption.clone()).with_capture_unix_millis(1_000),
+        &destination,
+    )
+    .unwrap();
+    let tenant_scope = scope(&source, &tenant_name);
+    let mut transaction = source
+        .begin(&tenant_scope, source.read_snapshot(&tenant_scope).unwrap(), operation("time-pair"))
+        .unwrap();
+    for id in ["pair-a", "pair-b"] {
+        transaction
+            .put(
+                Document::new(
+                    document_id(id),
+                    CollectionName::try_new("users").unwrap(),
+                    text("pair"),
+                ),
+                ExpectedVersion::Any,
+            )
+            .unwrap();
+    }
+    let pair = committed(transaction.commit(LocalDurability::Synced));
+    set_time(pair, 2_000);
+    let last = committed(put(
+        &source,
+        &tenant_name,
+        "time-last",
+        "last",
+        "users",
+        text("last"),
+        LocalDurability::Synced,
+    ));
+    set_time(last, 3_000);
+    run_backup(
+        &source,
+        BackupPlan::incremental_since(first, encryption.clone()).with_capture_unix_millis(3_500),
+        &destination,
+    )
+    .unwrap();
+    let cipher = encryption.cipher.lock().unwrap();
+    for (requested, expected, sequence) in
+        [(1_000, 1, first), (1_999, 1, first), (2_000, 3, pair), (2_001, 3, pair), (3_000, 4, last)]
+    {
+        let target = location("timestamp-target");
+        let receipt = RestorePlan::restore_at_unix_millis_encrypted_in_region(
+            requested,
+            &destination,
+            &target,
+            &*cipher,
+            &super::PlacementLock::br_only(),
+            RegionCode::GRU,
+        )
+        .unwrap();
+        assert_eq!(receipt.restored_documents(), expected);
+        assert_eq!(receipt.restored_source_sequence(), sequence);
+        assert_eq!(receipt.requested_unix_millis(), Some(requested));
+    }
+    for requested in [999, 3_501] {
+        let target = location("timestamp-outside");
+        assert_eq!(
+            RestorePlan::restore_at_unix_millis_encrypted_in_region(
+                requested,
+                &destination,
+                &target,
+                &*cipher,
+                &super::PlacementLock::br_only(),
+                RegionCode::GRU
+            ),
+            Err(BackupError::ChainIncomplete)
+        );
+        assert!(!target.exists());
+    }
+    std::fs::remove_dir_all(
+        destination.join(super::manifest::point_directory(root.manifest().identity())),
+    )
+    .unwrap();
+    assert_eq!(
+        RestorePlan::restore_at_unix_millis_encrypted_in_region(
+            2_000,
+            &destination,
+            &location("timestamp-pruned"),
+            &*cipher,
+            &super::PlacementLock::br_only(),
+            RegionCode::GRU
+        ),
+        Err(BackupError::ChainIncomplete)
+    );
+}
+
+#[test]
+fn timestamp_pitr_fails_closed_on_a_clock_regression_inside_incremental() {
+    let owner = DatabaseOwner::local_development();
+    let source_dir = location("timestamp-skew-source");
+    let source = Engine::open(
+        EngineConfig::durable(&source_dir)
+            .unwrap()
+            .with_owner(owner.clone())
+            .with_storage_keys(crate::engine::test_storage_keys(&owner, 23)),
+    )
+    .unwrap();
+    source.activate_origin_epoch(1).unwrap();
+    let tenant_name = owner.tenant().to_text();
+    let connection = crate::storage::open_physical_sqlite(
+        &crate::engine::database_file(&source_dir),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+    )
+    .unwrap();
+    let first = committed(put(
+        &source,
+        &tenant_name,
+        "skew-root",
+        "root",
+        "users",
+        text("root"),
+        LocalDurability::Synced,
+    ));
+    connection.execute("UPDATE replication_publications SET committed_at = 1000", []).unwrap();
+    let encryption = local_backup_encryption(&owner, RegionCode::GRU);
+    let destination = location("timestamp-skew-archive");
+    run_backup(&source, BackupPlan::full(encryption.clone()), &destination).unwrap();
+    let second = committed(put(
+        &source,
+        &tenant_name,
+        "skew-2",
+        "second",
+        "users",
+        text("second"),
+        LocalDurability::Synced,
+    ));
+    let third = committed(put(
+        &source,
+        &tenant_name,
+        "skew-3",
+        "third",
+        "users",
+        text("third"),
+        LocalDurability::Synced,
+    ));
+    connection
+        .execute(
+            "UPDATE replication_publications SET committed_at = 3000 WHERE local_seq = ?1",
+            [second.get() as i64],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE replication_publications SET committed_at = 2000 WHERE local_seq = ?1",
+            [third.get() as i64],
+        )
+        .unwrap();
+    run_backup(&source, BackupPlan::incremental_since(first, encryption.clone()), &destination)
+        .unwrap();
+    let cipher = encryption.cipher.lock().unwrap();
+    let target = location("timestamp-skew-target");
+    assert_eq!(
+        RestorePlan::restore_at_unix_millis_encrypted_in_region(
+            2000,
+            &destination,
+            &target,
+            &*cipher,
+            &super::PlacementLock::br_only(),
+            RegionCode::GRU
+        ),
+        Err(BackupError::ChecksumMismatch)
+    );
+    assert!(!target.exists());
 }

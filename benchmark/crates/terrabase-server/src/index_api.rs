@@ -734,6 +734,17 @@ impl<'engine> EngineIndexAdapter<'engine> {
         let tenant =
             TenantId::try_new(&scope.tenant).map_err(|_| IndexAdapterError::UnauthorizedTenant)?;
         let owner = self.engine.database_owner();
+        let engine_scope = self.engine.scope_for(&tenant);
+        if let Some(binding) = self
+            .engine
+            .usage_placement(&engine_scope)
+            .map_err(|_| IndexAdapterError::UnauthorizedTenant)?
+        {
+            if binding.scope.database_id().as_str() != scope.database {
+                return Err(IndexAdapterError::DatabaseNotFound);
+            }
+            return Ok(tenant);
+        }
         if scope.database != owner.database().to_text() {
             return Err(IndexAdapterError::DatabaseNotFound);
         }

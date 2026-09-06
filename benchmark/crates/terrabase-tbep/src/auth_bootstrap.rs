@@ -245,6 +245,29 @@ impl AuthBootstrapJournal {
         })
     }
 
+    /// Read all immutable grants for startup recovery and activation.
+    ///
+    /// # Errors
+    /// Refuses corrupt control state or a grant that no longer matches this host.
+    pub fn grants(&self) -> Result<Vec<pb::AuthGroupBootstrapGrant>, PlacementError> {
+        let identity = self.identity()?;
+        let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
+        let mut statement = connection
+            .prepare("SELECT grant FROM auth_grants ORDER BY group_id")
+            .map_err(|_| PlacementError::Storage)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+            .map_err(|_| PlacementError::Storage)?;
+        rows.map(|row| {
+            let bytes = row.map_err(|_| PlacementError::Storage)?;
+            let grant = pb::AuthGroupBootstrapGrant::decode(bytes.as_slice())
+                .map_err(|_| PlacementError::Storage)?;
+            self.boundary.validate(&grant, &identity.storage_incarnation)?;
+            Ok(grant)
+        })
+        .collect()
+    }
+
     /// Reserve initial state-file creation once. A repeated call never permits recreation.
     /// Persist this before creating the Raft file; after interruption, require that file
     /// and its identity to exist, or refuse recovery and perform explicit voter replacement.

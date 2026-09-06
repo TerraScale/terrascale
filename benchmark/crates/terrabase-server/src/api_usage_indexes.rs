@@ -215,17 +215,17 @@ mod tests {
         let host = document_host(&state, "prod").unwrap();
         let engine = host.engine();
         let scope = document_scope(engine).unwrap();
-        let owner = engine.database_owner();
+        let placement = engine.usage_placement(&scope).unwrap().expect("accepted placement");
         for (partition, delta) in [("one", 7), ("two", 11)] {
             engine
                 .record_usage(
                     &scope,
                     UsageRecordRequest::try_new(
                         UsageRecordMeter::DocumentWriteUnits,
-                        &owner.project().to_text(),
-                        &owner.database().to_text(),
+                        placement.scope.project_id().as_str(),
+                        placement.scope.database_id().as_str(),
                         partition,
-                        owner.region(),
+                        *placement.scope.region_id(),
                         UsageFactId::try_new(partition).unwrap(),
                         10,
                         1,
@@ -243,10 +243,10 @@ mod tests {
                     &scope,
                     UsageRecordRequest::try_new(
                         UsageRecordMeter::DocumentWriteUnits,
-                        &owner.project().to_text(),
-                        &owner.database().to_text(),
+                        placement.scope.project_id().as_str(),
+                        placement.scope.database_id().as_str(),
                         "one",
-                        owner.region(),
+                        *placement.scope.region_id(),
                         UsageFactId::try_new(&format!("page-{index}")).unwrap(),
                         10,
                         1,
@@ -269,6 +269,7 @@ mod tests {
         assert!(response.headers().contains_key(PLACEMENT_HEADER));
         let summary = body(response).await;
         assert_eq!(summary["database_id"], "prod");
+        assert!(summary["storage_complete_through_millis"].is_null());
         assert_eq!(summary["reads"], serde_json::json!({"total_reads": observed_reads}));
         assert_eq!(summary["meters"][0]["meter"], "document_write_units");
         assert_eq!(summary["meters"][0]["units"], "273");

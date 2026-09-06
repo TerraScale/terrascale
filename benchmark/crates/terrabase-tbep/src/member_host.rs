@@ -79,15 +79,23 @@ impl MemberHost {
 
     /// Composes public and sync serving over the same admitted Member lease.
     #[must_use]
-    pub fn from_admitted(lease: terrabase_cluster::production::ProductionDatabaseLease,
-        location: std::path::PathBuf, instance: u64) -> Self {
-        Self { engine: EngineHost::from_admitted(lease, location, instance),
-            delivery: SyncDeliveryHost::new(instance), journal_sync: Mutex::new(()) }
+    pub fn from_admitted(
+        lease: terrabase::member::DatabaseLease,
+        location: std::path::PathBuf,
+        instance: u64,
+    ) -> Self {
+        Self {
+            engine: EngineHost::from_admitted(lease, location, instance),
+            delivery: SyncDeliveryHost::new(instance),
+            journal_sync: Mutex::new(()),
+        }
     }
 
     /// Logical serving tenant; production uses the immutable admitted owner.
     #[must_use]
-    pub fn tenant(&self) -> &str { self.engine.tenant() }
+    pub fn tenant(&self) -> &str {
+        self.engine.tenant()
+    }
 
     /// Returns the single durable location shared by both serving planes.
     #[must_use]

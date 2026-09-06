@@ -19,20 +19,28 @@ use std::{
 
 mod authorized;
 mod export;
+mod recovery_statistics;
 mod ingest;
+pub mod lifecycle_state;
 pub(crate) mod merge;
 mod metadata;
+mod origin_fencing;
 mod patch;
 mod physical_restore;
 mod private_metadata;
+mod replicated_publication;
+mod replication_outbox;
+mod repair_summary;
+pub use repair_summary::ReplicationRepairCut;
+mod storage_usage;
 mod usage_placement;
 #[cfg(test)]
 mod usage_placement_tests;
-mod replication_outbox;
-mod replicated_publication;
-mod storage_usage;
-pub use replicated_publication::ReplicatedPublication;
+pub use replicated_publication::{
+    MAX_REPLICATION_PUBLICATION_BYTES, MAX_REPLICATION_PUBLICATION_RECORDS, ReplicatedPublication,
+};
 mod replication_dependencies;
+mod replication_wire;
 mod schema_indexes;
 mod schema_metadata;
 mod webhook_metadata;
@@ -48,6 +56,8 @@ mod patch_tests;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::test_storage_keys;
 
 pub use crate::storage::DatabaseOwner;
 pub use crate::storage::database_file;
@@ -57,6 +67,8 @@ pub use crate::storage::{
 };
 pub use authorized::{AuthorizedEngine, AuthorizedEngineError, AuthorizedSession};
 pub use export::{ExportHistoryRow, ExportMetadataSnapshot};
+pub use recovery_statistics::RecoveryStatistics;
+pub(crate) use recovery_statistics::{logical_document_digest, logical_state_hasher};
 pub use ingest::{
     BulkIngestRequest, IngestBatchReceipt, IngestConflictMode, IngestReceipt, IngestRefusal,
     IngestRefusalReason, IngestStream, IngestTermination, MAX_INGEST_BATCH_DOCUMENTS,
@@ -1060,6 +1072,7 @@ pub(crate) struct StorageState {
 /// let engine = terrabase::engine::Engine::ephemeral();
 /// ```
 pub struct Engine {
+    storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
     identity: u128,
     durable_owner: crate::storage::DatabaseOwner,
     /// Whether this location was opened with an explicit production owner.
@@ -1109,6 +1122,7 @@ pub struct Engine {
     /// policy and the pause gate. The handle is [`Engine::tiers`].
     /// The group-commit mailbox: waiting intents and the leader flag.
     /// Shared through the [`Arc`] so cloned engines form one group.
+    origin_commit_barrier: std::sync::RwLock<()>,
     pub(crate) commit_mailbox: Arc<Mutex<CommitMailbox>>,
     /// The arrival signal paired with [`Engine::commit_mailbox`]: every
     /// enqueue notifies it, so a coalescing leader wakes per arrival
@@ -1198,13 +1212,18 @@ impl Engine {
         })?;
         let metrics = Arc::new(MetricsRegistry::new());
         // Production owners use the authenticated VFS for every connection.
-        let storage: Box<dyn storage::StoragePort> = storage::SqliteStorage::open_with_keys(
+        let mut storage: Box<dyn storage::StoragePort> = storage::SqliteStorage::open_with_keys(
             &location,
             config.replication_origin.as_ref().map(RegionId::as_str),
             config.storage_keys.clone(),
         )
         .map(|engine| Box::new(engine) as Box<dyn storage::StoragePort>)
         .map_err(|_| EngineOpenError::StorageUnavailable)?;
+        if config.owner.is_some()
+            && storage.origin_epoch().map_err(|()| EngineOpenError::StorageUnavailable)?.0 == 0
+        {
+            storage.set_origin_epoch(0, true).map_err(|()| EngineOpenError::StorageUnavailable)?;
+        }
         let mut initial_clock =
             ReplicationClockStamp::new(config.replication_clock.now_millis(), 0);
         for tenant in
@@ -1240,6 +1259,7 @@ impl Engine {
         indexes.set_lifecycle_thresholds(config.lifecycle_thresholds());
         let index_subscription = subscriptions.subscribe(indexes.sink());
         Ok(Self {
+            storage_keys: config.storage_keys.clone(),
             identity: EngineIdentity::next().0,
             durable_owner: owner,
             owner_scope_enforced: config.owner.is_some(),
@@ -1259,6 +1279,7 @@ impl Engine {
             bulk_audit: Arc::new(crate::query::bulk::BulkAuditJournal::new()),
             auto_index_lifecycle: Mutex::new(auto_index_lifecycle),
             auto_index_observations: Mutex::new(crate::auto_index::WorkloadSketch::default()),
+            origin_commit_barrier: std::sync::RwLock::new(()),
             commit_mailbox: Arc::new(Mutex::new(CommitMailbox::default())),
             commit_arrivals: std::sync::Condvar::new(),
         })
@@ -1272,7 +1293,9 @@ impl Engine {
 
     /// Whether logical tenant scopes are restricted to this durable production owner.
     #[must_use]
-    pub const fn owner_scope_enforced(&self) -> bool { self.owner_scope_enforced }
+    pub const fn owner_scope_enforced(&self) -> bool {
+        self.owner_scope_enforced
+    }
 
     /// Returns the complete durable owner tuple recovered from this location.
     #[must_use]
@@ -1292,6 +1315,7 @@ impl Engine {
         &self,
         capture: impl FnOnce(&std::path::Path) -> T,
     ) -> Result<T, WalCaptureError> {
+        self.validate_storage_authorization().map_err(|_| WalCaptureError)?;
         let storage = self.storage.lock().map_err(|_| WalCaptureError)?;
         let mut capture = Some(capture);
         let mut result = None;
@@ -1939,6 +1963,8 @@ impl Engine {
         if snapshot.tenant() != scope.tenant() {
             return Err(EngineError::SnapshotTenantMismatch);
         }
+        let origin_epoch =
+            self.lock_storage()?.port.origin_epoch().map_err(|()| EngineError::StorageFailure)?.0;
         let reserved = self
             .in_flight
             .lock()
@@ -1955,6 +1981,7 @@ impl Engine {
             snapshot_sequence,
             operation,
             usage_admission: None,
+            expected_origin_epoch: origin_epoch,
             expected_uniform_context: None,
             merge_conflict: None,
             replication_fingerprint: None,
@@ -2701,7 +2728,22 @@ impl Engine {
         storage.port.flush().map_err(|()| EngineShutdownError::StorageFailure)
     }
 
+    /// Revalidates authorization even when SQLite satisfies a read from cache.
+    ///
+    /// # Errors
+    /// Returns storage failure after lease revocation or failed renewal.
+    pub fn validate_storage_authorization(&self) -> Result<(), EngineError> {
+        if let Some(keys) = &self.storage_keys {
+            let lease = keys.current_lease().map_err(|_| EngineError::StorageFailure)?;
+            if lease.is_expired() {
+                return Err(EngineError::StorageFailure);
+            }
+        }
+        Ok(())
+    }
+
     fn validate_scope(&self, scope: &TenantScope) -> Result<(), EngineError> {
+        self.validate_storage_authorization()?;
         if scope.engine_identity() != self.identity {
             return Err(EngineError::ScopeMismatch);
         }
@@ -4099,6 +4141,26 @@ impl Engine {
         storage.port.servable_history_start().map_err(|()| EngineError::StorageFailure)
     }
 
+    /// Reads the durable monotonic clock of an exact source publication.
+    /// Sequence zero names the empty database baseline at the Unix epoch.
+    pub(crate) fn backup_boundary_unix_millis(
+        &self,
+        sequence: StorageSequence,
+    ) -> Result<u64, EngineError> {
+        if sequence.get() == 0 {
+            return Ok(0);
+        }
+        let connection = self.open_sqlite_read_connection()?;
+        let timestamp: i64 = connection
+            .query_row(
+                "SELECT committed_at FROM replication_publications WHERE local_seq = ?1",
+                [i64::try_from(sequence.get()).map_err(|_| EngineError::StorageFailure)?],
+                |row| row.get(0),
+            )
+            .map_err(|_| EngineError::StorageFailure)?;
+        u64::try_from(timestamp).map_err(|_| EngineError::StorageFailure)
+    }
+
     /// Returns the last global storage sequence durably recorded in the
     /// publication-history journal (W4-CA-4 repair F2).
     ///
@@ -4122,6 +4184,7 @@ impl Engine {
     /// count).
     ///
     fn lock_storage(&self) -> Result<std::sync::MutexGuard<'_, StorageState>, EngineError> {
+        self.validate_storage_authorization()?;
         self.storage.lock().map_err(|_| EngineError::StorageFailure)
     }
 
@@ -4233,6 +4296,7 @@ pub struct Transaction<'engine> {
     snapshot_sequence: StorageSequence,
     operation: OperationId,
     usage_admission: Option<UsageAdmissionContext>,
+    expected_origin_epoch: u64,
     expected_uniform_context: Option<Vec<u8>>,
     merge_conflict: Option<(CollectionName, DocumentId, storage::MergeConflictEntry)>,
     replication_fingerprint: Option<[u8; 32]>,
@@ -4319,6 +4383,7 @@ impl Transaction<'_> {
     ///
     /// Returns [`EngineError::StorageFailure`] when storage cannot be reached.
     pub fn read(&self, id: &DocumentId) -> Result<Option<Document>, EngineError> {
+        self.engine.validate_storage_authorization()?;
         for write in self.writes.iter().rev() {
             if write.document_id() == id {
                 return Ok(match write {
@@ -4350,6 +4415,7 @@ impl Transaction<'_> {
         collection: &CollectionName,
         id: &DocumentId,
     ) -> Result<Option<Document>, EngineError> {
+        self.engine.validate_storage_authorization()?;
         for write in self.writes.iter().rev() {
             if write.document_id() != id {
                 continue;
@@ -4548,6 +4614,13 @@ impl Transaction<'_> {
     /// behaves exactly as a serial commit.
     #[must_use]
     pub fn commit(self, durability: LocalDurability) -> CommitOutcome {
+        if self.engine.validate_storage_authorization().is_err() {
+            return CommitOutcome::Rejected(CommitError::StorageFailure);
+        }
+        let engine = self.engine;
+        let Ok(_barrier) = engine.origin_commit_barrier.read() else {
+            return CommitOutcome::Rejected(CommitError::StorageFailure);
+        };
         let started = Instant::now();
         let metrics = Arc::clone(&self.engine.metrics);
         let outcome = self.commit_unobserved(durability);
@@ -4596,6 +4669,7 @@ impl Transaction<'_> {
             snapshot_sequence: self.snapshot_sequence,
             durability,
             usage_admission,
+            expected_origin_epoch: if replicated { None } else { Some(self.expected_origin_epoch) },
             expected_uniform_context: self.expected_uniform_context.take(),
             merge_conflict: self.merge_conflict.clone(),
             replication_fingerprint: self.replication_fingerprint,

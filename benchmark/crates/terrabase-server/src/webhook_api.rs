@@ -1655,16 +1655,38 @@ impl WebhookService {
     ) -> Result<DispatchReport, WebhookError> {
         let service = self.clone();
         let scope = scope.clone();
-        tokio::task::spawn_blocking(move || service.dispatch_blocking(&scope, cursor))
+        tokio::task::spawn_blocking(move || service.dispatch_blocking(&scope, cursor, None))
             .await
             .map_err(|_| WebhookError::storage(StorageError::Unavailable))?
+    }
+
+    /// Dispatches while honoring runtime shutdown at every durable/network boundary.
+    ///
+    /// # Errors
+    /// Returns cancellation or the underlying dispatch failure. No checkpoint advances on cancellation.
+    pub async fn dispatch_cancellable(
+        &self,
+        scope: &TenantScope,
+        cursor: Option<ChangeCheckpoint>,
+        stop: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<DispatchReport, WebhookError> {
+        let service = self.clone();
+        let scope = scope.clone();
+        tokio::task::spawn_blocking(move || service.dispatch_blocking(&scope, cursor, Some(&stop)))
+            .await
+            .map_err(|_| WebhookError::misconfigured())?
     }
 
     fn dispatch_blocking(
         &self,
         scope: &TenantScope,
         cursor: Option<ChangeCheckpoint>,
+        stop: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<DispatchReport, WebhookError> {
+        let cancelled = || stop.is_some_and(|stop| stop.load(std::sync::atomic::Ordering::Acquire));
+        if cancelled() {
+            return Err(WebhookError::misconfigured());
+        }
         let endpoints = self.list(scope)?;
         let page =
             self.journal.page(scope, cursor, MAX_JOURNAL_PAGE).map_err(WebhookError::storage)?;
@@ -1676,6 +1698,9 @@ impl WebhookService {
                 continue;
             }
             for publication in &publications {
+                if cancelled() {
+                    return Err(WebhookError::misconfigured());
+                }
                 if publication.body.len() > MAX_DELIVERY_BYTES {
                     report.skipped = report.skipped.saturating_add(1);
                     continue;
@@ -1690,6 +1715,9 @@ impl WebhookService {
                 .due_deliveries(scope, &endpoint.id, now, MAX_JOURNAL_PAGE)
                 .map_err(WebhookError::storage)?;
             for row in due {
+                if cancelled() {
+                    return Err(WebhookError::misconfigured());
+                }
                 if report.attempted >= MAX_DISPATCH_ATTEMPTS
                     || started.elapsed() >= std::time::Duration::from_secs(10)
                 {
@@ -2035,6 +2063,15 @@ impl WebhookError {
     #[must_use]
     pub fn invalid_request(detail: &'static str) -> Self {
         Self { code: "invalid_request", status: StatusCode::BAD_REQUEST, detail }
+    }
+    /// Constructs a bounded-request-body refusal.
+    #[must_use]
+    pub fn payload_too_large() -> Self {
+        Self {
+            code: "payload_too_large",
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            detail: "webhook request exceeds 64 KiB",
+        }
     }
     /// Constructs an authentication failure for an authorization adapter.
     #[must_use]

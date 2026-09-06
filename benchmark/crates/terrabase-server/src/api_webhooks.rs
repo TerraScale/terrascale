@@ -71,14 +71,14 @@ fn secret_response(status: StatusCode, response: &webhook::WebhookSecretResponse
     response
 }
 
-#[utoipa::path(post, path = "/api/v1/databases/{name}/webhooks/{id}/rotate-secret", request_body = webhook::RotateWebhookSecret, responses((status = 200, description = "One-time rotated signing secret", body = webhook::WebhookSecretResponse)))]
+#[utoipa::path(post, path = "/api/v1/databases/{name}/webhooks/{id}/rotate-secret", request_body = (content = webhook::RotateWebhookSecret, required = false), responses((status = 200, description = "One-time rotated signing secret", body = webhook::WebhookSecretResponse)))]
 pub(super) async fn rotate_secret(
     State(state): State<Arc<ApiState>>,
     Path((name, id)): Path<(String, String)>,
     body: Bytes,
 ) -> Response {
     if body.len() > webhook::MAX_WEBHOOK_BODY_BYTES {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+        return webhook::WebhookError::payload_too_large().into_response();
     }
     let input = if body.is_empty() {
         webhook::RotateWebhookSecret { overlap_seconds: 300 }
@@ -130,7 +130,7 @@ pub(super) async fn create_webhook(
     body: Bytes,
 ) -> Response {
     if body.len() > webhook::MAX_WEBHOOK_BODY_BYTES {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+        return webhook::WebhookError::payload_too_large().into_response();
     }
     let input = match serde_json::from_slice::<webhook::CreateWebhook>(&body) {
         Ok(input) => input,
@@ -207,19 +207,37 @@ pub(super) async fn replay_webhook(
     }
 }
 
+/// Owns cancellation and joining of the single runtime dispatcher.
+pub struct DispatchWorker {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    task: tokio::task::JoinHandle<()>,
+}
+impl DispatchWorker {
+    /// Stops admission immediately and waits for an in-flight bounded transport call.
+    pub async fn shutdown(self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        let _ = self.task.await;
+    }
+}
+
 /// Starts one serial database dispatcher. A weak state reference ends the loop
 /// when the serving runtime drops its router; no request or subscriber starts a task.
-pub(super) fn spawn_dispatcher(state: &Arc<ApiState>) -> Option<tokio::task::JoinHandle<()>> {
+pub(super) fn spawn_dispatcher(state: &Arc<ApiState>) -> Option<DispatchWorker> {
     if state.webhook_keys.is_none() {
         return None;
     }
     let state = Arc::downgrade(state);
-    Some(tokio::spawn(async move {
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_stop = Arc::clone(&stop);
+    let task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut offset = 0;
         loop {
             interval.tick().await;
+            if worker_stop.load(std::sync::atomic::Ordering::Acquire) {
+                break;
+            }
             let Some(state) = state.upgrade() else {
                 break;
             };
@@ -239,6 +257,9 @@ pub(super) fn spawn_dispatcher(state: &Arc<ApiState>) -> Option<tokio::task::Joi
             }
             // Eight databases and one journal page per database per tick.
             for index in 0..records.len().min(8) {
+                if worker_stop.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
                 let name = records[(offset + index) % records.len()].name.clone();
                 let state = Arc::clone(&state);
                 let resolved = tokio::task::spawn_blocking(move || {
@@ -252,7 +273,9 @@ pub(super) fn spawn_dispatcher(state: &Arc<ApiState>) -> Option<tokio::task::Joi
                 let Ok(Some((storage, service, scope, cursor))) = resolved else {
                     continue;
                 };
-                if let Ok(report) = service.dispatch(&scope, cursor).await {
+                if let Ok(report) =
+                    service.dispatch_cancellable(&scope, cursor, Arc::clone(&worker_stop)).await
+                {
                     let _ = tokio::task::spawn_blocking(move || {
                         storage.checkpoint_dispatch(&scope, cursor, report.cursor)
                     })
@@ -261,7 +284,8 @@ pub(super) fn spawn_dispatcher(state: &Arc<ApiState>) -> Option<tokio::task::Joi
             }
             offset = (offset + 8) % records.len();
         }
-    }))
+    });
+    Some(DispatchWorker { stop, task })
 }
 
 #[cfg(test)]

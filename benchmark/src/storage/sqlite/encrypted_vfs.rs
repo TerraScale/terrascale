@@ -512,10 +512,8 @@ unsafe extern "C" fn delete(
         if files.get(&path).and_then(Weak::upgrade).is_some() {
             return ffi::SQLITE_IOERR_DELETE;
         }
-        match std::fs::remove_file(backing(&path)) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(_) => return ffi::SQLITE_IOERR_DELETE,
+        if super::encrypted_file::delete(&path).is_err() {
+            return ffi::SQLITE_IOERR_DELETE;
         }
         files.remove(&path);
         // Native xDelete also synchronizes the containing directory when asked,
@@ -612,6 +610,15 @@ mod tests {
             .unwrap(),
         )))
     }
+    fn generation(path: &Path) -> PathBuf {
+        let manifest = std::fs::read(backing(path)).unwrap();
+        let mut generation = backing(path).into_os_string();
+        generation.push(".gen-");
+        generation
+            .push(manifest[8..40].iter().map(|byte| format!("{byte:02x}")).collect::<String>());
+        PathBuf::from(generation)
+    }
+
     struct Directory(PathBuf);
     impl Directory {
         fn new() -> Self {
@@ -833,6 +840,29 @@ mod tests {
     }
 
     #[test]
+    fn leftover_auxiliary_stub_recovers_after_interrupted_delete() {
+        let directory = Directory::new();
+        let path = directory.database();
+        let vfs = EncryptedVfs::register(&path, keys(28)).unwrap();
+        let connection = connect(&path, &vfs);
+        connection
+            .execute_batch("CREATE TABLE retained(value INTEGER); INSERT INTO retained VALUES(1);")
+            .unwrap();
+        drop(connection);
+        let wal = path.with_file_name("data.sqlite3-wal");
+        std::fs::write(&wal, []).unwrap();
+        assert!(!backing(&wal).exists());
+        let connection = connect(&path, &vfs);
+        connection.execute_batch("INSERT INTO retained VALUES(2);").unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM retained", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+    }
+
+    #[test]
     fn encrypted_records_recover_partial_tail_and_compact_overwrites() {
         use std::io::Write;
         let directory = Directory::new();
@@ -842,24 +872,211 @@ mod tests {
             file.write_all_at(&[value; 4096], 0).unwrap();
         }
         file.sync().unwrap();
-        assert!(std::fs::metadata(backing(&path)).unwrap().len() < 600_000);
+        assert!(std::fs::metadata(generation(&path)).unwrap().len() < 600_000);
         file.set_len(17).unwrap();
         file.set_len(4096).unwrap();
         file.sync().unwrap();
         drop(file);
-        let durable_length = std::fs::metadata(backing(&path)).unwrap().len();
+        let generation = generation(&path);
+        let durable_length = std::fs::metadata(&generation).unwrap().len();
         std::fs::OpenOptions::new()
             .append(true)
-            .open(backing(&path))
+            .open(&generation)
             .unwrap()
-            .write_all(&[77; 123])
+            .write_all(&[77; 8192 + 123])
             .unwrap();
         let mut file = EncryptedFile::open(&path, keys(25), ArtifactKind::Database).unwrap();
-        assert_eq!(std::fs::metadata(backing(&path)).unwrap().len(), durable_length);
+        assert_eq!(std::fs::metadata(&generation).unwrap().len(), durable_length);
         let mut bytes = [0; 4096];
         file.read_exact_at(&mut bytes, 0).unwrap();
         assert_eq!(&bytes[..17], &[149; 17]);
         assert!(bytes[17..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn durable_generation_rejects_corruption_and_old_generation_records() {
+        use std::io::{Seek, SeekFrom, Write};
+        let directory = Directory::new();
+        let path = directory.database();
+        let mut file = EncryptedFile::open(&path, keys(29), ArtifactKind::Database).unwrap();
+        file.write_all_at(&[1; 4096], 0).unwrap();
+        file.sync().unwrap();
+        let original_generation = generation(&path);
+        let old_bytes = std::fs::read(&original_generation).unwrap();
+        for byte in 2..100_u8 {
+            file.write_all_at(&[byte; 4096], 0).unwrap();
+        }
+        file.sync().unwrap();
+        drop(file);
+        let selected = generation(&path);
+        assert_ne!(selected, original_generation);
+        let good = std::fs::read(&selected).unwrap();
+        let mut disk = std::fs::OpenOptions::new().write(true).open(&selected).unwrap();
+        // Replay a complete, previously valid record at the same ordinal from
+        // the generation retired by compaction. Authentication must reject it.
+        disk.seek(SeekFrom::Start(4096 + 8192)).unwrap();
+        disk.write_all(&old_bytes[4096 + 8192..4096 + 2 * 8192]).unwrap();
+        disk.sync_all().unwrap();
+        assert!(EncryptedFile::open(&path, keys(29), ArtifactKind::Database).is_err());
+        disk.seek(SeekFrom::Start(0)).unwrap();
+        disk.write_all(&good).unwrap();
+        disk.seek(SeekFrom::Start(4096 + 100)).unwrap();
+        disk.write_all(&[good[4096 + 100] ^ 1]).unwrap();
+        disk.sync_all().unwrap();
+        assert!(EncryptedFile::open(&path, keys(29), ArtifactKind::Database).is_err());
+    }
+
+    #[test]
+    fn compaction_publication_failures_reopen_a_complete_generation() {
+        for stage in [
+            "generation_synced",
+            "generation_directory_synced",
+            "manifest_written",
+            "manifest_synced",
+            "manifest_renamed",
+            "manifest_directory_synced",
+        ] {
+            let directory = Directory::new();
+            let path = directory.database();
+            let mut file = EncryptedFile::open(&path, keys(31), ArtifactKind::Database).unwrap();
+            file.write_all_at(b"durable payload", 0).unwrap();
+            file.sync().unwrap();
+            let before = generation(&path);
+            super::super::encrypted_file::fail_next_publication_at(stage);
+            assert!(file.reencrypt().is_err(), "{stage}");
+            drop(file);
+            let selected = generation(&path);
+            if matches!(stage, "manifest_renamed" | "manifest_directory_synced") {
+                assert_ne!(before, selected);
+            } else {
+                assert_eq!(before, selected);
+            }
+            let mut file = EncryptedFile::open(&path, keys(31), ArtifactKind::Database).unwrap();
+            let mut bytes = [0; 15];
+            file.read_exact_at(&mut bytes, 0).unwrap();
+            assert_eq!(&bytes, b"durable payload", "{stage}");
+            assert!(selected.exists(), "{stage}");
+        }
+    }
+
+    #[test]
+    fn tag_corruption_is_discardable_only_after_durable_frontier() {
+        use std::io::{Seek, SeekFrom, Write};
+        for durable in [false, true] {
+            let directory = Directory::new();
+            let path = directory.database();
+            let mut file = EncryptedFile::open(&path, keys(32), ArtifactKind::Database).unwrap();
+            file.write_all_at(b"old", 0).unwrap();
+            file.sync().unwrap();
+            file.write_all_at(b"new", 0).unwrap();
+            if durable {
+                file.sync().unwrap();
+            }
+            drop(file);
+            let selected = generation(&path);
+            let mut bytes = std::fs::read(&selected).unwrap();
+            let record = bytes.len() - 8192;
+            let sealed = u32::from_le_bytes(bytes[record..record + 4].try_into().unwrap()) as usize;
+            let tag = record + 66 + sealed - 1;
+            bytes[tag] ^= 1;
+            let mut disk = std::fs::OpenOptions::new().write(true).open(&selected).unwrap();
+            disk.seek(SeekFrom::Start(tag as u64)).unwrap();
+            disk.write_all(&bytes[tag..tag + 1]).unwrap();
+            disk.sync_all().unwrap();
+            let reopened = EncryptedFile::open(&path, keys(32), ArtifactKind::Database);
+            if durable {
+                assert!(reopened.is_err());
+            } else {
+                let mut reopened = reopened.unwrap();
+                let mut output = [0; 3];
+                reopened.read_exact_at(&mut output, 0).unwrap();
+                assert_eq!(&output, b"old");
+            }
+        }
+    }
+
+    #[test]
+    fn reencrypt_retires_old_key_without_losing_live_blocks() {
+        use std::sync::atomic::AtomicBool;
+        #[derive(Debug)]
+        struct Rotating {
+            old: Arc<DatabaseKeyLease>,
+            new: Arc<DatabaseKeyLease>,
+            switched: AtomicBool,
+            retired: AtomicBool,
+        }
+        impl DatabaseKeySource for Rotating {
+            fn current_lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+                Ok(if self.switched.load(Ordering::SeqCst) {
+                    self.new.clone()
+                } else {
+                    self.old.clone()
+                })
+            }
+            fn lease(
+                &self,
+                version: DatabaseKeyVersion,
+            ) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+                if version == self.new.metadata().version() {
+                    Ok(self.new.clone())
+                } else if version == self.old.metadata().version()
+                    && !self.retired.load(Ordering::SeqCst)
+                {
+                    Ok(self.old.clone())
+                } else {
+                    Err(EncryptionError::InvalidKeyMetadata)
+                }
+            }
+        }
+        let old = keys(33).current_lease().unwrap();
+        let metadata = KeyVersionMetadata::new(
+            old.metadata().scope().clone(),
+            DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB1").unwrap(),
+        );
+        let new = Arc::new(
+            DatabaseKeyLease::test_oci_vault(
+                metadata,
+                DatabaseKey::from_bytes([34; 32]),
+                Duration::from_secs(300),
+            )
+            .unwrap(),
+        );
+        let keys = Arc::new(Rotating {
+            old,
+            new,
+            switched: AtomicBool::new(false),
+            retired: AtomicBool::new(false),
+        });
+        let directory = Directory::new();
+        let path = directory.database();
+        let mut file = EncryptedFile::open(&path, keys.clone(), ArtifactKind::Database).unwrap();
+        file.write_all_at(&[91; 9000], 0).unwrap();
+        file.sync().unwrap();
+        keys.switched.store(true, Ordering::SeqCst);
+        file.reencrypt().unwrap();
+        keys.retired.store(true, Ordering::SeqCst);
+        let mut bytes = [0; 9000];
+        file.read_exact_at(&mut bytes, 0).unwrap();
+        assert_eq!(bytes, [91; 9000]);
+        drop(file);
+        let mut file = EncryptedFile::open(&path, keys, ArtifactKind::Database).unwrap();
+        file.read_exact_at(&mut bytes, 0).unwrap();
+        assert_eq!(bytes, [91; 9000]);
+    }
+
+    #[test]
+    fn valid_unsynced_encrypted_suffix_survives_reopen() {
+        let directory = Directory::new();
+        let path = directory.database();
+        let mut file = EncryptedFile::open(&path, keys(30), ArtifactKind::Database).unwrap();
+        file.write_all_at(b"synced", 0).unwrap();
+        file.sync().unwrap();
+        file.write_all_at(b"written", 0).unwrap();
+        drop(file);
+        let mut file = EncryptedFile::open(&path, keys(30), ArtifactKind::Database).unwrap();
+        let mut bytes = [0; 7];
+        file.read_exact_at(&mut bytes, 0).unwrap();
+        assert_eq!(&bytes, b"written");
     }
 
     #[test]
@@ -874,6 +1091,14 @@ mod tests {
         let wal = path.with_file_name("data.sqlite3-wal");
         std::fs::copy(backing(&path), backing(&wal)).unwrap();
         assert!(EncryptedFile::open(&wal, keys(26), ArtifactKind::Wal).is_err());
+        std::fs::remove_file(backing(&wal)).unwrap();
+        let mut file = EncryptedFile::open(&wal, keys(26), ArtifactKind::Wal).unwrap();
+        file.write_all_at(b"wal secret", 0).unwrap();
+        file.sync().unwrap();
+        drop(file);
+        let journal = path.with_file_name("data.sqlite3-journal");
+        std::fs::copy(backing(&wal), backing(&journal)).unwrap();
+        assert!(EncryptedFile::open(&journal, keys(26), ArtifactKind::Wal).is_err());
     }
 
     #[test]
@@ -929,8 +1154,7 @@ mod tests {
             base: ffi::sqlite3_file { pMethods: ptr::null() },
             state: ptr::null_mut(),
         };
-        let flags =
-            ffi::SQLITE_OPEN_READ_WRITE | ffi::SQLITE_OPEN_CREATE | ffi::SQLITE_OPEN_MAIN_DB;
+        let flags = ffi::SQLITE_OPEN_READWRITE | ffi::SQLITE_OPEN_CREATE | ffi::SQLITE_OPEN_MAIN_DB;
         unsafe {
             assert_eq!(
                 open(vfs.vfs.get(), name.as_ptr(), &mut file.base, flags, ptr::null_mut()),

@@ -13,11 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use terrabase::engine::{CommitOutcome, Engine, EngineConfig, ReplicatedRecord};
+use terrabase::engine::{CommitOutcome, Engine, EngineConfig, ReplicatedPublication};
 use terrabase::types::{Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability};
-use terrabase_member_transport::envelope::{
-    Envelope, FrameKind, LaneValue, Payload, ReplicatedWrite, decode, encode,
-};
+use terrabase_member_transport::envelope::{Envelope, FrameKind, Payload, decode, encode};
 use terrabase_member_transport::{InProcessLane, MemberId, MemberTransport};
 use terrabase_replication_core::anti_entropy::{JournalRowId, RangeSummaryTable, RowSummary};
 
@@ -113,6 +111,7 @@ pub struct ProductionWorld {
     regions: Vec<RegionState>,
     lane: InProcessLane,
     records: BTreeMap<(RegionId, u64), JournalRow>,
+    publications: BTreeMap<(RegionId, u64), ReplicatedPublication>,
     deferred: BTreeMap<RegionId, Vec<JournalRow>>,
     cache: BTreeMap<(String, u64, u64), (u64, Vec<u8>)>,
 }
@@ -230,6 +229,7 @@ impl ProductionWorld {
             regions,
             lane: InProcessLane::new(),
             records: BTreeMap::new(),
+            publications: BTreeMap::new(),
             deferred: BTreeMap::new(),
             cache: BTreeMap::new(),
         })
@@ -465,48 +465,6 @@ impl ProductionWorld {
         self.regions.iter().find(|region| region.id == id)?.engine.as_ref()
     }
 
-    fn row_record(row: &JournalRow) -> Result<ReplicatedRecord, ProductionWorldError> {
-        let collection = terrabase::types::CollectionName::try_new(COLLECTION)
-            .map_err(|_| ProductionWorldError::InvalidIdentifier)?;
-        let id = DocumentId::try_new(&format!("key-{}", row.key))
-            .map_err(|_| ProductionWorldError::InvalidIdentifier)?;
-        Ok(ReplicatedRecord {
-            collection,
-            id,
-            body: if row.tombstone {
-                DocumentValue::Null
-            } else {
-                DocumentValue::String(
-                    String::from_utf8(row.value.clone())
-                        .map_err(|_| ProductionWorldError::InvalidIdentifier)?,
-                )
-            },
-            deleted: row.tombstone,
-            commit_ulid: format!("sim-r{}-{}", row.origin.index(), row.seq),
-            hlc: row.hlc.value(),
-            origin: format!("region-{}", row.origin.index()),
-            origin_sequence: row.seq,
-            context: encode_frontier_context(&row.context),
-        })
-    }
-
-    fn lane_record(row: &JournalRow) -> Result<ReplicatedWrite, ProductionWorldError> {
-        let record = Self::row_record(row)?;
-        Ok(ReplicatedWrite {
-            collection: terrabase_member_transport::CollectionName::try_new(COLLECTION)
-                .map_err(|_| ProductionWorldError::InvalidIdentifier)?,
-            id: terrabase_member_transport::DocumentId::try_new(&format!("key-{}", row.key))
-                .map_err(|_| ProductionWorldError::InvalidIdentifier)?,
-            body: (!row.tombstone)
-                .then(|| LaneValue::String(String::from_utf8_lossy(&row.value).into_owned())),
-            commit_ulid: record.commit_ulid,
-            hlc: record.hlc,
-            origin: record.origin,
-            origin_sequence: record.origin_sequence,
-            context: encode_frontier_context(&row.context),
-        })
-    }
-
     fn send_rows(
         &mut self,
         source: RegionId,
@@ -529,45 +487,85 @@ impl ProductionWorld {
         // intermediate Region.
         let source_position =
             self.region_position(source).ok_or(ProductionWorldError::EngineUnavailable)?;
-        let rows: Vec<_> = self.regions[source_position]
-            .applied
-            .iter()
-            .filter_map(|id| self.records.get(id))
-            .filter(|row| !self.regions[target_position].applied.contains(&row.id()))
-            .cloned()
-            .collect();
-        if rows.is_empty() {
+        let Some(engine) = self.regions[source_position].engine.as_ref() else { return Ok(()) };
+        let scope = engine.scope_for(&self.tenant);
+        let mut cursor = 0;
+        let mut publications = Vec::new();
+        loop {
+            let page = engine
+                .replication_publications(&scope, cursor, 1024)
+                .map_err(|_| ProductionWorldError::EngineUnavailable)?;
+            if page.is_empty() {
+                break;
+            }
+            for (sequence, publication) in page {
+                cursor = sequence;
+                let Some(origin) = publication
+                    .origin
+                    .strip_prefix("region-")
+                    .and_then(|id| id.parse::<u32>().ok())
+                    .map(RegionId::new)
+                else {
+                    continue;
+                };
+                if !self.regions[target_position]
+                    .applied
+                    .contains(&(origin, publication.origin_sequence))
+                {
+                    publications.push(publication);
+                }
+            }
+        }
+        if publications.is_empty() {
             return Ok(());
         }
-        let records = rows.iter().map(Self::lane_record).collect::<Result<Vec<_>, _>>()?;
-        let envelope = Envelope {
-            kind: FrameKind::ReplicationBatch,
-            message_id: self.step.saturating_add(1),
-            correlation_id: None,
-            causation_id: None,
-            idempotency_key: None,
-            source: source_member.clone(),
-            target: target_member.clone(),
-            issued_at: self.lane.now(),
-            expires_at: None,
-            range: None,
-            epoch: None,
-            payload: Payload::ReplicationBatch {
-                tenant: terrabase_member_transport::TenantId::try_new(TENANT)
-                    .map_err(|_| ProductionWorldError::InvalidIdentifier)?,
-                records,
-            },
-        };
-        let frame = encode(&envelope).map_err(|_| ProductionWorldError::TransportFailure)?;
-        self.lane
-            .send(&source_member, &target_member, frame)
-            .map_err(|_| ProductionWorldError::TransportFailure)
+        for publication in publications {
+            let envelope = Envelope {
+                kind: FrameKind::ReplicationPublication,
+                message_id: self.step.saturating_add(1),
+                correlation_id: None,
+                causation_id: None,
+                idempotency_key: None,
+                source: source_member.clone(),
+                target: target_member.clone(),
+                issued_at: self.lane.now(),
+                expires_at: None,
+                range: None,
+                epoch: None,
+                payload: Payload::ReplicationPublication {
+                    tenant: terrabase_member_transport::TenantId::try_new(TENANT)
+                        .map_err(|_| ProductionWorldError::InvalidIdentifier)?,
+                    publication: publication
+                        .encode_wire()
+                        .map_err(|_| ProductionWorldError::TransportFailure)?,
+                },
+            };
+            let frame = encode(&envelope).map_err(|_| ProductionWorldError::TransportFailure)?;
+            self.lane
+                .send(&source_member, &target_member, frame)
+                .map_err(|_| ProductionWorldError::TransportFailure)?;
+        }
+        Ok(())
     }
 
     fn apply_row(
         &mut self,
         target: RegionId,
         row: &JournalRow,
+    ) -> Result<(), ProductionWorldError> {
+        let publication = self
+            .publications
+            .get(&row.id())
+            .ok_or(ProductionWorldError::EngineUnavailable)?
+            .clone();
+        self.apply_publication(target, row, &publication)
+    }
+
+    fn apply_publication(
+        &mut self,
+        target: RegionId,
+        row: &JournalRow,
+        publication: &ReplicatedPublication,
     ) -> Result<(), ProductionWorldError> {
         let position =
             self.region_position(target).ok_or(ProductionWorldError::EngineUnavailable)?;
@@ -584,9 +582,18 @@ impl ProductionWorld {
                 return Ok(());
             };
             let scope = engine.scope_for(&self.tenant);
-            let record = Self::row_record(row)?;
+            if !engine
+                .replication_publication_dependencies_ready(&scope, publication)
+                .map_err(|_| ProductionWorldError::EngineUnavailable)?
+            {
+                let waiting = self.deferred.entry(target).or_default();
+                if !waiting.iter().any(|pending| pending.id() == row.id()) {
+                    waiting.push(row.clone());
+                }
+                return Ok(());
+            }
             engine
-                .apply_replicated(&scope, &record)
+                .apply_replicated_publication(&scope, publication)
                 .map_err(|_| ProductionWorldError::EngineUnavailable)?;
             self.regions[position].applied.insert(row.id());
         }
@@ -768,7 +775,13 @@ impl ReplicationEngine for ProductionWorld {
             value: value.to_string().into_bytes(),
             tombstone: false,
         };
+        let (_, publication) = engine
+            .replication_publications(&scope, receipt.sequence().get().saturating_sub(1), 1)
+            .ok()?
+            .into_iter()
+            .next()?;
         self.regions[position].applied.insert(row.id());
+        self.publications.insert(row.id(), publication);
         self.records.insert(row.id(), row.clone());
         Some(row)
     }
@@ -823,7 +836,13 @@ impl ReplicationEngine for ProductionWorld {
             value: Vec::new(),
             tombstone: true,
         };
+        let (_, publication) = engine
+            .replication_publications(&scope, receipt.sequence().get().saturating_sub(1), 1)
+            .ok()?
+            .into_iter()
+            .next()?;
         self.regions[position].applied.insert(row.id());
+        self.publications.insert(row.id(), publication);
         self.records.insert(row.id(), row.clone());
         Some(row)
     }
@@ -855,40 +874,34 @@ impl ReplicationEngine for ProductionWorld {
                 self.lane.receive(&member, terrabase_member_transport::FrameSelector::Deliveries);
             for frame in frames {
                 let Ok((envelope, _)) = decode(&frame.bytes) else { continue };
-                let Payload::ReplicationBatch { records, .. } = envelope.payload else { continue };
-                for record in records {
-                    let Some(row) = self
-                        .records
-                        .values()
-                        .find(|row| {
-                            row.origin.index().to_string()
-                                == record.origin.strip_prefix("region-").unwrap_or("")
-                                && row.seq == record.origin_sequence
-                        })
-                        .cloned()
-                    else {
-                        continue;
-                    };
-                    // Do not canonicalize the transport back to the
-                    // bookkeeping row.  The frame's operation, provenance,
-                    // identity, and body must all agree with the durable
-                    // source row before it is eligible for causal apply.
-                    let expected_body = (!row.tombstone).then(|| {
-                        LaneValue::String(String::from_utf8_lossy(&row.value).into_owned())
-                    });
-                    if record.commit_ulid != row_commit_string(&row)
-                        || record.hlc != row.hlc.value()
-                        || record.origin != format!("region-{}", row.origin.index())
-                        || record.origin_sequence != row.seq
-                        || record.collection.as_str() != COLLECTION
-                        || record.id.as_str() != format!("key-{}", row.key)
-                        || record.body != expected_body
-                    {
-                        continue;
-                    }
-                    let _ = self.apply_row(target, &row);
+                let Payload::ReplicationPublication { tenant, publication } = envelope.payload
+                else {
+                    continue;
+                };
+                if tenant.as_str() != TENANT {
+                    continue;
                 }
+                let Ok(publication) = ReplicatedPublication::decode_wire(&publication) else {
+                    continue;
+                };
+                let Some(row) = self
+                    .records
+                    .values()
+                    .find(|row| {
+                        publication.origin == format!("region-{}", row.origin.index())
+                            && publication.origin_sequence == row.seq
+                    })
+                    .cloned()
+                else {
+                    continue;
+                };
+                // The received complete source content must match the durable outbox.
+                if self.publications.get(&row.id()) != Some(&publication) {
+                    continue;
+                }
+                let _ = self.apply_publication(target, &row, &publication);
             }
+
             let deferred = self.deferred.remove(&target).unwrap_or_default();
             for row in deferred {
                 let _ = self.apply_row(target, &row);
@@ -1122,8 +1135,10 @@ impl ReplicationEngine for ProductionWorld {
             ordered.push(row);
         }
         for row in ordered {
-            let Ok(record) = Self::row_record(row) else { continue };
-            let _ = engine.apply_replicated(&scope, &record);
+            let Some(publication) = self.publications.get(&row.id()) else { return 0 };
+            if engine.apply_replicated_publication(&scope, publication).is_err() {
+                return 0;
+            }
         }
         let digest = {
             let snapshot = engine.read_snapshot(&scope);
@@ -1309,10 +1324,6 @@ fn row_bytes(row: &JournalRow) -> Vec<u8> {
 /// the engine's private codec while still proving journal membership.
 fn row_commit(row: &JournalRow) -> Vec<u8> {
     format!("sim-r{}-{}", row.origin.index(), row.seq).into_bytes()
-}
-
-fn row_commit_string(row: &JournalRow) -> String {
-    String::from_utf8(row_commit(row)).expect("simulation operation ids are ASCII")
 }
 
 /// Encodes a simulation frontier in the engine's stable versioned dotted

@@ -40,6 +40,9 @@ pub struct ProvisioningOperation {
     pub operation_id: String,
     /// Canonical database ULID allocated durably by the authority.
     pub database_id: String,
+    /// Parent identity of a provisioned branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_database_id: Option<String>,
     /// Persisted encryption key version.
     pub key_version: String,
     /// Immutable database name.
@@ -88,7 +91,7 @@ impl ProvisioningClient {
             "tenant_id":scope.tenant_id,"project_id":scope.project_id,"name":name,
             "regions":regions,"residency":residency,"operation_id":operation_id}))
         .map_err(|_| ProvisioningError::Unavailable)?;
-        let result = tokio::time::timeout(
+        let result: ProvisioningOperation = tokio::time::timeout(
             Duration::from_secs(10),
             self.exchange("/internal/v1/databases/create", body, hyper::StatusCode::ACCEPTED),
         )
@@ -104,6 +107,85 @@ impl ProvisioningClient {
             || !canonical_ulid(&result.key_version)
             || !canonical_ulid(&result.database_id)
             || !matches!(result.state.as_str(), "accepted" | "pending")
+        {
+            return Err(ProvisioningError::Unavailable);
+        }
+        Ok(result)
+    }
+
+    /// Submits a branch allocation bound to its admitted parent's immutable policy.
+    pub async fn branch(
+        &self,
+        scope: &crate::delegated_identity::VerifiedProjectScope,
+        parent: &crate::admission::AdmissionRecord,
+        name: &str,
+        operation_id: &str,
+    ) -> Result<ProvisioningOperation, ProvisioningError> {
+        if parent.tenant_id != scope.tenant_id
+            || parent.project_id != scope.project_id
+            || !valid_operation_id(operation_id)
+            || name.is_empty()
+        {
+            return Err(ProvisioningError::Forbidden);
+        }
+        let _permit = self.permits.try_acquire().map_err(|_| ProvisioningError::Unavailable)?;
+        let body = serde_json::to_vec(&serde_json::json!({"environment":self.environment,"tenant_id":scope.tenant_id,"project_id":scope.project_id,"name":name,"regions":parent.regions,"residency":parent.residency,"operation_id":operation_id,"parent_database_id":parent.database_id})).map_err(|_| ProvisioningError::Unavailable)?;
+        let result: ProvisioningOperation = tokio::time::timeout(
+            Duration::from_secs(10),
+            self.exchange("/internal/v1/databases/create", body, hyper::StatusCode::ACCEPTED),
+        )
+        .await
+        .map_err(|_| ProvisioningError::Unavailable)??;
+        if result.environment != self.environment
+            || result.tenant_id != scope.tenant_id
+            || result.project_id != scope.project_id
+            || result.operation_id != operation_id
+            || result.name != name
+            || result.parent_database_id.as_deref() != Some(parent.database_id.as_str())
+            || result.regions != parent.regions
+            || result.residency != parent.residency
+            || result.database_id == parent.database_id
+            || !canonical_ulid(&result.database_id)
+            || !canonical_ulid(&result.key_version)
+            || !matches!(result.state.as_str(), "accepted" | "pending")
+        {
+            return Err(ProvisioningError::Unavailable);
+        }
+        Ok(result)
+    }
+
+    /// Begins or polls authoritative deletion work in the verified database scope.
+    pub async fn deletion(
+        &self,
+        scope: &crate::delegated_identity::VerifiedProjectScope,
+        database_id: &str,
+        operation_id: &str,
+        begin: bool,
+    ) -> Result<serde_json::Value, ProvisioningError> {
+        if !canonical_ulid(database_id) || !valid_operation_id(operation_id) {
+            return Err(ProvisioningError::InvalidRequest);
+        }
+        let expected = serde_json::json!({"environment":self.environment,"tenant_id":scope.tenant_id,"project_id":scope.project_id,"database_id":database_id,"operation_id":operation_id});
+        let _permit = self.permits.try_acquire().map_err(|_| ProvisioningError::Unavailable)?;
+        let body = serde_json::to_vec(&expected).map_err(|_| ProvisioningError::Unavailable)?;
+        let path = if begin {
+            "/internal/v1/databases/delete/begin"
+        } else {
+            "/internal/v1/databases/delete/status"
+        };
+        let result: serde_json::Value = tokio::time::timeout(
+            Duration::from_secs(10),
+            self.exchange(path, body, hyper::StatusCode::OK),
+        )
+        .await
+        .map_err(|_| ProvisioningError::Unavailable)??;
+        if result.get("request") != Some(&expected)
+            || !matches!(
+                result.get("state").and_then(serde_json::Value::as_str),
+                Some("stopping" | "cleanup_pending")
+            )
+            || result.get("cutoff").and_then(serde_json::Value::as_str).is_none()
+            || !result.get("targets").is_some_and(serde_json::Value::is_array)
         {
             return Err(ProvisioningError::Unavailable);
         }
@@ -126,7 +208,7 @@ impl ProvisioningClient {
         let body = serde_json::to_vec(&serde_json::json!({"environment":self.environment,
             "tenant_id":scope.tenant_id,"project_id":scope.project_id,"operation_id":operation_id}))
         .map_err(|_| ProvisioningError::Unavailable)?;
-        let result = tokio::time::timeout(
+        let result: ProvisioningOperation = tokio::time::timeout(
             Duration::from_secs(10),
             self.exchange("/internal/v1/databases/status", body, hyper::StatusCode::OK),
         )
@@ -145,12 +227,12 @@ impl ProvisioningClient {
         Ok(result)
     }
 
-    async fn exchange(
+    async fn exchange<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,
         body: Vec<u8>,
         status: hyper::StatusCode,
-    ) -> Result<ProvisioningOperation, ProvisioningError> {
+    ) -> Result<T, ProvisioningError> {
         let stream = tokio::net::UnixStream::connect(&self.socket)
             .await
             .map_err(|_| ProvisioningError::Unavailable)?;

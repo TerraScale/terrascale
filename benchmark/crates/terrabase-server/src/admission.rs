@@ -1,4 +1,8 @@
 //! Authenticated host admission with durable, immutable replay records.
+#[path = "admission_stop.rs"]
+mod stop;
+pub use stop::{StopReceipt, StopRequest, StorageStop};
+
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -25,6 +29,9 @@ pub struct AdmissionRecord {
     pub project_id: String,
     /// Database identity.
     pub database_id: String,
+    /// Canonical parent for a branch admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_database_id: Option<String>,
     /// Installed key version.
     pub key_version: String,
     /// Human readable database name.
@@ -52,9 +59,20 @@ pub struct AdmissionHost {
     member_id: String,
     records: Mutex<BTreeMap<String, AdmissionRecord>>,
     admit_storage: StorageAdmission,
+    identity_delivery: Option<Arc<crate::identity_secret_delivery::IdentitySecretDelivery>>,
+    stop_storage: Option<StorageStop>,
 }
 
 impl AdmissionHost {
+    /// Installs fixed-file identity delivery on the UID-authenticated listener.
+    #[must_use]
+    pub fn with_identity_delivery(
+        mut self,
+        delivery: Arc<crate::identity_secret_delivery::IdentitySecretDelivery>,
+    ) -> Self {
+        self.identity_delivery = Some(delivery);
+        self
+    }
     /// Replays all durable intents through the encrypted storage integration.
     ///
     /// # Errors
@@ -86,6 +104,8 @@ impl AdmissionHost {
             member_id: member_id.to_string(),
             records: Mutex::new(BTreeMap::new()),
             admit_storage,
+            identity_delivery: None,
+            stop_storage: None,
         };
         for entry in fs::read_dir(&host.root).map_err(|_| "manifest unavailable")? {
             let entry = entry.map_err(|_| "manifest unavailable")?;
@@ -118,6 +138,10 @@ impl AdmissionHost {
         TenantUlid::from_text(&record.tenant_id).map_err(|_| "invalid tenant")?;
         ProjectUlid::from_text(&record.project_id).map_err(|_| "invalid project")?;
         DatabaseUlid::from_text(&record.database_id).map_err(|_| "invalid database")?;
+        if let Some(parent) = &record.parent_database_id {
+            DatabaseUlid::from_text(parent).map_err(|_| "invalid parent database")?;
+            if parent == &record.database_id { return Err("branch cannot be its own parent".into()); }
+        }
         DatabaseKeyVersion::from_text(&record.key_version).map_err(|_| "invalid key version")?;
         if record.environment != self.environment
             || record.region != self.region
@@ -218,10 +242,30 @@ impl AdmissionHost {
                 _ => StatusCode::CONFLICT.into_response(),
             }
         }
+        async fn stop(
+            State(host): State<Arc<AdmissionHost>>,
+            body: axum::body::Bytes,
+        ) -> axum::response::Response {
+            let Ok(request) = serde_json::from_slice::<StopRequest>(&body) else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
+            match tokio::task::spawn_blocking(move || host.stop(request)).await {
+                Ok(Ok(receipt)) => axum::Json(receipt).into_response(),
+                _ => StatusCode::CONFLICT.into_response(),
+            }
+        }
+        if self.identity_delivery.is_some() && orchestrator_uid != 62010 {
+            return Err(std::io::Error::other("identity delivery requires orchestrator UID"));
+        }
+        let identity_router =
+            self.identity_delivery.as_ref().map(|delivery| delivery.clone().router());
         let router = Router::new()
             .route("/internal/v1/databases/admit", post(admit))
+            .route("/internal/v1/databases/stop", post(stop))
             .layer(DefaultBodyLimit::max(16384))
             .with_state(self);
+        let router =
+            if let Some(identity) = identity_router { router.merge(identity) } else { router };
         loop {
             let (stream, _) = listener.accept().await?;
             if stream.peer_cred()?.uid() != orchestrator_uid {
@@ -270,6 +314,7 @@ mod tests {
             tenant_id: TenantUlid::generate().to_string(),
             project_id: ProjectUlid::generate().to_string(),
             database_id: DatabaseUlid::generate().to_string(),
+                parent_database_id: None,
             key_version: DatabaseKeyVersion::generate().to_string(),
             name: "orders".into(),
             regions: vec!["GRU".into()],

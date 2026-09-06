@@ -97,6 +97,9 @@ async fn send(socket: &mut WebSocket, message: SocketMessage) -> Result<(), Erro
 
 impl Session {
     fn authorized(&self) -> Result<(), ErrorCode> {
+        crate::api::document_host(&self.state, &self.database)
+            .map_err(|_| ErrorCode::PermissionDenied)?;
+
         match &self.authorization {
             Authorization::Bearer { principal, credential } => {
                 let admitted = self
@@ -151,7 +154,8 @@ impl Session {
                 ));
             }
         };
-        let (tenant, project) = crate::api::database_owner_scope(&self.state, &self.database).map_err(|_| ErrorCode::PermissionDenied)?;
+        let (tenant, project) = crate::api::database_owner_scope(&self.state, &self.database)
+            .map_err(|_| ErrorCode::PermissionDenied)?;
         let scope = format!("{tenant}:{project}:{}", self.database);
         let host = crate::api::document_host(&self.state, &self.database)
             .map_err(|_| ErrorCode::PermissionDenied)?;

@@ -12,7 +12,7 @@ use simulation::{
     run_reference,
 };
 
-use terrabase::engine::ReplicatedRecord;
+use terrabase::engine::{ReplicatedPublication, ReplicatedRecord};
 use terrabase::types::CollectionName;
 use terrabase::{
     Cancellation, Document, DocumentId, DocumentValue, Engine, EngineConfig, ExpectedVersion,
@@ -139,6 +139,18 @@ fn public_replication_apply_is_idempotent_and_order_stable() {
         origin_sequence: 1,
         context: Vec::new(),
     };
+    // These are two independent source transactions, each with one mutation.
+    let publication = |record: ReplicatedRecord| ReplicatedPublication {
+        origin: record.origin.clone(),
+        origin_sequence: record.origin_sequence,
+        hlc: record.hlc,
+        commit_ulid: record.commit_ulid.clone(),
+        context: record.context.clone(),
+        records: vec![record],
+        private_payload: Vec::new(),
+    };
+    let first = publication(first);
+    let second = publication(second);
     let dirs: Vec<_> = ["a", "b", "c"]
         .into_iter()
         .map(|suffix| {
@@ -156,16 +168,17 @@ fn public_replication_apply_is_idempotent_and_order_stable() {
     for (index, engine) in engines.iter().enumerate() {
         let scope = engine.scope_for(&tenant);
         if index == 0 {
-            engine.apply_replicated(&scope, &first).expect("older remote row applies");
-            engine.apply_replicated(&scope, &second).expect("newer remote row applies");
+            engine.apply_replicated_publication(&scope, &first).expect("older remote row applies");
+            engine.apply_replicated_publication(&scope, &second).expect("newer remote row applies");
         } else {
-            engine.apply_replicated(&scope, &second).expect("newer remote row applies");
+            engine.apply_replicated_publication(&scope, &second).expect("newer remote row applies");
             engine
-                .apply_replicated(&scope, &first)
+                .apply_replicated_publication(&scope, &first)
                 .expect("older remote row is a deterministic no-op");
         }
-        let replay =
-            engine.apply_replicated(&scope, &second).expect("duplicate remote row replays");
+        let replay = engine
+            .apply_replicated_publication(&scope, &second)
+            .expect("duplicate remote row replays");
         assert!(replay.replayed(), "same source identity must be idempotent");
         let snapshot = engine.read_snapshot(&scope).expect("snapshot");
         let documents = engine

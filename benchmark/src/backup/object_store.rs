@@ -108,6 +108,7 @@ impl std::error::Error for TransferError {}
 /// Each transfer holds at most one configured artifact in upload memory and
 /// streams downloads. The caller's bounded worker pool limits aggregate usage.
 pub struct ObjectDestination {
+    identity: String,
     admitted_region: crate::regions::RegionCode,
     provider: Provider,
     store: Arc<dyn ObjectStore>,
@@ -148,7 +149,21 @@ impl ObjectDestination {
             .map_err(|_| TransferError::Configuration)?;
         // Discard and zeroize the admission copy once the client owns its credentials.
         drop(config.credentials);
+        let identity = blake3::hash(
+            format!(
+                "{:?}\n{}\n{}\n{}\n{}",
+                config.provider,
+                config.endpoint,
+                config.bucket,
+                config.signing_region,
+                config.admitted_region
+            )
+            .as_bytes(),
+        )
+        .to_hex()
+        .to_string();
         Ok(Self {
+            identity,
             admitted_region: config.admitted_region,
             provider: config.provider,
             store: Arc::new(store),
@@ -165,12 +180,19 @@ impl ObjectDestination {
         max_point_bytes: u64,
     ) -> Self {
         Self {
+            identity: format!("test-{provider:?}"),
             admitted_region: crate::regions::RegionCode::GRU,
             provider,
             store,
             max_artifact_bytes,
             max_point_bytes,
         }
+    }
+
+    /// Stable opaque endpoint/bucket/Region identity, excluding credentials.
+    #[must_use]
+    pub fn identity(&self) -> &str {
+        &self.identity
     }
 
     /// Returns the canonical database Region bound at destination admission.
@@ -314,8 +336,7 @@ impl ObjectDestination {
             if name != INDEX {
                 validate_name(name)?;
             }
-            if keys.len() >= MAX_FILES + 1 || object.size > self.max_artifact_bytes.max(INDEX_LIMIT)
-            {
+            if keys.len() > MAX_FILES || object.size > self.max_artifact_bytes.max(INDEX_LIMIT) {
                 return Err(TransferError::InvalidPoint);
             }
             bytes = bytes.checked_add(object.size).ok_or(TransferError::InvalidPoint)?;
@@ -764,6 +785,7 @@ mod tests {
                 .build()
                 .unwrap();
             let destination = ObjectDestination {
+                identity: "test-http".into(),
                 admitted_region: crate::regions::RegionCode::GRU,
                 provider: Provider::Oci,
                 store: Arc::new(store),

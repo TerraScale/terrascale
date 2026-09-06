@@ -8,31 +8,62 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use tokio_rustls::TlsAcceptor;
+use super::reloadable_tls::ReloadableTls;
 use tokio_stream::StreamExt as _;
 use tonic::{Code, Request, Response, Status};
 
-use super::{
-    Permit, TbepGrpcConfig, authenticate_gateway_certificate, metadata_value, tls_server_config,
-};
+use super::{Permit, TbepGrpcConfig, authenticate_gateway_certificate, metadata_value};
 use crate::placement::{PlacementError, PlacementJournal};
 use crate::proto::terrabase::v1 as pb;
 use pb::placement_control_service_server::{
     PlacementControlService, PlacementControlServiceServer,
 };
 
+/// Actual admitted data-plane operations backing authenticated transition RPCs.
+/// Implementations must fence origin commits and physical acknowledgements
+/// durably before returning receipts, and must derive readiness from live proofs.
+pub trait PlacementDataControl: Send + Sync {
+    /// Executes a signed prepared transition against the actual old-epoch engines.
+    ///
+    /// # Errors
+    /// Refuses invalid authority, missing durable frontiers, or failed fencing.
+    fn drain(&self, operation: &str, prepared: &[u8]) -> Result<Vec<u8>, PlacementError>;
+    /// Signs a challenge only after the actual admitted database has caught up.
+    ///
+    /// # Errors
+    /// Refuses unavailable or fenced physical, causal, and assignment evidence.
+    fn readiness(&self, request: &pb::PlacementReadinessRequest)
+    -> Result<Vec<u8>, PlacementError>;
+}
+
 /// Authenticated placement control over one durable journal and bounded worker gate.
 pub struct PlacementControlServer {
     journal: Arc<PlacementJournal>,
+    data_control: Option<Arc<dyn PlacementDataControl>>,
     auth_journal: Arc<crate::auth_bootstrap::AuthBootstrapJournal>,
     config: TbepGrpcConfig,
     inflight: Arc<AtomicUsize>,
     draining: AtomicBool,
     observer_principals: BTreeSet<String>,
     observation_frames: AtomicU64,
+    catchup: Option<Arc<dyn crate::catchup::CatchUpSource>>,
 }
 
 impl PlacementControlServer {
+    /// Attaches the actual admitted data-plane fencing and proof producer.
+    #[must_use]
+    pub fn with_data_control(mut self, data_control: Arc<dyn PlacementDataControl>) -> Self {
+        self.data_control = Some(data_control);
+        self
+    }
+
+    /// Binds the admitted runtime's complete catchup source before serving.
+    #[must_use]
+    pub fn with_catchup_source(mut self, source: Arc<dyn crate::catchup::CatchUpSource>) -> Self {
+        self.catchup = Some(source);
+        self
+    }
+
     /// Constructs a separate control listener with exact orchestrator principals.
     ///
     /// # Errors
@@ -56,12 +87,14 @@ impl PlacementControlServer {
         }
         Ok(Self {
             journal,
+            data_control: None,
             auth_journal,
             config,
             inflight: Arc::new(AtomicUsize::new(0)),
             draining: AtomicBool::new(false),
             observer_principals,
             observation_frames: AtomicU64::new(0),
+            catchup: None,
         })
     }
 
@@ -76,7 +109,18 @@ impl PlacementControlServer {
         key: &str,
         ca: &str,
     ) -> std::io::Result<PlacementControlListener> {
-        let acceptor = TlsAcceptor::from(tls_server_config(certificate, key, ca)?);
+        self.bind_tls_reloadable(address, ReloadableTls::new(certificate, key, ca)?).await
+    }
+
+    /// Binds the control service to a live credential controller.
+    ///
+    /// # Errors
+    /// Returns listener bind failure.
+    pub async fn bind_tls_reloadable(
+        self: &Arc<Self>,
+        address: SocketAddr,
+        acceptor: ReloadableTls,
+    ) -> std::io::Result<PlacementControlListener> {
         let listener = tokio::net::TcpListener::bind(address).await?;
         Ok(PlacementControlListener { listener, acceptor, server: Arc::clone(self) })
     }
@@ -177,7 +221,7 @@ impl PlacementControlServer {
 /// A bound control listener whose service lifetime is explicitly owned by the daemon.
 pub struct PlacementControlListener {
     listener: tokio::net::TcpListener,
-    acceptor: TlsAcceptor,
+    acceptor: ReloadableTls,
     server: Arc<PlacementControlServer>,
 }
 
@@ -265,15 +309,72 @@ impl PlacementControlService for Arc<PlacementControlServer> {
         self.work(move || journal.stage(&principal, &operation, request)).await.map(Response::new)
     }
 
-    async fn accept(&self, request: Request<pb::PlacementAcceptRequest>) -> Result<Response<pb::PlacementAcceptanceResponse>, Status> {
+    async fn accept(
+        &self,
+        request: Request<pb::PlacementAcceptRequest>,
+    ) -> Result<Response<pb::PlacementAcceptanceResponse>, Status> {
         self.authenticate(&request)?;
-        let operation = metadata_value(request.metadata(), super::IDEMPOTENCY_METADATA, super::MAX_IDEMPOTENCY_BYTES)?;
+        let operation = metadata_value(
+            request.metadata(),
+            super::IDEMPOTENCY_METADATA,
+            super::MAX_IDEMPOTENCY_BYTES,
+        )?;
         let journal = Arc::clone(&self.journal);
         let request = request.into_inner();
         self.work(move || journal.accept(&operation, &request)).await.map(Response::new)
     }
 
-    async fn get_accepted(&self, request: Request<pb::PlacementGetRequest>) -> Result<Response<pb::PlacementAcceptanceResponse>, Status> {
+    async fn drain(
+        &self,
+        request: Request<pb::PlacementDrainRequest>,
+    ) -> Result<Response<pb::PlacementDrainResponse>, Status> {
+        self.authenticate(&request)?;
+        let operation = metadata_value(
+            request.metadata(),
+            super::IDEMPOTENCY_METADATA,
+            super::MAX_IDEMPOTENCY_BYTES,
+        )?;
+        let data = self.data_control.clone().ok_or_else(|| {
+            control_status(Code::FailedPrecondition, "durable data-plane fencing is unavailable")
+        })?;
+        let request = request.into_inner();
+        if request.prepared_transition.len() > 256 * 1024 {
+            return Err(control_status(
+                Code::InvalidArgument,
+                "prepared transition exceeds its bound",
+            ));
+        }
+        self.work(move || data.drain(&operation, &request.prepared_transition))
+            .await
+            .map(|signed_receipt| Response::new(pb::PlacementDrainResponse { signed_receipt }))
+    }
+
+    async fn readiness(
+        &self,
+        request: Request<pb::PlacementReadinessRequest>,
+    ) -> Result<Response<pb::PlacementDrainResponse>, Status> {
+        self.authenticate(&request)?;
+        let data = self.data_control.clone().ok_or_else(|| {
+            control_status(Code::FailedPrecondition, "durable readiness proof is unavailable")
+        })?;
+        let request = request.into_inner();
+        if request.nonce.len() != 64
+            || !request
+                .nonce
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(control_status(Code::InvalidArgument, "readiness challenge is invalid"));
+        }
+        self.work(move || data.readiness(&request))
+            .await
+            .map(|signed_receipt| Response::new(pb::PlacementDrainResponse { signed_receipt }))
+    }
+
+    async fn get_accepted(
+        &self,
+        request: Request<pb::PlacementGetRequest>,
+    ) -> Result<Response<pb::PlacementAcceptanceResponse>, Status> {
         self.authenticate(&request)?;
         let journal = Arc::clone(&self.journal);
         self.work(move || journal.accepted()).await.map(Response::new)

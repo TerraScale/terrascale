@@ -13,6 +13,8 @@ pub struct AuthAuthority {
     raft: Raft<TypeConfig>,
     store: SqliteStore,
     deadline: Duration,
+    durability_voters: Option<Arc<BTreeMap<u64, BasicNode>>>,
+    local: u64,
 }
 
 /// Authority, deadline, or durable storage failure. Mutation outcomes may be unknown.
@@ -36,9 +38,13 @@ impl AuthAuthority {
         deadline: Duration,
     ) -> Result<Self, AuthorityError> {
         store
-            .bind_admission(network.group(), &network.initial_nodes())
+            .bind_admission(network.group(), network.local_node(), &network.initial_nodes())
             .map_err(|_| AuthorityError::InvalidConfiguration)?;
-        Self::recover(network.local_node(), store, network, config, deadline).await
+        let voters = Arc::new(network.initial_nodes());
+        let mut authority =
+            Self::recover(network.local_node(), store, network, config, deadline).await?;
+        authority.durability_voters = Some(voters);
+        Ok(authority)
     }
 
     /// Recover one durable Raft member. This does not create a new group.
@@ -60,7 +66,7 @@ impl AuthAuthority {
         let raft = Raft::new(node, Arc::new(config), network, store.clone(), store.clone())
             .await
             .map_err(|_| AuthorityError::Unavailable)?;
-        Ok(Self { raft, store, deadline })
+        Ok(Self { raft, store, deadline, durability_voters: None, local: node })
     }
 
     /// Initialize an explicitly authorized, new voter configuration once.
@@ -74,13 +80,46 @@ impl AuthAuthority {
         self.raft.initialize(voters).await.map_err(|_| AuthorityError::Unavailable)
     }
 
+    /// Whether recovered durable state already has a Raft membership.
+    pub async fn is_initialized(&self) -> Result<bool, AuthorityError> {
+        self.raft.is_initialized().await.map_err(|_| AuthorityError::Unavailable)
+    }
+
     /// Submit a stable conditional command to consensus; local followers refuse.
     pub async fn mutate(&self, command: Command) -> Result<Outcome, AuthorityError> {
-        tokio::time::timeout(self.deadline, self.raft.client_write(command))
-            .await
-            .map_err(|_| AuthorityError::Deadline)?
-            .map(|response| response.data)
-            .map_err(|_| AuthorityError::Unavailable)
+        tokio::time::timeout(self.deadline, async {
+            let response =
+                self.raft.client_write(command).await.map_err(|_| AuthorityError::Unavailable)?;
+            // The admitted group has two independently durable SQLite voters per Region.
+            // A majority alone need not include both regional seats. Require every voter
+            // to durably append the committed entry before acknowledging auth success.
+            if let Some(voters) = &self.durability_voters {
+                let mut metrics = self.raft.metrics();
+                loop {
+                    let complete = {
+                        let observed = metrics.borrow();
+                        if observed.current_leader != Some(self.local) {
+                            return Err(AuthorityError::Unavailable);
+                        }
+                        observed.replication.as_ref().is_some_and(|replication| {
+                            voters.keys().all(|id| {
+                                *id == self.local
+                                    || replication.get(id).is_some_and(|matched| {
+                                        matched.is_some_and(|log| log >= response.log_id)
+                                    })
+                            })
+                        })
+                    };
+                    if complete {
+                        break;
+                    }
+                    metrics.changed().await.map_err(|_| AuthorityError::Unavailable)?;
+                }
+            }
+            Ok(response.data)
+        })
+        .await
+        .map_err(|_| AuthorityError::Deadline)?
     }
 
     /// Read only after a quorum-confirmed barrier and application of its index.

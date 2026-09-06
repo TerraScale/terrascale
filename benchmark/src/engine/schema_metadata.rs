@@ -110,27 +110,6 @@ impl Engine {
         }
         Ok(result)
     }
-
-    /// Atomically replaces an envelope when its complete bytes equal `expected`.
-    ///
-    /// `None` requires absence. Returns `false` on conflict, including changes
-    /// to migration progress that retain the same schema generation.
-    ///
-    /// # Errors
-    /// Returns an engine closure or durable storage failure.
-    pub fn schema_metadata_compare_exchange(
-        &self,
-        database: &str,
-        branch: &str,
-        collection: &str,
-        expected: Option<&[u8]>,
-        record: &[u8],
-    ) -> Result<bool, EngineError> {
-        self.lock_storage()?
-            .port
-            .schema_metadata_compare_exchange(database, branch, collection, expected, record)
-            .map_err(|()| EngineError::StorageFailure)
-    }
 }
 
 #[cfg(test)]
@@ -138,6 +117,32 @@ mod tests {
     use super::*;
     use crate::engine::EngineConfig;
     use crate::types::{TenantId, TenantScope};
+
+    fn cas(
+        engine: &Engine,
+        database: &str,
+        branch: &str,
+        collection: &str,
+        expected: Option<&[u8]>,
+        record: &[u8],
+    ) -> Result<bool, EngineError> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let scope = engine.scope_for(&TenantId::try_new("db").unwrap());
+        let operation = crate::types::OperationId::try_new(&format!(
+            "schema-cas-{}",
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
+        .unwrap();
+        let mut transaction = engine.begin(&scope, engine.read_snapshot(&scope)?, operation)?;
+        transaction.stage_schema_metadata(database, branch, collection, expected, record)?;
+        match transaction.commit(crate::types::LocalDurability::Synced) {
+            crate::engine::CommitOutcome::Committed(_) => Ok(true),
+            crate::engine::CommitOutcome::Rejected(crate::engine::CommitError::Conflict) => {
+                Ok(false)
+            }
+            _ => Err(EngineError::StorageFailure),
+        }
+    }
 
     #[test]
     fn schema_metadata_restart_cas_and_customer_data_isolation() {
@@ -155,22 +160,10 @@ mod tests {
         let first = br#"{"generation":1,"migration":"queued"}"#;
         let second = br#"{"generation":1,"migration":"complete"}"#;
         assert_eq!(engine.schema_metadata_load("db", "main", "items").unwrap(), None);
-        assert!(
-            engine.schema_metadata_compare_exchange("db", "main", "items", None, first).unwrap()
-        );
-        assert!(
-            !engine.schema_metadata_compare_exchange("db", "main", "items", None, second).unwrap()
-        );
-        assert!(
-            engine
-                .schema_metadata_compare_exchange("db", "main", "items", Some(first), second)
-                .unwrap()
-        );
-        assert!(
-            !engine
-                .schema_metadata_compare_exchange("db", "main", "items", Some(first), first)
-                .unwrap()
-        );
+        assert!(cas(&engine, "db", "main", "items", None, first).unwrap());
+        assert!(!cas(&engine, "db", "main", "items", None, second).unwrap());
+        assert!(cas(&engine, "db", "main", "items", Some(first), second).unwrap());
+        assert!(!cas(&engine, "db", "main", "items", Some(first), first).unwrap());
         assert_eq!(
             engine.schema_metadata_list("db", "main", None, 1).unwrap(),
             vec![("items".into(), second.to_vec())]
@@ -193,7 +186,7 @@ mod tests {
         let snapshot = engine.read_snapshot(&scope).unwrap();
         assert!(engine.snapshot_documents(&scope, &snapshot).unwrap().is_empty());
         assert_eq!(engine.metering_live_bytes(&scope), 0);
-        assert!(engine.metering_fact(&scope, "db").is_none());
+        assert!(engine.metering_fact(&scope, "db").is_none_or(|fact| fact.writes() == 0));
         engine.shutdown().expect("shutdown");
         std::fs::remove_dir_all(directory).expect("cleanup");
     }

@@ -53,6 +53,7 @@ name = "member"
 path = "tests/member/main.rs"
 
 [dependencies]
+terrabase-replication-core = { path = "crates/terrabase-replication-core" }
 object_store = { version = "0.12.4", features = ["aws"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 futures-util = "0.3"

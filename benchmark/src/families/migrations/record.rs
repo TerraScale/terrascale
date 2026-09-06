@@ -1,6 +1,6 @@
-//! The durable migration record and its reserved-collection mapping (SM-03).
+//! The durable migration record and its private transactional mapping (SM-03).
 //!
-//! One migration's drive state is a reserved family record at
+//! One migration's drive state is private control metadata at
 //! `family:migration/<collection>`: the manifest identity that owns the
 //! drive, the state (`in-progress`, `rolling-back`, or `complete` with the
 //! receipt), the scan cursor the next page resumes from, and the running
@@ -146,10 +146,8 @@ pub(crate) fn migration_record_id(collection: &CollectionName) -> Result<Documen
 
 /// Reads one collection's migration record through one transaction.
 ///
-/// `Ok(None)` means no migration record exists. A document that occupies the
-/// reserved address without belonging to the reserved collection, or a
-/// record that does not decode, fails closed: an unreadable migration state
-/// must never read as an absent one.
+/// `Ok(None)` means no migration record exists. A record that does not decode
+/// fails closed; customer documents cannot occupy this private address.
 pub(crate) fn read_record(
     transaction: &Transaction<'_>,
     collection: &CollectionName,

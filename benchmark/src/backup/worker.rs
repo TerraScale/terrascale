@@ -73,6 +73,7 @@ struct Stream {
     health: StreamHealth,
     due: Instant,
     pending_since: Option<Instant>,
+    closing: bool,
 }
 
 /// A single shared scheduler, invoked by the member's background runtime.
@@ -150,6 +151,7 @@ impl NativeBackupFleet {
                 health: StreamHealth::default(),
                 due: Instant::now(),
                 pending_since: None,
+                closing: false,
             },
         );
         Ok(())
@@ -226,6 +228,68 @@ impl NativeBackupFleet {
         super::sync_directory(&stream.config.staging).map_err(|_| FleetError::Capture)
     }
 
+    /// Deletes retained points after the lifecycle authority has durably closed
+    /// this database. `retained_destinations` must come from the historical
+    /// destination catalog, including retired policies; current policy alone
+    /// cannot prove complete deletion. Retry preserves the same closed stream.
+    /// Keys must be revoked by the key authority independently of object cleanup.
+    ///
+    /// # Errors
+    /// Refuses missing configured destinations, incomplete listings or provider
+    /// failures. No completion receipt is returned until all deletes succeed.
+    pub async fn purge_retained(
+        &mut self,
+        database: &str,
+        retained_destinations: &[Arc<ObjectDestination>],
+    ) -> Result<usize, FleetError> {
+        let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
+        if retained_destinations.is_empty()
+            || retained_destinations.len() > 64
+            || stream.config.destinations.iter().any(|(_, current)| {
+                !retained_destinations.iter().any(|destination| Arc::ptr_eq(current, destination))
+            })
+        {
+            return Err(FleetError::Configuration);
+        }
+        stream.closing = true;
+        stream.health.protected = false;
+        std::fs::create_dir_all(&stream.config.staging).map_err(|_| FleetError::Capture)?;
+        let mut removed = 0;
+        for destination in retained_destinations {
+            let journal =
+                stream.config.staging.join(format!("deleting-{}", destination.identity()));
+            let mut pending =
+                read_upload_journal(&journal, "delete-v1", self.limits.points_per_stream)?;
+            let points = destination
+                .list_points(database, self.limits.points_per_stream)
+                .await
+                .map_err(|_| FleetError::Upload)?;
+            for point in points {
+                let name = point.rsplit('/').next().ok_or(FleetError::Capture)?;
+                pending.insert(name.to_owned());
+            }
+            persist_upload_journal(&journal, "delete-v1", &pending)?;
+            for name in pending.clone() {
+                destination
+                    .delete_point(&format!("{database}/{name}"))
+                    .await
+                    .map_err(|_| FleetError::Upload)?;
+                pending.remove(&name);
+                persist_upload_journal(&journal, "delete-v1", &pending)?;
+                removed += 1;
+            }
+        }
+        match std::fs::remove_dir_all(&stream.config.staging) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(FleetError::Capture),
+        }
+        if let Some(parent) = stream.config.staging.parent() {
+            super::sync_directory(parent).map_err(|_| FleetError::Capture)?;
+        }
+        Ok(removed)
+    }
+
     /// Stops future capture for a catalog-closed database, preserving all local
     /// and remote retained artifacts. The lifecycle owner separately revokes
     /// access, stops metering and performs authorized key/artifact deletion.
@@ -240,7 +304,7 @@ impl NativeBackupFleet {
     pub async fn sync_once(&mut self) -> Vec<(String, FleetError)> {
         let mut failures = Vec::new();
         for (identity, stream) in &mut self.streams {
-            if stream.due > Instant::now() {
+            if stream.closing || stream.due > Instant::now() {
                 continue;
             }
             let source = stream.config.engine.journaled_high_water();
@@ -282,6 +346,32 @@ impl NativeBackupFleet {
         point: Option<&str>,
         target: &Path,
     ) -> Result<super::RecoveryReceipt, FleetError> {
+        self.restore_selected(database, provider, point, None, target).await
+    }
+
+    /// Restores every complete transaction through an inclusive Unix millisecond
+    /// from one independently selected provider's retained encrypted chain.
+    ///
+    /// # Errors
+    /// Refuses timestamps outside verified coverage or an incomplete chain.
+    pub async fn restore_at_from_provider(
+        &mut self,
+        database: &str,
+        provider: Provider,
+        at_unix_millis: u64,
+        target: &Path,
+    ) -> Result<super::RecoveryReceipt, FleetError> {
+        self.restore_selected(database, provider, None, Some(at_unix_millis), target).await
+    }
+
+    async fn restore_selected(
+        &mut self,
+        database: &str,
+        provider: Provider,
+        point: Option<&str>,
+        at: Option<u64>,
+        target: &Path,
+    ) -> Result<super::RecoveryReceipt, FleetError> {
         let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
         let destination = stream
             .config
@@ -313,6 +403,17 @@ impl NativeBackupFleet {
                     .map_err(|_| FleetError::Upload)?;
             }
             let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
+            if let Some(at) = at {
+                return super::RestorePlan::restore_at_unix_millis_encrypted_in_region(
+                    at,
+                    &staging,
+                    target,
+                    reader.as_ref(),
+                    &stream.config.placement,
+                    stream.config.engine.database_owner().region(),
+                )
+                .map_err(|_| FleetError::Capture);
+            }
             match point {
                 Some(point) => super::RestorePlan::restore_recovery_point_encrypted_in_region(
                     point,
@@ -341,6 +442,33 @@ impl NativeBackupFleet {
     #[must_use]
     pub fn health(&self, database: &str) -> Option<&StreamHealth> {
         self.streams.get(database).map(|stream| &stream.health)
+    }
+
+    /// Observes protection against the current durable journal boundary.
+    ///
+    /// This performs no upload and does not reuse a cached source boundary.
+    /// Success requires every configured provider's latest readback receipt;
+    /// an idle unmeasured stream cannot claim a protected zero sequence.
+    ///
+    /// # Errors
+    /// Refuses an unknown stream or an unreadable durable source journal.
+    pub fn observe_protection(&self, database: &str) -> Result<StreamHealth, FleetError> {
+        let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
+        let source =
+            stream.config.engine.journaled_high_water().map_err(|_| FleetError::Capture)?;
+        let mut observed = stream.health.clone();
+        observed.source_sequence = source.unwrap_or_default().get();
+        let providers_verified = !stream.config.destinations.is_empty()
+            && observed.providers.len() == stream.config.destinations.len()
+            && stream.config.destinations.iter().all(|(provider, _)| {
+                observed.providers.iter().filter(|(actual, ok)| actual == provider && *ok).count()
+                    == 1
+            });
+        observed.protected = observed.protected
+            && observed.failures == 0
+            && providers_verified
+            && observed.protected_sequence >= observed.source_sequence;
+        Ok(observed)
     }
 
     /// Returns the configured policy separately from observed protection.
@@ -513,19 +641,32 @@ async fn enforce_retention(
     stream: &Stream,
     limits: FleetLimits,
 ) -> Result<(), FleetError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| FleetError::Capture)?
+        .as_millis();
+    enforce_retention_at(
+        identity,
+        stream,
+        limits,
+        u64::try_from(now).map_err(|_| FleetError::Capture)?,
+    )
+    .await
+}
+
+async fn enforce_retention_at(
+    identity: &str,
+    stream: &Stream,
+    limits: FleetLimits,
+    now: u64,
+) -> Result<(), FleetError> {
     let reader: Arc<dyn BackupReader + Send + Sync> = stream.config.keys.clone();
     let points = super::restore::discover_encrypted_points(&stream.config.staging, reader.as_ref())
         .map_err(|_| FleetError::Capture)?;
     if points.len() > limits.points_per_stream {
         return Err(FleetError::StagingFull);
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| FleetError::Capture)?
-        .as_millis();
-    let cutoff = u64::try_from(now)
-        .map_err(|_| FleetError::Capture)?
-        .saturating_sub(u64::from(stream.config.retention_days) * 86_400_000);
+    let cutoff = now.saturating_sub(u64::from(stream.config.retention_days) * 86_400_000);
     // Keep the newest complete root at/before the retention cutoff and every
     // newer point. The preceding root, rather than a timestamp-only segment
     // filter, preserves the complete chain through the entire promised window.
@@ -536,6 +677,8 @@ async fn enforce_retention(
     else {
         return Ok(());
     };
+    super::verify_members(&stream.config.staging, root.identity(), root.members())
+        .map_err(|_| FleetError::Capture)?;
     let root_name = format!("rp-{}", root.identity());
     for (provider, _) in &stream.config.destinations {
         let path = stream.config.staging.join(match provider {
@@ -865,6 +1008,7 @@ mod tests {
             assert!(fleet.sync_once().await.is_empty());
             let identity = engine.database_id().to_string();
             assert!(fleet.health(&identity).unwrap().protected);
+            assert!(fleet.observe_protection(&identity).unwrap().protected);
             drop(fleet);
             let mut fleet = NativeBackupFleet::new(limits).unwrap();
             fleet.attach(config()).unwrap();
@@ -890,6 +1034,48 @@ mod tests {
                 fleet.health(&identity).unwrap().providers,
                 vec![(Provider::Oci, true), (Provider::Tigris, true)]
             );
+            fleet
+                .change_policy(&identity, "policy-2", vec![(Provider::Tigris, second.clone())])
+                .await
+                .unwrap();
+            assert_eq!(fleet.policy(&identity).unwrap().0, "policy-2");
+            assert_eq!(fleet.health(&identity).unwrap().providers, vec![(Provider::Tigris, true)]);
+            // Explicit removal retains old provider history for retention/deletion.
+            assert!(!first.list_points(&identity, 8).await.unwrap().is_empty());
+            fleet
+                .change_policy(
+                    &identity,
+                    "policy-3",
+                    vec![(Provider::Oci, first.clone()), (Provider::Tigris, second.clone())],
+                )
+                .await
+                .unwrap();
+            assert!(fleet.health(&identity).unwrap().protected);
+            // A new durable write must be visible before another scheduler tick.
+            committed(put(
+                &engine,
+                "alpha",
+                "op-observe",
+                "doc-1",
+                "users",
+                text("observe"),
+                LocalDurability::Synced,
+            ));
+            let observed = fleet.observe_protection(&identity).unwrap();
+            assert!(!observed.protected);
+            assert!(observed.source_sequence > observed.protected_sequence);
+            assert!(
+                fleet.health(&identity).unwrap().protected,
+                "observation leaves historical receipt unchanged"
+            );
+            assert!(
+                fleet.purge_retained(&identity, &[first.clone(), second.clone()]).await.unwrap()
+                    > 0
+            );
+            assert!(first.list_points(&identity, 8).await.unwrap().is_empty());
+            assert!(second.list_points(&identity, 8).await.unwrap().is_empty());
+            assert!(fleet.sync_once().await.is_empty());
+            assert!(!staging.exists());
         });
     }
 }

@@ -333,6 +333,7 @@ pub struct ArtifactFact {
     /// Relative bundle member path.
     pub path: String,
     /// Length of the encrypted bytes published by the port.
+    #[schema(format = "uint64", minimum = 0)]
     pub length: u64,
     /// BLAKE3 digest of the encrypted bytes.
     pub checksum: String,
@@ -622,16 +623,20 @@ pub struct ExportStatus {
     /// Current lifecycle state.
     pub status: JobStatus,
     /// Snapshot capture time in Unix milliseconds for operation activity views.
+    #[schema(format = "uint64", minimum = 0)]
     pub created_at_millis: u64,
     /// Current bounded work phase.
     pub phase: ExportPhase,
     /// Cooperative cancellation availability and progress.
     pub cancellation: ExportCancellation,
     /// Durably emitted pages retained even when cancellation completes.
+    #[schema(format = "uint64", minimum = 0)]
     pub pages: u64,
     /// Records emitted so far.
+    #[schema(format = "uint64", minimum = 0)]
     pub records: u64,
     /// Optional estimate.
+    #[schema(format = "uint64", minimum = 0)]
     pub estimated_records: Option<u64>,
     /// Progress in the inclusive range 0..=10000 (basis points).
     pub progress_basis_points: u16,

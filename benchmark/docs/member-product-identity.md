@@ -28,7 +28,16 @@ every binding, requires the explicit `database:read`, `database:write`, or
 `database:admin` scope for the action, and rejects expired credentials. It creates
 a principal restricted to exactly the requested database, collection, and verb.
 
-Database routes currently use the member's fixed authoritative serving tenant/project.
+Production database routes resolve canonical database IDs in the admitted Member
+registry. Entries retain the actual resource-accounted Member engine lease and
+validate its durable environment/tenant/project/database/Region owner. Human
+names never act as aliases; unknown IDs cannot create files. Every lookup checks
+current Member readiness, and origin writes also require the engine's accepted
+origin epoch. Identity introspection uses this admitted owner mapping, ignoring
+caller tenant/project selectors for database routes. Static member data keys
+remain bound to their configured serving tenant/project; cross-owner admission
+fails even for broad verb scopes. The explicit local catalog mode retains its
+configured development labels.
 Project provisioning (`POST /api/v1/databases`) and operation status
 (`GET /api/v1/operations/{id}`) support dynamic project administration. Clients
 supply canonical ULIDs in `X-TerraScale-Tenant-Id` and `X-TerraScale-Project-Id`.
@@ -41,9 +50,8 @@ a `VerifiedProjectScope` extension for the provisioning handler. Static member
 admin keys retain their configured serving scope and cannot select other projects.
 
 Other global routes, including database listing and reactive view attachment,
-remain denied for delegated credentials. Multi-tenant document serving requires
-admitted ownership routing before its fixed mapping can be lifted. The identity
-producer also requires consensus-backed identity storage to preserve live
+remain denied for delegated credentials. The admitted registry is populated only after authenticated storage admission;
+pending intents cannot serve. The identity producer also requires consensus-backed identity storage to preserve live
 revocation and permission reductions across partitions; a local or stale replica
 does not satisfy that requirement.
 
@@ -66,3 +74,9 @@ The credential file must be a regular owner-only file. Startup refuses invalid
 UTF-8, invalid service-header bytes, short credentials, and invalid HTTPS pins.
 The dashboard configures the matching `TERRASCALE_IDENTITY_SERVICE_KEY`; its
 Better Auth issuer and public API resource must exactly match the member pins.
+
+The member reloads the owner-only identity service credential for each request.
+Atomic file replacement adopts rotations without a restart; missing or unsafe
+files deny requests instead of retaining the previous key. The private delivery
+adapter can prove adoption using `probe_service_key`, which requires an authenticated
+200 inactive response from the pinned authority without supplying user credentials.

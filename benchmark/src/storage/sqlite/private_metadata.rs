@@ -119,9 +119,19 @@ pub(super) fn stage_controls(
     provenance: &crate::storage::JournalProvenance,
     sequence: u64,
 ) -> Result<(), ()> {
-    for write in &intent.metadata {
+    let (metadata, rejected) = super::schema_bundles::prepare(connection, intent, provenance)?;
+    for write in &metadata {
+        if super::schema_bundles::collection(&write.key)
+            .is_some_and(|collection| rejected.contains(collection))
+        {
+            continue;
+        }
         let key = format!("metadata:{}", write.key);
+        let bundled = super::schema_bundles::collection(&write.key).is_some_and(|collection| {
+            metadata.iter().any(|candidate| candidate.key == format!("schema:bundle/{collection}"))
+        });
         if intent.replication_publication.is_none()
+            || bundled
             || incoming_control_wins(connection, &intent.tenant, &key, provenance)?
         {
             stage_metadata(connection, &intent.tenant, std::slice::from_ref(write), sequence)?;
@@ -129,6 +139,9 @@ pub(super) fn stage_controls(
         }
     }
     for write in &intent.schema_envelopes {
+        if rejected.contains(&write.collection) {
+            continue;
+        }
         let key = format!(
             "schema:{}:{}:{}:{}:{}:{}",
             write.database.len(),
@@ -138,7 +151,11 @@ pub(super) fn stage_controls(
             write.collection.len(),
             write.collection
         );
+        let bundled = metadata
+            .iter()
+            .any(|candidate| candidate.key == format!("schema:bundle/{}", write.collection));
         if intent.replication_publication.is_none()
+            || bundled
             || incoming_control_wins(connection, &intent.tenant, &key, provenance)?
         {
             stage_envelopes(connection, std::slice::from_ref(write))?;
@@ -148,7 +165,7 @@ pub(super) fn stage_controls(
     Ok(())
 }
 
-fn incoming_control_wins(
+pub(super) fn incoming_control_wins(
     connection: &Connection,
     tenant: &TenantId,
     key: &str,

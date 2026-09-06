@@ -58,13 +58,14 @@ mod exports;
 mod development;
 
 pub use development::DevelopmentRuntime;
+pub use webhooks::DispatchWorker;
 
 pub(crate) use exports::recover_exports;
 
 /// Starts the configured webhook worker once for a serving API instance.
-/// The owner aborts and joins the task when that instance shuts down.
+/// The owner calls its shutdown method when that instance stops serving.
 #[must_use]
-pub fn spawn_webhook_dispatcher(state: &Arc<ApiState>) -> Option<tokio::task::JoinHandle<()>> {
+pub fn spawn_webhook_dispatcher(state: &Arc<ApiState>) -> Option<DispatchWorker> {
     webhooks::spawn_dispatcher(state)
 }
 #[path = "api_schema.rs"]
@@ -1289,10 +1290,7 @@ async fn placement_headers(
     let Some(database) = database else {
         return response;
     };
-    let Some(control) = state.control.as_ref() else {
-        return response;
-    };
-    let Ok(Some(record)) = control.get(&database) else {
+    let Ok(record) = database_record(&state, &database) else {
         return response;
     };
     if let (Ok(placement), Ok(residency)) = (
@@ -1764,26 +1762,28 @@ async fn create_database(State(state): State<Arc<ApiState>>, scope: Option<Exten
 /// member's region does not host answers the 421 contract (D-58).
 #[utoipa::path(get, path = "/api/v1/databases/{name}", responses((status = 200, description = "Database record")))]
 async fn get_database(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
-    let Some(control) = state.control.clone() else {
-        return ApiError::control_unavailable().into_response();
-    };
-    match control.get(&name) {
-        Ok(Some(record)) => {
+    match database_record(&state, &name) {
+        Ok(record) => {
             if !record.placement.contains(&state.region) {
-                return ApiError::misdirected(&record.placement, record.residency_header())
-                    .into_response();
+                return ApiError::misdirected(&record.placement, record.residency_header()).into_response();
             }
             record_response(StatusCode::OK, &record)
-        }
-        Ok(None) => ApiError::database_not_found(&name).into_response(),
-        Err(error) => ApiError::control(error).into_response(),
+        },
+        Err(error) => error.into_response(),
     }
 }
 
 /// Soft-deletes one database: restorable for seven days. The backup
 /// stream stops with it; retention owns the artifacts (S-06).
 #[utoipa::path(delete, path = "/api/v1/databases/{name}", responses((status = 200, description = "Database soft-deleted")))]
-async fn delete_database(State(state): State<Arc<ApiState>>, Path(name): Path<String>) -> Response {
+async fn delete_database(State(state): State<Arc<ApiState>>, Path(name): Path<String>, Extension(principal): Extension<crate::api_keys::Principal>, headers: axum::http::HeaderMap) -> Response {
+    if let Some(authority) = &state.provisioning {
+        if !principal.scope().admits_database(Verbs::ADMIN, &name) { return ApiError::forbidden("whole database deletion").into_response(); }
+        let operation = match headers.get("idempotency-key").and_then(|value|value.to_str().ok()) { Some(value) => value, None => return ApiError { status:StatusCode::BAD_REQUEST,code:"missing_operation_id",message:"deletion requires an idempotency key".into(),fix:"send Idempotency-Key with a stable deletion operation identifier".into(),placement:None }.into_response() };
+        let (tenant_id,project_id) = match database_owner_scope(&state,&name) { Ok(value)=>value,Err(error)=>return error.into_response() };
+        let scope = crate::delegated_identity::VerifiedProjectScope { tenant_id,project_id };
+        return match authority.deletion(&scope,&name,operation,true).await { Ok(value)=>json_response(StatusCode::ACCEPTED,value.to_string()),Err(error)=>provisioning_error(error).into_response() };
+    }
     let Some(control) = state.control.clone() else {
         return ApiError::control_unavailable().into_response();
     };
@@ -2100,6 +2100,8 @@ impl WriteDurability {
         let class = Durability::of_header(headers)?;
         let unavailable = || durability_unavailable(class == Durability::Global);
         let progress = state.replication_progress.clone().ok_or_else(unavailable)?;
+        #[cfg(test)]
+        tests::rf2::replicate(&progress, engine, engine_scope);
         let owner = engine.database_owner();
         let scope = terrabase_cluster::production::DatabaseRouteScope::new(
             owner.tenant(), owner.project(), owner.database(),
@@ -2139,6 +2141,8 @@ impl WriteDurability {
         engine_scope: &terrabase::types::TenantScope,
         receipt: &terrabase::CommitReceipt,
     ) -> Result<(), ApiError> {
+        #[cfg(test)]
+        tests::rf2::replicate(&self.progress, engine, engine_scope);
         let sequence = receipt.sequence().get();
         self.progress.wait_regional(self.scope, sequence, self.timeout).await
             .map_err(|_| durability_unknown())?;
@@ -2531,6 +2535,10 @@ pub(crate) fn document_host(
         if !record.placement.contains(&state.region) {
             return Err(ApiError::misdirected(&record.placement, record.residency_header()));
         }
+        let scope = document_scope(database.host.engine()).map_err(|()| ApiError::storage_failure())?;
+        if database.host.engine().storage_usage_stopped_at(&scope).map_err(|_| ApiError::storage_failure())?.is_some() {
+            return Err(ApiError::database_not_found(name));
+        }
         return Ok(database.host.clone());
     }
     let record = database_record(state, name)?;
@@ -2539,7 +2547,12 @@ pub(crate) fn document_host(
         return Err(ApiError::misdirected(&record.placement, record.residency_header()));
     }
     let catalog = state.catalog.as_ref().ok_or_else(ApiError::control_unavailable)?;
-    catalog.host_for(&state.scope.0, &state.scope.1, name).map_err(|_| ApiError::storage_failure())
+    let host = catalog.host_for(&state.scope.0, &state.scope.1, name).map_err(|_| ApiError::storage_failure())?;
+    let tenant = terrabase::types::TenantId::try_new(host.tenant()).map_err(|_| ApiError::storage_failure())?;
+    let placement = terrabase::usage::UsagePlacement::try_new(tenant, &state.scope.1, name, name,
+        state.region, record.placement, &record.created_at.to_string()).map_err(|_| ApiError::storage_failure())?;
+    host.engine().configure_usage_placement(placement).map_err(|_| ApiError::storage_failure())?;
+    Ok(host)
 }
 
 pub(crate) fn database_record(state: &ApiState, name: &str) -> Result<crate::control::DatabaseRecord, ApiError> {
@@ -3653,8 +3666,19 @@ async fn restore_backup(
 async fn create_branch(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
+    Extension(principal): Extension<crate::api_keys::Principal>,
     body: String,
 ) -> Response {
+    if !principal.scope().admits_database(Verbs::ADMIN, &name) { return ApiError::forbidden("whole database branching").into_response(); }
+    if let Some(authority) = &state.provisioning {
+        let Some(registry) = &state.admitted_databases else { return ApiError::control_unavailable().into_response(); };
+        let parent = match registry.resolve(&name) { Ok(Some(value))=>value,Ok(None)=>return ApiError::database_not_found(&name).into_response(),Err(_)=>return ApiError::storage_failure().into_response() };
+        let value: serde_json::Value = match serde_json::from_str(&body) { Ok(value)=>value,Err(_)=>return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest).into_response() };
+        let (Some(target),Some(operation)) = (value.get("name").and_then(serde_json::Value::as_str),value.get("operation_id").and_then(serde_json::Value::as_str)) else { return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest).into_response(); };
+        if value.get("at").is_some() { return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest).into_response(); }
+        let scope = crate::delegated_identity::VerifiedProjectScope { tenant_id:parent.record.tenant_id.clone(),project_id:parent.record.project_id.clone() };
+        return match authority.branch(&scope,&parent.record,target,operation).await { Ok(value)=>json_response(StatusCode::ACCEPTED,serde_json::to_string(&value).unwrap_or_default()),Err(error)=>provisioning_error(error).into_response() };
+    }
     restore_or_branch(state, name, body, RestoreFlavor::Branch)
 }
 
@@ -3931,6 +3955,7 @@ mod tests {
     #[path = "conditional_create.rs"]
     mod conditional_create;
     mod cors;
+    pub(super) mod rf2;
     mod shared_journal;
     mod websocket;
     use super::API_PREFIX;
@@ -3954,6 +3979,40 @@ mod tests {
     use terrabase::regions::RegionCode;
     use terrabase::types::RegionId;
     use tower::util::ServiceExt;
+
+    #[tokio::test]
+    async fn delegated_identity_admitted_databases_bind_owners_and_ignore_selectors() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let first = &records[0];
+        let second = &records[1];
+        let (verifier, _, authority_task) = crate::delegated_identity::tests::authority_for(
+            &first.tenant_id, &first.project_id, &first.database_id, "read").await;
+        let mut state = state();
+        let editable = Arc::get_mut(&mut state).unwrap();
+        editable.admitted_databases = Some(Arc::new(registry));
+        editable.delegated_identity = Some(Arc::new(verifier));
+        editable.scope = (second.tenant_id.clone(), second.project_id.clone());
+        editable.keys = Some(Arc::new(crate::api_keys::KeyStore::with_keys(&[(
+            "tskey_tenant_bound_abcdefghijkl", "tenant-key", crate::api_keys::Scope::every_database(crate::api_keys::Verbs::ALL))])));
+        let app = router(state);
+        let request = |token: &str, database: &str| Request::builder()
+            .uri(format!("/api/v1/databases/{database}/collections"))
+            .header("authorization", format!("Bearer {token}"))
+            .header("x-terrascale-tenant-id", &second.tenant_id)
+            .header("x-terrascale-project-id", &second.project_id)
+            .body(Body::empty()).unwrap();
+        let admitted = app.clone().oneshot(request("delegated-token", &first.database_id)).await.unwrap();
+        assert_eq!(admitted.status(), StatusCode::OK);
+        let denied = app.clone().oneshot(request("tskey_tenant_bound_abcdefghijkl", &first.database_id)).await.unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+        let allowed_key = app.clone().oneshot(request("tskey_tenant_bound_abcdefghijkl", &second.database_id)).await.unwrap();
+        assert_eq!(allowed_key.status(), StatusCode::OK);
+        assert_eq!(app.clone().oneshot(request("delegated-token", "same-name")).await.unwrap().status(), StatusCode::NOT_FOUND);
+        authority_task.abort();
+        drop(app);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn delegated_identity_project_selectors_require_live_administration() {
@@ -4054,7 +4113,7 @@ mod tests {
             development: Arc::default(),
             provisioning: None,
             admitted_databases: None,
-            replication_progress: None,
+            replication_progress: Some(rf2::progress()),
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
             delegated_identity: None,

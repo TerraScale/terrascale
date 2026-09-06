@@ -127,6 +127,14 @@ fn persist(
         .begin(&scope, snapshot, operation.clone())
         .map_err(|_| "schema status transaction failed".to_owned())?;
     transaction
+        .stage_schema_bundle(
+            &target.collection,
+            record.document.generation,
+            crate::schema_api::schema_bundle_identity(record)
+                .map_err(|_| "schema bundle identity encoding failed".to_owned())?,
+        )
+        .map_err(|_| "schema bundle staging failed".to_owned())?;
+    transaction
         .stage_schema_metadata(
             &target.database,
             &target.branch,

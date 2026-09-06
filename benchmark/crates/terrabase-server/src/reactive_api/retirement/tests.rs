@@ -191,3 +191,21 @@ fn retirement_releases_source_and_quota_and_reattachment_preserves_history() {
     drop(host);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn deletion_removes_active_and_retired_origin_bytes_only_for_owner_scope() {
+    let store = ViewStore::new();
+    let request: AttachRequest =
+        serde_json::from_str(r#"{"databaseId":"db","statement":"SELECT * FROM orders"}"#).unwrap();
+    let (active, active_id) = store.attach(&request, "org:project:db").unwrap();
+    let (_, other_id) = store.attach(&request, "other:project:db").unwrap();
+    store.revoke_scope("org:project:db").unwrap();
+    assert!(store.capability_claims(&active_id, active.generation).is_err());
+    assert!(store.views.lock().unwrap().contains_key(&other_id));
+    store.revoke_scope("org:project:db").unwrap();
+    age(&store, &other_id);
+    store.retire_idle(tokio::time::Instant::now());
+    assert!(store.views.lock().unwrap().get(&other_id).unwrap().retired_at.is_some());
+    store.revoke_scope("other:project:db").unwrap();
+    assert!(!store.views.lock().unwrap().contains_key(&other_id));
+}

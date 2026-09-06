@@ -162,6 +162,30 @@ pub struct ProductionControl {
     pub orchestrator_principals: BTreeSet<String>,
     /// Separate read-only principals for authenticated lifecycle observations.
     pub observer_principals: BTreeSet<String>,
+    /// Explicit pinned signed-transition authorities; absent denies acceptance.
+    pub transition: Option<ProductionTransitionTrust>,
+}
+
+/// Public signing pins for membership acceptance and old-epoch fences.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProductionTransitionTrust {
+    /// Pinned GRU accepted-epoch issuer keys.
+    pub authority_keys: Vec<TransitionPublicKey>,
+    /// Pinned explicit genesis grant keys.
+    pub genesis_keys: Vec<TransitionPublicKey>,
+    /// Pinned old member fence receipt keys; identity is the exact SPIFFE URI.
+    pub member_keys: Vec<TransitionPublicKey>,
+}
+
+/// An Ed25519 public key file bound to an explicit authority identity.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransitionPublicKey {
+    /// Exact signed-envelope key identity.
+    pub key_id: String,
+    /// Absolute file containing the 32 raw public key bytes.
+    pub public_key_file: PathBuf,
 }
 
 /// Authenticated local orchestrator key-delivery endpoint.
@@ -436,6 +460,7 @@ struct FilePublicApi {
 #[serde(deny_unknown_fields)]
 struct FileProductionConfig {
     mode: String,
+    public_api: Option<FilePublicApi>,
     environment: FileProductionEnvironment,
     databases: Vec<FileProductionDatabase>,
     placement: FileProductionPlacement,
@@ -461,6 +486,7 @@ struct FileProductionControl {
     orchestrator_principals: Vec<String>,
     #[serde(default)]
     observer_principals: Vec<String>,
+    transition: Option<ProductionTransitionTrust>,
 }
 
 #[derive(Deserialize)]
@@ -842,11 +868,23 @@ impl ServerConfig {
                 {
                     return Err(ConfigError::InvalidMemberPrincipal);
                 }
+                if let Some(trust) = &control.transition {
+                    if trust.authority_keys.is_empty() || trust.genesis_keys.is_empty() { return Err(ConfigError::InvalidMemberPrincipal); }
+                    for pins in [&trust.authority_keys, &trust.genesis_keys, &trust.member_keys] {
+                        if pins.len() > 40 { return Err(ConfigError::InvalidMemberPrincipal); }
+                        let mut ids = BTreeSet::new();
+                        for pin in pins {
+                            if pin.key_id.is_empty() || pin.key_id.len() > 256 || !pin.key_id.bytes().all(|byte| (33..=126).contains(&byte)) || !ids.insert(&pin.key_id) { return Err(ConfigError::InvalidMemberPrincipal); }
+                            production_path(&pin.public_key_file)?;
+                        }
+                    }
+                }
                 paths.push(proposal_journal.clone());
                 Ok(ProductionControl {
                     proposal_journal,
                     orchestrator_principals: principals,
                     observer_principals: observers,
+                    transition: control.transition,
                 })
             })
             .transpose()?;
@@ -878,6 +916,7 @@ impl ServerConfig {
             .ok_or(ConfigError::InvalidProductionBoundary)?;
         let tbep_listen = production.transport.tbep_listen;
         let metrics_listen = production.transport.metrics_listen;
+        let public_api=parse_public_api(file.public_api.as_ref(),tbep_listen,metrics_listen)?;
         let uds = file
             .transport
             .uds
@@ -911,7 +950,7 @@ impl ServerConfig {
             client_ca: production.transport.client_ca.clone(),
             member_principals: BTreeSet::new(),
             uds,
-            public_api: None,
+            public_api,
             replication_peers: Vec::new(),
             observability_listen: metrics_listen,
             max_message_bytes: file.transport.max_message_bytes,

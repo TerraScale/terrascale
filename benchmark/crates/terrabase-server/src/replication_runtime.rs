@@ -56,6 +56,31 @@ impl Default for ReplicationProgress {
 }
 
 impl ReplicationProgress {
+    /// Executes a bounded signing operation while the evidence fence is held.
+    /// The caller must not reenter this progress ledger from the closure.
+    ///
+    /// # Errors
+    /// Refuses unknown or fenced assignments and poisoned evidence.
+    pub fn with_active_boundary<T>(
+        &self,
+        scope: DatabaseRouteScope,
+        operation: impl FnOnce(&ReplicationBoundary) -> T,
+    ) -> Result<T, ReplicationWaitError> {
+        let databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
+        let progress = databases.get(&scope).ok_or(ReplicationWaitError::NotAdmitted)?;
+        if progress.fenced {
+            return Err(ReplicationWaitError::Fenced);
+        }
+        let boundary = ReplicationBoundary {
+            regional_sequence: progress.regional_sequence,
+            regional_observed: progress.regional_observed,
+            regions: progress.regions.clone(),
+        };
+        let result = operation(&boundary);
+        drop(databases);
+        Ok(result)
+    }
+
     /// Reads receipt evidence for a transition signer after workers have drained.
     /// This value alone does not prove fencing: the signer must durably fence
     /// the epoch and stop all old assignment workers before issuing a grant.
@@ -72,8 +97,8 @@ impl ReplicationProgress {
                 (
                     *scope,
                     ReplicationBoundary {
-                regional_sequence: progress.regional_sequence,
-                regional_observed: progress.regional_observed,
+                        regional_sequence: progress.regional_sequence,
+                        regional_observed: progress.regional_observed,
                         regions: progress.regions.clone(),
                     },
                 )
@@ -85,13 +110,24 @@ impl ReplicationProgress {
     ///
     /// # Errors
     /// Refuses poisoned state rather than reporting healthy progress.
-    pub fn active_boundaries(&self) -> Result<BTreeMap<DatabaseRouteScope, ReplicationBoundary>, ReplicationWaitError> {
+    pub fn active_boundaries(
+        &self,
+    ) -> Result<BTreeMap<DatabaseRouteScope, ReplicationBoundary>, ReplicationWaitError> {
         let databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
-        Ok(databases.iter().filter(|(_, progress)| !progress.fenced).map(|(scope, progress)| (*scope, ReplicationBoundary {
-            regional_sequence: progress.regional_sequence,
-            regional_observed: progress.regional_observed,
-            regions: progress.regions.clone(),
-        })).collect())
+        Ok(databases
+            .iter()
+            .filter(|(_, progress)| !progress.fenced)
+            .map(|(scope, progress)| {
+                (
+                    *scope,
+                    ReplicationBoundary {
+                        regional_sequence: progress.regional_sequence,
+                        regional_observed: progress.regional_observed,
+                        regions: progress.regions.clone(),
+                    },
+                )
+            })
+            .collect())
     }
     /// Registers immutable selected Regions from an accepted assignment.
     ///

@@ -123,6 +123,8 @@ pub(crate) struct CommitIntent {
     pub(crate) durability: LocalDurability,
     /// Exact causal frontier previously proven uniform for a GlobalDurable write.
     /// Compared after replay lookup under the SQLite writer transaction.
+    /// Captured origin authority epoch; checked before idempotent receipt replay.
+    pub(crate) expected_origin_epoch: Option<u64>,
     pub(crate) expected_uniform_context: Option<Vec<u8>>,
     /// Trusted usage admission bound atomically to this origin mutation.
     /// Replication, repair, and internal writes carry `None` and never mint.

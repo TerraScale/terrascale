@@ -623,6 +623,8 @@ pub enum CatalogValidationError {
     DuplicateDatabaseScope,
     /// A production catalog entry has no typed owner scope.
     UnscopedDatabase,
+    /// A required production key lease is unavailable or belongs to another scope.
+    EncryptionUnavailable,
     /// The environment identity is malformed.
     InvalidEnvironment,
     /// Admission limits are zero or outside the accepted bound.
@@ -776,6 +778,7 @@ pub struct MemberStatus {
 }
 
 struct DatabaseEntry {
+    storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
     location: PathBuf,
     scope: Option<DatabaseScope>,
     engine: ResidentEngine,
@@ -890,23 +893,42 @@ impl Member {
         specifications: impl IntoIterator<Item = DatabaseSpec>,
         limits: AdmissionLimits,
     ) -> Result<Self, MemberOpenError> {
+        Self::open_with_keys(root, specifications, limits, BTreeMap::new(), true)
+    }
+
+    fn open_with_keys(
+        root: impl AsRef<Path>,
+        specifications: impl IntoIterator<Item = DatabaseSpec>,
+        limits: AdmissionLimits,
+        keys: BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>>,
+        probe: bool,
+    ) -> Result<Self, MemberOpenError> {
         let root = validate_root(root.as_ref()).map_err(MemberOpenError::Validation)?;
         validate_limits(limits).map_err(MemberOpenError::Validation)?;
         let specs = collect_and_validate_specs(&root, specifications)
             .map_err(MemberOpenError::Validation)?;
 
         for (id, location, scope) in &specs {
+            if !probe {
+                continue;
+            }
             let config = EngineConfig::durable(location.clone())
                 .map(|config| {
-                    scope
-                        .as_ref()
-                        .map_or(config.clone(), |scope| config.with_owner(scope.owner().clone()))
+                    scope.as_ref().map_or(config.clone(), |scope| {
+                        config.with_owner(scope.owner().clone()).with_replication_origin(
+                            crate::types::RegionId::try_new(scope.owner().region().as_str())
+                                .expect("registered Region"),
+                        )
+                    })
                 })
                 .map_err(|error| MemberOpenError::EngineConfig { database: id.clone(), error });
             let config = match config {
                 Ok(config) => config,
                 Err(error) => return Err(error),
             };
+            let config = keys
+                .get(id)
+                .map_or(config.clone(), |keys| config.with_storage_keys(Arc::clone(keys)));
             if let Err(error) = revalidate_created_location(&root, &location) {
                 return Err(MemberOpenError::Validation(error));
             }
@@ -921,6 +943,7 @@ impl Member {
             .into_iter()
             .map(|(id, location, scope)| {
                 let entry = DatabaseEntry {
+                    storage_keys: keys.get(&id).cloned(),
                     location,
                     scope,
                     engine: ResidentEngine::Closed,
@@ -969,12 +992,13 @@ impl Member {
         root: impl AsRef<Path>,
         specifications: impl IntoIterator<Item = DatabaseSpec>,
         limits: AdmissionLimits,
+        keys: BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>>,
     ) -> Result<Self, MemberOpenError> {
         let specifications: Vec<_> = specifications.into_iter().collect();
         if specifications.iter().any(|spec| spec.scope.is_none()) {
             return Err(MemberOpenError::Validation(CatalogValidationError::UnscopedDatabase));
         }
-        Self::open(root, specifications, limits)
+        Self::open_with_keys(root, specifications, limits, keys, false)
     }
 
     /// Adds a scoped storage entry without granting placement or write authority.
@@ -986,12 +1010,27 @@ impl Member {
         &self,
         specification: DatabaseSpec,
         per_database: usize,
+        keys: Arc<dyn crate::encryption::DatabaseKeySource>,
     ) -> Result<(), CatalogValidationError> {
         if specification.scope.is_none() {
             return Err(CatalogValidationError::UnscopedDatabase);
         }
         if per_database == 0 || per_database > MAX_ADMISSION_PERMITS {
             return Err(CatalogValidationError::InvalidAdmissionLimits);
+        }
+        let owner = specification.scope.as_ref().expect("scope checked").owner();
+        let lease =
+            keys.current_lease().map_err(|_| CatalogValidationError::EncryptionUnavailable)?;
+        let key_scope = lease.metadata().scope();
+        if key_scope.environment() != owner.environment().as_str()
+            || key_scope.tenant() != owner.tenant()
+            || key_scope.project() != Some(owner.project())
+            || key_scope.database() != owner.database()
+            || key_scope.purpose() != crate::encryption::KeyPurpose::Data
+            || lease.provider() != crate::encryption::KeyProviderIdentity::OciVault
+            || lease.is_expired()
+        {
+            return Err(CatalogValidationError::EncryptionUnavailable);
         }
         let mut validated = collect_and_validate_specs(&self.inner.root, [specification])?;
         let (id, location, scope) = validated.pop().expect("one validated specification");
@@ -1015,6 +1054,7 @@ impl Member {
         catalog.databases.insert(
             id,
             DatabaseEntry {
+                storage_keys: Some(keys),
                 location,
                 scope,
                 engine: ResidentEngine::Closed,
@@ -1709,6 +1749,8 @@ fn open_database_engine(
             .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?
             .scope
             .clone();
+        let storage_keys =
+            catalog.databases.get(database).and_then(|entry| entry.storage_keys.clone());
         let open_engine = catalog.databases.get(database).and_then(|entry| {
             if let ResidentEngine::Open(engine) = &entry.engine {
                 Some(Arc::clone(engine))
@@ -1764,9 +1806,15 @@ fn open_database_engine(
                 let config = EngineConfig::durable(location).map_err(|error| {
                     MemberError::EngineConfig { database: database.clone(), error }
                 })?;
-                let config = scope
+                let config = scope.as_ref().map_or(config.clone(), |scope| {
+                    config.with_owner(scope.owner().clone()).with_replication_origin(
+                        crate::types::RegionId::try_new(scope.owner().region().as_str())
+                            .expect("registered Region"),
+                    )
+                });
+                let config = storage_keys
                     .as_ref()
-                    .map_or(config.clone(), |scope| config.with_owner(scope.owner().clone()));
+                    .map_or(config.clone(), |keys| config.with_storage_keys(Arc::clone(keys)));
                 let engine = Engine::open(config).map(Arc::new).map_err(|error| {
                     MemberError::EngineOpen { database: database.clone(), error }
                 })?;
@@ -1922,6 +1970,51 @@ mod tests {
         path
     }
 
+    #[derive(Debug)]
+    struct TestStorageKeys(crate::encryption::KeyVersionMetadata);
+    impl crate::encryption::DatabaseKeySource for TestStorageKeys {
+        fn current_lease(
+            &self,
+        ) -> Result<Arc<crate::encryption::DatabaseKeyLease>, crate::encryption::EncryptionError>
+        {
+            self.lease(self.0.version())
+        }
+        fn lease(
+            &self,
+            version: crate::encryption::DatabaseKeyVersion,
+        ) -> Result<Arc<crate::encryption::DatabaseKeyLease>, crate::encryption::EncryptionError>
+        {
+            if version != self.0.version() {
+                return Err(crate::encryption::EncryptionError::InvalidKeyMetadata);
+            }
+            crate::encryption::DatabaseKeyLease::test_oci_vault(
+                self.0.clone(),
+                crate::encryption::DatabaseKey::from_bytes([29; 32]),
+                Duration::from_secs(60),
+            )
+            .map(Arc::new)
+        }
+    }
+    fn storage_keys(
+        scope: &DatabaseScope,
+    ) -> BTreeMap<DatabaseId, Arc<dyn crate::encryption::DatabaseKeySource>> {
+        let metadata = crate::encryption::KeyVersionMetadata::new(
+            crate::encryption::KeyScope::new_with_project(
+                scope.owner().environment().as_str(),
+                scope.tenant(),
+                scope.project(),
+                scope.database(),
+                crate::encryption::KeyPurpose::Data,
+            )
+            .unwrap(),
+            crate::encryption::DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
+        );
+        BTreeMap::from([(
+            scope.database().into(),
+            Arc::new(TestStorageKeys(metadata)) as Arc<dyn crate::encryption::DatabaseKeySource>,
+        )])
+    }
+
     #[test]
     fn production_scope_is_bound_and_survives_member_restart() {
         let root = root("restart");
@@ -1935,14 +2028,24 @@ mod tests {
         .expect("scope");
         let spec = DatabaseSpec::scoped(scope.clone(), "db");
         let id = DatabaseId::from(scope.database());
-        let member = Member::open_production(&root, [spec.clone()], AdmissionLimits::new(2, 1))
-            .expect("production member");
+        let member = Member::open_production(
+            &root,
+            [spec.clone()],
+            AdmissionLimits::new(2, 1),
+            storage_keys(&scope),
+        )
+        .expect("production member");
         let lease = member.acquire(&id).expect("lease");
         assert_eq!(lease.database_owner().database(), scope.database());
         drop(lease);
         member.close(Duration::from_secs(1)).expect("close");
-        let reopened =
-            Member::open_production(&root, [spec], AdmissionLimits::new(2, 1)).expect("restart");
+        let reopened = Member::open_production(
+            &root,
+            [spec],
+            AdmissionLimits::new(2, 1),
+            storage_keys(&scope),
+        )
+        .expect("restart");
         let lease = reopened.acquire(&id).expect("lease");
         assert_eq!(lease.database_owner(), scope.owner());
         drop(lease);
@@ -1963,8 +2066,13 @@ mod tests {
         .expect("scope");
         let spec = DatabaseSpec::scoped(scope.clone(), "db");
         let id = DatabaseId::from(scope.database());
-        let member = Member::open_production(&root, [spec], AdmissionLimits::new(4, 2))
-            .expect("production member");
+        let member = Member::open_production(
+            &root,
+            [spec],
+            AdmissionLimits::new(4, 2),
+            storage_keys(&scope),
+        )
+        .expect("production member");
         // A just-used database is never idle.
         drop(member.acquire(&id).expect("initial open"));
         assert_eq!(member.close_idle(Duration::from_mins(1)), 0);
@@ -1994,8 +2102,13 @@ mod tests {
         .expect("scope");
         let spec = DatabaseSpec::scoped(scope.clone(), "db");
         let id = DatabaseId::from(scope.database());
-        let member = Member::open_production(&root, [spec], AdmissionLimits::new(4, 2))
-            .expect("production member");
+        let member = Member::open_production(
+            &root,
+            [spec],
+            AdmissionLimits::new(4, 2),
+            storage_keys(&scope),
+        )
+        .expect("production member");
         let lease = member.acquire(&id).expect("lease");
         std::thread::sleep(Duration::from_millis(5));
         // The outstanding lease pins the engine: nothing is evicted and the
@@ -2014,7 +2127,8 @@ mod tests {
             Member::open_production(
                 &root,
                 [DatabaseSpec::new("local", "db")],
-                AdmissionLimits::default()
+                AdmissionLimits::default(),
+                BTreeMap::new()
             ),
             Err(MemberOpenError::Validation(CatalogValidationError::UnscopedDatabase))
         ));

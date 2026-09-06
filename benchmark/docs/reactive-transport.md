@@ -140,3 +140,22 @@ Attach reports `X-TerraScale-Region`; the SDK uses that Region's member host for
 optional WebSockets, as required by D-24/D-48. Snapshot and log requests retain
 the sync origin. The Snippet accepts only those HTTP paths. This local
 qualification does not qualify production DNS, TLS, or Cloudflare deployment.
+
+### Database deletion revocation
+
+Native deletion commits its operation identity, retention boundary, and billing
+cutoff together before fencing origin writes. The member then removes every
+active and idle shared view for the database's organization/project scope,
+including retained origin snapshots and logs, and wakes waiting polls. Attach
+installation and refresh check the durable deletion fence; an attach prepared
+before deletion cannot reinstall a view afterward. WebSocket authorization checks
+live database admission every second and before each delivery.
+
+This is origin revocation. It cannot withdraw bytes already received or an
+in-flight response. Immutable responses advertise up to seven days of CDN
+retention. View capabilities expire within twenty minutes of issuance, but that
+bound protects cached responses only when the cache delivery layer validates the
+capability on every hit. Removing native views does not purge a CDN cache. A
+complete cached-delivery revocation claim therefore also requires the delivery
+layer's verified per-hit authorization or an acknowledged cache purge; the native
+stop receipt alone is insufficient evidence for that claim.

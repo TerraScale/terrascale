@@ -797,6 +797,7 @@ fn intent(operation: &str, writes: Vec<StagedWrite>, durability: LocalDurability
         snapshot_sequence: StorageSequence::new(0),
         durability,
         usage_admission: None,
+        expected_origin_epoch: Some(0),
         expected_uniform_context: None,
         merge_conflict: None,
         replication_fingerprint: None,
@@ -1711,6 +1712,7 @@ fn commit_as(
         snapshot_sequence: storage.published_state().0,
         durability: LocalDurability::Written,
         usage_admission: None,
+        expected_origin_epoch: Some(0),
         expected_uniform_context: None,
         merge_conflict: None,
         replication_fingerprint: None,
@@ -2790,14 +2792,14 @@ fn checkpoint_startup_refuses_missing_or_corrupt_database_without_creating_it() 
     let readers = Arc::new(std::sync::Mutex::new(super::ReaderPool::new(1024)));
     let gate = Arc::new(std::sync::Mutex::new(()));
     assert!(matches!(
-        super::spawn_checkpointer(path.clone(), "expected", readers.clone(), gate.clone()),
+        super::spawn_checkpointer(path.clone(), "expected", readers.clone(), gate.clone(), None),
         Err(StorageOpenError::Unavailable)
     ));
     assert!(!path.exists(), "checkpoint startup must never create an empty replacement");
     let corrupt = b"not a SQLite database";
     std::fs::write(&path, corrupt).unwrap();
     assert!(matches!(
-        super::spawn_checkpointer(path.clone(), "expected", readers, gate),
+        super::spawn_checkpointer(path.clone(), "expected", readers, gate, None),
         Err(StorageOpenError::Unavailable)
     ));
     assert_eq!(std::fs::read(&path).unwrap(), corrupt);
@@ -2883,7 +2885,8 @@ fn reader_refill_rejects_foreign_database_binding() {
             foreign_path.clone(),
             &storage.expected_binding,
             storage.readers.clone(),
-            storage.checkpoint_gate.clone()
+            storage.checkpoint_gate.clone(),
+            None,
         ),
         Err(StorageOpenError::Unavailable)
     ));

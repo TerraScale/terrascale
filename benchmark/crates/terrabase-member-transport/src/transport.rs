@@ -47,7 +47,10 @@ impl FrameSelector {
                 | (Self::Requests, FrameKind::CatchUpRequest)
                 | (Self::Deliveries, FrameKind::CatchUpBatch | FrameKind::Push)
                 | (Self::Reports, FrameKind::AckReport | FrameKind::AckBatch)
-        ) || matches!((self, kind), (Self::Deliveries, FrameKind::ReplicationBatch))
+        ) || matches!(
+            (self, kind),
+            (Self::Deliveries, FrameKind::ReplicationBatch | FrameKind::ReplicationPublication)
+        )
     }
 }
 

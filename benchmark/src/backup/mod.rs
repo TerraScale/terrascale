@@ -395,6 +395,7 @@ pub struct BackupPlan {
     placement: Option<PlacementLock>,
     reader: Option<Arc<dyn BackupReader + Send + Sync>>,
     archive_byte_limit: Option<u64>,
+    capture_unix_millis: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -407,6 +408,15 @@ enum BackupEncryptionMode {
 }
 
 impl BackupPlan {
+    /// Pins the capture clock for an idempotent retry of the same source boundary.
+    /// Supply the original manifest capture time; a newer source commit than this
+    /// clock fails closed. New scheduled captures should use the default clock.
+    #[must_use]
+    pub fn with_capture_unix_millis(mut self, captured_unix_millis: u64) -> Self {
+        self.capture_unix_millis = Some(captured_unix_millis);
+        self
+    }
+
     /// Plans a full backup of every committed tenant at the run's proven
     /// boundary.
     #[must_use]
@@ -423,6 +433,7 @@ impl BackupPlan {
             placement: None,
             reader: None,
             archive_byte_limit: None,
+            capture_unix_millis: None,
         }
     }
 
@@ -450,6 +461,7 @@ impl BackupPlan {
             placement: None,
             reader: None,
             archive_byte_limit: None,
+            capture_unix_millis: None,
         }
     }
 
@@ -468,6 +480,7 @@ impl BackupPlan {
             placement: None,
             reader: None,
             archive_byte_limit: None,
+            capture_unix_millis: None,
         }
     }
 
@@ -1085,13 +1098,26 @@ fn execute(
 
     let tenants = selected_tenants(engine, &mut state, plan)?;
     writer.set_byte_limit(plan.archive_byte_limit);
+    let now_unix_millis = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| BackupError::SourceUnavailable)?
+            .as_millis(),
+    )
+    .map_err(|_| BackupError::SourceUnavailable)?;
+    let captured_unix_millis = plan.capture_unix_millis.unwrap_or(now_unix_millis);
+    if captured_unix_millis > now_unix_millis {
+        return Err(BackupError::SourceUnavailable);
+    }
+    // Sample the clock before taking the source high-water snapshot. The
+    // snapshot includes everything committed by that instant; a racing newer
+    // commit clock causes refusal below instead of overstating idle coverage.
     let boundary = resolve_boundary(engine, &mut state, plan, destination)?;
-    let boundary_unix_millis = engine.backup_boundary_unix_millis(boundary)
-        .map_err(|_| BackupError::SourceUnavailable)?;
-    let captured_unix_millis = u64::try_from(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).map_err(|_| BackupError::SourceUnavailable)?.as_millis())
-        .map_err(|_| BackupError::SourceUnavailable)?;
-    if captured_unix_millis < boundary_unix_millis { return Err(BackupError::SourceUnavailable); }
+    let boundary_unix_millis =
+        engine.backup_boundary_unix_millis(boundary).map_err(|_| BackupError::SourceUnavailable)?;
+    if captured_unix_millis < boundary_unix_millis {
+        return Err(BackupError::SourceUnavailable);
+    }
     // Bind the complete selected scope even when a tenant contributes no
     // records to this particular range. Object-store chain planners use the
     // manifest scope to detect a requested tenant that is absent from the
@@ -1252,7 +1278,11 @@ fn archive_journal_range(
                 if commit.sequence().get() > boundary.get() {
                     continue;
                 }
-                archive_commit(state, writer, tenant_counts, commit)?;
+                state.spend_read()?;
+                let committed_unix_millis = engine
+                    .backup_boundary_unix_millis(commit.sequence())
+                    .map_err(|_| BackupError::SourceUnavailable)?;
+                archive_commit(state, writer, tenant_counts, commit, committed_unix_millis)?;
             }
             after = page.last().map_or(after, PublishedCommit::sequence);
             if reached_boundary {
@@ -1314,6 +1344,8 @@ fn archive_state_at(
                 writer
                     .write(&Record::Document {
                         tenant: tenant.clone(),
+                        sequence: boundary.get(),
+                        committed_unix_millis: 0,
                         document,
                         durability: record.durability(),
                     })
@@ -1403,6 +1435,7 @@ fn archive_commit(
     writer: &mut MemberWriter,
     tenant_counts: &mut BTreeMap<TenantId, (u64, u64)>,
     commit: &PublishedCommit,
+    committed_unix_millis: u64,
 ) -> Result<(), BackupError> {
     let disclose =
         matches!(commit.durability(), LocalDurability::Buffered | LocalDurability::Written);
@@ -1428,7 +1461,7 @@ fn archive_commit(
                     .write(&Record::Document {
                         tenant: commit.tenant().clone(),
                         sequence: commit.sequence().get(),
-                        committed_unix_millis: commit.committed_unix_millis(),
+                        committed_unix_millis,
                         document: document.clone(),
                         durability: commit.durability(),
                     })
@@ -1447,7 +1480,7 @@ fn archive_commit(
                     .write(&Record::Delete {
                         tenant: commit.tenant().clone(),
                         sequence: commit.sequence().get(),
-                        committed_unix_millis: commit.committed_unix_millis(),
+                        committed_unix_millis,
                         collection: collection.as_ref().map(|name| name.as_str().to_owned()),
                         id: id.as_str().to_owned(),
                         version_at_delete: *version_at_delete,

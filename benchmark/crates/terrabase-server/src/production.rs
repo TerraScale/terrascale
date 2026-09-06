@@ -6,9 +6,10 @@
 //! readiness setup: constructing this value proves only that storage and the
 //! static production catalogs agree.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -217,7 +218,38 @@ impl ProductionCatalogBootstrap {
             ));
         }
 
-        let member = Member::open_production(&root, specs.clone(), limits)
+        let key_config =
+            config.keys.as_ref().ok_or(ProductionCatalogError::EncryptionUnavailable)?;
+        let provider = terrabase::encryption::OciVaultKeyDelivery::new(
+            key_config.socket.clone(),
+            key_config.orchestrator_uid,
+            key_config.socket_gid,
+        )
+        .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
+        let mut keys: BTreeMap<
+            terrabase::member::DatabaseId,
+            Arc<dyn terrabase::encryption::DatabaseKeySource>,
+        > = BTreeMap::new();
+        for database in config.databases.iter().filter(|database| database.enabled) {
+            let scope = terrabase::encryption::KeyScope::new_with_project(
+                config.environment.name.as_str(),
+                database.tenant,
+                database.project,
+                database.database,
+                terrabase::encryption::KeyPurpose::Data,
+            )
+            .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
+            let metadata =
+                terrabase::encryption::KeyVersionMetadata::new(scope, database.encryption_key);
+            let source = terrabase::encryption::OciVaultDatabaseKeys::new(
+                provider.clone(),
+                metadata,
+                database.region,
+            )
+            .map_err(|_| ProductionCatalogError::EncryptionUnavailable)?;
+            keys.insert(database.database.into(), Arc::new(source));
+        }
+        let member = Member::open_production(&root, specs.clone(), limits, keys)
             .map_err(ProductionCatalogError::MemberOpen)?;
 
         let routes = match DatabaseRoutingCatalog::try_new(route_scopes) {
@@ -366,6 +398,8 @@ pub enum ProductionCatalogError {
     QuotaOverflow,
     /// A typed database owner could not be constructed.
     InvalidScope,
+    /// Required database key delivery or authorization is unavailable.
+    EncryptionUnavailable,
     /// The storage Member refused to open.
     MemberOpen(MemberOpenError),
     /// The routing catalog refused the configured scopes.
@@ -402,6 +436,9 @@ impl std::fmt::Display for ProductionCatalogError {
             }
             Self::QuotaOverflow => "database admission quotas exceed the bounded Member capacity",
             Self::InvalidScope => "a production database scope is invalid",
+            Self::EncryptionUnavailable => {
+                "production database encryption key delivery is unavailable"
+            }
             Self::MemberOpen(_) => "the production Member catalog could not be opened",
             Self::Routing(_) => "the production routing catalog is invalid",
             Self::Placement(_) => "the production placement is invalid",

@@ -931,7 +931,7 @@ impl LaneMember {
                 // minor 2) is the S-05 cross-region lane's frame, not this
                 // W4 protocol's: the driver records the rejection and never
                 // applies it — the RegionLink owns that apply path.
-                Payload::ReplicationBatch { .. } => {
+                Payload::ReplicationBatch { .. } | Payload::ReplicationPublication { .. } => {
                     self.record_rejection(EnvelopeRejection {
                         reason: EnvelopeError::UnsupportedKind,
                         kind: Some(FrameKind::ReplicationBatch),

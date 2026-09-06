@@ -200,6 +200,13 @@ fn resolve_encrypted_chain(
     selection: &Selection,
 ) -> Result<Vec<BackupManifest>, BackupError> {
     let points = discover_encrypted_points(destination, cipher)?;
+    resolve_encrypted_points_chain(&points, selection)
+}
+
+fn resolve_encrypted_points_chain(
+    points: &[BackupManifest],
+    selection: &Selection,
+) -> Result<Vec<BackupManifest>, BackupError> {
     let head = match selection {
         Selection::Latest => points
             .iter()
@@ -232,6 +239,39 @@ fn resolve_encrypted_chain(
     chain.reverse();
     validate_chain_frontier(&chain)?;
     Ok(chain)
+}
+
+fn resolve_timestamp_chain(
+    destination: &Path,
+    cipher: &dyn BackupReader,
+    requested: u64,
+) -> Result<Vec<BackupManifest>, BackupError> {
+    let points = discover_encrypted_points(destination, cipher)?;
+    let mut selected: Option<Vec<BackupManifest>> = None;
+    for point in points.iter().filter(|point| point.recoverable_through_unix_millis() >= requested)
+    {
+        let chain = resolve_encrypted_points_chain(
+            &points,
+            &Selection::Point { identity: point.identity().to_owned() },
+        )?;
+        let root = chain.first().ok_or(BackupError::ChainIncomplete)?;
+        if root.boundary_unix_millis() > requested {
+            continue;
+        }
+        // Prefer the newest usable root, then the newest covered head. Reading
+        // through equal-clock heads includes every available transaction in that ms.
+        let rank = (root.boundary_sequence().get(), point.boundary_sequence().get());
+        let replace = selected.as_ref().is_none_or(|prior| {
+            rank > (
+                prior[0].boundary_sequence().get(),
+                prior.last().expect("nonempty chain").boundary_sequence().get(),
+            )
+        });
+        if replace {
+            selected = Some(chain);
+        }
+    }
+    selected.ok_or(BackupError::ChainIncomplete)
 }
 
 pub(super) fn discover_encrypted_points(
@@ -469,6 +509,8 @@ impl RestoredTenant {
 /// `docs/evidence/recovery/`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecoveryReceipt {
+    requested_unix_millis: Option<u64>,
+    restored_source_sequence: StorageSequence,
     storage_format: &'static str,
     selected: RestoreChainLink,
     chain: Vec<RestoreChainLink>,
@@ -494,10 +536,23 @@ pub struct RecoveryReceipt {
     tenants_verified: u64,
     documents_read_back: u64,
     representative_values_matched: u64,
+    logical_checksum: String,
     largest_tenant_archive_bytes: u64,
 }
 
 impl RecoveryReceipt {
+    /// Returns the requested inclusive durable commit-clock cutoff, when restoring by time.
+    #[must_use]
+    pub fn requested_unix_millis(&self) -> Option<u64> {
+        self.requested_unix_millis
+    }
+
+    /// Returns the last original source transaction included in the restored prefix.
+    #[must_use]
+    pub fn restored_source_sequence(&self) -> StorageSequence {
+        self.restored_source_sequence
+    }
+
     /// Returns the storage format label of the restored target location.
     #[must_use]
     pub fn storage_format(&self) -> &str {
@@ -675,6 +730,12 @@ impl RecoveryReceipt {
     #[must_use]
     pub fn documents_read_back(&self) -> u64 {
         self.documents_read_back
+    }
+
+    /// Returns how many representative values compared byte-exactly.
+    #[must_use]
+    pub fn logical_checksum(&self) -> &str {
+        &self.logical_checksum
     }
 
     /// Returns how many representative values compared byte-exactly.
@@ -965,6 +1026,50 @@ impl RestorePlan {
         )
     }
 
+    /// Restores complete source transactions through an inclusive Unix-millisecond cutoff.
+    /// The durable source clock is nondecreasing: transactions sharing a millisecond
+    /// are included together. A retained full root at or before the cutoff and a
+    /// complete chain reaching the cutoff are required. Every consumed archive
+    /// member is authenticated, including records later than the cutoff.
+    ///
+    /// # Errors
+    /// Returns `ChainIncomplete` outside the retained, remotely covered interval;
+    /// placement, authentication, and replay failures leave no published target.
+    pub fn restore_at_unix_millis_encrypted_in_region(
+        requested_unix_millis: u64,
+        destination: &Path,
+        target: &Path,
+        cipher: &dyn BackupReader,
+        placement: &PlacementLock,
+        target_region: RegionCode,
+    ) -> Result<RecoveryReceipt, BackupError> {
+        if !placement.allows(target_region) {
+            return Err(BackupError::PlacementMismatch);
+        }
+        let chain = resolve_timestamp_chain(destination, cipher, requested_unix_millis)?;
+        admit_target(target)?;
+        let staging = StagingDir::create(target)?;
+        let outcome = build_and_verify_encrypted(
+            &staging,
+            destination,
+            &chain,
+            cipher,
+            Some(requested_unix_millis),
+        )
+        .and_then(|run| publish(&staging, target).map(|()| run));
+        match outcome {
+            Ok(run) => {
+                let mut result = receipt(&chain, run);
+                result.requested_unix_millis = Some(requested_unix_millis);
+                Ok(result)
+            }
+            Err(error) => {
+                staging.discard();
+                Err(error)
+            }
+        }
+    }
+
     /// Encrypted named-point counterpart of
     /// [`Self::restore_recovery_point_in_region`].
     ///
@@ -1032,7 +1137,7 @@ fn execute_restore_encrypted(
     let chain = resolve_encrypted_chain(destination, cipher, selection)?;
     admit_target(target)?;
     let staging = StagingDir::create(target)?;
-    let outcome = build_and_verify_encrypted(&staging, destination, &chain, cipher)
+    let outcome = build_and_verify_encrypted(&staging, destination, &chain, cipher, None)
         .and_then(|run| publish(&staging, target).map(|()| run));
     match outcome {
         Ok(run) => Ok(receipt(&chain, run)),
@@ -1121,6 +1226,8 @@ fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
 
 /// The replay's independently derived results.
 struct RunFacts {
+    applied_disclosures: u64,
+    restored_source_sequence: StorageSequence,
     restored_tenants: Vec<RestoredTenant>,
     restored_documents: u64,
     restored_family_records: u64,
@@ -1137,6 +1244,7 @@ struct RunFacts {
     tenants_verified: u64,
     documents_read_back: u64,
     representative_values_matched: u64,
+    logical_checksum: String,
 }
 
 /// Builds the complete engine in staging and verifies it by a fresh durable
@@ -1167,12 +1275,14 @@ fn build_and_verify_encrypted(
     destination: &Path,
     chain: &[BackupManifest],
     cipher: &dyn BackupReader,
+    cutoff: Option<u64>,
 ) -> Result<RunFacts, BackupError> {
     let engine = Engine::open(
         EngineConfig::durable(staging.path()).map_err(|_| BackupError::DestinationUnavailable)?,
     )
     .map_err(|_| BackupError::DestinationUnavailable)?;
     let mut replay = Replay::new();
+    replay.cutoff = cutoff;
     replay.chain(&engine, destination, chain, Some(cipher))?;
     drop(engine);
     let verification = verify_staging(staging.path(), &replay)?;
@@ -1195,7 +1305,15 @@ struct LinkCounts {
 
 /// The streaming replay of one chain into the staging engine location.
 struct Replay {
+    applied_disclosures: u64,
+    cutoff: Option<u64>,
+    incremental: bool,
+    commit_clocks: BTreeMap<TenantId, (u64, u64)>,
+    link_base: (u64, u64),
+    link_head: (u64, u64),
+    restored_source_sequence: StorageSequence,
     presence: BTreeMap<TenantId, BTreeSet<(String, String)>>,
+    content_hashes: BTreeMap<(TenantId, String, String), [u8; 32]>,
     batches: BTreeMap<TenantId, OpenBatch>,
     /// One retained sample document per tenant: the newest document record
     /// the chain decoded whose key is still live. A delete of the sample's
@@ -1230,7 +1348,15 @@ impl Replay {
     /// Creates the replay state.
     fn new() -> Self {
         Self {
+            applied_disclosures: 0,
+            cutoff: None,
+            incremental: false,
+            commit_clocks: BTreeMap::new(),
+            link_base: (0, 0),
+            link_head: (0, 0),
+            restored_source_sequence: StorageSequence::new(0),
             presence: BTreeMap::new(),
+            content_hashes: BTreeMap::new(),
             batches: BTreeMap::new(),
             samples: BTreeMap::new(),
             tenant_archive_bytes: BTreeMap::new(),
@@ -1260,6 +1386,12 @@ impl Replay {
         cipher: Option<&dyn BackupReader>,
     ) -> Result<(), BackupError> {
         for link in chain {
+            self.incremental = link.base_sequence().is_some();
+            self.link_base = self.link_head;
+            self.link_head = (link.boundary_sequence().get(), link.boundary_unix_millis());
+            if !self.incremental {
+                self.restored_source_sequence = link.boundary_sequence();
+            }
             let expected_tenants: BTreeMap<_, _> = link
                 .tenants()
                 .iter()
@@ -1368,8 +1500,39 @@ impl Replay {
         frame_bytes: u64,
         counts: &mut LinkCounts,
     ) -> Result<(), BackupError> {
+        let (source_sequence, timestamp) = match record {
+            Record::Document { sequence, committed_unix_millis, .. }
+            | Record::Delete { sequence, committed_unix_millis, .. } => {
+                (*sequence, *committed_unix_millis)
+            }
+        };
+        if self.incremental {
+            let tenant = match record {
+                Record::Document { tenant, .. } | Record::Delete { tenant, .. } => tenant,
+            };
+            let previous = self.commit_clocks.entry(tenant.clone()).or_insert(self.link_base);
+            if source_sequence <= self.link_base.0
+                || source_sequence > self.link_head.0
+                || timestamp < self.link_base.1
+                || timestamp > self.link_head.1
+                || source_sequence < previous.0
+                || timestamp < previous.1
+                || (source_sequence == previous.0 && timestamp != previous.1)
+            {
+                return Err(BackupError::ChecksumMismatch);
+            }
+            *previous = (source_sequence, timestamp);
+        }
+        let include = !self.incremental || self.cutoff.is_none_or(|cutoff| timestamp <= cutoff);
+        if include {
+            if record_durability(record) != LocalDurability::Synced {
+                self.applied_disclosures += 1;
+            }
+            self.restored_source_sequence =
+                StorageSequence::new(self.restored_source_sequence.get().max(source_sequence));
+        }
         match record {
-            Record::Document { tenant, document, durability } => {
+            Record::Document { tenant, document, durability, .. } => {
                 let collection = document.collection().as_str().to_owned();
                 let id = document.id().as_str().to_owned();
                 if collection == RESERVED_FAMILY_COLLECTION {
@@ -1382,6 +1545,9 @@ impl Replay {
                 if *durability != LocalDurability::Synced {
                     counts.disclosures += 1;
                 }
+                if !include {
+                    return Ok(());
+                }
                 *self.tenant_archive_bytes.entry(tenant.clone()).or_insert(0) += frame_bytes;
                 let keys = self.presence.entry(tenant.clone()).or_default();
                 if !keys.insert((collection.clone(), id.clone())) {
@@ -1393,6 +1559,10 @@ impl Replay {
                 // below), so a retained sample is always one of the tenant's
                 // final live keys and verification can never mismatch on a
                 // document the chain itself removed.
+                self.content_hashes.insert(
+                    (tenant.clone(), collection.clone(), id.clone()),
+                    crate::engine::logical_document_digest(tenant, document),
+                );
                 self.samples.insert(tenant.clone(), document.clone());
                 self.stage(
                     engine,
@@ -1411,6 +1581,9 @@ impl Replay {
                 if durability != LocalDurability::Synced {
                     counts.disclosures += 1;
                 }
+                if !include {
+                    return Ok(());
+                }
                 let keys = self.presence.entry(tenant.clone()).or_default();
                 let removed_key = match collection {
                     Some(name) => {
@@ -1428,7 +1601,10 @@ impl Replay {
                     // it when they name the same document: verification never
                     // compares a value against a key the archive's own chain
                     // deleted.
-                    Some(removed_key) => self.retire_sample(tenant, &removed_key),
+                    Some(removed_key) => {
+                        self.content_hashes.remove(&(tenant.clone(), removed_key.0.clone(), removed_key.1.clone()));
+                        self.retire_sample(tenant, &removed_key);
+                    },
                     None => self.missing_key_deletes += 1,
                 }
                 let staged_collection = match collection {
@@ -1512,6 +1688,7 @@ impl Replay {
             // It must never mint admitted-request usage without authenticated
             // serving-boundary facts.
             usage_admission: None,
+            expected_origin_epoch: None,
             expected_uniform_context: None,
             merge_conflict: None,
             replication_fingerprint: None,
@@ -1581,6 +1758,8 @@ impl Replay {
         let restored_family_records =
             restored_tenants.iter().map(RestoredTenant::family_records).sum();
         RunFacts {
+            applied_disclosures: self.applied_disclosures,
+            restored_source_sequence: self.restored_source_sequence,
             restored_tenants,
             restored_documents,
             restored_family_records,
@@ -1602,6 +1781,7 @@ impl Replay {
             tenants_verified: verification.tenants_verified,
             documents_read_back: verification.documents_read_back,
             representative_values_matched: verification.representative_values_matched,
+            logical_checksum: verification.logical_checksum,
         }
     }
 }
@@ -1620,160 +1800,49 @@ struct VerificationFacts {
     tenants_verified: u64,
     documents_read_back: u64,
     representative_values_matched: u64,
+    logical_checksum: String,
 }
 
-/// What one tenant's windowed read-back proved live in the reopened target.
-struct TenantReadBack {
-    /// The distinct live keys the bounded window observed.
-    observed: BTreeSet<(String, String)>,
-    /// Whether the window walked the tenant's complete canonical key range.
-    ///
-    /// `true` when the walk ended on a short or empty page — an identifier
-    /// that is unique across the tenant's collections pages exactly, so the
-    /// observed set is the tenant's whole live key set. `false` when a full
-    /// page resumed without producing one unseen key: one identifier is
-    /// reused across a page's worth of collections and the window's
-    /// identifier-only cursor cannot walk past it (W4-CA-7's documented
-    /// cycle), so the observed set is a prefix and the exact keys beyond it
-    /// must come from the collection-scoped read.
-    exhaustive: bool,
-}
-
-/// Reads one tenant's live keys back through the bounded window, in canonical
-/// key order, with a cycle guard so the walk always terminates.
-///
-/// The window is at-least-once (W4-CA-7): when a page boundary's identifier
-/// repeats across collections, a later page re-delivers already-seen keys.
-/// Duplicates are harmless — the observed set absorbs them — but a tenant
-/// reusing one identifier across a page's worth of collections makes every
-/// resume land before the same keys, so a full page that yields no unseen key
-/// is the honest report of a non-walkable range, never a reason to keep
-/// paging.
-fn read_back_window(
-    storage: &SqliteStorage,
-    sequence: StorageSequence,
-    tenant: &TenantId,
-) -> TenantReadBack {
-    let mut observed: BTreeSet<(String, String)> = BTreeSet::new();
-    let mut after: Option<DocumentId> = None;
-    loop {
-        let page = storage.documents_at_from(sequence, tenant, after.as_ref(), READBACK_PAGE);
-        if page.is_empty() {
-            return TenantReadBack { observed, exhaustive: true };
-        }
-        let unseen_before = observed.len();
-        for document in &page {
-            observed.insert((
-                document.collection().as_str().to_owned(),
-                document.id().as_str().to_owned(),
-            ));
-            after = Some(document.id().clone());
-        }
-        if page.len() < READBACK_PAGE as usize {
-            return TenantReadBack { observed, exhaustive: true };
-        }
-        if observed.len() == unseen_before {
-            return TenantReadBack { observed, exhaustive: false };
-        }
-    }
-}
-
-/// Reads one expected key back through the collection-scoped exact-key read,
-/// the storage seam's exact selector for a full canonical key.
-///
-/// # Errors
-///
-/// Returns [`BackupError::ChecksumMismatch`] when the expected key's
-/// collection or identifier is not a valid identifier the target could hold —
-/// an archive whose decoded keys are unpublishable is a content failure.
-fn read_back_key(
-    storage: &SqliteStorage,
-    sequence: StorageSequence,
-    tenant: &TenantId,
-    key: &(String, String),
-) -> Result<bool, BackupError> {
-    let collection = CollectionName::try_new(&key.0).map_err(|_| BackupError::ChecksumMismatch)?;
-    let id = DocumentId::try_new(&key.1).map_err(|_| BackupError::ChecksumMismatch)?;
-    Ok(storage.read_document_in_collection_at(sequence, tenant, &collection, &id).is_some())
-}
-
-/// Reopens the staged engine location through the durable storage open path
-/// — format verification and WAL recovery, the same path `Engine::open`
-/// runs — and reads the restored state back against the replay's
-/// independently derived expectation.
-///
-/// The key-set read-back pages the full canonical key. The bounded window
-/// does it while the tenant's identifiers are unique across collections,
-/// proving the live key set in both directions. When a tenant reuses one
-/// identifier across a page's worth of collections the window cannot walk
-/// the range, so the expectation itself drives the rest: every expected
-/// collection is read through the collection-scoped exact-key selector,
-/// which names the full canonical key and so cannot confuse two collections'
-/// copies of one identifier.
-///
-/// # Errors
-///
-/// Returns [`BackupError::DestinationUnavailable`] when the reopen fails,
-/// and [`BackupError::ChecksumMismatch`] when the read-back state does not
-/// reproduce the expectation exactly.
+/// Reopens durable storage and verifies every key and value against the
+/// archive replay, retaining only one bounded document page at a time.
 fn verify_staging(staging: &Path, replay: &Replay) -> Result<VerificationFacts, BackupError> {
     let storage = SqliteStorage::open(staging).map_err(|_| BackupError::DestinationUnavailable)?;
     let (sequence, root) = storage.published_state();
-    let mut tenants_verified = 0;
     let mut documents_read_back = 0;
-    let mut representative_values_matched = 0;
+    let mut digest = crate::engine::logical_state_hasher();
     for (tenant, expected_keys) in &replay.presence {
-        let read_back = read_back_window(&storage, sequence, tenant);
-        // Every key the target holds that the window observed must be an
-        // expected key, whatever the walk reached.
-        if !read_back.observed.is_subset(expected_keys) {
-            return Err(BackupError::ChecksumMismatch);
-        }
-        let mut proven_live = read_back.observed.len();
-        if read_back.exhaustive {
-            // The window walked the whole range, so the observed set is the
-            // tenant's exact live key set: it must match in both directions.
-            if &read_back.observed != expected_keys {
-                return Err(BackupError::ChecksumMismatch);
-            }
-        } else {
-            // One identifier repeats across a page's worth of collections, so
-            // the expectation's own collections drive the reads the window
-            // cannot place: each expected key resolves by its full canonical
-            // key, never by identifier alone.
-            for key in expected_keys.difference(&read_back.observed) {
-                if !read_back_key(&storage, sequence, tenant, key)? {
+        let mut after: Option<(CollectionName, DocumentId)> = None;
+        let mut observed = 0;
+        loop {
+            let page = storage.documents_at_from_key(
+                sequence, tenant,
+                after.as_ref().map(|(collection, id)| (collection, id)), READBACK_PAGE,
+            ).map_err(|_| BackupError::ChecksumMismatch)?;
+            if page.is_empty() { break; }
+            for document in &page {
+                let key = (tenant.clone(), document.collection().as_str().to_owned(), document.id().as_str().to_owned());
+                let actual = crate::engine::logical_document_digest(tenant, document);
+                if replay.content_hashes.get(&key) != Some(&actual) {
                     return Err(BackupError::ChecksumMismatch);
                 }
-                proven_live += 1;
+                digest.update(&actual);
+                observed += 1;
             }
+            let last = page.last().expect("nonempty page");
+            after = Some((last.collection().clone(), last.id().clone()));
         }
-        documents_read_back += proven_live as u64;
-        // The representative value per tenant, compared byte-exactly: the
-        // newest document record the replay decoded for this tenant that the
-        // chain's final state still holds. A tenant whose newest decoded
-        // document the chain deleted retains no sample for this run, and the
-        // matched count discloses that instead of failing a good archive.
-        if let Some(sample) = replay.samples.get(tenant) {
-            let read = storage.read_document_in_collection_at(
-                sequence,
-                tenant,
-                sample.collection(),
-                sample.id(),
-            );
-            if read.is_none_or(|document| document.value() != sample.value()) {
-                return Err(BackupError::ChecksumMismatch);
-            }
-            representative_values_matched += 1;
+        if observed != expected_keys.len() as u64 {
+            return Err(BackupError::ChecksumMismatch);
         }
-        tenants_verified += 1;
+        documents_read_back += observed;
     }
     Ok(VerificationFacts {
         sequence,
         root_identity: root.to_string(),
-        tenants_verified,
+        tenants_verified: replay.presence.len() as u64,
         documents_read_back,
-        representative_values_matched,
+        representative_values_matched: replay.samples.len() as u64,
+        logical_checksum: digest.finalize().to_hex().to_string(),
     })
 }
 
@@ -1782,6 +1851,8 @@ fn receipt(chain: &[BackupManifest], run: RunFacts) -> RecoveryReceipt {
     let links: Vec<RestoreChainLink> = chain.iter().map(RestoreChainLink::of).collect();
     let selected = links.last().cloned().expect("a resolved chain is never empty");
     RecoveryReceipt {
+        requested_unix_millis: None,
+        restored_source_sequence: run.restored_source_sequence,
         storage_format: STORAGE_FORMAT_LABEL,
         selected,
         members_verified: chain.iter().map(|link| link.members().len() as u64).sum(),
@@ -1799,13 +1870,14 @@ fn receipt(chain: &[BackupManifest], run: RunFacts) -> RecoveryReceipt {
         restored_family_records: run.restored_family_records,
         duplicate_put_replays: run.duplicate_put_replays,
         missing_key_deletes: run.missing_key_deletes,
-        disclosed_records_restored: run.decoded_disclosures,
+        disclosed_records_restored: run.applied_disclosures,
         restore_commits: run.restore_commits,
         target_sequence: run.target_sequence,
         target_root_identity: run.target_root_identity,
         tenants_verified: run.tenants_verified,
         documents_read_back: run.documents_read_back,
         representative_values_matched: run.representative_values_matched,
+        logical_checksum: run.logical_checksum,
         largest_tenant_archive_bytes: run.largest_tenant_archive_bytes,
         chain: links,
     }

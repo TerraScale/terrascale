@@ -4,7 +4,6 @@
 
 use crate::host::HostingError;
 use crate::registry::BoundScope;
-use crate::replication_lanes::{replicated_record, replicated_write};
 use std::collections::BTreeMap;
 use terrabase::engine::{Engine, ReplicatedPublication};
 use terrabase::types::TenantId;
@@ -17,18 +16,44 @@ pub const MAGIC: &[u8; 4] = b"TBCJ";
 const RETRY_MS: u64 = 2_000;
 const WINDOW: usize = 8;
 
+static RETAINED_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const HOST_RETAINED_BYTES: usize = 256 * 1024 * 1024;
+struct Reservation(usize);
+impl Reservation {
+    fn acquire(bytes: usize) -> Result<Self, HostingError> {
+        RETAINED_BYTES
+            .fetch_update(
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+                |used| used.checked_add(bytes).filter(|next| *next <= HOST_RETAINED_BYTES),
+            )
+            .map_err(|_| refused("host causal retained byte budget exhausted"))?;
+        Ok(Self(bytes))
+    }
+}
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        RETAINED_BYTES.fetch_sub(self.0, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 struct Pending {
+    _reservation: Reservation,
     bytes: Vec<u8>,
     checkpoint: Option<u64>,
     operations: Vec<String>,
     receipt_hash: String,
+    digest: [u8; 32],
     sequences: BTreeMap<String, u64>,
     sent_at: u64,
     acknowledged: bool,
+    next_offset: usize,
 }
 
 /// Result of processing one authenticated, scoped frame.
 pub enum CausalReceive {
+    /// A fragment is retained until its complete publication arrives.
+    Fragment,
     /// Missing causal dependencies; caller schedules catch-up and sends no receipt.
     Deferred,
     /// Applied locally. Release this receipt only after the local WAL follower
@@ -47,6 +72,17 @@ pub enum CausalReceive {
 }
 
 /// Bounded pipelined journal sender and scoped apply/receipt validator.
+struct Assembly {
+    _reservation: Reservation,
+    hash: [u8; 32],
+    bytes: Vec<u8>,
+    total: usize,
+    received: usize,
+    last_activity: u64,
+    chunks: std::collections::BTreeSet<usize>,
+}
+
+/// Bounded scoped publication sender and receiver.
 pub struct CausalDriver {
     local: MemberId,
     peer: MemberId,
@@ -59,6 +95,8 @@ pub struct CausalDriver {
     pending: BTreeMap<u64, Pending>,
     durable_peer_frontier: BTreeMap<String, u64>,
     retired: BTreeMap<u64, String>,
+    repair_authorizations: BTreeMap<(String, u64), [u8; 32]>,
+    assembly: Option<Assembly>,
 }
 
 fn refused(message: impl Into<String>) -> HostingError {
@@ -116,6 +154,8 @@ impl CausalDriver {
             pending: BTreeMap::new(),
             durable_peer_frontier: BTreeMap::new(),
             retired: BTreeMap::new(),
+            repair_authorizations: BTreeMap::new(),
+            assembly: None,
         })
     }
 
@@ -123,6 +163,37 @@ impl CausalDriver {
     #[must_use]
     pub fn durable_peer_frontier(&self) -> &BTreeMap<String, u64> {
         &self.durable_peer_frontier
+    }
+
+    /// Authorizes a missing source group proved by a correlated repair leaf.
+    /// The caller must admit the repair peer and source Region through placement.
+    /// # Errors
+    /// Refuses overflow or conflicting hash attestations without dropping entries.
+    pub fn authorize_repair(
+        &mut self,
+        origin: String,
+        sequence: u64,
+        hash: [u8; 32],
+    ) -> Result<(), HostingError> {
+        let key = (origin, sequence);
+        if let Some(old) = self.repair_authorizations.get(&key) {
+            return if *old == hash {
+                Ok(())
+            } else {
+                Err(refused("conflicting repair authorization"))
+            };
+        }
+        if self.repair_authorizations.len() >= 256 {
+            return Err(refused("repair authorization queue full"));
+        }
+        self.repair_authorizations.insert(key, hash);
+        Ok(())
+    }
+
+    /// Releases repair permissions after the runtime proves the repair round
+    /// complete and all related durable receipts have been delivered.
+    pub fn clear_repair_authorizations(&mut self) {
+        self.repair_authorizations.clear();
     }
 
     /// Whether any shipped publication still requires a peer receipt.
@@ -151,15 +222,26 @@ impl CausalDriver {
         engine: &Engine,
         now_ms: u64,
     ) -> Result<Option<Vec<u8>>, HostingError> {
-        if let Some(frame) = self
-            .pending
-            .values_mut()
-            .find(|p| !p.acknowledged && now_ms.saturating_sub(p.sent_at) >= RETRY_MS)
-        {
-            frame.sent_at = now_ms;
-            return Ok(Some(frame.bytes.clone()));
+        for pending in self.pending.values_mut() {
+            if pending.acknowledged {
+                continue;
+            }
+            if pending.next_offset >= pending.bytes.len()
+                && now_ms.saturating_sub(pending.sent_at) >= RETRY_MS
+            {
+                pending.next_offset = 0;
+            }
+            if pending.next_offset < pending.bytes.len() {
+                pending.sent_at = now_ms;
+                return Ok(Some(fragment(&self.prefix, pending)));
+            }
         }
-        if self.pending.len() >= WINDOW {
+        if self.pending.values().any(|p| !p.acknowledged && p.bytes.len() > CHUNK) {
+            return Ok(None);
+        }
+        if self.pending.len() >= WINDOW
+            || self.pending.values().map(|p| p.bytes.len()).sum::<usize>() >= 64 * 1024 * 1024
+        {
             return Ok(None);
         }
         let local_origin = &self.local_origin;
@@ -197,7 +279,9 @@ impl CausalDriver {
         publication: &ReplicatedPublication,
         now_ms: u64,
     ) -> Result<Vec<u8>, HostingError> {
-        if self.pending.len() >= WINDOW {
+        if self.pending.len() >= WINDOW
+            || self.pending.values().any(|p| !p.acknowledged && p.bytes.len() > CHUNK)
+        {
             return Err(refused("causal credit window is full"));
         }
         self.encode_publication(publication, None, now_ms)
@@ -209,58 +293,36 @@ impl CausalDriver {
         checkpoint: Option<u64>,
         now_ms: u64,
     ) -> Result<Vec<u8>, HostingError> {
-        let envelope = Envelope {
-            kind: FrameKind::ReplicationBatch,
-            message_id: self.next_id,
-            correlation_id: None,
-            causation_id: None,
-            idempotency_key: None,
-            source: self.local.clone(),
-            target: self.peer.clone(),
-            issued_at: LaneInstant::at_ticks(0),
-            expires_at: None,
-            range: None,
-            epoch: None,
-            payload: Payload::ReplicationBatch {
-                tenant: WireTenant::try_new(&self.scope.tenant).map_err(failure)?,
-                records: publication
-                    .records
-                    .iter()
-                    .map(replicated_write)
-                    .collect::<Result<Vec<_>, _>>()?,
-            },
-        };
         let mut bytes = self.prefix.clone();
         bytes.push(1);
-        for value in [
-            publication.origin.as_bytes(),
-            publication.commit_ulid.as_bytes(),
-            publication.context.as_slice(),
-            publication.private_payload.as_slice(),
-        ] {
-            put_bytes(&mut bytes, value)?;
+        bytes.extend_from_slice(&self.next_id.to_be_bytes());
+        bytes.extend_from_slice(&publication.encode_wire().map_err(failure)?);
+        if self.pending.values().map(|p| p.bytes.len()).sum::<usize>().saturating_add(bytes.len())
+            > 65 * 1024 * 1024
+        {
+            return Err(refused("causal pending byte budget exhausted"));
         }
-        bytes.extend_from_slice(&publication.origin_sequence.to_be_bytes());
-        bytes.extend_from_slice(&publication.hlc.to_be_bytes());
-        bytes.extend_from_slice(&encode(&envelope).map_err(failure)?.bytes);
-        self.pending.insert(
-            self.next_id,
-            Pending {
-                receipt_hash: blake3::hash(&bytes).to_hex().to_string(),
-                bytes: bytes.clone(),
-                checkpoint,
-                operations: vec![publication.commit_ulid.clone()],
-                sequences: BTreeMap::from([(
-                    publication.origin.clone(),
-                    publication.origin_sequence,
-                )]),
-                sent_at: now_ms,
-                acknowledged: false,
+        let mut pending = Pending {
+            _reservation: Reservation::acquire(bytes.len())?,
+            receipt_hash: blake3::hash(&bytes).to_hex().to_string(),
+            digest: *blake3::hash(&bytes).as_bytes(),
+            bytes,
+            checkpoint,
+            operations: vec![publication.commit_ulid.clone()],
+            sequences: if checkpoint.is_some() {
+                BTreeMap::from([(publication.origin.clone(), publication.origin_sequence)])
+            } else {
+                BTreeMap::new()
             },
-        );
+            sent_at: now_ms,
+            acknowledged: false,
+            next_offset: 0,
+        };
+        let frame = fragment(&self.prefix, &mut pending);
+        self.pending.insert(self.next_id, pending);
         self.next_id =
             self.next_id.checked_add(1).ok_or_else(|| refused("causal identifiers exhausted"))?;
-        Ok(bytes)
+        Ok(frame)
     }
 
     fn wrap(&self, envelope: &Envelope) -> Result<Vec<u8>, HostingError> {
@@ -286,82 +348,121 @@ impl CausalDriver {
             .strip_prefix(self.prefix.as_slice())
             .ok_or_else(|| refused("causal frame scope or placement mismatch"))?;
         let (&kind, mut body) = body.split_first().ok_or_else(|| refused("empty causal frame"))?;
-        let metadata = if kind == 1 {
-            let origin = String::from_utf8(take_bytes(&mut body)?.to_vec()).map_err(failure)?;
-            let commit = String::from_utf8(take_bytes(&mut body)?.to_vec()).map_err(failure)?;
-            let context = take_bytes(&mut body)?.to_vec();
-            let private = take_bytes(&mut body)?.to_vec();
-            let sequence = take_u64(&mut body)?;
-            let hlc = take_u64(&mut body)?;
-            Some((origin, commit, context, private, sequence, hlc))
-        } else if kind == 0 {
-            None
-        } else {
-            return Err(refused("unknown causal frame format"));
-        };
+        if kind == 2 {
+            let total = usize::try_from(take_u64(&mut body)?).map_err(failure)?;
+            let offset = usize::try_from(take_u64(&mut body)?).map_err(failure)?;
+            let hash: [u8; 32] = body
+                .get(..32)
+                .ok_or_else(|| refused("truncated fragment hash"))?
+                .try_into()
+                .map_err(failure)?;
+            body = &body[32..];
+            let chunk_hash = body.get(..32).ok_or_else(|| refused("truncated chunk hash"))?;
+            body = &body[32..];
+            if blake3::hash(body).as_bytes() != chunk_hash
+                || total > 65 * 1024 * 1024
+                || total == 0
+                || offset % CHUNK != 0
+                || body.len() != CHUNK.min(total.saturating_sub(offset))
+                || offset >= total
+            {
+                return Err(refused("invalid causal fragment"));
+            }
+            if self
+                .assembly
+                .as_ref()
+                .is_some_and(|a| _now_ms.saturating_sub(a.last_activity) > 30_000)
+            {
+                self.assembly = None;
+            }
+            if self.assembly.as_ref().is_some_and(|a| a.hash != hash) {
+                return Err(refused("causal reassembly occupied"));
+            }
+            if self.assembly.is_none() {
+                let reservation = Reservation::acquire(total)?;
+                self.assembly = Some(Assembly {
+                    _reservation: reservation,
+                    hash,
+                    bytes: vec![0; total],
+                    total,
+                    received: 0,
+                    last_activity: _now_ms,
+                    chunks: std::collections::BTreeSet::new(),
+                });
+            }
+            let assembly = self.assembly.as_mut().expect("assembly exists");
+            assembly.last_activity = _now_ms;
+            if assembly.total != total {
+                return Err(refused("causal fragment total mismatch"));
+            }
+            if assembly.chunks.insert(offset) {
+                assembly.bytes[offset..offset + body.len()].copy_from_slice(body);
+                assembly.received += body.len();
+            }
+            if assembly.received != total {
+                return Ok(CausalReceive::Fragment);
+            }
+            let assembly = self.assembly.take().expect("assembly exists");
+            if blake3::hash(&assembly.bytes).as_bytes() != &assembly.hash {
+                return Err(refused("causal assembly hash mismatch"));
+            }
+            if assembly.bytes.get(self.prefix.len()) != Some(&1) {
+                return Err(refused("assembled causal content is not a publication"));
+            }
+            return self.receive_frame(engine, &assembly.bytes, _now_ms);
+        }
+        if kind == 1 {
+            let message_id = take_u64(&mut body)?;
+            let publication = ReplicatedPublication::decode_wire(body).map_err(failure)?;
+            if publication.origin != self.origin
+                && self
+                    .repair_authorizations
+                    .get(&(publication.origin.clone(), publication.origin_sequence))
+                    != Some(&publication.fingerprint().map_err(failure)?)
+            {
+                return Err(refused("causal source has no correlated repair authorization"));
+            }
+            let scope = engine.scope_for(&TenantId::try_new(&self.scope.tenant).map_err(failure)?);
+            if !engine
+                .replication_publication_dependencies_ready(&scope, &publication)
+                .map_err(failure)?
+            {
+                return Ok(CausalReceive::Deferred);
+            }
+            engine.apply_replicated_publication(&scope, &publication).map_err(failure)?;
+            let operations = vec![publication.commit_ulid.clone()];
+            let receipt = self.wrap(&Envelope {
+                kind: FrameKind::AckBatch,
+                message_id,
+                correlation_id: Some(message_id),
+                causation_id: None,
+                idempotency_key: None,
+                source: self.local.clone(),
+                target: self.peer.clone(),
+                issued_at: LaneInstant::at_ticks(0),
+                expires_at: None,
+                range: None,
+                epoch: None,
+                payload: Payload::AckBatch {
+                    tenant: WireTenant::try_new(&self.scope.tenant).map_err(failure)?,
+                    reports: vec![(
+                        OperationId::try_new(blake3::hash(bytes).to_hex().as_str())
+                            .map_err(failure)?,
+                        true,
+                    )],
+                },
+            })?;
+            return Ok(CausalReceive::Applied { receipt, operations });
+        }
+        if kind != 0 {
+            return Err(refused("unknown causal frame kind"));
+        }
         let (envelope, _) = decode(body).map_err(failure)?;
         if envelope.source != self.peer || envelope.target != self.local {
-            return Err(refused("causal frame identity mismatch"));
+            return Err(refused("causal receipt peer mismatch"));
         }
         match envelope.payload {
-            Payload::ReplicationBatch { tenant, records } => {
-                if tenant.as_str() != self.scope.tenant || records.len() > 1024 {
-                    return Err(refused("invalid causal batch scope or bound"));
-                }
-                let (origin, commit, context, private, sequence, hlc) =
-                    metadata.ok_or_else(|| refused("missing publication metadata"))?;
-                if origin != self.origin {
-                    return Err(refused("causal source is not the admitted selected region"));
-                }
-                let publication = ReplicatedPublication {
-                    origin,
-                    origin_sequence: sequence,
-                    hlc,
-                    commit_ulid: commit,
-                    context,
-                    private_payload: private,
-                    records: records
-                        .iter()
-                        .map(replicated_record)
-                        .collect::<Result<Vec<_>, _>>()?,
-                };
-                let scope =
-                    engine.scope_for(&TenantId::try_new(&self.scope.tenant).map_err(failure)?);
-                if !engine
-                    .replication_publication_dependencies_ready(&scope, &publication)
-                    .map_err(failure)?
-                {
-                    return Ok(CausalReceive::Deferred);
-                }
-                engine.apply_replicated_publication(&scope, &publication).map_err(failure)?;
-                let operations = vec![publication.commit_ulid.clone()];
-                let receipt = self.wrap(&Envelope {
-                    kind: FrameKind::AckBatch,
-                    message_id: envelope.message_id,
-                    correlation_id: Some(envelope.message_id),
-                    causation_id: None,
-                    idempotency_key: None,
-                    source: self.local.clone(),
-                    target: self.peer.clone(),
-                    issued_at: LaneInstant::at_ticks(0),
-                    expires_at: None,
-                    range: None,
-                    epoch: None,
-                    payload: Payload::AckBatch {
-                        tenant,
-                        reports: vec![(
-                            OperationId::try_new(blake3::hash(bytes).to_hex().as_str())
-                                .map_err(failure)?,
-                            true,
-                        )],
-                    },
-                })?;
-                Ok(CausalReceive::Applied { receipt, operations })
-            }
             Payload::AckBatch { tenant, reports } => {
-                if metadata.is_some() {
-                    return Err(refused("receipt carries publication metadata"));
-                }
                 let id = envelope
                     .correlation_id
                     .ok_or_else(|| refused("uncorrelated causal receipt"))?;
@@ -414,22 +515,26 @@ impl CausalDriver {
     }
 }
 
-fn put_bytes(out: &mut Vec<u8>, value: &[u8]) -> Result<(), HostingError> {
-    if value.len() > 64 * 1024 * 1024 {
-        return Err(refused("publication field too large"));
+const CHUNK: usize = 32 * 1024;
+fn fragment(prefix: &[u8], pending: &mut Pending) -> Vec<u8> {
+    if pending.bytes.len() <= CHUNK {
+        pending.next_offset = pending.bytes.len();
+        return pending.bytes.clone();
     }
-    out.extend_from_slice(&u32::try_from(value.len()).map_err(failure)?.to_be_bytes());
-    out.extend_from_slice(value);
-    Ok(())
+    let offset = pending.next_offset;
+    let end = offset.saturating_add(CHUNK).min(pending.bytes.len());
+    let chunk = &pending.bytes[offset..end];
+    let mut frame = prefix.to_vec();
+    frame.push(2);
+    frame.extend_from_slice(&(pending.bytes.len() as u64).to_be_bytes());
+    frame.extend_from_slice(&(offset as u64).to_be_bytes());
+    frame.extend_from_slice(&pending.digest);
+    frame.extend_from_slice(blake3::hash(chunk).as_bytes());
+    frame.extend_from_slice(chunk);
+    pending.next_offset = end;
+    frame
 }
-fn take_bytes<'a>(input: &mut &'a [u8]) -> Result<&'a [u8], HostingError> {
-    let length = input.get(..4).ok_or_else(|| refused("truncated causal length"))?;
-    let length = u32::from_be_bytes(length.try_into().map_err(failure)?) as usize;
-    *input = &input[4..];
-    let value = input.get(..length).ok_or_else(|| refused("truncated causal payload"))?;
-    *input = &input[length..];
-    Ok(value)
-}
+
 fn take_u64(input: &mut &[u8]) -> Result<u64, HostingError> {
     let value = u64::from_be_bytes(
         input
@@ -473,6 +578,18 @@ mod tests {
             Document::new(
                 DocumentId::try_new("doc").unwrap(),
                 CollectionName::try_new("items").unwrap(),
+                DocumentValue::Object(BTreeMap::from([(
+                    "large".into(),
+                    DocumentValue::String("x".repeat(100_000)),
+                )])),
+            ),
+            ExpectedVersion::Any,
+        )
+        .unwrap();
+        tx.put(
+            Document::new(
+                DocumentId::try_new("second").unwrap(),
+                CollectionName::try_new("items").unwrap(),
                 DocumentValue::Object(BTreeMap::new()),
             ),
             ExpectedVersion::Any,
@@ -504,15 +621,39 @@ mod tests {
         .unwrap();
         let mut receiver = CausalDriver::new(b, a, origin.clone(), origin, bound, 1, 1).unwrap();
         let frame = sender.outbound_frame(&source, 0).unwrap().unwrap();
+        let mut frames = vec![frame.clone()];
+        while let Some(next) = sender.outbound_frame(&source, 0).unwrap() {
+            frames.push(next);
+        }
+        assert!(frames.len() > 1);
         assert_eq!(sender.outbound_frame(&source, RETRY_MS).unwrap().unwrap(), frame);
         let mut wrong_database = frame.clone();
         wrong_database[12] ^= 1;
         assert!(receiver.receive_frame(&target, &wrong_database, 0).is_err());
-        let CausalReceive::Applied { receipt, .. } =
-            receiver.receive_frame(&target, &frame, 0).unwrap()
-        else {
-            panic!("must apply")
-        };
+        let mut damaged = frames[1].clone();
+        let last = damaged.len() - 1;
+        damaged[last] ^= 1;
+        assert!(receiver.receive_frame(&target, &damaged, 0).is_err());
+        let mut receipt = None;
+        for chunk in frames.iter().rev() {
+            match receiver.receive_frame(&target, chunk, 0).unwrap() {
+                CausalReceive::Fragment => {
+                    assert!(
+                        target
+                            .replication_publications(&target.scope_for(&tenant), 0, 1)
+                            .unwrap()
+                            .is_empty()
+                    );
+                }
+                CausalReceive::Applied { receipt: value, .. } => {
+                    receipt = Some(value);
+                }
+                _ => panic!("unexpected frame result"),
+            }
+        }
+        let receipt = receipt.expect("complete group applied");
+        let received = target.replication_publications(&target.scope_for(&tenant), 0, 1).unwrap();
+        assert_eq!(received[0].1.records.len(), 2);
         assert!(sender.durable_peer_frontier().is_empty());
         assert!(matches!(
             sender.receive_frame(&source, &receipt, 0).unwrap(),

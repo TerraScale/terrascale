@@ -17,9 +17,10 @@ use crate::{Action, Command, Outcome, Record, TypeConfig};
 type Result<T> = std::result::Result<T, StorageError<u64>>;
 
 /// SQLite-backed Raft log and state machine. No in-memory durable fallback.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SqliteStore {
     connection: Arc<Mutex<Connection>>,
+    keys: Option<Arc<dyn terrabase::encryption::DatabaseKeySource>>,
 }
 
 fn storage(error: impl std::fmt::Display) -> StorageError<u64> {
@@ -56,6 +57,7 @@ impl SqliteStore {
     pub(crate) fn bind_admission(
         &self,
         group: &str,
+        local: u64,
         voters: &std::collections::BTreeMap<u64, BasicNode>,
     ) -> Result<()> {
         let mut connection = self.lock()?;
@@ -63,7 +65,7 @@ impl SqliteStore {
         if meta::<String>(&transaction, "group_identity")?.as_deref() != Some(group) {
             return Err(storage("auth admission group mismatch"));
         }
-        let encoded = encode(voters)?;
+        let encoded = encode(&(local, voters))?;
         if let Some(prior) = meta::<Vec<u8>>(&transaction, "voter_admission")? {
             if prior != encoded {
                 return Err(storage("auth voter identity mapping changed"));
@@ -95,22 +97,40 @@ impl SqliteStore {
     /// Open encrypted persistent auth state using an explicitly authorized database key.
     /// No plaintext production constructor is exposed. Existing empty/missing storage
     /// may be created only with the one-time permission reserved by bootstrap control.
-    pub fn open_encrypted(path:&Path,group_identity:&str,keys:Arc<dyn terrabase::encryption::DatabaseKeySource>,allow_create:bool)->Result<Self> {
-        if !allow_create && !path.is_file() { return Err(storage("auth state missing after bootstrap reservation")); }
-        let connection=terrabase::storage::open_encrypted_sqlite(path,keys).map_err(storage)?;
-        Self::from_connection(connection,group_identity,allow_create)
+    pub fn open_encrypted(
+        path: &Path,
+        group_identity: &str,
+        keys: Arc<dyn terrabase::encryption::DatabaseKeySource>,
+        allow_create: bool,
+    ) -> Result<Self> {
+        if !allow_create && !path.is_file() {
+            return Err(storage("auth state missing after bootstrap reservation"));
+        }
+        let connection =
+            terrabase::storage::open_encrypted_sqlite(path, Arc::clone(&keys)).map_err(storage)?;
+        let mut store = Self::from_connection(connection, group_identity, allow_create)?;
+        store.keys = Some(keys);
+        Ok(store)
     }
 
     #[cfg(test)]
-    pub(crate) fn open(path:&Path,group_identity:&str)->Result<Self> {
-        Self::from_connection(Connection::open(path).map_err(storage)?,group_identity,true)
+    pub(crate) fn open(path: &Path, group_identity: &str) -> Result<Self> {
+        Self::from_connection(Connection::open(path).map_err(storage)?, group_identity, true)
     }
 
-    fn from_connection(connection:Connection,group_identity:&str,allow_create:bool)->Result<Self> {
-        if group_identity.is_empty() || group_identity.len()>512 { return Err(storage("invalid auth group identity")); }
+    fn from_connection(
+        connection: Connection,
+        group_identity: &str,
+        allow_create: bool,
+    ) -> Result<Self> {
+        if group_identity.is_empty() || group_identity.len() > 512 {
+            return Err(storage("invalid auth group identity"));
+        }
         if !allow_create {
-            let stored:Option<String>=meta(&connection,"group_identity")?;
-            if stored.as_deref()!=Some(group_identity) { return Err(storage("auth state identity missing or changed")); }
+            let stored: Option<String> = meta(&connection, "group_identity")?;
+            if stored.as_deref() != Some(group_identity) {
+                return Err(storage("auth state identity missing or changed"));
+            }
         }
         connection.busy_timeout(std::time::Duration::from_secs(5)).map_err(storage)?;
         connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA locking_mode=EXCLUSIVE;
@@ -118,7 +138,8 @@ impl SqliteStore {
             CREATE TABLE IF NOT EXISTS raft_log(log_index TEXT PRIMARY KEY,entry BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS auth_records(model TEXT NOT NULL,id TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(model,id));
             CREATE TABLE IF NOT EXISTS auth_indexes(model TEXT NOT NULL,fields BLOB NOT NULL,PRIMARY KEY(model,fields));
-            CREATE TABLE IF NOT EXISTS auth_dedupe(operation_key TEXT PRIMARY KEY,digest BLOB NOT NULL,outcome BLOB NOT NULL);").map_err(storage)?;
+            CREATE TABLE IF NOT EXISTS auth_dedupe(operation_key TEXT PRIMARY KEY,digest BLOB NOT NULL,outcome BLOB NOT NULL);
+            CREATE TABLE IF NOT EXISTS auth_transactions(id TEXT PRIMARY KEY,workspace BLOB NOT NULL);").map_err(storage)?;
         let prior: Option<String> = meta(&connection, "group_identity")?;
         match prior {
             Some(prior) if prior != group_identity => {
@@ -127,10 +148,16 @@ impl SqliteStore {
             None => set_meta(&connection, "group_identity", &group_identity)?,
             _ => {}
         }
-        Ok(Self { connection: Arc::new(Mutex::new(connection)) })
+        Ok(Self { connection: Arc::new(Mutex::new(connection)), keys: None })
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, Connection>> {
+        if let Some(keys) = &self.keys {
+            let lease = keys.current_lease().map_err(storage)?;
+            if lease.is_expired() {
+                return Err(storage("auth storage key lease expired"));
+            }
+        }
         self.connection.lock().map_err(|_| storage("auth SQLite lock poisoned"))
     }
 
@@ -235,7 +262,10 @@ fn execute(transaction: &Transaction<'_>, command: &Command) -> Result<Outcome> 
             Ok(Outcome::IdempotencyConflict)
         };
     }
-    let outcome = execute_action(transaction, &command.action)?;
+    let logical_time =
+        meta::<u64>(transaction, "logical_time")?.unwrap_or(0).max(command.observed_at_ms);
+    set_meta(transaction, "logical_time", &logical_time)?;
+    let outcome = execute_dispatched(transaction, &command.action, logical_time)?;
     transaction
         .execute(
             "INSERT INTO auth_dedupe(operation_key,digest,outcome) VALUES(?1,?2,?3)",
@@ -245,17 +275,41 @@ fn execute(transaction: &Transaction<'_>, command: &Command) -> Result<Outcome> 
     Ok(outcome)
 }
 
+#[path = "transactions.rs"]
+mod transactions;
+use transactions::execute_dispatched;
+
 fn execute_action(transaction: &Transaction<'_>, action: &Action) -> Result<Outcome> {
     let model = match action {
         Action::CreateUniqueIndex { model, .. }
         | Action::InsertUnique { model, .. }
         | Action::CompareAndSwap { model, .. }
-        | Action::ConsumeOne { model, .. } => model,
+        | Action::ConsumeOne { model, .. }
+        | Action::Find { model, .. } => model,
+        _ => return Ok(invalid("nested transaction command is forbidden")),
     };
     if !valid_name(model) {
         return Ok(invalid("invalid model"));
     }
     match action {
+        Action::Find { expected, offset, limit, .. } => {
+            if *limit > 1000 || *offset > 1000 {
+                return Ok(invalid("query page exceeds bound"));
+            }
+            let all = records(transaction, model)?;
+            if all.len() > 1000 {
+                return Ok(invalid("auth model query exceeds 1000 record bound"));
+            }
+            Ok(Outcome::Records {
+                records: all
+                    .into_iter()
+                    .map(|(_, record)| record)
+                    .filter(|record| matches(record, expected))
+                    .skip(*offset as usize)
+                    .take(*limit as usize)
+                    .collect(),
+            })
+        }
         Action::CreateUniqueIndex { fields, .. } => {
             if fields.is_empty()
                 || fields.len() > 64
@@ -338,6 +392,7 @@ fn execute_action(transaction: &Transaction<'_>, action: &Action) -> Result<Outc
                 .map_err(storage)?;
             Ok(Outcome::Record { record })
         }
+        _ => Ok(invalid("nested transaction command is forbidden")),
     }
 }
 
@@ -433,6 +488,9 @@ struct SnapshotRows {
     records: Vec<(String, String, Vec<u8>)>,
     indexes: Vec<(String, Vec<u8>)>,
     dedupe: Vec<(String, Vec<u8>, Vec<u8>)>,
+    transactions: Vec<(String, Vec<u8>)>,
+    revision: u64,
+    logical_time: u64,
 }
 
 impl RaftSnapshotBuilder<TypeConfig> for SqliteStore {
@@ -440,6 +498,15 @@ impl RaftSnapshotBuilder<TypeConfig> for SqliteStore {
         let mut connection = self.lock()?;
         let transaction = connection.transaction().map_err(storage)?;
         let rows = SnapshotRows {
+            revision: meta(&transaction, "revision")?.unwrap_or(0),
+            logical_time: meta(&transaction, "logical_time")?.unwrap_or(0),
+            transactions: transaction
+                .prepare("SELECT id,workspace FROM auth_transactions ORDER BY id")
+                .map_err(storage)?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(storage)?
+                .collect::<std::result::Result<_, _>>()
+                .map_err(storage)?,
             group_identity: meta(&transaction, "group_identity")?
                 .ok_or_else(|| storage("auth group identity missing"))?,
             records: transaction
@@ -532,7 +599,7 @@ impl RaftStateMachine<TypeConfig> for SqliteStore {
         let transaction = connection.transaction().map_err(storage)?;
         transaction
             .execute_batch(
-                "DELETE FROM auth_records; DELETE FROM auth_indexes; DELETE FROM auth_dedupe;",
+                "DELETE FROM auth_records; DELETE FROM auth_indexes; DELETE FROM auth_dedupe; DELETE FROM auth_transactions;",
             )
             .map_err(storage)?;
         for (model, id, body) in rows.records {
@@ -550,6 +617,13 @@ impl RaftStateMachine<TypeConfig> for SqliteStore {
                 .execute("INSERT INTO auth_dedupe VALUES(?1,?2,?3)", params![key, digest, outcome])
                 .map_err(storage)?;
         }
+        for (id, workspace) in rows.transactions {
+            transaction
+                .execute("INSERT INTO auth_transactions VALUES(?1,?2)", params![id, workspace])
+                .map_err(storage)?;
+        }
+        set_meta(&transaction, "revision", &rows.revision)?;
+        set_meta(&transaction, "logical_time", &rows.logical_time)?;
         if let Some(applied) = snapshot_meta.last_log_id {
             set_meta(&transaction, "applied", &applied)?;
         } else {
@@ -572,5 +646,11 @@ impl RaftStateMachine<TypeConfig> for SqliteStore {
     }
     async fn get_snapshot_builder(&mut self) -> Self {
         self.clone()
+    }
+}
+
+impl std::fmt::Debug for SqliteStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AuthSqliteStore([redacted])")
     }
 }

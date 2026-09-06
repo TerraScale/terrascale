@@ -12,6 +12,17 @@ const SWEEP: Duration = Duration::from_mins(1);
 mod tests;
 
 impl ViewStore {
+    pub(super) fn revoke_scope(&self, scope: &str) -> Result<(), ApiError> {
+        let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
+        let removed: Vec<_> =
+            views.extract_if(.., |_, view| view.scope == scope).map(|(_, view)| view).collect();
+        drop(views);
+        // Drop hosts and admission leases outside the registry lock.
+        drop(removed);
+        self.changed.notify_waiters();
+        Ok(())
+    }
+
     pub(super) fn start_maintenance(self: &Arc<Self>) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
         let Ok(mut worker) = self.maintenance.lock() else { return };

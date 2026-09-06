@@ -14,10 +14,19 @@ pub(super) fn persist_publication(
     operation: &OperationId,
     local_sequence: u64,
 ) -> Result<(), ()> {
-    let payload = intent.replication_publication.as_ref().map_or_else(
-        || codec::encode_private_changes(&intent.metadata, &intent.schema_envelopes),
-        |group| group.private_payload.clone(),
-    );
+    // The retired per-record apply seam has no complete source transaction.
+    // Never advertise those fragments as a retained atomic publication.
+    if provenance.kind() == crate::storage::JournalKind::Replicated
+        && intent.replication_publication.is_none()
+    {
+        return Ok(());
+    }
+    let payload = if let Some(group) = &intent.replication_publication {
+        group.private_payload.clone()
+    } else {
+        let (metadata, envelopes) = super::schema_bundles::source_snapshot(connection, intent)?;
+        codec::encode_private_changes(&metadata, &envelopes)
+    };
     let now = i64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -27,12 +36,13 @@ pub(super) fn persist_publication(
     .map_err(|_| ())?;
     let previous: i64 = connection
         .query_row(
-            "SELECT COALESCE(MAX(committed_at), 0) FROM replication_publications",
+            "SELECT MAX(value) FROM (SELECT COALESCE(MAX(committed_at),0) AS value FROM replication_publications UNION ALL SELECT CAST(value AS INTEGER) FROM meta WHERE key='commit_timestamp_floor')",
             [],
             |row| row.get(0),
         )
         .map_err(|_| ())?;
     let committed_at = now.max(previous);
+    connection.execute("INSERT INTO meta (key,value) VALUES ('commit_timestamp_floor',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[committed_at]).map_err(|_|())?;
     connection.execute(
         "INSERT INTO replication_publications (tenant, origin, origin_seq, hlc, operation, local_seq, committed_at, context, private_payload) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![intent.tenant.as_str(), provenance.origin(), provenance.origin_sequence() as i64, provenance.hlc() as i64, operation.as_str(), local_sequence as i64, committed_at, provenance.context(), payload],
@@ -80,6 +90,23 @@ pub(super) fn persist_publication(
         };
         connection.execute("INSERT INTO replication_publication_records (tenant, local_seq, ordinal, collection, id, body) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![intent.tenant.as_str(), local_sequence as i64, index as i64, record.collection.as_str(), record.id.as_str(), body]).map_err(|_| ())?;
     }
+    super::repair_summary::persist(
+        connection,
+        &intent.tenant,
+        local_sequence,
+        &ReplicatedPublication {
+            origin: provenance.origin().to_owned(),
+            origin_sequence: provenance.origin_sequence(),
+            hlc: provenance.hlc(),
+            commit_ulid: intent
+                .replication_publication
+                .as_ref()
+                .map_or_else(|| operation.as_str().to_owned(), |group| group.commit_ulid.clone()),
+            context: provenance.context().to_vec(),
+            private_payload: payload,
+            records,
+        },
+    )?;
     Ok(())
 }
 

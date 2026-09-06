@@ -97,8 +97,13 @@ fn open_owned_engine(tag: &str) -> (PathBuf, Engine, TenantId) {
     let dir = location(tag);
     let owner = crate::storage::DatabaseOwner::local_development();
     let owner_tenant = tenant(&owner.tenant().to_text());
-    let config = EngineConfig::durable(&dir).expect("durable location").with_owner(owner);
+    let keys = test_storage_keys(&owner, 23);
+    let config = EngineConfig::durable(&dir)
+        .expect("durable location")
+        .with_owner(owner)
+        .with_storage_keys(keys);
     let engine = Engine::open(config).expect("owned engine opens");
+    engine.activate_origin_epoch(1).unwrap();
     (dir, engine, owner_tenant)
 }
 
@@ -2768,7 +2773,7 @@ fn replicated_publication_rolls_back_every_document_and_replays_after_restart() 
     let applied = engine.apply_replicated_publication(&scope, &publication).unwrap();
     assert!(!applied.replayed());
     let sequence = engine.published_sequence().unwrap();
-    let distinct: u64 = sql
+    let distinct: i64 = sql
         .query_row(
             "SELECT COUNT(DISTINCT commit_seq) FROM documents WHERE id IN ('group-a', 'group-b')",
             [],
@@ -2777,7 +2782,6 @@ fn replicated_publication_rolls_back_every_document_and_replays_after_restart() 
         .unwrap();
     assert_eq!(distinct, 1);
     engine.shutdown().unwrap();
-    drop(engine);
     drop(sql);
     let engine = reopen_engine(&dir);
     let scope = tenant_scope(&engine, "tenant-a");
@@ -2832,9 +2836,23 @@ fn replicated_publication_private_controls_and_documents_share_rollback_and_rest
     let (source_dir, source) = open_engine("atomic-private-source");
     let source_scope = tenant_scope(&source, "tenant-a");
     let snapshot = source.read_snapshot(&source_scope).unwrap();
-    let mut transaction = source.begin(&source_scope, snapshot, OperationId::try_new("private-source").unwrap()).unwrap();
-    transaction.put(Document::new(document_id("private-doc"), CollectionName::try_new("users").unwrap(), DocumentValue::Integer(7)), ExpectedVersion::Any).unwrap();
-    transaction.metadata.push(crate::storage::PrivateMetadataWrite { key: "migration:test:cursor".into(), value: Some(DocumentValue::Integer(7)) });
+    let mut transaction = source
+        .begin(&source_scope, snapshot, OperationId::try_new("private-source").unwrap())
+        .unwrap();
+    transaction
+        .put(
+            Document::new(
+                document_id("private-doc"),
+                CollectionName::try_new("users").unwrap(),
+                DocumentValue::Integer(7),
+            ),
+            ExpectedVersion::Any,
+        )
+        .unwrap();
+    transaction.metadata.push(crate::storage::PrivateMetadataWrite {
+        key: "migration:test:cursor".into(),
+        value: Some(DocumentValue::Integer(7)),
+    });
     assert!(matches!(transaction.commit(LocalDurability::Written), CommitOutcome::Committed(_)));
     let groups = source.replication_publications(&source_scope, 0, 10).unwrap();
     let publication = &groups.last().unwrap().1;
@@ -2844,19 +2862,294 @@ fn replicated_publication_private_controls_and_documents_share_rollback_and_rest
     let scope = tenant_scope(&engine, "tenant-a");
     let sql = rusqlite::Connection::open(dir.join("terrabase.sqlite3")).unwrap();
     sql.execute_batch("CREATE TRIGGER fail_private_document BEFORE INSERT ON documents BEGIN SELECT RAISE(ABORT, 'private group fault'); END;").unwrap();
-    assert_eq!(engine.apply_replicated_publication(&scope, publication), Err(EngineError::StorageFailure));
-    let count: u64 = sql.query_row("SELECT COUNT(*) FROM family_metadata", [], |row| row.get(0)).unwrap();
+    assert_eq!(
+        engine.apply_replicated_publication(&scope, publication),
+        Err(EngineError::StorageFailure)
+    );
+    let count: i64 =
+        sql.query_row("SELECT COUNT(*) FROM family_metadata", [], |row| row.get(0)).unwrap();
     assert_eq!(count, 0);
     sql.execute_batch("DROP TRIGGER fail_private_document").unwrap();
     engine.apply_replicated_publication(&scope, publication).unwrap();
-    let sequence: u64 = sql.query_row("SELECT seq FROM family_metadata WHERE record_key='migration:test:cursor'", [], |row| row.get(0)).unwrap();
-    let doc_sequence: u64 = sql.query_row("SELECT commit_seq FROM documents WHERE id='private-doc'", [], |row| row.get(0)).unwrap();
+    let sequence: i64 = sql
+        .query_row(
+            "SELECT seq FROM family_metadata WHERE record_key='migration:test:cursor'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let doc_sequence: i64 = sql
+        .query_row("SELECT commit_seq FROM documents WHERE id='private-doc'", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(sequence, doc_sequence);
-    engine.shutdown().unwrap(); drop(engine); drop(sql);
+    engine.shutdown().unwrap();
+    drop(sql);
     let engine = reopen_engine(&dir);
     let scope = tenant_scope(&engine, "tenant-a");
     assert!(engine.apply_replicated_publication(&scope, publication).unwrap().replayed());
-    assert_eq!(engine.replication_publications(&scope, 0, 10).unwrap().last().unwrap().1.fingerprint().unwrap(), publication.fingerprint().unwrap());
-    engine.shutdown().unwrap(); source.shutdown().unwrap();
-    std::fs::remove_dir_all(dir).unwrap(); std::fs::remove_dir_all(source_dir).unwrap();
+    assert_eq!(
+        engine
+            .replication_publications(&scope, 0, 10)
+            .unwrap()
+            .last()
+            .unwrap()
+            .1
+            .fingerprint()
+            .unwrap(),
+        publication.fingerprint().unwrap()
+    );
+    engine.shutdown().unwrap();
+    source.shutdown().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+    std::fs::remove_dir_all(source_dir).unwrap();
+}
+
+#[test]
+fn replicated_publication_missing_dependency_binds_nothing_and_retries() {
+    let (dir, engine) = open_engine("atomic-group-dependency");
+    let scope = tenant_scope(&engine, "tenant-a");
+    let predecessor = replicated_group(&["dependency-first"], 10);
+    let mut later = replicated_group(&["dependency-later"], 20);
+    later.origin_sequence = 2;
+    later.commit_ulid = "group-second-source".into();
+    later.context =
+        super::merge::encode_context(&super::merge::DocumentContext::from_frontier([(
+            later.origin.clone(),
+            1,
+        )]));
+    for record in &mut later.records {
+        record.origin_sequence = 2;
+        record.commit_ulid = later.commit_ulid.clone();
+        record.context = later.context.clone();
+    }
+    assert_eq!(engine.apply_replicated_publication(&scope, &later), Err(EngineError::Conflict));
+    assert!(read_document(&engine, "tenant-a", "dependency-later").is_none());
+    engine.apply_replicated_publication(&scope, &predecessor).unwrap();
+    engine.apply_replicated_publication(&scope, &later).unwrap();
+    assert!(read_document(&engine, "tenant-a", "dependency-later").is_some());
+    engine.shutdown().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn test_storage_keys(
+    owner: &crate::storage::DatabaseOwner,
+    byte: u8,
+) -> Arc<dyn crate::encryption::DatabaseKeySource> {
+    use crate::encryption::{
+        DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionError,
+        KeyPurpose, KeyScope, KeyVersionMetadata,
+    };
+    #[derive(Debug)]
+    struct Keys(Arc<DatabaseKeyLease>);
+    impl DatabaseKeySource for Keys {
+        fn current_lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+            Ok(self.0.clone())
+        }
+        fn lease(
+            &self,
+            version: DatabaseKeyVersion,
+        ) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+            if self.0.metadata().version() == version {
+                self.current_lease()
+            } else {
+                Err(EncryptionError::InvalidKeyMetadata)
+            }
+        }
+    }
+    let scope = KeyScope::new_with_project(
+        owner.environment().as_str(),
+        owner.tenant(),
+        owner.project(),
+        owner.database(),
+        KeyPurpose::Data,
+    )
+    .unwrap();
+    let metadata = KeyVersionMetadata::new(
+        scope,
+        DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB0").unwrap(),
+    );
+    Arc::new(Keys(Arc::new(
+        DatabaseKeyLease::test_oci_vault(
+            metadata,
+            DatabaseKey::from_bytes([byte; 32]),
+            std::time::Duration::from_secs(300),
+        )
+        .unwrap(),
+    )))
+}
+
+#[test]
+fn encrypted_owner_reopen_and_wrong_key_fail_closed() {
+    let dir = location("encrypted-owner");
+    let owner = crate::storage::DatabaseOwner::local_development();
+    let tenant = tenant(&owner.tenant().to_text());
+    let config = EngineConfig::durable(&dir).unwrap().with_owner(owner.clone());
+    assert!(matches!(Engine::open(config.clone()), Err(EngineOpenError::InvalidConfig)));
+    let engine =
+        Engine::open(config.clone().with_storage_keys(test_storage_keys(&owner, 91))).unwrap();
+    let scope = engine.scope_for(&tenant);
+    let snapshot = engine.read_snapshot(&scope).unwrap();
+    let mut transaction = engine.begin(&scope, snapshot, operation("encrypted-write")).unwrap();
+    transaction
+        .put(document("secret", "items", "encrypted-owner-payload"), ExpectedVersion::New)
+        .unwrap();
+    assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    engine.shutdown().unwrap();
+    assert!(Engine::open(config.clone().with_storage_keys(test_storage_keys(&owner, 92))).is_err());
+    let reopened = Engine::open(config.with_storage_keys(test_storage_keys(&owner, 91))).unwrap();
+    let scope = reopened.scope_for(&tenant);
+    let snapshot = reopened.read_snapshot(&scope).unwrap();
+    let transaction = reopened.begin(&scope, snapshot, operation("encrypted-read")).unwrap();
+    assert!(transaction.read(&document_id("secret")).unwrap().is_some());
+    drop(transaction);
+    drop(reopened);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn encrypted_owner_revocation_blocks_cached_and_staged_reads() {
+    use crate::encryption::{
+        DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionError,
+    };
+    #[derive(Debug)]
+    struct Revocable {
+        source: Arc<dyn DatabaseKeySource>,
+        revoked: std::sync::atomic::AtomicBool,
+    }
+    impl DatabaseKeySource for Revocable {
+        fn current_lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+            if self.revoked.load(Ordering::Acquire) {
+                Err(EncryptionError::KeyLeaseExpired)
+            } else {
+                self.source.current_lease()
+            }
+        }
+        fn lease(
+            &self,
+            version: DatabaseKeyVersion,
+        ) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+            self.current_lease()?;
+            self.source.lease(version)
+        }
+    }
+    let dir = location("encrypted-revocation");
+    let owner = crate::storage::DatabaseOwner::local_development();
+    let tenant = tenant(&owner.tenant().to_text());
+    let keys = Arc::new(Revocable {
+        source: test_storage_keys(&owner, 93),
+        revoked: std::sync::atomic::AtomicBool::new(false),
+    });
+    let engine = Engine::open(
+        EngineConfig::durable(&dir).unwrap().with_owner(owner).with_storage_keys(keys.clone()),
+    )
+    .unwrap();
+    let scope = engine.scope_for(&tenant);
+    let snapshot = engine.read_snapshot(&scope).unwrap();
+    let mut transaction = engine.begin(&scope, snapshot, operation("staged-secret")).unwrap();
+    transaction.put(document("secret", "items", "staged-secret"), ExpectedVersion::New).unwrap();
+    assert!(transaction.read(&document_id("secret")).unwrap().is_some());
+    keys.revoked.store(true, Ordering::Release);
+    assert!(matches!(transaction.read(&document_id("secret")), Err(EngineError::StorageFailure)));
+    assert!(matches!(engine.read_snapshot(&scope), Err(EngineError::StorageFailure)));
+    assert!(matches!(
+        transaction.commit(LocalDurability::Synced),
+        CommitOutcome::Rejected(CommitError::StorageFailure)
+    ));
+    drop(engine);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn replicated_private_only_conflicts_converge_and_keep_loser_source() {
+    let (source_dir, source) = open_engine("private-conflict-source");
+    let source_scope = tenant_scope(&source, "tenant-a");
+    for number in [1, 2] {
+        let snapshot = source.read_snapshot(&source_scope).unwrap();
+        let mut transaction = source
+            .begin(
+                &source_scope,
+                snapshot,
+                OperationId::try_new(&format!("private-control-{number}")).unwrap(),
+            )
+            .unwrap();
+        transaction.metadata.push(crate::storage::PrivateMetadataWrite {
+            key: "migration:test:cursor".into(),
+            value: Some(DocumentValue::Integer(number)),
+        });
+        assert!(matches!(
+            transaction.commit(LocalDurability::Written),
+            CommitOutcome::Committed(_)
+        ));
+    }
+    let mut groups = source.replication_publications(&source_scope, 0, 10).unwrap();
+    for (index, (_, group)) in groups.iter_mut().enumerate() {
+        group.origin = format!("private-peer-{index}");
+        group.origin_sequence = 1;
+        group.hlc = 100 + index as u64;
+        group.context = Vec::new();
+        assert!(group.records.is_empty());
+    }
+    let mut observed = Vec::new();
+    for reverse in [false, true] {
+        let (dir, engine) =
+            open_engine(if reverse { "private-reverse" } else { "private-forward" });
+        let scope = tenant_scope(&engine, "tenant-a");
+        for index in if reverse { [1, 0] } else { [0, 1] } {
+            engine.apply_replicated_publication(&scope, &groups[index].1).unwrap();
+        }
+        assert_eq!(engine.replication_publications(&scope, 0, 10).unwrap().len(), 2);
+        let sql = rusqlite::Connection::open(dir.join("terrabase.sqlite3")).unwrap();
+        observed.push(sql.query_row("SELECT value FROM family_metadata WHERE record_key='migration:test:cursor' ORDER BY seq DESC LIMIT 1", [], |row| row.get::<_,Vec<u8>>(0)).unwrap());
+        engine.shutdown().unwrap();
+        drop(sql);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    assert_eq!(observed[0], observed[1]);
+    assert_eq!(
+        observed[0],
+        crate::storage::encode_private_value(&DocumentValue::Integer(2)).unwrap()
+    );
+    source.shutdown().unwrap();
+    std::fs::remove_dir_all(source_dir).unwrap();
+}
+
+#[test]
+fn origin_sequences_are_contiguous_per_tenant_under_interleaved_commits() {
+    let (dir, engine) = open_engine("tenant-origin-counter");
+    for (tenant, op, id) in [
+        ("tenant-one", "first-a", "a"),
+        ("tenant-two", "first-b", "b"),
+        ("tenant-one", "second-a", "c"),
+    ] {
+        assert!(matches!(
+            commit_put(
+                &engine,
+                tenant,
+                op,
+                id,
+                "body",
+                ExpectedVersion::New,
+                LocalDurability::Synced
+            ),
+            CommitOutcome::Committed(_)
+        ));
+    }
+    let first = engine
+        .durable_origin_prefixes(&tenant_scope(&engine, "tenant-one"))
+        .expect("first frontier");
+    let second = engine
+        .durable_origin_prefixes(&tenant_scope(&engine, "tenant-two"))
+        .expect("second frontier");
+    assert_eq!(first.values().copied().collect::<Vec<_>>(), vec![2]);
+    assert_eq!(second.values().copied().collect::<Vec<_>>(), vec![1]);
+    drop(engine);
+    let engine = reopen_engine(&dir);
+    assert_eq!(
+        engine
+            .durable_origin_prefixes(&tenant_scope(&engine, "tenant-two"))
+            .expect("restart frontier"),
+        second
+    );
+    drop(engine);
+    std::fs::remove_dir_all(dir).expect("cleanup");
 }

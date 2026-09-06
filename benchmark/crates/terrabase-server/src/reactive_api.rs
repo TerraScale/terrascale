@@ -545,6 +545,11 @@ impl ViewStore {
         };
         let materialization = initialized.as_ref().or(materialization);
         let mut views = self.views.lock().map_err(|_| ApiError::storage_failure())?;
+        // Serialize final installation with database revocation. A prepared
+        // attach cannot resurrect a view after the durable deletion fence.
+        if let Some(materializer) = materialization.and_then(|value| value.materializer.as_ref()) {
+            ensure_materializer_access(materializer)?;
+        }
         if views.get(&view_id).is_some_and(|view| {
             view.scope != scope || view.entitlement_epoch != request.entitlement_epoch
         }) {
@@ -707,6 +712,7 @@ impl ViewStore {
             let view = views.get_mut(view_id).ok_or_else(unknown_view)?;
             view.prune(SystemTime::now());
             let Some(materializer) = &view.materializer else { return Ok(None) };
+            ensure_materializer_access(materializer)?;
             (
                 Arc::clone(&materializer.host),
                 materializer.tenant.clone(),
@@ -869,6 +875,25 @@ impl ViewStore {
             view.region,
         ))
     }
+}
+
+fn ensure_materializer_access(materializer: &Materializer) -> Result<(), ApiError> {
+    let engine = materializer.host.engine();
+    let scope = engine.scope_for(&materializer.tenant);
+    if engine.storage_usage_stopped_at(&scope).map_err(|_| ApiError::storage_failure())?.is_some() {
+        return Err(ApiError::forbidden("access to a deleted database"));
+    }
+    Ok(())
+}
+
+/// Revokes every origin view and retained response for one database owner scope.
+/// Call after the durable deletion fence, before acknowledging origin revocation.
+/// Previously delivered or CDN-cached bytes require the capability expiry boundary.
+///
+/// # Errors
+/// Returns a registry failure if revocation cannot complete.
+pub fn revoke_database(organization: &str, project: &str, database: &str) -> Result<(), ApiError> {
+    store().revoke_scope(&format!("{organization}:{project}:{database}"))
 }
 
 static STORE: OnceLock<Arc<ViewStore>> = OnceLock::new();

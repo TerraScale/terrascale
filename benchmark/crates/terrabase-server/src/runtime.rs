@@ -81,8 +81,7 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
         config.region,
         Arc::clone(&metrics),
     ));
-    let mut network_handle =
-        network.serve_tls(config.tbep_listen, &certificate, &private_key, Some(&client_ca))?;
+    let live_tls = terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(&certificate, &private_key, &client_ca)?;
 
     let mut uds_handle = if let Some(uds) = &config.uds {
         validate_uds_parent(&uds.path)?;
@@ -105,8 +104,13 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
         Arc::clone(&metrics),
         config.tenant.clone(),
         config.project.clone(),
+        live_tls.clone(),
+        format!("{certificate}\n{private_key}").into_bytes(),
+        client_ca.into_bytes(),
     )
     .await?;
+
+    let mut network_handle = network.serve_tls_reloadable(config.tbep_listen, live_tls.clone())?;
 
     let observability = tokio::net::TcpListener::bind(config.observability_listen).await?;
     let (http_stop, http_signal) = oneshot::channel::<()>();
@@ -272,6 +276,26 @@ async fn serve_pending_placement_control(
         Arc::new(PlacementJournal::open(&control.proposal_journal, boundary).map_err(|_| {
             unavailable("durable placement proposal journal cannot be opened or validated")
         })?);
+    if let Some(trust) = &control.transition {
+        let load = |pins: &[crate::config::TransitionPublicKey]| -> Result<std::collections::BTreeMap<String, Vec<u8>>, ProductionStartupError> {
+            pins.iter().map(|pin| {
+                let mut file = open_readonly(&pin.public_key_file).map_err(|_| unavailable("membership signing pin unavailable"))?;
+                let metadata = file.metadata().map_err(|_| unavailable("membership signing pin unavailable"))?;
+                if !metadata.is_file() || metadata.len() != 32 { return Err(unavailable("membership signing pin invalid")); }
+                #[cfg(unix)] {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    if metadata.permissions().mode() & 0o022 != 0 { return Err(unavailable("membership signing pin is writable by others")); }
+                }
+                let mut key = Vec::with_capacity(32);
+                file.read_to_end(&mut key).map_err(|_| unavailable("membership signing pin unavailable"))?;
+                if key.len() != 32 { return Err(unavailable("membership signing pin changed")); }
+                Ok((pin.key_id.clone(), key))
+            }).collect()
+        };
+        let trust = terrabase_tbep::placement::transition::TransitionTrust::new(load(&trust.authority_keys)?, load(&trust.genesis_keys)?, load(&trust.member_keys)?)
+            .map_err(|_| unavailable("membership signing pins invalid"))?;
+        journal.configure_transition_trust(trust).map_err(|_| unavailable("retained membership proof or signing pins invalid"))?;
+    }
     let grpc = TbepGrpcConfig::try_new(
         config.max_message_bytes,
         config.max_inflight,
@@ -288,13 +312,13 @@ async fn serve_pending_placement_control(
         production.databases.iter().filter(|database|database.enabled).map(|database| {
             terrabase_cluster::production::DatabaseRouteScope::new(database.tenant,database.project,database.database)
         }).collect(),
-        production.placement.regions().flat_map(|seats| seats.members().iter().map(|member|(member.to_text(),seats.region().as_str().to_owned())).collect::<Vec<_>>()).collect(),
+        production.placement.regions.iter().flat_map(|(region,members)| members.iter().map(|member|(member.to_text(),region.as_str().to_owned())).collect::<Vec<_>>()).collect(),
     ).map_err(|_|unavailable("auth bootstrap host boundary is invalid"))?;
     let auth_journal_path=control.proposal_journal.parent().ok_or_else(||unavailable("auth bootstrap journal directory missing"))?.join("auth-bootstrap.sqlite");
     let auth_journal=Arc::new(terrabase_tbep::auth_bootstrap::AuthBootstrapJournal::open(&auth_journal_path,auth_boundary)
         .map_err(|_|unavailable("auth bootstrap journal unavailable or identity mismatch"))?);
     let server = Arc::new(
-        PlacementControlServer::new(journal, auth_journal, grpc, control.observer_principals.clone())
+        PlacementControlServer::new(journal, Arc::clone(&auth_journal), grpc, control.observer_principals.clone())
             .map_err(|_| unavailable("placement control principal policy is invalid"))?,
     );
     let certificate = read_pem(&production.transport.server_certificate, false)
@@ -313,6 +337,21 @@ async fn serve_pending_placement_control(
     let observations = tokio::net::TcpListener::bind(production.transport.metrics_listen)
         .await
         .map_err(|_| unavailable("pending placement metrics listener cannot bind"))?;
+    let (auth_stop,auth_signal)=oneshot::channel();
+    let auth_runtime=if let Some(public)=&config.public_api {
+        let endpoint=Arc::new(build_production_transport(production).map_err(|_|unavailable("auth member transport cannot bind"))?);
+        Some(crate::auth_runtime::AuthRuntime::new(endpoint,Arc::clone(&auth_journal),production.clone(),public)
+            .map_err(|_|unavailable("auth runtime credentials or key delivery configuration missing"))?)
+    } else { None };
+    let auth_listen=config.public_api.as_ref().map(|public|public.listen);
+    let mut auth_task=tokio::spawn(async move {
+        if let (Some(runtime),Some(listen))=(auth_runtime,auth_listen) {
+            runtime.serve(listen,async { let _=auth_signal.await; }).await
+        } else {
+            let _=auth_signal.await;
+            Ok(())
+        }
+    });
     let (control_stop, control_signal) = oneshot::channel();
     let mut control_task = tokio::spawn(listener.serve(async {
         let _ = control_signal.await;
@@ -328,6 +367,7 @@ async fn serve_pending_placement_control(
     });
     let mut control_finished = false;
     let mut metrics_finished = false;
+    let mut auth_finished=false;
     let outcome = tokio::select! {
         result = wait_for_shutdown() => result.map_err(|_| unavailable("shutdown signal listener failed")),
         _ = &mut control_task => {
@@ -338,10 +378,15 @@ async fn serve_pending_placement_control(
             metrics_finished = true;
             Err(unavailable("pending placement metrics listener stopped unexpectedly"))
         },
+        _=&mut auth_task=> {
+            auth_finished=true;
+            Err(unavailable("auth consensus/public runtime stopped unexpectedly"))
+        },
     };
     server.begin_drain();
     let _ = control_stop.send(());
     let _ = metrics_stop.send(());
+    let _=auth_stop.send(());
     let drained = tokio::time::timeout(config.shutdown_grace, async {
         if !control_finished {
             control_task
@@ -354,6 +399,9 @@ async fn serve_pending_placement_control(
                 .await
                 .map_err(|_| unavailable("pending placement metrics task failed"))?
                 .map_err(|_| unavailable("pending placement metrics drain failed"))?;
+        }
+        if !auth_finished {
+            auth_task.await.map_err(|_|unavailable("auth runtime task failed"))?.map_err(|_|unavailable("auth runtime drain failed"))?;
         }
         server.drain().await.map_err(|_| unavailable("placement journal work did not drain"))
     })
@@ -485,6 +533,9 @@ async fn serve_public_api(
     metrics: Arc<terrabase::observability::MetricsRegistry>,
     tenant: String,
     project: String,
+    live_tls: terrabase_tbep::grpc::reloadable_tls::ReloadableTls,
+    workload_tls: Vec<u8>,
+    trust_bundle: Vec<u8>,
 ) -> Result<
     (Option<tokio::task::JoinHandle<Result<(), std::io::Error>>>, oneshot::Sender<()>),
     Box<dyn Error + Send + Sync>,
@@ -566,8 +617,9 @@ async fn serve_public_api(
         None => crate::reactive_api::CapabilityKeyRing::default(),
     };
     let rotation = public.credential_rotation.as_ref().map(|rotation| {
-        crate::credential_rotation::bind(&rotation.socket, &rotation.state_file,
-            read_secret_key(&rotation.token_file)?, origin_proof_keys.clone(), capability_keys.clone())
+        crate::credential_rotation::bind_with_tls(&rotation.socket, &rotation.state_file,
+            read_secret_key(&rotation.token_file)?, origin_proof_keys.clone(), capability_keys.clone(),
+            live_tls, workload_tls, trust_bundle)
             .map_err(|_| DaemonError::Engine("credential rotation receiver unavailable".into()))
     }).transpose()?;
     let (origin_proof_keys, capability_keys) = rotation.as_ref().map_or(
@@ -578,7 +630,7 @@ async fn serve_public_api(
         crate::delegated_identity::IdentityVerifier::new(crate::delegated_identity::IdentityConfig {
             endpoint: identity.endpoint.clone(), issuer: identity.issuer.clone(),
             audience: identity.audience.clone(), service_key: secret,
-        }).map(Arc::new).map_err(|_| DaemonError::Engine("invalid identity authority configuration".into()))
+        }).map(|verifier| Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()))).map_err(|_| DaemonError::Engine("invalid identity authority configuration".into()))
     }).transpose()?;
     let provisioning = public.provisioning.as_ref().map(|authority| {
         crate::provisioning::ProvisioningClient::new(authority.socket.clone(), authority.authority_uid,
@@ -639,8 +691,7 @@ async fn serve_public_api(
             let _ = worker.await;
         }
         if let Some(dispatcher) = dispatcher {
-            dispatcher.abort();
-            let _ = dispatcher.await;
+            dispatcher.shutdown().await;
         }
         result.and(rotation_result)
     });
@@ -704,7 +755,7 @@ fn open_readonly(path: &Path) -> Result<File, DaemonError> {
 /// Reads bounded raw HMAC key material from a private, no-follow file. Keys
 /// are delivered as UTF-8 bytes so operators can rotate them through the
 /// same secret-file mechanism as the rest of the daemon configuration.
-fn read_secret_key(path: &Path) -> Result<Vec<u8>, DaemonError> {
+pub(crate) fn read_secret_key(path: &Path) -> Result<Vec<u8>, DaemonError> {
     let mut file = open_readonly(path)?;
     let metadata = file.metadata().map_err(|_| DaemonError::SecretFile)?;
     if !metadata.is_file() || metadata.len() < 16 || metadata.len() > 4096 {

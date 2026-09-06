@@ -82,6 +82,13 @@ impl SchemaDurablePort for EngineSchemaStore {
                 .map_err(|_| storage_error())?;
         }
         transaction
+            .stage_schema_bundle(
+                &target.collection,
+                record.document.generation,
+                crate::schema_api::schema_bundle_identity(&record).map_err(|_| storage_error())?,
+            )
+            .map_err(|_| storage_error())?;
+        transaction
             .stage_schema_metadata(
                 &target.database,
                 &target.branch,

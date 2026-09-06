@@ -12,9 +12,8 @@
 //! unknown major or minor version, unknown frame kind, truncation, trailing
 //! bytes, oversized frames, invalid UTF-8, and digest disagreement with the
 //! payload. A frame whose expiry stamp has passed fails closed at the
-//! receiving Member. No frame ever carries credentials, and there is no
-//! generic byte-blob escape: every payload is one of the four typed frame
-//! kinds of the W4 catch-up/push protocol plus its acknowledgement report.
+//! receiving Member. No frame carries credentials. Source publication bytes
+//! use the engine-owned group codec, preserving complete transaction boundaries.
 
 use crate::clock::LaneInstant;
 use crate::identity::{CollectionName, DocumentId, MemberId, OperationId, TenantId};
@@ -34,10 +33,11 @@ pub const ENVELOPE_VERSION_MAJOR: u16 = 1;
 /// journal tailer's replicated-record batch ([`FrameKind::ReplicationBatch`]);
 /// minor 3 adds the durable source sequence to replicated records; minor 4
 /// adds the bounded opaque causal-context bytes to each replicated record.
+/// Minor 5 carries a complete engine-encoded source publication.
 /// Encoders use the canonical minor for each frame kind so older peers can
 /// continue to decode unchanged frame classes, while a legacy replication
 /// batch at minor 3 remains decodable with an empty context.
-pub const ENVELOPE_VERSION_MINOR: u16 = REPLICATION_BATCH_CONTEXT_VERSION_MINOR;
+pub const ENVELOPE_VERSION_MINOR: u16 = 5;
 
 const ACK_BATCH_VERSION_MINOR: u16 = 1;
 const REPLICATION_BATCH_VERSION_MINOR: u16 = 3;
@@ -103,6 +103,8 @@ pub enum FrameKind {
     /// body bytes plus causal metadata, one frame per group-commit wave per
     /// peer). Its current wire shape requires envelope minor version 3.
     ReplicationBatch,
+    /// One complete source publication encoded by the engine group codec.
+    ReplicationPublication,
 }
 
 impl FrameKind {
@@ -116,6 +118,7 @@ impl FrameKind {
             Self::AckReport => 4,
             Self::AckBatch => 5,
             Self::ReplicationBatch => 6,
+            Self::ReplicationPublication => 7,
         }
     }
 
@@ -132,6 +135,7 @@ impl FrameKind {
             4 => Ok(Self::AckReport),
             5 => Ok(Self::AckBatch),
             6 => Ok(Self::ReplicationBatch),
+            7 => Ok(Self::ReplicationPublication),
             _ => Err(EnvelopeError::UnsupportedKind),
         }
     }
@@ -146,6 +150,7 @@ impl FrameKind {
             Self::AckReport => "ack-report",
             Self::AckBatch => "ack-batch",
             Self::ReplicationBatch => "replication-batch",
+            Self::ReplicationPublication => "replication-publication",
         }
     }
 
@@ -155,6 +160,7 @@ impl FrameKind {
             Self::CatchUpRequest | Self::CatchUpBatch | Self::Push | Self::AckReport => 0,
             Self::AckBatch => ACK_BATCH_VERSION_MINOR,
             Self::ReplicationBatch => REPLICATION_BATCH_VERSION_MINOR,
+            Self::ReplicationPublication => 5,
         }
     }
 
@@ -380,6 +386,13 @@ pub struct ReplicatedWrite {
 /// The typed payload of one member envelope.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Payload {
+    /// An indivisible source transaction; the engine validates its bounded codec.
+    ReplicationPublication {
+        /// Tenant owning this publication.
+        tenant: TenantId,
+        /// Canonical complete source group, including private control changes.
+        publication: Vec<u8>,
+    },
     /// Requests a tenant's published commits after a cursor position.
     CatchUpRequest {
         /// The tenant whose history is requested.
@@ -960,6 +973,10 @@ fn encode_payload(out: &mut Vec<u8>, payload: &Payload) -> Result<(), EnvelopeEr
                 put_u8(out, u8::from(*held_synced));
             }
         }
+        Payload::ReplicationPublication { tenant, publication } => {
+            put_str(out, tenant.as_str())?;
+            put_bytes_field(out, publication, MAX_PAYLOAD_BYTES)?;
+        }
         Payload::ReplicationBatch { tenant, records } => {
             put_str(out, tenant.as_str())?;
             put_u32(out, u32::try_from(records.len()).map_err(|_| EnvelopeError::Oversized)?);
@@ -1058,6 +1075,10 @@ fn decode_payload(
         FrameKind::AckReport => decode_ack_report(cursor),
         FrameKind::AckBatch => decode_ack_batch(cursor),
         FrameKind::ReplicationBatch => decode_replication_batch(cursor, minor),
+        FrameKind::ReplicationPublication => Ok(Payload::ReplicationPublication {
+            tenant: decode_tenant(cursor)?,
+            publication: take_bytes_field(cursor, MAX_PAYLOAD_BYTES)?,
+        }),
     }
 }
 

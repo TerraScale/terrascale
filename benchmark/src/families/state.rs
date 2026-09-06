@@ -1,19 +1,14 @@
-//! Reserved family-record mapping over Engine documents.
+//! Family records staged inside Engine transactions.
 //!
-//! W3-F keeps every family value in documents of one reserved collection,
-//! `terrabase.families`, addressed by reserved record identifiers of the form
-//! `family:<kind>/<owner...>`. The Engine already keys documents by tenant and
-//! applies one transaction marker per commit, so family state inherits tenant
-//! isolation, atomicity, and durability from the Engine without families
-//! touching storage bytes.
+//! Schema validation and migration controls use private, tenant-scoped MVCC
+//! metadata. Their updates commit atomically with customer mutations, without
+//! becoming customer documents, journal events, or billable storage.
 //!
-//! This mapping is logical, not a storage-format fact: the record layout is
-//! encoded as structured [`DocumentValue`]s and never exposes pages, frames,
-//! or codec buffers. The Engine does not yet reserve the collection name, so a
-//! caller writing the same collection and identifier directly through the
-//! document seam collides with family state; that collision surfaces as the
-//! typed [`FamilyError::ReservedStateInvalid`] and is recorded as a handoff in
-//! the packet record.
+//! Customer family values (attachments, counters, time-series and revisions)
+//! remain documents in `terrabase.families`, addressed by
+//! `family:<kind>/<owner...>`. Collisions in that customer payload namespace
+//! report `FamilyError::ReservedStateInvalid`; private controls cannot collide
+//! with customer document identifiers.
 
 use std::collections::BTreeMap;
 
@@ -28,7 +23,7 @@ use crate::{
     types::{CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion},
 };
 
-/// The reserved collection holding every family record.
+/// The reserved collection holding customer family payload records.
 pub(crate) const RESERVED_COLLECTION: &str = "terrabase.families";
 
 /// The reserved record-identifier prefix.

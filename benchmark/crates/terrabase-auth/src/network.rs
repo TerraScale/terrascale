@@ -106,6 +106,19 @@ impl AuthNetwork {
             .collect()
     }
 
+    /// Peek the bounded versioned group routing key before dispatching a frame.
+    pub fn frame_group(bytes: &[u8]) -> Result<String, AuthorityError> {
+        if bytes.len() > MAX_RPC_BYTES {
+            return Err(AuthorityError::Unavailable);
+        }
+        let envelope: Envelope =
+            serde_json::from_slice(bytes).map_err(|_| AuthorityError::Unavailable)?;
+        if envelope.protocol != "terrabase.auth.raft.v1" {
+            return Err(AuthorityError::Unavailable);
+        }
+        Ok(envelope.group)
+    }
+
     /// Dispatch one already authenticated member connection.
     /// The transport listener must route this dedicated lane exclusively to auth.
     pub async fn receive(
@@ -114,6 +127,16 @@ impl AuthNetwork {
         authority: &AuthAuthority,
     ) -> Result<(), AuthorityError> {
         let bytes = connection.receive_frame().await.map_err(|_| AuthorityError::Unavailable)?;
+        self.receive_frame(connection, authority, &bytes).await
+    }
+
+    /// Dispatch an already received bounded frame without consuming a second frame.
+    pub async fn receive_frame(
+        &self,
+        connection: &ProductionConnection,
+        authority: &AuthAuthority,
+        bytes: &[u8],
+    ) -> Result<(), AuthorityError> {
         if bytes.len() > MAX_RPC_BYTES {
             return Err(AuthorityError::Unavailable);
         }

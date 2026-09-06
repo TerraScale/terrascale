@@ -8,6 +8,7 @@
 pub mod admission;
 pub mod admitted_databases;
 pub mod api;
+pub mod auth_runtime;
 pub mod api_keys;
 pub mod backup;
 pub mod byo_jwt;
@@ -15,6 +16,7 @@ pub mod config;
 pub mod control;
 pub mod credential_rotation;
 pub mod delegated_identity;
+pub mod identity_secret_delivery;
 pub mod export_api;
 pub mod export_store;
 pub mod export_local;
@@ -22,7 +24,9 @@ pub mod guards;
 pub mod http;
 pub mod index_api;
 pub mod production;
+pub mod production_admission;
 pub mod replication_runtime;
+pub mod replication_proof;
 pub mod provisioning;
 pub mod reactive_api;
 mod read_operation;
@@ -44,3 +48,9 @@ pub use view_capability::{
 
 /// Authenticated production replication peer workers.
 pub mod replication_peers;
+
+/// Encrypted native backup bridge for complete physical bootstrap snapshots.
+pub mod native_snapshot_backup;
+
+/// Joined live delivery catchup observations.
+pub mod catchup_observation;

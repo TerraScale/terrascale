@@ -2,6 +2,38 @@ use super::{Engine, TenantScope, UsageCommandError, map_usage_storage_error};
 use crate::usage::{MeasurementWindow, StorageUsageClosure};
 
 impl Engine {
+    /// Returns the last frozen storage boundary, absent before the first close.
+    ///
+    /// # Errors
+    /// Returns a scope or durable storage error.
+    pub fn storage_usage_closed_through(
+        &self,
+        scope: &TenantScope,
+    ) -> Result<Option<u64>, UsageCommandError> {
+        self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
+        self.storage
+            .lock()
+            .map_err(|_| UsageCommandError::StorageUnavailable)?
+            .port
+            .storage_usage_closed_through(scope.tenant())
+            .map_err(map_usage_storage_error)
+    }
+    /// Returns the durable accepted-deletion fence used to revoke public access.
+    ///
+    /// # Errors
+    /// Returns a scope or storage integrity/availability error.
+    pub fn storage_usage_stopped_at(
+        &self,
+        scope: &TenantScope,
+    ) -> Result<Option<u64>, UsageCommandError> {
+        self.validate_scope(scope).map_err(|_| UsageCommandError::ScopeMismatch)?;
+        self.storage
+            .lock()
+            .map_err(|_| UsageCommandError::StorageUnavailable)?
+            .port
+            .storage_usage_stopped_at(scope.tenant())
+            .map_err(map_usage_storage_error)
+    }
     /// Freezes a completed interval using the persisted placement binding and
     /// actual logical storage timeline. No caller supplies usage quantities.
     ///

@@ -601,8 +601,10 @@ pub struct SchemaDocument {
     /// Canonical schema JSON.
     pub schema: CollectionSchema,
     /// Monotonic HTTP/API generation used by `If-Match`.
+    #[schema(format = "uint64", minimum = 0)]
     pub generation: u64,
     /// Durable branch-pinned schema version.
+    #[schema(format = "uint64", minimum = 1, maximum = 9007199254740991_u64)]
     pub schema_version: u64,
     /// Current resumable migration, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -620,8 +622,10 @@ pub struct MigrationStatus {
     /// Ordered rename/backfill steps.
     pub steps: Vec<MigrationStep>,
     /// Number of documents known to the worker at operation creation.
+    #[schema(format = "uint64", minimum = 0)]
     pub total: u64,
     /// Number of documents durably acknowledged by the worker.
+    #[schema(format = "uint64", minimum = 0)]
     pub completed: u64,
     /// Opaque resume cursor.  It is never interpreted as SQL.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1048,6 +1052,15 @@ pub struct DurableSchemaRecord {
     pub idempotency: BTreeMap<String, IdempotencyRecord>,
 }
 
+/// Immutable collection contract identity; progress and replay records do not
+/// change which schema generation won a concurrent publication.
+pub(crate) fn schema_bundle_identity(
+    record: &DurableSchemaRecord,
+) -> Result<[u8; 32], serde_json::Error> {
+    serde_json::to_vec(&(record.document.schema_version, &record.document.schema))
+        .map(|bytes| *blake3::hash(&bytes).as_bytes())
+}
+
 /// A remembered idempotent response.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct IdempotencyRecord {
@@ -1222,8 +1235,19 @@ impl SchemaService {
             ));
         }
         let next_version = next_schema_version(current.as_ref(), schema.version)?;
-        if current.as_ref().is_some_and(|record| record.document.migration.as_ref().is_some_and(|migration| matches!(migration.state, MigrationState::Pending | MigrationState::Running) || (migration.state == MigrationState::Failed && record.migration_plan.is_some()))) {
-            return Err(SchemaError::new(409, "migration_in_progress", "the current schema migration is still running", "wait for migration completion before applying another schema"));
+        if current.as_ref().is_some_and(|record| {
+            record.document.migration.as_ref().is_some_and(|migration| {
+                matches!(migration.state, MigrationState::Pending | MigrationState::Running)
+                    || (migration.state == MigrationState::Failed
+                        && record.migration_plan.is_some())
+            })
+        }) {
+            return Err(SchemaError::new(
+                409,
+                "migration_in_progress",
+                "the current schema migration is still running",
+                "wait for migration completion before applying another schema",
+            ));
         }
         let migration = plan_migration(
             current.as_ref().map(|record| &record.document.schema),
@@ -1254,13 +1278,16 @@ impl SchemaService {
                 &request.target,
                 current.as_ref(),
                 DurableSchemaRecord {
-                    previous_schema: current.as_ref().filter(|_| document.migration.is_some()).map(|record| {
-                        let mut schema = record.document.schema.clone();
-                        schema.version = Some(record.document.schema_version);
-                        schema
-                    }),
+                    previous_schema: current.as_ref().filter(|_| document.migration.is_some()).map(
+                        |record| {
+                            let mut schema = record.document.schema.clone();
+                            schema.version = Some(record.document.schema_version);
+                            schema
+                        },
+                    ),
                     migration_plan: None,
-                    document: document.clone(), idempotency,
+                    document: document.clone(),
+                    idempotency,
                 },
             )
             .map_err(|error| durable_error(&error))?;
@@ -1376,9 +1403,26 @@ impl SchemaService {
                 &progress.target,
                 Some(&current),
                 DurableSchemaRecord {
-                    previous_schema: if document.migration.as_ref().is_some_and(|migration| migration.state == MigrationState::Complete) { None } else { current.previous_schema.clone() },
-                    migration_plan: if document.migration.as_ref().is_some_and(|migration| migration.state == MigrationState::Complete) { None } else { current.migration_plan.clone() },
-                    document: document.clone(), idempotency,
+                    previous_schema: if document
+                        .migration
+                        .as_ref()
+                        .is_some_and(|migration| migration.state == MigrationState::Complete)
+                    {
+                        None
+                    } else {
+                        current.previous_schema.clone()
+                    },
+                    migration_plan: if document
+                        .migration
+                        .as_ref()
+                        .is_some_and(|migration| migration.state == MigrationState::Complete)
+                    {
+                        None
+                    } else {
+                        current.migration_plan.clone()
+                    },
+                    document: document.clone(),
+                    idempotency,
                 },
             )
             .map_err(|error| durable_error(&error))?;
@@ -1859,8 +1903,11 @@ fn plan_migration(
             index: None,
         });
     }
-    let old_indexes: BTreeSet<&str> =
-        previous.into_iter().flat_map(|schema| schema.indexes.iter()).map(|index| index.name.as_str()).collect();
+    let old_indexes: BTreeSet<&str> = previous
+        .into_iter()
+        .flat_map(|schema| schema.indexes.iter())
+        .map(|index| index.name.as_str())
+        .collect();
     for index in &next.indexes {
         if !old_indexes.contains(index.name.as_str()) {
             steps.push(MigrationStep {
@@ -1881,12 +1928,28 @@ fn plan_migration(
     }
     let descriptors_changed = previous.map_or_else(
         || next.fields.iter().any(|field| field.indexed || field.unique),
-        |old| old.indexes != next.indexes || old.ttl != next.ttl ||
-            old.fields.iter().map(|field| (&field.name, field.indexed, field.unique)).collect::<Vec<_>>() !=
-            next.fields.iter().map(|field| (&field.name, field.indexed, field.unique)).collect::<Vec<_>>(),
+        |old| {
+            old.indexes != next.indexes
+                || old.ttl != next.ttl
+                || old
+                    .fields
+                    .iter()
+                    .map(|field| (&field.name, field.indexed, field.unique))
+                    .collect::<Vec<_>>()
+                    != next
+                        .fields
+                        .iter()
+                        .map(|field| (&field.name, field.indexed, field.unique))
+                        .collect::<Vec<_>>()
+        },
     );
     if descriptors_changed && steps.is_empty() {
-        steps.push(MigrationStep { kind: "schema_reconcile".into(), from: None, to: None, index: None });
+        steps.push(MigrationStep {
+            kind: "schema_reconcile".into(),
+            from: None,
+            to: None,
+            index: None,
+        });
     }
     if steps.is_empty() {
         return Ok(None);
@@ -2022,7 +2085,9 @@ fn validate_stored_document(
         }
         for step in &migration.steps {
             let valid = match step.kind.as_str() {
-                "schema_reconcile" => step.from.is_none() && step.to.is_none() && step.index.is_none(),
+                "schema_reconcile" => {
+                    step.from.is_none() && step.to.is_none() && step.index.is_none()
+                }
                 "field_rename" => {
                     step.index.is_none()
                         && document.schema.renames.iter().any(|rename| {
@@ -2349,11 +2414,18 @@ mod tests {
     fn finish_initial_backfill(service: &SchemaService) {
         let document = service.get(&target(), &identity()).expect("initial schema");
         let migration = document.migration.expect("initial descriptors need backfill");
-        service.record_backfill_progress(BackfillProgress {
-            target: target(), generation: document.generation,
-            operation_id: migration.operation_id, idempotency_key: "initial-worker".into(),
-            total: 0, completed: 0, next_cursor: None, failed: false,
-        }).expect("initial descriptor worker completion");
+        service
+            .record_backfill_progress(BackfillProgress {
+                target: target(),
+                generation: document.generation,
+                operation_id: migration.operation_id,
+                idempotency_key: "initial-worker".into(),
+                total: 0,
+                completed: 0,
+                next_cursor: None,
+                failed: false,
+            })
+            .expect("initial descriptor worker completion");
     }
 
     #[test]

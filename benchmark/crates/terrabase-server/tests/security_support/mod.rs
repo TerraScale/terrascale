@@ -43,6 +43,7 @@ impl Fixture {
         .expect("database catalog opens");
         let backups = Arc::new(BackupStreams::new(root.join("missing-litestream")));
         let state = Arc::new(ApiState {
+            admitted_databases: None,
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
             delegated_identity: None,

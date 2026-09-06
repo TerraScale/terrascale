@@ -67,6 +67,7 @@ pub mod host;
 pub mod member_host;
 pub mod placement;
 pub mod production_causal;
+pub mod production_repair;
 pub mod reactive;
 pub mod registry;
 pub mod replication;
@@ -101,3 +102,6 @@ pub use host::TbepHost;
 pub use member_host::{MemberHost, MemberHostOptions};
 pub use value::BodyError;
 pub use value::TbepValue;
+
+/// Host-wide delivery catchup observation port.
+pub mod catchup;

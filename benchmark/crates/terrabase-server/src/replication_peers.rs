@@ -5,17 +5,21 @@ use std::sync::Arc;
 use std::time::Duration;
 use terrabase_cluster::production::{DatabaseRouteScope, ProductionMemberRuntime};
 use terrabase_cluster::wal_driver::{
-    WalAuthenticatedPeer, WalCheckpointMessage, WalFollowerDriver, WalWriterDriver,
+    WalAuthenticatedPeer, WalCheckpointMessage, WalFollowerDriver, WalPhysicalBoundary,
+    WalWriterDriver,
 };
 use terrabase_cluster::wal_quic::WalCaptureStep;
 use terrabase_cluster::wal_route::WalReplicaBinding;
 use terrabase_cluster::wal_snapshot::{
-    WalSnapshotChunk, WalSnapshotManifest, WalSnapshotRequest, WalSnapshotSink, WalSnapshotSource,
+    WalSnapshotAck, WalSnapshotChunk, WalSnapshotManifest, WalSnapshotRequest, WalSnapshotSink,
+    WalSnapshotSource,
 };
 use terrabase_cluster::wal_wire::{ScopedWalAck, ScopedWalBatch};
 use terrabase_member_transport::identity::MemberId;
 use terrabase_member_transport::production::ProductionConnection;
 use terrabase_tbep::production_causal::{CausalDriver, CausalReceive};
+use terrabase_tbep::production_repair::{PublicationIndex, RepairDriver, VerifiedRepairCut};
+use terrabase_tbep::registry::BoundScope;
 use tokio::sync::{mpsc, watch};
 
 /// A physical assignment with an independently established shared snapshot.
@@ -42,6 +46,8 @@ pub struct SnapshotReceiver {
     pub destination: std::path::PathBuf,
     /// Maximum admitted snapshot bytes.
     pub max_bytes: u64,
+    /// Database key access for validating encrypted physical files.
+    pub keys: Option<Arc<dyn terrabase::encryption::DatabaseKeySource>>,
     sink: Option<WalSnapshotSink>,
     manifest: Option<WalSnapshotManifest>,
     offsets: [u64; 3],
@@ -54,7 +60,15 @@ impl SnapshotReceiver {
         destination: std::path::PathBuf,
         max_bytes: u64,
     ) -> Self {
-        Self { binding, destination, max_bytes, sink: None, manifest: None, offsets: [0; 3] }
+        Self {
+            binding,
+            destination,
+            max_bytes,
+            keys: None,
+            sink: None,
+            manifest: None,
+            offsets: [0; 3],
+        }
     }
 }
 /// Persistent database state retained across peer reconnects.
@@ -67,10 +81,18 @@ pub struct PeerDatabase {
     pub causal: Option<Arc<std::sync::Mutex<CausalDriver>>>,
 }
 /// Observations from live authenticated sessions; these do not certify repair completion.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct PeerFacts {
     /// An authenticated session is currently active.
     pub connected: bool,
+    /// Region authenticated by the live peer connection.
+    pub region: String,
+    /// Sealed installed-base and durable WAL evidence.
+    pub physical: Option<WalPhysicalBoundary>,
+    /// Correlated equality proof for the exact source cut.
+    pub repair: Option<VerifiedRepairCut>,
+    /// Monotonic observation time of the last newly verified cut.
+    pub repair_observed_at: Option<std::time::Instant>,
     /// The writer observed its physical tail durably caught up in this session.
     pub physical_caught_up: bool,
     /// At least one correlated causal receipt was observed in this session.
@@ -177,6 +199,7 @@ impl ReplicationPeers {
     }
 
     /// Waits for local outbound queues to empty after the caller stops origin writes.
+    /// This is a graceful-shutdown observation, never a fenced epoch or repair proof.
     /// # Errors
     /// A timeout leaves the manager running and does not authorize a fence receipt.
     pub async fn wait_caught_up(&self, timeout: Duration) -> Result<(), String> {
@@ -250,6 +273,15 @@ async fn session(
 ) -> Result<(), String> {
     let peer = WalAuthenticatedPeer::from_connection(&connection);
     let region = connection.peer_region().as_str();
+    if let Ok(mut facts) = observations.lock() {
+        for lane in lanes.iter() {
+            if let Some(facts) =
+                facts.get_mut(&(connection.peer().member().as_str().to_owned(), lane.scope))
+            {
+                facts.region = region.to_owned();
+            }
+        }
+    }
     let connection = Arc::new(connection);
     let (sender, mut frames) = mpsc::channel(8);
     let mut reader = tokio::task::JoinSet::new();
@@ -279,6 +311,33 @@ async fn session(
             _ => {}
         }
     }
+    let mut repair_lanes = BTreeMap::new();
+    for lane in lanes.iter().filter(|lane| lane.causal.is_some()) {
+        let bound = BoundScope {
+            principal: runtime.transport().config().local_identity().as_str().to_owned(),
+            tenant: lane.scope.tenant().to_text(),
+            project: lane.scope.project().to_text(),
+            database: lane.scope.database().to_text(),
+        };
+        let driver = RepairDriver::new(
+            runtime.transport().config().local_identity().member().clone(),
+            connection.peer().member().clone(),
+            bound.clone(),
+            connection.placement_generation(),
+            connection.replica_set_epoch(),
+        )
+        .map_err(failure)?;
+        repair_lanes.insert(
+            lane.scope,
+            Arc::new(std::sync::Mutex::new(RepairLane {
+                bound,
+                driver,
+                index: PublicationIndex::default(),
+                requested: std::collections::VecDeque::new(),
+                indexed: false,
+            })),
+        );
+    }
     let started = tokio::time::Instant::now();
     let mut tick = tokio::time::interval(Duration::from_millis(20));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -291,8 +350,36 @@ async fn session(
                 let bytes = frame.ok_or_else(|| "replication reader closed".to_owned())?.map_err(failure)?;
                 let scope = frame_scope(&bytes)?;
                 let lane = lanes.iter_mut().find(|lane| lane.scope == scope).ok_or_else(|| "unassigned replication scope".to_owned())?;
-                if bytes.starts_with(b"TBWS") {
+                if bytes.starts_with(b"TBRP") {
+                    let repair = repair_lanes.get(&scope).cloned().ok_or("unassigned repair lane")?;
+                    let worker = runtime.clone();
+                    let causal = lane.causal.clone().ok_or("repair requires causal lane")?;
+                    let responses = tokio::task::spawn_blocking(move || {
+                        let engine = worker.acquire_replication(&scope).map_err(failure)?;
+                        let mut repair = repair.lock().map_err(failure)?;
+                        let RepairLane { bound, driver, index, requested, indexed } = &mut *repair;
+                        *indexed = index.refresh(&engine, bound).map_err(failure)?;
+                        if !*indexed { return Ok::<_, String>(Vec::new()); }
+                        let result = driver.receive_frame(index, &bytes).map_err(failure)?;
+                        if result.needs_snapshot { return Err("repair requires retained-history snapshot".into()); }
+                        { let mut causal = causal.lock().map_err(failure)?;
+                          for (origin, sequence, hash) in result.expected { causal.authorize_repair(origin, sequence, hash).map_err(failure)?; }
+                        }
+                        for operation in result.requested {
+                            if !requested.contains(&operation) {
+                                if requested.len() >= 4096 { return Err("repair request window exceeded".into()); }
+                                requested.push_back(operation);
+                            }
+                        }
+                        Ok(result.frames)
+                    }).await.map_err(failure)??;
+                    for response in responses { connection.send_frame(&response).await.map_err(failure)?; }
+                } else if bytes.starts_with(b"TBWS") {
                     snapshot_frame(lane, &peer, &connection, &bytes).await?;
+                    if let Some(PhysicalDriver::Follower(follower)) = lane.physical.as_mut() {
+                        let proof = follower.physical_boundary().await.map_err(failure)?;
+                        if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical = proof; }
+                    }
                 } else if bytes.starts_with(b"TBWCP") {
                     let message = WalCheckpointMessage::decode(&bytes).map_err(failure)?;
                     match lane.physical.as_mut() {
@@ -307,6 +394,8 @@ async fn session(
                     let Some(PhysicalDriver::Follower(follower)) = lane.physical.as_mut() else { return Err("physical batch sent to non-follower".into()); };
                     let receipt = follower.apply(&peer, ScopedWalBatch::decode(&bytes).map_err(failure)?).await.map_err(failure)?;
                     connection.send_frame(&receipt.encode().map_err(failure)?).await.map_err(failure)?;
+                    let proof = follower.physical_boundary().await.map_err(failure)?;
+                    if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical = proof; }
                 } else if bytes.starts_with(b"TBWACK") {
                     let Some(PhysicalDriver::Writer(writer) | PhysicalDriver::BootstrapWriter { writer, .. }) = lane.physical.as_mut() else { return Err("physical receipt sent to non-writer".into()); };
                     writer.acknowledge(&peer, ScopedWalAck::decode(&bytes).map_err(failure)?).await.map_err(failure)?;
@@ -318,7 +407,7 @@ async fn session(
                         let engine = runtime.acquire_replication(&scope).map_err(failure)?;
                         let mut causal = causal.lock().map_err(failure)?;
                         let result = causal.receive_frame(&engine, &bytes, 0).map_err(failure)?;
-                        let tenant = engine.scope_for(&terrabase::types::TenantId::try_new(scope.tenant().to_text()).map_err(failure)?);
+                        let tenant = engine.scope_for(&terrabase::types::TenantId::try_new(&scope.tenant().to_text()).map_err(failure)?);
                         let sequence = engine.read_snapshot(&tenant).map_err(failure)?.sequence().get();
                         Ok::<_, String>((result, sequence, causal.durable_peer_frontier().clone()))
                     }).await.map_err(failure)??;
@@ -329,7 +418,10 @@ async fn session(
                                 receipts.push((scope, sequence, receipt));
                             }
                         }
-                        CausalReceive::Deferred => {},
+                        CausalReceive::Fragment => {},
+                        CausalReceive::Deferred => {
+                            if let Some(repair) = repair_lanes.get(&scope) { repair.lock().map_err(failure)?.driver.trigger(); }
+                        },
                         CausalReceive::Receipt { .. } => {
                             progress.advance_region(scope, region, &frontier).map_err(failure)?;
                             if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.causal_receipt_observed = true; }
@@ -361,17 +453,47 @@ async fn session(
                                 let worker = runtime.clone();
                                 let (tenant, frontier) = tokio::task::spawn_blocking(move || {
                                     let engine = worker.acquire_replication(&scope).map_err(failure)?;
-                                    let tenant = engine.scope_for(&terrabase::types::TenantId::try_new(scope.tenant().to_text()).map_err(failure)?);
+                                    let tenant = engine.scope_for(&terrabase::types::TenantId::try_new(&scope.tenant().to_text()).map_err(failure)?);
                                     let frontier = engine.durable_origin_prefixes(&tenant).map_err(failure)?;
                                     Ok::<_, String>((tenant, frontier))
                                 }).await.map_err(failure)??;
-                                if let Some(sequence) = writer.durable_sequence(tenant).await.map_err(failure)? {
+                                if let Some(sequence) = writer.durable_sequence(tenant.clone()).await.map_err(failure)? {
+                                    let proof = writer.physical_boundary(tenant).await.map_err(failure)?;
+                                    if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical = proof; }
                                     if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) { facts.physical_caught_up = true; }
                                     progress.advance_regional(scope, sequence.get());
                                     progress.advance_region(scope, runtime.transport().config().local_region().as_str(), &frontier).map_err(failure)?;
                                 }
                             }
                         }
+                    }
+                    if let Some(repair) = repair_lanes.get(&lane.scope).cloned() {
+                        let worker = runtime.clone();
+                        let scope = lane.scope;
+                        let causal = lane.causal.clone().ok_or("repair requires causal lane")?;
+                        let now = millis(started);
+                        let (frames, verified) = tokio::task::spawn_blocking(move || {
+                            let engine = worker.acquire_replication(&scope).map_err(failure)?;
+                            let mut repair = repair.lock().map_err(failure)?;
+                            let RepairLane { bound, driver, index, requested, indexed } = &mut *repair;
+                            *indexed = index.refresh(&engine, bound).map_err(failure)?;
+                            if !*indexed { return Ok::<_, String>((Vec::new(), None)); }
+                            let mut frames = Vec::new();
+                            let mut causal = causal.lock().map_err(failure)?;
+                            if !causal.has_pending() && let Some((origin, sequence)) = requested.front() {
+                                let publication = index.publication(&engine, bound, origin, *sequence).map_err(failure)?;
+                                frames.push(causal.publication_frame(&publication, now).map_err(failure)?);
+                                requested.pop_front();
+                            }
+                            if let Some(frame) = driver.outbound_frame(index, now).map_err(failure)? { frames.push(frame); }
+                            Ok((frames, driver.verified_cut().cloned()))
+                        }).await.map_err(failure)??;
+                        if let Ok(mut facts) = observations.lock() && let Some(facts) = facts.get_mut(&(connection.peer().member().as_str().to_owned(), scope)) {
+                            let changed = facts.repair.as_ref().map(|proof| (proof.cut_digest(), proof.root_digest(), proof.local_sequence())) != verified.as_ref().map(|proof| (proof.cut_digest(), proof.root_digest(), proof.local_sequence()));
+                            if changed { facts.repair_observed_at = verified.as_ref().map(|_| std::time::Instant::now()); }
+                            facts.repair = verified;
+                        }
+                        for frame in frames { connection.send_frame(&frame).await.map_err(failure)?; }
                     }
                     if let Some(causal) = lane.causal.clone() {
                         let worker = runtime.clone();
@@ -396,11 +518,14 @@ async fn session(
         }
     }
 }
-fn millis(start: tokio::time::Instant) -> u64 {
-    u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+fn millis(_start: tokio::time::Instant) -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    u64::try_from(START.get_or_init(std::time::Instant::now).elapsed().as_millis())
+        .unwrap_or(u64::MAX)
 }
+
 fn frame_scope(bytes: &[u8]) -> Result<DatabaseRouteScope, String> {
-    if bytes.starts_with(b"TBCJ") {
+    if bytes.starts_with(b"TBCJ") || bytes.starts_with(b"TBRP") {
         let mut remaining = &bytes[4..];
         let mut ids = Vec::with_capacity(3);
         for _ in 0..3 {
@@ -414,7 +539,8 @@ fn frame_scope(bytes: &[u8]) -> Result<DatabaseRouteScope, String> {
             remaining = &remaining[4 + length..];
         }
         DatabaseRouteScope::try_new(ids[0], ids[1], ids[2]).map_err(failure)
-    } else if bytes.starts_with(b"TBWSM\0\0\x01")
+    } else if bytes.starts_with(b"TBWSA\0\0\x01")
+        || bytes.starts_with(b"TBWSM\0\0\x01")
         || bytes.starts_with(b"TBWSR\0\0\x01")
         || bytes.starts_with(b"TBWSC\0\0\x01")
         || bytes.starts_with(b"TBWAL\0\0\x01")
@@ -479,6 +605,16 @@ async fn snapshot_frame(
     connection: &ProductionConnection,
     bytes: &[u8],
 ) -> Result<(), String> {
+    if bytes.starts_with(b"TBWSA") {
+        let Some(PhysicalDriver::BootstrapWriter { source, writer }) = lane.physical.as_mut()
+        else {
+            return Err("unassigned snapshot source".into());
+        };
+        let proof = source
+            .authenticate_ack(peer, WalSnapshotAck::decode(bytes).map_err(failure)?)
+            .map_err(failure)?;
+        return writer.adopt_installed_snapshot(proof).map_err(failure);
+    }
     if bytes.starts_with(b"TBWSR") {
         let Some(PhysicalDriver::BootstrapWriter { source, .. }) = &lane.physical else {
             return Err("unassigned snapshot source".into());
@@ -503,6 +639,12 @@ async fn snapshot_frame(
                 )
                 .await
                 .map_err(failure)?;
+            if let Some(proof) = follower.installed_snapshot() {
+                connection
+                    .send_frame(&proof.acknowledgment().encode().map_err(failure)?)
+                    .await
+                    .map_err(failure)?;
+            }
             return connection
                 .send_frame(&response.encode().map_err(failure)?)
                 .await
@@ -523,6 +665,7 @@ async fn snapshot_frame(
                     manifest.clone(),
                     receiver.destination.clone(),
                     receiver.max_bytes,
+                    receiver.keys.clone(),
                 )
                 .await
                 .map_err(failure)?,
@@ -568,6 +711,21 @@ async fn snapshot_frame(
         .finish(peer)
         .await
         .map_err(failure)?;
+    let ack = follower
+        .installed_snapshot()
+        .ok_or("installed snapshot proof required")?
+        .acknowledgment()
+        .encode()
+        .map_err(failure)?;
     lane.physical = Some(PhysicalDriver::Follower(follower));
+    connection.send_frame(&ack).await.map_err(failure)?;
     connection.send_frame(&receipt.encode().map_err(failure)?).await.map_err(failure)
+}
+
+struct RepairLane {
+    bound: BoundScope,
+    driver: RepairDriver,
+    index: PublicationIndex,
+    requested: std::collections::VecDeque<(String, u64)>,
+    indexed: bool,
 }

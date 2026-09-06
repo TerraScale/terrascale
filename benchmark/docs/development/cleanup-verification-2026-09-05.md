@@ -76,3 +76,23 @@ Three regression tests passed in the freshly compiled engine test artifact
 restart with preserved documents, atomic hidden-dependency refusal, and recovery
 of an exhausted 32-field budget. Whole-workspace verification remains pending
 concurrent runtime and dependency changes.
+
+## Uniform durability admission
+
+The transaction can now retain the exact causal frontier proven uniform by
+its caller. SQLite compares that frontier inside the writer transaction after
+idempotent receipt lookup and before mutating documents, usage, or metadata.
+A newer dependency rejects admission without binding a permanent rejection;
+the caller can prove a fresh frontier and retry the same logical operation.
+Committed retries still recover the original receipt before checking the stale
+frontier. This closes the gap between a public GlobalDurable preflight and
+actual commit. RF=2 and cross-Region receipt waits remain separate mandatory
+runtime checks; the guard alone does not establish global durability.
+
+New regression coverage stages a guarded write, publishes an independent new
+dependency, verifies refusal without a document, retries after a fresh cut, and
+replays the original receipt. This test and the additional index DDL rollback
+test await the coordinated current-source test build.
+
+Native HTTPS admission was also moved to one process-wide semaphore. Creating
+one transport per database or request cannot multiply its sixteen-slot limit.

@@ -14,10 +14,13 @@ mod faults;
 mod intent;
 mod invisible;
 mod ownership;
+mod physical_file;
 mod shadow;
 mod sqlite;
-mod physical_file;
-pub use physical_file::{EncryptedStorage, PhysicalFile, open_physical_file, create_physical_file, open_encrypted_sqlite, open_physical_sqlite};
+pub use physical_file::{
+    EncryptedStorage, PhysicalFile, create_physical_file, open_encrypted_sqlite,
+    open_physical_file, open_physical_sqlite,
+};
 
 pub use invisible::{InvisibleColumnKind, InvisibleIndexColumn, InvisibleIndexProgress};
 pub use shadow::{
@@ -625,8 +628,30 @@ pub(crate) struct AppliedFrontierEntry {
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
-    fn configure_usage_placement(&mut self, _placement: &crate::usage::UsagePlacement) -> Result<(), ()> { Err(()) }
-    fn usage_placement(&self, _tenant: &TenantId) -> Result<Option<crate::usage::UsagePlacement>, ()> { Ok(None) }
+    fn lifecycle_update(
+        &mut self,
+        _tenant: &TenantId,
+        _command: crate::engine::lifecycle_state::LifecycleCommand,
+    ) -> Result<crate::engine::lifecycle_state::LifecycleState, crate::engine::lifecycle_state::LifecycleError> {
+        Err(crate::engine::lifecycle_state::LifecycleError::Unavailable)
+    }
+
+    fn configure_usage_placement(
+        &mut self,
+        _placement: &crate::usage::UsagePlacement,
+    ) -> Result<(), ()> {
+        Err(())
+    }
+    fn usage_placement(
+        &self,
+        _tenant: &TenantId,
+    ) -> Result<Option<crate::usage::UsagePlacement>, ()> {
+        Ok(None)
+    }
+
+    fn replication_repair_frontier(&self, tenant: &TenantId, cut: u64) -> Result<std::collections::BTreeMap<String, u64>, ()>;
+    fn replication_range_summary(&self, tenant: &TenantId, origin: &str, cut: u64, first: u64, last: u64) -> Result<terrabase_replication_core::anti_entropy::RangeFingerprint, ()>;
+    fn replication_range_publications(&self, tenant: &TenantId, origin: &str, cut: u64, first: u64, last: u64) -> Result<Vec<crate::engine::ReplicatedPublication>, ()>;
 
     /// Reads complete retained source groups, including their original private controls.
     fn replication_publications(
@@ -676,16 +701,6 @@ pub(crate) trait StoragePort: Send {
         collection: &str,
     ) -> Result<Option<Vec<u8>>, ()>;
 
-    /// Replaces an envelope only when its complete previous bytes match.
-    fn schema_metadata_compare_exchange(
-        &mut self,
-        database: &str,
-        branch: &str,
-        collection: &str,
-        expected: Option<&[u8]>,
-        record: &[u8],
-    ) -> Result<bool, ()>;
-
     /// Runs a file capture with commits and background checkpoints excluded.
     fn with_quiescent_wal(&self, capture: &mut dyn FnMut(&std::path::Path)) -> Result<(), ()>;
     /// Opens a read-only `SQLite` handle for one bounded SQL execution.
@@ -693,6 +708,12 @@ pub(crate) trait StoragePort: Send {
     /// This narrow capability keeps physical storage access behind the Engine;
     /// query execution never reconstructs a database from an unverified path.
     fn open_sqlite_read_connection(&self) -> Result<rusqlite::Connection, ()>;
+
+    /// Reads persisted origin authority and its closed state.
+    fn origin_epoch(&self) -> Result<(u64, bool), ()>;
+
+    /// Monotonically changes origin authority under the SQLite writer transaction.
+    fn set_origin_epoch(&mut self, epoch: u64, closed: bool) -> Result<(), ()>;
 
     /// Runs the publication order for one validated commit intent.
     fn commit(&mut self, intent: CommitIntent) -> CommitResult;
@@ -738,6 +759,16 @@ pub(crate) trait StoragePort: Send {
         _tenant: &TenantId,
         _window: MeasurementWindow,
     ) -> Result<crate::usage::StorageUsageClosure, UsageStorageError> {
+        Err(UsageStorageError::Unavailable)
+    }
+
+    /// Durable accepted-deletion fence.
+    fn storage_usage_stopped_at(&self, _tenant: &TenantId) -> Result<Option<u64>, UsageStorageError> {
+        Err(UsageStorageError::Unavailable)
+    }
+
+    /// Last complete immutable storage cut, absent before the first closure.
+    fn storage_usage_closed_through(&self, _tenant: &TenantId) -> Result<Option<u64>, UsageStorageError> {
         Err(UsageStorageError::Unavailable)
     }
 
@@ -1616,7 +1647,7 @@ pub(crate) use codec::{document_fingerprint, write_set_digest};
 /// Reports whether one document is inside the codec's structural limits.
 pub(crate) use codec::document_within_limits;
 
-pub(crate) use codec::{decode_private_changes, encode_private_value, transaction_digest};
+pub(crate) use codec::{decode_private_changes, decode_private_value, encode_private_value, transaction_digest};
 pub(crate) use intent::{PrivateMetadataWrite, SchemaEnvelopeWrite};
 
 pub(crate) use intent::ReplicationPublicationIntent;

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use super::{
     DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionError,
-    KeyProviderIdentity, KeyVersionMetadata, MAX_DATABASE_KEY_LEASE,
+    KeyVersionMetadata, MAX_DATABASE_KEY_LEASE,
 };
 use crate::regions::{RegionCatalog, RegionCode};
 
@@ -38,7 +38,7 @@ impl fmt::Debug for OciVaultKeyDelivery {
 }
 
 impl OciVaultKeyDelivery {
-    /// Validates an absolute, protected socket belonging to the adapter UID.
+    /// Validates a protected socket owned by the adapter UID and dedicated GID.
     ///
     /// # Errors
     /// Returns a redacted refusal for absent, unsafe, or inaccessible paths.
@@ -247,7 +247,7 @@ fn unavailable<T>(_: T) -> EncryptionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encryption::{DatabaseKeyVersion, KeyPurpose, KeyScope};
+    use crate::encryption::{DatabaseKeyVersion, KeyProviderIdentity, KeyPurpose, KeyScope};
     use crate::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
@@ -371,6 +371,14 @@ mod tests {
             .is_err()
         );
         let _listener = fixture.listen();
+        assert!(
+            OciVaultKeyDelivery::new(
+                fixture.socket.clone(),
+                rustix::process::geteuid().as_raw(),
+                rustix::process::getegid().as_raw().wrapping_add(1)
+            )
+            .is_err()
+        );
         assert!(
             OciVaultKeyDelivery::new(
                 fixture.socket.clone(),

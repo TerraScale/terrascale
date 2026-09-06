@@ -9,6 +9,9 @@ const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS storage_accounting_clock (
     singleton INTEGER PRIMARY KEY CHECK(singleton = 1), millis INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS storage_accounting_coverage (
+    singleton INTEGER PRIMARY KEY CHECK(singleton = 1), start_millis INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS storage_accounting_stops (
     tenant TEXT PRIMARY KEY, millis INTEGER NOT NULL
 ) WITHOUT ROWID;
@@ -69,8 +72,14 @@ pub(super) fn initialize(connection: &Connection) -> Result<(), ()> {
     transaction.commit().map_err(|_| ())
 }
 
-fn initialize_at(connection: &Connection, now: u64) -> Result<(), ()> {
+pub(super) fn initialize_at(connection: &Connection, now: u64) -> Result<(), ()> {
     connection.execute_batch(SCHEMA).map_err(|_| ())?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO storage_accounting_coverage VALUES (1, ?1)",
+            [i64::try_from(now).map_err(|_| ())?],
+        )
+        .map_err(|_| ())?;
     let first = connection
         .execute(
             "INSERT OR IGNORE INTO storage_accounting_clock VALUES (1, ?1)",
@@ -214,6 +223,16 @@ pub(super) fn byte_millis(
     }
     let start = i64::try_from(start).map_err(|_| ())?;
     let end = i64::try_from(end).map_err(|_| ())?;
+    let coverage: i64 = connection
+        .query_row(
+            "SELECT start_millis FROM storage_accounting_coverage WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| ())?;
+    if start < coverage {
+        return Err(());
+    }
     let clock: i64 = connection
         .query_row("SELECT millis FROM storage_accounting_clock WHERE singleton = 1", [], |row| {
             row.get(0)
@@ -315,6 +334,17 @@ mod tests {
                 rusqlite::params![seq, ttl],
             )
             .unwrap();
+    }
+
+    #[test]
+    fn incomplete_historical_coverage_is_refused_even_for_empty_database() {
+        let connection = database();
+        begin_change(&connection, 3_000).unwrap();
+        assert_eq!(byte_millis(&connection, "db", 999, 3_000), Err(()));
+        assert_eq!(byte_millis(&connection, "db", 1_000, 3_000), Ok(0));
+        initialize_at(&connection, 4_000).unwrap();
+        assert_eq!(byte_millis(&connection, "db", 999, 3_000), Err(()));
+        assert_eq!(byte_millis(&connection, "db", 1_000, 3_000), Ok(0));
     }
 
     #[test]

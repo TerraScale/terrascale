@@ -282,6 +282,16 @@ impl BackupManifest {
         self.captured_unix_millis
     }
 
+    /// Returns the inclusive source-clock interval covered by this capture.
+    /// Historical pinned snapshots prove only their original commit boundary.
+    #[must_use]
+    pub fn recoverable_through_unix_millis(&self) -> u64 {
+        match self.kind {
+            BackupKind::Snapshot => self.boundary_unix_millis,
+            BackupKind::Full | BackupKind::Incremental { .. } => self.captured_unix_millis,
+        }
+    }
+
     /// Returns the base boundary an incremental manifest builds on, or
     /// `None` for a full or snapshot manifest.
     #[must_use]
@@ -447,9 +457,13 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
     let partition_id = parse_partition_id(lines.next().ok_or_else(invalid)?)?;
     let tenant_scope = parse_digest(lines.next().ok_or_else(invalid)?, "tenant_scope")?;
     let boundary = parse_number(lines.next().ok_or_else(invalid)?, "boundary")?;
-    let boundary_unix_millis = parse_number(lines.next().ok_or_else(invalid)?, "boundary_unix_millis")?;
-    let captured_unix_millis = parse_number(lines.next().ok_or_else(invalid)?, "captured_unix_millis")?;
-    if captured_unix_millis < boundary_unix_millis { return Err(invalid()); }
+    let boundary_unix_millis =
+        parse_number(lines.next().ok_or_else(invalid)?, "boundary_unix_millis")?;
+    let captured_unix_millis =
+        parse_number(lines.next().ok_or_else(invalid)?, "captured_unix_millis")?;
+    if captured_unix_millis < boundary_unix_millis {
+        return Err(invalid());
+    }
     let documents = parse_number(lines.next().ok_or_else(invalid)?, "documents")?;
     let family_records = parse_number(lines.next().ok_or_else(invalid)?, "family_records")?;
     let deletes = parse_number(lines.next().ok_or_else(invalid)?, "deletes")?;

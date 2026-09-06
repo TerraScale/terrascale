@@ -86,14 +86,7 @@ pub(super) fn close(
         )
         .map_err(|_| ())?;
         let sequence = durable_watermark(connection)?.checked_add(1).ok_or(())?;
-        let durable = DurableUsageFact::try_new(fact, sequence, 1).map_err(|_| ())?;
-        let fact = durable.fact();
-        connection.execute(
-            "INSERT INTO usage_facts (tenant,project,database,partition,region,rule,fact_id,seq,start_millis,end_millis,body)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-            rusqlite::params![tenant,scope.project_id().as_str(),scope.database_id().as_str(),
-              scope.partition_id().as_str(),scope.region_id().as_str(),minting_rule_code(fact.identity().rule()),
-              fact.identity().id().as_str(),i64::try_from(sequence).map_err(|_| ())?,start_sql,end_sql,durable.encoded()]).map_err(|_| ())?;
+        super::write_usage::insert(connection, &fact, sequence)?;
     }
     let seal = super::usage_seal::seal(connection, &scope, window)?;
     if seal.storage_byte_seconds != i128::try_from(byte_seconds).map_err(|_| ())? {
@@ -127,7 +120,7 @@ mod tests {
     fn atomic_closure_carries_fraction_and_replays_without_duplicate_facts() {
         let mut connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(super::super::SCHEMA).unwrap();
-        super::super::accounting::initialize(&connection).unwrap();
+        super::super::accounting::initialize_at(&connection, 1000).unwrap();
         initialize(&connection).unwrap();
         let scope = UsageScope::try_new(
             TenantId::try_new("db").unwrap(),
@@ -173,7 +166,7 @@ mod tests {
     fn zero_usage_region_still_freezes_a_receipt() {
         let mut connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(super::super::SCHEMA).unwrap();
-        super::super::accounting::initialize(&connection).unwrap();
+        super::super::accounting::initialize_at(&connection, 1000).unwrap();
         initialize(&connection).unwrap();
         let scope = UsageScope::try_new(
             TenantId::try_new("db").unwrap(),
@@ -198,5 +191,39 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+    #[test]
+    fn regional_arrival_and_retention_are_measured_independently() {
+        let mut totals = Vec::new();
+        for (region, arrived, retained_until) in
+            [(RegionCode::GRU, 1000, 3000), (RegionCode::SFO, 1500, 2500)]
+        {
+            let mut connection = Connection::open_in_memory().unwrap();
+            connection.execute_batch(super::super::SCHEMA).unwrap();
+            super::super::accounting::initialize_at(&connection, 1000).unwrap();
+            initialize(&connection).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO storage_accounting_revisions VALUES ('db','items','a',1,10,?1,?2)",
+                    rusqlite::params![arrived, retained_until],
+                )
+                .unwrap();
+            let scope = UsageScope::try_new(
+                TenantId::try_new("db").unwrap(),
+                "project",
+                "database",
+                "partition",
+                region,
+            )
+            .unwrap();
+            let transaction = connection.transaction().unwrap();
+            let receipt =
+                close(&transaction, scope, 2, MeasurementWindow::interval(1000, 3000).unwrap())
+                    .unwrap();
+            totals.push(receipt.byte_seconds());
+            transaction.commit().unwrap();
+        }
+        assert_eq!(totals, vec![20, 10]);
+        assert_eq!(totals.iter().sum::<u128>(), 30);
     }
 }

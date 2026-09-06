@@ -1,6 +1,11 @@
 //! Atomic application of a complete source transaction.
 use super::*;
 
+/// Maximum records in one bounded source transaction.
+pub const MAX_REPLICATION_PUBLICATION_RECORDS: usize = 100_000;
+/// Maximum encoded content retained or applied for one source transaction.
+pub const MAX_REPLICATION_PUBLICATION_BYTES: usize = 64 * 1024 * 1024;
+
 /// An indivisible source transaction, including private control changes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReplicatedPublication {
@@ -51,6 +56,9 @@ impl Engine {
             storage::decode_private_changes(&publication.private_payload)
                 .ok_or(EngineError::InvalidDocument)?
         };
+        if publication.records.is_empty() && metadata.is_empty() && schema_envelopes.is_empty() {
+            return Err(EngineError::InvalidDocument);
+        }
         let (snapshot, plans) = {
             let storage = self.lock_storage()?;
             let bound = storage
@@ -148,8 +156,8 @@ fn publication_binding(
         || publication.origin.len() > 255
         || publication.origin_sequence == 0
         || publication.origin_sequence > i64::MAX as u64
-        || publication.records.len() > 1024
-        || publication.private_payload.len() > 64 * 1024 * 1024
+        || publication.records.len() > MAX_REPLICATION_PUBLICATION_RECORDS
+        || publication.private_payload.len() > MAX_REPLICATION_PUBLICATION_BYTES
         || (publication.records.is_empty() && publication.private_payload.is_empty())
     {
         return Err(EngineError::InvalidDocument);
@@ -183,7 +191,15 @@ fn publication_binding(
     let mut ordered = publication.records.iter().collect::<Vec<_>>();
     ordered.sort_by(|a, b| (&a.collection, &a.id).cmp(&(&b.collection, &b.id)));
     let mut last = None;
-    let mut bytes = publication.private_payload.len();
+    let mut bytes = 41usize
+        .checked_add(publication.origin.len())
+        .and_then(|bytes| bytes.checked_add(publication.commit_ulid.len()))
+        .and_then(|bytes| bytes.checked_add(publication.context.len()))
+        .and_then(|bytes| bytes.checked_add(publication.private_payload.len()))
+        .ok_or(EngineError::InvalidDocument)?;
+    if bytes > MAX_REPLICATION_PUBLICATION_BYTES {
+        return Err(EngineError::InvalidDocument);
+    }
     for record in ordered {
         if record.origin != publication.origin
             || record.origin_sequence != publication.origin_sequence
@@ -196,15 +212,25 @@ fn publication_binding(
         }
         last = Some((&record.collection, &record.id));
         // Fingerprinting validates the per-document size before any publication.
-        content.update(&replication_fingerprint(record)?);
+        let mut canonical = record.clone();
+        if canonical.deleted {
+            canonical.body = DocumentValue::Null;
+        }
+        content.update(&replication_fingerprint(&canonical)?);
+        let body_bytes = if canonical.deleted {
+            0
+        } else {
+            storage::encode_private_value(&canonical.body)
+                .ok_or(EngineError::InvalidDocument)?
+                .len()
+        };
         bytes = bytes
-            .checked_add(
-                storage::encode_private_value(&record.body)
-                    .ok_or(EngineError::InvalidDocument)?
-                    .len(),
-            )
+            .checked_add(13)
+            .and_then(|bytes| bytes.checked_add(record.collection.as_str().len()))
+            .and_then(|bytes| bytes.checked_add(record.id.as_str().len()))
+            .and_then(|bytes| bytes.checked_add(body_bytes))
             .ok_or(EngineError::InvalidDocument)?;
-        if bytes > 64 * 1024 * 1024 {
+        if bytes > MAX_REPLICATION_PUBLICATION_BYTES {
             return Err(EngineError::InvalidDocument);
         }
     }

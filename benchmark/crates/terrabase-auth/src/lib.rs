@@ -31,6 +31,9 @@ pub type Record = BTreeMap<String, serde_json::Value>;
 pub struct Command {
     /// Opaque stable key scoped by this consensus group's database identity.
     pub idempotency_key: String,
+    /// Server-observed time, persisted through consensus; excluded from retry digest.
+    #[serde(default)]
+    pub observed_at_ms: u64,
     /// Named conditional operation.
     pub action: Action,
 }
@@ -47,6 +50,16 @@ pub enum Action {
     CompareAndSwap { model: String, id: String, expected: Record, update: Record },
     /// Delete and return one identified record if all predicates still match.
     ConsumeOne { model: String, id: String, expected: Record },
+    /// Read a bounded model page using exact field predicates.
+    Find { model: String, expected: Record, offset: u32, limit: u32 },
+    /// Create a private bounded snapshot for an optimistic transaction callback.
+    BeginTransaction { transaction_id: String },
+    /// Apply one named command against the private transaction workspace.
+    TransactionOperation { transaction_id: String, action: Box<Action> },
+    /// Commit if no ordinary authority mutation changed the captured revision.
+    CommitTransaction { transaction_id: String },
+    /// Discard an unfinished workspace without reverting external callback effects.
+    RollbackTransaction { transaction_id: String },
 }
 
 /// Deterministic results, including conflicts, are persisted for replay.
@@ -60,6 +73,12 @@ pub enum Outcome {
     Record { record: Record },
     /// The conditional predicate did not match an existing record.
     NotMatched,
+    /// Bounded query records.
+    Records { records: Vec<Record> },
+    /// An optimistic transaction started at a fixed revision and expiry.
+    Transaction { transaction_id: String, expires_at_ms: u64 },
+    /// A transaction conflicted, expired, or previously failed an inner operation.
+    TransactionConflict,
     /// A persisted uniqueness constraint was violated.
     UniqueConflict,
     /// A key already belongs to a different canonical command.
@@ -72,5 +91,15 @@ impl std::fmt::Debug for Command {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Raft tracing must never print credentials or recovery tokens in commands.
         formatter.write_str("AuthCommand([redacted])")
+    }
+}
+
+/// Bounded consensus transport and snapshot settings for one admitted auth group.
+pub fn consensus_config(group: &str) -> openraft::Config {
+    openraft::Config {
+        cluster_name: group.into(),
+        max_payload_entries: 1,
+        snapshot_max_chunk_size: 64 * 1024,
+        ..Default::default()
     }
 }

@@ -220,6 +220,14 @@ impl WalReplicaBinding {
         self.epoch
     }
 
+    pub(crate) fn authorize_local(&self, writer: bool) -> Result<(), WalRouteError> {
+        let _admission = self.preflight_admission()?;
+        if self.local_is_writer != writer {
+            return Err(WalRouteError::Unauthorized);
+        }
+        Ok(())
+    }
+
     pub(crate) fn authorize_batch(&self, batch: &ScopedWalBatch) -> Result<(), WalRouteError> {
         let _admission = self.preflight_admission()?;
         if batch.scope != self.scope || batch.replica_epoch != self.epoch {

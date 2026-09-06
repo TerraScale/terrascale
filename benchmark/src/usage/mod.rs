@@ -2094,7 +2094,7 @@ impl StorageRevision {
     }
 
     /// Creates a retained-history observation. History is billed only until
-    /// its retention boundary, and also stops at an earlier TTL boundary.
+    /// its retention boundary, including after TTL visibility expiry.
     pub fn history(
         revision_id: UsageFactId,
         logical_bytes: u64,

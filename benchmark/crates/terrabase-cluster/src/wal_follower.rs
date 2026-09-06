@@ -65,11 +65,11 @@
 //! acquires the live engine's commit and checkpoint barrier for this copy.
 //! File-only callers must already own an equivalent quiescence boundary.
 //!
-//! ## What is deliberately M1
+//! ## Capture and transport boundaries
 //!
-//! - The ship is an in-process handoff ([`WalFrames`]); the QUIC socket
-//!   adapter is the S-09 member-composition step, alongside the
-//!   `[replication] peers` wiring the cross-region lanes already parse.
+//! - [`WalFrames`] carry logical SQLite bytes through the authenticated
+//!   production dispatcher in [`crate::wal_driver`]. Encrypted locations
+//!   use the admitted physical-file VFS for capture and follower writes.
 //! - The fold is one `wal_checkpoint(TRUNCATE)` per adopted generation;
 //!   there is no pipelining across generations yet.
 //! - The tail reads the header and seeks past its shipped prefix. It scans
@@ -87,7 +87,9 @@
 use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use terrabase::storage::{create_physical_file, open_physical_file, PhysicalFile};
+use terrabase::storage::{
+    create_physical_file, open_physical_file, open_physical_sqlite, EncryptedStorage, PhysicalFile,
+};
 
 /// The engine's `SQLite` database file name inside a durable location.
 const DATABASE_FILE: &str = "terrabase.sqlite3";
@@ -627,6 +629,7 @@ impl WalTail {
 /// The follower side: one location holding the writer's file pair and the
 /// frames it has durably applied.
 pub struct WalFollower {
+    encryption: Option<EncryptedStorage>,
     location: PathBuf,
     header: Option<WalHeader>,
     /// The frames durably appended of the current generation.
@@ -711,6 +714,7 @@ impl WalFollower {
         }
         sync_directory(location)?;
         let state = Self {
+            encryption: EncryptedStorage::for_related_location(location, location)?,
             location: location.to_path_buf(),
             header: checkpoint.header,
             applied: checkpoint.shipped,
@@ -759,6 +763,7 @@ impl WalFollower {
         require_empty_destination(follower)?;
         std::fs::rename(&staging.path, follower)?;
         sync_directory(parent)?;
+        state.encryption = EncryptedStorage::for_related_location(writer, follower)?;
         state.location = follower.to_path_buf();
         Ok((state, checkpoint))
     }
@@ -772,6 +777,7 @@ impl WalFollower {
             .as_mut()
             .map_or_else(|| Ok(WalCheckpoint::default()), |file| scan_wal(file, false))?;
         let state = Self {
+            encryption: EncryptedStorage::for_related_location(writer, follower)?,
             location: follower.to_path_buf(),
             header: checkpoint.header,
             applied: checkpoint.shipped,
@@ -828,7 +834,10 @@ impl WalFollower {
     /// cannot be opened.
     pub fn fold_generation(&mut self) -> Result<(), WalFollowerError> {
         self.verify_fold_prefix()?;
-        let connection = rusqlite::Connection::open(self.location.join(DATABASE_FILE))?;
+        let connection = open_physical_sqlite(
+            &self.location.join(DATABASE_FILE),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )?;
         let (busy, log_frames, checkpointed_frames): (i64, i64, i64) =
             connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?))
@@ -849,8 +858,7 @@ impl WalFollower {
     /// silently change the durable prefix this follower has acknowledged.
     fn verify_fold_prefix(&self) -> Result<(), WalFollowerError> {
         let mut wal = open_wal(&self.location)?;
-        let length =
-            wal.as_ref().map_or(Ok(0), |file| file.metadata().map(|metadata| metadata.len()))?;
+        let length = wal.as_ref().map_or(Ok(0), |file| file.len())?;
         let Some(header) = self.header else {
             if length != 0 {
                 return Err(WalFollowerError::CheckpointIncomplete);
@@ -1040,8 +1048,8 @@ fn require_empty_destination(path: &Path) -> Result<(), WalFollowerError> {
 }
 
 fn verify_snapshot(location: &Path) -> Result<(), WalFollowerError> {
-    let connection = rusqlite::Connection::open_with_flags(
-        location.join(DATABASE_FILE),
+    let connection = open_physical_sqlite(
+        &location.join(DATABASE_FILE),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     let result: String = connection.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;

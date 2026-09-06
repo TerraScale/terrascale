@@ -627,6 +627,7 @@ impl DatabaseKeyLease {
     ///
     /// Returns an error when the provider is not OCI Vault or the duration is
     /// outside the bounded lease interval.
+    #[cfg(test)]
     pub(in crate::encryption) fn from_adapter(
         metadata: KeyVersionMetadata,
         key: DatabaseKey,

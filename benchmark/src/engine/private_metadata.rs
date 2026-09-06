@@ -254,3 +254,131 @@ mod tests {
         std::fs::remove_dir_all(path).unwrap();
     }
 }
+
+impl Transaction<'_> {
+    /// Binds schema controls to an immutable collection generation and manifest.
+    ///
+    /// Progress retains this identity; only a new schema changes it. The
+    /// durable writer records the initial winner stamp independently of later
+    /// progress stamps, so progress cannot elect another schema generation.
+    ///
+    /// # Errors
+    /// Rejects a zero generation or invalid collection identifier.
+    pub fn stage_schema_bundle(
+        &mut self,
+        collection: &str,
+        generation: u64,
+        manifest: [u8; 32],
+    ) -> Result<(), EngineError> {
+        crate::types::CollectionName::try_new(collection)
+            .map_err(|_| EngineError::InvalidDocument)?;
+        let generation = i64::try_from(generation)
+            .ok()
+            .filter(|value| *value > 0)
+            .ok_or(EngineError::InvalidDocument)?;
+        let value = DocumentValue::Object(std::collections::BTreeMap::from([
+            ("generation".into(), DocumentValue::Integer(generation)),
+            (
+                "manifest".into(),
+                DocumentValue::String(blake3::Hash::from_bytes(manifest).to_hex().to_string()),
+            ),
+        ]));
+        self.put_private_metadata(&format!("schema:bundle/{collection}"), value)
+    }
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::*;
+    use crate::{
+        engine::{CommitOutcome, Engine, EngineConfig},
+        types::{LocalDurability, OperationId, TenantId},
+    };
+    fn engine(tag: &str) -> (std::path::PathBuf, Engine) {
+        let path = std::env::temp_dir().join(format!(
+            "terrabase-bundle-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
+        (path, engine)
+    }
+    fn publish(
+        engine: &Engine,
+        name: &str,
+        manifest: u8,
+        expected: Option<&[u8]>,
+        envelope: &[u8],
+        control: i64,
+    ) {
+        let scope = engine.scope_for(&TenantId::try_new("tenant").unwrap());
+        let mut transaction = engine
+            .begin(
+                &scope,
+                engine.read_snapshot(&scope).unwrap(),
+                OperationId::try_new(name).unwrap(),
+            )
+            .unwrap();
+        transaction.stage_schema_bundle("users", 1, [manifest; 32]).unwrap();
+        transaction
+            .put_private_metadata("family:validation/users", DocumentValue::Integer(control))
+            .unwrap();
+        transaction.stage_schema_metadata("db", "main", "users", expected, envelope).unwrap();
+        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+    }
+    #[test]
+    fn schema_bundle_converges_when_losing_generation_progress_arrives_last() {
+        let (a_path, a) = engine("a");
+        let (b_path, b) = engine("b");
+        let (x_path, x) = engine("x");
+        let (y_path, y) = engine("y");
+        publish(&a, "a-schema", 1, None, b"a", 1);
+        publish(&b, "b-schema", 2, None, b"b", 2);
+        let scope_a = a.scope_for(&TenantId::try_new("tenant").unwrap());
+        let scope_b = b.scope_for(&TenantId::try_new("tenant").unwrap());
+        let a_initial = a.replication_publications(&scope_a, 0, 10).unwrap().remove(0).1;
+        let b_initial = b.replication_publications(&scope_b, 0, 10).unwrap().remove(0).1;
+        let a_wins = (a_initial.hlc, &a_initial.origin) > (b_initial.hlc, &b_initial.origin);
+        let (loser, old, new, manifest, control) = if a_wins {
+            (&b, b"b".as_slice(), b"b-progress".as_slice(), 2, 2)
+        } else {
+            (&a, b"a".as_slice(), b"a-progress".as_slice(), 1, 1)
+        };
+        publish(loser, "loser-progress", manifest, Some(old), new, control);
+        let loser_scope = loser.scope_for(&TenantId::try_new("tenant").unwrap());
+        let progress =
+            loser.replication_publications(&loser_scope, 0, 10).unwrap().pop().unwrap().1;
+        for (target, groups) in [
+            (&x, vec![&a_initial, &b_initial, &progress]),
+            (&y, vec![&progress, &b_initial, &a_initial]),
+        ] {
+            let scope = target.scope_for(&TenantId::try_new("tenant").unwrap());
+            for group in groups {
+                target.apply_replicated_publication(&scope, group).unwrap();
+            }
+            let expected = if a_wins { b"a".as_slice() } else { b"b".as_slice() };
+            assert_eq!(
+                target.schema_metadata_load("db", "main", "users").unwrap(),
+                Some(expected.to_vec())
+            );
+            let transaction = target
+                .begin(
+                    &scope,
+                    target.read_snapshot(&scope).unwrap(),
+                    OperationId::try_new("read-controls").unwrap(),
+                )
+                .unwrap();
+            assert_eq!(
+                transaction.read_private_metadata("family:validation/users").unwrap(),
+                Some(DocumentValue::Integer(if a_wins { 1 } else { 2 }))
+            );
+        }
+        a.shutdown().unwrap();
+        b.shutdown().unwrap();
+        x.shutdown().unwrap();
+        y.shutdown().unwrap();
+        for path in [a_path, b_path, x_path, y_path] {
+            std::fs::remove_dir_all(path).unwrap();
+        }
+    }
+}

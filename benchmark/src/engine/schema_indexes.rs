@@ -21,7 +21,9 @@ impl Engine {
         fields: &[String],
         unique: bool,
     ) -> Result<bool, EngineError> {
-        self.lock_storage()?.port.register_schema_index(tenant, collection, name, fields, unique)
+        self.lock_storage()?
+            .port
+            .register_schema_index(tenant, collection, name, fields, unique)
             .map_err(|()| EngineError::StorageFailure)
     }
 
@@ -35,7 +37,9 @@ impl Engine {
         collection: &CollectionName,
         name: &str,
     ) -> Result<(), EngineError> {
-        self.lock_storage()?.port.remove_schema_index(tenant, collection, name)
+        self.lock_storage()?
+            .port
+            .remove_schema_index(tenant, collection, name)
             .map_err(|()| EngineError::StorageFailure)
     }
 }

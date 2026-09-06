@@ -235,16 +235,20 @@ fn wire_usage_fact(
 /// The TBEP host backed by one durable Engine.
 enum HostEngine {
     Local(Engine),
-    Admitted(Arc<terrabase_cluster::production::ProductionDatabaseLease>),
+    Admitted(Arc<terrabase::member::DatabaseLease>),
 }
 
 impl std::ops::Deref for HostEngine {
     type Target = Engine;
     fn deref(&self) -> &Engine {
-        match self { Self::Local(engine) => engine, Self::Admitted(lease) => lease }
+        match self {
+            Self::Local(engine) => engine,
+            Self::Admitted(lease) => lease,
+        }
     }
 }
 
+/// TBEP adapter retaining either a local engine or its actual Member admission lease.
 pub struct EngineHost {
     engine: HostEngine,
     location: PathBuf,
@@ -299,19 +303,29 @@ impl EngineHost {
 
     /// Composes the exact Member engine while retaining its admission lease.
     #[must_use]
-    pub fn from_admitted(lease: terrabase_cluster::production::ProductionDatabaseLease,
-        location: PathBuf, instance: u64) -> Self {
-        let scope = lease.scope();
+    pub fn from_admitted(
+        lease: terrabase::member::DatabaseLease,
+        location: PathBuf,
+        instance: u64,
+    ) -> Self {
+        let scope = lease.database_owner().clone();
         Self {
-            tenant: scope.tenant().to_string(), project: scope.project().to_string(),
-            database: scope.database().to_string(), engine: HostEngine::Admitted(Arc::new(lease)),
-            location, instance, frames_served: Mutex::new(0), health: Mutex::new(HealthState::Serving),
+            tenant: scope.tenant().to_string(),
+            project: scope.project().to_string(),
+            database: scope.database().to_string(),
+            engine: HostEngine::Admitted(Arc::new(lease)),
+            location,
+            instance,
+            frames_served: Mutex::new(0),
+            health: Mutex::new(HealthState::Serving),
         }
     }
 
     /// Logical tenant bound to this adapter's admitted engine.
     #[must_use]
-    pub fn tenant(&self) -> &str { &self.tenant }
+    pub fn tenant(&self) -> &str {
+        &self.tenant
+    }
 
     /// Returns the durable location the host's engine serves.
     #[must_use]

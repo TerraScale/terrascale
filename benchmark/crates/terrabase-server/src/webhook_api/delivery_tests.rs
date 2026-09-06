@@ -580,3 +580,148 @@ fn retained_journal_preserves_overwritten_events_and_pending_retry_after_restart
     engine.shutdown().expect("shutdown reopened");
     std::fs::remove_dir_all(root).expect("cleanup");
 }
+
+#[tokio::test]
+async fn dispatcher_budget_and_cancellation_preserve_due_deliveries() {
+    struct BudgetPorts {
+        base: TestPorts,
+        stop: Arc<std::sync::atomic::AtomicBool>,
+        stop_after_send: bool,
+    }
+    impl WebhookJournal for BudgetPorts {
+        fn page(
+            &self,
+            _: &TenantScope,
+            cursor: Option<ChangeCheckpoint>,
+            limit: usize,
+        ) -> Result<PublicationPage, StorageError> {
+            let publications = (1..=12_u32)
+                .filter(|index| {
+                    cursor
+                        .is_none_or(|cursor| cursor.sequence() < 7 || cursor.write_index() < *index)
+                })
+                .take(limit)
+                .map(|write_index| Publication {
+                    revision: 7,
+                    write_index,
+                    event_id: format!("event-{write_index}"),
+                    body: b"payload".to_vec(),
+                })
+                .collect::<Vec<_>>();
+            let next = publications
+                .last()
+                .map(|row| ChangeCheckpoint::after(row.revision, row.write_index))
+                .or(cursor);
+            Ok(PublicationPage { publications, next })
+        }
+    }
+    impl WebhookDelivery for BudgetPorts {
+        fn validate_target(&self, _: &str) -> Result<(), DeliveryError> {
+            Ok(())
+        }
+        fn send(
+            &self,
+            _: &str,
+            _: &BTreeMap<String, String>,
+            _: &[u8],
+        ) -> Result<DeliveryResponse, DeliveryError> {
+            self.base.sent.fetch_add(1, Ordering::SeqCst);
+            if self.stop_after_send {
+                self.stop.store(true, Ordering::Release);
+            }
+            Ok(DeliveryResponse { status: 204 })
+        }
+    }
+    let root = std::env::temp_dir().join(format!(
+        "terrascale-webhook-budget-{}",
+        terrabase::identity::process_generator().generate().to_text()
+    ));
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("engine"),
+    );
+    let owner = engine.database_owner();
+    let scope = TenantScope::new(
+        owner.tenant().to_text(),
+        owner.project().to_text(),
+        owner.database().to_text(),
+    )
+    .expect("scope");
+    let base = Arc::new(TestPorts::default());
+    let ports = Arc::new(BudgetPorts {
+        base: TestPorts::default(),
+        stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        stop_after_send: false,
+    });
+    let storage = Arc::new(EngineWebhookStorage::new(Arc::clone(&engine)));
+    let service = WebhookService::new(
+        storage.clone(),
+        ports.clone(),
+        base.clone(),
+        Arc::new(AbuseGuardWebhookGuard::new(Arc::new(AbuseGuards::new()))),
+        ports.clone(),
+        base.clone(),
+        "GRU",
+    )
+    .expect("service");
+    let endpoint =
+        storage.create_endpoint(&scope, "https://hooks.example/events", 0).expect("endpoint");
+    let report = service.dispatch(&scope, None).await.expect("bounded batch");
+    assert_eq!(report.attempted, MAX_DISPATCH_ATTEMPTS);
+    assert_eq!(storage.delivery_log(&scope, &endpoint.id, 256).expect("log").deliveries.len(), 12);
+    storage.checkpoint_dispatch(&scope, None, report.cursor).expect("checkpoint");
+    let remaining = service.dispatch(&scope, report.cursor).await.expect("durable due");
+    assert_eq!(remaining.attempted, 12 - MAX_DISPATCH_ATTEMPTS);
+    assert_eq!(ports.base.sent.load(Ordering::SeqCst), 12);
+    assert_eq!(
+        service.dispatch(&scope, report.cursor).await.expect("no duplicate effects").attempted,
+        0
+    );
+    let stopping = Arc::new(BudgetPorts {
+        base: TestPorts::default(),
+        stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        stop_after_send: true,
+    });
+    let cancel_service = WebhookService::new(
+        storage.clone(),
+        stopping.clone(),
+        base.clone(),
+        Arc::new(AbuseGuardWebhookGuard::new(Arc::new(AbuseGuards::new()))),
+        stopping.clone(),
+        base,
+        "GRU",
+    )
+    .expect("service");
+    let endpoint =
+        storage.create_endpoint(&scope, "https://other.example/events", 0).expect("new endpoint");
+    assert!(
+        cancel_service
+            .dispatch_cancellable(&scope, None, Arc::clone(&stopping.stop))
+            .await
+            .is_err()
+    );
+    assert_eq!(stopping.base.sent.load(Ordering::SeqCst), 1);
+    let log = storage.delivery_log(&scope, &endpoint.id, 256).expect("cancelled batch durable");
+    assert_eq!(log.deliveries.len(), 12);
+    assert_eq!(log.deliveries.iter().filter(|row| row.delivered).count(), 1);
+    drop(cancel_service);
+    drop(service);
+    drop(storage);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
+    engine.shutdown().expect("shutdown");
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("reopen"),
+    );
+    let storage = EngineWebhookStorage::new(Arc::clone(&engine));
+    let log = storage.delivery_log(&scope, &endpoint.id, 256).expect("restart pending");
+    assert_eq!(log.deliveries.iter().filter(|row| row.delivered).count(), 1);
+    assert_eq!(
+        storage.due_deliveries(&scope, &endpoint.id, 0, 256).expect("restart due").len(),
+        11
+    );
+    drop(storage);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole reopened engine") };
+    engine.shutdown().expect("close");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}

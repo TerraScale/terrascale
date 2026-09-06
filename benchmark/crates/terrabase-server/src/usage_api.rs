@@ -770,7 +770,10 @@ pub struct UsageSummary {
     /// Durable ledger high-water shared by all totals.
     #[schema(format = "uint64", minimum = 0)]
     pub snapshot_sequence: u64,
-    /// The only two billable meters.
+    /// Storage totals include finalized intervals only; null means no interval is finalized.
+    #[schema(format = "uint64", minimum = 0)]
+    pub storage_complete_through_millis: Option<u64>,
+    /// The only two billable meters. Storage includes only finalized intervals.
     pub meters: [MeterTotal; 2],
     /// Live read attribution since this Engine opened, outside the billable snapshot.
     pub reads: ReadAttribution,
@@ -783,8 +786,14 @@ pub struct UsageSummary {
 ///
 /// # Errors
 /// Returns typed source failures or rejects facts outside the Engine owner tuple.
-pub fn engine_summary(engine: &Engine, scope: &terrabase::TenantScope) -> Result<UsageSummary, UsageApiError> {
-    let binding = engine.usage_placement(scope).map_err(map_engine_usage_error).map_err(map_source_error)?
+pub fn engine_summary(
+    engine: &Engine,
+    scope: &terrabase::TenantScope,
+) -> Result<UsageSummary, UsageApiError> {
+    let binding = engine
+        .usage_placement(scope)
+        .map_err(map_engine_usage_error)
+        .map_err(map_source_error)?
         .ok_or_else(|| UsageApiError::SourceUnavailable {
             retryable: false,
             detail: "the database has no accepted usage placement binding".into(),
@@ -793,6 +802,12 @@ pub fn engine_summary(engine: &Engine, scope: &terrabase::TenantScope) -> Result
     let project = binding.scope.project_id().as_str().to_owned();
     let database = binding.scope.database_id().as_str().to_owned();
     let region = *binding.scope.region_id();
+    // Capture coverage before the ledger high-water so a concurrent closure
+    // can never claim coverage that the returned meter snapshot excludes.
+    let storage_complete_through_millis = engine
+        .storage_usage_closed_through(scope)
+        .map_err(map_engine_usage_error)
+        .map_err(map_source_error)?;
     let mut continuation = None;
     let mut snapshot = None;
     let mut totals = UsageTotals::zero();
@@ -858,6 +873,7 @@ pub fn engine_summary(engine: &Engine, scope: &terrabase::TenantScope) -> Result
         tenant_id: tenant,
         database_id: database,
         snapshot_sequence: snapshot.unwrap_or(0),
+        storage_complete_through_millis,
         meters: [
             MeterTotal {
                 meter: BillableMeter::DocumentWriteUnits,
@@ -1786,10 +1802,7 @@ mod tests {
                 .expect("clock")
                 .as_nanos()
         ));
-        let owner = terrabase::storage::DatabaseOwner::local_development();
-        let config = terrabase::EngineConfig::durable(&root)
-            .expect("durable location")
-            .with_owner(owner.clone());
+        let config = terrabase::EngineConfig::durable(&root).expect("durable location");
         let engine = Arc::new(terrabase::Engine::open(config).expect("engine opens"));
         let source = Arc::new(EngineUsageSource::new(Arc::clone(&engine), "partition-a").unwrap());
         let access = source.access();
@@ -1834,9 +1847,7 @@ mod tests {
 
         let reopened = Arc::new(
             terrabase::Engine::open(
-                terrabase::EngineConfig::durable(&root)
-                    .expect("durable location")
-                    .with_owner(owner),
+                terrabase::EngineConfig::durable(&root).expect("durable location"),
             )
             .expect("engine reopens"),
         );

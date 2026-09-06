@@ -30,6 +30,7 @@
 //! `spawn_blocking`; the tonic runtime never blocks on engine work.
 
 pub mod placement_control;
+pub mod reloadable_tls;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -59,7 +60,6 @@ use x509_parser::extensions::ParsedExtension;
 use x509_parser::prelude::FromDer;
 use x509_parser::prelude::X509Certificate;
 
-use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
@@ -380,6 +380,8 @@ impl Drop for TbepGrpcHandle {
 /// The gRPC serving of one host: every service of the contract wired
 /// over [`TbepHost`].
 pub struct TbepGrpcServer {
+    catchup: Option<Arc<dyn crate::catchup::CatchUpSource>>,
+    catchup_principals: std::collections::BTreeSet<String>,
     host: Arc<dyn TbepHost>,
     binding: pb::BindingKind,
     config: TbepGrpcConfig,
@@ -435,6 +437,18 @@ fn authenticate_gateway_certificate(principal: &str, leaf: &[u8]) -> Result<(), 
 }
 
 impl TbepGrpcServer {
+    /// Binds read-only complete admitted-runtime catchup evidence.
+    #[must_use]
+    pub fn with_catchup_source(
+        mut self,
+        source: Arc<dyn crate::catchup::CatchUpSource>,
+        observers: std::collections::BTreeSet<String>,
+    ) -> Self {
+        self.catchup_principals = observers;
+        self.catchup = Some(source);
+        self
+    }
+
     /// Creates the serving over one host. `binding` is the transport
     /// this instance serves (local socket or mTLS network) and answers
     /// in topology reads.
@@ -466,6 +480,8 @@ impl TbepGrpcServer {
         metrics: Arc<MetricsRegistry>,
     ) -> Self {
         Self {
+            catchup: None,
+            catchup_principals: std::collections::BTreeSet::new(),
             host,
             binding,
             config,
@@ -667,6 +683,23 @@ impl TbepGrpcServer {
         key_pem: &str,
         client_ca_pem: Option<&str>,
     ) -> std::io::Result<TbepGrpcHandle> {
+        let trust =
+            client_ca_pem.ok_or_else(|| std::io::Error::other("mTLS trust bundle required"))?;
+        self.serve_tls_reloadable(
+            address,
+            reloadable_tls::ReloadableTls::new(server_pem, key_pem, trust)?,
+        )
+    }
+
+    /// Serves the network API using the same live TLS controller as credential rotation.
+    ///
+    /// # Errors
+    /// Returns invalid binding, missing principals, or listener startup failure.
+    pub fn serve_tls_reloadable(
+        self: &Arc<Self>,
+        address: SocketAddr,
+        tls_acceptor: reloadable_tls::ReloadableTls,
+    ) -> std::io::Result<TbepGrpcHandle> {
         if self.binding != pb::BindingKind::NetworkMtls {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -679,14 +712,6 @@ impl TbepGrpcServer {
                 "a production TLS listener requires an authenticated gateway mapping",
             ));
         }
-        let Some(client_ca_pem) = client_ca_pem.filter(|bundle| !bundle.trim().is_empty()) else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "production TLS requires a non-empty client CA bundle for mutual authentication",
-            ));
-        };
-        let tls_config = tls_server_config(server_pem, key_pem, client_ca_pem)?;
-        let tls_acceptor = TlsAcceptor::from(tls_config);
         let server = Arc::clone(self);
         let startup_timeout = self.config.tls_handshake_timeout();
         let (shutdown, signal) = tokio::sync::oneshot::channel::<()>();
@@ -2259,6 +2284,23 @@ impl ReplicationService for Arc<TbepGrpcServer> {
 
 #[tonic::async_trait]
 impl MaintenanceService for Arc<TbepGrpcServer> {
+    async fn catch_up_status(
+        &self,
+        request: Request<pb::MaintenanceServiceCatchUpStatusRequest>,
+    ) -> Result<Response<pb::MaintenanceServiceCatchUpStatusResponse>, Status> {
+        self.counted();
+        let identity = self.identity(&request)?;
+        let Some(source) = &self.catchup else {
+            return Ok(Response::new(pb::MaintenanceServiceCatchUpStatusResponse::default()));
+        };
+        if !self.catchup_principals.contains(&identity.principal) {
+            return Err(Status::permission_denied("host catchup requires an admitted observer"));
+        }
+        let response =
+            source.observe().map_err(|_| Status::unavailable("catchup observation unavailable"))?;
+        Ok(Response::new(response))
+    }
+
     async fn topology_read(
         &self,
         request: Request<pb::MaintenanceServiceTopologyReadRequest>,

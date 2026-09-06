@@ -18,13 +18,24 @@ fn columns(fields: &[String]) -> Result<Vec<String>, ()> {
     if fields.is_empty() || fields.len() > 32 {
         return Err(());
     }
-    fields.iter().map(|field| {
-        if field.is_empty() || field.len() > 1024 || field.trim() != field
-            || field.chars().any(char::is_control) || !seen.insert(field) {
-            return Err(());
-        }
-        Ok(format!("{}, {}", quote_identifier(&text_column(field)), quote_identifier(&numeric_column(field))))
-    }).collect()
+    fields
+        .iter()
+        .map(|field| {
+            if field.is_empty()
+                || field.len() > 1024
+                || field.trim() != field
+                || field.chars().any(char::is_control)
+                || !seen.insert(field)
+            {
+                return Err(());
+            }
+            Ok(format!(
+                "{}, {}",
+                quote_identifier(&text_column(field)),
+                quote_identifier(&numeric_column(field))
+            ))
+        })
+        .collect()
 }
 
 fn duplicate_exists(
@@ -55,7 +66,9 @@ fn duplicate_exists(
          AND NOT EXISTS(SELECT 1 FROM documents n WHERE n.tenant = a.tenant AND n.collection = a.collection AND n.id = a.id AND n.commit_seq > a.commit_seq)
          AND NOT EXISTS(SELECT 1 FROM documents n WHERE n.tenant = b.tenant AND n.collection = b.collection AND n.id = b.id AND n.commit_seq > b.commit_seq)
          AND {})", predicates.join(" AND "));
-    connection.query_row(&sql, params![tenant, collection, unix_millis(), sequence, id], |row| row.get(0)).map_err(|_| ())
+    connection
+        .query_row(&sql, params![tenant, collection, unix_millis(), sequence, id], |row| row.get(0))
+        .map_err(|_| ())
 }
 
 /// Scans at most 32 retained rows per call and persists the resume key.
@@ -75,15 +88,24 @@ fn advance_unique_validation(
         params![tenant, collection, name], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     ).optional().map_err(|_| ())?;
     let (cursor_id, cursor_seq) = match saved {
-        Some((old_fields, old_watermark, id, sequence)) if old_fields == encoded && old_watermark == watermark => (id, sequence),
+        Some((old_fields, old_watermark, id, sequence))
+            if old_fields == encoded && old_watermark == watermark =>
+        {
+            (id, sequence)
+        }
         _ => (String::new(), -1),
     };
     let rows = {
         let mut statement = connection.prepare(
             "SELECT id, commit_seq FROM documents WHERE tenant = ?1 AND collection = ?2 AND (id, commit_seq) > (?3, ?4) ORDER BY id, commit_seq LIMIT 33",
         ).map_err(|_| ())?;
-        statement.query_map(params![tenant, collection, cursor_id, cursor_seq], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
-            .map_err(|_| ())?.collect::<Result<Vec<_>, _>>().map_err(|_| ())?
+        statement
+            .query_map(params![tenant, collection, cursor_id, cursor_seq], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|_| ())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| ())?
     };
     for (id, sequence) in rows.iter().take(32) {
         if duplicate_exists(connection, tenant, collection, fields, Some(*sequence), Some(id))? {
@@ -123,7 +145,9 @@ impl SqliteStorage {
         }
         drop(state);
         let mut writer = self.writer.lock().map_err(|_| ())?;
-        let transaction = writer.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|_| ())?;
+        let transaction = writer
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|_| ())?;
         let existing: Option<(String, bool)> = transaction.query_row(
             "SELECT fields, is_unique FROM schema_indexes WHERE tenant = ?1 AND collection = ?2 AND name = ?3",
             params![tenant.as_str(), collection.as_str(), name], |row| Ok((row.get(0)?, row.get(1)?)),
@@ -132,24 +156,57 @@ impl SqliteStorage {
         if existing.as_ref().is_some_and(|current| current == &(encoded.clone(), unique)) {
             return Ok(true);
         }
-        if unique && !advance_unique_validation(&transaction, tenant.as_str(), collection.as_str(), name, fields)? {
+        if unique
+            && !advance_unique_validation(
+                &transaction,
+                tenant.as_str(),
+                collection.as_str(),
+                name,
+                fields,
+            )?
+        {
             transaction.commit().map_err(|_| ())?;
             return Ok(false);
         }
         let physical = physical_name(tenant.as_str(), collection.as_str(), name);
-        transaction.execute_batch(&format!("DROP INDEX IF EXISTS {}", quote_identifier(&physical))).map_err(|_| ())?;
-        transaction.execute_batch(&format!("CREATE INDEX {} ON documents (tenant, collection, {}, id, commit_seq)", quote_identifier(&physical), expressions.join(", "))).map_err(|_| ())?;
+        transaction
+            .execute_batch(&format!("DROP INDEX IF EXISTS {}", quote_identifier(&physical)))
+            .map_err(|_| ())?;
+        transaction
+            .execute_batch(&format!(
+                "CREATE INDEX {} ON documents (tenant, collection, {}, id, commit_seq)",
+                quote_identifier(&physical),
+                expressions.join(", ")
+            ))
+            .map_err(|_| ())?;
         transaction.execute("INSERT INTO schema_indexes (tenant, collection, name, fields, is_unique) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (tenant, collection, name) DO UPDATE SET fields = excluded.fields, is_unique = excluded.is_unique", params![tenant.as_str(), collection.as_str(), name, encoded, unique]).map_err(|_| ())?;
         transaction.execute("DELETE FROM schema_index_builds WHERE tenant = ?1 AND collection = ?2 AND name = ?3", params![tenant.as_str(), collection.as_str(), name]).map_err(|_| ())?;
         transaction.commit().map_err(|_| ())?;
         Ok(true)
     }
 
-    pub(super) fn remove_canonical_index(&mut self, tenant: &TenantId, collection: &CollectionName, name: &str) -> Result<(), ()> {
+    pub(super) fn remove_canonical_index(
+        &mut self,
+        tenant: &TenantId,
+        collection: &CollectionName,
+        name: &str,
+    ) -> Result<(), ()> {
         let mut writer = self.writer.lock().map_err(|_| ())?;
-        let transaction = writer.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|_| ())?;
-        transaction.execute_batch(&format!("DROP INDEX IF EXISTS {}", quote_identifier(&physical_name(tenant.as_str(), collection.as_str(), name)))).map_err(|_| ())?;
-        transaction.execute("DELETE FROM schema_indexes WHERE tenant = ?1 AND collection = ?2 AND name = ?3", params![tenant.as_str(), collection.as_str(), name]).map_err(|_| ())?;
+        let transaction = writer
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|_| ())?;
+        transaction
+            .execute_batch(&format!(
+                "DROP INDEX IF EXISTS {}",
+                quote_identifier(&physical_name(tenant.as_str(), collection.as_str(), name))
+            ))
+            .map_err(|_| ())?;
+        transaction
+            .execute(
+                "DELETE FROM schema_indexes WHERE tenant = ?1 AND collection = ?2 AND name = ?3",
+                params![tenant.as_str(), collection.as_str(), name],
+            )
+            .map_err(|_| ())?;
         transaction.execute("DELETE FROM schema_index_builds WHERE tenant = ?1 AND collection = ?2 AND name = ?3", params![tenant.as_str(), collection.as_str(), name]).map_err(|_| ())?;
         transaction.commit().map_err(|_| ())
     }
@@ -157,13 +214,32 @@ impl SqliteStorage {
 
 /// Checks the final transaction image, so key swaps and delete/reuse are atomic.
 /// Replicated commits bypass this local admission constraint at the call site.
-pub(super) fn validate_local_writes(connection: &Connection, tenant: &TenantId, sequence: u64) -> Result<bool, ()> {
-    let mut statement = connection.prepare("SELECT collection, fields FROM schema_indexes WHERE tenant = ?1 AND is_unique = 1").map_err(|_| ())?;
-    let definitions = statement.query_map([tenant.as_str()], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).map_err(|_| ())?;
+pub(super) fn validate_local_writes(
+    connection: &Connection,
+    tenant: &TenantId,
+    sequence: u64,
+) -> Result<bool, ()> {
+    let mut statement = connection
+        .prepare(
+            "SELECT collection, fields FROM schema_indexes WHERE tenant = ?1 AND is_unique = 1",
+        )
+        .map_err(|_| ())?;
+    let definitions = statement
+        .query_map([tenant.as_str()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|_| ())?;
     for definition in definitions {
         let (collection, fields) = definition.map_err(|_| ())?;
         let fields = fields.split('\n').map(str::to_owned).collect::<Vec<_>>();
-        if duplicate_exists(connection, tenant.as_str(), &collection, &fields, Some(i64::try_from(sequence).map_err(|_| ())?), None)? {
+        if duplicate_exists(
+            connection,
+            tenant.as_str(),
+            &collection,
+            &fields,
+            Some(i64::try_from(sequence).map_err(|_| ())?),
+            None,
+        )? {
             return Ok(false);
         }
     }
@@ -173,6 +249,103 @@ pub(super) fn validate_local_writes(connection: &Connection, tenant: &TenantId, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structured_unique_keys_preserve_types_and_null_nonparticipation() {
+        use super::super::{ColumnValue, extract_column_value};
+        use crate::types::{Document, DocumentId, DocumentValue};
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE documents (tenant TEXT, collection TEXT, id TEXT, commit_seq INTEGER, deleted INTEGER DEFAULT 0, expires_at INTEGER, \"f:a#t\" TEXT, \"f:a#n\" NUMERIC)").unwrap();
+        let fields = vec!["a".to_owned()];
+        let typed = |value: DocumentValue| {
+            let document = Document::new(
+                DocumentId::try_new("one").unwrap(),
+                CollectionName::try_new("c").unwrap(),
+                DocumentValue::Object(std::collections::BTreeMap::from([("a".to_owned(), value)])),
+            );
+            match extract_column_value(&document, "a") {
+                Some(ColumnValue::Typed(bytes)) => rusqlite::types::Value::Blob(bytes),
+                Some(ColumnValue::Text(text)) => rusqlite::types::Value::Text(text),
+                None => rusqlite::types::Value::Null,
+                other => panic!("unexpected typed value: {other:?}"),
+            }
+        };
+        let insert = "INSERT INTO documents (tenant,collection,id,commit_seq,\"f:a#t\") VALUES ('t','c',?1,?2,?3)";
+        for (left, right, equal) in [
+            (DocumentValue::Boolean(false), DocumentValue::Boolean(true), false),
+            (DocumentValue::Boolean(false), DocumentValue::Boolean(false), true),
+            (DocumentValue::Boolean(true), DocumentValue::Boolean(true), true),
+            (DocumentValue::Boolean(true), DocumentValue::String("true".to_owned()), false),
+            (
+                DocumentValue::Array(vec![DocumentValue::Boolean(true)]),
+                DocumentValue::Array(vec![DocumentValue::Boolean(true)]),
+                true,
+            ),
+            (
+                DocumentValue::Object(std::collections::BTreeMap::from([
+                    ("x".to_owned(), DocumentValue::Integer(1)),
+                    ("y".to_owned(), DocumentValue::Boolean(true)),
+                ])),
+                DocumentValue::Object(std::collections::BTreeMap::from([
+                    ("y".to_owned(), DocumentValue::Boolean(true)),
+                    ("x".to_owned(), DocumentValue::Integer(1)),
+                ])),
+                true,
+            ),
+            (DocumentValue::Null, DocumentValue::Null, false),
+        ] {
+            db.execute("DELETE FROM documents", []).unwrap();
+            db.execute(insert, params!["one", 1, typed(left)]).unwrap();
+            db.execute(insert, params!["two", 2, typed(right)]).unwrap();
+            assert_eq!(duplicate_exists(&db, "t", "c", &fields, None, None).unwrap(), equal);
+        }
+    }
+
+    #[test]
+    fn unique_validation_resumes_after_restart_and_restarts_after_writes() {
+        let path = std::env::temp_dir().join(format!(
+            "terrabase-unique-cursor-{}-{}.sqlite",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch(super::super::SCHEMA).unwrap();
+        db.execute_batch("ALTER TABLE documents ADD COLUMN \"f:a#t\" TEXT; ALTER TABLE documents ADD COLUMN \"f:a#n\" NUMERIC;").unwrap();
+        let insert = "INSERT INTO documents (tenant,collection,id,commit_seq,commit_ulid,revision,requested,digest,version,deleted,body,\"f:a#t\") VALUES ('t','c',?1,?2,'','',0,0,1,0,X'',?3)";
+        for index in 0..70 {
+            let id = format!("{index:03}");
+            db.execute(insert, params![id, index + 1, id]).unwrap();
+        }
+        let fields = vec!["a".to_owned()];
+        assert!(!advance_unique_validation(&db, "t", "c", "idx", &fields).unwrap());
+        let cursor: String = db
+            .query_row("SELECT cursor_id FROM schema_index_builds", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(cursor, "031");
+        drop(db);
+        let db = Connection::open(&path).unwrap();
+        assert!(!advance_unique_validation(&db, "t", "c", "idx", &fields).unwrap());
+        let cursor: String = db
+            .query_row("SELECT cursor_id FROM schema_index_builds", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(cursor, "063");
+        // An update before the resume key invalidates the previous image.
+        db.execute(insert, params!["000", 71, "new"]).unwrap();
+        assert!(!advance_unique_validation(&db, "t", "c", "idx", &fields).unwrap());
+        let cursor: String = db
+            .query_row("SELECT cursor_id FROM schema_index_builds", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(cursor, "030");
+        assert!(!advance_unique_validation(&db, "t", "c", "idx", &fields).unwrap());
+        assert!(advance_unique_validation(&db, "t", "c", "idx", &fields).unwrap());
+        db.execute(insert, params!["000", 72, "069"]).unwrap();
+        assert!(advance_unique_validation(&db, "t", "c", "idx", &fields).is_err());
+        let active: i64 =
+            db.query_row("SELECT COUNT(*) FROM schema_indexes", [], |row| row.get(0)).unwrap();
+        assert_eq!(active, 0);
+        drop(db);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn uniqueness_uses_live_heads_and_complete_compound_keys() {

@@ -40,6 +40,21 @@ impl PlacementControlServer {
 
 #[tonic::async_trait]
 impl MaintenanceService for Arc<PlacementControlServer> {
+    async fn catch_up_status(
+        &self,
+        request: Request<pb::MaintenanceServiceCatchUpStatusRequest>,
+    ) -> Result<Response<pb::MaintenanceServiceCatchUpStatusResponse>, Status> {
+        self.authenticate_observer(&request)?;
+        self.observed_frame();
+        let Some(source) = &self.catchup else {
+            return Ok(Response::new(pb::MaintenanceServiceCatchUpStatusResponse::default()));
+        };
+        let response = source
+            .observe()
+            .map_err(|_| control_status(Code::Unavailable, "catchup observation unavailable"))?;
+        Ok(Response::new(response))
+    }
+
     async fn topology_read(
         &self,
         request: Request<pb::MaintenanceServiceTopologyReadRequest>,
@@ -262,6 +277,15 @@ mod tests {
             .unwrap()
             .into_inner();
         assert_eq!(health.state, pb::HealthState::Draining as i32);
+        let catchup = client
+            .catch_up_status(request(pb::MaintenanceServiceCatchUpStatusRequest {}, OBSERVER))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!catchup.complete);
+        assert!(catchup.databases.is_empty());
+        assert_eq!(catchup.observed_at_unix_ms, 0);
+        assert!(catchup.assignment_revision.is_empty());
         stop.send(()).unwrap();
         serving.await.unwrap().unwrap();
     }

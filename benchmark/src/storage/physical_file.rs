@@ -6,7 +6,9 @@ use super::sqlite::{encrypted_file::EncryptedFile, encrypted_vfs::EncryptedVfs};
 
 /// Keeps an authenticated database VFS available for offline follower or restore
 /// I/O. Production callers supply the same owner-bound source as EngineConfig.
-pub struct EncryptedStorage(Arc<EncryptedVfs>);
+pub struct EncryptedStorage {
+    _registration: Arc<EncryptedVfs>,
+}
 
 impl EncryptedStorage {
     /// Registers an encrypted location before opening physical database files.
@@ -15,7 +17,7 @@ impl EncryptedStorage {
     /// Fails on invalid locations or conflicting live key sources.
     pub fn register(location: &Path, keys: Arc<dyn crate::encryption::DatabaseKeySource>) -> io::Result<Self> {
         std::fs::create_dir_all(location)?;
-        Ok(Self(EncryptedVfs::register(&location.join("terrabase.sqlite3"), keys)?))
+        Ok(Self { _registration: EncryptedVfs::register(&location.join("terrabase.sqlite3"), keys)? })
     }
 }
 
@@ -53,7 +55,12 @@ fn open(path: &Path, create: bool) -> io::Result<PhysicalFile> {
         if !create && !super::sqlite::encrypted_file::companion(path).exists() {
             return Err(io::ErrorKind::NotFound.into());
         }
-        if create && !path.exists() { File::create_new(path)?; }
+        let companion_exists = super::sqlite::encrypted_file::companion(path).exists();
+        if let Ok(metadata) = std::fs::symlink_metadata(path) {
+            if !metadata.is_file() || metadata.len() > 0 || (!path.as_os_str().as_encoded_bytes().ends_with(b"-wal") && !path.as_os_str().as_encoded_bytes().ends_with(b"-journal") && !companion_exists) {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, "invalid encrypted SQLite stub"));
+            }
+        } else if create { File::create_new(path)?; }
         Backend::Encrypted { file: guard.shared_file(path)?, _guard: guard }
     } else {
         if super::sqlite::encrypted_file::companion(path).exists() {
@@ -193,4 +200,19 @@ pub fn open_physical_sqlite(path: &Path, flags: rusqlite::OpenFlags) -> Result<r
     };
     connection.execute_batch("PRAGMA temp_store=MEMORY; PRAGMA mmap_size=0;")?;
     Ok(connection)
+}
+
+impl EncryptedStorage {
+    /// Rewrites one logical database or journal file under the source's active
+    /// key version. The caller must quiesce SQLite writes/checkpoints first.
+    /// Each file publishes an atomic replacement, so interrupted multi-file
+    /// rotation can resume while historical leases remain available.
+    ///
+    /// # Errors
+    /// Fails for out-of-scope paths, unavailable historical keys or I/O errors.
+    pub fn reencrypt_file(&self, path: &Path) -> io::Result<()> {
+        self._registration.shared_file(path)?
+            .lock().map_err(|_| io::Error::other("encrypted file poisoned"))?
+            .reencrypt()
+    }
 }

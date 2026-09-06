@@ -64,12 +64,47 @@ impl KeyMaterial {
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct LiveKeys {
+    #[serde(default)]
+    tls: Option<TlsMaterial>,
+    #[serde(default)]
+    previous_generation: u64,
     pub(crate) origin: KeyMaterial,
     pub(crate) capability: KeyMaterial,
 }
 impl LiveKeys {
     pub(crate) fn single(keys: KeyMaterial) -> Self {
-        Self { origin: keys.clone(), capability: keys }
+        Self { origin: keys.clone(), capability: keys, tls: None, previous_generation: 0 }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct TlsMaterial {
+    workload: Vec<u8>,
+    trust: Vec<u8>,
+    expires_at: u64,
+}
+impl std::fmt::Debug for TlsMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TlsMaterial([REDACTED])")
+    }
+}
+impl Drop for TlsMaterial {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.workload.zeroize();
+        self.trust.zeroize();
+    }
+}
+impl TlsMaterial {
+    fn prepare(&self) -> io::Result<terrabase_tbep::grpc::reloadable_tls::PreparedTls> {
+        let workload = std::str::from_utf8(&self.workload).map_err(io::Error::other)?;
+        let trust = std::str::from_utf8(&self.trust).map_err(io::Error::other)?;
+        terrabase_tbep::grpc::reloadable_tls::ReloadableTls::prepare(
+            workload,
+            workload,
+            trust,
+            self.expires_at,
+        )
     }
 }
 
@@ -91,10 +126,18 @@ struct Request {
     previous_key: String,
     #[serde(default)]
     previous_expires_at: u64,
+    #[serde(default)]
+    workload_tls: String,
+    #[serde(default)]
+    previous_generation: u64,
+    #[serde(default)]
+    trust_bundle: String,
 }
 impl Drop for Request {
     fn drop(&mut self) {
         use zeroize::Zeroize;
+        self.workload_tls.zeroize();
+        self.trust_bundle.zeroize();
         self.current_key.zeroize();
         self.previous_key.zeroize();
     }
@@ -127,6 +170,7 @@ struct Inner {
     _lock: std::fs::File,
 }
 struct Service {
+    tls: Option<terrabase_tbep::grpc::reloadable_tls::ReloadableTls>,
     inner: Mutex<Inner>,
     live: Arc<RwLock<LiveKeys>>,
     token: zeroize::Zeroizing<Vec<u8>>,
@@ -181,6 +225,34 @@ pub fn bind(
     origin: OriginProofKeyRing,
     capability: CapabilityKeyRing,
 ) -> io::Result<BoundRotation> {
+    bind_inner(socket, state_file, token, origin, capability, None)
+}
+/// Binds rotation to the actual member TLS listener and its initial durable material.
+///
+/// # Errors
+/// Returns invalid TLS material or private listener/state validation failures.
+pub fn bind_with_tls(
+    socket: &Path,
+    state_file: &Path,
+    token: Vec<u8>,
+    origin: OriginProofKeyRing,
+    capability: CapabilityKeyRing,
+    tls: terrabase_tbep::grpc::reloadable_tls::ReloadableTls,
+    workload: Vec<u8>,
+    trust: Vec<u8>,
+) -> io::Result<BoundRotation> {
+    let material = TlsMaterial { workload, trust, expires_at: u64::MAX };
+    material.prepare()?;
+    bind_inner(socket, state_file, token, origin, capability, Some((tls, material)))
+}
+fn bind_inner(
+    socket: &Path,
+    state_file: &Path,
+    token: Vec<u8>,
+    origin: OriginProofKeyRing,
+    capability: CapabilityKeyRing,
+    tls: Option<(terrabase_tbep::grpc::reloadable_tls::ReloadableTls, TlsMaterial)>,
+) -> io::Result<BoundRotation> {
     use std::os::unix::fs::PermissionsExt;
     if token.len() < 32 || token.len() > 4096 {
         return Err(io::Error::other("rotation token must contain 32..4096 bytes"));
@@ -209,6 +281,8 @@ pub fn bind(
         }
     }
     let initial = LiveKeys {
+        previous_generation: 0,
+        tls: tls.as_ref().map(|(_, material)| material.clone()),
         origin: origin
             .live
             .read()
@@ -242,10 +316,25 @@ pub fn bind(
         persist(state_file, &value)?;
         value
     };
+    if let Some((controller, _)) = &tls {
+        if durable.state == "fenced" {
+            controller.fence();
+        } else {
+            controller.install(
+                durable
+                    .active
+                    .tls
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("durable TLS material missing"))?
+                    .prepare()?,
+            )?;
+        }
+    }
     let live = Arc::new(RwLock::new(durable.active.clone()));
     let listener = tokio::net::UnixListener::bind(socket)?;
     std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
     let service = Arc::new(Service {
+        tls: tls.map(|(controller, _)| controller),
         inner: Mutex::new(Inner { durable, file: state_file.to_owned(), _lock: lock }),
         live: live.clone(),
         token: zeroize::Zeroizing::new(token),
@@ -276,7 +365,7 @@ impl BoundRotation {
     ) -> io::Result<()> {
         let router = Router::new()
             .route("/v1/credential-rotation", post(handle))
-            .layer(DefaultBodyLimit::max(24 * 1024))
+            .layer(DefaultBodyLimit::max(256 * 1024))
             .with_state(self.service);
         let result = axum::serve(self.listener, router).with_graceful_shutdown(shutdown).await;
         std::fs::remove_file(self.socket)?;
@@ -312,7 +401,7 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
     let invalid = || io::Error::other("invalid rotation transition");
     if request.operation_id.is_empty()
         || request.operation_id.len() > 128
-        || request.generation == 0
+        || (request.generation == 0 && request.action != "fence")
     {
         return Err(invalid());
     }
@@ -352,7 +441,29 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
                 .ok_or_else(invalid)?;
             keys.expires_at = request.expires_at;
             keys.previous_expires_at = request.previous_expires_at;
-            next.staged = Some(LiveKeys::single(keys));
+            let mut snapshot = LiveKeys::single(keys);
+            if overlap
+                && (request.previous_generation == 0
+                    || request.previous_generation >= request.generation)
+            {
+                return Err(invalid());
+            }
+            snapshot.previous_generation = request.previous_generation;
+            if service.tls.is_some() {
+                let material = TlsMaterial {
+                    workload: STANDARD.decode(&request.workload_tls).map_err(|_| invalid())?,
+                    trust: STANDARD.decode(&request.trust_bundle).map_err(|_| invalid())?,
+                    expires_at: request.expires_at,
+                };
+                if material.workload.len() > 128 * 1024 || material.trust.len() > 32 * 1024 {
+                    return Err(invalid());
+                }
+                service.tls.as_ref().ok_or_else(invalid)?.validate(&material.prepare()?)?;
+                snapshot.tls = Some(material);
+            } else if !request.workload_tls.is_empty() || !request.trust_bundle.is_empty() {
+                return Err(invalid());
+            }
+            next.staged = Some(snapshot);
             next.generation = request.generation;
             next.state = "staged".into();
             next.verified = false;
@@ -362,6 +473,16 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
                 || next.staged.as_ref().is_none_or(|s| s.origin.usable().is_none())
             {
                 return Err(invalid());
+            }
+            if let Some(controller) = &service.tls {
+                controller.validate(
+                    &next
+                        .staged
+                        .as_ref()
+                        .and_then(|s| s.tls.as_ref())
+                        .ok_or_else(invalid)?
+                        .prepare()?,
+                )?;
             }
             next.verified = true;
         }
@@ -378,9 +499,10 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
             next.state = "active".into();
         }
         "retire" => {
-            if request.generation != next.generation || next.state != "active" {
+            if request.generation != next.active.previous_generation || next.state != "active" {
                 return Err(invalid());
             }
+            next.active.previous_generation = 0;
             next.active.origin.previous = None;
             next.active.capability.previous = None;
             next.rollback = None;
@@ -395,10 +517,10 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
             next.state = "active".into();
         }
         "fence" => {
-            if request.generation < next.generation {
+            if request.generation != 0 && request.generation < next.generation {
                 return Err(invalid());
             }
-            next.generation = request.generation;
+            next.generation = next.generation.max(request.generation);
             next.active = LiveKeys::default();
             next.staged = None;
             next.rollback = None;
@@ -408,7 +530,7 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
     }
     let valid_until = next.staged.as_ref().unwrap_or(&next.active).origin.expires_at;
     let receipt = Receipt {
-        generation: next.generation,
+        generation: if request.action == "retire" { request.generation } else { next.generation },
         valid_until,
         state: next.state.clone(),
         operation_id: request.operation_id.clone(),
@@ -419,12 +541,32 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
     }
     next.receipts
         .insert(request.operation_id.clone(), SavedReceipt { digest, receipt: receipt.clone() });
+    let prepared_tls = if service.tls.is_some() && next.state != "fenced" {
+        Some(next.active.tls.as_ref().ok_or_else(invalid)?.prepare()?)
+    } else {
+        None
+    };
+    if let (Some(controller), Some(prepared)) = (&service.tls, &prepared_tls) {
+        controller.validate(prepared)?;
+    }
     let mut live = service.live.write().map_err(|_| invalid())?;
     if let Err(error) = persist(&inner.file, &next) {
         // A failed directory fsync can leave an uncertain on-disk commit.
         // Stop accepting credentials until an authenticated retry or restart reconciles it.
         *live = LiveKeys::default();
+        if let Some(tls) = &service.tls {
+            tls.fence();
+        }
         return Err(error);
+    }
+    if let Some(tls) = &service.tls
+        && !matches!(request.action.as_str(), "stage" | "verify")
+    {
+        if let Some(prepared) = prepared_tls {
+            tls.install(prepared)?;
+        } else {
+            tls.fence();
+        }
     }
     *live = next.active.clone();
     inner.durable = next;
@@ -440,13 +582,16 @@ mod tests {
         Request {
             operation_id: operation.into(),
             action: action.into(),
-            generation: 1,
+            generation: 2,
             expires_at: now() + 3600,
             current_key_id: "new".into(),
             current_key: STANDARD.encode(b"new-key-with-at-least-32-bytes-000"),
             previous_key_id: "old".into(),
             previous_key: STANDARD.encode(b"old-key-with-at-least-32-bytes-000"),
             previous_expires_at: now() + 600,
+            previous_generation: 1,
+            workload_tls: String::new(),
+            trust_bundle: String::new(),
         }
     }
     fn accepts(ring: &OriginProofKeyRing, key: &[u8]) -> bool {
@@ -527,7 +672,9 @@ mod tests {
         task.await.unwrap().unwrap();
         let restored = make();
         assert!(accepts(&restored.origin, new));
-        apply(&restored.service, &request("retire", "retire")).unwrap();
+        let mut retire = request("retire", "retire");
+        retire.generation = 1;
+        apply(&restored.service, &retire).unwrap();
         assert!(!accepts(&restored.origin, old));
         assert!(accepts(&restored.origin, new));
         apply(&restored.service, &request("fence", "fence")).unwrap();

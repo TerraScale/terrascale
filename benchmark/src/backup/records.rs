@@ -99,7 +99,15 @@ pub(crate) fn encode_into(buffer: &mut Vec<u8>, record: &Record) {
             encode_value(buffer, document.value());
             encode_u64(buffer, document.metadata().version());
         }
-        Record::Delete { tenant, collection, id, version_at_delete, durability, sequence, committed_unix_millis } => {
+        Record::Delete {
+            tenant,
+            collection,
+            id,
+            version_at_delete,
+            durability,
+            sequence,
+            committed_unix_millis,
+        } => {
             buffer.push(TAG_DELETE);
             encode_tenant(buffer, tenant);
             encode_durability(buffer, *durability);
