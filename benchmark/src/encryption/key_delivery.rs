@@ -1,16 +1,18 @@
 //! Authenticated local delivery of OCI Vault leases by the host orchestrator.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::{
-    DatabaseKey, DatabaseKeyLease, EncryptionError, KeyProviderIdentity, KeyVersionMetadata,
-    MAX_DATABASE_KEY_LEASE,
+    DatabaseKey, DatabaseKeyLease, DatabaseKeySource, DatabaseKeyVersion, EncryptionError,
+    KeyProviderIdentity, KeyVersionMetadata, MAX_DATABASE_KEY_LEASE,
 };
 use crate::regions::{RegionCatalog, RegionCode};
 
@@ -139,6 +141,76 @@ impl OciVaultKeyDelivery {
             validate_component(&path, &self.socket, self.orchestrator_uid)?;
         }
         Ok(())
+    }
+}
+
+/// Bounded, renewable OCI leases for one immutable database scope and version.
+///
+/// Replace this source only after a new active version is durably admitted.
+/// Historical versions are requested explicitly and remain usable only while
+/// the orchestrator authorizes their regional wrappers.
+#[derive(Debug)]
+pub struct OciVaultDatabaseKeys {
+    provider: OciVaultKeyDelivery,
+    metadata: KeyVersionMetadata,
+    region: RegionCode,
+    cache: Mutex<BTreeMap<DatabaseKeyVersion, CachedLease>>,
+}
+
+#[derive(Debug)]
+struct CachedLease {
+    lease: Arc<DatabaseKeyLease>,
+    renew_at: Instant,
+}
+
+impl OciVaultDatabaseKeys {
+    /// Authorizes the active key before returning a production storage source.
+    ///
+    /// # Errors
+    /// Fails closed when the bound scope/version/Region cannot obtain a lease.
+    pub fn new(
+        provider: OciVaultKeyDelivery,
+        metadata: KeyVersionMetadata,
+        region: RegionCode,
+    ) -> Result<Self, EncryptionError> {
+        let source = Self { provider, metadata, region, cache: Mutex::new(BTreeMap::new()) };
+        source.current_lease()?;
+        Ok(source)
+    }
+}
+
+impl DatabaseKeySource for OciVaultDatabaseKeys {
+    fn current_lease(&self) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+        self.lease(self.metadata.version())
+    }
+
+    fn lease(&self, version: DatabaseKeyVersion) -> Result<Arc<DatabaseKeyLease>, EncryptionError> {
+        // Serialize a renewal per database so concurrent page reads cannot
+        // create a Vault request storm. Healthy cached reads do no socket I/O.
+        let mut cache = self.cache.lock().map_err(unavailable)?;
+        let now = Instant::now();
+        cache.retain(|_, cached| !cached.lease.is_expired());
+        if let Some(cached) = cache.get(&version)
+            && now < cached.renew_at
+            && !cached.lease.is_expired()
+        {
+            return Ok(Arc::clone(&cached.lease));
+        }
+        let metadata = KeyVersionMetadata::new(self.metadata.scope().clone(), version);
+        let lease = Arc::new(self.provider.lease(&metadata, self.region)?);
+        let now = Instant::now();
+        let remaining = lease
+            .expires_at()
+            .checked_duration_since(now)
+            .filter(|duration| !duration.is_zero())
+            .ok_or(EncryptionError::KeyLeaseExpired)?;
+        let renew_at =
+            now.checked_add(remaining * 4 / 5).ok_or(EncryptionError::InvalidKeyLease)?;
+        if !cache.contains_key(&version) && cache.len() >= 32 {
+            cache.pop_first();
+        }
+        cache.insert(version, CachedLease { lease: Arc::clone(&lease), renew_at });
+        Ok(lease)
     }
 }
 
@@ -409,5 +481,38 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn bound_source_caches_io_and_renews_the_same_explicit_version() {
+        let fixture = SocketFixture::new();
+        let listener = fixture.listen();
+        let version = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
+        let server = respond(listener, version, 60, 41);
+        let source = OciVaultDatabaseKeys::new(
+            fixture.provider(),
+            metadata(version),
+            RegionCode::from_text("GRU").unwrap(),
+        )
+        .unwrap();
+        server.join().unwrap();
+        fs::remove_file(&fixture.socket).unwrap();
+        let first = source.current_lease().unwrap();
+        let second = source.current_lease().unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        // Expire the renewal deadline, not the key's actual authorization.
+        source.cache.lock().unwrap().get_mut(&metadata(version).version()).unwrap().renew_at =
+            Instant::now();
+        let server = respond(fixture.listen(), version, 60, 41);
+        let renewed = source.current_lease().unwrap();
+        assert!(!Arc::ptr_eq(&first, &renewed));
+        assert_eq!(renewed.metadata(), first.metadata());
+        server.join().unwrap();
+        fs::remove_file(&fixture.socket).unwrap();
+        assert!(
+            source
+                .lease(DatabaseKeyVersion::from_text("01ARZ3NDEKTSV4RRFFQ69G5FB1").unwrap())
+                .is_err()
+        );
+        assert!(source.current_lease().is_ok());
     }
 }

@@ -800,6 +800,8 @@ fn intent(operation: &str, writes: Vec<StagedWrite>, durability: LocalDurability
         merge_conflict: None,
         replication_fingerprint: None,
         hlc: 0,
+        metadata: Vec::new(),
+        schema_envelopes: Vec::new(),
         writes,
     }
 }
@@ -1710,6 +1712,8 @@ fn commit_as(
         merge_conflict: None,
         replication_fingerprint: None,
         hlc: 0,
+        metadata: Vec::new(),
+        schema_envelopes: Vec::new(),
         writes,
     };
     storage.commit(intent)
@@ -3509,6 +3513,49 @@ fn descriptor_removal_releases_the_column_budget() {
         storage.register_index_descriptor(&users, "replacement"),
         Ok(DescriptorRegistration::Active)
     );
+    drop(storage);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn descriptor_removal_rolls_back_both_columns_and_cache_after_second_ddl_failure() {
+    let (dir, mut storage) = sqlite_store("descriptor-remove-rollback");
+    let users = scan_users();
+    let tenant = scan_tenant();
+    storage.register_index_descriptor(&users, "score").expect("descriptor");
+    storage
+        .writer
+        .lock()
+        .expect("writer")
+        .execute_batch("CREATE INDEX test_extra_numeric_dependency ON documents (\"f:score#n\")")
+        .expect("independent numeric dependency");
+    assert_eq!(
+        storage.remove_index_descriptor(&users, "score"),
+        Err(crate::storage::IndexDescriptorRemovalError::Storage)
+    );
+    assert_eq!(storage.index_descriptor_state(&users, "score"), Some(true));
+    commit_object(
+        &mut storage,
+        &tenant,
+        "after-rollback",
+        object_document("doc-a", "users", &[("score", DocumentValue::Integer(7))]),
+    );
+    let latest = storage.published_state().0.get();
+    assert_eq!(
+        filtered(&storage, latest, &equals("score", DocumentValue::Integer(7)))
+            .expect("restored index")
+            .len(),
+        1
+    );
+    drop(storage);
+    let storage = SqliteStorage::open(&dir).expect("restart after rolled-back DDL");
+    assert_eq!(storage.index_descriptor_state(&users, "score"), Some(true));
+    let connection = storage.writer.lock().expect("writer");
+    let count: i64 = connection.query_row(
+        "SELECT count(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('i:score#t', 'i:score#n')", [], |row| row.get(0),
+    ).expect("restored indexes");
+    assert_eq!(count, 2);
+    drop(connection);
     drop(storage);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }

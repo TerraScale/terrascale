@@ -743,6 +743,28 @@ impl KeyRotation {
     }
 }
 
+/// Refreshable leases for one durable database key hierarchy.
+///
+/// Implementations bind the complete owner scope and selected Region. Readers
+/// request the version recorded in their artifact; writers use the version
+/// selected by the durable rotation state, never an inferred newest version.
+pub trait DatabaseKeySource: fmt::Debug + Send + Sync {
+    /// Obtains the admitted version used for new encrypted artifacts.
+    ///
+    /// # Errors
+    /// Returns a redacted refusal when authorization cannot be renewed.
+    fn current_lease(&self) -> Result<std::sync::Arc<DatabaseKeyLease>, EncryptionError>;
+
+    /// Obtains exactly one historical version for authenticated reads.
+    ///
+    /// # Errors
+    /// Returns a refusal for missing, retired or unauthorized versions.
+    fn lease(
+        &self,
+        version: DatabaseKeyVersion,
+    ) -> Result<std::sync::Arc<DatabaseKeyLease>, EncryptionError>;
+}
+
 /// Provider-neutral key wrapping, rotation, recovery, and destruction seam.
 ///
 /// Provider implementations must keep OCI OCIDs and credentials outside all

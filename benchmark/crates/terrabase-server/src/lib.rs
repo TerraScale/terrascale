@@ -5,6 +5,7 @@
 //! and publishes private Prometheus and lifecycle probes. It contains no
 //! database or protocol implementation of its own.
 
+pub mod admission;
 pub mod api;
 pub mod api_keys;
 pub mod backup;
@@ -13,11 +14,13 @@ pub mod config;
 pub mod control;
 pub mod delegated_identity;
 pub mod export_api;
+pub mod export_store;
 pub mod export_local;
 pub mod guards;
 pub mod http;
 pub mod index_api;
 pub mod production;
+pub mod replication_runtime;
 pub mod provisioning;
 pub mod reactive_api;
 mod read_operation;

@@ -256,7 +256,8 @@ impl RegionLink {
             return Ok(ShipStep::WindowFull);
         }
         let mut page = Vec::new();
-        let mut after = self.cursor;
+        let mut after =
+            self.in_flight.last_key_value().and_then(|(_, frame)| frame.checkpoint).or(self.cursor);
         for _ in 0..MAX_FILTERED_PAGE_SCANS {
             let (candidate, next) = pull_origin_page(host, scope, after)?;
             if !candidate.is_empty() {
@@ -271,8 +272,10 @@ impl RegionLink {
                     "the durable journal pull did not advance its checkpoint".into(),
                 ));
             }
-            self.cursor = Some(next);
-            after = self.cursor;
+            if self.in_flight.is_empty() {
+                self.cursor = Some(next);
+            }
+            after = Some(next);
         }
         if page.is_empty() {
             return Ok(ShipStep::Idle);
@@ -730,7 +733,7 @@ fn replication_envelope(
 }
 
 /// Converts one engine record into its lane form.
-fn replicated_write(record: &ReplicatedRecord) -> Result<ReplicatedWrite, HostingError> {
+pub(crate) fn replicated_write(record: &ReplicatedRecord) -> Result<ReplicatedWrite, HostingError> {
     Ok(ReplicatedWrite {
         collection: LaneCollection::try_new(record.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection breaks the lane rules".into()))?,
@@ -746,7 +749,7 @@ fn replicated_write(record: &ReplicatedRecord) -> Result<ReplicatedWrite, Hostin
 }
 
 /// Converts one lane record back into the engine's form.
-fn replicated_record(write: &ReplicatedWrite) -> Result<ReplicatedRecord, HostingError> {
+pub(crate) fn replicated_record(write: &ReplicatedWrite) -> Result<ReplicatedRecord, HostingError> {
     Ok(ReplicatedRecord {
         collection: terrabase::types::CollectionName::try_new(write.collection.as_str())
             .map_err(|_| HostingError::Invalid("the collection is not valid".into()))?,

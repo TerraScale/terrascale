@@ -1,7 +1,5 @@
 use super::*;
-use crate::export_api::{
-    ExportAccepted, ExportRuntime, ExportStatus, ExportStore, FileExportStore, JobStatus,
-};
+use crate::export_api::{ExportAccepted, ExportRuntime, ExportStatus, ExportStore, JobStatus};
 use axum::body::Body;
 use axum::http::Request;
 use tower::util::ServiceExt;
@@ -213,7 +211,8 @@ async fn http_export_reads_real_documents_and_recovers_after_runtime_restart() {
     drop(app);
     let database_id = document_host(&state, "prod").unwrap().engine().database_id().to_text();
     let identity = blake3::hash(database_id.as_bytes()).to_hex().to_string();
-    let store = FileExportStore::open(root.join("jobs").join(identity)).unwrap();
+    let store =
+        crate::export_store::SqliteExportStore::open(root.join("jobs").join(identity)).unwrap();
     let lease = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
             if let Some(lease) = store.acquire_job(&accepted.job_id).unwrap() {

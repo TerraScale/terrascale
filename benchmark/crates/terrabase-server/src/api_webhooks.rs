@@ -61,6 +61,45 @@ fn json<T: serde::Serialize>(status: StatusCode, value: &T) -> Response {
     }
 }
 
+fn secret_response(status: StatusCode, response: &webhook::WebhookSecretResponse) -> Response {
+    let mut response = json(status, response);
+    response
+        .headers_mut()
+        .insert(axum::http::header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+#[utoipa::path(post, path = "/api/v1/databases/{name}/webhooks/{id}/rotate-secret", request_body = webhook::RotateWebhookSecret, responses((status = 200, description = "One-time rotated signing secret", body = webhook::WebhookSecretResponse)))]
+pub(super) async fn rotate_secret(
+    State(state): State<Arc<ApiState>>,
+    Path((name, id)): Path<(String, String)>,
+    body: Bytes,
+) -> Response {
+    if body.len() > webhook::MAX_WEBHOOK_BODY_BYTES {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let input = if body.is_empty() {
+        webhook::RotateWebhookSecret { overlap_seconds: 300 }
+    } else {
+        match serde_json::from_slice::<webhook::RotateWebhookSecret>(&body) {
+            Ok(input) => input,
+            Err(_) => {
+                return webhook::WebhookError::invalid_request("invalid rotation request")
+                    .into_response();
+            }
+        }
+    };
+    let (service, scope) = match resolve(state, name).await {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
+    blocking(move || match service.rotate_secret(&scope, &id, &input) {
+        Ok(secret) => secret_response(StatusCode::OK, &secret),
+        Err(error) => error.into_response(),
+    })
+    .await
+}
+
 async fn blocking(work: impl FnOnce() -> Response + Send + 'static) -> Response {
     tokio::task::spawn_blocking(work).await.unwrap_or_else(|_| unavailable())
 }
@@ -81,10 +120,11 @@ pub(super) async fn list_webhooks(
     .await
 }
 
-#[utoipa::path(post, path = "/api/v1/databases/{name}/webhooks", request_body = webhook::CreateWebhook, responses((status = 201, description = "Created durable webhook endpoint", body = webhook::WebhookEndpoint), (status = 503, description = "Regional key provider unavailable")))]
+#[utoipa::path(post, path = "/api/v1/databases/{name}/webhooks", request_body = webhook::CreateWebhook, responses((status = 201, description = "Created durable webhook endpoint", body = webhook::WebhookSecretResponse), (status = 503, description = "Regional key provider unavailable")))]
 pub(super) async fn create_webhook(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
+    headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> Response {
     if body.len() > webhook::MAX_WEBHOOK_BODY_BYTES {
@@ -101,8 +141,12 @@ pub(super) async fn create_webhook(
         Ok(value) => value,
         Err(response) => return response,
     };
-    blocking(move || match service.create(&scope, &input) {
-        Ok(endpoint) => json(StatusCode::CREATED, &endpoint),
+    let operation = match headers.get("idempotency-key") {
+        Some(value) => match value.to_str() { Ok(value) => Some(value.to_owned()), Err(_) => return webhook::WebhookError::invalid_request("invalid webhook idempotency key").into_response() },
+        None => None,
+    };
+    blocking(move || match service.create_with_secret(&scope, &input, operation.as_deref()) {
+        Ok(endpoint) => secret_response(StatusCode::CREATED, &endpoint),
         Err(error) => error.into_response(),
     })
     .await
@@ -242,7 +286,7 @@ mod tests {
             (
                 "tskey_collection_abcdefghijklmnop",
                 "collection",
-                Scope::collection("hooks", "orders", Verbs::ALL),
+                Scope::database_collection("hooks", "orders", Verbs::ALL),
             ),
         ])));
         let control = state.control.as_ref().expect("control");

@@ -44,8 +44,10 @@ impl PlacementControlServer {
         if (config.gateway_principals.is_empty() && observer_principals.is_empty())
             || !config.gateway_principals.is_disjoint(&observer_principals)
             || config.gateway_principals.iter().chain(observer_principals.iter()).any(|principal| {
-                !principal.starts_with("spiffe://") || principal.len() > super::MAX_PRINCIPAL_BYTES
-                    || principal.chars().any(char::is_whitespace) || principal.chars().any(char::is_control)
+                !principal.starts_with("spiffe://")
+                    || principal.len() > super::MAX_PRINCIPAL_BYTES
+                    || principal.chars().any(char::is_whitespace)
+                    || principal.chars().any(char::is_control)
             })
         {
             return Err(PlacementError::Invalid);
@@ -223,9 +225,13 @@ impl PlacementControlListener {
                     .max_decoding_message_size(self.server.config.max_message_bytes())
                     .max_encoding_message_size(self.server.config.max_message_bytes()),
             )
-            .add_service(pb::maintenance_service_server::MaintenanceServiceServer::new(Arc::clone(&self.server))
+            .add_service(
+                pb::maintenance_service_server::MaintenanceServiceServer::new(Arc::clone(
+                    &self.server,
+                ))
                 .max_decoding_message_size(self.server.config.max_message_bytes())
-                .max_encoding_message_size(self.server.config.max_message_bytes()))
+                .max_encoding_message_size(self.server.config.max_message_bytes()),
+            )
             .serve_with_incoming_shutdown(incoming, shutdown)
             .await
     }

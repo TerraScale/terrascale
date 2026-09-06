@@ -623,6 +623,14 @@ pub(crate) struct AppliedFrontierEntry {
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
+    /// Reads private control state at the transaction's immutable snapshot.
+    fn private_metadata_at(
+        &self,
+        tenant: &TenantId,
+        key: &str,
+        sequence: StorageSequence,
+    ) -> Result<Option<crate::types::DocumentValue>, ()>;
+
     /// Loads one private webhook metadata record.
     fn webhook_metadata_load(
         &self,
@@ -1533,3 +1541,6 @@ pub(crate) use codec::{document_fingerprint, write_set_digest};
 
 /// Reports whether one document is inside the codec's structural limits.
 pub(crate) use codec::document_within_limits;
+
+pub(crate) use codec::{encode_private_value, transaction_digest};
+pub(crate) use intent::{PrivateMetadataWrite, SchemaEnvelopeWrite};

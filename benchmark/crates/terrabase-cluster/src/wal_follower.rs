@@ -110,7 +110,7 @@ const WAL_MAGIC_LE: u32 = 0x377F_0682;
 const WAL_MAGIC_BE: u32 = 0x377F_0683;
 
 /// A validated WAL header: the fields the tail and follower track.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WalHeader {
     /// The magic as read (selects the checksum word order).
     magic: u32,
@@ -312,7 +312,7 @@ pub struct WalFrames {
 /// snapshot instead of re-shipping it (the follower fails closed on a batch
 /// that does not continue its prefix). A live tail snapshots the same
 /// position with [`WalTail::checkpoint`] before a tailer restart.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WalCheckpoint {
     header: Option<WalHeader>,
     shipped: usize,
@@ -321,6 +321,57 @@ pub struct WalCheckpoint {
 }
 
 impl WalTail {
+    /// Restores an authenticated follower position after checking its complete
+    /// checksum prefix against the live writer under its capture barrier.
+    /// The caller must independently establish that both files share a snapshot.
+    ///
+    /// # Errors
+    /// Rejects a changed generation, corrupt prefix, or unavailable barrier.
+    pub fn resume_engine(
+        engine: &terrabase::Engine,
+        checkpoint: WalCheckpoint,
+    ) -> Result<Self, WalFollowerError> {
+        engine
+            .with_quiescent_wal(|location| {
+                if let Some(expected) = checkpoint.header {
+                    let mut file = File::open(location.join(wal_file_name()))?;
+                    let mut bytes = [0; WAL_HEADER_BYTES];
+                    file.read_exact(&mut bytes)?;
+                    let header = WalHeader::parse(&bytes)?;
+                    if header != expected {
+                        return Err(WalFollowerError::GenerationMismatch);
+                    }
+                    let mut position = 0;
+                    let mut chain = header.checksum;
+                    let mut last_commit = None;
+                    let mut buffer = Vec::new();
+                    while position < checkpoint.shipped {
+                        let count = (checkpoint.shipped - position)
+                            .min(MAX_WAL_BATCH_BYTES / header.frame_size());
+                        buffer.resize(count * header.frame_size(), 0);
+                        file.read_exact(&mut buffer)?;
+                        let (frames, next_chain) = validate_frames(&header, &buffer, count, chain);
+                        if frames.len() != count {
+                            return Err(WalFollowerError::FrameChecksum);
+                        }
+                        for (offset, frame) in frames.iter().enumerate() {
+                            if frame.commit {
+                                last_commit = Some((position + offset + 1, frame.checksum));
+                            }
+                        }
+                        position += count;
+                        chain = next_chain;
+                    }
+                    if chain != checkpoint.chain || last_commit != checkpoint.last_commit {
+                        return Err(WalFollowerError::AcknowledgmentMismatch);
+                    }
+                } else if checkpoint != WalCheckpoint::default() {
+                    return Err(WalFollowerError::AcknowledgmentMismatch);
+                }
+                Ok(Self::resume(location, checkpoint))
+            })
+            .map_err(|_| WalFollowerError::CaptureUnavailable)?
+    }
     /// Creates the tail over one engine location.
     #[must_use]
     pub fn new(location: impl Into<PathBuf>) -> Self {
@@ -600,6 +651,21 @@ pub struct FollowerAck {
 }
 
 impl WalFollower {
+    /// Captures only progress that has completed the follower's sync operation.
+    ///
+    /// # Errors
+    /// Returns an I/O or checksum error when durable progress cannot be read.
+    pub fn checkpoint(&self) -> Result<WalCheckpoint, WalFollowerError> {
+        let committed = open_wal(&self.location)?
+            .as_mut()
+            .map_or_else(|| Ok(WalCheckpoint::default()), |file| scan_wal(file, true))?;
+        Ok(WalCheckpoint {
+            header: self.header,
+            shipped: self.applied,
+            chain: self.chain,
+            last_commit: committed.last_commit,
+        })
+    }
     /// Bootstraps from a live engine while its commits and checkpoints pause.
     /// The destination has the same fresh-location requirements as [`Self::bootstrap`].
     ///

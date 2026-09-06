@@ -11,13 +11,12 @@
 //! The schema language is the accepted W3-F closed rule set, now versioned:
 //! each [`SchemaDefinition`] carries a positive [`SchemaVersion`] identity,
 //! rules live in canonical order, and one collection's schema is recorded
-//! with its metadata in the reserved family collection, scoped to one tenant
-//! by the Engine's document keying. Schema-free collections keep their exact
+//! in private engine metadata, scoped to one tenant. Schema-free collections keep their exact
 //! prior behavior: when no validation record exists the evaluator is never
 //! consulted and no write-path byte changes.
 //!
 //! Validation is bounded and deterministic by construction: a schema holds at
-//! most 256 rules, each rule performs one bounded field lookup, and
+//! most 1024 rules, each rule performs one bounded field lookup, and
 //! violations are reported in canonical rule order with typed, content-safe
 //! kinds — a violation names a field and a rule, or the document itself when
 //! the value is not an object and the schema declares at least one rule, and
@@ -37,7 +36,7 @@ use super::payloads::{
     MAX_ENUM_VALUES, SchemaDefinition, SchemaRule, SchemaVersion, SchemaViolation,
     interchange_integer, validate_name as validate_field_name,
 };
-use super::state::{RESERVED_COLLECTION, ValidationRecord, record_id};
+use super::state::ValidationRecord;
 
 use crate::{
     engine::{EngineError, Transaction},
@@ -51,6 +50,9 @@ use crate::{
 /// Reports whether one logical type matches one document value.
 fn type_matches(kind: super::SchemaFieldType, value: &DocumentValue) -> bool {
     use super::SchemaFieldType as FieldType;
+    if let FieldType::Canonical(kind) = kind {
+        return canonical_type_matches(kind, value);
+    }
     matches!(
         (kind, value),
         (FieldType::Boolean, DocumentValue::Boolean(_))
@@ -59,6 +61,31 @@ fn type_matches(kind: super::SchemaFieldType, value: &DocumentValue) -> bool {
             | (FieldType::Text, DocumentValue::String(_))
             | (FieldType::Object, DocumentValue::Object(_))
             | (FieldType::Array, DocumentValue::Array(_))
+    )
+}
+
+fn numeric_field_type(kind: super::SchemaFieldType) -> bool {
+    use super::SchemaFieldType as T;
+    matches!(
+        kind,
+        T::Integer
+            | T::Number
+            | T::Canonical(
+                CanonicalFieldType::Int
+                    | CanonicalFieldType::Float
+                    | CanonicalFieldType::Timestamp
+                    | CanonicalFieldType::CounterPn
+            )
+    )
+}
+
+fn text_field_type(kind: super::SchemaFieldType) -> bool {
+    matches!(
+        kind,
+        super::SchemaFieldType::Text
+            | super::SchemaFieldType::Canonical(
+                CanonicalFieldType::String | CanonicalFieldType::Text
+            )
     )
 }
 
@@ -177,8 +204,6 @@ fn has_duplicate(values: &[String]) -> bool {
 /// without any bound, a bound rule the field's declared type can never bind,
 /// and a duplicate field-and-kind pair.
 pub(crate) fn validate_schema(schema: &SchemaDefinition) -> Result<(), super::FamilyError> {
-    use super::SchemaFieldType as FieldType;
-
     let malformed = super::FamilyError::ValidationPolicyMalformed;
     // The field's declared type decides which bound rules can ever bind: a
     // numeric range binds the integer and number types, a text length binds
@@ -192,8 +217,7 @@ pub(crate) fn validate_schema(schema: &SchemaDefinition) -> Result<(), super::Fa
             _ => None,
         })
         .collect();
-    let numeric =
-        |kind: super::SchemaFieldType| matches!(kind, FieldType::Integer | FieldType::Number);
+    let numeric = numeric_field_type;
     let mut keys: Vec<String> = Vec::new();
     for rule in schema.rules() {
         let kind = match rule {
@@ -226,7 +250,7 @@ pub(crate) fn validate_schema(schema: &SchemaDefinition) -> Result<(), super::Fa
             SchemaRule::TextLength { field, .. }
                 if declared_types
                     .get(field.as_str())
-                    .is_some_and(|kind| *kind != FieldType::Text) =>
+                    .is_some_and(|kind| !text_field_type(*kind)) =>
             {
                 return Err(malformed);
             }
@@ -260,45 +284,48 @@ pub(crate) fn validate_schema(schema: &SchemaDefinition) -> Result<(), super::Fa
 /// schema. An unreadable migration record fails closed exactly like an
 /// unreadable validation record.
 ///
-/// The reserved family collection is exempt: family records are engine
-/// state, not user documents, and a schema cannot be declared on it. A user
-/// document that occupies the reserved validation-record address makes the
-/// collection's schema state unreadable; the hook fails closed rather than
-/// treating the collision as an absent schema. Unreadable or malformed
-/// schema state surfaces as [`EngineError::StorageFailure`] — the engine
-/// vocabulary has no reserved-state case, a recorded mapping limit — and a
-/// violating document surfaces as [`EngineError::InvalidDocument`] with the
-/// typed field-and-kind report available through the family validation read.
+/// Private metadata cannot collide with customer document addresses. Malformed
+/// schema state fails closed with [`EngineError::StorageFailure`]; violations
+/// produce [`EngineError::InvalidDocument`]. The same evaluator runs during
+/// commit against current metadata so a schema published after staging applies.
 pub(crate) fn enforce_put(
     transaction: &Transaction<'_>,
     document: &Document,
 ) -> Result<(), EngineError> {
-    let collection = document.collection().as_str();
-    if collection == RESERVED_COLLECTION {
-        return Ok(());
-    }
-    if let Some(target) =
-        super::migrations::record::in_progress_target(transaction, document.collection())?
-    {
-        return if violations(&target, document.value()).is_empty() {
-            Ok(())
-        } else {
-            Err(EngineError::InvalidDocument)
-        };
-    }
-    let id = record_id("validation", &[collection]).map_err(|_| EngineError::StorageFailure)?;
-    let Some(record) = transaction.read(&id)? else {
-        return Ok(());
-    };
-    if record.collection().as_str() != RESERVED_COLLECTION {
-        return Err(EngineError::StorageFailure);
-    }
-    let schema =
-        ValidationRecord::decode(record.value()).map_err(|_| EngineError::StorageFailure)?;
-    if violations(&schema.schema, document.value()).is_empty() {
-        Ok(())
+    enforce_value(document.collection(), document.value(), |key| {
+        transaction.read_private_metadata(key)
+    })
+}
+
+/// Validates against the active schema using the caller's atomic metadata view.
+pub(crate) fn enforce_value(
+    collection: &crate::types::CollectionName,
+    value: &DocumentValue,
+    mut read: impl FnMut(&str) -> Result<Option<DocumentValue>, EngineError>,
+) -> Result<(), EngineError> {
+    let migration_key = format!("family:migration/{}", collection.as_str());
+    let target = read(&migration_key)?
+        .map(|value| super::migrations::record::decode(&value))
+        .transpose()?
+        .and_then(|record| match record.state {
+            super::migrations::record::RecordState::InProgress { target, .. } => Some(target),
+            _ => None,
+        });
+    let schema = if let Some(target) = target {
+        Some(target)
     } else {
+        read(&format!("family:validation/{}", collection.as_str()))?
+            .map(|value| {
+                ValidationRecord::decode(&value)
+                    .map(|record| record.schema)
+                    .map_err(|_| EngineError::StorageFailure)
+            })
+            .transpose()?
+    };
+    if schema.is_some_and(|schema| !violations(&schema, value).is_empty()) {
         Err(EngineError::InvalidDocument)
+    } else {
+        Ok(())
     }
 }
 
@@ -342,6 +369,7 @@ fn json_type_name(kind: super::SchemaFieldType) -> &'static str {
         FieldType::Text => "string",
         FieldType::Object => "object",
         FieldType::Array => "array",
+        FieldType::Canonical(kind) => kind.as_str(),
     }
 }
 
@@ -396,6 +424,12 @@ impl SchemaDefinition {
                     SchemaRule::Required { .. } => {
                         required.push(DocumentValue::String(field_name.clone()));
                     }
+                    SchemaRule::FieldType {
+                        kind: super::SchemaFieldType::Canonical(kind), ..
+                    } => subschema.push((
+                        "x-terrabase-field-type",
+                        DocumentValue::String(kind.as_str().to_owned()),
+                    )),
                     SchemaRule::FieldType { kind, .. } => subschema
                         .push(("type", DocumentValue::String(json_type_name(*kind).to_owned()))),
                     SchemaRule::EnumValues { values, .. } => subschema.push((
@@ -572,22 +606,41 @@ fn parse_property(
 
     for key in keywords.keys() {
         match key.as_str() {
-            "type" | "enum" | "minimum" | "maximum" | "minLength" | "maxLength" => {}
+            "type"
+            | "x-terrabase-field-type"
+            | "enum"
+            | "minimum"
+            | "maximum"
+            | "minLength"
+            | "maxLength" => {}
             _ => return Err(SchemaFormatError::UnsupportedKeyword),
         }
     }
     let field = field_name.to_owned();
     let mut rules: Vec<SchemaRule> = Vec::new();
-    let declared_type = match keywords.get("type") {
-        None => None,
-        Some(DocumentValue::String(kind)) => {
-            let Some(kind) = parse_json_type(kind) else {
-                return Err(SchemaFormatError::UnsupportedType);
-            };
-            rules.push(SchemaRule::FieldType { field: field.clone(), kind });
-            Some(kind)
+    let declared_type = if let Some(value) = keywords.get("x-terrabase-field-type") {
+        if keywords.contains_key("type") {
+            return Err(SchemaFormatError::MalformedValue);
         }
-        _ => return Err(SchemaFormatError::MalformedValue),
+        let DocumentValue::String(kind) = value else {
+            return Err(SchemaFormatError::MalformedValue);
+        };
+        let kind = CanonicalFieldType::from_str(kind).ok_or(SchemaFormatError::UnsupportedType)?;
+        let kind = FieldType::Canonical(kind);
+        rules.push(SchemaRule::FieldType { field: field.clone(), kind });
+        Some(kind)
+    } else {
+        match keywords.get("type") {
+            None => None,
+            Some(DocumentValue::String(kind)) => {
+                let Some(kind) = parse_json_type(kind) else {
+                    return Err(SchemaFormatError::UnsupportedType);
+                };
+                rules.push(SchemaRule::FieldType { field: field.clone(), kind });
+                Some(kind)
+            }
+            _ => return Err(SchemaFormatError::MalformedValue),
+        }
     };
     match keywords.get("enum") {
         None => {}
@@ -620,8 +673,7 @@ fn parse_property(
     let minimum = integer_keyword("minimum")?;
     let maximum = integer_keyword("maximum")?;
     if minimum.is_some() || maximum.is_some() {
-        if declared_type.is_some_and(|kind| !matches!(kind, FieldType::Integer | FieldType::Number))
-        {
+        if declared_type.is_some_and(|kind| !numeric_field_type(kind)) {
             return Err(SchemaFormatError::MalformedValue);
         }
         rules.push(SchemaRule::NumberRange { field: field.clone(), min: minimum, max: maximum });
@@ -636,7 +688,7 @@ fn parse_property(
     let min_length = length("minLength")?;
     let max_length = length("maxLength")?;
     if min_length.is_some() || max_length.is_some() {
-        if declared_type.is_some_and(|kind| kind != FieldType::Text) {
+        if declared_type.is_some_and(|kind| !text_field_type(kind)) {
             return Err(SchemaFormatError::MalformedValue);
         }
         rules.push(SchemaRule::TextLength { field, min: min_length, max: max_length });
@@ -650,12 +702,9 @@ fn parse_property(
 
 /// The field type vocabulary emitted by every SDK's schema builder.
 ///
-/// This is intentionally separate from [`SchemaFieldType`].  The latter is
-/// the small validation-rule vocabulary used by the legacy family record;
-/// this enum is the complete public schema contract, including extracted
-/// document and CRDT field types.  Keeping the two types distinct prevents a
-/// JSON schema import from silently dropping metadata that the engine cannot
-/// enforce yet.
+/// The validation-rule vocabulary embeds this type without collapsing bytes,
+/// timestamps, or CRDT types into general JSON categories. Field representations
+/// are enforced independently of the merge metadata and index configuration.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum CanonicalFieldType {
     /// UTF-8 scalar text.
@@ -666,7 +715,7 @@ pub enum CanonicalFieldType {
     Float,
     /// Boolean.
     Bool,
-    /// Opaque bytes.
+    /// Opaque bytes encoded as canonical padded RFC 4648 base64 JSON text.
     Bytes,
     /// Arbitrary JSON value.
     Json,
@@ -682,6 +731,32 @@ pub enum CanonicalFieldType {
     SetRemoveWins,
     /// Multi-value register CRDT field.
     RegisterMv,
+}
+
+/// Canonical values use JSON representations: bytes are padded base64 strings,
+/// timestamps and counters are signed integers, sets are arrays, and registers
+/// and JSON fields accept any JSON value. CRDT conflict metadata is separate.
+fn canonical_type_matches(kind: CanonicalFieldType, value: &DocumentValue) -> bool {
+    match kind {
+        CanonicalFieldType::String | CanonicalFieldType::Text => {
+            matches!(value, DocumentValue::String(_))
+        }
+        CanonicalFieldType::Int | CanonicalFieldType::Timestamp | CanonicalFieldType::CounterPn => {
+            matches!(value, DocumentValue::Integer(_))
+        }
+        CanonicalFieldType::Float => {
+            matches!(value, DocumentValue::Integer(_))
+                || matches!(value, DocumentValue::Number(n) if n.is_finite())
+        }
+        CanonicalFieldType::Bool => matches!(value, DocumentValue::Boolean(_)),
+        CanonicalFieldType::Bytes => {
+            matches!(value, DocumentValue::String(text) if super::attachments::codec::base64_decode(text.as_bytes()).is_ok())
+        }
+        CanonicalFieldType::SetAddWins | CanonicalFieldType::SetRemoveWins => {
+            matches!(value, DocumentValue::Array(_))
+        }
+        CanonicalFieldType::Json | CanonicalFieldType::RegisterMv => true,
+    }
 }
 
 impl CanonicalFieldType {
@@ -1036,6 +1111,28 @@ pub struct CanonicalCollectionSchema {
 }
 
 impl CanonicalCollectionSchema {
+    /// Produces the complete write-validation policy for this canonical schema.
+    ///
+    /// # Errors
+    /// Returns a malformed-value error if the bounded rule limit is exceeded.
+    pub fn validation_schema(
+        &self,
+        version: SchemaVersion,
+    ) -> Result<SchemaDefinition, SchemaFormatError> {
+        self.validate()?;
+        let mut rules = Vec::new();
+        for field in &self.fields {
+            if field.required {
+                rules.push(SchemaRule::Required { field: field.name.clone() });
+            }
+            rules.push(SchemaRule::FieldType {
+                field: field.name.clone(),
+                kind: super::SchemaFieldType::Canonical(field.kind),
+            });
+        }
+        SchemaDefinition::try_new(version, rules).map_err(|_| SchemaFormatError::MalformedValue)
+    }
+
     /// Creates and validates one canonical collection schema.
     ///
     /// # Errors
@@ -1083,7 +1180,7 @@ impl CanonicalCollectionSchema {
     /// window.
     pub fn validate(&self) -> Result<(), SchemaFormatError> {
         validate_canonical_identifier(&self.name)?;
-        if !(1..=30).contains(&self.history_retention_days) {
+        if self.fields.len() > 512 || !(1..=30).contains(&self.history_retention_days) {
             return Err(SchemaFormatError::MalformedValue);
         }
         let mut fields = BTreeSet::new();
@@ -1633,6 +1730,90 @@ mod canonical_tests {
 
     fn field(name: &str, kind: CanonicalFieldType) -> CanonicalField {
         CanonicalField::try_new(name, kind, true, false, false, None).expect("valid field")
+    }
+
+    #[test]
+    fn canonical_validation_accepts_all_512_required_fields_and_rejects_513() {
+        let build = |count| {
+            CanonicalCollectionSchema::try_new(
+                "items",
+                (0..count)
+                    .map(|i| field(&format!("field_{i}"), CanonicalFieldType::String))
+                    .collect(),
+                vec![],
+                None,
+                vec![],
+                None,
+                7,
+                SchemaMergePolicy::RemoveWins,
+            )
+        };
+        let schema =
+            build(512).unwrap().validation_schema(SchemaVersion::try_new(1).unwrap()).unwrap();
+        assert_eq!(schema.rules().len(), 1024);
+        let value = DocumentValue::Object(
+            (0..512)
+                .map(|i| (format!("field_{i}"), DocumentValue::String("present".into())))
+                .collect(),
+        );
+        assert!(violations(&schema, &value).is_empty());
+        assert_eq!(build(513), Err(SchemaFormatError::MalformedValue));
+    }
+
+    #[test]
+    fn canonical_validation_preserves_all_types_and_rejects_wrong_values() {
+        use CanonicalFieldType as T;
+        let cases = [
+            (T::String, DocumentValue::String("x".into())),
+            (T::Text, DocumentValue::String("x".into())),
+            (T::Int, DocumentValue::Integer(4)),
+            (T::Timestamp, DocumentValue::Integer(4)),
+            (T::CounterPn, DocumentValue::Integer(-4)),
+            (T::Float, DocumentValue::Number(1.5)),
+            (T::Bool, DocumentValue::Boolean(true)),
+            (T::Bytes, DocumentValue::String("AP8=".into())),
+            (T::SetAddWins, DocumentValue::Array(vec![DocumentValue::String("x".into())])),
+            (T::SetRemoveWins, DocumentValue::Array(vec![])),
+            (T::Json, DocumentValue::Null),
+            (T::RegisterMv, DocumentValue::Object(BTreeMap::new())),
+        ];
+        let version = SchemaVersion::try_new(1).unwrap();
+        for (kind, value) in cases {
+            let collection = CanonicalCollectionSchema::try_new(
+                "items",
+                vec![field("value", kind)],
+                vec![],
+                None,
+                vec![],
+                None,
+                7,
+                SchemaMergePolicy::RemoveWins,
+            )
+            .unwrap();
+            let schema = collection.validation_schema(version).unwrap();
+            assert!(violations(&schema, &object(vec![("value", value)])).is_empty(), "{kind:?}");
+            assert!(!violations(&schema, &object(vec![])).is_empty(), "required {kind:?}");
+            let record = ValidationRecord { schema: schema.clone() };
+            assert_eq!(ValidationRecord::decode(&record.encode()).unwrap().schema, schema);
+            assert_eq!(
+                SchemaDefinition::from_json_schema(version, &schema.to_json_schema()).unwrap(),
+                schema
+            );
+            if !matches!(kind, T::Json | T::RegisterMv) {
+                assert!(
+                    !violations(&schema, &object(vec![("value", DocumentValue::Null)])).is_empty(),
+                    "{kind:?}"
+                );
+            }
+        }
+        assert!(!canonical_type_matches(
+            T::Bytes,
+            &DocumentValue::Array(vec![DocumentValue::Integer(256)])
+        ));
+        assert!(!canonical_type_matches(T::Bytes, &DocumentValue::String("bytes".into())));
+        assert!(!canonical_type_matches(T::Bytes, &DocumentValue::String("QR==".into())));
+        assert!(canonical_type_matches(T::Bytes, &DocumentValue::String(String::new())));
+        assert!(!canonical_type_matches(T::Float, &DocumentValue::Number(f64::NAN)));
     }
 
     #[test]

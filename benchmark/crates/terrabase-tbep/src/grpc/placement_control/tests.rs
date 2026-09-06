@@ -135,7 +135,9 @@ async fn metadata_without_peer_certificate_cannot_reach_journal() {
         [PRINCIPAL.to_owned()].into(),
     )
     .unwrap();
-    let server = Arc::new(PlacementControlServer::new(Arc::clone(&journal), config, BTreeSet::new()).unwrap());
+    let server = Arc::new(
+        PlacementControlServer::new(Arc::clone(&journal), config, BTreeSet::new()).unwrap(),
+    );
     let error = PlacementControlService::stage(
         &server,
         request(fixture.request.clone(), Some("operation")),

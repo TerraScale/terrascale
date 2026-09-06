@@ -1,0 +1,486 @@
+//! Persistent physical RF=2 sessions for the production endpoint dispatcher.
+//!
+//! The dispatcher demultiplexes scoped frames and supplies identity captured
+//! from its authenticated connection. Drivers never infer authority from seat
+//! order or report serving readiness. A generation change requires installing
+//! a fresh physical snapshot before constructing a replacement driver.
+
+use crate::production::{DatabaseRouteScope, MemberWorkloadIdentity};
+use crate::wal_follower::{WalCheckpoint, WalFollower, WalTail};
+use crate::wal_quic::{self, WalCaptureStep, WalQuicError};
+use crate::wal_route::{WalReplicaBinding, WalRouteError};
+use crate::wal_wire::{ScopedWalAck, ScopedWalBatch, WalWireError};
+use std::sync::{Arc, Mutex};
+use terrabase_member_transport::production::ProductionConnection;
+
+/// Keeps the production catalog lease alive for the entire physical session.
+pub trait WalEngineHandle: Send + Sync {
+    /// Borrows the live engine without releasing its admission lease.
+    fn engine(&self) -> &terrabase::Engine;
+}
+
+impl WalEngineHandle for terrabase::Engine {
+    fn engine(&self) -> &terrabase::Engine {
+        self
+    }
+}
+
+impl WalEngineHandle for crate::production::ProductionDatabaseLease {
+    fn engine(&self) -> &terrabase::Engine {
+        self
+    }
+}
+
+/// Immutable authentication evidence captured from the actual admitted socket.
+/// Construction is restricted to a production connection; wire identities are
+/// never accepted as authentication evidence.
+#[derive(Clone)]
+pub struct WalAuthenticatedPeer {
+    identity: MemberWorkloadIdentity,
+    generation: u64,
+    epoch: u64,
+}
+
+impl WalAuthenticatedPeer {
+    /// Captures the connection's verified workload and admitted placement.
+    #[must_use]
+    pub fn from_connection(connection: &ProductionConnection) -> Self {
+        Self {
+            identity: connection.peer().clone(),
+            generation: connection.placement_generation(),
+            epoch: connection.replica_set_epoch(),
+        }
+    }
+
+    fn authorize(&self, binding: &WalReplicaBinding, sending: bool) -> Result<(), WalQuicError> {
+        binding
+            .authorize_peer(&self.identity, self.generation, self.epoch, sending)
+            .map_err(WalQuicError::Route)
+    }
+}
+
+/// Scoped restart handshake. `None` requests the follower's durable checkpoint;
+/// `Some` is the authenticated follower response. This proves WAL position only,
+/// and must never substitute for establishing a shared physical base snapshot.
+#[derive(Clone, Debug)]
+pub struct WalCheckpointMessage {
+    /// Immutable database identity.
+    pub scope: DatabaseRouteScope,
+    /// Accepted replica epoch.
+    pub replica_epoch: u64,
+    /// Durable follower position, or a request for that position.
+    pub checkpoint: Option<WalCheckpoint>,
+}
+
+impl WalCheckpointMessage {
+    /// Encodes the bounded restart control frame.
+    ///
+    /// # Errors
+    /// Rejects invalid epochs or serialization failure.
+    pub fn encode(&self) -> Result<Vec<u8>, WalWireError> {
+        if self.replica_epoch == 0 {
+            return Err(WalWireError::InvalidScope);
+        }
+        let mut bytes = b"TBWCP\0\0\x01".to_vec();
+        for id in [
+            self.scope.tenant().to_text(),
+            self.scope.project().to_text(),
+            self.scope.database().to_text(),
+        ] {
+            bytes.extend_from_slice(id.as_bytes());
+        }
+        bytes.extend_from_slice(&self.replica_epoch.to_be_bytes());
+        bytes.extend(serde_json::to_vec(&self.checkpoint).map_err(|_| WalWireError::InvalidFrame)?);
+        Ok(bytes)
+    }
+
+    /// Decodes a bounded control frame before any disk work is dispatched.
+    ///
+    /// # Errors
+    /// Rejects unknown versions, malformed scope, zero epoch, and excess size.
+    pub fn decode(bytes: &[u8]) -> Result<Self, WalWireError> {
+        if bytes.len() > 1024 {
+            return Err(WalWireError::Oversized);
+        }
+        if bytes.len() < 98 || &bytes[..8] != b"TBWCP\0\0\x01" {
+            return Err(WalWireError::InvalidFrame);
+        }
+        let id = |start| {
+            std::str::from_utf8(&bytes[start..start + 26]).map_err(|_| WalWireError::InvalidScope)
+        };
+        let scope = DatabaseRouteScope::try_new(id(8)?, id(34)?, id(60)?)
+            .map_err(|_| WalWireError::InvalidScope)?;
+        let replica_epoch =
+            u64::from_be_bytes(bytes[86..94].try_into().map_err(|_| WalWireError::InvalidFrame)?);
+        if replica_epoch == 0 {
+            return Err(WalWireError::InvalidScope);
+        }
+        let checkpoint =
+            serde_json::from_slice(&bytes[94..]).map_err(|_| WalWireError::InvalidFrame)?;
+        Ok(Self { scope, replica_epoch, checkpoint })
+    }
+
+    fn authorize(&self, binding: &WalReplicaBinding) -> Result<(), WalQuicError> {
+        if self.scope != binding.scope() || self.replica_epoch != binding.epoch() {
+            return Err(WalQuicError::Route(WalRouteError::Unauthorized));
+        }
+        Ok(())
+    }
+}
+
+/// A writer tail survives transport reconnects and retains unacknowledged bytes.
+pub struct WalWriterDriver {
+    binding: WalReplicaBinding,
+    engine: Arc<dyn WalEngineHandle>,
+    tail: Arc<Mutex<WalTail>>,
+}
+
+impl WalWriterDriver {
+    /// Attaches a tail whose base snapshot was installed on the assigned follower.
+    #[must_use]
+    pub fn new(
+        binding: WalReplicaBinding,
+        engine: Arc<dyn WalEngineHandle>,
+        tail: WalTail,
+    ) -> Self {
+        Self { binding, engine, tail: Arc::new(Mutex::new(tail)) }
+    }
+
+    /// Creates the restart request for this admitted database assignment.
+    #[must_use]
+    pub fn checkpoint_request(&self) -> WalCheckpointMessage {
+        WalCheckpointMessage {
+            scope: self.binding.scope(),
+            replica_epoch: self.binding.epoch(),
+            checkpoint: None,
+        }
+    }
+
+    /// Restores a restarted writer from the authenticated follower's checkpoint.
+    /// Use only when starting a session, before capturing new pending batches.
+    /// A shared physical snapshot must already be established independently.
+    ///
+    /// # Errors
+    /// Rejects wrong authority, a request masquerading as a response, and a
+    /// checkpoint that does not match the live writer's WAL checksum prefix.
+    pub async fn resume(
+        &mut self,
+        peer: &WalAuthenticatedPeer,
+        response: WalCheckpointMessage,
+    ) -> Result<(), WalQuicError> {
+        peer.authorize(&self.binding, true)?;
+        response.authorize(&self.binding)?;
+        let checkpoint =
+            response.checkpoint.ok_or(WalQuicError::Wire(WalWireError::InvalidFrame))?;
+        let permit = self.binding.reserve_worker().map_err(WalQuicError::Route)?;
+        let binding = self.binding.clone();
+        let engine = self.engine.clone();
+        let tail = self.tail.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            binding
+                .with_admission(|| {
+                    let replacement = WalTail::resume_engine(engine.engine(), checkpoint)
+                        .map_err(WalRouteError::Storage)?;
+                    *tail.lock().map_err(|_| WalRouteError::Fenced)? = replacement;
+                    Ok(())
+                })
+                .map_err(WalQuicError::Route)
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)?
+    }
+
+    /// Captures a bounded batch, retaining it until a verified durable receipt.
+    /// `UpToDate` is a point-in-time observation, not a permanent readiness flag.
+    ///
+    /// # Errors
+    /// Returns a fenced assignment, capture, or worker failure.
+    pub async fn capture(&mut self) -> Result<WalCaptureStep, WalQuicError> {
+        wal_quic::capture_batch(&self.binding, self.engine.clone(), self.tail.clone()).await
+    }
+
+    /// Returns a conservative SQLite sequence covered by the follower's
+    /// verified receipts. Read the sequence before capturing: observing an
+    /// empty tail then proves all bytes through that earlier sequence were
+    /// acknowledged. Reading the sequence after capture would race a commit.
+    /// Requires the base snapshot contract of [`Self::new`].
+    ///
+    /// # Errors
+    /// Returns snapshot, capture, or fencing failures. `None` means pending
+    /// frames or a generation change; callers must continue capture/catch-up.
+    pub async fn durable_sequence(
+        &mut self,
+        scope: terrabase::types::TenantScope,
+    ) -> Result<Option<terrabase::types::StorageSequence>, WalQuicError> {
+        let engine = self.engine.clone();
+        let sequence = tokio::task::spawn_blocking(move || {
+            engine
+                .engine()
+                .read_snapshot(&scope)
+                .map(|snapshot| snapshot.sequence())
+                .map_err(|_| WalQuicError::WorkerUnavailable)
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)??;
+        match self.capture().await? {
+            WalCaptureStep::UpToDate => Ok(Some(sequence)),
+            WalCaptureStep::Batch(_) | WalCaptureStep::GenerationChanged => Ok(None),
+        }
+    }
+
+    /// Accepts a scoped receipt from the actual authenticated follower.
+    ///
+    /// # Errors
+    /// Rejects wrong identity, placement, epoch, or pending batch checksum.
+    pub async fn acknowledge(
+        &mut self,
+        peer: &WalAuthenticatedPeer,
+        receipt: ScopedWalAck,
+    ) -> Result<(), WalQuicError> {
+        peer.authorize(&self.binding, true)?;
+        let permit = self.binding.reserve_worker().map_err(WalQuicError::Route)?;
+        let binding = self.binding.clone();
+        let peer = peer.identity.clone();
+        let tail = self.tail.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let mut tail = tail.lock().map_err(|_| WalQuicError::WorkerUnavailable)?;
+            binding.acknowledge(&peer, receipt, &mut tail).map_err(WalQuicError::Route)
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)?
+    }
+
+    /// Exchanges at most `batch_budget` batches on an exclusively owned lane.
+    /// Returns `Batch` when more work remains, `UpToDate` after catching up, or
+    /// `GenerationChanged` when physical snapshot replacement is required.
+    ///
+    /// # Errors
+    /// Returns transport, authenticated receipt, or capture failures. Retry on
+    /// a fresh connection; the pending batch survives an interrupted exchange.
+    pub async fn catch_up(
+        &mut self,
+        connection: &mut ProductionConnection,
+        batch_budget: usize,
+    ) -> Result<WalCaptureStep, WalQuicError> {
+        self.binding.authorize_connection(connection, true).map_err(WalQuicError::Route)?;
+        for _ in 0..batch_budget {
+            match self.capture().await? {
+                WalCaptureStep::Batch(batch) => {
+                    wal_quic::send_batch(connection, &self.binding, &batch, self.tail.clone())
+                        .await?
+                }
+                step => return Ok(step),
+            }
+        }
+        self.capture().await
+    }
+}
+
+/// Persistent disk follower owned exclusively by one accepted assignment.
+pub struct WalFollowerDriver {
+    binding: WalReplicaBinding,
+    follower: Arc<Mutex<WalFollower>>,
+}
+
+impl WalFollowerDriver {
+    /// Attaches a physically installed or recovered follower file.
+    #[must_use]
+    pub fn new(binding: WalReplicaBinding, follower: WalFollower) -> Self {
+        Self { binding, follower: Arc::new(Mutex::new(follower)) }
+    }
+
+    /// Applies a demultiplexed batch on the blocking pool and returns only a
+    /// receipt whose WAL bytes have completed `fdatasync`.
+    ///
+    /// # Errors
+    /// Rejects foreign identities, scopes, epochs, corrupt bytes, and failed sync.
+    pub async fn apply(
+        &mut self,
+        peer: &WalAuthenticatedPeer,
+        batch: ScopedWalBatch,
+    ) -> Result<ScopedWalAck, WalQuicError> {
+        peer.authorize(&self.binding, false)?;
+        let permit = self.binding.reserve_worker().map_err(WalQuicError::Route)?;
+        let binding = self.binding.clone();
+        let peer = peer.identity.clone();
+        let follower = self.follower.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let mut follower = follower.lock().map_err(|_| WalQuicError::WorkerUnavailable)?;
+            binding.apply(&peer, &batch, &mut follower).map_err(WalQuicError::Route)
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)?
+    }
+
+    /// Answers restart recovery from synchronized follower state, under fencing.
+    ///
+    /// # Errors
+    /// Rejects unauthenticated or stale requests and inaccessible follower files.
+    pub async fn checkpoint(
+        &mut self,
+        peer: &WalAuthenticatedPeer,
+        request: WalCheckpointMessage,
+    ) -> Result<WalCheckpointMessage, WalQuicError> {
+        peer.authorize(&self.binding, false)?;
+        request.authorize(&self.binding)?;
+        if request.checkpoint.is_some() {
+            return Err(WalQuicError::Wire(WalWireError::InvalidFrame));
+        }
+        let permit = self.binding.reserve_worker().map_err(WalQuicError::Route)?;
+        let binding = self.binding.clone();
+        let follower = self.follower.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let checkpoint = binding
+                .with_admission(|| {
+                    follower
+                        .lock()
+                        .map_err(|_| WalRouteError::Fenced)?
+                        .checkpoint()
+                        .map_err(WalRouteError::Storage)
+                })
+                .map_err(WalQuicError::Route)?;
+            Ok(WalCheckpointMessage { checkpoint: Some(checkpoint), ..request })
+        })
+        .await
+        .map_err(|_| WalQuicError::WorkerUnavailable)?
+    }
+
+    /// Receives one exchange on an exclusively owned connection lane.
+    ///
+    /// # Errors
+    /// Returns authentication, wire, disk sync, and transport failures.
+    pub async fn receive(
+        &mut self,
+        connection: &mut ProductionConnection,
+    ) -> Result<(), WalQuicError> {
+        wal_quic::receive_batch(connection, &self.binding, self.follower.clone()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::production::{ProductionPlacement, ProductionRegionSeats};
+    use terrabase::identity::MemberUlid;
+    use terrabase::types::{
+        CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
+        OperationId, TenantId,
+    };
+    use terrabase::{Engine, EngineConfig, RegionCode};
+
+    #[test]
+    fn dispatched_receipts_and_restart_handshake_preserve_durable_progress() {
+        let writer_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let follower_id = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+        let writer_identity =
+            MemberWorkloadIdentity::try_new("production", "cluster", writer_id).unwrap();
+        let follower_identity =
+            MemberWorkloadIdentity::try_new("production", "cluster", follower_id).unwrap();
+        let scope = DatabaseRouteScope::try_new(writer_id, writer_id, writer_id).unwrap();
+        let binding = |local| {
+            WalReplicaBinding::new(
+                scope,
+                &ProductionPlacement::try_new(
+                    MemberUlid::from_text(local).unwrap(),
+                    1,
+                    7,
+                    [ProductionRegionSeats::try_new(
+                        RegionCode::GRU,
+                        [
+                            MemberUlid::from_text(writer_id).unwrap(),
+                            MemberUlid::from_text(follower_id).unwrap(),
+                        ],
+                    )
+                    .unwrap()],
+                )
+                .unwrap(),
+                writer_identity.clone(),
+                follower_identity.clone(),
+            )
+            .unwrap()
+        };
+        let writer_binding = binding(writer_id);
+        let follower_binding = binding(follower_id);
+        let writer_peer =
+            WalAuthenticatedPeer { identity: writer_identity, generation: 1, epoch: 7 };
+        let follower_peer =
+            WalAuthenticatedPeer { identity: follower_identity, generation: 1, epoch: 7 };
+        let root = std::env::temp_dir().join(format!(
+            "tb-wal-driver-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let location = root.join("writer");
+        let engine = Arc::new(Engine::open(EngineConfig::durable(&location).unwrap()).unwrap());
+        let tenant = engine.scope_for(&TenantId::try_new("tenant-a").unwrap());
+        let snapshot = engine.read_snapshot(&tenant).unwrap();
+        let mut tx =
+            engine.begin(&tenant, snapshot, OperationId::try_new("write").unwrap()).unwrap();
+        tx.put(
+            Document::new(
+                DocumentId::try_new("doc").unwrap(),
+                CollectionName::try_new("docs").unwrap(),
+                DocumentValue::Integer(42),
+            ),
+            ExpectedVersion::New,
+        )
+        .unwrap();
+        assert!(matches!(
+            tx.commit(LocalDurability::Synced),
+            terrabase::engine::CommitOutcome::Committed(_)
+        ));
+        let (replica, _) = WalFollower::bootstrap_engine(&engine, &root.join("follower")).unwrap();
+        let mut writer =
+            WalWriterDriver::new(writer_binding.clone(), engine.clone(), WalTail::new(&location));
+        let mut follower = WalFollowerDriver::new(follower_binding, replica);
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        runtime.block_on(async {
+            assert!(writer.durable_sequence(tenant.clone()).await.unwrap().is_none());
+            let WalCaptureStep::Batch(batch) = writer.capture().await.unwrap() else {
+                panic!("expected pending batch")
+            };
+            assert!(follower.apply(&follower_peer, batch.clone()).await.is_err());
+            let receipt = follower.apply(&writer_peer, batch.clone()).await.unwrap();
+            assert!(writer.acknowledge(&writer_peer, receipt.clone()).await.is_err());
+            assert_eq!(writer.capture().await.unwrap(), WalCaptureStep::Batch(batch));
+            writer.acknowledge(&follower_peer, receipt).await.unwrap();
+            assert_eq!(
+                writer.durable_sequence(tenant.clone()).await.unwrap(),
+                Some(engine.read_snapshot(&tenant).unwrap().sequence())
+            );
+            let request =
+                WalCheckpointMessage::decode(&writer.checkpoint_request().encode().unwrap())
+                    .unwrap();
+            let response = follower.checkpoint(&writer_peer, request).await.unwrap();
+            let bytes = response.encode().unwrap();
+            let mut restarted = WalWriterDriver::new(
+                writer_binding.clone(),
+                engine.clone(),
+                WalTail::new(&location),
+            );
+            restarted
+                .resume(&follower_peer, WalCheckpointMessage::decode(&bytes).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(restarted.capture().await.unwrap(), WalCaptureStep::UpToDate);
+            let mut corrupt = response;
+            let mut checkpoint =
+                serde_json::to_value(corrupt.checkpoint.as_ref().unwrap()).unwrap();
+            checkpoint["chain"][0] = serde_json::json!(0);
+            corrupt.checkpoint = Some(serde_json::from_value(checkpoint).unwrap());
+            assert!(restarted.resume(&follower_peer, corrupt).await.is_err());
+            assert_eq!(restarted.capture().await.unwrap(), WalCaptureStep::UpToDate);
+            writer_binding.fence();
+            assert!(restarted.capture().await.is_err());
+        });
+        drop(follower);
+        drop(writer);
+        drop(engine);
+        drop(runtime);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

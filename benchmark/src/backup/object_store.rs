@@ -134,21 +134,33 @@ impl ObjectDestination {
             .with_secret_access_key(&config.credentials.secret_key)
             .with_virtual_hosted_style_request(false)
             .with_client_options(
-                ClientOptions::new().with_allow_http(false).with_timeout(Duration::from_secs(60)),
+                ClientOptions::new().with_allow_http(false).with_timeout(Duration::from_mins(1)),
             )
             .with_retry(RetryConfig {
                 max_retries: 2,
-                retry_timeout: Duration::from_secs(120),
+                retry_timeout: Duration::from_mins(2),
                 ..RetryConfig::default()
             })
             .build()
             .map_err(|_| TransferError::Configuration)?;
+        // Discard and zeroize the admission copy once the client owns its credentials.
+        drop(config.credentials);
         Ok(Self {
             provider: config.provider,
             store: Arc::new(store),
             max_artifact_bytes: config.max_artifact_bytes,
             max_point_bytes: config.max_point_bytes,
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn for_test(
+        provider: Provider,
+        store: Arc<dyn ObjectStore>,
+        max_artifact_bytes: u64,
+        max_point_bytes: u64,
+    ) -> Self {
+        Self { provider, store, max_artifact_bytes, max_point_bytes }
     }
 
     /// Returns the independently configured provider.
@@ -182,14 +194,14 @@ impl ObjectDestination {
                 return Err(TransferError::InvalidPoint);
             }
             let name = object.location.as_ref();
-            if let Some(point) = name.strip_suffix(&format!("/{INDEX}")) {
-                if point.strip_prefix(prefix).is_some_and(|tail| tail.starts_with('/')) {
-                    validate_prefix(point)?;
-                    if points.len() == max {
-                        return Err(TransferError::InvalidPoint);
-                    }
-                    points.push(point.to_owned());
+            if let Some(point) = name.strip_suffix(&format!("/{INDEX}"))
+                && point.strip_prefix(prefix).is_some_and(|tail| tail.starts_with('/'))
+            {
+                validate_prefix(point)?;
+                if points.len() == max {
+                    return Err(TransferError::InvalidPoint);
                 }
+                points.push(point.to_owned());
             }
         }
         points.sort();
@@ -252,12 +264,30 @@ impl ObjectDestination {
     /// Returns unavailable for missing indexes/artifacts, integrity for corruption,
     /// and invalid point for malformed indexes or exhausted configured limits.
     pub async fn download_point(&self, prefix: &str, target: &Path) -> Result<(), TransferError> {
+        self.download_point_with_byte_limit(prefix, target, self.max_point_bytes).await
+    }
+
+    /// Downloads a point while enforcing the caller's remaining staging budget.
+    ///
+    /// # Errors
+    /// Rejects a point exceeding the remaining byte limit before creating files;
+    /// otherwise returns the same validation and transfer errors as `download_point`.
+    pub async fn download_point_with_byte_limit(
+        &self,
+        prefix: &str,
+        target: &Path,
+        remaining_bytes: u64,
+    ) -> Result<(), TransferError> {
         validate_prefix(prefix)?;
         if target.try_exists().map_err(|_| TransferError::LocalIo)? {
             return Err(TransferError::InvalidPoint);
         }
         let bytes = self.read_bounded(&object_key(prefix, INDEX)?, INDEX_LIMIT).await?;
-        let entries = parse_index(&bytes, self.max_artifact_bytes, self.max_point_bytes)?;
+        let entries = parse_index(
+            &bytes,
+            self.max_artifact_bytes,
+            self.max_point_bytes.min(remaining_bytes),
+        )?;
         let parent = target.parent().ok_or(TransferError::InvalidPoint)?;
         let stage = super::StagingDir::create(parent).map_err(|_| TransferError::LocalIo)?;
         let result = async {
@@ -339,7 +369,7 @@ impl ObjectDestination {
             }
             let mut digest = blake3::Hasher::new();
             let mut source = open_regular(&file.path()).map_err(|_| TransferError::LocalIo)?;
-            let mut buffer = [0_u8; 65536];
+            let mut buffer = vec![0_u8; 65536].into_boxed_slice();
             let mut read_length = 0_u64;
             loop {
                 let size = source.read(&mut buffer).map_err(|_| TransferError::LocalIo)?;
@@ -519,12 +549,7 @@ mod tests {
     use object_store::memory::InMemory;
 
     fn destination(store: Arc<InMemory>) -> ObjectDestination {
-        ObjectDestination {
-            provider: Provider::Oci,
-            store,
-            max_artifact_bytes: 1024,
-            max_point_bytes: 4096,
-        }
+        ObjectDestination::for_test(Provider::Oci, store, 1024, 4096)
     }
 
     #[test]
@@ -550,6 +575,13 @@ mod tests {
                 first.download_point("db/rp-1", &root.join("absent")).await,
                 Err(TransferError::Unavailable)
             );
+            assert_eq!(
+                second
+                    .download_point_with_byte_limit("db/rp-1", &root.join("over-budget"), 1)
+                    .await,
+                Err(TransferError::InvalidPoint)
+            );
+            assert!(!root.join("over-budget").exists());
             second.download_point("db/rp-1", &root.join("restored")).await.unwrap();
             assert_eq!(
                 fs::read(root.join("restored/member.tbv3e")).unwrap(),
@@ -607,6 +639,7 @@ mod tests {
                 .with_access_key_id("fixture-access")
                 .with_secret_access_key("fixture-secret")
                 .with_allow_http(true)
+                .with_retry(RetryConfig { max_retries: 0, ..RetryConfig::default() })
                 .build()
                 .unwrap();
             let destination = ObjectDestination {

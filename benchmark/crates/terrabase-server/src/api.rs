@@ -1,8 +1,7 @@
-//! The public `/api/v1` HTTP surface (`SHORT_GOAL` `S-03`, D-34/D-44).
+//! The public `/api/v1` HTTP surface.
 //!
-//! Every response is a hand-assembled envelope that splices body bytes —
-//! no `serde_json::Value` ever sits on the data path. Every error carries
-//! `fix`: a one-line remedy, with the CLI command where one applies (D-56).
+//! Document responses splice stored JSON bytes; management handlers expose
+//! typed durable service results. Every error carries `fix`: a one-line remedy.
 //! Authentication is deny-all by default: with no key material configured,
 //! no request is admitted, and there is no unauthenticated production mode.
 //!
@@ -55,6 +54,10 @@ use crate::api_keys::Verbs;
 
 #[path = "api_exports.rs"]
 mod exports;
+#[path = "api_development.rs"]
+mod development;
+
+pub use development::DevelopmentRuntime;
 
 pub(crate) use exports::recover_exports;
 
@@ -519,15 +522,18 @@ fn regions_list(regions: &[RegionCode]) -> String {
 
 /// The public API's serving state.
 pub struct ApiState {
+    /// Actual peer acknowledgements; absent progress cannot certify durable writes.
+    pub replication_progress: Option<Arc<crate::replication_runtime::ReplicationProgress>>,
+    /// Bounded branch-only development admission faults.
+    pub development: Arc<DevelopmentRuntime>,
     /// Durable production create authority; absent configuration denies production create.
     pub provisioning: Option<Arc<crate::provisioning::ProvisioningClient>>,
     /// The serving member's own region (D-58: named on every response).
     pub region: RegionCode,
     /// The member's health registry backing `/health`.
     pub metrics: Arc<MetricsRegistry>,
-    /// Admitted API keys. `None` is deny-all: no request is admitted
-    /// without exception, which is the production default until key
-    /// material is configured.
+    /// Admitted member data keys. `None` admits no data keys; other product
+    /// credentials require the separately configured live identity authority.
     pub keys: Option<Arc<crate::api_keys::KeyStore>>,
     /// Live product identity authority; absent configuration denies delegated credentials.
     pub delegated_identity: Option<Arc<crate::delegated_identity::IdentityVerifier>>,
@@ -576,6 +582,7 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(health))
         .routes(routes!(regions))
         .routes(routes!(list_databases, create_database))
+        .routes(routes!(get_provisioning_operation))
         .routes(routes!(get_database, delete_database))
         .routes(routes!(restore_database))
         .routes(routes!(list_collections))
@@ -587,10 +594,14 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(webhooks::delete_webhook))
         .routes(routes!(webhooks::list_deliveries))
         .routes(routes!(webhooks::replay_webhook))
-        .routes(routes!(exports::create_export))
+        .routes(routes!(webhooks::rotate_secret))
+        .routes(routes!(exports::list_exports, exports::create_export))
         .routes(routes!(exports::get_export))
         .routes(routes!(exports::resume_export))
         .routes(routes!(exports::download_export))
+        .routes(routes!(exports::cancel_export))
+        .routes(routes!(development::development_fault, development::clear_development_fault))
+        .routes(routes!(development::development_logs))
         .routes(routes!(list_indexes, create_index))
         .routes(routes!(list_documents))
         .routes(routes!(batch_documents))
@@ -682,7 +693,9 @@ fn enrich_openapi(raw: String) -> String {
                         if status == "204" || status == "101" {
                             response.remove("content");
                         } else if status.starts_with('2') {
-                            if let Some(schema) = success_schema {
+                            if let Some(schema) = success_schema
+                                && !response.contains_key("content")
+                            {
                                 response.insert("content".into(), json_content(schema));
                             }
                         } else if status.parse::<u16>().is_ok_and(|code| code >= 400) {
@@ -1089,7 +1102,7 @@ fn openapi_schemas() -> serde_json::Value {
         "SqlRequest": { "type": "object", "required": ["sql"], "properties": { "sql": { "type": "string" }, "parameters": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/JsonValue" } }, "explain": { "type": "boolean" }, "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 30000 }, "cancelled": { "type": "boolean" } } },
         "SqlResponse": { "type": "object", "required": ["matched", "rows"], "properties": { "matched": { "type": "integer", "format": "int64" }, "rows": { "type": "array", "items": { "type": "object", "required": ["id", "value"], "properties": { "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
         "BackupStatusResponse": { "type": "object", "required": ["ready", "streaming"], "properties": { "ready": { "type": "boolean" }, "streaming": { "type": "boolean" } } },
-        "CreateDatabaseRequest": { "type": "object", "required": ["name", "placement"], "properties": { "name": { "type": "string" }, "placement": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "residency": { "type": ["string", "null"] } } },
+        "CreateDatabaseRequest": { "type": "object", "required": ["name", "placement"], "description": "Production provisioning also requires operation_id and residency; operation_id identifies an idempotent placement admission.", "properties": { "operation_id": { "type": "string" }, "name": { "type": "string" }, "placement": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "residency": { "type": ["string", "null"] } } },
         "CreateIndexRequest": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" } } },
         "BatchRequest": { "type": "object", "required": ["operations"], "properties": { "operations": { "type": "array", "minItems": 1, "maxItems": 1000, "items": { "type": "object", "required": ["op", "id"], "properties": { "op": { "type": "string", "enum": ["put", "patch", "delete"] }, "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
         "RestoreRequest": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "at": { "type": "integer", "format": "int64" } } },
@@ -1321,11 +1334,17 @@ async fn authenticate(
     let admitted = match state.keys.as_ref().map(|keys| keys.admit(token)) {
         Some(Ok(principal)) => Ok(principal),
         _ => match (&state.delegated_identity, database_of(request.uri().path())) {
-            (Some(identity), Some(database)) => identity.admit(
-                token, &state.scope.0, &state.scope.1, database,
-                collection_of(request.uri().path()),
-                required_verb(request.method(), request.uri().path()),
-            ).await.map_err(|_| ApiError::unauthorized()),
+            (Some(identity), Some(database)) => identity
+                .admit(
+                    token,
+                    &state.scope.0,
+                    &state.scope.1,
+                    database,
+                    collection_of(request.uri().path()),
+                    required_verb(request.method(), request.uri().path()),
+                )
+                .await
+                .map_err(|_| ApiError::unauthorized()),
             _ => Err(ApiError::unauthorized()),
         },
     };
@@ -1362,6 +1381,10 @@ async fn authenticate(
                 && !principal.scope().admits_global(Verbs::ADMIN)
             {
                 return ApiError::forbidden("deployment administration").into_response();
+            }
+            let development_path = request.uri().path().to_owned();
+            if let Err(error) = development::admit(&state, &principal, &development_path).await {
+                return error.into_response();
             }
             request.extensions_mut().insert(principal.clone());
             let mut response = next.run(request).await;
@@ -1415,6 +1438,9 @@ fn unix_seconds() -> u64 {
 /// ride `ADMIN` (the [`crate::api_keys::Verbs`] contract). Unknown mutating
 /// paths fail closed toward `ADMIN`.
 fn required_verb(method: &Method, path: &str) -> Verbs {
+    if path.strip_prefix("/api/v1/operations/").is_some_and(|id| !id.is_empty() && !id.contains('/')) {
+        return Verbs::ADMIN;
+    }
     if *method == Method::GET || *method == Method::HEAD {
         return Verbs::READ;
     }
@@ -1517,7 +1543,22 @@ async fn list_databases(State(state): State<Arc<ApiState>>) -> Response {
     }
 }
 
-async fn create_provisioned_database(authority: &crate::provisioning::ProvisioningClient, body: &str) -> Response {
+#[utoipa::path(get, path = "/api/v1/operations/{operation_id}", responses((status = 200, description = "Durable provisioning operation", body = crate::provisioning::ProvisioningOperation)))]
+async fn get_provisioning_operation(State(state): State<Arc<ApiState>>, Path(operation_id): Path<String>) -> Response {
+    let Some(authority) = &state.provisioning else { return ApiError::control_unavailable().into_response(); };
+    match authority.status(&operation_id).await {
+        Ok(operation) => match serde_json::to_string(&operation) {
+            Ok(body) => json_response(StatusCode::OK, body),
+            Err(_) => ApiError::control_unavailable().into_response(),
+        },
+        Err(_) => ApiError::control_unavailable().into_response(),
+    }
+}
+
+async fn create_provisioned_database(
+    authority: &crate::provisioning::ProvisioningClient,
+    body: &str,
+) -> Response {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Create {
@@ -1528,11 +1569,22 @@ async fn create_provisioned_database(authority: &crate::provisioning::Provisioni
     }
     let request: Create = match serde_json::from_str(body) {
         Ok(request) => request,
-        Err(_) => return ApiError { status: StatusCode::BAD_REQUEST, code: "invalid_create_request",
-            message: "create requires name, placement, residency and a stable operation_id".into(),
-            fix: "supply the immutable placement and reuse operation_id when retrying".into(), placement: None }.into_response(),
+        Err(_) => {
+            return ApiError {
+                status: StatusCode::BAD_REQUEST,
+                code: "invalid_create_request",
+                message: "create requires name, placement, residency and a stable operation_id"
+                    .into(),
+                fix: "supply the immutable placement and reuse operation_id when retrying".into(),
+                placement: None,
+            }
+            .into_response();
+        }
     };
-    match authority.create(&request.name, &request.placement, &request.residency, &request.operation_id).await {
+    match authority
+        .create(&request.name, &request.placement, &request.residency, &request.operation_id)
+        .await
+    {
         Ok(operation) => match serde_json::to_string(&operation) {
             Ok(body) => json_response(StatusCode::ACCEPTED, body),
             Err(_) => ApiError::control_unavailable().into_response(),
@@ -1543,7 +1595,7 @@ async fn create_provisioned_database(authority: &crate::provisioning::Provisioni
 
 /// Creates one database from an explicit placement and optional residency
 /// constraint (D-52).
-#[utoipa::path(post, path = "/api/v1/databases", responses((status = 201, description = "Database created")))]
+#[utoipa::path(post, path = "/api/v1/databases", responses((status = 201, description = "Database created"), (status = 202, description = "Durable provisioning accepted; not ready to serve", body = crate::provisioning::ProvisioningOperation)))]
 async fn create_database(State(state): State<Arc<ApiState>>, body: String) -> Response {
     if let Some(authority) = &state.provisioning {
         return create_provisioned_database(authority, &body).await;
@@ -1897,14 +1949,10 @@ struct DocumentPaging {
     after: Option<String>,
 }
 
-/// Requested public durability. The local-stack host can fsync locally;
-/// it cannot manufacture a global receipt from configured topology.
-/// Production serving remains gated on the complete RF=2 Member adapter.
+/// Durability is established by peer acknowledgements after local commit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Durability {
-    /// The regional class; this local-stack adapter fsyncs its sole replica.
     Regional,
-    /// A global receipt, requiring an installed replication coordinator.
     Global,
 }
 
@@ -1928,17 +1976,82 @@ impl Durability {
         }
     }
 
-    fn local_level(self) -> Result<LocalDurability, ApiError> {
-        match self {
-            Self::Regional => Ok(LocalDurability::Synced),
-            Self::Global => Err(ApiError {
-                status: StatusCode::SERVICE_UNAVAILABLE,
-                code: "global_durability_unavailable",
-                message: "the serving host has no global replication receipt provider".into(),
-                fix: "retry when the member's replication coordinator is available".into(),
-                placement: None,
-            }),
+}
+
+struct WriteDurability {
+    class: Durability,
+    progress: Arc<crate::replication_runtime::ReplicationProgress>,
+    scope: terrabase_cluster::production::DatabaseRouteScope,
+    timeout: std::time::Duration,
+}
+
+fn durability_unavailable(global: bool) -> ApiError {
+    ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: if global { "global_durability_unavailable" } else { "regional_durability_unavailable" },
+        message: "the requested replication acknowledgements are unavailable before commit".into(),
+        fix: "retry when the selected regional members are available".into(),
+        placement: None,
+    }
+}
+
+fn durability_unknown() -> ApiError {
+    ApiError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        code: "commit_unknown",
+        message: "the write committed locally but its requested replication durability is unconfirmed".into(),
+        fix: "retry the identical request with its original Idempotency-Key; do not mint a new key".into(),
+        placement: None,
+    }
+}
+
+impl WriteDurability {
+    async fn prepare(
+        state: &ApiState,
+        database: &str,
+        engine: &terrabase::Engine,
+        engine_scope: &terrabase::types::TenantScope,
+        headers: &axum::http::HeaderMap,
+    ) -> Result<Self, ApiError> {
+        let class = Durability::of_header(headers)?;
+        let unavailable = || durability_unavailable(class == Durability::Global);
+        let progress = state.replication_progress.clone().ok_or_else(unavailable)?;
+        let scope = terrabase_cluster::production::DatabaseRouteScope::try_new(
+            &state.scope.0, &state.scope.1, database,
+        ).map_err(|_| unavailable())?;
+        let timeout_ms = match headers.get("x-terrascale-timeout-ms") {
+            Some(value) => value.to_str().ok().and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0 && *value <= 30_000)
+                .ok_or_else(|| ApiError::invalid_header("X-TerraScale-Timeout-Ms"))?,
+            None => 5_000,
+        };
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        if class == Durability::Global {
+            let context = engine.durable_origin_prefixes(engine_scope)
+                .map_err(|_| ApiError::storage_failure())?;
+            progress.wait_uniform(scope, &context, timeout).await.map_err(|_| unavailable())?;
         }
+        Ok(Self { class, progress, scope, timeout })
+    }
+
+    async fn confirm(
+        &self,
+        engine: &terrabase::Engine,
+        engine_scope: &terrabase::types::TenantScope,
+        receipt: &terrabase::CommitReceipt,
+    ) -> Result<(), ApiError> {
+        let sequence = receipt.sequence().get();
+        self.progress.wait_regional(self.scope, sequence, self.timeout).await
+            .map_err(|_| durability_unknown())?;
+        if self.class == Durability::Global {
+            let rows = engine.journal_rows(engine_scope, sequence.saturating_sub(1), 1)
+                .map_err(|_| durability_unknown())?;
+            let row = rows.first().filter(|row| row.commit_sequence == sequence)
+                .ok_or_else(durability_unknown)?;
+            self.progress.wait_global(self.scope, &row.origin, row.origin_sequence, self.timeout)
+                .await.map_err(|_| durability_unknown())?;
+        }
+        Ok(())
     }
 }
 
@@ -2010,7 +2123,7 @@ async fn batch_documents(
         Ok(operations) => operations,
         Err(error) => return error.into_response(),
     };
-    let durability = match Durability::of_header(&headers).and_then(Durability::local_level) {
+    let durability = match WriteDurability::prepare(&state, &name, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -2034,8 +2147,11 @@ async fn batch_documents(
             return batch_refusal(index, code, message);
         }
     }
-    match transaction.commit(durability) {
+    match transaction.commit(LocalDurability::Synced) {
         CommitOutcome::Committed(receipt) => {
+            if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
+                return error.into_response();
+            }
             let mut response = json_response(
                 StatusCode::OK,
                 format!(
@@ -2761,7 +2877,7 @@ async fn put_document(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let durability = match Durability::of_header(&headers).and_then(Durability::local_level) {
+    let durability = match WriteDurability::prepare(&state, &name, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -2801,8 +2917,11 @@ async fn put_document(
         }
         .into_response();
     }
-    match transaction.commit(durability) {
-        CommitOutcome::Committed(_receipt) => {
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(receipt) => {
+            if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
+                return error.into_response();
+            }
             let revision = match live_revision(engine, &scope, &probe.0, &probe.1) {
                 Ok(revision) => revision,
                 Err(error) => return error.into_response(),
@@ -2878,7 +2997,7 @@ async fn patch_document(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let durability = match Durability::of_header(&headers).and_then(Durability::local_level) {
+    let durability = match WriteDurability::prepare(&state, &name, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -2921,8 +3040,11 @@ async fn patch_document(
         }
         .into_response();
     }
-    match transaction.commit(durability) {
-        CommitOutcome::Committed(_receipt) => {
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(receipt) => {
+            if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
+                return error.into_response();
+            }
             let revision = match live_revision(engine, &scope, &probe.0, &probe.1) {
                 Ok(revision) => revision,
                 Err(error) => return error.into_response(),
@@ -3048,7 +3170,7 @@ async fn delete_document(
         Ok(operation) => operation,
         Err(error) => return error.into_response(),
     };
-    let durability = match Durability::of_header(&headers).and_then(Durability::local_level) {
+    let durability = match WriteDurability::prepare(&state, &name, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
@@ -3076,8 +3198,11 @@ async fn delete_document(
     // existence, and this route read the target above); the commit's
     // conflict rejection is the version check.
     transaction.delete_in_collection(&collection, id.clone(), expected);
-    match transaction.commit(durability) {
-        CommitOutcome::Committed(_) => {
+    match transaction.commit(LocalDurability::Synced) {
+        CommitOutcome::Committed(receipt) => {
+            if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
+                return error.into_response();
+            }
             let token = match refresh_session(&mut session, &collection, &id) {
                 Ok(token) => token,
                 Err(error) => return error.into_response(),
@@ -3690,8 +3815,13 @@ mod tests {
         let mut state = state();
         Arc::get_mut(&mut state).unwrap().delegated_identity = Some(Arc::new(verifier));
         let app = router(state);
-        let request = || Request::builder().uri("/api/v1/databases/db-a")
-            .header("authorization", "Bearer delegated-token").body(Body::empty()).unwrap();
+        let request = || {
+            Request::builder()
+                .uri("/api/v1/databases/db-a")
+                .header("authorization", "Bearer delegated-token")
+                .body(Body::empty())
+                .unwrap()
+        };
         let admitted = app.clone().oneshot(request()).await.unwrap();
         assert_ne!(admitted.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(admitted.headers()["x-terrascale-principal"], "user-1");
@@ -3707,7 +3837,9 @@ mod tests {
         let timetravel =
             Arc::new(crate::backup::TimeTravelCache::new(Arc::clone(&backups), &backup_root));
         Arc::new(ApiState {
+            development: Arc::default(),
             provisioning: None,
+            replication_progress: None,
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
             delegated_identity: None,
@@ -3752,7 +3884,9 @@ mod tests {
             &dir.join("backup-timetravel"),
         ));
         Arc::new(ApiState {
+            development: Arc::default(),
             provisioning: None,
+            replication_progress: None,
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
             delegated_identity: None,
@@ -3993,7 +4127,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(operation_count, 41, "registered route count changed");
+        assert_eq!(operation_count, 48, "registered route count changed");
     }
 
     #[test]
@@ -4003,7 +4137,8 @@ mod tests {
         while let Some(value) = pending.pop() {
             match value {
                 serde_json::Value::Object(object) => {
-                    if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str) {
+                    if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str)
+                    {
                         let pointer = reference.strip_prefix('#').expect("local schema reference");
                         assert!(document.pointer(pointer).is_some(), "unresolved {reference}");
                     }
@@ -4013,8 +4148,14 @@ mod tests {
                 _ => {}
             }
         }
-        assert_eq!(document["components"]["schemas"]["SchemaIndexDescriptor"]["properties"]["fields"]["type"], "array");
-        assert_eq!(document["components"]["schemas"]["IndexDescriptor"]["properties"]["field"]["type"], "string");
+        assert_eq!(
+            document["components"]["schemas"]["SchemaIndexDescriptor"]["properties"]["fields"]["type"],
+            "array"
+        );
+        assert_eq!(
+            document["components"]["schemas"]["IndexDescriptor"]["properties"]["field"]["type"],
+            "string"
+        );
     }
 
     #[tokio::test]
@@ -5866,3 +6007,7 @@ mod tests {
         let _ = header::AUTHORIZATION;
     }
 }
+
+#[cfg(test)]
+#[path = "api_write_durability_tests.rs"]
+mod write_durability_tests;

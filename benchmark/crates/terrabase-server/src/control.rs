@@ -12,6 +12,9 @@
 //! timestamp, and the purge that eventually reclaims the name is a later
 //! lane's job.
 
+#[path = "control_development.rs"]
+mod development;
+
 use std::path::Path;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;

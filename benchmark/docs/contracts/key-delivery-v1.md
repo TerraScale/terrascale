@@ -40,6 +40,12 @@ non-dumpable anonymous memory, subtracts request elapsed time from the
 received lease and zeroes memory on drop. Connection read/write deadlines
 are 25 seconds; the orchestrator limits its Vault request to 20 seconds. An expired lease cannot create or use an artifact cipher.
 
+The database-bound consumer caches at most 32 authorized versions and renews
+at 80% of each lease lifetime. Healthy page I/O does not contact Vault.
+Renewal failure denies new key use; an expired entry is evicted and zeroed
+when its last operation reference is dropped. The active version is supplied
+by durable admission or rotation state, never guessed from the provider.
+
 The durable orchestrator catalog retains wrapped old versions for authorized
 reads during rotation. Rotation never changes the bytes behind an existing
 key version. Restart reloads wrappers and obtains fresh Vault authorization;

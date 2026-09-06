@@ -85,7 +85,7 @@
 //! makes no recovery, durability, RPO/RTO, or performance claim: formal
 //! Recovery Receipts come exclusively from the exclusive recovery lane,
 //! which belongs to BK-02. Restore selection and execution
-//! ([`RestorePlan`], [`RestoreResult`]) are available through the native
+//! ([`RestorePlan`], [`RecoveryReceipt`]) are available through the native
 //! restore seam and are covered by round-trip tests. The source
 //! read path is the publication history only: a source whose history is
 //! absent or diverged from its published state fails closed or binds the
@@ -94,13 +94,13 @@
 //! attempt is a typed error.
 
 mod manifest;
-/// Bounded native backup scheduling shared by hosted databases.
-pub mod worker;
 mod records;
 mod restore;
 mod sha256;
 #[cfg(test)]
 mod tests;
+/// Bounded native backup scheduling shared by hosted databases.
+pub mod worker;
 
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
 pub use restore::{
@@ -785,9 +785,6 @@ pub struct RestorePlan {
     plan: std::marker::PhantomData<()>,
 }
 
-/// Compatibility name for the terminal restore receipt.
-pub type RestoreResult = RecoveryReceipt;
-
 impl BackupResult {
     /// Creates the terminal result of one sealed run.
     pub(crate) fn new(
@@ -1469,6 +1466,9 @@ fn seal_point(
 ) -> Result<(), BackupError> {
     let point = destination.join(point_directory(manifest.identity()));
     let manifest_file = encrypted_manifest.map_or(MANIFEST_FILE, |_| ENCRYPTED_MANIFEST_FILE);
+    if std::fs::symlink_metadata(&point).is_ok_and(|metadata| !metadata.file_type().is_dir()) {
+        return Err(BackupError::ManifestInvalid);
+    }
     if point.join(manifest_file).is_file() {
         // Idempotent retry: the identical recovery point is already
         // sealed, and a second run must not mint a second one.

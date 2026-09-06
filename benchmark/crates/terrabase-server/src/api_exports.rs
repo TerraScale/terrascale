@@ -232,10 +232,7 @@ pub(super) async fn create_export(
         })
         .await
     {
-        Ok(mut accepted) => {
-            accepted.status_path = format!("/api/v1/databases/{name}/exports/{}", accepted.job_id);
-            export::json_response(StatusCode::ACCEPTED, &accepted)
-        }
+        Ok(accepted) => export::json_response(StatusCode::ACCEPTED, &accepted),
         Err(error) => export_error(&error).into_response(),
     }
 }
@@ -392,6 +389,65 @@ pub(super) async fn download_export(
             );
             response
         }
+        Err(error) => export_error(&error).into_response(),
+    }
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(super) struct ExportListQuery {
+    /// Last job identity returned by the previous page.
+    after: Option<String>,
+    /// Number of results, from one through fifty; defaults to fifty.
+    limit: Option<usize>,
+}
+
+#[derive(serde::Serialize, utoipa::ToSchema)]
+pub(super) struct ExportList {
+    exports: Vec<export::ExportStatus>,
+    next_cursor: Option<String>,
+}
+
+#[utoipa::path(get, path = "/api/v1/databases/{name}/exports", params(ExportListQuery),
+    responses((status = 200, description = "Discover durable exports and supported actions", body = ExportList)))]
+pub(super) async fn list_exports(
+    State(state): State<Arc<ApiState>>,
+    Path(name): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<ExportListQuery>,
+) -> Response {
+    let limit = query.limit.unwrap_or(50);
+    if !(1..=50).contains(&limit) {
+        return export_error(&export::ExportError::InvalidRequest("invalid page size"))
+            .into_response();
+    }
+    let (service, _, _) = match resolve(state, name).await {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
+    };
+    match service.list_async(query.after.as_deref(), limit + 1).await {
+        Ok(mut exports) => {
+            let has_more = exports.len() > limit;
+            exports.truncate(limit);
+            let next_cursor =
+                has_more.then(|| exports.last().expect("nonempty page").job_id.clone());
+            export::json_response(StatusCode::OK, &ExportList { exports, next_cursor })
+        }
+        Err(error) => export_error(&error).into_response(),
+    }
+}
+
+#[utoipa::path(post, path = "/api/v1/databases/{name}/exports/{job_id}/cancel",
+    responses((status = 200, description = "Cancellation requested at a safe page boundary", body = export::ExportStatus)))]
+pub(super) async fn cancel_export(
+    State(state): State<Arc<ApiState>>,
+    Path((name, job)): Path<(String, String)>,
+) -> Response {
+    let (service, _, _) = match resolve(state, name).await {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
+    };
+    match service.cancel(&job).await {
+        Ok(status) => export::json_response(StatusCode::OK, &status),
         Err(error) => export_error(&error).into_response(),
     }
 }

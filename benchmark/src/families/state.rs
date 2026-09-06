@@ -182,6 +182,12 @@ impl<'a, 'engine> Records<'a, 'engine> {
     /// namespace collision and reports
     /// [`FamilyError::ReservedStateInvalid`].
     pub(crate) fn read(&mut self, id: &DocumentId) -> Result<Option<DocumentValue>, FamilyError> {
+        if private_control_record(id) {
+            return self
+                .transaction
+                .read_private_metadata(id.as_str())
+                .map_err(|_| FamilyError::StorageFailure);
+        }
         let document = self.transaction.read(id).map_err(|_| FamilyError::StorageFailure)?;
         match document {
             None => Ok(None),
@@ -200,6 +206,12 @@ impl<'a, 'engine> Records<'a, 'engine> {
         id: DocumentId,
         value: DocumentValue,
     ) -> Result<(), FamilyError> {
+        if private_control_record(&id) {
+            return self
+                .transaction
+                .put_private_metadata(id.as_str(), value)
+                .map_err(|_| FamilyError::StorageFailure);
+        }
         let collection = CollectionName::try_new(RESERVED_COLLECTION)
             .map_err(|_| FamilyError::StorageFailure)?;
         let document = Document::new(id, collection, value);
@@ -211,6 +223,12 @@ impl<'a, 'engine> Records<'a, 'engine> {
 
     /// Stages the deletion of one family record.
     pub(crate) fn clear(&mut self, id: &DocumentId) -> Result<(), FamilyError> {
+        if private_control_record(id) {
+            return self
+                .transaction
+                .delete_private_metadata(id.as_str())
+                .map_err(|_| FamilyError::StorageFailure);
+        }
         self.transaction
             .delete(id.clone(), ExpectedVersion::Any)
             .map_err(|_| FamilyError::StorageFailure)
@@ -1208,6 +1226,9 @@ impl ArchivalRecord {
 
 /// Encodes one schema field type.
 fn encode_field_type(kind: SchemaFieldType) -> DocumentValue {
+    if let SchemaFieldType::Canonical(kind) = kind {
+        return DocumentValue::String(format!("canonical:{}", kind.as_str()));
+    }
     DocumentValue::String(
         match kind {
             SchemaFieldType::Boolean => "boolean",
@@ -1216,12 +1237,18 @@ fn encode_field_type(kind: SchemaFieldType) -> DocumentValue {
             SchemaFieldType::Text => "text",
             SchemaFieldType::Object => "object",
             SchemaFieldType::Array => "array",
+            SchemaFieldType::Canonical(_) => unreachable!("handled above"),
         }
         .to_owned(),
     )
 }
 
 fn decode_field_type(value: &DocumentValue) -> Option<SchemaFieldType> {
+    if let DocumentValue::String(text) = value
+        && let Some(kind) = text.strip_prefix("canonical:")
+    {
+        return super::schemas::CanonicalFieldType::from_str(kind).map(SchemaFieldType::Canonical);
+    }
     match value {
         DocumentValue::String(text) => match text.as_str() {
             "boolean" => Some(SchemaFieldType::Boolean),
@@ -1437,4 +1464,9 @@ impl TombstoneRecord {
     pub(crate) fn deletion_version(&self, family: super::FamilyKind) -> Option<u64> {
         self.entries.get(family_key(family)).map(|(version, _)| *version)
     }
+}
+
+/// Only control records are private and unbilled; family payloads remain customer data.
+fn private_control_record(id: &DocumentId) -> bool {
+    id.as_str().starts_with("family:validation/") || id.as_str().starts_with("family:migration/")
 }

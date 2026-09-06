@@ -781,6 +781,37 @@ impl ProductionMemberRuntime {
         Ok(ProductionDatabaseLease { scope: *scope, lease })
     }
 
+    /// Acquires an admitted database for catch-up before public readiness.
+    ///
+    /// Replication must establish the readiness boundary itself. This path
+    /// therefore requires durable membership but does not require a ready
+    /// data plane. It is reserved for authenticated replication drivers.
+    ///
+    /// # Errors
+    /// Refuses pending or fenced membership, draining, unknown databases,
+    /// and exhausted storage admission.
+    pub fn acquire_replication(
+        &self,
+        scope: &DatabaseRouteScope,
+    ) -> Result<ProductionDatabaseLease, ProductionAdmissionError> {
+        let admission = lock_unpoisoned(&self.membership_admission);
+        if *admission != MembershipAdmission::Admitted {
+            return Err(ProductionAdmissionError::NotReady(vec![
+                ProductionReadinessBlocker::MembershipNotAdmitted,
+            ]));
+        }
+        if self.draining.load(Ordering::Acquire) {
+            return Err(ProductionAdmissionError::NotReady(vec![
+                ProductionReadinessBlocker::Draining,
+            ]));
+        }
+        let database = self.routes.resolve(scope)
+            .ok_or(ProductionAdmissionError::UnknownDatabaseScope)?;
+        let lease = self.member.acquire(database).map_err(ProductionAdmissionError::Storage)?;
+        drop(admission);
+        Ok(ProductionDatabaseLease { scope: *scope, lease })
+    }
+
     /// Stops admission, drains the data plane and QUIC endpoint, then flushes
     /// every isolated engine within bounded component deadlines.
     pub async fn drain(self) -> ProductionMemberDrainReport {

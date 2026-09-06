@@ -1,6 +1,8 @@
 //! Durable export service composition shared by member HTTP handlers.
 
 use super::*;
+use crate::export_store::SqliteExportStore;
+use std::sync::atomic::AtomicBool;
 
 /// Resolves an encrypted artifact provider for one database incarnation.
 pub trait ExportArtifactFactory: Send + Sync + 'static {
@@ -19,6 +21,7 @@ pub struct ExportRuntime {
     destination: ExportDestination,
     cursor_key: [u8; 32],
     active_jobs: Arc<Mutex<BTreeSet<String>>>,
+    stop_requested: Arc<AtomicBool>,
 }
 
 impl ExportRuntime {
@@ -37,7 +40,14 @@ impl ExportRuntime {
             return Err(ExportError::EncryptionUnavailable);
         }
         FileExportStore::open(&root)?;
-        Ok(Self { root, factory, destination, cursor_key, active_jobs: Arc::default() })
+        Ok(Self {
+            root,
+            factory,
+            destination,
+            cursor_key,
+            active_jobs: Arc::default(),
+            stop_requested: Arc::default(),
+        })
     }
 
     /// Opens encrypted local member dependencies. Production must use `new`
@@ -72,11 +82,12 @@ impl ExportRuntime {
         let identity = blake3::hash(database_id.as_bytes()).to_hex().to_string();
         let mut service = ExportService::new(
             Some(source),
-            Some(Arc::new(FileExportStore::open(self.root.join(identity))?)),
+            Some(Arc::new(SqliteExportStore::open(self.root.join(identity))?)),
             Some(self.factory.artifacts(database_id)?),
             *blake3::keyed_hash(&self.cursor_key, database_id.as_bytes()).as_bytes(),
         )?;
         service.active_jobs = self.active_jobs.clone();
+        service.stop_requested = self.stop_requested.clone();
         Ok(Arc::new(service))
     }
 
@@ -86,32 +97,42 @@ impl ExportRuntime {
         service: &ExportService,
     ) -> Result<(), ExportError> {
         let identity = blake3::hash(database_id.as_bytes()).to_hex().to_string();
-        let store = FileExportStore::open(self.root.join(identity))?;
-        for entry in
-            fs::read_dir(&store.root).map_err(|error| ExportError::Io(error.to_string()))?
-        {
-            let entry = entry.map_err(|error| ExportError::Io(error.to_string()))?;
-            let path = entry.path();
-            if path.extension().is_none_or(|extension| extension != "json") {
-                continue;
+        let store = SqliteExportStore::open(self.root.join(identity))?;
+        let mut after: Option<String> = None;
+        loop {
+            if self.stop_requested.load(Ordering::Acquire) {
+                return Ok(());
             }
-            let Some(job) = path.file_stem().and_then(|name| name.to_str()) else {
-                continue;
-            };
-            let Some(state) = store.load(job)? else {
-                continue;
-            };
-            if !matches!(state.status, JobStatus::Accepted | JobStatus::Running) {
-                continue;
+            let jobs = store.list(after.as_deref(), 50)?;
+            if jobs.is_empty() {
+                break;
             }
-            if let Some(active) = ActiveJob::acquire(self.active_jobs.clone(), job)? {
-                // Recovery runs on one blocking worker, keeping origin work
-                // bounded regardless of the number of interrupted jobs.
-                let _active = active;
-                let _ = service.clone_for_worker().run(job);
+            for job in &jobs {
+                if self.stop_requested.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                let Some(state) = store.load(job)? else {
+                    continue;
+                };
+                if !matches!(state.status, JobStatus::Accepted | JobStatus::Running) {
+                    continue;
+                }
+                if let Some(active) = ActiveJob::acquire(self.active_jobs.clone(), job)? {
+                    // One recovery worker processes interrupted jobs in bounded
+                    // indexed pages without delaying admitted data service.
+                    let _active = active;
+                    let _ = service.clone_for_worker().run(job);
+                }
             }
+            after = jobs.last().cloned();
         }
         Ok(())
+    }
+
+    /// Pauses process-owned workers at their next durable page boundary.
+    /// Accepted jobs retain their identity and resume on member restart.
+    pub fn stop(&self) {
+        self.stop_requested.store(true, Ordering::Release);
     }
 
     pub(crate) fn destination(&self) -> ExportDestination {

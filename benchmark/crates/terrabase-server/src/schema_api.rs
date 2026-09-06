@@ -1037,6 +1037,12 @@ fn migration_error(error: MigrationError) -> SchemaError {
 pub struct DurableSchemaRecord {
     /// Public schema document.
     pub document: SchemaDocument,
+    /// Previous collection contract retained until migration completion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_schema: Option<CollectionSchema>,
+    /// Original ready-plan evidence retained before the first migration page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migration_plan: Option<Vec<u8>>,
     /// Idempotency key → canonical request digest and response document.
     #[serde(default)]
     pub idempotency: BTreeMap<String, IdempotencyRecord>,
@@ -1215,6 +1221,9 @@ impl SchemaService {
                 "GET the schema, then retry with its ETag in If-Match",
             ));
         }
+        if current.as_ref().is_some_and(|record| record.document.migration.as_ref().is_some_and(|migration| matches!(migration.state, MigrationState::Pending | MigrationState::Running))) {
+            return Err(SchemaError::new(409, "migration_in_progress", "the current schema migration is still running", "wait for migration completion before applying another schema"));
+        }
         let next_version = next_schema_version(current.as_ref(), schema.version)?;
         let migration = plan_migration(
             current.as_ref().map(|record| &record.document.schema),
@@ -1244,7 +1253,15 @@ impl SchemaService {
             .commit(
                 &request.target,
                 current.as_ref(),
-                DurableSchemaRecord { document: document.clone(), idempotency },
+                DurableSchemaRecord {
+                    previous_schema: current.as_ref().filter(|_| document.migration.is_some()).map(|record| {
+                        let mut schema = record.document.schema.clone();
+                        schema.version = Some(record.document.schema_version);
+                        schema
+                    }),
+                    migration_plan: None,
+                    document: document.clone(), idempotency,
+                },
             )
             .map_err(|error| durable_error(&error))?;
         if outcome == DurableCommit::GenerationConflict {
@@ -1358,7 +1375,11 @@ impl SchemaService {
             .commit(
                 &progress.target,
                 Some(&current),
-                DurableSchemaRecord { document: document.clone(), idempotency },
+                DurableSchemaRecord {
+                    previous_schema: current.previous_schema.clone(),
+                    migration_plan: current.migration_plan.clone(),
+                    document: document.clone(), idempotency,
+                },
             )
             .map_err(|error| durable_error(&error))?;
         if outcome == DurableCommit::GenerationConflict {
@@ -1829,7 +1850,6 @@ fn plan_migration(
     next: &CollectionSchema,
     target: &SchemaTarget,
 ) -> Result<Option<MigrationStatus>, SchemaError> {
-    let Some(previous) = previous else { return Ok(None) };
     let mut steps = Vec::new();
     for rename in &next.renames {
         steps.push(MigrationStep {
@@ -1840,7 +1860,7 @@ fn plan_migration(
         });
     }
     let old_indexes: BTreeSet<&str> =
-        previous.indexes.iter().map(|index| index.name.as_str()).collect();
+        previous.into_iter().flat_map(|schema| schema.indexes.iter()).map(|index| index.name.as_str()).collect();
     for index in &next.indexes {
         if !old_indexes.contains(index.name.as_str()) {
             steps.push(MigrationStep {
@@ -1851,7 +1871,7 @@ fn plan_migration(
             });
         }
     }
-    if previous.ttl != next.ttl && next.ttl.is_some() {
+    if previous.and_then(|schema| schema.ttl.as_ref()) != next.ttl.as_ref() && next.ttl.is_some() {
         steps.push(MigrationStep {
             kind: "ttl_backfill".into(),
             from: None,

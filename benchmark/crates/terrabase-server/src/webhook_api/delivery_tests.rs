@@ -53,6 +53,26 @@ impl WebhookSecrets for TestPorts {
             Ok(())
         }
     }
+    fn creation(&self, scope: &TenantScope, id: &str, region: &str) -> Result<Vec<u8>, SecretError> { self.get(scope, id, region) }
+    fn rotate(
+        &self,
+        _: &TenantScope,
+        _: &str,
+        _: &str,
+        _: u64,
+        _: u64,
+    ) -> Result<Vec<u8>, SecretError> {
+        Ok(b"rotated-test-secret".to_vec())
+    }
+    fn previous(
+        &self,
+        _: &TenantScope,
+        _: &str,
+        _: &str,
+        _: u64,
+    ) -> Result<Option<Vec<u8>>, SecretError> {
+        Ok(None)
+    }
     fn get(&self, _: &TenantScope, _: &str, _: &str) -> Result<Vec<u8>, SecretError> {
         Ok(b"test-secret".to_vec())
     }
@@ -345,7 +365,7 @@ fn journal_page_keeps_an_entire_large_commit_before_checkpointing() {
         transaction
             .put(
                 Document::new(
-                    DocumentId::try_new(format!("item-{index}")).expect("id"),
+                    DocumentId::try_new(&format!("item-{index}")).expect("id"),
                     CollectionName::try_new("orders").expect("collection"),
                     DocumentValue::Integer(index as i64),
                 ),

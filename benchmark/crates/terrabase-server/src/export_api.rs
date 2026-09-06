@@ -23,7 +23,7 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -215,7 +215,7 @@ pub struct ExportSnapshot {
 }
 
 /// The two data classes in a logical export.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum ExportPhase {
     /// Current canonical document state.
     Documents,
@@ -443,6 +443,8 @@ pub enum JobStatus {
     Accepted,
     /// A worker is publishing pages.
     Running,
+    /// Cancellation stopped work at a durable chunk boundary; staged output remains resumable.
+    Cancelled,
     /// All members and the commit marker are durable.
     Complete,
     /// The job failed closed; state remains resumable when the error is
@@ -460,6 +462,39 @@ impl ExportJobLease for ActiveJob {}
 
 /// Durable state store seam.
 pub trait ExportStore: Send + Sync + 'static {
+    /// Lists durable jobs in ascending identity order, exclusively after `after`.
+    ///
+    /// # Errors
+    /// Returns an unavailable dependency, invalid limit, or durable read error.
+    fn list(&self, _after: Option<&str>, _limit: usize) -> Result<Vec<String>, ExportError> {
+        Err(ExportError::DependencyUnavailable)
+    }
+
+    /// Persists a cancellation request independently of worker progress writes.
+    /// Returns false when the job is absent or already terminal.
+    ///
+    /// # Errors
+    /// Returns a persistence or unsupported-store error.
+    fn request_cancel(&self, _job_id: &str) -> Result<bool, ExportError> {
+        Err(ExportError::DependencyUnavailable)
+    }
+
+    /// Reads the independently durable cancellation request.
+    ///
+    /// # Errors
+    /// Returns a persistence or unsupported-store error.
+    fn cancel_requested(&self, _job_id: &str) -> Result<bool, ExportError> {
+        Err(ExportError::DependencyUnavailable)
+    }
+
+    /// Clears cancellation only for an explicit authenticated resume.
+    ///
+    /// # Errors
+    /// Returns a persistence or unsupported-store error.
+    fn clear_cancel(&self, _job_id: &str) -> Result<(), ExportError> {
+        Err(ExportError::DependencyUnavailable)
+    }
+
     /// Attempts exclusive worker ownership across every handle and process
     /// sharing this store. Returns `None` when another worker owns the job.
     /// Workers must hold the guard across all state and artifact operations.
@@ -558,6 +593,20 @@ pub struct ExportAccepted {
     pub resume_cursor: String,
 }
 
+/// Whether cancellation can still stop work at the next durable boundary.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportCancellation {
+    /// A cooperative cancellation request can be submitted.
+    Available,
+    /// A durable request is waiting for the next safe boundary.
+    Requested,
+    /// Work stopped; already emitted records and pages remain staged.
+    Complete,
+    /// The operation is committed or its store does not support cancellation.
+    Unavailable,
+}
+
 /// Status view returned by polling.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ExportStatus {
@@ -565,6 +614,14 @@ pub struct ExportStatus {
     pub job_id: String,
     /// Current lifecycle state.
     pub status: JobStatus,
+    /// Snapshot capture time in Unix milliseconds for operation activity views.
+    pub created_at_millis: u64,
+    /// Current bounded work phase.
+    pub phase: ExportPhase,
+    /// Cooperative cancellation availability and progress.
+    pub cancellation: ExportCancellation,
+    /// Durably emitted pages retained even when cancellation completes.
+    pub pages: u64,
     /// Records emitted so far.
     pub records: u64,
     /// Optional estimate.
@@ -600,6 +657,7 @@ pub struct ExportService {
     artifacts: Arc<dyn ArtifactPort>,
     cursor_key: [u8; 32],
     active_jobs: Arc<Mutex<BTreeSet<String>>>,
+    stop_requested: Arc<AtomicBool>,
 }
 
 impl ExportService {
@@ -626,6 +684,7 @@ impl ExportService {
             artifacts,
             cursor_key,
             active_jobs: Arc::new(Mutex::new(BTreeSet::new())),
+            stop_requested: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -689,7 +748,7 @@ impl ExportService {
         {
             return Err(ExportError::IdempotencyConflict);
         }
-        if state.status != JobStatus::Complete {
+        if !matches!(state.status, JobStatus::Complete | JobStatus::Cancelled) {
             self.spawn_worker(job_id)?;
         }
         Ok(accepted(state))
@@ -703,7 +762,21 @@ impl ExportService {
     /// Returns a store read or invalid durable-state error.
     pub fn status(&self, job_id: &str) -> Result<Option<ExportStatus>, ExportError> {
         let Some(state) = self.store.load(job_id)? else { return Ok(None) };
+        self.public_status(state).map(Some)
+    }
+
+    fn public_status(&self, state: ExportJobState) -> Result<ExportStatus, ExportError> {
         validate_state(&state)?;
+        let cancellation = match state.status {
+            JobStatus::Complete => ExportCancellation::Unavailable,
+            JobStatus::Cancelled => ExportCancellation::Complete,
+            _ => match self.store.cancel_requested(&state.job_id) {
+                Ok(true) => ExportCancellation::Requested,
+                Ok(false) => ExportCancellation::Available,
+                Err(ExportError::DependencyUnavailable) => ExportCancellation::Unavailable,
+                Err(error) => return Err(error),
+            },
+        };
         let progress_basis_points = match state.status {
             JobStatus::Complete => 10_000,
             _ => state
@@ -714,9 +787,13 @@ impl ExportService {
                     ((state.records.saturating_mul(10_000) / estimate).min(9_999)) as u16
                 }),
         };
-        Ok(Some(ExportStatus {
+        Ok(ExportStatus {
             job_id: state.job_id,
             status: state.status,
+            phase: state.phase,
+            created_at_millis: state.snapshot.captured_at_millis,
+            cancellation,
+            pages: state.pages,
             records: state.records,
             estimated_records: state.snapshot.estimated_records,
             progress_basis_points,
@@ -725,7 +802,7 @@ impl ExportService {
             // Older records may contain raw provider errors. Never reflect
             // those persisted diagnostics through the public status route.
             error: state.error.map(|_| "export failed; retry with the latest resume cursor".into()),
-        }))
+        })
     }
 
     /// Reads a job's durable control record on the blocking pool.
@@ -740,6 +817,58 @@ impl ExportService {
         tokio::task::spawn_blocking(move || service.status(&job_id))
             .await
             .map_err(|_| ExportError::DependencyUnavailable)?
+    }
+
+    /// Lists a bounded page of durable operation status without document data.
+    ///
+    /// # Errors
+    /// Returns an invalid pagination argument, storage error, or unavailable task.
+    pub async fn list_async(
+        &self,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ExportStatus>, ExportError> {
+        if !(1..=100).contains(&limit)
+            || after.is_some_and(|value| {
+                value.len() != 32 || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        {
+            return Err(ExportError::InvalidRequest("invalid export pagination"));
+        }
+        let service = self.clone();
+        let after = after.map(str::to_owned);
+        tokio::task::spawn_blocking(move || {
+            service
+                .store
+                .list(after.as_deref(), limit)?
+                .into_iter()
+                .map(|job| service.status(&job)?.ok_or(ExportError::IdempotencyConflict))
+                .collect()
+        })
+        .await
+        .map_err(|_| ExportError::DependencyUnavailable)?
+    }
+
+    /// Requests cancellation at the next durable chunk boundary.
+    /// Already emitted records remain staged; a concurrent final commit can win.
+    ///
+    /// # Errors
+    /// Returns an unknown-job, storage, or unavailable-cancellation error.
+    pub async fn cancel(&self, job_id: &str) -> Result<ExportStatus, ExportError> {
+        let service = self.clone();
+        let job = job_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let state =
+                service.store.load(&job)?.ok_or(ExportError::InvalidRequest("unknown job"))?;
+            validate_state(&state)?;
+            if !matches!(state.status, JobStatus::Complete | JobStatus::Cancelled) {
+                service.store.request_cancel(&job)?;
+                service.spawn_worker(&job)?;
+            }
+            service.status(&job)?.ok_or(ExportError::InvalidRequest("unknown job"))
+        })
+        .await
+        .map_err(|_| ExportError::DependencyUnavailable)?
     }
 
     /// Validates and decodes a caller cursor, returning its phase and source
@@ -781,6 +910,10 @@ impl ExportService {
         }
         let _ = self.decode_resume_cursor(job_id, token)?;
         if state.status != JobStatus::Complete {
+            match self.store.clear_cancel(job_id) {
+                Ok(()) | Err(ExportError::DependencyUnavailable) => (),
+                Err(error) => return Err(error),
+            }
             self.spawn_worker(job_id)?;
         }
         self.status(job_id)?.ok_or(ExportError::InvalidRequest("unknown job"))
@@ -817,6 +950,7 @@ impl ExportService {
             store: Arc::clone(&self.store),
             artifacts: Arc::clone(&self.artifacts),
             cursor_key: self.cursor_key,
+            stop_requested: Arc::clone(&self.stop_requested),
         }
     }
 
@@ -843,6 +977,7 @@ struct Worker {
     store: Arc<dyn ExportStore>,
     artifacts: Arc<dyn ArtifactPort>,
     cursor_key: [u8; 32],
+    stop_requested: Arc<AtomicBool>,
 }
 
 struct ActiveJob {
@@ -877,6 +1012,9 @@ impl Drop for ActiveJob {
 
 impl Worker {
     fn run(&self, job_id: &str) -> Result<(), ExportError> {
+        if self.stop_requested.load(Ordering::Acquire) {
+            return Ok(());
+        }
         let Some(_lease) = self.store.acquire_job(job_id)? else {
             return Ok(());
         };
@@ -889,21 +1027,37 @@ impl Worker {
         state.status = JobStatus::Running;
         state.error = None;
         self.store.save(&state)?;
-        let result: Result<ArtifactFact, ExportError> = (|| {
+        let result: Result<Option<ArtifactFact>, ExportError> = (|| {
+            if self.cancellation_requested(job_id)? {
+                return Ok(None);
+            }
             let placement = PlacementLock::new(state.placement.iter().copied())?;
             let mut writer =
                 self.artifacts.open(job_id, &state.database, &state.destination, &placement)?;
-            let manifest = self.run_inner(&mut state, &mut writer)?;
+            let Some(manifest) = self.run_inner(&mut state, &mut writer)? else {
+                return Ok(None);
+            };
+            if self.cancellation_requested(job_id)? {
+                return Ok(None);
+            }
             writer.commit(&manifest)?;
-            Ok(manifest)
+            Ok(Some(manifest))
         })();
         match result {
-            Ok(manifest) => {
+            Ok(Some(manifest)) => {
                 state.manifest = Some(manifest);
                 state.status = JobStatus::Complete;
                 state.phase = ExportPhase::Done;
                 state.resume_cursor =
                     encode_cursor(&self.cursor_key, job_id, ExportPhase::Done, None);
+                self.store.save(&state)
+            }
+            Ok(None) => {
+                if self.stop_requested.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                state.status = JobStatus::Cancelled;
+                state.error = None;
                 self.store.save(&state)
             }
             Err(error) => {
@@ -915,11 +1069,22 @@ impl Worker {
         }
     }
 
+    fn cancellation_requested(&self, job_id: &str) -> Result<bool, ExportError> {
+        if self.stop_requested.load(Ordering::Acquire) {
+            return Ok(true);
+        }
+        match self.store.cancel_requested(job_id) {
+            Ok(requested) => Ok(requested),
+            Err(ExportError::DependencyUnavailable) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     fn run_inner(
         &self,
         state: &mut ExportJobState,
         writer: &mut Box<dyn ArtifactWriter>,
-    ) -> Result<ArtifactFact, ExportError> {
+    ) -> Result<Option<ArtifactFact>, ExportError> {
         let metadata = metadata_members(&state.snapshot)?;
         let mut facts_by_path = BTreeSet::new();
         let mut facts = Vec::with_capacity(metadata.len() + 4);
@@ -939,12 +1104,18 @@ impl Worker {
             facts.push(fact);
         }
         for (path, bytes) in metadata {
+            if self.cancellation_requested(&state.job_id)? {
+                return Ok(None);
+            }
             let fact = put_checked(writer, &path, &bytes)?;
             if facts_by_path.insert(fact.path.clone()) {
                 facts.push(fact);
             }
         }
         loop {
+            if self.cancellation_requested(&state.job_id)? {
+                return Ok(None);
+            }
             if state.phase == ExportPhase::Done {
                 break;
             }
@@ -1022,7 +1193,7 @@ impl Worker {
             facts.push(checksums);
         }
         let manifest_bytes = manifest_bytes(state, &facts)?;
-        put_checked(writer, "manifest.json", &manifest_bytes)
+        put_checked(writer, "manifest.json", &manifest_bytes).map(Some)
     }
 }
 
@@ -1288,7 +1459,7 @@ fn validate_request(request: &ExportRequest) -> Result<(), ExportError> {
 fn accepted(state: &ExportJobState) -> ExportAccepted {
     ExportAccepted {
         job_id: state.job_id.clone(),
-        status_path: format!("/api/v1/exports/{}", state.job_id),
+        status_path: format!("/api/v1/databases/{}/exports/{}", state.database, state.job_id),
         resume_cursor: state.resume_cursor.clone(),
     }
 }
@@ -1478,6 +1649,68 @@ impl FileExportStore {
 }
 
 impl ExportStore for FileExportStore {
+    fn list(&self, after: Option<&str>, limit: usize) -> Result<Vec<String>, ExportError> {
+        if !(1..=100).contains(&limit) {
+            return Err(ExportError::InvalidRequest("invalid export page limit"));
+        }
+        if let Some(after) = after {
+            self.path(after)?;
+        }
+        let mut jobs = BTreeSet::new();
+        for entry in fs::read_dir(&self.root).map_err(|error| ExportError::Io(error.to_string()))? {
+            let entry = entry.map_err(|error| ExportError::Io(error.to_string()))?;
+            let path = entry.path();
+            if path.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            let Some(job) = path.file_stem().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            self.path(job)?;
+            if after.is_some_and(|after| job <= after) {
+                continue;
+            }
+            jobs.insert(job.to_owned());
+            if jobs.len() > limit {
+                jobs.pop_last();
+            }
+        }
+        Ok(jobs.into_iter().collect())
+    }
+
+    fn request_cancel(&self, job_id: &str) -> Result<bool, ExportError> {
+        let Some(state) = self.load(job_id)? else {
+            return Ok(false);
+        };
+        if matches!(state.status, JobStatus::Complete | JobStatus::Cancelled) {
+            return Ok(false);
+        }
+        publish_artifact(&self.path(job_id)?.with_extension("cancel"), b"cancel\n")?;
+        Ok(true)
+    }
+
+    fn cancel_requested(&self, job_id: &str) -> Result<bool, ExportError> {
+        let path = self.path(job_id)?.with_extension("cancel");
+        ensure_no_symlink_components(&path)?;
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.is_file() && metadata.len() == 7 => Ok(true),
+            Ok(_) => Err(ExportError::IdempotencyConflict),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(ExportError::Io(error.to_string())),
+        }
+    }
+
+    fn clear_cancel(&self, job_id: &str) -> Result<(), ExportError> {
+        let path = self.path(job_id)?.with_extension("cancel");
+        ensure_no_symlink_components(&path)?;
+        match fs::remove_file(path) {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(ExportError::Io(error.to_string())),
+        }
+        sync_directory_ancestors(&self.root).map_err(|error| ExportError::Io(error.to_string()))
+    }
+
     fn acquire_job(&self, job_id: &str) -> Result<Option<Box<dyn ExportJobLease>>, ExportError> {
         let path = self.path(job_id)?.with_extension("lock");
         ensure_no_symlink_components(&path)?;
@@ -1534,10 +1767,58 @@ impl ExportStore for FileExportStore {
 pub struct MemoryExportStore {
     states: Mutex<std::collections::BTreeMap<String, ExportJobState>>,
     jobs: Arc<Mutex<BTreeSet<String>>>,
+    cancellations: Mutex<BTreeSet<String>>,
 }
 
 #[cfg(test)]
 impl ExportStore for MemoryExportStore {
+    fn list(&self, after: Option<&str>, limit: usize) -> Result<Vec<String>, ExportError> {
+        if !(1..=100).contains(&limit) {
+            return Err(ExportError::InvalidRequest("invalid export page limit"));
+        }
+        Ok(self
+            .states
+            .lock()
+            .map_err(|_| ExportError::Io("store lock poisoned".into()))?
+            .iter()
+            .filter(|(job, _)| after.is_none_or(|after| job.as_str() > after))
+            .take(limit)
+            .map(|(job, _)| job.clone())
+            .collect())
+    }
+
+    fn request_cancel(&self, job_id: &str) -> Result<bool, ExportError> {
+        let states =
+            self.states.lock().map_err(|_| ExportError::Io("store lock poisoned".into()))?;
+        let Some(state) = states.get(job_id) else {
+            return Ok(false);
+        };
+        if matches!(state.status, JobStatus::Complete | JobStatus::Cancelled) {
+            return Ok(false);
+        }
+        self.cancellations
+            .lock()
+            .map_err(|_| ExportError::Io("cancel lock poisoned".into()))?
+            .insert(job_id.into());
+        Ok(true)
+    }
+
+    fn cancel_requested(&self, job_id: &str) -> Result<bool, ExportError> {
+        Ok(self
+            .cancellations
+            .lock()
+            .map_err(|_| ExportError::Io("cancel lock poisoned".into()))?
+            .contains(job_id))
+    }
+
+    fn clear_cancel(&self, job_id: &str) -> Result<(), ExportError> {
+        self.cancellations
+            .lock()
+            .map_err(|_| ExportError::Io("cancel lock poisoned".into()))?
+            .remove(job_id);
+        Ok(())
+    }
+
     fn acquire_job(&self, job_id: &str) -> Result<Option<Box<dyn ExportJobLease>>, ExportError> {
         Ok(ActiveJob::acquire(Arc::clone(&self.jobs), job_id)?
             .map(|lease| Box::new(lease) as Box<dyn ExportJobLease>))
@@ -2089,6 +2370,7 @@ mod tests {
             .expect("artifact port"),
         );
         let worker = Worker {
+            stop_requested: Arc::new(AtomicBool::new(false)),
             source: source.clone(),
             store: store.clone(),
             artifacts: port,

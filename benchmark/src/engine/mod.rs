@@ -24,6 +24,8 @@ pub(crate) mod merge;
 mod metadata;
 mod patch;
 mod physical_restore;
+mod private_metadata;
+mod replication_dependencies;
 mod schema_metadata;
 mod webhook_metadata;
 
@@ -1915,6 +1917,8 @@ impl Engine {
             merge_conflict: None,
             replication_fingerprint: None,
             writes: Vec::new(),
+            metadata: Vec::new(),
+            schema_envelopes: Vec::new(),
         })
     }
 
@@ -4189,6 +4193,8 @@ pub struct Transaction<'engine> {
     merge_conflict: Option<(CollectionName, DocumentId, storage::MergeConflictEntry)>,
     replication_fingerprint: Option<[u8; 32]>,
     writes: Vec<StagedWrite>,
+    metadata: Vec<storage::PrivateMetadataWrite>,
+    schema_envelopes: Vec<storage::SchemaEnvelopeWrite>,
 }
 
 impl Drop for Transaction<'_> {
@@ -4487,7 +4493,10 @@ impl Transaction<'_> {
         if usage_admission.is_some() && durability != LocalDurability::Synced {
             return CommitOutcome::Rejected(CommitError::UsageRequiresSynced);
         }
-        let write_digest = storage::write_set_digest(self.scope.tenant(), &writes);
+        let metadata = std::mem::take(&mut self.metadata);
+        let schema_envelopes = std::mem::take(&mut self.schema_envelopes);
+        let write_digest =
+            storage::transaction_digest(self.scope.tenant(), &writes, &metadata, &schema_envelopes);
         // An origin commit stamps the replication clock (the hybrid
         // logical clock the deterministic merge compares); a replicated
         // intent carries its source stamp on the staged variant.
@@ -4498,7 +4507,10 @@ impl Transaction<'_> {
                     | storage::StagedWrite::ReplicatedDelete { .. }
             )
         });
-        if !replicated && !writes.is_empty() && self.engine.admit_origin_clock().is_err() {
+        if !replicated
+            && (!writes.is_empty() || !metadata.is_empty() || !schema_envelopes.is_empty())
+            && self.engine.admit_origin_clock().is_err()
+        {
             return CommitOutcome::Rejected(CommitError::Validation);
         }
         let hlc = if replicated { 0 } else { self.engine.tick_replication_clock() };
@@ -4513,6 +4525,8 @@ impl Transaction<'_> {
             replication_fingerprint: self.replication_fingerprint,
             hlc,
             writes,
+            metadata,
+            schema_envelopes,
         };
         let engine = self.engine;
         let operation = self.operation.clone();

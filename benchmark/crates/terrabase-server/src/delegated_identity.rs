@@ -294,6 +294,12 @@ pub(crate) mod tests {
                                         let input: serde_json::Value =
                                             serde_json::from_slice(&body).unwrap();
                                         assert_eq!(input["token"], "delegated-token");
+                                        assert_eq!(input["organizationId"], "terrabase-local");
+                                        assert_eq!(input["projectId"], "local");
+                                        assert_eq!(input["databaseId"], "db-a");
+                                        assert_eq!(input["audience"], "https://api.example");
+                                        assert_eq!(input["action"], "read");
+                                        assert!(input.get("collection").is_none());
                                         Ok::<_, std::convert::Infallible>(hyper::Response::new(
                                             Full::new(Bytes::from(
                                                 responses.lock().unwrap().to_string(),

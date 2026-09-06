@@ -300,7 +300,7 @@ fn json_schema_parser_rejects_wrong_dialect_types_and_values() {
 #[test]
 fn schema_declarations_are_bounded() {
     let many_rules: Vec<SchemaRule> =
-        (0..257).map(|index| SchemaRule::Required { field: format!("field-{index}") }).collect();
+        (0..1025).map(|index| SchemaRule::Required { field: format!("field-{index}") }).collect();
     assert_eq!(
         SchemaDefinition::try_new(version(1), many_rules),
         Err(terrabase::RequestValidationError::InvalidFamilyPayload)
@@ -316,7 +316,7 @@ fn schema_declarations_are_bounded() {
     );
 
     let boundary: Vec<SchemaRule> =
-        (0..256).map(|index| SchemaRule::Required { field: format!("field-{index}") }).collect();
+        (0..1024).map(|index| SchemaRule::Required { field: format!("field-{index}") }).collect();
     assert!(SchemaDefinition::try_new(version(1), boundary).is_ok());
 }
 

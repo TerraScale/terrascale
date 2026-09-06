@@ -56,7 +56,7 @@ pub(super) fn base64_encode(bytes: &[u8]) -> String {
 /// Returns `Err(())` when the input is not padded base64 of the standard
 /// alphabet: wrong length, invalid characters, padding in the middle, or
 /// non-zero trailing bits.
-pub(super) fn base64_decode(text: &[u8]) -> Result<Vec<u8>, ()> {
+pub(crate) fn base64_decode(text: &[u8]) -> Result<Vec<u8>, ()> {
     if !text.len().is_multiple_of(4) {
         return Err(());
     }

@@ -440,3 +440,62 @@ pub(crate) fn document_fingerprint(document: &Document) -> [u8; 32] {
     encode_document(&mut bytes, document);
     *blake3::hash(&bytes).as_bytes()
 }
+
+/// Encodes a bounded private control value in the existing storage value codec.
+pub(crate) fn encode_private_value(value: &DocumentValue) -> Option<Vec<u8>> {
+    if value_depth(value, 0) > MAX_VALUE_DEPTH {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    encode_value(&mut bytes, value, 0);
+    (bytes.len() <= MAX_DOCUMENT_BYTES).then_some(bytes)
+}
+
+/// Decodes a complete private control value, rejecting trailing bytes.
+pub(crate) fn decode_private_value(bytes: &[u8]) -> Option<DocumentValue> {
+    let mut reader = Reader::new(bytes);
+    let value = decode_value(&mut reader, 0)?;
+    (reader.remaining() == 0).then_some(value)
+}
+
+/// Binds private metadata to the same operation identity as document writes.
+pub(crate) fn transaction_digest(
+    tenant: &TenantId,
+    writes: &[StagedWrite],
+    metadata: &[super::intent::PrivateMetadataWrite],
+    schema_envelopes: &[super::intent::SchemaEnvelopeWrite],
+) -> u64 {
+    let document_digest = write_set_digest(tenant, writes);
+    if metadata.is_empty() && schema_envelopes.is_empty() {
+        return document_digest;
+    }
+    let mut bytes = b"terrabase.private-transaction.v1".to_vec();
+    push_u64(&mut bytes, document_digest);
+    let mut ordered: Vec<_> = metadata.iter().collect();
+    ordered.sort_by(|a, b| a.key.cmp(&b.key));
+    for record in ordered {
+        push_str(&mut bytes, &record.key);
+        push_u8(&mut bytes, u8::from(record.value.is_some()));
+        if let Some(value) = &record.value {
+            encode_value(&mut bytes, value, 0);
+        }
+    }
+    let mut envelopes: Vec<_> = schema_envelopes.iter().collect();
+    envelopes.sort_by(|a, b| {
+        (&a.database, &a.branch, &a.collection).cmp(&(&b.database, &b.branch, &b.collection))
+    });
+    push_u32(&mut bytes, envelopes.len() as u32);
+    for envelope in envelopes {
+        push_str(&mut bytes, &envelope.database);
+        push_str(&mut bytes, &envelope.branch);
+        push_str(&mut bytes, &envelope.collection);
+        push_u8(&mut bytes, u8::from(envelope.expected.is_some()));
+        if let Some(expected) = &envelope.expected {
+            push_u32(&mut bytes, expected.len() as u32);
+            bytes.extend_from_slice(expected);
+        }
+        push_u32(&mut bytes, envelope.replacement.len() as u32);
+        bytes.extend_from_slice(&envelope.replacement);
+    }
+    fnv1a(&bytes)
+}

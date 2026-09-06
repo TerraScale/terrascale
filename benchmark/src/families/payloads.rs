@@ -2332,6 +2332,8 @@ impl ArchivalReadResult {
 /// The logical type of one document field.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SchemaFieldType {
+    /// A complete canonical public field type, preserved in durable validation.
+    Canonical(super::schemas::CanonicalFieldType),
     /// A boolean value.
     Boolean,
     /// A signed integer value.
@@ -2382,7 +2384,8 @@ impl SchemaVersion {
 ///
 /// The bound keeps write validation bounded by construction: evaluation cost
 /// is linear in a bounded rule count with one bounded map lookup per rule.
-pub(crate) const MAX_SCHEMA_RULES: usize = 256;
+// Each of the 512 canonical fields can contribute required and type rules.
+pub(crate) const MAX_SCHEMA_RULES: usize = 1024;
 
 /// The maximum number of accepted values in one enum rule.
 pub(crate) const MAX_ENUM_VALUES: usize = 256;
@@ -2498,7 +2501,7 @@ impl SchemaDefinition {
     /// # Errors
     ///
     /// Returns [`RequestValidationError::InvalidFamilyPayload`] for version
-    /// zero, an invalid field name, a rule count above 256, an enum rule
+    /// zero, an invalid field name, a rule count above 1024, an enum rule
     /// with more than 256 accepted values, or a text-length bound above
     /// `i64::MAX`.
     pub fn try_new(

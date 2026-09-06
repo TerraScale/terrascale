@@ -184,9 +184,39 @@ pub struct ProductionPlacement {
     pub regions: BTreeMap<RegionCode, [MemberUlid; 2]>,
 }
 
+/// Pinned live identity authority and owner-only member credential file.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicIdentityConfig {
+    /// Exact HTTPS introspection endpoint.
+    pub endpoint: String,
+    /// Expected Better Auth issuer.
+    pub issuer: String,
+    /// Expected public database API audience/resource.
+    pub audience: String,
+    /// Absolute path to the private service credential.
+    pub service_key_file: PathBuf,
+}
+
+/// Authenticated local ingress to the durable provisioning authority.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicProvisioningConfig {
+    /// Absolute Unix socket path.
+    pub socket: PathBuf,
+    /// Exact operating system UID of the authority peer.
+    pub authority_uid: u32,
+    /// Deployment-owned environment, never supplied by API callers.
+    pub environment: String,
+}
+
 /// The resolved public `/api/v1` listener configuration.
 #[derive(Clone, Debug)]
 pub struct PublicApiConfig {
+    /// Optional durable provisioning authority; no implicit endpoint.
+    pub provisioning: Option<PublicProvisioningConfig>,
+    /// Optional live product identity authority; no defaults or local fallback.
+    pub identity: Option<PublicIdentityConfig>,
     /// The listener address.
     pub listen: SocketAddr,
     /// The member's data root: the control-plane engine and the database
@@ -355,6 +385,10 @@ struct FileObservability {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FilePublicApi {
+    #[serde(default)]
+    provisioning: Option<PublicProvisioningConfig>,
+    #[serde(default)]
+    identity: Option<PublicIdentityConfig>,
     listen: String,
     #[serde(default)]
     allow_wildcard: bool,
@@ -784,11 +818,17 @@ impl ServerConfig {
                 let proposal_journal = production_path(&control.proposal_journal)?;
                 let principals = control_principals(control.orchestrator_principals)?;
                 let observers = control_principals(control.observer_principals)?;
-                if (principals.is_empty() && observers.is_empty()) || !principals.is_disjoint(&observers) {
+                if (principals.is_empty() && observers.is_empty())
+                    || !principals.is_disjoint(&observers)
+                {
                     return Err(ConfigError::InvalidMemberPrincipal);
                 }
                 paths.push(proposal_journal.clone());
-                Ok(ProductionControl { proposal_journal, orchestrator_principals: principals, observer_principals: observers })
+                Ok(ProductionControl {
+                    proposal_journal,
+                    orchestrator_principals: principals,
+                    observer_principals: observers,
+                })
             })
             .transpose()?;
         let keys = file
@@ -872,14 +912,17 @@ fn absolute(path: &Path) -> Result<(), ConfigError> {
 }
 
 fn control_principals(values: Vec<String>) -> Result<BTreeSet<String>, ConfigError> {
-    if values.len() > MAX_MEMBER_PRINCIPALS { return Err(ConfigError::InvalidMemberPrincipal); }
+    if values.len() > MAX_MEMBER_PRINCIPALS {
+        return Err(ConfigError::InvalidMemberPrincipal);
+    }
     let mut principals = BTreeSet::new();
     for principal in values {
         if !principal.starts_with("spiffe://")
             || principal.len() > terrabase_tbep::grpc::MAX_PRINCIPAL_BYTES
             || principal.chars().any(char::is_whitespace)
             || principal.chars().any(char::is_control)
-            || !principals.insert(principal) {
+            || !principals.insert(principal)
+        {
             return Err(ConfigError::InvalidMemberPrincipal);
         }
     }
@@ -1227,6 +1270,24 @@ fn parse_public_api(
     if let Some(key_file) = &section.capability_previous_key_file {
         absolute(key_file)?;
     }
+    if let Some(provisioning) = &section.provisioning {
+        absolute(&provisioning.socket)?;
+        if provisioning.environment.is_empty() || provisioning.environment.len() > 128
+            || !provisioning.environment.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_')) {
+            return Err(ConfigError::InvalidProvisioningAuthority);
+        }
+    }
+    if let Some(identity) = &section.identity {
+        absolute(&identity.service_key_file)?;
+        for endpoint in [&identity.endpoint, &identity.issuer, &identity.audience] {
+            let uri: axum::http::Uri = endpoint.parse().map_err(|_| ConfigError::InvalidIdentityAuthority)?;
+            if uri.scheme_str() != Some("https") || uri.host().is_none()
+                || uri.authority().is_none_or(|value| value.as_str().contains('@'))
+                || uri.query().is_some() || endpoint.contains('#') {
+                return Err(ConfigError::InvalidIdentityAuthority);
+            }
+        }
+    }
     // Every named region must parse; duplicates collapse (the count is
     // the durability class's input, not a placement).
     let named: std::collections::BTreeSet<String> = section.regions.iter().cloned().collect();
@@ -1235,6 +1296,8 @@ fn parse_public_api(
             .map_err(|_| ConfigError::InvalidRegion)?;
     }
     Ok(Some(PublicApiConfig {
+        provisioning: section.provisioning.clone(),
+        identity: section.identity.clone(),
         listen,
         data_root: section.data_root.clone(),
         bootstrap_key_file: section.bootstrap_key_file.clone(),
@@ -1283,6 +1346,10 @@ pub enum ConfigError {
     InvalidListenAddress,
     /// The Region was not GRU, SFO, or FRA.
     InvalidRegion,
+    /// The pinned live identity authority configuration was invalid.
+    InvalidIdentityAuthority,
+    /// The provisioning authority configuration is invalid.
+    InvalidProvisioningAuthority,
     /// A configured numeric bound was zero or outside its production range.
     InvalidBound,
     /// The admitted private-member principal set was empty, duplicated, or invalid.
@@ -1323,6 +1390,8 @@ impl std::fmt::Display for ConfigError {
             Self::ParseConfiguration(_) => "the configuration file is not valid strict TOML",
             Self::RelativeProductionPath => "production file paths must be absolute",
             Self::InvalidListenAddress => "configured listener addresses are invalid",
+            Self::InvalidProvisioningAuthority => "invalid provisioning authority configuration",
+            Self::InvalidIdentityAuthority => "invalid pinned HTTPS identity authority",
             Self::InvalidRegion => "engine.region must be GRU, SFO, or FRA",
             Self::InvalidBound => "a production server bound is outside its accepted range",
             Self::InvalidMemberPrincipal => "member_principals is invalid",
@@ -1484,7 +1553,8 @@ orchestrator_uid = 1234
         assert_eq!(production.control.unwrap().orchestrator_principals.len(), 1);
         assert_eq!(production.keys.unwrap().orchestrator_uid, 1234);
         let observe_only = suffix.replace("orchestrator_principals", "observer_principals");
-        let observed = ServerConfig::parse(&(production_valid() + &observe_only)).expect("observer-only bootstrap");
+        let observed = ServerConfig::parse(&(production_valid() + &observe_only))
+            .expect("observer-only bootstrap");
         let policy = observed.production.unwrap().control.unwrap();
         assert!(policy.orchestrator_principals.is_empty());
         assert_eq!(policy.observer_principals.len(), 1);

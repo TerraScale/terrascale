@@ -155,34 +155,7 @@ pub(crate) fn read_record(
     collection: &CollectionName,
 ) -> Result<Option<MigrationRecord>, EngineError> {
     let id = migration_record_id(collection)?;
-    let document = transaction.read(&id).map_err(|_| EngineError::StorageFailure)?;
-    let Some(document) = document else {
-        return Ok(None);
-    };
-    if document.collection().as_str() != crate::families::state::RESERVED_COLLECTION {
-        return Err(EngineError::StorageFailure);
-    }
-    decode(document.value()).map(Some)
-}
-
-/// Returns the target schema a collection's puts are enforced against while
-/// a migration is in progress.
-///
-/// `Ok(None)` means no in-progress drive retargets enforcement — the caller
-/// falls through to the recorded validation record. A rollback drive does
-/// not retarget: the validation record still holds the from-version schema,
-/// which is what restoring documents must satisfy. An unreadable or
-/// malformed record fails closed.
-pub(crate) fn in_progress_target(
-    transaction: &Transaction<'_>,
-    collection: &CollectionName,
-) -> Result<Option<SchemaDefinition>, EngineError> {
-    match read_record(transaction, collection)? {
-        Some(MigrationRecord { state: RecordState::InProgress { target, .. }, .. }) => {
-            Ok(Some(target))
-        }
-        Some(_) | None => Ok(None),
-    }
+    transaction.read_private_metadata(id.as_str())?.as_ref().map(decode).transpose()
 }
 
 /// Stages one migration record value inside the caller's transaction.

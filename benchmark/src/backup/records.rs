@@ -309,7 +309,10 @@ impl MemberWriter {
         // Reserve envelope overhead conservatively per record. No artifact
         // bytes are written when the complete bounded reservation will not fit.
         let reservation = (encoded.len() as u64).saturating_add(4096);
-        if self.byte_limit.is_some_and(|limit| self.reserved_bytes.saturating_add(reservation) > limit) {
+        if self
+            .byte_limit
+            .is_some_and(|limit| self.reserved_bytes.saturating_add(reservation) > limit)
+        {
             encoded.zeroize();
             return Err(std::io::Error::other("backup staging budget exhausted"));
         }

@@ -1059,16 +1059,17 @@ fn recorded_schema(
 ) -> Result<Option<SchemaDefinition>, MigrationError> {
     let id = record_id("validation", &[collection.as_str()])
         .map_err(|_| MigrationError::StorageFailure)?;
-    let document = transaction.read(&id).map_err(|_| MigrationError::StorageFailure)?;
-    let Some(document) = document else {
-        return Ok(None);
-    };
-    if document.collection().as_str() != crate::families::state::RESERVED_COLLECTION {
-        return Err(MigrationError::ReservedStateInvalid);
-    }
-    ValidationRecord::decode(document.value())
-        .map(|record| Some(record.schema))
-        .map_err(|_| MigrationError::ReservedStateInvalid)
+    let value = transaction
+        .read_private_metadata(id.as_str())
+        .map_err(|_| MigrationError::StorageFailure)?;
+    value
+        .as_ref()
+        .map(|value| {
+            ValidationRecord::decode(value)
+                .map(|record| record.schema)
+                .map_err(|_| MigrationError::ReservedStateInvalid)
+        })
+        .transpose()
 }
 
 /// Checks that one plan addresses one contract and is ready.

@@ -1012,15 +1012,18 @@ impl Member {
         if catalog.databases.values().any(|entry| entry.location == location) {
             return Err(CatalogValidationError::DuplicateDatabaseLocation);
         }
-        catalog.databases.insert(id, DatabaseEntry {
-            location,
-            scope,
-            engine: ResidentEngine::Closed,
-            last_used: Instant::now(),
-            access_stamp: 0,
-            admissions: Arc::new(AdmissionCounter::new(per_database)),
-            backup_paused: false,
-        });
+        catalog.databases.insert(
+            id,
+            DatabaseEntry {
+                location,
+                scope,
+                engine: ResidentEngine::Closed,
+                last_used: Instant::now(),
+                access_stamp: 0,
+                admissions: Arc::new(AdmissionCounter::new(per_database)),
+                backup_paused: false,
+            },
+        );
         Ok(())
     }
 

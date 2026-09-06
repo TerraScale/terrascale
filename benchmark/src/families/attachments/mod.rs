@@ -24,7 +24,7 @@
 //! their pinned-commit citations are recorded in
 //! `docs/families/attachment-content-plane.md`.
 
-mod codec;
+pub(crate) mod codec;
 mod content;
 mod digest;
 

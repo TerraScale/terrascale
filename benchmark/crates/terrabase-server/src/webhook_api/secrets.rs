@@ -62,6 +62,32 @@ impl EngineWebhookSecrets {
         ArtifactCipher::from_database_key_lease(lease, context, 0)
             .map_err(|_| SecretError::Unavailable)
     }
+    fn decrypt(
+        &self,
+        scope: &TenantScope,
+        id: &str,
+        region: &str,
+        fields: &BTreeMap<String, MetadataValue>,
+    ) -> Result<Vec<u8>, SecretError> {
+        let Some(MetadataValue::String(version)) = fields.get("version") else {
+            return Err(SecretError::Unavailable);
+        };
+        let Some(MetadataValue::String(ciphertext)) = fields.get("ciphertext") else {
+            return Err(SecretError::Unavailable);
+        };
+        let version =
+            DatabaseKeyVersion::from_text(version).map_err(|_| SecretError::Unavailable)?;
+        let lease = self.keys.lease(scope, region, Some(version))?;
+        let Some(MetadataValue::String(artifact)) = fields.get("artifact") else {
+            return Err(SecretError::Unavailable);
+        };
+        let ciphertext = base64::engine::general_purpose::STANDARD
+            .decode(ciphertext)
+            .map_err(|_| SecretError::Unavailable)?;
+        self.cipher(scope, &format!("{id}-{artifact}"), &lease)?
+            .open(&ciphertext)
+            .map_err(|_| SecretError::Unavailable)
+    }
 }
 
 impl WebhookSecrets for EngineWebhookSecrets {
@@ -117,6 +143,93 @@ impl WebhookSecrets for EngineWebhookSecrets {
             .map_err(|_| SecretError::Unavailable)
     }
 
+    fn rotate(
+        &self,
+        scope: &TenantScope,
+        id: &str,
+        region: &str,
+        now: u64,
+        overlap_seconds: u64,
+    ) -> Result<Vec<u8>, SecretError> {
+        if overlap_seconds > 3600 {
+            return Err(SecretError::Unavailable);
+        }
+        let _lock = self.writes.lock().map_err(|_| SecretError::Unavailable)?;
+        let lease = self.keys.lease(scope, region, None)?;
+        let document = self
+            .storage
+            .read_document(scope, COLLECTION, id)
+            .map_err(|_| SecretError::Unavailable)?
+            .ok_or(SecretError::NotFound)?;
+        let MetadataValue::Object(mut previous) = document.value().clone() else {
+            return Err(SecretError::NotFound);
+        };
+        previous.remove("previous");
+        previous.remove("previous_until");
+        let artifact = terrabase::identity::process_generator().generate().to_text();
+        let mut cipher = self.cipher(scope, &format!("{id}-{artifact}"), &lease)?;
+        let mut secret = vec![0_u8; 32];
+        aws_lc_rs::rand::fill(&mut secret).map_err(|_| SecretError::Unavailable)?;
+        let encrypted = cipher.seal(&secret).map_err(|_| SecretError::Unavailable)?;
+        let mut fields = BTreeMap::from([
+            ("artifact".into(), MetadataValue::String(artifact)),
+            ("version".into(), MetadataValue::String(lease.metadata().version().to_text())),
+            (
+                "ciphertext".into(),
+                MetadataValue::String(base64::engine::general_purpose::STANDARD.encode(encrypted)),
+            ),
+        ]);
+        if overlap_seconds > 0 {
+            fields.insert("previous".into(), MetadataValue::Object(previous));
+            fields.insert(
+                "previous_until".into(),
+                unsigned_value(now.checked_add(overlap_seconds).ok_or(SecretError::Unavailable)?),
+            );
+        }
+        if self
+            .storage
+            .write_document(
+                scope,
+                COLLECTION,
+                id,
+                MetadataValue::Object(fields),
+                ExpectedVersion::Exact(document.version),
+            )
+            .is_err()
+        {
+            secret.fill(0);
+            return Err(SecretError::Unavailable);
+        }
+        Ok(secret)
+    }
+
+    fn previous(
+        &self,
+        scope: &TenantScope,
+        id: &str,
+        region: &str,
+        now: u64,
+    ) -> Result<Option<Vec<u8>>, SecretError> {
+        let document = self
+            .storage
+            .read_document(scope, COLLECTION, id)
+            .map_err(|_| SecretError::Unavailable)?
+            .ok_or(SecretError::NotFound)?;
+        let MetadataValue::Object(fields) = document.value() else {
+            return Err(SecretError::NotFound);
+        };
+        let Some(expiry) = fields.get("previous_until").and_then(unsigned_from_value) else {
+            return Ok(None);
+        };
+        if now >= expiry {
+            return Ok(None);
+        }
+        let Some(MetadataValue::Object(previous)) = fields.get("previous") else {
+            return Err(SecretError::Unavailable);
+        };
+        self.decrypt(scope, id, region, previous).map(Some)
+    }
+
     fn get(&self, scope: &TenantScope, id: &str, region: &str) -> Result<Vec<u8>, SecretError> {
         let document = self
             .storage
@@ -126,24 +239,7 @@ impl WebhookSecrets for EngineWebhookSecrets {
         let MetadataValue::Object(fields) = document.value() else {
             return Err(SecretError::NotFound);
         };
-        let Some(MetadataValue::String(version)) = fields.get("version") else {
-            return Err(SecretError::Unavailable);
-        };
-        let Some(MetadataValue::String(ciphertext)) = fields.get("ciphertext") else {
-            return Err(SecretError::Unavailable);
-        };
-        let version =
-            DatabaseKeyVersion::from_text(version).map_err(|_| SecretError::Unavailable)?;
-        let lease = self.keys.lease(scope, region, Some(version))?;
-        let Some(MetadataValue::String(artifact)) = fields.get("artifact") else {
-            return Err(SecretError::Unavailable);
-        };
-        let ciphertext = base64::engine::general_purpose::STANDARD
-            .decode(ciphertext)
-            .map_err(|_| SecretError::Unavailable)?;
-        self.cipher(scope, &format!("{id}-{artifact}"), &lease)?
-            .open(&ciphertext)
-            .map_err(|_| SecretError::Unavailable)
+        self.decrypt(scope, id, region, fields)
     }
 }
 
@@ -232,7 +328,7 @@ mod tests {
         );
         let version = metadata.version().to_text();
         let server = std::thread::spawn(move || {
-            for _ in 0..4 {
+            for _ in 0..7 {
                 let (mut connection, _) = listener.accept().expect("connection");
                 connection
                     .set_read_timeout(Some(std::time::Duration::from_secs(5)))
@@ -282,6 +378,21 @@ mod tests {
             writes: Mutex::new(()),
         };
         assert_eq!(secrets.get(&scope, "endpoint", "GRU").expect("reopen secret"), plaintext);
+        assert_eq!(
+            secrets.rotate(&scope, "endpoint", "GRU", 100, 3601),
+            Err(SecretError::Unavailable)
+        );
+        let rotated = secrets.rotate(&scope, "endpoint", "GRU", 100, 300).expect("rotate");
+        assert_ne!(rotated, plaintext);
+        assert_eq!(secrets.get(&scope, "endpoint", "GRU").expect("current"), rotated);
+        assert_eq!(
+            secrets.previous(&scope, "endpoint", "GRU", 399).expect("overlap"),
+            Some(plaintext)
+        );
+        assert_eq!(
+            secrets.previous(&scope, "endpoint", "GRU", 400).expect("expired overlap"),
+            None
+        );
         secrets.destroy(&scope, "endpoint", "GRU").expect("destroy");
         assert_eq!(secrets.get(&scope, "endpoint", "GRU"), Err(SecretError::NotFound));
         drop(secrets);
@@ -289,5 +400,86 @@ mod tests {
         engine.shutdown().expect("close");
         server.join().expect("adapter thread");
         std::fs::remove_dir_all(directory).expect("cleanup");
+    }
+}
+
+/// The admitted data plane supplies current placement authorization; config alone
+/// cannot grant a database permission to unwrap a regional signing key.
+pub trait WebhookPlacementAuthorization: Send + Sync + 'static {
+    /// Checks the current admitted database lease and placement generation.
+    ///
+    /// # Errors
+    /// Returns a refusal for missing admission or a revoked regional placement.
+    fn authorize(
+        &self,
+        scope: &TenantScope,
+        region: terrabase::regions::RegionCode,
+    ) -> Result<(), SecretError>;
+}
+
+/// Native OCI key delivery with exact configured identities and live admission.
+pub struct OciWebhookKeyLeases {
+    provider: terrabase::encryption::OciVaultKeyDelivery,
+    configuration: crate::config::ProductionConfig,
+    admission: Arc<dyn WebhookPlacementAuthorization>,
+}
+
+impl OciWebhookKeyLeases {
+    /// Opens the configured, authenticated orchestrator key-delivery socket.
+    ///
+    /// # Errors
+    /// Refuses missing configuration or an unsafe/unavailable socket.
+    pub fn new(
+        configuration: crate::config::ProductionConfig,
+        admission: Arc<dyn WebhookPlacementAuthorization>,
+    ) -> Result<Self, SecretError> {
+        let keys = configuration.keys.as_ref().ok_or(SecretError::Unavailable)?;
+        let provider = terrabase::encryption::OciVaultKeyDelivery::new(
+            keys.socket.clone(),
+            keys.orchestrator_uid,
+        )
+        .map_err(|_| SecretError::Unavailable)?;
+        Ok(Self { provider, configuration, admission })
+    }
+}
+
+impl WebhookKeyLeases for OciWebhookKeyLeases {
+    fn lease(
+        &self,
+        scope: &TenantScope,
+        region: &str,
+        version: Option<DatabaseKeyVersion>,
+    ) -> Result<DatabaseKeyLease, SecretError> {
+        use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};
+        let region = terrabase::regions::RegionCode::from_text(region)
+            .map_err(|_| SecretError::Unavailable)?;
+        let database = self
+            .configuration
+            .databases
+            .iter()
+            .find(|database| {
+                database.enabled
+                    && database.tenant.to_text() == scope.tenant
+                    && database.project.to_text() == scope.project
+                    && database.database.to_text() == scope.database
+            })
+            .ok_or(SecretError::Unavailable)?;
+        if !self.configuration.placement.regions.contains_key(&region) {
+            return Err(SecretError::Unavailable);
+        }
+        self.admission.authorize(scope, region)?;
+        let key_scope = KeyScope::new_with_project(
+            self.configuration.environment.name.as_str(),
+            database.tenant,
+            database.project,
+            database.database,
+            KeyPurpose::Data,
+        )
+        .map_err(|_| SecretError::Unavailable)?;
+        // Historical ciphertext carries its exact key version. The orchestrator
+        // independently verifies that the version belongs to this database.
+        let metadata =
+            KeyVersionMetadata::new(key_scope, version.unwrap_or(database.encryption_key));
+        self.provider.lease(&metadata, region).map_err(|_| SecretError::Unavailable)
     }
 }

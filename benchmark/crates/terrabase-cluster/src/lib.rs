@@ -7,6 +7,8 @@
 //! placement, routing, and admission over the real member catalog.
 
 pub mod production;
+/// Persistent production physical replication sessions and restart handshake.
+pub mod wal_driver;
 /// Physical SQLite WAL-frame replication for an in-Region RF=2 follower.
 pub mod wal_follower;
 /// Authenticated QUIC physical batch and durable receipt exchange.

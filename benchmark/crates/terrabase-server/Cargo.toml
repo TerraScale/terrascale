@@ -15,16 +15,17 @@ missing_docs = "deny"
 pedantic = "warn"
 
 [dependencies]
+rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 terrabase = { path = "../..", default-features = false }
 terrabase-tbep = { path = "../terrabase-tbep", default-features = false }
 terrabase-cluster = { path = "../terrabase-cluster", default-features = false }
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "ws"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "ws", "json"] }
 aws-lc-rs = { version = "1.18.0", default-features = false, features = ["non-fips"] }
 base64 = "0.22"
 blake3 = "1.8.2"
 bytes = "1"
 http-body-util = "0.1"
-hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper = { version = "1", default-features = false, features = ["client", "server", "http1"] }
 hyper-util = { version = "0.1", default-features = false, features = ["client", "client-legacy", "http1", "tokio"] }
 rustls = "0.23"
 tokio-rustls = "0.26"
@@ -40,6 +41,7 @@ tokio = { version = "1", default-features = false, features = [
   "time",
 ] }
 toml = "1"
+tower-service = "0.3"
 rmp = "0.8.15"
 terrabase-sync-core = { version = "0.1.0", path = "../terrabase-sync-core" }
 utoipa = { version = "5.5.0", features = ["axum_extras"] }
@@ -50,7 +52,6 @@ tower-http = { version = "0.6", default-features = false, features = ["cors"] }
 [dev-dependencies]
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std", "async-await"] }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake"] }
-rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled"] }
 tokio = { version = "1", features = ["test-util"] }
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }

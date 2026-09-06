@@ -51,9 +51,9 @@ pub enum WalCaptureStep {
 ///
 /// # Errors
 /// Returns admission, worker, wrong-engine, I/O, or WAL validation errors.
-pub async fn capture_batch(
+pub async fn capture_batch<E: crate::wal_driver::WalEngineHandle + ?Sized + 'static>(
     binding: &WalReplicaBinding,
-    engine: Arc<terrabase::Engine>,
+    engine: Arc<E>,
     tail: Arc<Mutex<WalTail>>,
 ) -> Result<WalCaptureStep, WalQuicError> {
     let permit = binding.reserve_worker().map_err(WalQuicError::Route)?;
@@ -61,7 +61,8 @@ pub async fn capture_batch(
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         let mut tail = tail.lock().map_err(|_| WalQuicError::WorkerUnavailable)?;
-        let step = binding.capture_frames(&engine, &mut tail).map_err(WalQuicError::Route)?;
+        let step =
+            binding.capture_frames(engine.engine(), &mut tail).map_err(WalQuicError::Route)?;
         match step {
             WalTailStep::UpToDate => Ok(WalCaptureStep::UpToDate),
             WalTailStep::GenerationChanged => Ok(WalCaptureStep::GenerationChanged),

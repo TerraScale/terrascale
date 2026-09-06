@@ -77,6 +77,23 @@ impl StagedWrite {
     }
 }
 
+/// A private control record staged with the transaction's customer mutations.
+#[derive(Clone, Debug)]
+pub(crate) struct PrivateMetadataWrite {
+    pub(crate) key: String,
+    pub(crate) value: Option<crate::types::DocumentValue>,
+}
+
+/// One schema envelope CAS committed alongside active validation metadata.
+#[derive(Clone, Debug)]
+pub(crate) struct SchemaEnvelopeWrite {
+    pub(crate) database: String,
+    pub(crate) branch: String,
+    pub(crate) collection: String,
+    pub(crate) expected: Option<Vec<u8>>,
+    pub(crate) replacement: Vec<u8>,
+}
+
 /// The validated, digest-bound request storage publishes for one transaction.
 #[derive(Clone, Debug)]
 pub(crate) struct CommitIntent {
@@ -103,6 +120,10 @@ pub(crate) struct CommitIntent {
     pub(crate) hlc: u64,
     /// The staged writes to publish atomically.
     pub(crate) writes: Vec<StagedWrite>,
+    /// Private control changes committed atomically and excluded from customer billing.
+    pub(crate) metadata: Vec<PrivateMetadataWrite>,
+    /// Schema envelopes atomically bound to their active validation controls.
+    pub(crate) schema_envelopes: Vec<SchemaEnvelopeWrite>,
 }
 
 /// The storage-side view of one local commit receipt.

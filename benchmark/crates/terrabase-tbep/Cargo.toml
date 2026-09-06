@@ -26,6 +26,7 @@ missing_docs = "deny"
 pedantic = "warn"
 
 [dependencies]
+blake3 = "1"
 # The gRPC serving stack (ADR 0025): tonic over tokio, prost messages,
 # rustls TLS with the single non-FIPS ring provider (D-41 defers FIPS builds
 # past the first customer).

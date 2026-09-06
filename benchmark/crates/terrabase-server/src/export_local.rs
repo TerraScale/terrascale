@@ -418,6 +418,11 @@ mod tests {
         );
         assert_eq!(fs::read(root.join("database/job/documents/page.json")).unwrap(), ciphertext);
         assert_eq!(local_cursor_key(&root).unwrap(), local_cursor_key(&root).unwrap());
+        fs::write(root.join("database/job/COMMITTED"), b"tampered").unwrap();
+        assert!(matches!(
+            restarted.read_member("job", "database", "documents/page.json", &manifest),
+            Err(ExportError::IdempotencyConflict)
+        ));
         fs::remove_dir_all(root).unwrap();
     }
 

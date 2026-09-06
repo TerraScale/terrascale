@@ -33,7 +33,7 @@ use crate::types::{
     LocalDurability, OperationId, StorageSequence, TenantId, TenantScope,
 };
 
-fn location(tag: &str) -> PathBuf {
+pub(super) fn location(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let index = COUNTER.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir()
@@ -44,7 +44,7 @@ fn location(tag: &str) -> PathBuf {
     path
 }
 
-fn open_engine(tag: &str) -> (PathBuf, Engine) {
+pub(super) fn open_engine(tag: &str) -> (PathBuf, Engine) {
     let dir = location(tag);
     let engine =
         Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens");
@@ -117,11 +117,11 @@ fn operation(name: &str) -> OperationId {
     OperationId::try_new(name).expect("valid identifier")
 }
 
-fn text(value: &str) -> DocumentValue {
+pub(super) fn text(value: &str) -> DocumentValue {
     DocumentValue::String(value.to_owned())
 }
 
-fn put(
+pub(super) fn put(
     engine: &Engine,
     tenant_name: &str,
     operation_name: &str,
@@ -177,7 +177,7 @@ fn put_family_record(
     )
 }
 
-fn committed(outcome: CommitOutcome) -> StorageSequence {
+pub(super) fn committed(outcome: CommitOutcome) -> StorageSequence {
     match outcome {
         CommitOutcome::Committed(receipt) => receipt.sequence(),
         other => panic!("expected a committed receipt, got {other:?}"),
@@ -1559,16 +1559,63 @@ fn encrypted_incremental_chain_survives_fresh_artifact_contexts() {
     use crate::encryption::KeyVersionMetadata;
     let (_dir, engine) = open_engine("encrypted-chain-restart");
     let owner = engine.database_owner();
-    let scope = KeyScope::new_with_project(owner.environment().as_str(), owner.tenant(), owner.project(), owner.database(), KeyPurpose::Backup).unwrap();
-    let lease = Arc::new(DatabaseKeyLease::test_oci_vault(KeyVersionMetadata::new(scope, DatabaseKeyVersion::generate()), DatabaseKey::from_bytes([51; 32]), std::time::Duration::from_secs(60)).unwrap());
+    let scope = KeyScope::new_with_project(
+        owner.environment().as_str(),
+        owner.tenant(),
+        owner.project(),
+        owner.database(),
+        KeyPurpose::Backup,
+    )
+    .unwrap();
+    let lease = Arc::new(
+        DatabaseKeyLease::test_oci_vault(
+            KeyVersionMetadata::new(scope, DatabaseKeyVersion::generate()),
+            DatabaseKey::from_bytes([51; 32]),
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap(),
+    );
     let reader: Arc<dyn BackupReader + Send + Sync> = lease.clone();
     let destination = location("encrypted-chain-restart-archive");
-    committed(put(&engine, "alpha", "op-1", "doc-1", "users", text("one"), LocalDurability::Synced));
-    let full = run_backup(&engine, BackupPlan::full(BackupEncryption::from_database_key_lease(&lease, owner.region(), 0).unwrap()), &destination).unwrap();
-    committed(put(&engine, "alpha", "op-2", "doc-2", "users", text("two"), LocalDurability::Synced));
-    let incremental = BackupPlan::incremental_since(full.manifest().boundary_sequence(), BackupEncryption::from_database_key_lease(&lease, owner.region(), 0).unwrap()).with_reader(reader);
-    run_backup(&engine, incremental, &destination).expect("new artifact can extend retained encrypted chain");
-    let receipt = RestorePlan::restore_latest_encrypted(&destination, &location("encrypted-chain-restart-target"), lease.as_ref()).unwrap();
+    committed(put(
+        &engine,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
+    let full = run_backup(
+        &engine,
+        BackupPlan::full(
+            BackupEncryption::from_database_key_lease(&lease, owner.region(), 0).unwrap(),
+        ),
+        &destination,
+    )
+    .unwrap();
+    committed(put(
+        &engine,
+        "alpha",
+        "op-2",
+        "doc-2",
+        "users",
+        text("two"),
+        LocalDurability::Synced,
+    ));
+    let incremental = BackupPlan::incremental_since(
+        full.manifest().boundary_sequence(),
+        BackupEncryption::from_database_key_lease(&lease, owner.region(), 0).unwrap(),
+    )
+    .with_reader(reader);
+    run_backup(&engine, incremental, &destination)
+        .expect("new artifact can extend retained encrypted chain");
+    let receipt = RestorePlan::restore_latest_encrypted(
+        &destination,
+        &location("encrypted-chain-restart-target"),
+        lease.as_ref(),
+    )
+    .unwrap();
     assert_eq!(receipt.chain_depth(), 2);
     assert_eq!(receipt.restored_documents(), 2);
 }
@@ -1576,11 +1623,35 @@ fn encrypted_incremental_chain_survives_fresh_artifact_contexts() {
 #[test]
 fn staging_byte_limit_preserves_preexisting_recovery_point() {
     let (_dir, engine) = open_engine("staging-byte-limit");
-    committed(put(&engine, "alpha", "op-1", "doc-1", "users", text("one"), LocalDurability::Synced));
+    committed(put(
+        &engine,
+        "alpha",
+        "op-1",
+        "doc-1",
+        "users",
+        text("one"),
+        LocalDurability::Synced,
+    ));
     let destination = location("staging-byte-limit-archive");
     let full = run_backup(&engine, BackupPlan::local_test_full_plaintext(), &destination).unwrap();
-    committed(put(&engine, "alpha", "op-2", "doc-2", "users", text("two"), LocalDurability::Synced));
-    assert!(run_backup(&engine, BackupPlan::local_test_incremental_since(full.manifest().boundary_sequence()).with_archive_byte_limit(1), &destination).is_err());
+    committed(put(
+        &engine,
+        "alpha",
+        "op-2",
+        "doc-2",
+        "users",
+        text("two"),
+        LocalDurability::Synced,
+    ));
+    assert!(
+        run_backup(
+            &engine,
+            BackupPlan::local_test_incremental_since(full.manifest().boundary_sequence())
+                .with_archive_byte_limit(1),
+            &destination
+        )
+        .is_err()
+    );
     assert_eq!(verify_latest_chain(&destination).unwrap().len(), 1);
     full.archive().verify(&destination).unwrap();
 }

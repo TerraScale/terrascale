@@ -16,3 +16,6 @@ __pycache__/
 /.worktrees/
 /.claude/
 .codex-worktrees/
+
+# Private generated CI release candidates and signatures
+/.terrascale-develop-release/

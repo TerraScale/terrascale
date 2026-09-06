@@ -185,16 +185,39 @@ impl WalReplicaBinding {
         connection: &terrabase_member_transport::production::ProductionConnection,
         sending: bool,
     ) -> Result<(), WalRouteError> {
+        self.authorize_peer(
+            connection.peer(),
+            connection.placement_generation(),
+            connection.replica_set_epoch(),
+            sending,
+        )
+    }
+
+    pub(crate) fn authorize_peer(
+        &self,
+        identity: &MemberWorkloadIdentity,
+        generation: u64,
+        epoch: u64,
+        sending: bool,
+    ) -> Result<(), WalRouteError> {
         let _admission = self.preflight_admission()?;
         let peer = if sending { &self.follower } else { &self.writer };
         if self.local_is_writer != sending
-            || connection.peer() != peer
-            || connection.placement_generation() != self.generation
-            || connection.replica_set_epoch() != self.epoch
+            || identity != peer
+            || generation != self.generation
+            || epoch != self.epoch
         {
             return Err(WalRouteError::Unauthorized);
         }
         Ok(())
+    }
+
+    pub(crate) fn scope(&self) -> DatabaseRouteScope {
+        self.scope
+    }
+
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
     }
 
     pub(crate) fn authorize_batch(&self, batch: &ScopedWalBatch) -> Result<(), WalRouteError> {
@@ -240,6 +263,14 @@ impl WalReplicaBinding {
             return Err(WalRouteError::Fenced);
         }
         Ok(active)
+    }
+
+    pub(crate) fn with_admission<T>(
+        &self,
+        work: impl FnOnce() -> Result<T, WalRouteError>,
+    ) -> Result<T, WalRouteError> {
+        let _admission = self.admission()?;
+        work()
     }
 
     /// Authorizes a decoded batch before touching the follower's files.

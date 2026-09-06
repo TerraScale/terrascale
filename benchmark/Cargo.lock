@@ -208,6 +208,7 @@ dependencies = [
  "percent-encoding",
  "pin-project-lite",
  "serde_core",
+ "serde_json",
  "serde_path_to_error",
  "serde_urlencoded",
  "sha1",
@@ -2650,6 +2651,7 @@ dependencies = [
  "toml",
  "tower",
  "tower-http",
+ "tower-service",
  "utoipa",
  "utoipa-axum",
  "utoipa-scalar",
@@ -2676,6 +2678,7 @@ version = "0.1.0"
 name = "terrabase-tbep"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "futures-util",
  "hyper-util",
  "prost",

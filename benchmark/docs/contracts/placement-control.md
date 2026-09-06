@@ -13,15 +13,22 @@ The production daemon enables this listener with an explicit configuration:
 [control]
 proposal_journal = "/var/lib/terrabase/placement/proposals.sqlite"
 orchestrator_principals = ["spiffe://terrascale.tech/production/orchestrator/gru-1"]
+observer_principals = ["spiffe://terrascale.tech/production/observer/gru-1"]
 ```
 
 The journal parent must already exist with mode `0700`; the journal uses mode
 `0600`. The listener uses the configured private TBEP address, server certificate,
 private key and client CA. TLS 1.3 mutual authentication is mandatory. Every RPC
 carries exactly one `x-tb-principal` matching the client certificate's sole SPIFFE
-URI SAN and the control allowlist. Database scope metadata is rejected. This
-listener exposes no data operations or maintenance host. Its lifecycle metrics
-remain in `Starting`; a healthy process or successful Stage is not readiness.
+URI SAN and the appropriate control allowlist. Stage/Get reject database scope metadata.
+The separate read-only observer role exposes the existing Maintenance topology,
+admin and supervision observations with validated full scope metadata. Pending
+observations report `Starting`, unavailable engine topology and unknown cluster
+mode; shutdown reports `Draining`. Observers cannot stage intent or request
+shutdown, and writer/observer allowlists must be disjoint. Either role may be
+configured alone. The listener exposes no customer data operations. Its
+lifecycle metrics remain in `Starting`; a healthy process or successful Stage
+is not readiness.
 Without this configuration the missing-membership startup refusal remains.
 
 `Stage` carries `expected_revision`, a complete proposal, and the usual

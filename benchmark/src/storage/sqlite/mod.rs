@@ -92,6 +92,7 @@
 
 mod descriptor_removal;
 mod invisible;
+mod private_metadata;
 mod schema_metadata;
 mod shadow;
 #[cfg(test)]
@@ -868,6 +869,14 @@ CREATE TABLE IF NOT EXISTS webhook_metadata (
     record_key TEXT NOT NULL,
     record BLOB NOT NULL,
     PRIMARY KEY (tenant, namespace, record_key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS family_metadata (
+    tenant TEXT NOT NULL,
+    record_key TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    value BLOB,
+    PRIMARY KEY (tenant, record_key, seq)
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS schema_metadata (
@@ -2093,7 +2102,13 @@ fn stage_intent(
     fts_descriptors: &std::collections::BTreeMap<(String, String), bool>,
 ) -> Result<CommitResult, ()> {
     // Step 1: validation never binds the identity.
-    if intent.writes.is_empty() || codec::staged_writes_have_duplicate_targets(&intent.writes) {
+    if (intent.writes.is_empty()
+        && intent.metadata.is_empty()
+        && intent.schema_envelopes.is_empty())
+        || codec::staged_writes_have_duplicate_targets(&intent.writes)
+        || !private_metadata::valid_metadata(&intent.metadata)
+        || !private_metadata::valid_envelopes(&intent.schema_envelopes)
+    {
         return Ok(CommitResult::Rejected(CommitRejection::Validation));
     }
     // An admitted mutation must be locally synced: its billable fact is
@@ -2101,7 +2116,8 @@ fn stage_intent(
     // is also the operation identity, so retries can verify the exact fact
     // instead of minting a second one.
     let admitted_fact = if let Some(admission) = &intent.usage_admission {
-        if intent.durability != LocalDurability::Synced
+        if intent.writes.is_empty()
+            || intent.durability != LocalDurability::Synced
             || admission.request_id().as_str() != intent.operation.as_str()
         {
             return Ok(CommitResult::Rejected(CommitRejection::Validation));
@@ -2296,6 +2312,62 @@ fn stage_intent(
             return Ok(CommitResult::Rejected(CommitRejection::Conflict));
         }
     }
+    if private_metadata::metadata_conflicts(
+        transaction,
+        &intent.tenant,
+        &intent.metadata,
+        snapshot_sequence,
+    )? {
+        insert_rejection_row(
+            transaction,
+            &intent.tenant,
+            &intent.operation,
+            intent.digest,
+            CommitRejection::Conflict,
+        )?;
+        return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+    }
+    for write in &intent.writes {
+        if let StagedWrite::Put { document, .. } = write {
+            let validation = crate::families::schemas::enforce_value(
+                document.collection(),
+                document.value(),
+                |key| {
+                    if let Some(staged) =
+                        intent.metadata.iter().rev().find(|change| change.key == key)
+                    {
+                        return Ok(staged.value.clone());
+                    }
+                    private_metadata::read_private_metadata_on(
+                        transaction,
+                        &intent.tenant,
+                        key,
+                        *watermark,
+                    )
+                    .map_err(|()| crate::engine::EngineError::StorageFailure)
+                },
+            );
+            if let Err(error) = validation {
+                return Ok(CommitResult::Rejected(
+                    if matches!(error, crate::engine::EngineError::InvalidDocument) {
+                        CommitRejection::Validation
+                    } else {
+                        CommitRejection::Storage
+                    },
+                ));
+            }
+        }
+    }
+    if private_metadata::envelopes_conflict(transaction, &intent.schema_envelopes)? {
+        insert_rejection_row(
+            transaction,
+            &intent.tenant,
+            &intent.operation,
+            intent.digest,
+            CommitRejection::Conflict,
+        )?;
+        return Ok(CommitResult::Rejected(CommitRejection::Conflict));
+    }
     // Step 4: allocate the sequence past everything this location has named.
     let Some(sequence) = watermark.checked_add(1) else {
         return Err(());
@@ -2367,6 +2439,8 @@ fn stage_intent(
         context,
     };
     let mut published_writes: Vec<PublishedWrite> = Vec::with_capacity(intent.writes.len());
+    private_metadata::stage_metadata(transaction, &intent.tenant, &intent.metadata, sequence)?;
+    private_metadata::stage_envelopes(transaction, &intent.schema_envelopes)?;
     let mut billed_writes = 0_u64;
     let mut billed_bytes = 0_u64;
     for write in &intent.writes {
@@ -4120,6 +4194,16 @@ impl SqliteStorage {
 }
 
 impl StoragePort for SqliteStorage {
+    fn private_metadata_at(
+        &self,
+        tenant: &TenantId,
+        key: &str,
+        sequence: StorageSequence,
+    ) -> Result<Option<DocumentValue>, ()> {
+        let reader = self.reader();
+        private_metadata::read_private_metadata_on(reader.connection(), tenant, key, sequence.get())
+    }
+
     fn webhook_metadata_load(
         &self,
         tenant: &TenantId,

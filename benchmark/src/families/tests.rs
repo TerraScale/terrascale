@@ -4183,12 +4183,9 @@ fn reserved_collection_rejects_schema_declarations() {
 }
 
 #[test]
-fn validation_record_collisions_fail_closed_on_put() {
+fn customer_documents_cannot_collide_with_private_validation_records() {
     let (_dir, engine) = open_engine("sm02-collision");
-    // A user document can still occupy the reserved validation-record
-    // address through the document seam (the W3-F collision contract); while
-    // it does, the collection's schema state cannot be read, and every put
-    // to that collection fails closed instead of skipping validation.
+    // Customer identifiers cannot occupy private validation metadata keys.
     assert!(
         stage_put(
             &engine,
@@ -4209,7 +4206,7 @@ fn validation_record_collisions_fail_closed_on_put() {
             "users",
             object_user_value(&[("name", "ada")]),
         ),
-        Err(EngineError::StorageFailure)
+        Ok(())
     );
     engine.shutdown().expect("shuts down");
 }

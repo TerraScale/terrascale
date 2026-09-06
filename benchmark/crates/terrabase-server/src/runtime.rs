@@ -553,6 +553,19 @@ async fn serve_public_api(
         }
         None => crate::reactive_api::CapabilityKeyRing::default(),
     };
+    let delegated_identity = public.identity.as_ref().map(|identity| {
+        let secret = String::from_utf8(read_secret_key(&identity.service_key_file)?)
+            .map_err(|_| DaemonError::SecretFile)?;
+        crate::delegated_identity::IdentityVerifier::new(crate::delegated_identity::IdentityConfig {
+            endpoint: identity.endpoint.clone(), issuer: identity.issuer.clone(),
+            audience: identity.audience.clone(), service_key: secret,
+        }).map(Arc::new).map_err(|_| DaemonError::Engine("invalid identity authority configuration".into()))
+    }).transpose()?;
+    let provisioning = public.provisioning.as_ref().map(|authority| {
+        crate::provisioning::ProvisioningClient::new(authority.socket.clone(), authority.authority_uid,
+            authority.environment.clone(), tenant.clone(), project.clone())
+            .map(Arc::new).map_err(|_| DaemonError::Engine("invalid provisioning authority configuration".into()))
+    }).transpose()?;
     let state = Arc::new(crate::api::ApiState {
         region,
         metrics,
@@ -566,23 +579,31 @@ async fn serve_public_api(
         guards: Arc::new(crate::guards::AbuseGuards::default()),
         origin_proof_keys: Arc::new(origin_proof_keys),
         webhook_keys: None,
-        exports: Some(Arc::new(crate::export_api::ExportRuntime::local(backup_root.with_file_name("exports"), region)
-            .map_err(|_| DaemonError::Engine("local export dependencies unavailable".into()))?)),
-        delegated_identity: None,
-        provisioning: None,
+        exports: Some(Arc::new(
+            crate::export_api::ExportRuntime::local(backup_root.with_file_name("exports"), region)
+                .map_err(|_| DaemonError::Engine("local export dependencies unavailable".into()))?,
+        )),
+        delegated_identity,
+        development: Arc::default(),
+        provisioning,
         capability_keys: Arc::new(capability_keys),
     });
     let listener = tokio::net::TcpListener::bind(public.listen).await?;
     let recover_state = Arc::clone(&state);
-    tokio::task::spawn_blocking(move || crate::api::recover_exports(&recover_state))
-        .await.map_err(|_| DaemonError::Engine("export recovery worker failed".into()))?
-        .map_err(|_| DaemonError::Engine("export recovery failed".into()))?;
+    let export_recovery = tokio::task::spawn_blocking(move || {
+        if crate::api::recover_exports(&recover_state).is_err() {
+            eprintln!("export recovery failed; durable jobs remain available for retry");
+        }
+    });
     let dispatcher = crate::api::spawn_webhook_dispatcher(&state);
+    let export_runtime = state.exports.clone();
     let router = crate::api::router(state);
     let task = tokio::spawn(async move {
+        let _export_recovery = export_recovery;
         let result = axum::serve(listener, router)
             .with_graceful_shutdown(async {
                 let _ = signal.await;
+                if let Some(exports) = export_runtime { exports.stop(); }
             })
             .await;
         if let Some(dispatcher) = dispatcher {

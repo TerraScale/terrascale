@@ -1102,7 +1102,15 @@ impl StagingDir {
 /// Returns [`BackupError::DestinationUnavailable`] when the rename fails;
 /// the caller discards the staging tree on that path.
 fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
-    if std::fs::rename(staging.path(), target).is_err() {
+    if rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        staging.path(),
+        rustix::fs::CWD,
+        target,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .is_err()
+    {
         return Err(BackupError::DestinationUnavailable);
     }
     if let Some(parent) = target.parent() {
@@ -1507,6 +1515,8 @@ impl Replay {
             merge_conflict: None,
             replication_fingerprint: None,
             hlc: 0,
+            metadata: Vec::new(),
+            schema_envelopes: Vec::new(),
             writes: batch.writes,
             operation,
         };

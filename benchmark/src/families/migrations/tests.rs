@@ -1283,7 +1283,7 @@ fn evidence_mismatches_fail_closed() {
 }
 
 #[test]
-fn reserved_record_collisions_fail_closed() {
+fn customer_documents_cannot_collide_with_private_migration_records() {
     let (_dir, engine) = open_engine("collision");
     let users = scope(&engine, "alpha");
     seeded_users(&engine, &users);
@@ -1298,22 +1298,19 @@ fn reserved_record_collisions_fail_closed() {
     assert!(outcome.is_ok(), "the address itself is a valid document id");
 
     let contract = reversible_contract(1, 2);
-    assert_eq!(
-        dry_run(&engine, &users, &contract),
-        Err(MigrationError::StorageFailure),
-        "an occupied migration record fails closed, never reads as absent"
+    assert!(
+        dry_run(&engine, &users, &contract).is_ok(),
+        "customer identifiers cannot occupy private migration records"
     );
-    // The write-path hook fails closed on the unreadable state too.
-    assert_eq!(
+    assert!(
         put_document(
             &engine,
             &users,
             "ada-2",
             "users",
             object(&[("email", text("a")), ("nick", text("a")), ("age_text", text("1"))])
-        ),
-        Err(EngineError::StorageFailure),
-        "the collision does not become a validation bypass"
+        )
+        .is_ok()
     );
 }
 
