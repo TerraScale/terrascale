@@ -57,3 +57,45 @@ it("bounds begin labels in UTF-8 bytes and preserves the returned transaction id
   expect(() => client.beginTransaction("db", { transactionId: "é".repeat(50) + "x" }, { idempotencyKey: "too-long" })).toThrow(TypeError);
   expect(calls).toBe(1);
 });
+
+it("maps predicate auth routes and keeps ordinary queries read-scoped", async () => {
+  const requests: Request[] = [];
+  const client = createAuthPersistenceClient({ fetch: async input => {
+    requests.push(new Request(input));
+    return Response.json({ record: null, matched: true, count: 2 });
+  } });
+  const predicates = [{ field: "active", value: true }] as const;
+  await client.count("db", { model: "user", predicates });
+  await client.findPage("db", { model: "user", predicates, offset: 0, limit: 10 });
+  await client.updateOne("db", { model: "user", predicates, update: { name: "Ada" } }, { idempotencyKey: "update-one", transactionId: "tx" });
+  await client.updateMany("db", { model: "user", predicates, update: { active: false } }, { idempotencyKey: "update-many", transactionId: "tx" });
+  await client.deleteOne("db", { model: "user", predicates }, { idempotencyKey: "delete-one", transactionId: "tx" });
+  await client.deleteMany("db", { model: "user", predicates }, { idempotencyKey: "delete-many", transactionId: "tx" });
+  await client.incrementOne("db", { model: "user", predicates, increment: { attempts: 1 }, set: { active: true } }, { idempotencyKey: "increment-one", transactionId: "tx" });
+  await client.consumeMatching("db", { model: "verification", predicates }, { idempotencyKey: "consume-matching", transactionId: "tx" });
+
+  expect(requests.map(request => new URL(request.url).pathname)).toEqual([
+    "/api/v1/databases/db/auth/count",
+    "/api/v1/databases/db/auth/findPage",
+    "/api/v1/databases/db/auth/updateOne",
+    "/api/v1/databases/db/auth/updateMany",
+    "/api/v1/databases/db/auth/deleteOne",
+    "/api/v1/databases/db/auth/deleteMany",
+    "/api/v1/databases/db/auth/incrementOne",
+    "/api/v1/databases/db/auth/consumeMatching",
+  ]);
+  expect(requests[0]?.headers.has("idempotency-key")).toBe(false);
+  expect(requests[1]?.headers.has("idempotency-key")).toBe(false);
+  expect(requests[2]?.headers.get("x-terrascale-auth-transaction")).toBe("tx");
+  expect(await requests[6]?.json()).toEqual({ model: "user", predicates, increment: { attempts: 1 }, set: { active: true } });
+});
+
+it("preserves full-width auth result counts as bigint", async () => {
+  const client = createAuthPersistenceClient({ fetch: async () => new Response(
+    '{"record":null,"matched":true,"count":18446744073709551615}',
+    { status: 200, headers: { "content-type": "application/json" } },
+  ) });
+  const result = await client.count("db", { model: "user", predicates: [] });
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.value.count).toBe(18446744073709551615n);
+});

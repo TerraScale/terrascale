@@ -171,6 +171,34 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (_client, _management, auth) => auth.findPage(sampleIds.database, { model: "user", predicates: [{ field: "active", value: true }], offset: 0, limit: 25 }, { idempotencyKey: "auth-page-1", transactionId: "tx-1" }),
   },
   {
+    client: "databases", operation: "count", routeName: "databases.count",
+    invoke: (_client, _management, auth) => auth.count(sampleIds.database, { model: "user", predicates: [{ field: "active", value: true }] }),
+  },
+  {
+    client: "databases", operation: "updateOne", routeName: "databases.updateOne",
+    invoke: (_client, _management, auth) => auth.updateOne(sampleIds.database, { model: "user", predicates: [{ field: "id", value: sampleIds.documentId }], update: { active: true } }, { idempotencyKey: "auth-update-one-1", transactionId: "tx-1" }),
+  },
+  {
+    client: "databases", operation: "updateMany", routeName: "databases.updateMany",
+    invoke: (_client, _management, auth) => auth.updateMany(sampleIds.database, { model: "user", predicates: [{ field: "active", value: false }], update: { active: true } }, { idempotencyKey: "auth-update-many-1", transactionId: "tx-1" }),
+  },
+  {
+    client: "databases", operation: "deleteOne", routeName: "databases.deleteOne",
+    invoke: (_client, _management, auth) => auth.deleteOne(sampleIds.database, { model: "user", predicates: [{ field: "id", value: sampleIds.documentId }] }, { idempotencyKey: "auth-delete-one-1", transactionId: "tx-1" }),
+  },
+  {
+    client: "databases", operation: "deleteMany", routeName: "databases.deleteMany",
+    invoke: (_client, _management, auth) => auth.deleteMany(sampleIds.database, { model: "user", predicates: [{ field: "active", value: false }] }, { idempotencyKey: "auth-delete-many-1", transactionId: "tx-1" }),
+  },
+  {
+    client: "databases", operation: "incrementOne", routeName: "databases.incrementOne",
+    invoke: (_client, _management, auth) => auth.incrementOne(sampleIds.database, { model: "user", predicates: [{ field: "id", value: sampleIds.documentId }], increment: { attempts: 1 }, set: { active: true } }, { idempotencyKey: "auth-increment-one-1", transactionId: "tx-1" }),
+  },
+  {
+    client: "databases", operation: "consumeMatching", routeName: "databases.consumeMatching",
+    invoke: (_client, _management, auth) => auth.consumeMatching(sampleIds.database, { model: "verification", predicates: [{ field: "id", value: sampleIds.documentId }] }, { idempotencyKey: "auth-consume-matching-1", transactionId: "tx-1" }),
+  },
+  {
     client: "databases", operation: "beginTransaction", routeName: "databases.beginTransaction",
     invoke: (_client, _management, auth) => auth.beginTransaction(sampleIds.database, { transactionId: "tx-1" }, { idempotencyKey: "auth-begin-1" }),
   },

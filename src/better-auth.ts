@@ -1,5 +1,28 @@
 import type { TerraScaleResult } from "./result.js";
 
+export {
+  AuthPersistenceClient,
+  createAuthPersistenceClient,
+} from "./auth-persistence.js";
+export type {
+  AuthConditionalUpdate,
+  AuthConsume,
+  AuthFindOneOptions,
+  AuthIncrement,
+  AuthPageQuery,
+  AuthPersistencePredicate,
+  AuthPersistenceResult,
+  AuthPredicateOnly,
+  AuthPredicateUpdate,
+  AuthQueryOptions,
+  AuthRequestOptions,
+  AuthTransactionIdentity,
+  AuthTransactionOptions,
+  AuthMutationOptions,
+  AuthUniqueIndex,
+  AuthUniqueInsert,
+} from "./auth-persistence.js";
+
 /** The comparison operators understood by Better Auth's database adapter. */
 export type BetterAuthWhere = {
   readonly field: string;
