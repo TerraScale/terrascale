@@ -2,22 +2,28 @@ use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::{Notify, oneshot};
 
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+const DRAIN_DEADLINE: Duration = Duration::from_secs(5);
 
 pub(super) async fn supervise<E, F, Fut>(
     mut stop: oneshot::Receiver<()>,
     notify: Arc<Notify>,
     process: F,
-) where
+) -> bool
+where
     E: std::fmt::Debug,
     F: Fn() -> Fut,
     Fut: Future<Output = Result<bool, E>>,
 {
     let mut stopping = false;
+    let mut deadline = None;
     let mut backoff = Duration::from_millis(25);
     loop {
         if !stopping {
             tokio::select! {
-                _ = &mut stop => stopping = true,
+                _ = &mut stop => {
+                    stopping = true;
+                    deadline = Some(tokio::time::Instant::now() + DRAIN_DEADLINE);
+                },
                 _ = notify.notified() => {}
             }
         }
@@ -26,17 +32,28 @@ pub(super) async fn supervise<E, F, Fut>(
                 backoff = Duration::from_millis(25);
                 continue;
             }
-            Ok(false) if stopping => break,
+            Ok(false) if stopping => return false,
             Ok(false) => {
                 // Notifications are coalesced; waiting here also prevents an idle spin.
                 tokio::select! {
-                    _ = &mut stop => stopping = true,
+                    _ = &mut stop => {
+                        stopping = true;
+                        deadline = Some(tokio::time::Instant::now() + DRAIN_DEADLINE);
+                    },
                     _ = notify.notified() => {}
                 }
             }
             Err(error) => {
                 eprintln!("native recovery worker error; retrying: {error:?}");
-                tokio::time::sleep(backoff).await;
+                if stopping {
+                    let Some(until) = deadline else { return true };
+                    if tokio::time::Instant::now() >= until {
+                        return true;
+                    }
+                    tokio::time::sleep(backoff.min(until.saturating_duration_since(tokio::time::Instant::now()))).await;
+                } else {
+                    tokio::time::sleep(backoff).await;
+                }
                 backoff = (backoff * 2).min(MAX_BACKOFF);
             }
         }

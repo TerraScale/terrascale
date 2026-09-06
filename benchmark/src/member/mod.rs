@@ -898,9 +898,6 @@ pub struct Member {
     inner: Arc<MemberInner>,
 }
 
-/// Compatibility name for the root-owned database catalog.
-pub type MemberCatalog = Member;
-
 impl Member {
     /// Validates the complete catalog, probing each durable engine once, then
     /// publishes only closed entries. Engines are reopened lazily and kept in

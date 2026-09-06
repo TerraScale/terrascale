@@ -100,6 +100,8 @@ mod invisible;
 mod json_codec;
 mod lifecycle_state;
 #[cfg(test)]
+mod metering_tests;
+#[cfg(test)]
 mod operation_kind_markers_tests;
 mod private_metadata;
 mod repair_summary;
@@ -3735,7 +3737,26 @@ fn flush_metering_db_facts(
     intents: &[CommitIntent],
     results: &[Option<CommitResult>],
 ) -> Result<(), ()> {
+    use rusqlite::OptionalExtension;
     use std::collections::BTreeMap;
+    // Operation facts retain local logical write units. Apply the accepted
+    // placement's Region multiplier once at the per-database rollup seam.
+    let placement: Option<(String, u64)> = transaction
+        .query_row(
+            "SELECT tenant, selected_regions FROM usage_placement WHERE singleton = 1",
+            [],
+            |row| {
+                let tenant = row.get::<_, String>(0)?;
+                let selected = row.get::<_, String>(1)?;
+                let regions = selected.split(',').filter(|region| !region.is_empty()).count();
+                Ok((tenant, regions as u64))
+            },
+        )
+        .optional()
+        .map_err(|_| ())?;
+    if placement.as_ref().is_some_and(|(_, regions)| *regions == 0) {
+        return Err(());
+    }
     let mut billed: BTreeMap<String, (u64, u64, u64)> = BTreeMap::new();
     {
         let mut statement = transaction
@@ -3756,12 +3777,17 @@ fn flush_metering_db_facts(
             .map_err(|_| ())?;
         for row in rows {
             let (tenant, seq, writes, bytes) = row.map_err(|_| ())?;
+            let tenant_name = tenant.as_str();
             let seq = u64::try_from(seq).map_err(|_| ())?;
             let writes = u64::try_from(writes).map_err(|_| ())?;
             let bytes = u64::try_from(bytes).map_err(|_| ())?;
             let entry = billed.entry(tenant).or_insert((0, 0, 0));
             entry.0 = entry.0.max(seq);
-            entry.1 = entry.1.saturating_add(writes);
+            let multiplier = placement
+                .as_ref()
+                .filter(|(placement_tenant, _)| placement_tenant == tenant_name)
+                .map_or(1, |(_, regions)| *regions);
+            entry.1 = entry.1.checked_add(writes.checked_mul(multiplier).ok_or(())?).ok_or(())?;
             entry.2 = entry.2.saturating_add(bytes);
         }
     }

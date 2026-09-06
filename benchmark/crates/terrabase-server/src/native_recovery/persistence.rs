@@ -71,5 +71,46 @@ pub(super) fn save_record_only(
     Ok(())
 }
 
+/// Replaces unfinished rows with a redacted terminal state after a bounded drain.
+pub(super) fn fail_pending(connection: &Connection) -> Result<bool, NativeRecoveryError> {
+    let mut statement = connection
+        .prepare("SELECT operation_id, source_database_id FROM native_recovery_operations WHERE phase IN ('accepted','capturing','measuring')")
+        .map_err(|_| NativeRecoveryError::Unavailable)?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|_| NativeRecoveryError::Unavailable)?;
+    let mut changed = false;
+    for row in rows {
+        let (operation_id, source_database_id) =
+            row.map_err(|_| NativeRecoveryError::Unavailable)?;
+        let operation = NativeRecoveryOperation {
+            operation_id,
+            source_database_id,
+            phase: super::NativeRecoveryPhase::Failed,
+            facts: None,
+            error: Some("native recovery drain deadline reached; retry the existing operation".into()),
+        };
+        save_record_only(connection, &operation)?;
+        changed = true;
+    }
+    Ok(changed)
+}
+
+pub(super) fn fail_row(
+    connection: &Connection,
+    operation_id: &str,
+    source_database_id: &str,
+    message: &str,
+) -> Result<(), NativeRecoveryError> {
+    let operation = NativeRecoveryOperation {
+        operation_id: operation_id.to_owned(),
+        source_database_id: source_database_id.to_owned(),
+        phase: super::NativeRecoveryPhase::Failed,
+        facts: None,
+        error: Some(message.to_owned()),
+    };
+    save_record_only(connection, &operation)
+}
+
 #[cfg(test)]
 mod tests;

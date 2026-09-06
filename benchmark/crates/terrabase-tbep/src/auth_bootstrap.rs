@@ -180,7 +180,9 @@ impl AuthBootstrapJournal {
     ///
     /// # Errors
     /// Refuses corrupt or unavailable control state.
-    pub fn identity(&self) -> Result<pb::AuthGroupBootstrapServiceIdentityResponse, PlacementError> {
+    pub fn identity(
+        &self,
+    ) -> Result<pb::AuthGroupBootstrapServiceIdentityResponse, PlacementError> {
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
         let incarnation: String = connection
             .query_row("SELECT incarnation FROM auth_identity WHERE id=1", [], |row| row.get(0))

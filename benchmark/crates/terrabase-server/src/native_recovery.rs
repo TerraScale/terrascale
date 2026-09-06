@@ -42,7 +42,7 @@ impl NativeRecoveryLimits {
 pub struct NativeRecoveryWorker {
     runtime: Arc<NativeRecoveryRuntime>,
     stop: tokio::sync::oneshot::Sender<()>,
-    join: tokio::task::JoinHandle<()>,
+    join: tokio::task::JoinHandle<bool>,
 }
 
 impl NativeRecoveryWorker {
@@ -50,7 +50,13 @@ impl NativeRecoveryWorker {
     pub async fn shutdown(self) -> Result<(), NativeRecoveryError> {
         *self.runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? = true;
         let _ = self.stop.send(());
-        self.join.await.map_err(|_| NativeRecoveryError::Unavailable)?;
+        let deadline = self.join.await.map_err(|_| NativeRecoveryError::Unavailable)?;
+        if deadline {
+            let connection = self.runtime.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
+            persistence::fail_pending(&connection)?;
+            *self.runtime.worker_error.lock().map_err(|_| NativeRecoveryError::Unavailable)? =
+                Some(NativeRecoveryError::Unavailable);
+        }
         if self.runtime.worker_error.lock().map_err(|_| NativeRecoveryError::Unavailable)?.is_some()
         {
             return Err(NativeRecoveryError::Unavailable);

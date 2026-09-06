@@ -233,9 +233,10 @@ fn drain_intent_process_exit_child() {
     let decode = |name| {
         base64::engine::general_purpose::STANDARD.decode(std::env::var(name).unwrap()).unwrap()
     };
-    let request =
-        pb::PlacementControlServiceStageRequest::decode(decode("TERRABASE_DRAIN_INTENT_REQUEST").as_slice())
-            .unwrap();
+    let request = pb::PlacementControlServiceStageRequest::decode(
+        decode("TERRABASE_DRAIN_INTENT_REQUEST").as_slice(),
+    )
+    .unwrap();
     let proposal = request.proposal.unwrap();
     let assignment = &proposal.assignments[0];
     let scope =

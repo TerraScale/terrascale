@@ -1527,11 +1527,27 @@ impl WebhookService {
                 return Err(WebhookError::storage(error));
             }
         };
-        // A provider outage leaves the scoped operation resumable. No delivery
-        // can proceed until its encrypted key has been provisioned.
-        self.secrets.provision(scope, &id, &self.region).map_err(WebhookError::secret)?;
-        let secret =
-            self.secrets.creation(scope, &id, &self.region).map_err(WebhookError::secret)?;
+        // An idempotent operation remains durable so a retry can recover after
+        // a provider outage. Without an operation key there is no way for the
+        // caller to identify this endpoint after an error, so clean it up
+        // before returning and release its quota reservation.
+        if let Err(error) = self.secrets.provision(scope, &id, &self.region) {
+            if operation.is_none() && self.storage.delete_endpoint(scope, &id).is_ok() {
+                self.guard.release(scope, &id);
+                let _ = self.secrets.destroy(scope, &id, &self.region);
+            }
+            return Err(WebhookError::secret(error));
+        }
+        let secret = match self.secrets.creation(scope, &id, &self.region) {
+            Ok(secret) => secret,
+            Err(error) => {
+                if operation.is_none() && self.storage.delete_endpoint(scope, &id).is_ok() {
+                    self.guard.release(scope, &id);
+                    let _ = self.secrets.destroy(scope, &id, &self.region);
+                }
+                return Err(WebhookError::secret(error));
+            }
+        };
         Ok(WebhookSecretResponse {
             webhook,
             secret: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret),
@@ -2494,6 +2510,36 @@ mod tests {
             Err(DeliveryError::TargetRejected)
         );
         assert_eq!(*transport.sent.lock().expect("sent"), 1);
+    }
+
+    #[test]
+    fn https_adapter_returns_redirect_without_following_it() {
+        struct RedirectTransport {
+            sent: Mutex<Vec<String>>,
+        }
+        impl HttpsTransport for RedirectTransport {
+            fn resolve(&self, _: &str) -> Result<Vec<IpAddr>, DeliveryError> {
+                Ok(vec!["1.1.1.1".parse().expect("public")])
+            }
+            fn send_https(
+                &self,
+                endpoint: &str,
+                _: &[IpAddr],
+                _: &BTreeMap<String, String>,
+                _: &[u8],
+            ) -> Result<DeliveryResponse, DeliveryError> {
+                self.sent.lock().expect("sent").push(endpoint.to_owned());
+                Ok(DeliveryResponse { status: 302 })
+            }
+        }
+        let transport = Arc::new(RedirectTransport { sent: Mutex::new(Vec::new()) });
+        let delivery = HttpsWebhookDelivery::new(Arc::clone(&transport));
+        let endpoint = "https://hooks.example/events";
+        assert_eq!(
+            delivery.send(endpoint, &BTreeMap::new(), b"body").expect("redirect response").status,
+            302
+        );
+        assert_eq!(transport.sent.lock().expect("sent").as_slice(), &[endpoint.to_owned()]);
     }
 
     #[test]

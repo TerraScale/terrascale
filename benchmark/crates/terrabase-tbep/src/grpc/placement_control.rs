@@ -32,8 +32,10 @@ pub trait PlacementDataControl: Send + Sync {
     ///
     /// # Errors
     /// Refuses unavailable or fenced physical, causal, and assignment evidence.
-    fn readiness(&self, request: &pb::PlacementControlServiceReadinessRequest)
-    -> Result<Vec<u8>, PlacementError>;
+    fn readiness(
+        &self,
+        request: &pb::PlacementControlServiceReadinessRequest,
+    ) -> Result<Vec<u8>, PlacementError>;
 }
 
 /// Authenticated placement control over one durable journal and bounded worker gate.
@@ -344,9 +346,11 @@ impl PlacementControlService for Arc<PlacementControlServer> {
                 "prepared transition exceeds its bound",
             ));
         }
-        self.work(move || data.drain(&operation, &request.prepared_transition))
-            .await
-            .map(|signed_receipt| Response::new(pb::PlacementControlServiceDrainResponse { signed_receipt }))
+        self.work(move || data.drain(&operation, &request.prepared_transition)).await.map(
+            |signed_receipt| {
+                Response::new(pb::PlacementControlServiceDrainResponse { signed_receipt })
+            },
+        )
     }
 
     async fn readiness(
@@ -366,9 +370,9 @@ impl PlacementControlService for Arc<PlacementControlServer> {
         {
             return Err(control_status(Code::InvalidArgument, "readiness challenge is invalid"));
         }
-        self.work(move || data.readiness(&request))
-            .await
-            .map(|signed_receipt| Response::new(pb::PlacementControlServiceReadinessResponse { signed_receipt }))
+        self.work(move || data.readiness(&request)).await.map(|signed_receipt| {
+            Response::new(pb::PlacementControlServiceReadinessResponse { signed_receipt })
+        })
     }
 
     async fn get_accepted(

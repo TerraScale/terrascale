@@ -89,11 +89,11 @@ impl RouteTable {
     /// Builds a validated table from routes.
     pub fn new(mut routes: Vec<ShardRoute>) -> Result<Self, RouteError> {
         routes.sort_by(|left, right| left.lower.cmp(&right.lower));
-        if routes.windows(2).any(|pair| {
-            pair[0]
-                .upper
-                .as_deref()
-                .is_none_or(|upper| pair[1].lower.as_deref().is_none_or(|lower| upper > lower))
+        if routes.windows(2).any(|pair| match pair[0].upper.as_deref() {
+            // A route without an upper bound owns the remainder of the key
+            // space, so any following route overlaps it.
+            None => true,
+            Some(upper) => pair[1].lower.as_deref().is_none_or(|lower| upper > lower),
         }) {
             return Err(RouteError::Overlap);
         }

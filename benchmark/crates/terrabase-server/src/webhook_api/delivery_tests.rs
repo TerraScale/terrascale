@@ -7,6 +7,8 @@ struct TestPorts {
     now: AtomicU64,
     sent: AtomicU64,
     destruction_unavailable: std::sync::atomic::AtomicBool,
+    provision_unavailable: std::sync::atomic::AtomicBool,
+    creation_unavailable: std::sync::atomic::AtomicBool,
     provision_gate: std::sync::Mutex<Option<ProvisionGate>>,
 }
 
@@ -100,6 +102,9 @@ impl WebhookJournal for TestPorts {
 
 impl WebhookSecrets for TestPorts {
     fn provision(&self, _: &TenantScope, _: &str, _: &str) -> Result<(), SecretError> {
+        if self.provision_unavailable.load(Ordering::SeqCst) {
+            return Err(SecretError::Unavailable);
+        }
         if let Some(gate) = self.provision_gate.lock().expect("provision gate").take() {
             gate.entered.send(()).map_err(|()| SecretError::Unavailable)?;
             gate.resume
@@ -121,6 +126,9 @@ impl WebhookSecrets for TestPorts {
         id: &str,
         region: &str,
     ) -> Result<Vec<u8>, SecretError> {
+        if self.creation_unavailable.load(Ordering::SeqCst) {
+            return Err(SecretError::Unavailable);
+        }
         self.get(scope, id, region)
     }
     fn rotate(
@@ -534,6 +542,68 @@ fn creation_retry_keeps_the_same_endpoint_and_secret_and_rejects_request_reuse()
         Some("create-1"),
     );
     assert!(matches!(conflict, Err(error) if error.status() == StatusCode::CONFLICT));
+    drop(service);
+    let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
+    engine.shutdown().expect("shutdown");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[test]
+fn non_idempotent_creation_failure_rolls_back_endpoint_and_quota() {
+    let root = std::env::temp_dir()
+        .join(format!("terrascale-webhook-create-rollback-{}", terrabase::identity::generate()));
+    let engine = Arc::new(
+        Engine::open(terrabase::EngineConfig::durable(root.clone()).expect("config"))
+            .expect("engine"),
+    );
+    let owner = engine.database_owner();
+    let scope = TenantScope::new(
+        owner.tenant().to_text(),
+        owner.project().to_text(),
+        owner.database().to_text(),
+    )
+    .expect("scope");
+    let ports = Arc::new(TestPorts::default());
+    let service = service(&engine, &ports);
+    ports.provision_unavailable.store(true, Ordering::SeqCst);
+    assert!(service
+        .create_with_secret(
+            &scope,
+            &CreateWebhook { endpoint: "https://hooks.example/keyed".into() },
+            Some("recoverable"),
+        )
+        .is_err());
+    ports.provision_unavailable.store(false, Ordering::SeqCst);
+    let recovered = service
+        .create_with_secret(
+            &scope,
+            &CreateWebhook { endpoint: "https://hooks.example/keyed".into() },
+            Some("recoverable"),
+        )
+        .expect("idempotent retry");
+    service.delete(&scope, &recovered.webhook.id).expect("cleanup recovered endpoint");
+
+    ports.provision_unavailable.store(true, Ordering::SeqCst);
+    assert!(service
+        .create_with_secret(
+            &scope,
+            &CreateWebhook { endpoint: "https://hooks.example/events".into() },
+            None,
+        )
+        .is_err());
+    assert!(service.list(&scope).expect("list").is_empty());
+
+    ports.provision_unavailable.store(false, Ordering::SeqCst);
+    ports.creation_unavailable.store(true, Ordering::SeqCst);
+    assert!(service
+        .create_with_secret(
+            &scope,
+            &CreateWebhook { endpoint: "https://hooks.example/events".into() },
+            None,
+        )
+        .is_err());
+    assert!(service.list(&scope).expect("list").is_empty());
+
     drop(service);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
     engine.shutdown().expect("shutdown");

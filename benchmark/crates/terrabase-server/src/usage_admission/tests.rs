@@ -16,7 +16,7 @@ use std::{
 use terrabase::identity::{ClusterUlid, DatabaseUlid, MemberUlid, ProjectUlid, TenantUlid};
 use terrabase_cluster::production::DatabaseRouteScope;
 use terrabase_tbep::{
-    placement::{transition::TransitionTrust, PlacementBoundary, PlacementJournal},
+    placement::{PlacementBoundary, PlacementJournal, transition::TransitionTrust},
     proto::terrabase::v1 as pb,
 };
 
@@ -408,28 +408,30 @@ fn corrupt_stored_registration_is_rejected() {
         .execute("UPDATE registrations SET payload=?1", [b"invalid json".as_slice()])
         .unwrap();
     drop(connection);
-    assert!(fixture
-        .open()
-        .resolve(
-            &crate::admission::AdmissionRecord {
-                created_at: 1,
-                environment: fixture.environment.clone(),
-                tenant_id: fixture.scope.tenant().to_text(),
-                project_id: fixture.scope.project().to_text(),
-                database_id: fixture.scope.database().to_text(),
-                parent_database_id: None,
-                key_version: "v1".into(),
-                name: "db".into(),
-                regions: vec!["GRU".into()],
-                residency: "GRU".into(),
-                operation_id: "usage-registration".into(),
-                region: "GRU".into(),
-                member_id: fixture.member.clone()
-            },
-            1,
-            &fixture.proof_digest
-        )
-        .is_err());
+    assert!(
+        fixture
+            .open()
+            .resolve(
+                &crate::admission::AdmissionRecord {
+                    created_at: 1,
+                    environment: fixture.environment.clone(),
+                    tenant_id: fixture.scope.tenant().to_text(),
+                    project_id: fixture.scope.project().to_text(),
+                    database_id: fixture.scope.database().to_text(),
+                    parent_database_id: None,
+                    key_version: "v1".into(),
+                    name: "db".into(),
+                    regions: vec!["GRU".into()],
+                    residency: "GRU".into(),
+                    operation_id: "usage-registration".into(),
+                    region: "GRU".into(),
+                    member_id: fixture.member.clone()
+                },
+                1,
+                &fixture.proof_digest
+            )
+            .is_err()
+    );
 }
 
 #[cfg(unix)]
@@ -439,25 +441,29 @@ fn unsafe_usage_paths_are_refused() {
     let fixture = Fixture::new();
     let link = fixture.root.join("usage-link");
     std::os::unix::fs::symlink(&fixture.usage_root, &link).unwrap();
-    assert!(UsageAdmissionJournal::open(
-        &link,
-        fixture.environment.clone(),
-        fixture.member.clone(),
-        fixture.region.clone(),
-        fixture.placement.clone()
-    )
-    .is_err());
+    assert!(
+        UsageAdmissionJournal::open(
+            &link,
+            fixture.environment.clone(),
+            fixture.member.clone(),
+            fixture.region.clone(),
+            fixture.placement.clone()
+        )
+        .is_err()
+    );
     let world = fixture.root.join("world");
     fs::create_dir(&world).unwrap();
     fs::set_permissions(&world, fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(UsageAdmissionJournal::open(
-        &world,
-        fixture.environment.clone(),
-        fixture.member.clone(),
-        fixture.region.clone(),
-        fixture.placement.clone()
-    )
-    .is_err());
+    assert!(
+        UsageAdmissionJournal::open(
+            &world,
+            fixture.environment.clone(),
+            fixture.member.clone(),
+            fixture.region.clone(),
+            fixture.placement.clone()
+        )
+        .is_err()
+    );
     fs::set_permissions(&world, fs::Permissions::from_mode(0o700)).unwrap();
     drop(
         UsageAdmissionJournal::open(
@@ -471,23 +477,27 @@ fn unsafe_usage_paths_are_refused() {
     );
     let file = world.join("usage-admissions.sqlite");
     fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
-    assert!(UsageAdmissionJournal::open(
-        &world,
-        fixture.environment.clone(),
-        fixture.member.clone(),
-        fixture.region.clone(),
-        fixture.placement.clone()
-    )
-    .is_err());
+    assert!(
+        UsageAdmissionJournal::open(
+            &world,
+            fixture.environment.clone(),
+            fixture.member.clone(),
+            fixture.region.clone(),
+            fixture.placement.clone()
+        )
+        .is_err()
+    );
     fs::remove_file(&file).unwrap();
     drop(fixture.open());
     std::os::unix::fs::symlink(fixture.usage_root.join("usage-admissions.sqlite"), &file).unwrap();
-    assert!(UsageAdmissionJournal::open(
-        &world,
-        fixture.environment.clone(),
-        fixture.member.clone(),
-        fixture.region.clone(),
-        fixture.placement.clone()
-    )
-    .is_err());
+    assert!(
+        UsageAdmissionJournal::open(
+            &world,
+            fixture.environment.clone(),
+            fixture.member.clone(),
+            fixture.region.clone(),
+            fixture.placement.clone()
+        )
+        .is_err()
+    );
 }

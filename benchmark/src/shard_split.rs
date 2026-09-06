@@ -268,6 +268,26 @@ mod tests {
         assert_eq!(router.route(b"z"), Some(1));
     }
 
+    /// An unbounded route cannot be followed by another route: the latter
+    /// would be unreachable for every key it claims to own.
+    #[test]
+    fn route_table_rejects_unbounded_route_followed_by_bounded_route() {
+        let whole = ShardRoute::new(1, None, None).expect("whole key space");
+        let suffix = ShardRoute::new(2, Some(b"m".to_vec()), None).expect("suffix");
+        assert_eq!(RouteTable::new(vec![whole, suffix]), Err(RouteError::Overlap));
+    }
+
+    /// Adjacent half-open ranges remain valid and route their boundary key
+    /// to the upper range only.
+    #[test]
+    fn route_table_accepts_adjacent_partitions() {
+        let lower = ShardRoute::new(1, None, Some(b"m".to_vec())).expect("lower");
+        let upper = ShardRoute::new(2, Some(b"m".to_vec()), None).expect("upper");
+        let table = RouteTable::new(vec![upper, lower]).expect("adjacent ranges");
+        assert_eq!(table.route(b"l"), Some(1));
+        assert_eq!(table.route(b"m"), Some(2));
+    }
+
     /// A checkpoint is advanced even when a page contains only rows outside
     /// the moved range; otherwise catch-up loops forever on that page.
     #[test]

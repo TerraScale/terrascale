@@ -101,7 +101,11 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
     assert_auth_bootstrap(&fixture, channel.clone()).await;
 
     assert_eq!(
-        client.get(request(pb::PlacementControlServiceGetRequest {}, None)).await.unwrap_err().code(),
+        client
+            .get(request(pb::PlacementControlServiceGetRequest {}, None))
+            .await
+            .unwrap_err()
+            .code(),
         Code::NotFound
     );
     let response = client
@@ -151,7 +155,11 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
     );
     server.begin_drain();
     assert_eq!(
-        client.get(request(pb::PlacementControlServiceGetRequest {}, None)).await.unwrap_err().code(),
+        client
+            .get(request(pb::PlacementControlServiceGetRequest {}, None))
+            .await
+            .unwrap_err()
+            .code(),
         Code::Unavailable
     );
     let _ = stop.send(());

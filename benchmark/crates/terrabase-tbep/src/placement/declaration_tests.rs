@@ -34,7 +34,9 @@ fn with_control_declaration(
     request
 }
 
-fn successor(mut request: pb::PlacementControlServiceStageRequest) -> pb::PlacementControlServiceStageRequest {
+fn successor(
+    mut request: pb::PlacementControlServiceStageRequest,
+) -> pb::PlacementControlServiceStageRequest {
     request.expected_revision = 1;
     let proposal = request.proposal.as_mut().unwrap();
     proposal.generation = 2;

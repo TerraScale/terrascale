@@ -842,7 +842,9 @@ impl PlacementJournal {
     ///
     /// # Errors
     /// Rejects missing proofs or invalid retained chain.
-    pub fn accepted(&self) -> Result<pb::PlacementControlServiceGetAcceptedResponse, PlacementError> {
+    pub fn accepted(
+        &self,
+    ) -> Result<pb::PlacementControlServiceGetAcceptedResponse, PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
         let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
@@ -1176,7 +1178,9 @@ impl PlacementJournal {
     ///
     /// # Errors
     /// Refuses absent or invalid accepted authority and unavailable durable storage.
-    pub fn accepted_proposal(&self) -> Result<pb::PlacementControlServiceStageResponse, PlacementError> {
+    pub fn accepted_proposal(
+        &self,
+    ) -> Result<pb::PlacementControlServiceStageResponse, PlacementError> {
         let configured = self.trust.lock().map_err(|_| PlacementError::Storage)?;
         let trust = configured.as_ref().ok_or(PlacementError::Invalid)?;
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;

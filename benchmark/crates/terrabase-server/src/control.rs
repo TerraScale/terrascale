@@ -24,6 +24,7 @@ use terrabase::Engine;
 use terrabase::EngineConfig;
 use terrabase::engine::EngineError;
 use terrabase::regions::RegionCode;
+use terrabase::regions::RegionCatalog;
 use terrabase::types::CollectionName;
 use terrabase::types::Document;
 use terrabase::types::DocumentId;
@@ -121,6 +122,7 @@ impl DatabaseRecord {
 pub struct ControlPlane {
     engine: Engine,
     scope: TenantScope,
+    catalog: RegionCatalog,
 }
 
 impl ControlPlane {
@@ -132,6 +134,16 @@ impl ControlPlane {
     /// Returns [`ControlError::Registry`] when the engine cannot open the
     /// location.
     pub fn open(root: &Path) -> Result<Self, ControlError> {
+        Self::open_with_catalog(root, RegionCatalog::production())
+    }
+
+    /// Opens the registry with the authoritative orchestrator Region catalog.
+    /// The catalog is supplied by the caller so future admitted Regions are
+    /// accepted without changing this control-plane code.
+    pub fn open_with_catalog(
+        root: &Path,
+        catalog: RegionCatalog,
+    ) -> Result<Self, ControlError> {
         let engine = Engine::open(
             EngineConfig::durable(root.join("control-plane"))
                 .map_err(|error| ControlError::Registry(format!("{error:?}")))?,
@@ -141,7 +153,7 @@ impl ControlPlane {
             &TenantId::try_new(REGISTRY_TENANT)
                 .map_err(|error| ControlError::Registry(format!("{error:?}")))?,
         );
-        Ok(Self { engine, scope })
+        Ok(Self { engine, scope, catalog })
     }
 
     /// Creates one database record. The placement is an explicit, non-empty
@@ -161,9 +173,9 @@ impl ControlPlane {
         residency: Option<&str>,
     ) -> Result<DatabaseRecord, ControlError> {
         validate_name(name)?;
-        validate_placement(placement)?;
+        validate_placement(&self.catalog, placement)?;
         if let Some(constraint) = residency {
-            validate_residency(constraint, placement)?;
+            validate_residency(&self.catalog, constraint, placement)?;
         }
         if let Some(existing) = self.get(name)? {
             if existing.deleted {
@@ -212,8 +224,8 @@ impl ControlPlane {
             _ => return Err(ControlError::NotFound(parent.to_owned())),
         };
         validate_name(name)?;
-        validate_placement(placement)?;
-        let inherited = lock_allows_derived(&parent_record, placement, residency)?;
+        validate_placement(&self.catalog, placement)?;
+        let inherited = lock_allows_derived(&self.catalog, &parent_record, placement, residency)?;
         if let Some(existing) = self.get(name)? {
             if existing.deleted {
                 return Err(ControlError::SoftDeleted(name.to_owned()));
@@ -254,8 +266,8 @@ impl ControlPlane {
             Some(record) if !record.deleted => record,
             _ => return Err(ControlError::NotFound(source.to_owned())),
         };
-        validate_placement(placement)?;
-        lock_allows_derived(&source_record, placement, None)
+        validate_placement(&self.catalog, placement)?;
+        lock_allows_derived(&self.catalog, &source_record, placement, None)
     }
 
     /// Lists every record, deleted records included (the dashboard's
@@ -496,6 +508,7 @@ fn record_body(record: &DatabaseRecord) -> DocumentValue {
 /// fail-closed rather than guessed. Returns the residency the derived
 /// record must store.
 fn lock_allows_derived(
+    catalog: &RegionCatalog,
     source: &DatabaseRecord,
     placement: &[RegionCode],
     residency: Option<&str>,
@@ -523,7 +536,7 @@ fn lock_allows_derived(
         (None, requested) => requested.map(str::to_owned),
     };
     if let Some(constraint) = inherited.as_deref() {
-        validate_residency(constraint, placement)?;
+        validate_residency(catalog, constraint, placement)?;
     }
     Ok(inherited)
 }
@@ -546,9 +559,15 @@ fn validate_name(name: &str) -> Result<(), ControlError> {
 }
 
 /// Validates a placement: non-empty, every region a well-formed code.
-fn validate_placement(placement: &[RegionCode]) -> Result<(), ControlError> {
+fn validate_placement(
+    catalog: &RegionCatalog,
+    placement: &[RegionCode],
+) -> Result<(), ControlError> {
     if placement.is_empty() {
         return Err(ControlError::InvalidPlacement("the region list is empty".into()));
+    }
+    if let Some(region) = placement.iter().find(|region| !catalog.is_registered(region)) {
+        return Err(ControlError::InvalidPlacement(format!("region {region} is not registered")));
     }
     Ok(())
 }
@@ -558,7 +577,11 @@ fn validate_placement(placement: &[RegionCode]) -> Result<(), ControlError> {
 /// placement region must satisfy it.
 // ponytail: the eu/br sets hardcode the launch catalog (GRU/SFO/FRA); an
 // orchestrator-fed geo map replaces this when the 4th region lands.
-fn validate_residency(constraint: &str, placement: &[RegionCode]) -> Result<(), ControlError> {
+fn validate_residency(
+    catalog: &RegionCatalog,
+    constraint: &str,
+    placement: &[RegionCode],
+) -> Result<(), ControlError> {
     let allowed: Vec<RegionCode> = match constraint {
         "eu-only" => vec![RegionCode::FRA],
         "br-only" => vec![RegionCode::GRU],
@@ -570,6 +593,9 @@ fn validate_residency(constraint: &str, placement: &[RegionCode]) -> Result<(), 
             .map_err(|_| ControlError::InvalidResidency(constraint.to_owned()))?,
     };
     if allowed.is_empty() {
+        return Err(ControlError::InvalidResidency(constraint.to_owned()));
+    }
+    if allowed.iter().any(|region| !catalog.is_registered(region)) {
         return Err(ControlError::InvalidResidency(constraint.to_owned()));
     }
     for region in placement {
@@ -599,7 +625,7 @@ fn registry_error(error: &EngineError) -> ControlError {
 mod tests {
     use super::ControlError;
     use super::ControlPlane;
-    use terrabase::regions::RegionCode;
+    use terrabase::regions::{RegionCatalog, RegionCode};
 
     fn plane() -> (tempdir::TempDir, ControlPlane) {
         let dir = tempdir::TempDir::new().expect("tempdir");
@@ -643,6 +669,26 @@ mod tests {
             plane.create("bad-db", &[RegionCode::GRU], Some("nope")),
             Err(ControlError::InvalidResidency(_))
         ));
+    }
+
+    #[test]
+    fn placement_requires_registered_regions_but_accepts_a_future_catalog_admission() {
+        let unknown = RegionCode::from_wire_bytes(*b"XYZ").expect("valid shape");
+        let (_dir, plane) = plane();
+        assert!(matches!(
+            plane.create("unknown", &[unknown], None),
+            Err(ControlError::InvalidPlacement(_))
+        ));
+        assert!(matches!(
+            plane.create("unknown-residency", &[RegionCode::GRU], Some("GRU,XYZ")),
+            Err(ControlError::InvalidResidency(_))
+        ));
+
+        let dir = tempdir::TempDir::new().expect("tempdir");
+        let mut catalog = RegionCatalog::production();
+        catalog.admit(unknown).expect("future region admission");
+        let plane = ControlPlane::open_with_catalog(dir.path(), catalog).expect("opens");
+        assert!(plane.create("future", &[unknown], Some("XYZ")).is_ok());
     }
 
     #[test]

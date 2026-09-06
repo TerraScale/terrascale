@@ -1106,6 +1106,18 @@ struct PendingPut {
     expected: ExpectedVersion,
 }
 
+/// A committed save whose response could not complete the session frontier
+/// observation. The write set is retained because generated stores are only
+/// present in the transaction-local preparation map until the save is fully
+/// acknowledged by the session.
+struct PendingCommit {
+    operation: OperationId,
+    receipt: crate::engine::CommitReceipt,
+    puts: BTreeMap<DocKey, (DocumentValue, ExpectedVersion)>,
+    deletes: Vec<(DocKey, ExpectedVersion)>,
+    generated: Vec<DocKey>,
+}
+
 /// The identity-map key: storage keys a document by tenant, collection,
 /// and identifier.
 type DocKey = (CollectionName, DocumentId);
@@ -1135,6 +1147,7 @@ pub struct Session<'engine> {
     hooks: SessionHooks,
     operation_counter: u64,
     identity: u64,
+    pending_commit: Option<PendingCommit>,
 }
 
 impl fmt::Debug for Session<'_> {
@@ -1205,6 +1218,7 @@ impl<'engine> Session<'engine> {
             hooks: SessionHooks::default(),
             operation_counter: 0,
             identity: next_session_identity(),
+            pending_commit: None,
         })
     }
 

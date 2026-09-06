@@ -1437,10 +1437,16 @@ fn literal(
             .or_else(|_| value.parse::<f64>().map(DocumentValue::Number))
             .map_err(|_| unsupported("numeric literal")),
         Value::Placeholder(name) => {
-            let mut name = name.trim_start_matches(['$', ':', '@']).to_owned();
-            if name == "?" {
+            // Keep direct callers of `validate_parameters` and `lower` in
+            // agreement with QueryStore's marker normalization: sqlparser
+            // preserves the `?` in numbered markers (`?1`), while named
+            // markers arrive with their sigil.  All of these names share the
+            // same out-of-band binding key.
+            let bare = name == "?";
+            let mut name = name.trim_start_matches(['$', ':', '@', '?']).to_owned();
+            if bare {
                 let mut ordinal = 1_u64;
-                while parameters.contains(&ordinal.to_string()) {
+                while used.contains(&ordinal.to_string()) {
                     ordinal = ordinal.saturating_add(1);
                 }
                 name = ordinal.to_string();
