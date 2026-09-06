@@ -44,3 +44,16 @@ it("stages findOne only with an explicit transaction identity and stable key", a
   expect(() => client.findOne("db", "user", "one", { transactionId: "tx-one" })).toThrow(TypeError);
   expect(() => client.findOne("db", "user", "one", { idempotencyKey: "find-one" })).toThrow(TypeError);
 });
+
+it("bounds begin labels in UTF-8 bytes and preserves the returned transaction identity", async () => {
+  let calls = 0;
+  const client = createAuthPersistenceClient({ fetch: async () => {
+    calls++;
+    return Response.json({ record: null, matched: true, transactionId: "é".repeat(50) + "#42", expiresAtMs: 30_000 });
+  } });
+  const result = await client.beginTransaction("db", { transactionId: "é".repeat(50) }, { idempotencyKey: "begin" });
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.value.transactionId).toBe("é".repeat(50) + "#42");
+  expect(() => client.beginTransaction("db", { transactionId: "é".repeat(50) + "x" }, { idempotencyKey: "too-long" })).toThrow(TypeError);
+  expect(calls).toBe(1);
+});

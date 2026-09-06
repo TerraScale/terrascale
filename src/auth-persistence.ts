@@ -68,8 +68,9 @@ export class AuthPersistenceClient {
     return this.#http.request({ method: "POST", path: `${authPath(database)}/findPage`, routeName: "databases.findPage", body: request, ...mutationOptions(options) });
   }
 
+  /** Use the returned transactionId for every operation, commit, and rollback. */
   beginTransaction(database: string, request: AuthTransactionIdentity, options: AuthTransactionOptions): Promise<TerraScaleResult<AuthPersistenceResult>> {
-    identity(request.transactionId, "transactionId", 128);
+    identity(request.transactionId, "transactionId", 100);
     return this.#http.request({ method: "POST", path: `${authPath(database)}/transactions/begin`, routeName: "databases.beginTransaction", body: request, ...transactionOptions(options) });
   }
 
