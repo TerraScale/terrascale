@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -164,6 +165,8 @@ func TestDownloadExportPreservesBinaryArtifact(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Header().Set("Cache-Control", "private, no-store")
+			w.Header().Set("X-TerraScale-Artifact-Length", fmt.Sprint(len(body)))
+			w.Header().Set("X-TerraScale-Artifact-Checksum", strings.Repeat("a", 64))
 			_, _ = w.Write(body)
 		}))
 		client, err := NewClient(Config{APIBaseURL: server.URL})
@@ -172,7 +175,7 @@ func TestDownloadExportPreservesBinaryArtifact(t *testing.T) {
 		}
 		got, err := client.Databases.DownloadExport(t.Context(), "demo", "job-1", "documents/part-1.jsonl")
 		server.Close()
-		if err != nil || !bytes.Equal(got, body) {
+		if err != nil || got == nil || !bytes.Equal(got.Bytes, body) {
 			t.Fatalf("download changed bytes: %x want %x: %v", got, body, err)
 		}
 	}

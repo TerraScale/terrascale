@@ -460,6 +460,7 @@ type requestConfig struct {
 	deleteConfirmation string
 	schemaIfMatch      string
 	responseMediaType  string
+	responseHeaders    *http.Header
 	createOnly         bool
 	authTransaction    string
 	noRetry            bool
@@ -614,6 +615,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		base := c.currentBase()
 		globalFirstContact := c.isGlobalFirstContact(base)
 		status, headers, respBody, transportErr := c.roundTrip(requestCtx, method, base, path, query, payload, rc, idem)
+		if rc.responseHeaders != nil {
+			*rc.responseHeaders = headers.Clone()
+		}
 		if transportErr != nil {
 			if !recoveredPin && requestCtx.Err() == nil && canRecoverRead(method) && c.clearFailedPin(base) {
 				recoveredPin = true

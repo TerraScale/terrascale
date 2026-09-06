@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -303,9 +304,17 @@ func managementResourcePath(ctx context.Context, database, kind, id string) (str
 	return path + "/" + kind + "/" + url.PathEscape(id), nil
 }
 
+// ExportDownload contains one decrypted artifact member and its plaintext
+// integrity metadata returned by the server.
+type ExportDownload struct {
+	Bytes    []byte
+	Length   uint64
+	Checksum string
+}
+
 // DownloadExport retrieves one decrypted artifact member after export completion.
 // The member is escaped as one path segment; JSON is never applied to its bytes.
-func (d *DatabasesClient) DownloadExport(ctx context.Context, database, jobID, member string, opts ...RequestOption) ([]byte, error) {
+func (d *DatabasesClient) DownloadExport(ctx context.Context, database, jobID, member string, opts ...RequestOption) (*ExportDownload, error) {
 	path, err := managementResourcePath(ctx, database, "exports", jobID)
 	if err != nil {
 		return nil, err
@@ -314,11 +323,24 @@ func (d *DatabasesClient) DownloadExport(ctx context.Context, database, jobID, m
 		return nil, err
 	}
 	opts = append(opts, func(rc *requestConfig) { rc.responseMediaType = "application/octet-stream" })
+	var headers http.Header
+	opts = append(opts, func(rc *requestConfig) { rc.responseHeaders = &headers })
 	var out binaryResponse
 	if err := d.c.do(ctx, "GET", path+"/artifacts/"+url.PathEscape(member), nil, nil, &out, "download_export", opts...); err != nil {
 		return nil, err
 	}
-	return []byte(out), nil
+	length, err := strconv.ParseUint(headers.Get("X-TerraScale-Artifact-Length"), 10, 64)
+	if err != nil || strconv.FormatUint(length, 10) != headers.Get("X-TerraScale-Artifact-Length") {
+		return nil, fmt.Errorf("sdk: invalid artifact length header")
+	}
+	checksum := headers.Get("X-TerraScale-Artifact-Checksum")
+	if len(checksum) != 64 || strings.Trim(checksum, "0123456789abcdefABCDEF") != "" {
+		return nil, fmt.Errorf("sdk: invalid artifact checksum header")
+	}
+	if uint64(len(out)) != length {
+		return nil, fmt.Errorf("sdk: artifact length header does not match body")
+	}
+	return &ExportDownload{Bytes: []byte(out), Length: length, Checksum: strings.ToLower(checksum)}, nil
 }
 
 // ProvisioningOperation acknowledges durable work; it does not imply readiness.
