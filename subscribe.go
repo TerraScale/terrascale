@@ -5,7 +5,7 @@
 // A checkpoint is an opaque authorized-view position. Any identity,
 // generation, schema, entitlement, region, or retention mismatch surfaces as
 // a typed ResetError with a fresh snapshot; the consumer resubscribes.
-// WebSocket is an explicit opt-in transport (not implemented in this stub).
+// WebSocket is an explicit opt-in transport.
 package sdk
 
 import (
@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/coder/websocket"
 )
 
 // Checkpoint is an opaque authorized-view position (journal cut).
@@ -305,6 +307,9 @@ type Subscription struct {
 	capabilityHeader string
 	region           string
 	sessionToken     string
+	statement        string
+	parameters       []byte
+	websocket        *websocket.Conn
 
 	mu         sync.RWMutex
 	checkpoint Checkpoint
@@ -400,6 +405,9 @@ func (s *Subscription) Close() {
 			s.cancel()
 		}
 		close(s.done)
+		if s.websocket != nil {
+			_ = s.websocket.Close(websocket.StatusNormalClosure, "closed")
+		}
 	})
 	s.wg.Wait()
 }
@@ -458,9 +466,6 @@ func (c *Client) Execute(ctx context.Context, databaseID, statement string, para
 // Close is called. A typed reset is delivered as an UpdateReset event and
 // ends the stream; resubscribe for a fresh authorized snapshot.
 func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, params []any, sub SubscriptionOptions, opts ...RequestOption) (*Subscription, error) {
-	if sub.Transport == TransportWebSocket {
-		return nil, fmt.Errorf("sdk: websocket transport is not implemented in this stub; use HTTP long-polling")
-	}
 	attach, err := c.attach(ctx, databaseID, statement, params, sub, opts)
 	if err != nil {
 		return nil, err
@@ -499,11 +504,31 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 		capabilityHeader: attach.CapabilityHeader,
 		region:           normalizeRegion(attach.Region),
 		sessionToken:     c.SessionToken(),
+		statement:        statement,
 		checkpoint:       attach.Checkpoint,
 		offset:           attachOffset(attach),
 		events:           make(chan Update, 128),
 		done:             make(chan struct{}),
 		cancel:           cancel,
+	}
+	if sub.Transport == TransportWebSocket {
+		parameterMap, err := canonicalSQLParameters(params)
+		if err != nil {
+			return nil, err
+		}
+		s.parameters, err = json.Marshal(parameterMap)
+		if err != nil {
+			return nil, fmt.Errorf("sdk: encode reactive parameters: %w", err)
+		}
+		conn, err := c.dialReactiveWebSocket(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		s.websocket = conn
+		if err := writeReactiveSubscribe(ctx, conn, s); err != nil {
+			_ = conn.Close(websocket.StatusProtocolError, "invalid subscribe")
+			return nil, err
+		}
 	}
 	for index, doc := range attach.Snapshot {
 		cp := s.Checkpoint()
@@ -515,7 +540,11 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 	// origin cannot deliver a delta ahead of the snapshot. Detach the poll
 	// loop from the caller's ctx lifetime via Close and the parent ctx.
 	s.wg.Add(1)
-	go s.pollLoop(pollCtx)
+	if sub.Transport == TransportWebSocket {
+		go s.websocketLoop(pollCtx)
+	} else {
+		go s.pollLoop(pollCtx)
+	}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -524,6 +553,166 @@ func (c *Client) Subscribe(ctx context.Context, databaseID, statement string, pa
 		}
 	}()
 	return s, nil
+}
+
+func (c *Client) dialReactiveWebSocket(ctx context.Context, s *Subscription) (*websocket.Conn, error) {
+	origin, err := reactiveOrigin(c)
+	if err != nil {
+		return nil, err
+	}
+	u, err := url.Parse(origin + canonicalReactivePath(s.viewID, s.generation, "websocket"))
+	if err != nil {
+		return nil, fmt.Errorf("sdk: invalid reactive WebSocket URL: %w", err)
+	}
+	if u.Scheme == "http" {
+		u.Scheme = "ws"
+	} else {
+		u.Scheme = "wss"
+	}
+	if !validWebSocketToken(s.capability) {
+		return nil, fmt.Errorf("sdk: attach response has invalid view capability")
+	}
+	header := make(http.Header)
+	c.decorateScopeHeaders(header)
+	if token := c.token(); token != "" {
+		if strings.HasPrefix(token, "Bearer ") {
+			header.Set("Authorization", token)
+		} else {
+			header.Set("Authorization", "Bearer "+token)
+		}
+	}
+	if causal := strings.TrimSpace(s.sessionToken); causal != "" {
+		header.Set("X-TerraScale-Session", causal)
+	}
+	conn, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{
+		HTTPClient: c.http,
+		HTTPHeader: header,
+		Subprotocols: []string{
+			"terrascale.sync.v1",
+			"terrascale.cap." + s.capability,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("sdk: reactive WebSocket upgrade failed: %w", err)
+	}
+	if resp != nil {
+		c.observeSession(resp.Header)
+		s.sessionToken = c.SessionToken()
+	}
+	if conn.Subprotocol() != "terrascale.sync.v1" {
+		_ = conn.Close(websocket.StatusProtocolError, "unsupported subprotocol")
+		return nil, fmt.Errorf("sdk: reactive WebSocket negotiated unsupported subprotocol")
+	}
+	conn.SetReadLimit(maxReactiveBody)
+	return conn, nil
+}
+
+func validWebSocketToken(value string) bool {
+	if value == "" || len(value) > 4096 || strings.ContainsAny(value, "\r\n") {
+		return false
+	}
+	for _, b := range []byte(value) {
+		if b <= 0x20 || b >= 0x7f || strings.ContainsRune("()<>@,;:\\[\\]?={}\"/", rune(b)) {
+			return false
+		}
+	}
+	return true
+}
+
+func writeReactiveSubscribe(ctx context.Context, conn *websocket.Conn, s *Subscription) error {
+	checkpoint := []byte(s.Checkpoint())
+	body := mpArray(4)
+	body = append(body, mpString(s.viewID)...)
+	body = append(body, mpString(s.statement)...)
+	body = append(body, mpBinaryValue(s.parameters)...)
+	if len(checkpoint) == 0 {
+		body = append(body, 0xc0)
+	} else {
+		body = append(body, mpBinaryValue(checkpoint)...)
+	}
+	frame := mpArray(7)
+	for _, value := range []uint64{1, 0, 0, 1, 1, 0} {
+		frame = append(frame, mpUintValue(value)...)
+	}
+	frame = append(frame, body...)
+	if len(frame) > maxReactiveBody {
+		return fmt.Errorf("sdk: reactive subscribe frame exceeds %d bytes", maxReactiveBody)
+	}
+	return conn.Write(ctx, websocket.MessageBinary, frame)
+}
+
+func (s *Subscription) websocketLoop(ctx context.Context) {
+	defer s.wg.Done()
+	defer close(s.events)
+	defer s.cancel()
+	for {
+		typ, frame, err := s.websocket.Read(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				s.deliver(Update{Kind: UpdateReset, Checkpoint: s.Checkpoint(), Reset: &ResetError{Reason: ResetReconnect, Message: "reactive WebSocket connection closed", ViewID: s.viewID, Generation: s.generation}})
+			}
+			return
+		}
+		if typ != websocket.MessageBinary {
+			_ = s.websocket.Close(websocket.StatusProtocolError, "binary MessagePack required")
+			s.deliver(Update{Kind: UpdateReset, Checkpoint: s.Checkpoint(), Reset: &ResetError{Reason: ResetReconnect, Message: "reactive WebSocket sent a non-binary frame", ViewID: s.viewID, Generation: s.generation}})
+			return
+		}
+		updates, cp, _, reset, err := decodeReactiveMessagePack(frame, s.viewID, s.generation)
+		if err != nil {
+			_ = s.websocket.Close(websocket.StatusProtocolError, "invalid reactive frame")
+			s.deliver(Update{Kind: UpdateReset, Checkpoint: s.Checkpoint(), Reset: &ResetError{Reason: ResetReconnect, Message: "invalid reactive WebSocket frame", ViewID: s.viewID, Generation: s.generation}})
+			return
+		}
+		if cp != "" {
+			s.setProgress(cp, "", "")
+		}
+		if reset != nil {
+			s.deliver(Update{Kind: UpdateReset, Checkpoint: s.Checkpoint(), Snapshot: cloneDocuments(reset.Snapshot), Reset: reset})
+			return
+		}
+		for _, update := range updates {
+			if update.Checkpoint == "" {
+				update.Checkpoint = cp
+			}
+			if !s.deliver(update) {
+				return
+			}
+		}
+	}
+}
+
+func mpArray(n int) []byte { return []byte{0x90 | byte(n)} }
+
+func mpUintValue(v uint64) []byte {
+	if v <= 0x7f {
+		return []byte{byte(v)}
+	}
+	if v <= 0xff {
+		return []byte{0xcc, byte(v)}
+	}
+	if v <= 0xffff {
+		return []byte{0xcd, byte(v >> 8), byte(v)}
+	}
+	if v <= 0xffffffff {
+		return []byte{0xce, byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}
+	}
+	return []byte{0xcf, byte(v >> 56), byte(v >> 48), byte(v >> 40), byte(v >> 32), byte(v >> 24), byte(v >> 16), byte(v >> 8), byte(v)}
+}
+
+func mpString(v string) []byte {
+	b := []byte(v)
+	if len(b) < 32 {
+		return append([]byte{0xa0 | byte(len(b))}, b...)
+	}
+	if len(b) <= 65535 {
+		return append([]byte{0xda, byte(len(b) >> 8), byte(len(b))}, b...)
+	}
+	return append([]byte{0xdb, byte(len(b) >> 24), byte(len(b) >> 16), byte(len(b) >> 8), byte(len(b))}, b...)
+}
+
+func mpBinaryValue(v []byte) []byte {
+	return append([]byte{0xc6, byte(len(v) >> 24), byte(len(v) >> 16), byte(len(v) >> 8), byte(len(v))}, v...)
 }
 
 func (c *Client) attach(ctx context.Context, databaseID, statement string, params []any, sub SubscriptionOptions, opts []RequestOption) (*attachResponse, error) {

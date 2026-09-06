@@ -62,6 +62,25 @@ func TestPackagedGoConsumerPreservesSQLIntegers(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(filepath.Join(versionRoot, "v0.0.0.zip"), packed.Bytes())
+	// Mirror direct dependencies into the isolated file proxy. The packaged
+	// consumer intentionally has no source-checkout access or public proxy.
+	cacheOutput, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := strings.TrimSpace(string(cacheOutput))
+	dependencyRoot := filepath.Join(proxy, "github.com", "coder", "websocket", "@v")
+	if err := os.MkdirAll(dependencyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{".mod", ".info", ".zip"} {
+		name := "v1.8.15" + suffix
+		data, err := os.ReadFile(filepath.Join(cache, "cache", "download", "github.com", "coder", "websocket", "@v", name))
+		if err != nil {
+			t.Fatalf("read websocket module cache %s: %v", name, err)
+		}
+		write(filepath.Join(dependencyRoot, name), data)
+	}
 	write(filepath.Join(consumer, "go.mod"), []byte("module consumer.test\n\ngo 1.24.0\n\nrequire terrascale.tech/sdk v0.0.0\n"))
 	write(filepath.Join(consumer, "consumer_test.go"), []byte(packagedSQLConsumer))
 	command := exec.CommandContext(t.Context(), "go", "test", "-count=1", "./...")

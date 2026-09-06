@@ -10,7 +10,106 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
+
+func TestSubscribeWebSocketLoopback(t *testing.T) {
+	protocols := make(chan string, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/reactive/views", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("attach method = %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"view":"view-1","generation":1,"checkpoint":"Y3A=","log":"/api/v1/reactive/views/view-1/1/log","capability":"cap-token","snapshot":[{"id":"doc-1","body":{"ok":true}}]}`))
+	})
+	mux.HandleFunc("/api/v1/reactive/views/view-1/1/websocket", func(w http.ResponseWriter, r *http.Request) {
+		protocols <- r.Header.Get("Sec-WebSocket-Protocol")
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"terrascale.sync.v1"}})
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "done")
+		ctx := r.Context()
+		typ, frame, err := conn.Read(ctx)
+		if err != nil || typ != websocket.MessageBinary || len(frame) < 7 || frame[0] != 0x97 {
+			return
+		}
+		heartbeat := []byte{0x97, 0xcf, 0, 0, 0, 0, 0xcf, 0, 0, 0, 0, 0xcf, 0, 0, 0, 0, 0xcf, 6, 0xcf, 0, 0, 0, 0xcf, 0, 0, 0, 0, 0x90}
+		_ = conn.Write(ctx, websocket.MessageBinary, heartbeat)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL, HTTPClient: server.Client(), AccessToken: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sub, err := client.Subscribe(context.Background(), "db", "SELECT * FROM users", nil, SubscriptionOptions{Transport: TransportWebSocket})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	if got := <-protocols; got != "terrascale.sync.v1,terrascale.cap.cap-token" {
+		t.Fatalf("protocols = %q", got)
+	}
+	select {
+	case update := <-sub.Events():
+		if update.Kind != UpdateSnapshot || update.ID != "doc-1" {
+			t.Fatalf("update = %#v", update)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for snapshot")
+	}
+}
+
+func TestReactiveWebSocketServerControlTags(t *testing.T) {
+	snapshot := append(mpArray(6), mpUintValue(1)...)
+	snapshot = append(snapshot, mpUintValue(2)...)
+	snapshot = append(snapshot, mpUintValue(3)...)
+	snapshot = append(snapshot, mpArray(0)...)
+	snapshot = append(snapshot, mpString("digest")...)
+	snapshot = append(snapshot, mpBinaryValue([]byte("cp"))...)
+	auth := append(mpArray(4), mpString("sub")...)
+	auth = append(auth, mpUintValue(2)...)
+	auth = append(auth, mpArray(0)...)
+	auth = append(auth, snapshot...)
+	cases := []struct {
+		name   string
+		frame  []byte
+		reason ResetReason
+	}{
+		{name: "heartbeat", frame: reactiveTestEnvelope(6, mpArray(0)), reason: ""},
+		{name: "authorization changed", frame: reactiveTestEnvelope(8, auth), reason: ResetAuthChanged},
+		{name: "route change", frame: reactiveTestEnvelope(9, append(mpArray(1), mpString("GRU")...)), reason: ResetRegionMoved},
+		{name: "backpressure", frame: reactiveTestEnvelope(11, append(mpArray(1), mpUintValue(1)...)), reason: ResetBackpressure},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, _, reset, err := decodeReactiveMessagePack(tc.frame, "view", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.reason == "" {
+				if reset != nil {
+					t.Fatalf("heartbeat reset = %#v", reset)
+				}
+				return
+			}
+			if reset == nil || reset.Reason != tc.reason {
+				t.Fatalf("reset = %#v, want %s", reset, tc.reason)
+			}
+		})
+	}
+}
+
+func reactiveTestEnvelope(tag uint64, body []byte) []byte {
+	frame := mpArray(7)
+	for _, value := range []uint64{1, 0, 0, tag, 0, 0} {
+		frame = append(frame, mpUintValue(value)...)
+	}
+	return append(frame, body...)
+}
 
 func mustHex(value string) []byte {
 	body, err := hex.DecodeString(value)

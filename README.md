@@ -27,6 +27,15 @@ reactive/MessagePack vectors. They also install a freshly built module ZIP
 through an isolated local Go proxy and run a consumer without a checkout
 replacement. These checks do not qualify a published module or a live member.
 
+Reactive subscriptions use bounded HTTP long-polling by default. To opt into
+the direct WebSocket transport, pass `SubscriptionOptions{Transport:
+TransportWebSocket}` to `Subscribe`. The SDK performs the authenticated view
+attach, negotiates `terrascale.sync.v1` with the view capability, and validates
+each binary MessagePack frame against the pinned sync-v1 limits. A canceled or
+closed connection ends the subscription; an unexpected transport or protocol
+failure delivers a typed `ResetReconnect` update, after which the caller can
+create a new subscription using its last checkpoint.
+
 SQL projection numbers in `SQLRow.Value` decode as `json.Number`. Use its
 `Int64` method for integer values; this preserves values above 2^53 without
 rounding them through `float64`.
