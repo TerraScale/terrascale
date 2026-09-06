@@ -384,6 +384,34 @@ export class ManagementExportsClient {
 
 export type WebhookCreateOptions = ManagementRequestOptions & { readonly idempotencyKey?: string };
 
+function validateWebhookEndpoint(raw: unknown): string {
+  if (typeof raw !== "string" || raw.trim() !== raw || raw.length === 0 || /[^\x00-\x7f]/.test(raw)) {
+    throw new TypeError("webhook endpoint is invalid.");
+  }
+  if ([...raw].some(character => /\s|[\u0000-\u001f\u007f]/.test(character)) || raw.includes("#") || raw.includes("?")) {
+    throw new TypeError("webhook endpoint is invalid.");
+  }
+  const authority = raw.slice("https://".length).split(/[/?#]/, 1)[0] ?? "";
+  if (raw.startsWith("https://") && (authority === "" || authority.includes("@") || authority.includes(".."))) {
+    throw new TypeError("webhook endpoint host is invalid.");
+  }
+  let endpoint: URL;
+  try { endpoint = new URL(raw); } catch { throw new TypeError("webhook endpoint is invalid."); }
+  if (endpoint.protocol !== "https:" || endpoint.username !== "" || endpoint.password !== "" || endpoint.search !== "" || endpoint.hash !== "" || endpoint.hostname === "") {
+    throw new TypeError("webhook endpoint must be an HTTPS URL without credentials, query, or fragment.");
+  }
+  const host = endpoint.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".home.arpa") || host.startsWith(".") || host.endsWith(".") || host.includes("..")) {
+    throw new TypeError("webhook endpoint host is not public.");
+  }
+  const octets = host.match(/^((?:\d{1,3}\.){3}\d{1,3})$/)?.[1]?.split(".").map(Number);
+  const [first, second] = octets ?? [];
+  if (octets && (octets.some(part => part > 255) || first === 0 || first === 10 || first === 127 || (first === 192 && second === 168) || (first === 172 && second !== undefined && second >= 16 && second <= 31) || (first === 169 && second === 254))) {
+    throw new TypeError("webhook endpoint host is not public.");
+  }
+  return endpoint.toString();
+}
+
 export class ManagementWebhooksClient {
   readonly #http: TerraScaleHttp;
   constructor(http: TerraScaleHttp) { this.#http = http; }
@@ -394,9 +422,8 @@ export class ManagementWebhooksClient {
 
   create(databaseId: string, request: Contracts.CreateWebhookRequest, options: WebhookCreateOptions = {}): Promise<TerraScaleResult<Contracts.WebhookSecretResponse>> {
     if (options.idempotencyKey !== undefined) requireText(options.idempotencyKey, "idempotencyKey", 128);
-    const endpoint = new URL(request?.endpoint);
-    if (endpoint.protocol !== "https:") throw new TypeError("webhook endpoint must use HTTPS.");
-    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/webhooks`, routeName: "databases.createWebhook", signal: options.signal, body: request, idempotencyKey: options.idempotencyKey ?? false });
+    const endpoint = validateWebhookEndpoint(request?.endpoint);
+    return this.#http.request({ method: "POST", path: `${databasePath(databaseId)}/webhooks`, routeName: "databases.createWebhook", signal: options.signal, body: { ...request, endpoint }, idempotencyKey: options.idempotencyKey ?? false });
   }
 
   rotateSecret(databaseId: string, webhookId: string, request: Contracts.RotateWebhookSecretRequest = {}, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<Contracts.WebhookSecretResponse>> {

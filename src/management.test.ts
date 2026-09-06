@@ -156,6 +156,23 @@ it("bounds recommendations and keeps export idempotency in the published request
   expect(requests).toHaveLength(2);
 });
 
+it("rejects non-public or ambiguous webhook endpoints before issuing a request", () => {
+  const requests: Request[] = [];
+  const client = createTerraScaleManagementClient({ fetch: fixtureFetch(requests) });
+  for (const endpoint of [
+    "https://user:pass@example.test/hook",
+    "https://example.test/hook?",
+    "https://example.test/hook#fragment",
+    "https://localhost/hook",
+    "https://127.0.0.1/hook",
+    "https://192.168.1.10/hook",
+    "https://example..test/hook",
+  ]) {
+    expect(() => client.webhooks.create("db", { endpoint })).toThrow(TypeError);
+  }
+  expect(requests).toHaveLength(0);
+});
+
 it("cancels an in-flight export download through its typed options", async () => {
   const controller = new AbortController();
   let requestStarted: (() => void) | undefined;
