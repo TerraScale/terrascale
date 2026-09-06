@@ -354,7 +354,7 @@ fn decode_counts(value: Option<&DocumentValue>) -> Result<TransformCounts, Engin
 /// Encodes one running chain.
 fn encode_chain(chain: &DocumentChain) -> DocumentValue {
     object(vec![
-        ("digest", DocumentValue::String(super::digest::to_hex(&chain.running()))),
+        ("digest", DocumentValue::String(hex::encode(chain.running()))),
         ("links", counter(chain.links())),
     ])
 }

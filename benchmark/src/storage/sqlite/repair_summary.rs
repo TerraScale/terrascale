@@ -4,6 +4,34 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::BTreeMap;
 use terrabase_replication_core::anti_entropy::{JournalRowId, RangeFingerprint, row_contribution};
 
+/// Returns the lineage marker captured with a repair cut.
+///
+/// Normal databases intentionally share the empty marker, while a branch
+/// carries the provenance written by `branch_provenance`.
+pub(super) fn baseline_digest(connection: &Connection) -> Result<[u8; 32], ()> {
+    let marker: Option<String> = connection
+        .query_row(
+            "SELECT value FROM meta WHERE key='branch_snapshot_baseline'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| ())?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"terrabase-repair-baseline-v1");
+    match marker {
+        Some(marker) => {
+            hasher.update(&[1]);
+            hasher.update(&(marker.len() as u64).to_be_bytes());
+            hasher.update(marker.as_bytes());
+        }
+        None => {
+            hasher.update(&[0]);
+        }
+    }
+    Ok(*hasher.finalize().as_bytes())
+}
+
 pub(super) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS repair_history_floor (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1), local_seq INTEGER NOT NULL
@@ -433,6 +461,22 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM repair_summary_versions", [], |row| row.get(0))
             .unwrap();
         assert_eq!(versions, 4 * i64::from(LEVELS));
+    }
+
+    #[test]
+    fn baseline_digest_distinguishes_branch_provenance_and_is_stable() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);").unwrap();
+        let normal = baseline_digest(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO meta(key,value) VALUES('branch_snapshot_baseline',?1)",
+                ["branch:db:7:root"],
+            )
+            .unwrap();
+        let branch = baseline_digest(&connection).unwrap();
+        assert_ne!(normal, branch);
+        assert_eq!(branch, baseline_digest(&connection).unwrap());
     }
     #[test]
     fn summary_queries_use_primary_key_ranges() {

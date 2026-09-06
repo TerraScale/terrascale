@@ -112,7 +112,8 @@ enforces strict parsing and fixed binary lengths. The
 crate supplies canonical text, binary conversion, equality, and comparison;
 typed entity IDs preserve distinctions between tenants, projects, and other
 entities.
-Application code cannot select alternate formats or random sources.
+Entity constructors use the shared generator. Public boundaries validate the
+canonical ULID format.
 
 One cross-language corpus covers the ULID specification vectors, minimum and
 maximum values, same-millisecond monotonic generation, entropy overflow,

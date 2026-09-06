@@ -68,114 +68,107 @@ pub const DOCUMENT_WRITE_UNITS_KEY: &str = "document_write_units";
 pub const STORAGE_BYTE_SECONDS_KEY: &str = "storage_byte_seconds";
 
 /// Typed failures in the usage domain.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum UsageError {
     /// An identifier was empty, too long, or contained forbidden text.
+    #[error("invalid usage identifier")]
     InvalidIdentifier,
     /// A meter version was zero.
+    #[error("invalid meter version")]
     InvalidMeterVersion,
     /// A meter definition does not match its fixed typed contract.
+    #[error("invalid meter definition")]
     InvalidMeterDefinition,
     /// A catalog already contains this meter and version.
+    #[error("duplicate meter definition")]
     DuplicateMeterDefinition,
     /// A requested meter version is absent from a catalog.
+    #[error("unknown meter definition")]
     UnknownMeterDefinition,
     /// A sequence interval was empty, reversed, or too large.
+    #[error("invalid sequence interval")]
     InvalidSequenceInterval,
     /// A measurement window was reversed or otherwise invalid.
+    #[error("invalid measurement window")]
     InvalidMeasurementWindow,
     /// A usage fact had no integer work to account for.
+    #[error("usage delta cannot be zero")]
     ZeroDelta,
     /// Aggregating integer usage facts overflowed the domain's integer range.
+    #[error("usage integer total overflow")]
     IntegerOverflow,
     /// One aggregate contains the same minted fact identity more than once.
+    #[error("usage fact identity is duplicated")]
     DuplicateFactIdentity,
     /// The canonical segment would exceed the bounded segment limit.
+    #[error("usage segment exceeds its bound")]
     SegmentTooLarge,
     /// The encoded segment is truncated or has an unknown field value.
+    #[error("malformed usage segment encoding")]
     MalformedEncoding,
     /// The encoded checksum does not match its canonical body.
+    #[error("usage segment checksum mismatch")]
     ChecksumMismatch,
     /// The bytes are valid but not the one canonical encoding.
+    #[error("non-canonical usage segment encoding")]
     NonCanonicalEncoding,
     /// A segment identity already names the exact same segment.
+    #[error("usage segment is an exact duplicate")]
     DuplicateSegment,
     /// A segment identity was reused for different bytes/checksum.
+    #[error("usage segment identity has different bytes")]
     SegmentIdentityConflict,
     /// A new segment overlaps a prior interval in the same accounting scope.
+    #[error("usage sequence interval overlaps an existing segment")]
     SequenceOverlap,
     /// A correction names no segment in the ledger.
+    #[error("usage correction target is missing")]
     MissingCorrectionTarget,
     /// A correction does not match its target's accounting scope.
+    #[error("usage correction scope differs from its target")]
     CorrectionScopeMismatch,
     /// Corrections may reference only a base segment, never another correction.
+    #[error("usage correction cannot target another correction")]
     CorrectionChain,
     /// A durable fact names an impossible commit sequence or replica epoch.
+    #[error("usage durability binding is invalid")]
     InvalidDurabilityBinding,
     /// A durable fact does not match the commit that carried it.
+    #[error("usage fact commit binding does not match")]
     FactCommitMismatch,
     /// A fact identity was reused for different durable bytes.
+    #[error("usage fact identity has different bytes")]
     FactIdentityConflict,
     /// A usage command carried a zero or negative unit count.
+    #[error("usage integer units must be positive")]
     InvalidIntegerUnits,
     /// A trusted usage event carried the zero Unix timestamp.
+    #[error("usage event timestamp must be nonzero")]
     InvalidTimestamp,
     /// A usage page requested zero items or more than the fixed bound.
+    #[error("usage page size is outside its bound")]
     InvalidPageSize,
     /// A usage continuation was empty or exceeded its fixed byte bound.
+    #[error("usage continuation is outside its byte bound")]
     InvalidContinuation,
     /// A usage command named a Region outside the production GRU/SFO/FRA set.
+    #[error("usage Region is outside the production set")]
     InvalidUsageRegion,
     /// A usage command exceeded its selected meter's per-fact unit bound.
+    #[error("usage integer units exceed the meter bound")]
     UsageUnitsExceeded,
     /// A write or storage observation named no selected Region copies.
+    #[error("usage Region count must be positive")]
     InvalidRegionCount,
     /// A journal entry or group-commit fact named the zero sequence.
+    #[error("usage commit sequence must be nonzero")]
     InvalidCommitSequence,
     /// An export cursor moved backwards.
+    #[error("usage export cursor moved backwards")]
     CursorRegression,
     /// The requested meter is not one of the two billable D-16 meters.
+    #[error("usage meter is not billable")]
     NonBillableMeter,
-}
-
-impl fmt::Display for UsageError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::InvalidIdentifier => "invalid usage identifier",
-            Self::InvalidMeterVersion => "invalid meter version",
-            Self::InvalidMeterDefinition => "invalid meter definition",
-            Self::DuplicateMeterDefinition => "duplicate meter definition",
-            Self::UnknownMeterDefinition => "unknown meter definition",
-            Self::InvalidSequenceInterval => "invalid sequence interval",
-            Self::InvalidMeasurementWindow => "invalid measurement window",
-            Self::ZeroDelta => "usage delta cannot be zero",
-            Self::IntegerOverflow => "usage integer total overflow",
-            Self::DuplicateFactIdentity => "usage fact identity is duplicated",
-            Self::SegmentTooLarge => "usage segment exceeds its bound",
-            Self::MalformedEncoding => "malformed usage segment encoding",
-            Self::ChecksumMismatch => "usage segment checksum mismatch",
-            Self::NonCanonicalEncoding => "non-canonical usage segment encoding",
-            Self::DuplicateSegment => "usage segment is an exact duplicate",
-            Self::SegmentIdentityConflict => "usage segment identity has different bytes",
-            Self::SequenceOverlap => "usage sequence interval overlaps an existing segment",
-            Self::MissingCorrectionTarget => "usage correction target is missing",
-            Self::CorrectionScopeMismatch => "usage correction scope differs from its target",
-            Self::CorrectionChain => "usage correction cannot target another correction",
-            Self::InvalidDurabilityBinding => "usage durability binding is invalid",
-            Self::FactCommitMismatch => "usage fact commit binding does not match",
-            Self::FactIdentityConflict => "usage fact identity has different bytes",
-            Self::InvalidIntegerUnits => "usage integer units must be positive",
-            Self::InvalidTimestamp => "usage event timestamp must be nonzero",
-            Self::InvalidPageSize => "usage page size is outside its bound",
-            Self::InvalidContinuation => "usage continuation is outside its byte bound",
-            Self::InvalidUsageRegion => "usage Region is outside the production set",
-            Self::UsageUnitsExceeded => "usage integer units exceed the meter bound",
-            Self::InvalidRegionCount => "usage Region count must be positive",
-            Self::InvalidCommitSequence => "usage commit sequence must be nonzero",
-            Self::CursorRegression => "usage export cursor moved backwards",
-            Self::NonBillableMeter => "usage meter is not billable",
-        })
-    }
 }
 
 impl MintingRule {
@@ -186,8 +179,6 @@ impl MintingRule {
     #[allow(non_upper_case_globals)]
     pub const LogicalStorage: Self = Self::StableAdmittedRequest;
 }
-
-impl std::error::Error for UsageError {}
 
 /// A validated identifier used for Project, Database, and Partition scope.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -1469,42 +1460,33 @@ impl UsageRecordReceipt {
 }
 
 /// Typed failures at the Engine usage-command boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum UsageCommandError {
     /// The request or continuation failed structural validation.
+    #[error("invalid usage request")]
     InvalidRequest,
     /// The tenant scope belongs to another Engine.
+    #[error("usage scope belongs to another engine")]
     ScopeMismatch,
     /// The usage identity does not bind to the mutation operation identity.
+    #[error("usage identity does not match the mutation identity")]
     IdentityMismatch,
     /// One scoped fact identity was reused for different content.
+    #[error("usage identity is already bound to different content")]
     IdentityConflict,
     /// A usage-bearing mutation requested weaker than synced durability.
+    #[error("usage-bearing mutation requires synced durability")]
     RequiresSynced,
     /// The location contains legacy facts that cannot be billed truthfully.
+    #[error("authoritative usage is unavailable for this location")]
     UsageUnavailable,
     /// Persisted usage bytes are corrupt or semantically inconsistent.
+    #[error("persisted usage is corrupt")]
     CorruptStorage,
     /// Durable storage could not complete the command.
+    #[error("durable usage storage is unavailable")]
     StorageUnavailable,
 }
-
-impl fmt::Display for UsageCommandError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::InvalidRequest => "invalid usage request",
-            Self::ScopeMismatch => "usage scope belongs to another engine",
-            Self::IdentityMismatch => "usage identity does not match the mutation identity",
-            Self::IdentityConflict => "usage identity is already bound to different content",
-            Self::RequiresSynced => "usage-bearing mutation requires synced durability",
-            Self::UsageUnavailable => "authoritative usage is unavailable for this location",
-            Self::CorruptStorage => "persisted usage is corrupt",
-            Self::StorageUnavailable => "durable usage storage is unavailable",
-        })
-    }
-}
-
-impl std::error::Error for UsageCommandError {}
 
 /// One half-open measurement window `[start, end)` in Unix milliseconds.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

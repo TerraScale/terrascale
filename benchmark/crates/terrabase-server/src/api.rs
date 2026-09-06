@@ -29,6 +29,7 @@ use axum::middleware::from_fn_with_state;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::get;
+use base64::Engine as _;
 use terrabase::CommitOutcome;
 use terrabase::Session;
 use terrabase::SessionError;
@@ -2536,58 +2537,14 @@ fn invalid_session_token() -> ApiError {
 /// Canonical re-encoding is checked by [`decode_session_header`], so alternate
 /// spellings and padding never become equivalent credentials.
 fn decode_base64url(value: &str) -> Option<Vec<u8>> {
-    let bytes = value.as_bytes();
-    if bytes.is_empty() || bytes.len() % 4 == 1 || bytes.contains(&b'=') {
+    if value.is_empty() {
         return None;
     }
-    let mut output = Vec::with_capacity(bytes.len().saturating_mul(3) / 4);
-    let mut index = 0;
-    while index < bytes.len() {
-        let remaining = bytes.len() - index;
-        let a = base64url_value(bytes[index])?;
-        let b = base64url_value(bytes[index + 1])?;
-        output.push((a << 2) | (b >> 4));
-        if remaining > 2 {
-            let c = base64url_value(bytes[index + 2])?;
-            output.push((b << 4) | (c >> 2));
-            if remaining > 3 {
-                let d = base64url_value(bytes[index + 3])?;
-                output.push((c << 6) | d);
-            }
-        }
-        index += remaining.min(4);
-    }
-    Some(output)
-}
-
-fn base64url_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'-' => Some(62),
-        b'_' => Some(63),
-        _ => None,
-    }
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(value).ok()
 }
 
 fn encode_base64url(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut output = String::with_capacity(bytes.len().saturating_mul(4).div_ceil(3));
-    for chunk in bytes.chunks(3) {
-        let a = chunk[0];
-        output.push(ALPHABET[usize::from(a >> 2)] as char);
-        let b = chunk.get(1).copied().unwrap_or(0);
-        output.push(ALPHABET[usize::from((a << 4 | b >> 4) & 0x3f)] as char);
-        if chunk.len() > 1 {
-            let c = chunk.get(2).copied().unwrap_or(0);
-            output.push(ALPHABET[usize::from((b << 2 | c >> 6) & 0x3f)] as char);
-        }
-        if chunk.len() > 2 {
-            output.push(ALPHABET[usize::from(chunk[2] & 0x3f)] as char);
-        }
-    }
-    output
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 fn decode_session_header(

@@ -27,7 +27,7 @@ use super::content::{
     AttachmentContentReader, AttachmentContentWrite, AttachmentRange, AttachmentSegment,
     MAX_CONTENT_BYTES, MAX_SEGMENT_BYTES, MAX_SEGMENT_COUNT,
 };
-use super::digest::{Sha256, to_hex};
+use aws_lc_rs::digest::{Context, SHA256};
 
 use crate::{
     engine::{Engine, EngineConfig},
@@ -93,9 +93,9 @@ fn segments_of(bytes: &[u8], segment_len: usize) -> Vec<AttachmentSegment> {
 }
 
 fn digest_of(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
+    let mut hasher = Context::new(&SHA256);
     hasher.update(bytes);
-    to_hex(&hasher.finish())
+    hex::encode(hasher.finish().as_ref())
 }
 
 /// Stages content through the family seam inside one committed transaction.

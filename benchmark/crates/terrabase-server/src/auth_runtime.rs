@@ -611,6 +611,9 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct TransactionIdentity {

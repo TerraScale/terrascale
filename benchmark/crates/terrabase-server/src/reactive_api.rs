@@ -13,6 +13,7 @@ use axum::extract::{Path, Query, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::http::{Method, Uri};
 use axum::response::{IntoResponse, Response};
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -1791,57 +1792,11 @@ fn frame_error() -> ApiError {
 }
 
 fn encode_base64(bytes: &[u8]) -> String {
-    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = String::new();
-    for chunk in bytes.chunks(3) {
-        let a = chunk[0];
-        let b = *chunk.get(1).unwrap_or(&0);
-        let c = *chunk.get(2).unwrap_or(&0);
-        output.push(A[(a >> 2) as usize] as char);
-        output.push(A[((a & 3) << 4 | b >> 4) as usize] as char);
-        output.push(if chunk.len() > 1 {
-            A[((b & 15) << 2 | c >> 6) as usize] as char
-        } else {
-            '='
-        });
-        output.push(if chunk.len() > 2 { A[(c & 63) as usize] as char } else { '=' });
-    }
-    output
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 fn decode_base64(input: &str) -> Result<Vec<u8>, ()> {
-    if input.is_empty() {
-        return Ok(Vec::new());
-    }
-    let values: Vec<u8> = input
-        .bytes()
-        .filter(|byte| !byte.is_ascii_whitespace())
-        .map(|byte| match byte {
-            b'A'..=b'Z' => Ok(byte - b'A'),
-            b'a'..=b'z' => Ok(byte - b'a' + 26),
-            b'0'..=b'9' => Ok(byte - b'0' + 52),
-            b'+' => Ok(62),
-            b'/' => Ok(63),
-            b'=' => Ok(64),
-            _ => Err(()),
-        })
-        .collect::<Result<_, _>>()?;
-    if !values.len().is_multiple_of(4) {
-        return Err(());
-    }
-    let mut output = Vec::new();
-    for chunk in values.chunks(4) {
-        if chunk[0] == 64 || chunk[1] == 64 || (chunk[2] == 64 && chunk[3] != 64) {
-            return Err(());
-        }
-        output.push((chunk[0] << 2) | (chunk[1] >> 4));
-        if chunk[2] != 64 {
-            output.push((chunk[1] << 4) | (chunk[2] >> 2));
-        }
-        if chunk[3] != 64 {
-            output.push((chunk[2] << 6) | chunk[3]);
-        }
-    }
-    Ok(output)
+    let compact: String = input.chars().filter(|character| !character.is_ascii_whitespace()).collect();
+    base64::engine::general_purpose::STANDARD.decode(compact).map_err(|_| ())
 }
 fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
     aws_lc_rs::constant_time::verify_slices_are_equal(left, right).is_ok()

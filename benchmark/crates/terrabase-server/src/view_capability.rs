@@ -21,6 +21,7 @@
 use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine as _;
 use terrabase::regions::RegionCode;
 
 /// The fixed header used by reactive view log and snapshot requests.
@@ -410,7 +411,7 @@ fn verify_time(expiry: u64, now: u64) -> Result<(), CapabilityError> {
 fn encode_and_sign(claims: &ViewCapabilityClaims, key: &[u8]) -> Result<String, CapabilityError> {
     let body = body_for(claims)?;
     let mac = hmac_sha256(key, body.as_bytes());
-    let token = format!("{body}.{}", hex_encode(&mac));
+    let token = format!("{body}.{}", hex::encode(mac));
     if token.len() > MAX_CAPABILITY_BYTES {
         return Err(CapabilityError::Malformed);
     }
@@ -468,11 +469,8 @@ fn decode(token: &str) -> Result<ViewCapabilityClaims, CapabilityError> {
 
 fn decode_mac(token: &str) -> Result<[u8; 32], CapabilityError> {
     let field = token.rsplit('.').next().ok_or(CapabilityError::Malformed)?;
-    let mut output = [0; 32];
-    for (index, pair) in field.as_bytes().as_chunks::<2>().0.iter().enumerate() {
-        output[index] = (hex_value(pair[0])? << 4) | hex_value(pair[1])?;
-    }
-    Ok(output)
+    let bytes = hex::decode(field).map_err(|_| CapabilityError::Malformed)?;
+    bytes.try_into().map_err(|_| CapabilityError::Malformed)
 }
 
 fn parse_decimal(value: &str) -> Result<u64, CapabilityError> {
@@ -490,13 +488,18 @@ fn encode_scope(scope: &str) -> String {
     {
         scope.to_owned()
     } else {
-        format!("b64:{}", base64url_encode(scope.as_bytes()))
+        format!(
+            "b64:{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(scope.as_bytes())
+        )
     }
 }
 
 fn decode_scope(field: &str) -> Result<String, CapabilityError> {
     if let Some(encoded) = field.strip_prefix("b64:") {
-        let bytes = base64url_decode(encoded)?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| CapabilityError::Malformed)?;
         let scope = String::from_utf8(bytes).map_err(|_| CapabilityError::Malformed)?;
         validate_scope(&scope)?;
         if encode_scope(&scope) != field {
@@ -513,50 +516,10 @@ fn decode_scope(field: &str) -> Result<String, CapabilityError> {
     Err(CapabilityError::Malformed)
 }
 
-fn base64url_encode(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let a = chunk[0];
-        let b = chunk.get(1).copied().unwrap_or(0);
-        let c = chunk.get(2).copied().unwrap_or(0);
-        output.push(TABLE[usize::from(a >> 2)] as char);
-        output.push(TABLE[usize::from((a << 4 | b >> 4) & 0x3f)] as char);
-        if chunk.len() > 1 {
-            output.push(TABLE[usize::from((b << 2 | c >> 6) & 0x3f)] as char);
-        }
-        if chunk.len() > 2 {
-            output.push(TABLE[usize::from(c & 0x3f)] as char);
-        }
-    }
-    output
-}
-
 fn base64url_decode(value: &str) -> Result<Vec<u8>, CapabilityError> {
-    if value.is_empty()
-        || value.len() % 4 == 1
-        || !value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-    {
-        return Err(CapabilityError::Malformed);
-    }
-    let mut output = Vec::with_capacity(value.len() * 3 / 4);
-    let bytes = value.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        let a = base64_value(bytes[index])?;
-        let b = base64_value(bytes[index + 1])?;
-        output.push((a << 2) | (b >> 4));
-        if index + 2 < bytes.len() {
-            let c = base64_value(bytes[index + 2])?;
-            output.push((b << 4) | (c >> 2));
-            if index + 3 < bytes.len() {
-                let d = base64_value(bytes[index + 3])?;
-                output.push((c << 6) | d);
-            }
-        }
-        index += 4;
-    }
-    Ok(output)
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| CapabilityError::Malformed)
 }
 
 fn base64_value(byte: u8) -> Result<u8, CapabilityError> {
@@ -569,23 +532,8 @@ fn base64_value(byte: u8) -> Result<u8, CapabilityError> {
         _ => Err(CapabilityError::Malformed),
     }
 }
-
-fn hex_value(byte: u8) -> Result<u8, CapabilityError> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        _ => Err(CapabilityError::Malformed),
-    }
-}
-
 fn hex_encode(bytes: &[u8; 32]) -> String {
-    const TABLE: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(64);
-    for &byte in bytes {
-        output.push(TABLE[usize::from(byte >> 4)] as char);
-        output.push(TABLE[usize::from(byte & 0x0f)] as char);
-    }
-    output
+    hex::encode(bytes)
 }
 
 fn constant_time_equal(left: &[u8; 32], right: &[u8; 32]) -> bool {
@@ -601,7 +549,7 @@ fn unix_now() -> Result<u64, CapabilityError> {
 }
 
 pub(crate) fn hmac_sha256_hex(key: &[u8], message: &[u8]) -> String {
-    hex_encode(&hmac_sha256(key, message))
+    hex::encode(hmac_sha256(key, message))
 }
 
 fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {

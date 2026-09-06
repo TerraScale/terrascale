@@ -52,7 +52,6 @@
 //! here is focused in-process runs, and the exclusive recovery lane owns
 //! the formal Recovery Receipts.
 
-mod digest;
 mod evidence;
 pub(crate) mod record;
 mod transform;
@@ -388,8 +387,8 @@ pub fn dry_run(
     let outcome = if problems.is_empty() {
         PlanOutcome::Ready {
             documents: source_chain.links(),
-            source_digest: to_hex_digest(&source_chain),
-            result_digest: to_hex_digest(&result_chain),
+            source_digest: hex::encode(source_chain.running()),
+            result_digest: hex::encode(result_chain.running()),
             transform_counts: counts,
         }
     } else {
@@ -705,10 +704,10 @@ pub fn finalize(
     if verification.links() != record.documents || record.documents != *planned_documents {
         return Err(MigrationError::CountMismatch);
     }
-    let verification_digest = to_hex_digest(&verification);
-    if verification_digest != to_hex_digest(&record.result_chain)
+    let verification_digest = hex::encode(verification.running());
+    if verification_digest != hex::encode(record.result_chain.running())
         || verification_digest != *planned_result
-        || to_hex_digest(&record.source_chain) != *planned_source
+        || hex::encode(record.source_chain.running()) != *planned_source
     {
         return Err(MigrationError::ChecksumMismatch);
     }
@@ -735,8 +734,8 @@ pub fn finalize(
         manifest,
         contract.from_version(),
         contract.to_version(),
-        to_hex_digest(&record.source_chain),
-        to_hex_digest(&record.result_chain),
+        hex::encode(record.source_chain.running()),
+        hex::encode(record.result_chain.running()),
         record.documents,
         record.transformed,
         record.counts,
@@ -1115,7 +1114,7 @@ fn at_target_receipt(
             Ok(())
         },
     )?;
-    let digest = to_hex_digest(&chain);
+    let digest = hex::encode(chain.running());
     let receipt = MigrationReceipt::new(
         contract.collection().clone(),
         evidence::manifest_digest(contract),
@@ -1176,9 +1175,6 @@ fn commit_step(
 }
 
 /// Renders one chain's running digest as hex evidence.
-fn to_hex_digest(chain: &DocumentChain) -> String {
-    digest::to_hex(&chain.running())
-}
 
 /// Maps an engine failure into the migration vocabulary.
 fn map_engine_error(error: &EngineError) -> MigrationError {

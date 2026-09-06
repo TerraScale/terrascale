@@ -709,7 +709,8 @@ impl ServiceState {
 }
 
 /// A refused backwards or post-stop service lifecycle transition.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("service state cannot move from {} to {}", .from.as_str(), .to.as_str())]
 pub struct ServiceTransitionError {
     from: ServiceState,
     to: ServiceState,
@@ -729,21 +730,9 @@ impl ServiceTransitionError {
     }
 }
 
-impl std::fmt::Display for ServiceTransitionError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "service state cannot move from {} to {}",
-            self.from.as_str(),
-            self.to.as_str()
-        )
-    }
-}
-
-impl std::error::Error for ServiceTransitionError {}
-
 /// A refusal to serve a Prometheus body beyond the contract limit.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("Prometheus body is {bytes} bytes; limit is {} bytes", MAX_PROMETHEUS_BODY_BYTES)]
 pub struct ExpositionTooLarge {
     bytes: usize,
 }
@@ -761,18 +750,6 @@ impl ExpositionTooLarge {
         MAX_PROMETHEUS_BODY_BYTES
     }
 }
-
-impl std::fmt::Display for ExpositionTooLarge {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "Prometheus body is {} bytes; limit is {} bytes",
-            self.bytes, MAX_PROMETHEUS_BODY_BYTES
-        )
-    }
-}
-
-impl std::error::Error for ExpositionTooLarge {}
 
 /// The state of one health check.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

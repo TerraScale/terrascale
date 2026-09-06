@@ -87,108 +87,97 @@ pub const MAX_RETAINED_FIELDS: usize = 256;
 pub const MAX_HOLDS: usize = 256;
 
 /// Typed failures in the deletion workflow domain.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum DeletionError {
     /// An identifier was empty, too long, or contained forbidden text.
+    #[error("invalid deletion identifier")]
     InvalidIdentifier,
     /// The deletion request named no selected active Region.
+    #[error("deletion request names no selected Region")]
     EmptyRegionSet,
     /// A Region appeared where only selected Regions are allowed.
+    #[error("deletion names a Region that is not selected")]
     UnknownRegion,
     /// The identity verification timestamp postdates the request it verifies.
+    #[error("deletion verification time is invalid")]
     InvalidVerification,
     /// Admission did not durably record every selected active Region.
+    #[error("deletion admission is not durable in every selected Region")]
     AdmissionNotGlobalDurable,
     /// The plan does not give every selected Region a live-copy target.
+    #[error("deletion plan misses a selected Region's live copy")]
     PlanMissesRegion,
     /// The plan is empty or exceeds the bounded plan size.
+    #[error("deletion plan is empty or unbounded")]
     InvalidPlan,
     /// An admission timestamp precedes the request it admits.
+    #[error("deletion admission time precedes its request")]
     InvalidAdmissionTime,
     /// Work was attempted before `GlobalDurable` admission.
+    #[error("deletion work precedes GlobalDurable admission")]
     NotAdmitted,
     /// The workflow already reached a terminal state.
+    #[error("deletion workflow is terminal")]
     TerminalState,
     /// The transition does not exist in the workflow state machine.
+    #[error("invalid deletion workflow transition")]
     InvalidTransition,
     /// A receipt names a copy the admitted plan does not contain.
+    #[error("deletion receipt names an unplanned copy")]
     CopyTargetNotPlanned,
     /// A receipt's outcome does not match its copy class.
+    #[error("deletion receipt outcome mismatches its copy class")]
     InvalidReceiptOutcome,
     /// A receipt's completion time precedes admission.
+    #[error("deletion receipt precedes admission")]
     InvalidReceiptTime,
     /// A receipt claims completion in the future of the verification clock.
+    #[error("deletion receipt is in the future")]
     ReceiptInFuture,
     /// A hold's expiry does not postdate its recording.
+    #[error("hold expiry does not postdate its recording")]
     InvalidHoldWindow,
     /// A hold retains no fields or more fields than the bound allows.
+    #[error("hold retained-field set is empty or unbounded")]
     InvalidRetainedFields,
     /// A hold's recording time precedes the deletion request.
+    #[error("hold recording precedes the deletion request")]
     InvalidHoldRecordingTime,
     /// A hold authority is already recorded with different facts.
+    #[error("hold authority is recorded with different facts")]
     HoldConflict,
     /// The workflow already carries the bounded maximum number of holds.
+    #[error("deletion workflow holds exceed their bound")]
     HoldLimitExceeded,
     /// A hold authority is not recorded on this workflow.
+    #[error("hold authority is not recorded")]
     UnknownHold,
     /// Verification cannot complete while an unexpired hold applies.
+    #[error("an unexpired hold blocks deletion completion")]
     HoldBlocksCompletion,
     /// A receipt predates the last hold's end, so it cannot prove the held
     /// fields were removed.
+    #[error("deletion receipt predates the last hold's end")]
     ReceiptPredatesHoldEnd,
     /// Not every planned copy has a receipt yet.
+    #[error("deletion copies remain unreceipted")]
     MissingReceipts,
     /// A copy crossed its deadline; the workflow fails terminally.
+    #[error("deletion copy crossed its deadline")]
     DeadlineExceeded,
     /// The encoded workflow is truncated or has an unknown field value.
+    #[error("malformed deletion workflow encoding")]
     MalformedEncoding,
     /// The encoded checksum does not match its canonical body.
+    #[error("deletion workflow checksum mismatch")]
     ChecksumMismatch,
     /// The bytes are valid but not the one canonical encoding.
+    #[error("non-canonical deletion workflow encoding")]
     NonCanonicalEncoding,
     /// The workflow identity was reused for different facts.
+    #[error("deletion workflow identity names different facts")]
     WorkflowConflict,
 }
-
-impl fmt::Display for DeletionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::InvalidIdentifier => "invalid deletion identifier",
-            Self::EmptyRegionSet => "deletion request names no selected Region",
-            Self::UnknownRegion => "deletion names a Region that is not selected",
-            Self::InvalidVerification => "deletion verification time is invalid",
-            Self::AdmissionNotGlobalDurable => {
-                "deletion admission is not durable in every selected Region"
-            }
-            Self::PlanMissesRegion => "deletion plan misses a selected Region's live copy",
-            Self::InvalidPlan => "deletion plan is empty or unbounded",
-            Self::InvalidAdmissionTime => "deletion admission time precedes its request",
-            Self::NotAdmitted => "deletion work precedes GlobalDurable admission",
-            Self::TerminalState => "deletion workflow is terminal",
-            Self::InvalidTransition => "invalid deletion workflow transition",
-            Self::CopyTargetNotPlanned => "deletion receipt names an unplanned copy",
-            Self::InvalidReceiptOutcome => "deletion receipt outcome mismatches its copy class",
-            Self::InvalidReceiptTime => "deletion receipt precedes admission",
-            Self::ReceiptInFuture => "deletion receipt is in the future",
-            Self::InvalidHoldWindow => "hold expiry does not postdate its recording",
-            Self::InvalidRetainedFields => "hold retained-field set is empty or unbounded",
-            Self::InvalidHoldRecordingTime => "hold recording precedes the deletion request",
-            Self::HoldConflict => "hold authority is recorded with different facts",
-            Self::HoldLimitExceeded => "deletion workflow holds exceed their bound",
-            Self::UnknownHold => "hold authority is not recorded",
-            Self::HoldBlocksCompletion => "an unexpired hold blocks deletion completion",
-            Self::ReceiptPredatesHoldEnd => "deletion receipt predates the last hold's end",
-            Self::MissingReceipts => "deletion copies remain unreceipted",
-            Self::DeadlineExceeded => "deletion copy crossed its deadline",
-            Self::MalformedEncoding => "malformed deletion workflow encoding",
-            Self::ChecksumMismatch => "deletion workflow checksum mismatch",
-            Self::NonCanonicalEncoding => "non-canonical deletion workflow encoding",
-            Self::WorkflowConflict => "deletion workflow identity names different facts",
-        })
-    }
-}
-
-impl std::error::Error for DeletionError {}
 
 /// A validated stable deletion-request identity used for idempotent retries.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

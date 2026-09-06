@@ -39,7 +39,7 @@ use super::super::{
     store,
 };
 use super::codec::{self, ContentManifest};
-use super::digest::{Sha256, to_hex};
+use aws_lc_rs::digest::{Context, SHA256, digest};
 
 /// The largest byte length of one staged segment.
 ///
@@ -808,11 +808,15 @@ impl<'engine> FamilyStore<'engine> {
         if size > MAX_CONTENT_BYTES {
             return Err(AttachmentContentError::SizeLimitExceeded);
         }
-        let mut hasher = Sha256::new();
-        for segment in write.segments() {
-            hasher.update(segment.bytes());
-        }
-        let digest = to_hex(&hasher.finish());
+        let digest = if let [segment] = write.segments() {
+            hex::encode(digest(&SHA256, segment.bytes()).as_ref())
+        } else {
+            let mut hasher = Context::new(&SHA256);
+            for segment in write.segments() {
+                hasher.update(segment.bytes());
+            }
+            hex::encode(hasher.finish().as_ref())
+        };
         if write.expected_digest().is_some_and(|declared| declared != digest) {
             return Err(AttachmentContentError::DigestMismatch);
         }

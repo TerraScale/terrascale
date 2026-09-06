@@ -15,6 +15,7 @@ pub struct ReplicationRepairCut {
     database: crate::identity::DatabaseUlid,
     local_sequence: u64,
     frontier: BTreeMap<String, u64>,
+    baseline: [u8; 32],
     expires: std::time::Instant,
 }
 impl ReplicationRepairCut {
@@ -33,6 +34,11 @@ impl ReplicationRepairCut {
     pub fn frontier(&self) -> &BTreeMap<String, u64> {
         &self.frontier
     }
+    /// Stable database-lineage marker captured atomically with this cut.
+    #[must_use]
+    pub const fn baseline_digest(&self) -> [u8; 32] {
+        self.baseline
+    }
 }
 impl Engine {
     /// Captures an exact tenant-scoped source set without loading publications.
@@ -46,9 +52,9 @@ impl Engine {
         self.validate_scope(scope)?;
         let storage = self.lock_storage()?;
         let local_sequence = storage.port.published_state().0.get();
-        let frontier = storage
+        let (frontier, baseline) = storage
             .port
-            .replication_repair_frontier(scope.tenant(), local_sequence)
+            .replication_repair_cut(scope.tenant(), local_sequence)
             .map_err(|()| EngineError::StorageFailure)?;
         Ok(ReplicationRepairCut {
             tenant: scope.tenant().clone(),
@@ -56,6 +62,7 @@ impl Engine {
             database: self.database_id(),
             local_sequence,
             frontier,
+            baseline,
             expires: std::time::Instant::now() + std::time::Duration::from_secs(300),
         })
     }

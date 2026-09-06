@@ -2,8 +2,8 @@
 
 Date: 2026-09-05
 
-Status: Proposed implementation design. No public auth operation or production
-consensus implementation is supplied by this record.
+Status: Partially implemented. Production composition, the complete Better Auth
+adapter, immutable contract publication, and public failure qualification remain open.
 
 Authority: The workspace goal requires identity correctness during partitions,
 permits workers to choose coordination, and keeps ordinary document consistency
@@ -11,9 +11,11 @@ unchanged. ADR 0044 supplies causal replication, not strict identity authority.
 
 ## Source review
 
-The server's public API has no Better Auth persistence operations.
-`ts-typescript/src/better-auth.ts` defines a structural operations port without
-a generated public producer binding. The dashboard development path still
+`terrabase-auth` now supplies the strict consensus state machine and encrypted
+storage. `terrabase-server/src/auth_runtime.rs` exposes named auth operations,
+including a durable transaction lifecycle. The TypeScript HTTP client covers
+those operations, but the complete Better Auth operations port still lacks its
+production implementation. The dashboard development path still
 consumes the temporary SQLite bridge. Its deletion depends on qualified public
 persistence, so it remains. Both local bridge implementations now refuse
 transaction callbacks before executing effects because neither supports atomic
@@ -66,12 +68,28 @@ durability, or group identity cannot be verified. Local health, a cached leader
 hint, a session token, or a clock lease alone does not authorize a read or write.
 Ordinary causal document operations retain their existing guarantees.
 
-The public transaction contract must represent bounded commands and
-preconditions. An arbitrary JavaScript callback that reads intermediate results
-cannot simply become a batch. Either the producer implements a bounded,
-durable transaction lifecycle with conflict/expiry handling, or the SDK refuses
-that callback shape before effects. Publish this choice before adapting Better
-Auth's maintained transaction tests.
+The producer uses optimistic transaction workspaces with a captured global
+revision, a 30-second lifetime, at most 100 operations, and at most 4 MiB of
+staged state. At most 32 workspaces may be active. Begin accepts a client label
+of at most 100 UTF-8 bytes and returns a generation-qualified identity. Every
+subsequent operation, commit, and rollback uses that exact returned identity.
+The generation counter persists through restart and snapshots; terminal
+workspaces can therefore be removed without allowing a delayed command to
+target a later callback. Retrying Begin uses its original idempotency key.
+
+Commit requires the captured revision to remain current. Hard state-machine
+failures, including operation-limit and conflicting-idempotency rejection,
+poison the workspace and discard staged commands. An identical successful
+retry returns its retained outcome. Conditional nonmatches remain available
+for deliberate handling by the callback. Transactional record reads carry
+both the exact transaction identity and a stable idempotency key, and read
+the replicated workspace rather than committed state.
+
+HTTP validation failures that never reach consensus do not establish an
+aborted workspace. The complete SDK callback adapter must stop commit after
+such failures and resolve uncertain outcomes before retrying. It must never
+rerun a callback to recover an uncertain commit. These public failure cases
+and Better Auth's maintained transaction tests remain qualification work.
 
 ## Implementation and qualification dependencies
 
@@ -89,5 +107,4 @@ minority members never admit strict work. Run those cases through the real
 public API, then the exact Better Auth core/plugin adapter suite. Retire the
 temporary bridge only after the replacement and dashboard flows pass.
 
-This design is not implementation evidence and does not pass an auth release
-gate. Voter mapping and transaction lifecycle remain concrete design work.
+This design is not qualification evidence and does not pass an auth release gate.

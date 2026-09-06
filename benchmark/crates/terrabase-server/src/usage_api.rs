@@ -1284,7 +1284,7 @@ impl CursorState {
         let mac = blake3::keyed_hash(key, &body);
         let mut bytes = body;
         bytes.extend_from_slice(mac.as_bytes());
-        let text = hex_encode(&bytes);
+        let text = hex::encode(&bytes);
         if text.len() > MAX_CURSOR_TEXT_BYTES {
             return Err(UsageApiError::InvalidCursor);
         }
@@ -1295,7 +1295,7 @@ impl CursorState {
         if text.is_empty() || text.len() > MAX_CURSOR_TEXT_BYTES || !text.len().is_multiple_of(2) {
             return Err(UsageApiError::InvalidCursor);
         }
-        let bytes = hex_decode(text).ok_or(UsageApiError::InvalidCursor)?;
+        let bytes = hex::decode(text).map_err(|_| UsageApiError::InvalidCursor)?;
         if bytes.len() <= CURSOR_MAC_BYTES {
             return Err(UsageApiError::InvalidCursor);
         }
@@ -1473,27 +1473,6 @@ fn put_text(output: &mut Vec<u8>, value: &str) -> Result<(), UsageApiError> {
     output.extend_from_slice(&length.to_le_bytes());
     output.extend_from_slice(value.as_bytes());
     Ok(())
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        text.push(char::from(HEX[usize::from(byte >> 4)]));
-        text.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    text
-}
-
-fn hex_decode(text: &str) -> Option<Vec<u8>> {
-    let bytes = text.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len() / 2);
-    for pair in bytes.as_chunks::<2>().0 {
-        let high = u8::try_from(char::from(pair[0]).to_digit(16)?).ok()?;
-        let low = u8::try_from(char::from(pair[1]).to_digit(16)?).ok()?;
-        output.push((high << 4) | low);
-    }
-    Some(output)
 }
 
 struct CursorReader<'a> {

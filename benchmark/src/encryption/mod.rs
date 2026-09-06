@@ -81,76 +81,66 @@ impl ProviderMode {
 }
 
 /// Errors returned by the encryption foundation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum EncryptionError {
     /// The requested production provider is not compiled and selected.
+    #[error("production provider unavailable")]
     ProductionProviderUnavailable,
     /// The local key file could not be created, read, or synchronized.
+    #[error("local encryption key unavailable")]
     LocalKeyUnavailable,
     /// The local key path, type, length, permissions, or identity is unsafe.
+    #[error("unsafe local encryption key file")]
     UnsafeLocalKeyFile,
     /// An identity or context field is empty, too long, or otherwise invalid.
+    #[error("invalid encryption context")]
     InvalidContext,
     /// The plaintext or envelope exceeds a configured bound.
+    #[error("encryption input exceeds size limit")]
     SizeLimit,
     /// The 96-bit ordinal nonce space has been exhausted.
+    #[error("96-bit encryption ordinal exhausted")]
     OrdinalExhausted,
     /// A reservation was reused or does not belong to this cipher.
+    #[error("invalid encryption ordinal reservation")]
     OrdinalReservationInvalid,
     /// The envelope or AAD has an invalid version, shape, or length.
+    #[error("malformed encryption envelope")]
     MalformedEnvelope,
     /// The provider rejected the encryption or decryption operation.
+    #[error("cryptographic provider failure")]
     CryptographicFailure,
     /// Authentication failed, including a wrong key or wrong AAD.
+    #[error("encryption authentication failed")]
     AuthenticationFailed,
     /// An already-opened ordinal was presented again.
+    #[error("encryption envelope replay refused")]
     Replay,
     /// Authenticated plaintext did not match its SHA-256 digest in the AAD.
+    #[error("plaintext digest mismatch")]
     DigestMismatch,
     /// The caller's bounded replay guard cannot track another ordinal.
+    #[error("encryption replay guard is full")]
     ReplayGuardFull,
     /// Key metadata is malformed or names the wrong hierarchy.
+    #[error("invalid database-key metadata")]
     InvalidKeyMetadata,
     /// Opaque provider wrapper bytes are empty or exceed their bound.
+    #[error("invalid wrapped database key")]
     InvalidWrappedKey,
     /// A database-key authorization lease is empty or exceeds thirty minutes.
+    #[error("invalid database-key authorization lease")]
     InvalidKeyLease,
     /// A database-key authorization lease expired.
+    #[error("database-key authorization lease expired")]
     KeyLeaseExpired,
     /// A rotation changes scope or reuses the current version.
+    #[error("invalid database-key rotation")]
     InvalidKeyRotation,
     /// No OCI Vault adapter or workload authorization is configured.
+    #[error("key provider is not configured")]
     KeyProviderUnconfigured,
 }
-
-impl fmt::Display for EncryptionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let message = match self {
-            Self::ProductionProviderUnavailable => "production provider unavailable",
-            Self::LocalKeyUnavailable => "local encryption key unavailable",
-            Self::UnsafeLocalKeyFile => "unsafe local encryption key file",
-            Self::InvalidContext => "invalid encryption context",
-            Self::SizeLimit => "encryption input exceeds size limit",
-            Self::OrdinalExhausted => "96-bit encryption ordinal exhausted",
-            Self::OrdinalReservationInvalid => "invalid encryption ordinal reservation",
-            Self::MalformedEnvelope => "malformed encryption envelope",
-            Self::CryptographicFailure => "cryptographic provider failure",
-            Self::AuthenticationFailed => "encryption authentication failed",
-            Self::Replay => "encryption envelope replay refused",
-            Self::DigestMismatch => "plaintext digest mismatch",
-            Self::ReplayGuardFull => "encryption replay guard is full",
-            Self::InvalidKeyMetadata => "invalid database-key metadata",
-            Self::InvalidWrappedKey => "invalid wrapped database key",
-            Self::InvalidKeyLease => "invalid database-key authorization lease",
-            Self::KeyLeaseExpired => "database-key authorization lease expired",
-            Self::InvalidKeyRotation => "invalid database-key rotation",
-            Self::KeyProviderUnconfigured => "key provider is not configured",
-        };
-        f.write_str(message)
-    }
-}
-
-impl std::error::Error for EncryptionError {}
 
 /// A random 256-bit database key held in zeroizing memory.
 pub struct DatabaseKey {

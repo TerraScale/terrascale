@@ -20,11 +20,13 @@ pub const MAX_ENTROPY: u128 = (1_u128 << ENTROPY_BITS) - 1;
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /// Invalid canonical ULID input at an API or storage boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum UlidError {
     /// Text does not contain exactly 26 bytes.
+    #[error("ulid text must be 26 bytes, found {0}")]
     WrongTextLength(usize),
     /// A character is excluded from the Crockford alphabet as ambiguous.
+    #[error("ulid text byte {index} is ambiguous: {:?}", *byte as char)]
     AmbiguousCharacter {
         /// Byte offset in the input.
         index: usize,
@@ -32,6 +34,7 @@ pub enum UlidError {
         byte: u8,
     },
     /// A character is outside the canonical uppercase alphabet.
+    #[error("ulid text byte {index} ({:?}) is not canonical uppercase Crockford Base32", *byte as char)]
     NonCanonicalCharacter {
         /// Byte offset in the input.
         index: usize,
@@ -39,35 +42,15 @@ pub enum UlidError {
         byte: u8,
     },
     /// The encoded value exceeds 128 bits.
+    #[error("ulid text overflows 128 bits: {:?}", *first as char)]
     TextOverflow {
         /// Leading byte that exceeds the permitted range.
         first: u8,
     },
     /// Binary input does not contain exactly 16 bytes.
+    #[error("ulid binary must be 16 bytes, found {0}")]
     WrongBinaryLength(usize),
 }
-
-impl fmt::Display for UlidError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Self::WrongTextLength(len) => write!(f, "ulid text must be 26 bytes, found {len}"),
-            Self::AmbiguousCharacter { index, byte } => {
-                write!(f, "ulid text byte {index} is ambiguous: {:?}", byte as char)
-            }
-            Self::NonCanonicalCharacter { index, byte } => write!(
-                f,
-                "ulid text byte {index} ({:?}) is not canonical uppercase Crockford Base32",
-                byte as char
-            ),
-            Self::TextOverflow { first } => {
-                write!(f, "ulid text overflows 128 bits: {:?}", first as char)
-            }
-            Self::WrongBinaryLength(len) => write!(f, "ulid binary must be 16 bytes, found {len}"),
-        }
-    }
-}
-
-impl std::error::Error for UlidError {}
 
 const fn ambiguous(byte: u8) -> bool {
     matches!(byte, b'I' | b'L' | b'O' | b'U' | b'i' | b'l' | b'o' | b'u')

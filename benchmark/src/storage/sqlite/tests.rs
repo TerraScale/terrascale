@@ -2530,6 +2530,38 @@ fn json_storage_preserves_finite_float_variants_and_bits() {
 }
 
 #[test]
+fn json_storage_preserves_envelope_unicode_nonfinite_and_rejects_invalid_input() {
+    let value = DocumentValue::Object(
+        [("text".to_owned(), DocumentValue::String("line\n café".to_owned()))].into(),
+    );
+    let document = Document::new(
+        DocumentId::try_new("json-doc").unwrap(),
+        CollectionName::try_new("json").unwrap(),
+        value.clone(),
+    );
+    let bytes = super::encode_document_body(&document);
+    assert_eq!(
+        bytes,
+        br#"{"$collection":"json","$id":"json-doc","$value":{"text":"line\ncafé"},"$version":0}"#
+    );
+    assert_eq!(super::decode_document_body(&bytes).unwrap().value(), &value);
+
+    for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let document = Document::new(
+            DocumentId::try_new("json-doc").unwrap(),
+            CollectionName::try_new("json").unwrap(),
+            DocumentValue::Number(number),
+        );
+        let bytes = super::encode_document_body(&document);
+        let restored = super::decode_document_body(&bytes).unwrap();
+        assert_eq!(restored.value(), &DocumentValue::Number(number));
+    }
+
+    assert!(super::decode_document_body(br#"{"$collection":"json","$id":"json-doc","$value":null,"$version":0} trailing"#).is_none());
+    assert!(super::decode_document_body(br#"{"$collection":"json","$id":"json-doc","$value":[1,],"$version":0}"#).is_none());
+}
+
+#[test]
 fn origin_prefix_preserves_unsigned_hlc_through_pruning() {
     let (dir, mut storage) = sqlite_store("prefix-unsigned-hlc");
     for index in 1..=3 {

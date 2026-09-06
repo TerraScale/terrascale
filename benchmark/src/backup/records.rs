@@ -32,8 +32,8 @@ use std::sync::{Arc, Mutex};
 use crate::encryption::{ArtifactCipher, MAX_PLAINTEXT_BYTES};
 use zeroize::Zeroize;
 
-use crate::backup::sha256::{Sha256, to_hex};
 use crate::types::{Document, LocalDurability, TenantId};
+use aws_lc_rs::digest::{Context, SHA256};
 
 /// Record tag: one tenant's document in its published form.
 const TAG_DOCUMENT: u8 = 1;
@@ -210,7 +210,7 @@ struct OpenMember {
     /// after authentication has sealed the complete member. Plain members
     /// retain the streaming file path used by the compatibility format.
     plaintext: Vec<u8>,
-    hasher: Sha256,
+    hasher: Context,
     length: u64,
 }
 
@@ -320,7 +320,7 @@ impl MemberWriter {
                 name,
                 file,
                 plaintext: Vec::new(),
-                hasher: Sha256::new(),
+                hasher: Context::new(&SHA256),
                 length: 0,
             });
         }
@@ -373,8 +373,8 @@ impl MemberWriter {
         };
         let (length, digest) = if let Some(file) = member.file.take() {
             file.sync_all()?;
-            let hasher = std::mem::take(&mut member.hasher);
-            (member.length, to_hex(&hasher.finish()))
+            let hasher = std::mem::replace(&mut member.hasher, Context::new(&SHA256));
+            (member.length, hex::encode(hasher.finish().as_ref()))
         } else {
             let cipher = self.encryption.as_ref().expect("encrypted member cipher");
             let plaintext = std::mem::take(&mut member.plaintext);
@@ -391,9 +391,10 @@ impl MemberWriter {
             let mut file = File::create(self.directory.join(&member.name))?;
             file.write_all(&envelope)?;
             file.sync_all()?;
-            let mut hasher = Sha256::new();
-            hasher.update(&envelope);
-            (envelope.len() as u64, to_hex(&hasher.finish()))
+            (
+                envelope.len() as u64,
+                hex::encode(aws_lc_rs::digest::digest(&SHA256, &envelope).as_ref()),
+            )
         };
         self.sealed.push(SealedMember { name: std::mem::take(&mut member.name), length, digest });
         Ok(())

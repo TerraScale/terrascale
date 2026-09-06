@@ -143,7 +143,13 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
 /// custom BLAKE3 entropy stream with the crate's Generator and value type.
 /// Boundary validation retains strict parsing; shared generation serializes
 /// access and retries entropy overflow.
-const ENGINE_CORE_EXTERNAL_DEPS: &[&str] = &["blake3", "ulid"];
+/// Review update (2026-09-05): owner-approved standard-library replacement
+/// refactor adds serde/serde_json for persisted JSON syntax, hex for existing
+/// digest encodings, and thiserror for typed error derives. SHA-256 generation
+/// uses the existing aws-lc-rs dependency. Persisted bytes and public error
+/// messages remain covered by the corresponding regression tests.
+const ENGINE_CORE_EXTERNAL_DEPS: &[&str] =
+    &["blake3", "ulid", "hex", "serde", "serde_json", "thiserror"];
 
 /// The workspace graph as read from the manifests.
 struct WorkspaceGraph {

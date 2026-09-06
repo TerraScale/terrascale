@@ -54,7 +54,8 @@ pub enum Action {
     ConsumeOne { model: String, id: String, expected: Record },
     /// Read a bounded model page using exact field predicates.
     Find { model: String, predicates: Vec<Predicate>, offset: u32, limit: u32 },
-    /// Create a private bounded snapshot for an optimistic transaction callback.
+    /// Start a bounded optimistic transaction using a client label of at most 100 bytes.
+    /// Subsequent operations must use the returned generation-qualified identity.
     BeginTransaction { transaction_id: String },
     /// Apply one named command against the private transaction workspace.
     TransactionOperation { transaction_id: String, action: Box<Action> },
@@ -78,6 +79,7 @@ pub enum Outcome {
     /// Bounded query records.
     Records { records: Vec<Record> },
     /// An optimistic transaction started at a fixed revision and expiry.
+    /// `transaction_id` is the exact server-issued identity for all subsequent commands.
     Transaction { transaction_id: String, expires_at_ms: u64 },
     /// A transaction conflicted, expired, or previously failed an inner operation.
     TransactionConflict,

@@ -7,10 +7,8 @@
 //! transforms were touched). The checksum is a SHA-256 chain over the
 //! collection's documents in canonical key order, so it is order-stable
 //! across pages and across an interrupted-and-resumed run, and it is computed
-//! by the same in-crate SHA-256 the backup manifest uses — this crate adds no
-//! dependency.
+//! by the same SHA-256 primitive the backup manifest uses.
 
-use super::digest::{Sha256, to_hex};
 use crate::families::payloads::{SchemaDefinition, SchemaVersion, SchemaViolation};
 use crate::families::state::ValidationRecord;
 use crate::types::{CollectionName, DocumentId, DocumentValue};
@@ -18,6 +16,7 @@ use crate::types::{CollectionName, DocumentId, DocumentValue};
 use super::transform::{
     Coercion, RollbackLimit, SchemaMigration, TransformCounts, TransformLiteral, TransformRejection,
 };
+use aws_lc_rs::digest::{Context, SHA256};
 
 /// The domain separator of the document chain.
 const CHAIN_START: &[u8] = b"terrabase.schema-migration.chain.v1";
@@ -46,9 +45,9 @@ pub(crate) struct DocumentChain {
 impl DocumentChain {
     /// Creates the chain over zero documents.
     pub(crate) fn new() -> Self {
-        let mut hasher = Sha256::new();
+        let mut hasher = Context::new(&SHA256);
         hasher.update(CHAIN_START);
-        let running = hasher.finish();
+        let running = hasher.finish().as_ref().try_into().expect("SHA-256 has a 32-byte digest");
         Self { running, links: 0 }
     }
 
@@ -59,12 +58,12 @@ impl DocumentChain {
 
     /// Links one document value under one side separator.
     pub(crate) fn link(&mut self, side: &[u8], id: &DocumentId, value: &DocumentValue) {
-        let mut hasher = Sha256::new();
+        let mut hasher = Context::new(&SHA256);
         hasher.update(side);
         hasher.update(&self.running);
         hasher.update(id.as_str().as_bytes());
         hasher.update(&canonical_value(value));
-        self.running = hasher.finish();
+        self.running = hasher.finish().as_ref().try_into().expect("SHA-256 has a 32-byte digest");
         self.links += 1;
     }
 
@@ -163,7 +162,7 @@ fn extend_length(bytes: &mut Vec<u8>, length: usize) {
 /// is derived only from contract content — no tenant, path, or document
 /// value participates.
 pub(crate) fn manifest_digest(contract: &SchemaMigration) -> String {
-    let mut hasher = Sha256::new();
+    let mut hasher = Context::new(&SHA256);
     hasher.update(b"terrabase.schema-migration.manifest.v1");
     hasher.update(contract.collection().as_str().as_bytes());
     hasher.update(contract.from_version().get().to_string().as_bytes());
@@ -172,7 +171,7 @@ pub(crate) fn manifest_digest(contract: &SchemaMigration) -> String {
     for transform in contract.transforms() {
         hasher.update(transform_digest(transform).as_bytes());
     }
-    to_hex(&hasher.finish())
+    hex::encode(hasher.finish().as_ref())
 }
 
 /// Encodes one transform into its canonical manifest text.
@@ -549,7 +548,7 @@ pub(crate) fn schema_digest_bytes(schema: &SchemaDefinition) -> Vec<u8> {
 /// Decodes one lowercase hex digest, failing on any character outside it or
 /// any length other than the digest length.
 ///
-/// Mirrors [`to_hex`](crate::backup::sha256::to_hex), which is encode-only:
+/// This is the inverse of the lowercase hex encoding used for digests:
 /// the migration record's decoder stays in this module instead of widening
 /// the backup checksum module's surface.
 pub(crate) fn from_hex(text: &str) -> Option<[u8; 32]> {

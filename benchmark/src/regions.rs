@@ -52,14 +52,16 @@ pub struct RegionCode([u8; REGION_CODE_BYTES]);
 ///
 /// Every variant names its exact rejection class; none of them carries or
 /// implies a repaired value, because parsers never normalize input.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum RegionCodeError {
     /// The input was not exactly [`REGION_CODE_BYTES`] bytes long. Carries
     /// the observed byte length, counting multi-byte UTF-8 characters one
     /// byte per encoded unit.
+    #[error("Region code must be exactly three bytes (got {0})")]
     WrongLength(usize),
     /// The input contained a byte at or above `0x80`, so it is not ASCII
     /// text. Carries the index of the first such byte.
+    #[error("Region code contains non-ASCII byte at index {index}")]
     NonAscii {
         /// The index of the first non-ASCII byte.
         index: usize,
@@ -68,6 +70,7 @@ pub enum RegionCodeError {
     /// uppercase letters `A`..=`Z` — lowercase text, a digit, punctuation,
     /// whitespace, or a control byte. Carries the index and value of the
     /// first such byte.
+    #[error("Region code byte at index {index} is not an uppercase ASCII letter (0x{byte:02x})")]
     NotUppercaseLetter {
         /// The index of the offending byte.
         index: usize,
@@ -77,33 +80,14 @@ pub enum RegionCodeError {
     /// The text is a well-formed code that this catalog has never
     /// admitted. Carries the refused code. Alias attempts land here: the
     /// engine keeps no alias table.
+    #[error("Region code {0} is not registered")]
     Unregistered(RegionCode),
     /// The text is a well-formed code that this catalog retired. Retired
     /// codes stay reserved forever and can never be admitted again, so
     /// parsing them can never succeed. Carries the retired code.
+    #[error("Region code {0} is retired")]
     Retired(RegionCode),
 }
-
-impl fmt::Display for RegionCodeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::WrongLength(length) => {
-                write!(formatter, "Region code must be exactly three bytes (got {length})")
-            }
-            Self::NonAscii { index } => {
-                write!(formatter, "Region code contains non-ASCII byte at index {index}")
-            }
-            Self::NotUppercaseLetter { index, byte } => write!(
-                formatter,
-                "Region code byte at index {index} is not an uppercase ASCII letter (0x{byte:02x})"
-            ),
-            Self::Unregistered(code) => write!(formatter, "Region code {code} is not registered"),
-            Self::Retired(code) => write!(formatter, "Region code {code} is retired"),
-        }
-    }
-}
-
-impl std::error::Error for RegionCodeError {}
 
 /// The typed failures of Region catalog admission and retirement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

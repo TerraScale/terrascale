@@ -13,12 +13,12 @@
 //! identifiers may carry interior whitespace and a bare name would not
 //! parse back.
 
-use crate::backup::sha256::{Sha256, to_hex};
 use crate::backup::{BackupError, BackupKind};
 use crate::{
     identity::DatabaseUlid,
     types::{StorageSequence, TenantId},
 };
+use aws_lc_rs::digest::{Context, SHA256, digest};
 use std::io::Read;
 
 /// The manifest file name inside one recovery-point directory.
@@ -97,9 +97,7 @@ impl BackupMember {
         if u64::try_from(bytes.len()).ok() != Some(self.length) {
             return false;
         }
-        let mut hasher = Sha256::new();
-        hasher.update(bytes);
-        to_hex(&hasher.finish()) == self.digest
+        hex::encode(digest(&SHA256, bytes).as_ref()) == self.digest
     }
 }
 
@@ -232,9 +230,8 @@ impl BackupManifest {
             members,
             total_bytes,
         };
-        let mut hasher = Sha256::new();
-        hasher.update(&manifest.body_lines().join("\n").into_bytes());
-        manifest.identity = to_hex(&hasher.finish());
+        manifest.identity =
+            hex::encode(digest(&SHA256, manifest.body_lines().join("\n").as_bytes()).as_ref());
         manifest
     }
 
@@ -570,9 +567,9 @@ pub(crate) fn parse_manifest(text: &str) -> Result<BackupManifest, BackupError> 
         total_bytes,
     };
     // The identity must bind the parsed body exactly.
-    let mut hasher = Sha256::new();
-    hasher.update(&manifest.body_lines().join("\n").into_bytes());
-    if manifest.identity != to_hex(&hasher.finish()) {
+    if manifest.identity
+        != hex::encode(digest(&SHA256, manifest.body_lines().join("\n").as_bytes()).as_ref())
+    {
         return Err(invalid());
     }
     // Identity binds the canonical body, so the serialized input must also
@@ -712,14 +709,14 @@ fn validate_identity_hex(text: &str) -> Result<(), BackupError> {
 
 /// Computes the canonical digest of the ordered tenant scope.
 fn tenant_scope_digest(tenants: &[BackupTenantCount]) -> String {
-    let mut hasher = Sha256::new();
+    let mut hasher = Context::new(&SHA256);
     for tenant in tenants {
         hasher.update(tenant.tenant().as_str().len().to_string().as_bytes());
         hasher.update(b":");
         hasher.update(tenant.tenant().as_str().as_bytes());
         hasher.update(b"\n");
     }
-    to_hex(&hasher.finish())
+    hex::encode(hasher.finish().as_ref())
 }
 
 /// Validates a caller-supplied recovery-point identity.
@@ -756,9 +753,7 @@ mod tests {
     fn rebind(mut text: String) -> String {
         let mut lines: Vec<_> = text.split('\n').map(str::to_owned).collect();
         let body = lines[2..lines.len() - 1].join("\n");
-        let mut hasher = Sha256::new();
-        hasher.update(body.as_bytes());
-        lines[1] = format!("identity {}", to_hex(&hasher.finish()));
+        lines[1] = format!("identity {}", hex::encode(digest(&SHA256, body.as_bytes()).as_ref()));
         text = lines.join("\n");
         text
     }

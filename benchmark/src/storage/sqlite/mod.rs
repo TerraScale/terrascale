@@ -97,6 +97,7 @@ mod descriptor_removal;
 pub(super) mod encrypted_file;
 pub(super) mod encrypted_vfs;
 mod invisible;
+mod json_codec;
 mod lifecycle_state;
 mod private_metadata;
 mod repair_summary;
@@ -140,6 +141,8 @@ use crate::usage::{
 #[cfg(test)]
 use super::faults::FaultPlan;
 use super::ownership::database_binding;
+pub(crate) use json_codec::decode_document_body;
+use json_codec::encode_document_body;
 use super::{
     AppliedFrontierEntry, BackfillProgress, DbUsageFact, DescriptorListing, DescriptorRegistration,
     DocumentMergeState, DocumentRevisionEntry, ExpiredTtlKey, IndexDescriptorError, JournalKind,
@@ -3970,303 +3973,6 @@ fn conflict_for_absent_document(
         first_collection_of_id(transaction, tenant, id, published_sequence)?.is_some();
     Ok(in_snapshot != in_published || in_published || !codec::matches_expectation(None, expected))
 }
-
-/// Escapes one string using the JSON string grammar.  Non-ASCII UTF-8 stays
-/// literal, which makes the bytes deterministic without needless escaping.
-fn append_json_string(output: &mut Vec<u8>, value: &str) {
-    output.push(b'"');
-    for byte in value.bytes() {
-        match byte {
-            b'"' => output.extend_from_slice(br#"\""#),
-            b'\\' => output.extend_from_slice(br"\\"),
-            0x00..=0x1f => output.extend_from_slice(format!("\\u{byte:04x}").as_bytes()),
-            _ => output.push(byte),
-        }
-    }
-    output.push(b'"');
-}
-
-fn append_json_value(output: &mut Vec<u8>, value: &DocumentValue) {
-    match value {
-        DocumentValue::Null => output.extend_from_slice(b"null"),
-        DocumentValue::Boolean(value) => {
-            output.extend_from_slice(if *value { b"true" } else { b"false" })
-        }
-        DocumentValue::Integer(value) => output.extend_from_slice(value.to_string().as_bytes()),
-        DocumentValue::Number(value) if value.is_finite() => {
-            let text = value.to_string();
-            output.extend_from_slice(text.as_bytes());
-            // Keep the numeric variant across the JSON storage boundary.
-            // Integral floats and negative zero otherwise decode as integers.
-            if !text.contains(['.', 'e', 'E']) {
-                output.extend_from_slice(b".0");
-            }
-        }
-        // JSON has no non-finite number representation. Keep the body valid
-        // JSON while retaining the exact IEEE-754 bits in a reserved scalar
-        // envelope. The parser recognizes this shape only when it is the
-        // object's sole member, so regular objects remain unaffected by the
-        // extension and SQLite's JSON functions continue to accept the body.
-        DocumentValue::Number(value) => {
-            output.extend_from_slice(br#"{"__terrascale_nonfinite__":"#);
-            append_json_string(output, &format!("{:016x}", value.to_bits()));
-            output.push(b'}');
-        }
-        DocumentValue::String(value) => append_json_string(output, value),
-        DocumentValue::Array(items) => {
-            output.push(b'[');
-            for (index, item) in items.iter().enumerate() {
-                if index != 0 {
-                    output.push(b',');
-                }
-                append_json_value(output, item);
-            }
-            output.push(b']');
-        }
-        DocumentValue::Object(fields) => {
-            output.push(b'{');
-            for (index, (name, item)) in fields.iter().enumerate() {
-                if index != 0 {
-                    output.push(b',');
-                }
-                append_json_string(output, name);
-                output.push(b':');
-                append_json_value(output, item);
-            }
-            output.push(b'}');
-        }
-    }
-}
-
-/// Encodes one document as a deterministic JSON envelope.  Keeping identity
-/// and version in the envelope preserves the existing zero-copy row API while
-/// replacing the private binary body representation with canonical JSON.
-fn encode_document_body(document: &Document) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"{\"$collection\":");
-    append_json_string(&mut bytes, document.collection().as_str());
-    bytes.extend_from_slice(b",\"$id\":");
-    append_json_string(&mut bytes, document.id().as_str());
-    bytes.extend_from_slice(b",\"$value\":");
-    append_json_value(&mut bytes, document.value());
-    bytes.extend_from_slice(b",\"$version\":");
-    bytes.extend_from_slice(document.metadata().version().to_string().as_bytes());
-    bytes.push(b'}');
-    bytes
-}
-
-struct JsonParser<'a> {
-    bytes: &'a [u8],
-    position: usize,
-}
-
-impl<'a> JsonParser<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, position: 0 }
-    }
-
-    fn whitespace(&mut self) {
-        while self.bytes.get(self.position).is_some_and(|byte| byte.is_ascii_whitespace()) {
-            self.position += 1;
-        }
-    }
-
-    fn consume(&mut self, expected: u8) -> Option<()> {
-        self.whitespace();
-        (self.bytes.get(self.position).copied()? == expected).then(|| self.position += 1)
-    }
-
-    fn string(&mut self) -> Option<String> {
-        self.consume(b'"')?;
-        let mut output = String::new();
-        while let Some(byte) = self.bytes.get(self.position).copied() {
-            self.position += 1;
-            match byte {
-                b'"' => return Some(output),
-                b'\\' => match self.bytes.get(self.position).copied()? {
-                    b'"' | b'\\' | b'/' => {
-                        output.push(self.bytes[self.position] as char);
-                        self.position += 1;
-                    }
-                    b'b' => {
-                        output.push('\u{8}');
-                        self.position += 1;
-                    }
-                    b'f' => {
-                        output.push('\u{c}');
-                        self.position += 1;
-                    }
-                    b'n' => {
-                        output.push('\n');
-                        self.position += 1;
-                    }
-                    b'r' => {
-                        output.push('\r');
-                        self.position += 1;
-                    }
-                    b't' => {
-                        output.push('\t');
-                        self.position += 1;
-                    }
-                    b'u' => {
-                        self.position += 1;
-                        let hex = self.bytes.get(self.position..self.position + 4)?;
-                        let text = std::str::from_utf8(hex).ok()?;
-                        let code = u32::from_str_radix(text, 16).ok()?;
-                        output.push(char::from_u32(code)?);
-                        self.position += 4;
-                    }
-                    _ => return None,
-                },
-                0..=0x1f => return None,
-                _ => {
-                    let tail = std::str::from_utf8(&self.bytes[self.position - 1..]).ok()?;
-                    let character = tail.chars().next()?;
-                    if character.len_utf8() > 1 {
-                        self.position += character.len_utf8() - 1;
-                    }
-                    output.push(character);
-                }
-            }
-        }
-        None
-    }
-
-    fn value(&mut self, depth: usize) -> Option<DocumentValue> {
-        if depth > codec::MAX_VALUE_DEPTH {
-            return None;
-        }
-        self.whitespace();
-        match self.bytes.get(self.position).copied()? {
-            b'n' if self.bytes.get(self.position..self.position + 4) == Some(b"null") => {
-                self.position += 4;
-                Some(DocumentValue::Null)
-            }
-            b't' if self.bytes.get(self.position..self.position + 4) == Some(b"true") => {
-                self.position += 4;
-                Some(DocumentValue::Boolean(true))
-            }
-            b'f' if self.bytes.get(self.position..self.position + 5) == Some(b"false") => {
-                self.position += 5;
-                Some(DocumentValue::Boolean(false))
-            }
-            b'"' => self.string().map(DocumentValue::String),
-            b'[' => {
-                self.position += 1;
-                let mut values = Vec::new();
-                self.whitespace();
-                if self.bytes.get(self.position) == Some(&b']') {
-                    self.position += 1;
-                    return Some(DocumentValue::Array(values));
-                }
-                loop {
-                    values.push(self.value(depth + 1)?);
-                    self.whitespace();
-                    match self.bytes.get(self.position).copied()? {
-                        b',' => self.position += 1,
-                        b']' => {
-                            self.position += 1;
-                            break;
-                        }
-                        _ => return None,
-                    }
-                }
-                Some(DocumentValue::Array(values))
-            }
-            b'{' => {
-                self.position += 1;
-                let mut fields = std::collections::BTreeMap::new();
-                self.whitespace();
-                if self.bytes.get(self.position) == Some(&b'}') {
-                    self.position += 1;
-                    return Some(DocumentValue::Object(fields));
-                }
-                loop {
-                    let name = self.string()?;
-                    self.consume(b':')?;
-                    fields.insert(name, self.value(depth + 1)?);
-                    self.whitespace();
-                    match self.bytes.get(self.position).copied()? {
-                        b',' => self.position += 1,
-                        b'}' => {
-                            self.position += 1;
-                            break;
-                        }
-                        _ => return None,
-                    }
-                }
-                if fields.len() == 1 {
-                    if let Some(DocumentValue::String(bits)) =
-                        fields.get("__terrascale_nonfinite__")
-                    {
-                        if bits.len() == 16
-                            && bits.bytes().all(|byte| byte.is_ascii_hexdigit())
-                            && let Ok(bits) = u64::from_str_radix(bits, 16)
-                        {
-                            let value = f64::from_bits(bits);
-                            if !value.is_finite() {
-                                return Some(DocumentValue::Number(value));
-                            }
-                        }
-                    }
-                }
-                Some(DocumentValue::Object(fields))
-            }
-            b'-' | b'0'..=b'9' => {
-                let start = self.position;
-                while self
-                    .bytes
-                    .get(self.position)
-                    .is_some_and(|byte| byte.is_ascii_digit() || b"+-.eE".contains(byte))
-                {
-                    self.position += 1;
-                }
-                let text = std::str::from_utf8(&self.bytes[start..self.position]).ok()?;
-                if !text.contains(['.', 'e', 'E']) {
-                    if let Ok(value) = text.parse::<i64>() {
-                        return Some(DocumentValue::Integer(value));
-                    }
-                }
-                text.parse::<f64>()
-                    .ok()
-                    .filter(|value| value.is_finite())
-                    .map(DocumentValue::Number)
-            }
-            _ => None,
-        }
-    }
-}
-
-/// Decodes one canonical JSON body, rejecting trailing bytes and malformed
-/// envelope metadata.
-pub(crate) fn decode_document_body(bytes: &[u8]) -> Option<Document> {
-    let mut parser = JsonParser::new(bytes);
-    let DocumentValue::Object(mut fields) = parser.value(0)? else { return None };
-    parser.whitespace();
-    if parser.position != bytes.len() {
-        return None;
-    }
-    let collection = match fields.remove("$collection")? {
-        DocumentValue::String(value) => CollectionName::try_new(&value).ok()?,
-        _ => return None,
-    };
-    let id = match fields.remove("$id")? {
-        DocumentValue::String(value) => DocumentId::try_new(&value).ok()?,
-        _ => return None,
-    };
-    let version = match fields.remove("$version")? {
-        DocumentValue::Integer(value) if value >= 0 => u64::try_from(value).ok()?,
-        _ => return None,
-    };
-    let value = fields.remove("$value")?;
-    if !fields.is_empty() {
-        return None;
-    }
-    let mut document = Document::new(id, collection, value);
-    document.set_version(version);
-    Some(document)
-}
-
 /// Derives the next root-chain identity from the current head.
 ///
 /// The identity binds the sequence to the preceding publication and the
@@ -4551,6 +4257,18 @@ impl StoragePort for SqliteStorage {
         let result = repair_summary::frontier(&transaction, tenant, cut)?;
         transaction.commit().map_err(|_| ())?;
         Ok(result)
+    }
+    fn replication_repair_cut(
+        &self,
+        tenant: &TenantId,
+        cut: u64,
+    ) -> Result<(std::collections::BTreeMap<String, u64>, [u8; 32]), ()> {
+        let reader = self.reader();
+        let transaction = reader.connection().unchecked_transaction().map_err(|_| ())?;
+        let frontier = repair_summary::frontier(&transaction, tenant, cut)?;
+        let baseline = repair_summary::baseline_digest(&transaction)?;
+        transaction.commit().map_err(|_| ())?;
+        Ok((frontier, baseline))
     }
     fn replication_range_summary(
         &self,

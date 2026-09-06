@@ -53,6 +53,11 @@ name = "member"
 path = "tests/member/main.rs"
 
 [dependencies]
+# Standard codecs and error derives replace repository-owned implementations.
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
+thiserror = "2"
 terrabase-replication-core = { path = "crates/terrabase-replication-core" }
 object_store = { version = "0.12.4", features = ["aws"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }

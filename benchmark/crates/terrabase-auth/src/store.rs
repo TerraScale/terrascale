@@ -244,6 +244,7 @@ fn execute(transaction: &Transaction<'_>, command: &Command) -> Result<Outcome> 
         || command.idempotency_key.len() > 256
         || body.len() > 1024 * 1024
     {
+        transactions::poison_operation(transaction, &command.action)?;
         return Ok(invalid("invalid idempotency key or operation exceeds 1 MiB"));
     }
     let digest = blake3::hash(&body);
@@ -259,6 +260,7 @@ fn execute(transaction: &Transaction<'_>, command: &Command) -> Result<Outcome> 
         return if prior_digest == digest.as_bytes() {
             decode(&outcome)
         } else {
+            transactions::poison_operation(transaction, &command.action)?;
             Ok(Outcome::IdempotencyConflict)
         };
     }

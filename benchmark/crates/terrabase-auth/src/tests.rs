@@ -351,7 +351,8 @@ async fn real_raft_rejects_partitioned_leader_and_serializes_competing_auth_writ
 
 fn tx(id: &str, action: Action) -> Action {
     Action::TransactionOperation {
-        transaction_id: if id.contains('#') { id.into() } else { format!("{id}#1") },
+        // Tests must use the exact canonical ID returned by BeginTransaction.
+        transaction_id: id.into(),
         action: Box::new(action),
     }
 }
@@ -376,7 +377,7 @@ async fn transaction_reads_own_writes_and_commit_replay_survives_expiry_and_rest
         command(
             "tx-insert",
             tx(
-                "tx",
+                "tx#1",
                 Action::InsertUnique { model: "user".into(), record: user("a", "secret@test") },
             ),
         ),
@@ -389,14 +390,14 @@ async fn transaction_reads_own_writes_and_commit_replay_survives_expiry_and_rest
         command(
             "tx-read",
             tx(
-                "tx",
+                "tx#1",
                 Action::Find { model: "user".into(), predicates: vec![], offset: 0, limit: 100 },
             ),
         ),
     )
     .await;
     assert!(matches!(selected,Outcome::Records { records } if records.len()==1));
-    let commit = command("commit", Action::CommitTransaction { transaction_id: "tx".into() });
+    let commit = command("commit", Action::CommitTransaction { transaction_id: "tx#1".into() });
     assert_eq!(apply(&mut store, 4, commit.clone()).await, Outcome::Applied);
     drop(store);
     let mut store = SqliteStore::open(&path, "group").unwrap();
@@ -421,7 +422,10 @@ async fn caught_inner_conflict_poison_commit_without_partial_effects() {
         2,
         command(
             "first",
-            tx("tx", Action::InsertUnique { model: "user".into(), record: user("a", "one@test") }),
+            tx(
+                "tx#1",
+                Action::InsertUnique { model: "user".into(), record: user("a", "one@test") },
+            ),
         ),
     )
     .await;
@@ -432,7 +436,7 @@ async fn caught_inner_conflict_poison_commit_without_partial_effects() {
             command(
                 "conflict",
                 tx(
-                    "tx",
+                    "tx#1",
                     Action::InsertUnique { model: "user".into(), record: user("a", "two@test") }
                 )
             )
@@ -447,7 +451,7 @@ async fn caught_inner_conflict_poison_commit_without_partial_effects() {
             command(
                 "first",
                 tx(
-                    "tx",
+                    "tx#1",
                     Action::InsertUnique { model: "user".into(), record: user("b", "two@test") }
                 )
             )
@@ -459,7 +463,7 @@ async fn caught_inner_conflict_poison_commit_without_partial_effects() {
         apply(
             &mut store,
             5,
-            command("commit", Action::CommitTransaction { transaction_id: "tx".into() })
+            command("commit", Action::CommitTransaction { transaction_id: "tx#1".into() })
         )
         .await,
         Outcome::TransactionConflict
@@ -468,7 +472,7 @@ async fn caught_inner_conflict_poison_commit_without_partial_effects() {
 }
 
 #[tokio::test]
-async fn outer_idempotency_conflict_does_not_poison_transaction() {
+async fn idempotency_conflict_poisons_transaction_without_visible_writes() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
     apply(
@@ -482,7 +486,10 @@ async fn outer_idempotency_conflict_does_not_poison_transaction() {
         2,
         command(
             "first",
-            tx("tx", Action::InsertUnique { model: "user".into(), record: user("a", "one@test") }),
+            tx(
+                "tx#1",
+                Action::InsertUnique { model: "user".into(), record: user("a", "one@test") },
+            ),
         ),
     )
     .await;
@@ -493,7 +500,7 @@ async fn outer_idempotency_conflict_does_not_poison_transaction() {
             command(
                 "first",
                 tx(
-                    "tx",
+                    "tx#1",
                     Action::InsertUnique { model: "user".into(), record: user("b", "two@test") }
                 )
             )
@@ -508,10 +515,99 @@ async fn outer_idempotency_conflict_does_not_poison_transaction() {
             command("commit", Action::CommitTransaction { transaction_id: "tx#1".into() })
         )
         .await,
+        Outcome::TransactionConflict
+    );
+    assert!(store.read_record("user", "a").unwrap().is_none());
+    assert!(store.read_record("user", "b").unwrap().is_none());
+}
+
+#[tokio::test]
+async fn invalid_inner_operation_poisons_transaction_without_visible_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
+    assert!(matches!(
+        apply(
+            &mut store,
+            1,
+            command("begin", Action::BeginTransaction { transaction_id: "invalid".into() }),
+        )
+        .await,
+        Outcome::Transaction { transaction_id, .. } if transaction_id == "invalid#1"
+    ));
+    assert!(matches!(
+        apply(
+            &mut store,
+            2,
+            command(
+                "nested-invalid",
+                tx("invalid#1", Action::BeginTransaction { transaction_id: "nested".into() },),
+            ),
+        )
+        .await,
+        Outcome::Invalid { .. }
+    ));
+    assert_eq!(
+        apply(
+            &mut store,
+            3,
+            command("commit", Action::CommitTransaction { transaction_id: "invalid#1".into() }),
+        )
+        .await,
+        Outcome::TransactionConflict
+    );
+    assert!(store.read_record("user", "never-written").unwrap().is_none());
+}
+
+#[tokio::test]
+async fn transaction_workspace_survives_snapshot_restore_with_canonical_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("auth.sqlite");
+    let mut store = SqliteStore::open(&path, "group").unwrap();
+    assert!(matches!(
+        apply(
+            &mut store,
+            1,
+            command("begin", Action::BeginTransaction { transaction_id: "snap".into() }),
+        )
+        .await,
+        Outcome::Transaction { transaction_id, .. } if transaction_id == "snap#1"
+    ));
+    assert!(matches!(
+        apply(
+            &mut store,
+            2,
+            command(
+                "stage",
+                tx(
+                    "snap#1",
+                    Action::InsertUnique {
+                        model: "user".into(),
+                        record: user("snap-user", "snap@test"),
+                    },
+                ),
+            ),
+        )
+        .await,
+        Outcome::Record { .. }
+    ));
+    assert!(store.read_record("user", "snap-user").unwrap().is_none());
+
+    let snapshot = openraft::RaftSnapshotBuilder::build_snapshot(&mut store).await.unwrap();
+    let mut restored = SqliteStore::open(&dir.path().join("restored.sqlite"), "group").unwrap();
+    restored.install_snapshot(&snapshot.meta, snapshot.snapshot).await.unwrap();
+    assert_eq!(
+        apply(
+            &mut restored,
+            3,
+            command(
+                "commit-restored",
+                Action::CommitTransaction { transaction_id: "snap#1".into() }
+            ),
+        )
+        .await,
         Outcome::Applied
     );
-    assert!(store.read_record("user", "a").unwrap().is_some());
-    assert!(store.read_record("user", "b").unwrap().is_none());
+    assert!(restored.read_record("user", "snap-user").unwrap().is_some());
 }
 
 #[tokio::test]
@@ -555,7 +651,7 @@ async fn transaction_generations_reject_delayed_ids_after_terminal_expiry_and_re
         .await,
         Outcome::TransactionConflict
     );
-    assert_eq!(
+    assert!(matches!(
         apply(
             &mut store,
             4,
@@ -566,18 +662,18 @@ async fn transaction_generations_reject_delayed_ids_after_terminal_expiry_and_re
         )
         .await,
         Outcome::Transaction { transaction_id, .. } if transaction_id == "terminal#2"
-    );
+    ));
 
     assert!(matches!(
         apply(&mut store, 5, command("begin-expired", Action::BeginTransaction {
             transaction_id: "expired".into()
         })).await,
-        Outcome::Transaction { transaction_id, .. } if transaction_id == "expired#2"
+        Outcome::Transaction { transaction_id, .. } if transaction_id == "expired#3"
     ));
     let mut delayed = command(
         "delayed-expired",
         tx(
-            "expired#2",
+            "expired#3",
             Action::InsertUnique { model: "user".into(), record: user("late2", "late2@test") },
         ),
     );
@@ -593,7 +689,7 @@ async fn transaction_generations_reject_delayed_ids_after_terminal_expiry_and_re
             command("reuse-expired", Action::BeginTransaction { transaction_id: "expired".into() })
         )
         .await,
-        Outcome::Transaction { transaction_id, .. } if transaction_id == "expired#4"
+        Outcome::Transaction { transaction_id, .. } if transaction_id == "expired#5"
     ));
     drop(store);
     let mut reopened = SqliteStore::open(&path, "group").unwrap();
@@ -618,7 +714,7 @@ async fn transaction_generations_reject_delayed_ids_after_terminal_expiry_and_re
 }
 
 #[tokio::test]
-async fn operation_limit_rejection_does_not_poison_workspace() {
+async fn operation_limit_rejection_poisons_workspace() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SqliteStore::open(&dir.path().join("auth.sqlite"), "group").unwrap();
     assert!(matches!(
@@ -638,7 +734,7 @@ async fn operation_limit_rejection_does_not_poison_workspace() {
                 command(
                     &format!("find-{index}"),
                     tx(
-                        "limited",
+                        "limited#1",
                         Action::Find {
                             model: "user".into(),
                             predicates: vec![],
@@ -659,7 +755,7 @@ async fn operation_limit_rejection_does_not_poison_workspace() {
             command(
                 "limit",
                 tx(
-                    "limited",
+                    "limited#1",
                     Action::Find { model: "user".into(), predicates: vec![], offset: 0, limit: 1 },
                 )
             )
@@ -671,10 +767,10 @@ async fn operation_limit_rejection_does_not_poison_workspace() {
         apply(
             &mut store,
             103,
-            command("commit", Action::CommitTransaction { transaction_id: "limited".into() })
+            command("commit", Action::CommitTransaction { transaction_id: "limited#1".into() })
         )
         .await,
-        Outcome::Applied
+        Outcome::TransactionConflict
     );
 }
 
@@ -834,7 +930,7 @@ async fn transaction_touches_one_record_in_database_larger_than_snapshot_bound()
         command(
             "find",
             tx(
-                "large",
+                "large#1",
                 Action::Find {
                     model: "user".into(),
                     predicates: vec![predicate],
@@ -854,7 +950,7 @@ async fn transaction_touches_one_record_in_database_larger_than_snapshot_bound()
         command(
             "change",
             tx(
-                "large",
+                "large#1",
                 Action::CompareAndSwap {
                     model: "user".into(),
                     id: "1100".into(),
@@ -869,7 +965,7 @@ async fn transaction_touches_one_record_in_database_larger_than_snapshot_bound()
         apply(
             &mut store,
             1104,
-            command("commit", Action::CommitTransaction { transaction_id: "large".into() })
+            command("commit", Action::CommitTransaction { transaction_id: "large#1".into() })
         )
         .await,
         Outcome::Applied

@@ -81,7 +81,11 @@ pub async fn run(config: ServerConfig) -> Result<(), Box<dyn Error + Send + Sync
         config.region,
         Arc::clone(&metrics),
     ));
-    let live_tls = terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(&certificate, &private_key, &client_ca)?;
+    let live_tls = terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(
+        &certificate,
+        &private_key,
+        &client_ca,
+    )?;
 
     let mut uds_handle = if let Some(uds) = &config.uds {
         validate_uds_parent(&uds.path)?;
@@ -199,18 +203,27 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         match journal.accepted() {
             Ok(_) => Some(journal),
             Err(terrabase_tbep::placement::PlacementError::NotFound) => {
-                return serve_pending_placement_control(&config, production).await.map_err(|error| {
-                    Box::new(DaemonError::ProductionStartup(error)) as Box<dyn Error + Send + Sync>
-                });
+                return serve_pending_placement_control(&config, production).await.map_err(
+                    |error| {
+                        Box::new(DaemonError::ProductionStartup(error))
+                            as Box<dyn Error + Send + Sync>
+                    },
+                );
             }
-            Err(_) => return Err(Box::new(DaemonError::ProductionStartup(
-                ProductionStartupError::Component(crate::production::ProductionComponentError {
-                    component: crate::production::ProductionComponent::Membership,
-                    detail: "retained membership proof is unavailable or invalid",
-                }),
-            )))
+            Err(_) => {
+                return Err(Box::new(DaemonError::ProductionStartup(
+                    ProductionStartupError::Component(
+                        crate::production::ProductionComponentError {
+                            component: crate::production::ProductionComponent::Membership,
+                            detail: "retained membership proof is unavailable or invalid",
+                        },
+                    ),
+                )));
+            }
         }
-    } else { None };
+    } else {
+        None
+    };
 
     // This is the production storage boundary. It opens every enabled
     // database below one root and verifies the route and placement catalogs;
@@ -250,24 +263,30 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
                 ) => "durable orchestrator membership source unavailable",
                 _ => "durable orchestrator membership proof is invalid or mismatched",
             };
-            let error = ProductionStartupError::Component(crate::production::ProductionComponentError {
-                component: crate::production::ProductionComponent::Membership, detail,
-            }).with_storage_cleanup(report.storage);
+            let error =
+                ProductionStartupError::Component(crate::production::ProductionComponentError {
+                    component: crate::production::ProductionComponent::Membership,
+                    detail,
+                })
+                .with_storage_cleanup(report.storage);
             return Err(Box::new(DaemonError::ProductionStartup(error)));
         }
     } else {
         let report = member.drain().await;
-        let error = ProductionStartupError::Component(crate::production::ProductionComponentError {
-            component: crate::production::ProductionComponent::Membership,
-            detail: "no durable orchestrator membership source is configured",
-        }).with_storage_cleanup(report.storage);
+        let error =
+            ProductionStartupError::Component(crate::production::ProductionComponentError {
+                component: crate::production::ProductionComponent::Membership,
+                detail: "no durable orchestrator membership source is configured",
+            })
+            .with_storage_cleanup(report.storage);
         return Err(Box::new(DaemonError::ProductionStartup(error)));
     }
     let report = member.drain().await;
     let error = ProductionStartupError::Component(crate::production::ProductionComponentError {
         component: crate::production::ProductionComponent::Replication,
         detail: "durable production data plane is not composed",
-    }).with_storage_cleanup(report.storage);
+    })
+    .with_storage_cleanup(report.storage);
     Err(Box::new(DaemonError::ProductionStartup(error)))
 }
 
@@ -289,8 +308,8 @@ async fn serve_pending_placement_control(
         .control
         .as_ref()
         .ok_or_else(|| unavailable("placement control configuration missing"))?;
-    let journal = open_production_placement_journal(production)
-        .map_err(|detail| unavailable(detail))?;
+    let journal =
+        open_production_placement_journal(production).map_err(|detail| unavailable(detail))?;
     let grpc = TbepGrpcConfig::try_new(
         config.max_message_bytes,
         config.max_inflight,
@@ -300,21 +319,55 @@ async fn serve_pending_placement_control(
         control.orchestrator_principals.clone(),
     )
     .map_err(|_| unavailable("placement control transport limits are invalid"))?;
-    let auth_boundary=terrabase_tbep::auth_bootstrap::AuthBootstrapBoundary::new(
+    let auth_boundary = terrabase_tbep::auth_bootstrap::AuthBootstrapBoundary::new(
         production.environment.name.as_str(),
         &production.environment.cluster.to_text(),
         &production.environment.member.to_text(),
-        production.databases.iter().filter(|database|database.enabled).map(|database| {
-            terrabase_cluster::production::DatabaseRouteScope::new(database.tenant,database.project,database.database)
-        }).collect(),
-        production.placement.regions.iter().flat_map(|(region,members)| members.iter().map(|member|(member.to_text(),region.as_str().to_owned())).collect::<Vec<_>>()).collect(),
-    ).map_err(|_|unavailable("auth bootstrap host boundary is invalid"))?;
-    let auth_journal_path=control.proposal_journal.parent().ok_or_else(||unavailable("auth bootstrap journal directory missing"))?.join("auth-bootstrap.sqlite");
-    let auth_journal=Arc::new(terrabase_tbep::auth_bootstrap::AuthBootstrapJournal::open(&auth_journal_path,auth_boundary)
-        .map_err(|_|unavailable("auth bootstrap journal unavailable or identity mismatch"))?);
+        production
+            .databases
+            .iter()
+            .filter(|database| database.enabled)
+            .map(|database| {
+                terrabase_cluster::production::DatabaseRouteScope::new(
+                    database.tenant,
+                    database.project,
+                    database.database,
+                )
+            })
+            .collect(),
+        production
+            .placement
+            .regions
+            .iter()
+            .flat_map(|(region, members)| {
+                members
+                    .iter()
+                    .map(|member| (member.to_text(), region.as_str().to_owned()))
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+    )
+    .map_err(|_| unavailable("auth bootstrap host boundary is invalid"))?;
+    let auth_journal_path = control
+        .proposal_journal
+        .parent()
+        .ok_or_else(|| unavailable("auth bootstrap journal directory missing"))?
+        .join("auth-bootstrap.sqlite");
+    let auth_journal = Arc::new(
+        terrabase_tbep::auth_bootstrap::AuthBootstrapJournal::open(
+            &auth_journal_path,
+            auth_boundary,
+        )
+        .map_err(|_| unavailable("auth bootstrap journal unavailable or identity mismatch"))?,
+    );
     let server = Arc::new(
-        PlacementControlServer::new(journal, Arc::clone(&auth_journal), grpc, control.observer_principals.clone())
-            .map_err(|_| unavailable("placement control principal policy is invalid"))?,
+        PlacementControlServer::new(
+            journal,
+            Arc::clone(&auth_journal),
+            grpc,
+            control.observer_principals.clone(),
+        )
+        .map_err(|_| unavailable("placement control principal policy is invalid"))?,
     );
     let certificate = read_pem(&production.transport.server_certificate, false)
         .map_err(|_| unavailable("placement control TLS certificate is unavailable"))?;
@@ -322,15 +375,29 @@ async fn serve_pending_placement_control(
         .map_err(|_| unavailable("placement control TLS private key is unavailable"))?;
     let ca = read_pem(&production.transport.client_ca, false)
         .map_err(|_| unavailable("placement control TLS CA is unavailable"))?;
-    let live_tls = terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(&certificate, &key, &ca)
-        .map_err(|_| unavailable("placement TLS identity is invalid"))?;
-    let rotation = production.transport.credential_rotation.as_ref().map(|rotation| {
-        let token = read_secret_key(&rotation.token_file).map_err(|_| unavailable("rotation token unavailable"))?;
-        crate::credential_rotation::bind_with_tls(&rotation.socket, &rotation.state_file, token,
-            crate::reactive_api::OriginProofKeyRing::disabled(), crate::reactive_api::CapabilityKeyRing::disabled(),
-            live_tls.clone(), format!("{certificate}\n{key}").into_bytes(), ca.as_bytes().to_vec())
+    let live_tls =
+        terrabase_tbep::grpc::reloadable_tls::ReloadableTls::new(&certificate, &key, &ca)
+            .map_err(|_| unavailable("placement TLS identity is invalid"))?;
+    let rotation = production
+        .transport
+        .credential_rotation
+        .as_ref()
+        .map(|rotation| {
+            let token = read_secret_key(&rotation.token_file)
+                .map_err(|_| unavailable("rotation token unavailable"))?;
+            crate::credential_rotation::bind_with_tls(
+                &rotation.socket,
+                &rotation.state_file,
+                token,
+                crate::reactive_api::OriginProofKeyRing::disabled(),
+                crate::reactive_api::CapabilityKeyRing::disabled(),
+                live_tls.clone(),
+                format!("{certificate}\n{key}").into_bytes(),
+                ca.as_bytes().to_vec(),
+            )
             .map_err(|_| unavailable("durable credential rotation controller unavailable"))
-    }).transpose()?;
+        })
+        .transpose()?;
     let listener = server
         .bind_tls_reloadable(production.transport.tbep_listen, live_tls)
         .await
@@ -341,25 +408,51 @@ async fn serve_pending_placement_control(
     let observations = tokio::net::TcpListener::bind(production.transport.metrics_listen)
         .await
         .map_err(|_| unavailable("pending placement metrics listener cannot bind"))?;
-    let (auth_stop,auth_signal)=oneshot::channel();
-    let auth_runtime=if let Some(public)=&config.public_api {
-        let endpoint=Arc::new(build_production_transport(production).map_err(|_|unavailable("auth member transport cannot bind"))?);
-        Some(crate::auth_runtime::AuthRuntime::new(endpoint,Arc::clone(&auth_journal),production.clone(),public)
-            .map_err(|_|unavailable("auth runtime credentials or key delivery configuration missing"))?)
-    } else { None };
-    let auth_listen=config.public_api.as_ref().map(|public|public.listen);
-    let mut auth_task=tokio::spawn(async move {
-        if let (Some(runtime),Some(listen))=(auth_runtime,auth_listen) {
-            runtime.serve(listen,async { let _=auth_signal.await; }).await
+    let (auth_stop, auth_signal) = oneshot::channel();
+    let auth_runtime = if let Some(public) = &config.public_api {
+        let endpoint = Arc::new(
+            build_production_transport(production)
+                .map_err(|_| unavailable("auth member transport cannot bind"))?,
+        );
+        Some(
+            crate::auth_runtime::AuthRuntime::new(
+                endpoint,
+                Arc::clone(&auth_journal),
+                production.clone(),
+                public,
+            )
+            .map_err(|_| {
+                unavailable("auth runtime credentials or key delivery configuration missing")
+            })?,
+        )
+    } else {
+        None
+    };
+    let auth_listen = config.public_api.as_ref().map(|public| public.listen);
+    let mut auth_task = tokio::spawn(async move {
+        if let (Some(runtime), Some(listen)) = (auth_runtime, auth_listen) {
+            runtime
+                .serve(listen, async {
+                    let _ = auth_signal.await;
+                })
+                .await
         } else {
-            let _=auth_signal.await;
+            let _ = auth_signal.await;
             Ok(())
         }
     });
     let (rotation_stop, rotation_signal) = oneshot::channel();
     let mut rotation_task = tokio::spawn(async move {
-        if let Some(bound) = rotation { bound.serve_until(async { let _ = rotation_signal.await; }).await }
-        else { let _ = rotation_signal.await; Ok(()) }
+        if let Some(bound) = rotation {
+            bound
+                .serve_until(async {
+                    let _ = rotation_signal.await;
+                })
+                .await
+        } else {
+            let _ = rotation_signal.await;
+            Ok(())
+        }
     });
     let (control_stop, control_signal) = oneshot::channel();
     let mut control_task = tokio::spawn(listener.serve(async {
@@ -376,8 +469,8 @@ async fn serve_pending_placement_control(
     });
     let mut control_finished = false;
     let mut metrics_finished = false;
-    let mut auth_finished=false;
-    let mut rotation_finished=false;
+    let mut auth_finished = false;
+    let mut rotation_finished = false;
     let outcome = tokio::select! {
         result = wait_for_shutdown() => result.map_err(|_| unavailable("shutdown signal listener failed")),
         _ = &mut control_task => {
@@ -400,8 +493,8 @@ async fn serve_pending_placement_control(
     server.begin_drain();
     let _ = control_stop.send(());
     let _ = metrics_stop.send(());
-    let _=auth_stop.send(());
-    let _=rotation_stop.send(());
+    let _ = auth_stop.send(());
+    let _ = rotation_stop.send(());
     let drained = tokio::time::timeout(config.shutdown_grace, async {
         if !control_finished {
             control_task
@@ -416,11 +509,16 @@ async fn serve_pending_placement_control(
                 .map_err(|_| unavailable("pending placement metrics drain failed"))?;
         }
         if !rotation_finished {
-            rotation_task.await.map_err(|_| unavailable("credential rotation task failed"))?
+            rotation_task
+                .await
+                .map_err(|_| unavailable("credential rotation task failed"))?
                 .map_err(|_| unavailable("credential rotation drain failed"))?;
         }
         if !auth_finished {
-            auth_task.await.map_err(|_|unavailable("auth runtime task failed"))?.map_err(|_|unavailable("auth runtime drain failed"))?;
+            auth_task
+                .await
+                .map_err(|_| unavailable("auth runtime task failed"))?
+                .map_err(|_| unavailable("auth runtime drain failed"))?;
         }
         server.drain().await.map_err(|_| unavailable("placement journal work did not drain"))
     })
@@ -461,34 +559,39 @@ fn open_production_placement_journal(
     );
     if let Some(trust) = &control.transition {
         let load = |pins: &[crate::config::TransitionPublicKey]| {
-            pins.iter().map(|pin| {
-                let mut file = open_readonly(&pin.public_key_file)
-                    .map_err(|_| "membership signing pin unavailable")?;
-                let metadata = file.metadata().map_err(|_| "membership signing pin unavailable")?;
-                if !metadata.is_file() || metadata.len() != 32 {
-                    return Err("membership signing pin invalid");
-                }
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt as _;
-                    if metadata.permissions().mode() & 0o022 != 0 {
-                        return Err("membership signing pin is writable by others");
+            pins.iter()
+                .map(|pin| {
+                    let mut file = open_readonly(&pin.public_key_file)
+                        .map_err(|_| "membership signing pin unavailable")?;
+                    let metadata =
+                        file.metadata().map_err(|_| "membership signing pin unavailable")?;
+                    if !metadata.is_file() || metadata.len() != 32 {
+                        return Err("membership signing pin invalid");
                     }
-                }
-                let mut key = Vec::with_capacity(32);
-                file.read_to_end(&mut key).map_err(|_| "membership signing pin unavailable")?;
-                if key.len() != 32 {
-                    return Err("membership signing pin changed");
-                }
-                Ok((pin.key_id.clone(), key))
-            }).collect::<Result<std::collections::BTreeMap<_, _>, &'static str>>()
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt as _;
+                        if metadata.permissions().mode() & 0o022 != 0 {
+                            return Err("membership signing pin is writable by others");
+                        }
+                    }
+                    let mut key = Vec::with_capacity(32);
+                    file.read_to_end(&mut key).map_err(|_| "membership signing pin unavailable")?;
+                    if key.len() != 32 {
+                        return Err("membership signing pin changed");
+                    }
+                    Ok((pin.key_id.clone(), key))
+                })
+                .collect::<Result<std::collections::BTreeMap<_, _>, &'static str>>()
         };
         let trust = terrabase_tbep::placement::transition::TransitionTrust::new(
             load(&trust.authority_keys)?,
             load(&trust.genesis_keys)?,
             load(&trust.member_keys)?,
-        ).map_err(|_| "membership signing pins invalid")?;
-        journal.configure_transition_trust(trust)
+        )
+        .map_err(|_| "membership signing pins invalid")?;
+        journal
+            .configure_transition_trust(trust)
             .map_err(|_| "retained membership proof or signing pins invalid")?;
     }
     Ok(journal)
@@ -699,27 +802,60 @@ async fn serve_public_api(
         }
         None => crate::reactive_api::CapabilityKeyRing::default(),
     };
-    let rotation = public.credential_rotation.as_ref().map(|rotation| {
-        crate::credential_rotation::bind_with_tls(&rotation.socket, &rotation.state_file,
-            read_secret_key(&rotation.token_file)?, origin_proof_keys.clone(), capability_keys.clone(),
-            live_tls, workload_tls, trust_bundle)
+    let rotation = public
+        .credential_rotation
+        .as_ref()
+        .map(|rotation| {
+            crate::credential_rotation::bind_with_tls(
+                &rotation.socket,
+                &rotation.state_file,
+                read_secret_key(&rotation.token_file)?,
+                origin_proof_keys.clone(),
+                capability_keys.clone(),
+                live_tls,
+                workload_tls,
+                trust_bundle,
+            )
             .map_err(|_| DaemonError::Engine("credential rotation receiver unavailable".into()))
-    }).transpose()?;
-    let (origin_proof_keys, capability_keys) = rotation.as_ref().map_or(
-        (origin_proof_keys, capability_keys), |bound| (bound.origin.clone(), bound.capability.clone()));
-    let delegated_identity = public.identity.as_ref().map(|identity| {
-        let secret = String::from_utf8(read_secret_key(&identity.service_key_file)?)
-            .map_err(|_| DaemonError::SecretFile)?;
-        crate::delegated_identity::IdentityVerifier::new(crate::delegated_identity::IdentityConfig {
-            endpoint: identity.endpoint.clone(), issuer: identity.issuer.clone(),
-            audience: identity.audience.clone(), service_key: secret,
-        }).map(|verifier| Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()))).map_err(|_| DaemonError::Engine("invalid identity authority configuration".into()))
-    }).transpose()?;
-    let provisioning = public.provisioning.as_ref().map(|authority| {
-        crate::provisioning::ProvisioningClient::new(authority.socket.clone(), authority.authority_uid,
-            authority.environment.clone())
-            .map(Arc::new).map_err(|_| DaemonError::Engine("invalid provisioning authority configuration".into()))
-    }).transpose()?;
+        })
+        .transpose()?;
+    let (origin_proof_keys, capability_keys) =
+        rotation.as_ref().map_or((origin_proof_keys, capability_keys), |bound| {
+            (bound.origin.clone(), bound.capability.clone())
+        });
+    let delegated_identity = public
+        .identity
+        .as_ref()
+        .map(|identity| {
+            let secret = String::from_utf8(read_secret_key(&identity.service_key_file)?)
+                .map_err(|_| DaemonError::SecretFile)?;
+            crate::delegated_identity::IdentityVerifier::new(
+                crate::delegated_identity::IdentityConfig {
+                    endpoint: identity.endpoint.clone(),
+                    issuer: identity.issuer.clone(),
+                    audience: identity.audience.clone(),
+                    service_key: secret,
+                },
+            )
+            .map(|verifier| {
+                Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()))
+            })
+            .map_err(|_| DaemonError::Engine("invalid identity authority configuration".into()))
+        })
+        .transpose()?;
+    let provisioning = public
+        .provisioning
+        .as_ref()
+        .map(|authority| {
+            crate::provisioning::ProvisioningClient::new(
+                authority.socket.clone(),
+                authority.authority_uid,
+                authority.environment.clone(),
+            )
+            .map(Arc::new)
+            .map_err(|_| DaemonError::Engine("invalid provisioning authority configuration".into()))
+        })
+        .transpose()?;
     let state = Arc::new(crate::api::ApiState {
         region,
         metrics,
@@ -757,18 +893,26 @@ async fn serve_public_api(
     let router = crate::api::router(state);
     let task = tokio::spawn(async move {
         let (rotation_stop, rotation_signal) = oneshot::channel();
-        let rotation_task = rotation.map(|bound| tokio::spawn(bound.serve_until(async { let _ = rotation_signal.await; })));
+        let rotation_task = rotation.map(|bound| {
+            tokio::spawn(bound.serve_until(async {
+                let _ = rotation_signal.await;
+            }))
+        });
         let _export_recovery = export_recovery;
         let result = axum::serve(listener, router)
             .with_graceful_shutdown(async {
                 let _ = signal.await;
-                if let Some(exports) = export_runtime { exports.stop(); }
+                if let Some(exports) = export_runtime {
+                    exports.stop();
+                }
             })
             .await;
         let _ = rotation_stop.send(());
         let rotation_result = if let Some(task) = rotation_task {
             task.await.map_err(std::io::Error::other)?
-        } else { Ok(()) };
+        } else {
+            Ok(())
+        };
         if let Some(worker) = schema_migrations {
             worker.abort();
             let _ = worker.await;

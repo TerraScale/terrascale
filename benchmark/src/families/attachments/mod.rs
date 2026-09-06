@@ -26,7 +26,6 @@
 
 pub(crate) mod codec;
 mod content;
-mod digest;
 
 #[cfg(test)]
 mod tests;

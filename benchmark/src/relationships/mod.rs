@@ -27,24 +27,31 @@ pub const MAX_EDGE_PROPERTIES: usize = 64;
 pub const MAX_EDGE_PROPERTY_BYTES: usize = 64 * 1024;
 
 /// A typed failure from relationship construction, indexing, or traversal.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum RelationshipError {
     /// A relationship identifier was empty, oversized, padded, or contained
     /// a control character.
+    #[error("invalid relationship identifier")]
     InvalidIdentifier,
     /// An edge used a different tenant or database from the index.
+    #[error("relationship scope mismatch")]
     ScopeMismatch,
     /// An edge named a different relationship from the index definition.
+    #[error("relationship name mismatch")]
     RelationMismatch,
     /// An endpoint collection did not match its declared side of the
     /// relationship.
+    #[error("relationship endpoint collection mismatch")]
     EndpointCollectionMismatch,
     /// The same edge identity was presented with different immutable fields.
+    #[error("relationship edge identity conflict")]
     EdgeIdentityConflict,
     /// A duplicate add arrived after the identity had been removed.
+    #[error("relationship edge identity was removed")]
     RemovedIdentity,
     /// The generation requested by a caller is no longer the snapshot
     /// generation being read.
+    #[error("stale relationship generation")]
     StaleGeneration {
         /// The generation requested by the caller.
         expected: u64,
@@ -52,57 +59,27 @@ pub enum RelationshipError {
         actual: u64,
     },
     /// The generation counter cannot advance further.
+    #[error("relationship generation exhausted")]
     GenerationExhausted,
     /// A traversal bound was zero or otherwise invalid.
+    #[error("invalid relationship traversal bounds")]
     InvalidTraversalBounds,
     /// A traversal exceeded its maximum hop count.
+    #[error("relationship traversal hop limit exceeded")]
     HopLimitExceeded,
     /// A traversal exceeded its maximum result count.
+    #[error("relationship traversal result limit exceeded")]
     ResultLimitExceeded,
     /// A traversal exceeded its maximum encoded result bytes.
+    #[error("relationship traversal byte limit exceeded")]
     ByteLimitExceeded,
     /// An edge property set exceeded a fixed cardinality or byte bound.
+    #[error("relationship property limit exceeded")]
     PropertyLimitExceeded,
     /// A concurrent reader or writer observed a poisoned lock.
+    #[error("relationship index lock poisoned")]
     LockPoisoned,
 }
-
-impl fmt::Display for RelationshipError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidIdentifier => formatter.write_str("invalid relationship identifier"),
-            Self::ScopeMismatch => formatter.write_str("relationship scope mismatch"),
-            Self::RelationMismatch => formatter.write_str("relationship name mismatch"),
-            Self::EndpointCollectionMismatch => {
-                formatter.write_str("relationship endpoint collection mismatch")
-            }
-            Self::EdgeIdentityConflict => {
-                formatter.write_str("relationship edge identity conflict")
-            }
-            Self::RemovedIdentity => formatter.write_str("relationship edge identity was removed"),
-            Self::StaleGeneration { .. } => formatter.write_str("stale relationship generation"),
-            Self::GenerationExhausted => formatter.write_str("relationship generation exhausted"),
-            Self::InvalidTraversalBounds => {
-                formatter.write_str("invalid relationship traversal bounds")
-            }
-            Self::HopLimitExceeded => {
-                formatter.write_str("relationship traversal hop limit exceeded")
-            }
-            Self::ResultLimitExceeded => {
-                formatter.write_str("relationship traversal result limit exceeded")
-            }
-            Self::ByteLimitExceeded => {
-                formatter.write_str("relationship traversal byte limit exceeded")
-            }
-            Self::PropertyLimitExceeded => {
-                formatter.write_str("relationship property limit exceeded")
-            }
-            Self::LockPoisoned => formatter.write_str("relationship index lock poisoned"),
-        }
-    }
-}
-
-impl std::error::Error for RelationshipError {}
 
 fn valid_identifier(value: &str) -> bool {
     !value.is_empty()
