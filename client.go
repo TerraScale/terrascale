@@ -127,8 +127,7 @@ type Client struct {
 
 	mu     sync.RWMutex
 	pinned RegionCode
-	// sessionToken is the canonical REST frontier. The legacy subscription
-	// implementation still has its own compatibility field in cfg.
+	// sessionToken is the canonical frontier shared by REST and subscriptions.
 	sessionToken string
 
 	Documents        *DocumentsClient
@@ -238,7 +237,6 @@ func NewClient(cfg Config) (*Client, error) {
 		ProjectID:        cfg.ProjectID,
 		PreferredRegion:  preferred,
 		Affinity:         affinity,
-		SessionToken:     cfg.SessionToken,
 		HTTPClient:       httpClient,
 		MaxRetryAttempts: cfg.MaxRetryAttempts,
 		RetryDelay:       retryDelay,
@@ -316,7 +314,6 @@ func (c *Client) SetSessionToken(token string) error {
 		}
 	}
 	c.mu.Lock()
-	c.cfg.SessionToken = strings.TrimSpace(token)
 	c.sessionToken = strings.TrimSpace(token)
 	c.mu.Unlock()
 	return nil
@@ -592,7 +589,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 			}
 			return fmt.Errorf("sdk: %s %s (%s): %w", method, path, route, transportErr)
 		}
-		if status == http.StatusMisdirectedRequest && !followed421 {
+		if status == http.StatusMisdirectedRequest && !followed421 && c.cfg.Affinity != AffinityStrict {
 			if code, ok := placementRegionExcluding(headers, c.PinnedRegion()); ok {
 				c.setPinned(code)
 				// The placement in a 421 is authoritative for this retry,

@@ -381,3 +381,28 @@ func TestNewClientRejectsInsecureOrCredentialBearingEndpoints(t *testing.T) {
 		t.Fatalf("explicit test transport should allow .test HTTP endpoint: %v", err)
 	}
 }
+
+func TestStrictAffinityRejectsPlacementRedirect(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if got := r.Header.Get("X-TerraScale-Preferred-Region"); got != "GRU" {
+			t.Errorf("region hint = %q", got)
+		}
+		w.Header().Set("X-TerraScale-Placement", "FRA")
+		w.WriteHeader(http.StatusMisdirectedRequest)
+	}))
+	defer srv.Close()
+	client, err := NewClient(Config{APIBaseURL: srv.URL, PreferredRegion: RegionGRU, Affinity: AffinityStrict})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = client.do(t.Context(), http.MethodGet, "/api/v1/regions", nil, nil, nil, "regions.list")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusMisdirectedRequest {
+		t.Fatalf("expected 421, got %v", err)
+	}
+	if calls.Load() != 1 || client.EffectiveRegion() != RegionGRU {
+		t.Fatalf("strict request escaped: calls=%d region=%s", calls.Load(), client.EffectiveRegion())
+	}
+}
