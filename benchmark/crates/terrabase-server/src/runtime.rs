@@ -413,6 +413,13 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         ))));
     }
     let region = public_api_region(config.region)?;
+    let metrics = Arc::new(terrabase::observability::MetricsRegistry::new());
+    let prepared_metrics = crate::production_metrics::PreparedMetrics::bind(
+        production.transport.metrics_listen,
+        Arc::clone(&metrics),
+    )
+    .await
+    .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
     let admission = Arc::new(admission);
     let native_restore_target: Arc<
         dyn Fn(
@@ -431,6 +438,27 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         .iter()
         .find(|database| database.enabled)
         .ok_or(DaemonError::ProductionConfigurationMissing)?;
+    let export_prefix = "exports".to_owned();
+    let exports = crate::production_export::new_production_export(
+        primary.backup_root.join("exports"),
+        Arc::new(crate::production_export::ProductionArtifactFactory {
+            resolver: admission.native_backup_input_resolver(),
+            root: primary.backup_root.join("exports"),
+            prefix: export_prefix.clone(),
+        }),
+        crate::export_api::ExportDestination::ObjectStorage {
+            endpoint: "https://native-backup-owner.invalid".into(),
+            bucket: "per-database".into(),
+            prefix: export_prefix,
+            region,
+        },
+        production
+            .control
+            .as_ref()
+            .and_then(|control| control.receipt_signing_key_file.as_ref())
+            .ok_or(DaemonError::ProductionConfigurationMissing)?,
+    )
+    .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
     let byo_jwt = public
         .byo_jwt
         .as_ref()
@@ -478,7 +506,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         Arc::clone(&recovery),
         native_restore_target,
         region,
-        Arc::new(terrabase::observability::MetricsRegistry::new()),
+        Arc::clone(&metrics),
         Arc::clone(&registry),
         Arc::clone(&progress),
         (primary.tenant.to_text(), primary.project.to_text()),
@@ -492,7 +520,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         delegated_identity,
         byo_jwt,
         None,
-        None,
+        Some(Arc::new(exports)),
         admission.budget_runtime().map(Arc::new),
     );
     let prepared = admission.prepare_public(public, state, auth).await.map_err(|_| {
@@ -503,6 +531,19 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             },
         ))) as Box<dyn Error + Send + Sync>
     })?;
+    let public_status = prepared.status();
+    let metrics_status = prepared_metrics.observation();
+    member
+        .attach_data_plane(Arc::new(crate::production_runtime::ProductionRuntime::new(
+            admission.lifecycle(),
+            metrics_status,
+            public_status.clone(),
+        )))
+        .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+    let (metrics_stop, metrics_signal) = tokio::sync::oneshot::channel();
+    let mut metrics_task = tokio::spawn(prepared_metrics.serve(async {
+        let _ = metrics_signal.await;
+    }));
     // The production TBEP endpoint uses the same retained-host registry as
     // the HTTP surface.  It is created only after native composition, so no
     // second engine or location based adapter can be opened.
@@ -549,7 +590,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     )?;
     let mut grpc_handle = grpc.serve_tls_reloadable(production.transport.tbep_listen, grpc_tls)?;
     serving.store(true, std::sync::atomic::Ordering::Release);
-    let status = prepared.status();
+    let status = public_status;
     let mut public_task = tokio::spawn(prepared.serve(async {
         let _ = wait_for_shutdown().await;
     }));
@@ -572,6 +613,11 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     .await
     .map_err(|_| DaemonError::ShutdownTimeout)??;
     let result = public_task.await.map_err(|_| DaemonError::ShutdownTimeout)?;
+    let _ = metrics_stop.send(());
+    metrics_task
+        .await
+        .map_err(|_| DaemonError::ShutdownTimeout)?
+        .map_err(|_| DaemonError::ShutdownTimeout)?;
     grpc_handle.begin_drain();
     tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait())
         .await

@@ -640,4 +640,32 @@ mod tests {
         assert!(!Scope::every_database(Verbs::READ).admits_global(Verbs::ADMIN));
         assert!(!Scope::database("prod", Verbs::ALL).admits_global(Verbs::ADMIN));
     }
+
+    #[test]
+    fn customer_key_is_bound_to_one_owner() {
+        let store = KeyStore::empty();
+        store.register_for_owner(
+            "tskey_owner_bound_abcdefghijkl",
+            "customer",
+            Scope::every_database(Verbs::ALL),
+            ("tenant-a".into(), "project-a".into()),
+            None,
+        );
+        assert!(
+            store
+                .admit_for_owner(
+                    "tskey_owner_bound_abcdefghijkl",
+                    &("tenant-a".into(), "project-a".into())
+                )
+                .is_ok()
+        );
+        assert!(
+            store
+                .admit_for_owner(
+                    "tskey_owner_bound_abcdefghijkl",
+                    &("tenant-b".into(), "project-b".into())
+                )
+                .is_err()
+        );
+    }
 }

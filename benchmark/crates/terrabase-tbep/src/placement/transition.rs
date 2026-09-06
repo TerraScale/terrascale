@@ -171,6 +171,24 @@ pub struct TransitionTrust {
 }
 
 impl TransitionTrust {
+    /// Verifies and strictly decodes a signed lifecycle operation grant.
+    pub(super) fn verify_lifecycle_grant(
+        &self,
+        encoded: &[u8],
+    ) -> Result<crate::lifecycle::LifecycleOperationGrant, PlacementError> {
+        let payload = self.decode_payload(encoded)?;
+        serde_json::from_slice(&payload).map_err(|_| PlacementError::Invalid)
+    }
+
+    fn decode_payload(&self, encoded: &[u8]) -> Result<Vec<u8>, PlacementError> {
+        if encoded.len() > MAX_PROOF_BYTES {
+            return Err(PlacementError::Invalid);
+        }
+        let signed: Signed =
+            serde_json::from_slice(encoded).map_err(|_| PlacementError::Invalid)?;
+        verify(&signed, &self.authority)
+    }
+
     /// Validates bounded Ed25519 public-key pins supplied by the host authority.
     ///
     /// # Errors

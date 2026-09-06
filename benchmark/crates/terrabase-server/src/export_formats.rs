@@ -27,6 +27,22 @@ pub enum TransferFormat {
     DynamoJson,
 }
 
+/// Logical record scope for an export.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportScope {
+    /// Include current documents and retained history.
+    All,
+    /// Include current documents only.
+    Documents,
+}
+
+impl Default for ExportScope {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
 impl Default for TransferFormat {
     fn default() -> Self {
         Self::Native

@@ -164,7 +164,7 @@ pub(crate) fn observe_auto_index_execution(
         tenant: tenant.as_str().to_owned(),
         template: crate::auto_index::Template {
             collection: collection.as_str().to_owned(),
-            predicates,
+            predicates: predicates.clone(),
             ordering,
             projection,
         },
@@ -207,7 +207,7 @@ pub(crate) fn observe_auto_index_execution(
     }
     if let Ok(generation) = engine.auto_index_lifecycle_generation(tenant) {
         engine.sample_auto_index_shadow(
-            engine.scope_for(tenant),
+            &engine.scope_for(tenant),
             snapshot,
             collection.as_str(),
             field,

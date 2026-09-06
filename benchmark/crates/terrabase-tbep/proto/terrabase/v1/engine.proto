@@ -893,6 +893,9 @@ message LifecycleControlResponse {
   LifecycleStatus status = 1;
   string operation_id = 2;
   string detail = 3;
+  string recovery_point_id = 4;
+  string recovery_point_digest = 5;
+  repeated string placement = 6;
 }
 
 message PlacementRegionSeats {

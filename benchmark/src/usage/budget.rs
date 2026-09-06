@@ -207,21 +207,27 @@ impl VerifiedAllocation {
         Ok(Self { envelope, payload_digest })
     }
 
+    #[must_use]
     pub fn grant(&self) -> &AllocationGrant {
         &self.envelope.grant
     }
+    #[must_use]
     pub fn cycle_id(&self) -> &str {
         &self.envelope.cycle_id
     }
+    #[must_use]
     pub fn placement(&self) -> &str {
         &self.envelope.placement
     }
+    #[must_use]
     pub fn payload_digest(&self) -> &[u8; 32] {
         &self.payload_digest
     }
+    #[must_use]
     pub fn local_units(&self) -> i64 {
         self.envelope.grant.requested_units
     }
+    #[must_use]
     pub fn valid_at(&self, now_millis: u64) -> bool {
         parse_millis(&self.envelope.grant.expires_at).is_some_and(|expires| expires > now_millis)
     }
@@ -322,7 +328,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
     let mp = month + if month > 2 { -3 } else { 9 };
     let doy = (153 * mp + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era.checked_mul(146097)?.checked_add(doe)?.checked_sub(719468)
+    era.checked_mul(146_097)?.checked_add(doe)?.checked_sub(719_468)
 }
 
 #[cfg(test)]

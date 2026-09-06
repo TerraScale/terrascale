@@ -94,7 +94,10 @@ where
                 _ => SplitPhase::Planned,
             })
         })?;
-        self.engine.save(&split.durable_state()).map_err(SplitRuntimeError::State)?;
+        if let Err(error) = self.engine.save(&split.durable_state()) {
+            let _ = self.engine.rollback_split_target(&context);
+            return Err(SplitRuntimeError::State(error));
+        }
         self.split = Some(split);
         self.committed_generation = None;
         Ok(())

@@ -21,6 +21,15 @@ pub struct CutoverContext {
     pub permit: CutoverPermit,
 }
 
+/// Durable route receipt returned while recovering an already committed split.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CommittedSplitRoute {
+    /// Operation identity whose route was installed.
+    pub split: SplitContext,
+    /// Durable route generation assigned by the engine.
+    pub generation: u64,
+}
+
 /// Engine-owned atomic cutover seam.
 pub trait AtomicSplitCutover {
     /// Engine-specific error.
@@ -30,6 +39,12 @@ pub trait AtomicSplitCutover {
     /// durable transaction. Implementations must return the installed route
     /// generation and make an exact retry a no-op.
     fn install_split_route(&mut self, context: &CutoverContext) -> Result<u64, Self::Error>;
+
+    /// Recovers the durable route receipt for an operation after restart.
+    fn recover_split_route(
+        &mut self,
+        split: &SplitContext,
+    ) -> Result<Option<CommittedSplitRoute>, Self::Error>;
 }
 
 /// Engine hooks required to drive a resumable split.

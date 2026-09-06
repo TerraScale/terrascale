@@ -3,13 +3,13 @@ use crate::placement::tests::Fixture;
 
 pub(crate) fn grant(
     fixture: &Fixture,
-    identity: &pb::AuthGroupBootstrapServiceIdentityResponse,
-) -> pb::AuthGroupBootstrapServiceBootstrapRequest {
+    identity: &pb::AuthStorageIdentity,
+) -> pb::AuthGroupBootstrapRequest {
     let proposal = fixture.request.proposal.as_ref().unwrap();
     let assignment = &proposal.assignments[0];
     let mut members = proposal.regions[0].members.clone();
     members.sort();
-    pb::AuthGroupBootstrapServiceBootstrapRequest {
+    pb::AuthGroupBootstrapRequest {
         operation_id: generate().to_string(),
         grant: Some(pb::AuthGroupBootstrapGrant {
             environment: proposal.environment.clone(),

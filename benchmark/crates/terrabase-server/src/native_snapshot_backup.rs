@@ -5,11 +5,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use terrabase::backup::BackupReader;
+use terrabase::backup::PlacementLock;
 use terrabase::backup::object_store::ObjectDestination;
 use terrabase::encryption::{
     ArtifactCipher, ArtifactKind, Compression, DatabaseKeyLease, DatabaseKeySource,
     EncryptionContext,
 };
+use terrabase::regions::RegionCode;
 use terrabase_cluster::wal_driver::{WalCheckpointMessage, WalFollowerDriver};
 use terrabase_cluster::wal_route::WalReplicaBinding;
 use terrabase_cluster::wal_snapshot::{
@@ -27,6 +29,17 @@ pub enum SnapshotBackupError {
     Provider,
 }
 
+fn validate_residency(
+    source_region: RegionCode,
+    destination_region: RegionCode,
+    placement: &PlacementLock,
+) -> Result<(), SnapshotBackupError> {
+    if source_region != destination_region || !placement.allows(destination_region) {
+        return Err(SnapshotBackupError::Provider);
+    }
+    Ok(())
+}
+
 /// Encrypts a complete admitted physical snapshot and independently uploads it
 /// to every selected provider. The caller owns durable retry identity `prefix`.
 ///
@@ -38,12 +51,16 @@ pub async fn upload_snapshot(
     staging: &Path,
     prefix: &str,
     destinations: &[Arc<ObjectDestination>],
+    placement: &PlacementLock,
     max_bytes: u64,
 ) -> Result<(), SnapshotBackupError> {
     if destinations.is_empty()
         || destinations.len() > 2
         || destinations.len() == 2 && destinations[0].provider() == destinations[1].provider()
     {
+        return Err(SnapshotBackupError::Provider);
+    }
+    if destinations.iter().any(|destination| !placement.allows(destination.admitted_region())) {
         return Err(SnapshotBackupError::Provider);
     }
     let metadata = lease.metadata();
@@ -152,10 +169,12 @@ pub async fn restore_snapshot(
     staging: &Path,
     reader: &dyn BackupReader,
     binding: WalReplicaBinding,
+    placement: &PlacementLock,
     target: PathBuf,
     keys: Arc<dyn DatabaseKeySource>,
     max_bytes: u64,
 ) -> Result<(WalFollowerDriver, WalCheckpointMessage), SnapshotBackupError> {
+    validate_residency(binding.scope().region(), destination.admitted_region(), placement)?;
     destination
         .download_point_with_byte_limit(prefix, staging, max_bytes)
         .await
@@ -214,4 +233,23 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, SnapshotBackupError>
         return Err(SnapshotBackupError::Snapshot);
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrong_region_is_rejected_before_provider_use() {
+        let placement = PlacementLock::explicit([RegionCode::GRU]).unwrap();
+        assert_eq!(
+            validate_residency(RegionCode::SFO, RegionCode::GRU, &placement),
+            Err(SnapshotBackupError::Provider)
+        );
+        assert_eq!(
+            validate_residency(RegionCode::GRU, RegionCode::SFO, &placement),
+            Err(SnapshotBackupError::Provider)
+        );
+        assert!(validate_residency(RegionCode::GRU, RegionCode::GRU, &placement).is_ok());
+    }
 }

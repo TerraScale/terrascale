@@ -32,7 +32,7 @@ pub(crate) type ExportFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, ExportError>> + Send + 'a>>;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::export_formats::TransferFormat;
+use crate::export_formats::{ExportScope, TransferFormat};
 use axum::body::Body;
 use axum::http::{Response as HttpResponse, StatusCode, header};
 use serde::{Deserialize, Serialize};
@@ -426,6 +426,9 @@ pub struct ExportJobState {
     /// Encoding selected at admission; changing it cannot resume this job.
     #[serde(default)]
     pub format: TransferFormat,
+    /// Logical records included in the artifact.
+    #[serde(default)]
+    pub scope: ExportScope,
     /// Fixed placement lock text (Region enum is serializable).
     #[serde(with = "region_vec_serde")]
     pub placement: Vec<RegionCode>,
@@ -670,6 +673,8 @@ pub struct ExportRequest {
     pub destination: ExportDestination,
     /// Encoding selected at admission.
     pub format: TransferFormat,
+    /// Logical records included in the artifact.
+    pub scope: ExportScope,
     /// Exact database placement lock.
     pub placement: PlacementLock,
     /// Optional retry identity. Repeating it returns the original job.
@@ -747,6 +752,7 @@ impl ExportService {
             database: request.database.clone(),
             destination: request.destination.clone(),
             format: request.format,
+            scope: request.scope,
             placement: request.placement.regions().collect(),
             snapshot,
             phase: ExportPhase::Documents,
@@ -773,6 +779,7 @@ impl ExportService {
             || state.database != request.database
             || state.destination != request.destination
             || state.format != request.format
+            || state.scope != request.scope
             || state.placement != request.placement.regions().collect::<Vec<_>>()
         {
             return Err(ExportError::IdempotencyConflict);
@@ -964,10 +971,19 @@ impl ExportService {
     /// # Errors
     /// Refuses unknown or incomplete jobs and unverified artifact bytes.
     pub async fn download(&self, job_id: &str, member: &str) -> Result<Vec<u8>, ExportError> {
+        Ok(self.download_with_format(job_id, member).await?.0)
+    }
+
+    /// Reads one completed export member and returns its durable encoding.
+    pub async fn download_with_format(
+        &self,
+        job_id: &str,
+        member: &str,
+    ) -> Result<(Vec<u8>, TransferFormat), ExportError> {
         let service = self.clone();
         let job = job_id.to_owned();
         let member = member.to_owned();
-        let (database, manifest) = tokio::task::spawn_blocking(move || {
+        let (database, manifest, format) = tokio::task::spawn_blocking(move || {
             if !safe_member_path(&member) {
                 return Err(ExportError::InvalidRequest("invalid member"));
             }
@@ -978,11 +994,11 @@ impl ExportService {
                 return Err(ExportError::InvalidRequest("export incomplete"));
             }
             let manifest = state.manifest.ok_or(ExportError::IdempotencyConflict)?;
-            Ok::<_, ExportError>((state.database, manifest))
+            Ok::<_, ExportError>((state.database, manifest, state.format))
         })
         .await
         .map_err(|_| ExportError::DependencyUnavailable)??;
-        service.artifacts.read_member(&job, &database, &member, &manifest).await
+        Ok((service.artifacts.read_member(&job, &database, &member, &manifest).await?, format))
     }
 
     fn clone_for_worker(&self) -> Worker {
@@ -1184,6 +1200,14 @@ impl Worker {
             if state.phase == ExportPhase::Done {
                 break;
             }
+            if state.phase == ExportPhase::History && state.scope == ExportScope::Documents {
+                state.phase = ExportPhase::Done;
+                state.source_cursor = None;
+                state.resume_cursor =
+                    encode_cursor(&self.cursor_key, &state.job_id, state.phase, None);
+                self.store.save(state)?;
+                continue;
+            }
             // Match the artifact provider recovery bound: an export must
             // never publish a bundle too large to reopen after a restart.
             if facts.len() >= MAX_PAGE_RECORDS.saturating_mul(4).saturating_sub(2) {
@@ -1225,7 +1249,8 @@ impl Worker {
                     };
                 let page_number = state.pages;
                 if !jsonl.is_empty() {
-                    let path = format!("documents/{page_number:012}.jsonl");
+                    let suffix = crate::export_formats::extension(state.format);
+                    let path = format!("documents/{page_number:012}.{suffix}");
                     let fact = put_checked(writer, &path, &jsonl).await?;
                     if facts_by_path.insert(fact.path.clone()) {
                         facts.push(fact);
@@ -1576,6 +1601,11 @@ fn validate_state(state: &ExportJobState) -> Result<(), ExportError> {
 }
 
 fn validate_request(request: &ExportRequest) -> Result<(), ExportError> {
+    if request.format != TransferFormat::Native && request.scope != ExportScope::Documents {
+        return Err(ExportError::InvalidRequest(
+            "converted export formats require documents-only scope",
+        ));
+    }
     if request.database.trim().is_empty()
         || request.database.contains('/')
         || request.database.contains('\\')
@@ -2108,6 +2138,7 @@ mod tests {
                 region: RegionCode::GRU,
             },
             format: TransferFormat::Jsonl,
+            scope: ExportScope::All,
             placement: vec![RegionCode::GRU],
             snapshot: Source { pages: Mutex::new(Vec::new()) }.snapshot("db").expect("snapshot"),
             phase: ExportPhase::Documents,
@@ -2411,6 +2442,7 @@ mod tests {
                 database: state.database.clone(),
                 destination: state.destination.clone(),
                 format: TransferFormat::Jsonl,
+                scope: ExportScope::All,
                 placement: PlacementLock::single(RegionCode::GRU),
                 idempotency_key: None,
             })
@@ -2494,6 +2526,7 @@ mod tests {
                     database: state.database,
                     destination: state.destination,
                     format: TransferFormat::Jsonl,
+                    scope: ExportScope::All,
                     placement: PlacementLock::single(RegionCode::GRU),
                     idempotency_key: None,
                 })
@@ -2728,6 +2761,7 @@ mod tests {
                 region: RegionCode::FRA,
             },
             format: TransferFormat::Jsonl,
+            scope: ExportScope::All,
             placement: PlacementLock::single(RegionCode::GRU),
             idempotency_key: None,
         };

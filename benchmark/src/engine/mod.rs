@@ -1133,7 +1133,6 @@ pub(crate) struct StorageState {
 /// let engine = terrabase::engine::Engine::ephemeral();
 /// ```
 pub struct Engine {
-    location: PathBuf,
     storage_keys: Option<Arc<dyn crate::encryption::DatabaseKeySource>>,
     identity: u128,
     durable_owner: crate::storage::DatabaseOwner,
@@ -1360,7 +1359,6 @@ impl Engine {
         indexes.set_lifecycle_thresholds(config.lifecycle_thresholds());
         let index_subscription = subscriptions.subscribe(indexes.sink());
         Ok(Self {
-            location,
             storage_keys: config.storage_keys.clone(),
             identity: EngineIdentity::next().0,
             durable_owner: owner,
@@ -1392,10 +1390,6 @@ impl Engine {
     #[must_use]
     pub fn database_id(&self) -> crate::identity::DatabaseUlid {
         self.durable_owner.database()
-    }
-
-    pub(crate) fn location(&self) -> &std::path::Path {
-        &self.location
     }
 
     /// Whether logical tenant scopes are restricted to this durable production owner.
@@ -4179,6 +4173,8 @@ impl Engine {
             u64::from(comparison.candidate.full_scan_steps),
             u64::from(comparison.candidate.rows),
         ));
+        let sample_count = entry.1.len();
+        drop(entry);
         if samples.len() > 256 {
             if let Some(oldest) =
                 samples.iter().min_by_key(|(_, (last, _, _))| *last).map(|(key, _)| key.clone())
@@ -4186,7 +4182,7 @@ impl Engine {
                 samples.remove(&oldest);
             }
         }
-        if entry.1.len() < 20 {
+        if sample_count < 20 {
             return;
         }
         let (_, baseline, candidate_samples) = samples.remove(&key).expect("shadow sample entry");
@@ -4646,7 +4642,10 @@ impl Engine {
     }
 
     fn maintain_d31_indexes(&self) {
-        let tenant = self.database_owner().tenant().clone();
+        let Ok(tenant) = TenantId::try_new(self.database_owner().tenant().to_string().as_str())
+        else {
+            return;
+        };
         let Ok(snapshot) = self.auto_index_lifecycle_snapshot(&tenant, None, 64) else { return };
         for index in snapshot.indexes {
             let generation = index.generation;

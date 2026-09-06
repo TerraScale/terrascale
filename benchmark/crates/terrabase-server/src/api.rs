@@ -4500,11 +4500,15 @@ mod tests {
         editable.admitted_databases = Some(Arc::new(registry));
         editable.delegated_identity = Some(Arc::new(verifier));
         editable.scope = (second.tenant_id.clone(), second.project_id.clone());
-        editable.keys = Some(Arc::new(crate::api_keys::KeyStore::with_keys(&[(
+        let keys = crate::api_keys::KeyStore::empty();
+        keys.register_for_owner(
             "tskey_tenant_bound_abcdefghijkl",
             "tenant-key",
             crate::api_keys::Scope::every_database(crate::api_keys::Verbs::ALL),
-        )])));
+            (second.tenant_id.clone(), second.project_id.clone()),
+            None,
+        );
+        editable.keys = Some(Arc::new(keys));
         let app = router(state);
         let request = |token: &str, database: &str| {
             Request::builder()

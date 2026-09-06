@@ -51,6 +51,10 @@ pub struct MemberHost {
 type SubscriptionSeed = (crate::reactive::ProjectedMembers, Vec<(String, Vec<u8>)>);
 
 impl MemberHost {
+    /// Consumes an admitted host and transfers its exclusive Member lease.
+    pub fn into_admitted_lease(self) -> Result<terrabase::member::DatabaseLease, HostingError> {
+        self.engine.into_admitted_lease()
+    }
     /// Opens the staged host when the explicit TB-1a construction flag is on.
     ///
     /// # Errors

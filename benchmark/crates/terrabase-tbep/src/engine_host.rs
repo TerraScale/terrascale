@@ -10,8 +10,7 @@
 //! operations fail with typed errors.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use terrabase::engine::{CommitOutcome, Engine, EngineConfig};
 use terrabase::observability::MetricsRegistry;
@@ -261,6 +260,16 @@ pub struct EngineHost {
 }
 
 impl EngineHost {
+    /// Consumes an admitted host and releases its exclusive Member lease.
+    pub fn into_admitted_lease(self) -> Result<terrabase::member::DatabaseLease, HostingError> {
+        match self.engine {
+            HostEngine::Admitted(lease) => Arc::try_unwrap(lease)
+                .map_err(|_| HostingError::Refused("engine lease is still shared".into())),
+            HostEngine::Local(_) => {
+                Err(HostingError::Refused("local engine has no admitted Member lease".into()))
+            }
+        }
+    }
     /// Opens the host's engine at a durable location, creating the
     /// directory when absent.
     ///

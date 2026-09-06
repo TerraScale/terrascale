@@ -68,6 +68,7 @@ fn fixture(stop: bool) -> Fixture {
         database: "db".into(),
         destination,
         format: crate::export_formats::TransferFormat::Jsonl,
+        scope: crate::export_formats::ExportScope::All,
         placement: PlacementLock::single(RegionCode::GRU),
         idempotency_key: Some("original-operation".into()),
     };

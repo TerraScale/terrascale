@@ -41,7 +41,7 @@ async fn assert_auth_bootstrap(fixture: &Fixture, channel: tonic::transport::Cha
     let mut auth_client =
         pb::auth_group_bootstrap_service_client::AuthGroupBootstrapServiceClient::new(channel);
     let identity = auth_client
-        .identity(request(pb::AuthGroupBootstrapServiceIdentityRequest {}, None))
+        .identity(request(pb::AuthStorageIdentityRequest {}, None))
         .await
         .unwrap()
         .into_inner();
@@ -101,11 +101,7 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
     assert_auth_bootstrap(&fixture, channel.clone()).await;
 
     assert_eq!(
-        client
-            .get(request(pb::PlacementControlServiceGetRequest {}, None))
-            .await
-            .unwrap_err()
-            .code(),
+        client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap_err().code(),
         Code::NotFound
     );
     let response = client
@@ -115,11 +111,7 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
         .into_inner();
     assert_eq!(response.status, pb::PlacementProposalStatus::Pending as i32);
     assert_eq!(response.revision, 1);
-    let fetched = client
-        .get(request(pb::PlacementControlServiceGetRequest {}, None))
-        .await
-        .unwrap()
-        .into_inner();
+    let fetched = client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap().into_inner();
     assert_eq!(fetched.revision, response.revision);
     assert_eq!(fetched.proposal, response.proposal);
     assert_eq!(fetched.status, response.status);
@@ -155,11 +147,7 @@ async fn real_mtls_stage_get_retry_and_scope_isolation() {
     );
     server.begin_drain();
     assert_eq!(
-        client
-            .get(request(pb::PlacementControlServiceGetRequest {}, None))
-            .await
-            .unwrap_err()
-            .code(),
+        client.get(request(pb::PlacementGetRequest {}, None)).await.unwrap_err().code(),
         Code::Unavailable
     );
     let _ = stop.send(());

@@ -4,6 +4,7 @@
 //! the host composition.  This module intentionally has no local fallback.
 
 use crate::backup::object_store::ObjectDestination;
+use crate::backup::worker::BackupKeys;
 use crate::export_api::{
     ArtifactFact, ArtifactPort, ArtifactWriter, EncryptionAttestation, ExportArtifactFactory,
     ExportDestination, ExportError, ExportFuture, ExportRuntime, PlacementLock, fact,
@@ -28,6 +29,44 @@ pub(crate) struct ProductionArtifactPort {
     pub(crate) destination: Arc<ObjectDestination>,
     pub(crate) prefix: String,
     pub(crate) crypto: Arc<dyn ArtifactCrypto>,
+}
+
+/// Resolves export artifacts from the already admitted backup owner.
+pub(crate) struct ProductionArtifactFactory {
+    pub(crate) resolver: Arc<
+        dyn Fn(&str) -> Result<crate::native_backup_runtime::NativeBackupInput, String>
+            + Send
+            + Sync,
+    >,
+    pub(crate) root: PathBuf,
+    pub(crate) prefix: String,
+}
+
+impl ExportArtifactFactory for ProductionArtifactFactory {
+    fn artifacts(&self, database_id: &str) -> Result<Arc<dyn ArtifactPort>, ExportError> {
+        let input = (self.resolver)(database_id).map_err(|_| ExportError::DependencyUnavailable)?;
+        let (_, destination) = input.destinations.first().ok_or(ExportError::PlacementMismatch)?;
+        if !input.placement.allows(destination.admitted_region()) {
+            return Err(ExportError::PlacementMismatch);
+        }
+        let lease = input.keys.lease().map_err(|_| ExportError::EncryptionUnavailable)?;
+        let scope = lease.metadata().scope();
+        if scope.database().to_string() != database_id {
+            return Err(ExportError::IdempotencyConflict);
+        }
+        let tenant = scope.tenant().to_string();
+        let crypto = Arc::new(crate::export_artifact_crypto::LeaseCrypto::new(
+            lease,
+            database_id.to_owned(),
+            tenant,
+        ));
+        Ok(Arc::new(ProductionArtifactPort {
+            root: self.root.clone(),
+            destination: Arc::clone(destination),
+            prefix: self.prefix.clone(),
+            crypto,
+        }))
+    }
 }
 
 struct ProductionWriter {
@@ -135,6 +174,7 @@ impl ArtifactWriter for ProductionWriter {
     fn commit(self: Box<Self>, manifest: &ArtifactFact) -> ExportFuture<'static, ()> {
         Box::pin(async move {
             let ProductionWriter { inner, destination, prefix, database, job } = *self;
+            let mut inner = inner;
             let facts = inner.existing_facts().await?;
             reconcile_remote_facts(&inner, &destination, &prefix, &database, &job, &facts).await?;
             Box::new(inner).commit(manifest).await?;
@@ -303,7 +343,7 @@ mod tests {
         let page_ciphertext = crypto.seal(binding, "page", b"page-data").unwrap();
         let page_fact = fact("page", &page_ciphertext);
         let manifest_plaintext =
-            serde_json::json!({ "members": [page_fact] }).to_string().into_bytes();
+            serde_json::json!({ "members": [page_fact.clone()] }).to_string().into_bytes();
         let manifest_ciphertext =
             crypto.seal(binding, "manifest.json", &manifest_plaintext).unwrap();
         let manifest_fact = fact("manifest.json", &manifest_ciphertext);
@@ -321,8 +361,11 @@ mod tests {
             )
             .await
             .unwrap();
+        let root =
+            std::env::temp_dir().join(format!("terrabase-export-resume-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
         let port = ProductionArtifactPort {
-            root: std::env::temp_dir(),
+            root: root.clone(),
             destination,
             prefix: "exports".into(),
             crypto,
@@ -335,5 +378,17 @@ mod tests {
             port.read_member("job", "db", "secret", &manifest_fact).await,
             Err(ExportError::DestinationUnavailable)
         ));
+        let destination_config = ExportDestination::ObjectStorage {
+            endpoint: "https://example.invalid".into(),
+            bucket: "exports".into(),
+            prefix: "exports".into(),
+            region: terrabase::regions::RegionCode::GRU,
+        };
+        let placement = PlacementLock::single(terrabase::regions::RegionCode::GRU);
+        let mut writer = port.open("job", "db", &destination_config, &placement).await.unwrap();
+        assert_eq!(writer.existing_facts().await.unwrap(), vec![page_fact]);
+        assert!(root.join("db/job/page").exists());
+        drop(writer);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

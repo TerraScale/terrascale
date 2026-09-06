@@ -5,7 +5,7 @@ use super::{
     database_records, document_host, document_scope, push_value,
 };
 use crate::export_api::{self as export, ExportService, ExportSource, ExportSourceError};
-use crate::export_formats::TransferFormat;
+use crate::export_formats::{ExportScope, TransferFormat, content_type};
 use axum::http::header::{CONTENT_TYPE, HeaderValue};
 use axum::response::IntoResponse;
 use serde::Deserialize;
@@ -19,6 +19,9 @@ pub(super) struct CreateExport {
     /// Output encoding. Defaults to JSONL for existing callers.
     #[serde(default)]
     format: TransferFormat,
+    /// Converted formats require an explicit documents-only scope.
+    #[serde(default)]
+    scope: ExportScope,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -233,6 +236,7 @@ pub(super) async fn create_export(
             placement,
             idempotency_key: Some(request.idempotency_key),
             format: request.format,
+            scope: request.scope,
         })
         .await
     {
@@ -385,14 +389,27 @@ pub(super) async fn download_export(
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
-    match service.download(&job, &member).await {
-        Ok(bytes) => {
+    match service.download_with_format(&job, &member).await {
+        Ok((bytes, format)) => {
             let length = bytes.len().to_string();
             let checksum = blake3::hash(&bytes).to_hex().to_string();
             let mut response = bytes.into_response();
-            response
-                .headers_mut()
-                .insert(CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+            let member_type = if member.ends_with(".csv") {
+                "text/csv"
+            } else if member.ends_with(".json") {
+                "application/json"
+            } else if member.ends_with(".txt") {
+                "text/plain"
+            } else {
+                content_type(format)
+            };
+            response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(member_type));
+            if let Ok(value) = HeaderValue::from_str(&format!(
+                "attachment; filename=\"{}\"",
+                member.rsplit('/').next().unwrap_or("export")
+            )) {
+                response.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION, value);
+            }
             response.headers_mut().insert(
                 axum::http::header::CACHE_CONTROL,
                 HeaderValue::from_static("private, no-store"),

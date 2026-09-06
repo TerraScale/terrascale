@@ -65,6 +65,38 @@ pub struct AdmittedDatabaseSnapshot {
     pub activated: bool,
 }
 
+/// Exclusive restore reservation after the admitted host and lease have been
+/// fully released. The reservation carries only immutable admission facts;
+/// no engine handle remains alive while restore bytes are installed.
+pub struct RestoreReservation {
+    record: AdmissionRecord,
+    location: PathBuf,
+}
+
+impl RestoreReservation {
+    /// Returns the admitted record being restored.
+    #[must_use]
+    pub fn record(&self) -> &AdmissionRecord {
+        &self.record
+    }
+
+    /// Returns the exclusive database location.
+    #[must_use]
+    pub fn location(&self) -> &std::path::Path {
+        &self.location
+    }
+
+    /// Reinstalls the same admitted identity after a successful restore.
+    pub fn complete(
+        self,
+        registry: &AdmittedDatabaseRegistry,
+        lease: DatabaseLease,
+        instance: u64,
+    ) -> Result<(), String> {
+        registry.publish(self.record, lease, self.location, instance)
+    }
+}
+
 /// No name aliases or implicit engine opens: unknown identities always refuse.
 pub struct AdmittedDatabaseRegistry {
     ready: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -74,6 +106,54 @@ pub struct AdmittedDatabaseRegistry {
 }
 
 impl AdmittedDatabaseRegistry {
+    /// Fences one paused database and transfers its host lease exclusively.
+    /// Restore callers must complete the reservation with a freshly acquired
+    /// lease after installing bytes; no open Engine survives this boundary.
+    pub fn reserve_restore(&self, database: &str) -> Result<RestoreReservation, String> {
+        let mut serving = self.serving.write().map_err(|_| "admitted activation unavailable")?;
+        let mut databases = self.databases.write().map_err(|_| "admitted registry unavailable")?;
+        if serving.contains(database) {
+            return Err("restore target is still serving".into());
+        }
+        let entry = databases
+            .remove(database)
+            .ok_or_else(|| "restore target is not admitted".to_owned())?;
+        let result = (|| {
+            let tenant = terrabase::types::TenantId::try_new(&entry.record.tenant_id)
+                .map_err(|_| "restore target tenant is invalid".to_owned())?;
+            let lifecycle = entry
+                .host
+                .engine()
+                .lifecycle_state(&entry.host.engine().scope_for(&tenant))
+                .map_err(|_| "restore target lifecycle is unavailable".to_owned())?;
+            if !lifecycle.paused || lifecycle.access_revoked() {
+                return Err("restore target must be paused and active".into());
+            }
+            if Arc::strong_count(&entry) != 1 {
+                return Err("restore target admission is still referenced".to_owned());
+            }
+            let database = Arc::try_unwrap(entry)
+                .map_err(|_| "restore target admission is still referenced")?;
+            let location = database.host.location().to_path_buf();
+            if Arc::strong_count(&database.host) != 1 {
+                return Err("restore target engine is still referenced".into());
+            }
+            let host = Arc::try_unwrap(database.host)
+                .map_err(|_| "restore target engine is still referenced")?;
+            let lease =
+                host.into_admitted_lease().map_err(|_| "restore target lease is not exclusive")?;
+            drop(lease);
+            Ok(RestoreReservation { record: database.record, location })
+        })();
+        if result.is_err() {
+            // `entry` was moved only on success; failed uniqueness checks
+            // retain the original owner through the early return path.
+            return result;
+        }
+        drop(databases);
+        drop(serving);
+        result
+    }
     /// Durably pauses one admitted database while retaining its host and data.
     pub fn pause(
         &self,

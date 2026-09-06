@@ -936,6 +936,20 @@ impl ProductionAdmissionRuntime {
         })
     }
 
+    /// Returns the narrow source-bound resolver used by native backup
+    /// composition. The closure retains this admission authority so callers
+    /// cannot construct backup inputs from configuration alone.
+    pub fn native_backup_input_resolver(
+        self: &Arc<Self>,
+    ) -> Arc<
+        dyn Fn(&str) -> Result<crate::native_backup_runtime::NativeBackupInput, String>
+            + Send
+            + Sync,
+    > {
+        let admission = Arc::clone(self);
+        Arc::new(move |database| admission.resolve_native_backup_input(database))
+    }
+
     /// Resolves an already admitted, quiescent target for native restore.
     ///
     /// The target must be retained by admission but not serving; its owner,
@@ -1017,6 +1031,91 @@ impl ProductionAdmissionRuntime {
         )
         .map_err(|_| "invalid restore target placement")?;
         Ok((target, placement))
+    }
+
+    /// Executes a native restore only after the target has been admitted and
+    /// durably paused. The caller supplies the already authenticated source
+    /// fleet and operation identity; this method never opens a source engine
+    /// by path or falls back to a local provider.
+    pub async fn restore_native_to_target(
+        &self,
+        backups: &crate::native_backup_runtime::NativeBackupRuntime,
+        source: &str,
+        target: &str,
+        provider: terrabase::backup::object_store::Provider,
+        point: Option<&str>,
+        operation_id: &str,
+    ) -> Result<terrabase::backup::RecoveryReceipt, String> {
+        let reservation = self.registry.reserve_restore(target)?;
+        let record = reservation.record().clone();
+        let configured = self
+            .config
+            .databases
+            .iter()
+            .find(|entry| entry.database.to_text() == target)
+            .ok_or("native restore target configuration is unavailable")?;
+        let region = record.region.parse().map_err(|_| "invalid restore target Region")?;
+        let owner = terrabase::storage::DatabaseOwner::try_new(
+            &record.environment,
+            configured.tenant,
+            configured.project,
+            configured.database,
+            region,
+        )
+        .map_err(failure)?;
+        let keys = self.config.keys.as_ref().ok_or("production key delivery missing")?;
+        let provider_key =
+            OciVaultKeyDelivery::new(keys.socket.clone(), keys.orchestrator_uid, keys.socket_gid)
+                .map_err(failure)?;
+        let scope = KeyScope::new_with_project(
+            &record.environment,
+            configured.tenant,
+            configured.project,
+            configured.database,
+            KeyPurpose::Data,
+        )
+        .map_err(failure)?;
+        let source = OciVaultDatabaseKeys::new(
+            provider_key,
+            KeyVersionMetadata::new(scope, configured.encryption_key),
+            region,
+        )
+        .map_err(failure)?;
+        let target_config =
+            terrabase::engine::EngineConfig::durable(reservation.location().to_path_buf())
+                .map_err(failure)?
+                .with_owner(owner)
+                .with_storage_keys(Arc::new(source));
+        let placement = PlacementLock::explicit(
+            record
+                .regions
+                .iter()
+                .map(|value| value.parse())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| "invalid restore target placement")?,
+        )
+        .map_err(|_| "invalid restore target placement")?;
+        let restored = backups
+            .restore_from_provider(
+                source,
+                provider,
+                point,
+                &target_config,
+                operation_id,
+                &placement,
+            )
+            .await
+            .map_err(|_| "native restore failed or target authority was unavailable".to_owned());
+        let id = terrabase::member::DatabaseId::try_new(target).map_err(failure)?;
+        let lease = self.member.acquire_existing(&id).map_err(failure)?;
+        reservation.complete(&self.registry, lease, 1)?;
+        match restored {
+            Ok(receipt) => {
+                self.registry.resume(target, operation_id)?;
+                Ok(receipt)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Reconciles retained acceptance and starts the actual role-specific workers.

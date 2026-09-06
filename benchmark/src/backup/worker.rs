@@ -176,10 +176,16 @@ pub enum FleetError {
 /// Receipt returned only after a native lifecycle effect has completed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LifecycleReceipt {
+    /// Durable lifecycle operation identity.
     pub operation_id: String,
+    /// Database whose backup lifecycle changed.
     pub database: String,
+    /// Lifecycle action applied.
     pub action: String,
-    pub retained_points: usize,
+    /// Authenticated recovery point identity when one exists.
+    pub point_id: String,
+    /// Authenticated recovery point digest when one exists.
+    pub point_digest: String,
 }
 
 impl NativeBackupFleet {
@@ -198,7 +204,8 @@ impl NativeBackupFleet {
             operation_id: operation_id.to_owned(),
             database: database.to_owned(),
             action: "snapshot".into(),
-            retained_points: points.len(),
+            point_id: manifest.identity().to_owned(),
+            point_digest: manifest.identity().to_owned(),
         })
     }
 
@@ -212,11 +219,13 @@ impl NativeBackupFleet {
         if points.is_empty() {
             return Err(FleetError::Capture);
         }
+        let point = points.last().ok_or(FleetError::Capture)?;
         Ok(LifecycleReceipt {
             operation_id: operation_id.to_owned(),
             database: database.to_owned(),
             action: "verify_snapshot_placement".into(),
-            retained_points: points.len(),
+            point_id: point.identity().to_owned(),
+            point_digest: point.identity().to_owned(),
         })
     }
 
@@ -240,7 +249,8 @@ impl NativeBackupFleet {
             operation_id: operation_id.to_owned(),
             database: database.to_owned(),
             action: "delete_owned_data".into(),
-            retained_points: removed,
+            point_id: String::new(),
+            point_digest: removed.to_string(),
         })
     }
 

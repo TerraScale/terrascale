@@ -8,6 +8,7 @@ use crate::proto::terrabase::v1 as pb;
 use serde::Deserialize;
 
 /// Closed lifecycle effect action issued by the current authority lease.
+#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleGrantAction {
@@ -20,6 +21,7 @@ pub enum LifecycleGrantAction {
 }
 
 /// Strict, scoped lifecycle effect grant payload.
+#[allow(missing_docs)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LifecycleOperationGrant {
@@ -46,6 +48,8 @@ impl LifecycleOperationGrant {
     pub fn validate(&self, now_unix_millis: i64) -> Result<(), LifecycleError> {
         if self.version != 1
             || self.domain != "terrabase.lifecycle-operation-v1"
+            || self.environment.is_empty()
+            || self.environment.len() > 255
             || self.tenant.is_empty()
             || self.project.is_empty()
             || self.database.is_empty()
@@ -166,6 +170,9 @@ pub fn unavailable(operation_id: &str) -> pb::LifecycleControlResponse {
         status: pb::LifecycleStatus::Unavailable as i32,
         operation_id: operation_id.to_owned(),
         detail: "native lifecycle owner is not composed".into(),
+        recovery_point_id: String::new(),
+        recovery_point_digest: String::new(),
+        placement: Vec::new(),
     }
 }
 
@@ -175,6 +182,9 @@ pub fn applied(operation_id: &str) -> pb::LifecycleControlResponse {
         status: pb::LifecycleStatus::Applied as i32,
         operation_id: operation_id.to_owned(),
         detail: String::new(),
+        recovery_point_id: String::new(),
+        recovery_point_digest: String::new(),
+        placement: Vec::new(),
     }
 }
 

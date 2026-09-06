@@ -1,6 +1,6 @@
 use terrabase::shard_split::{
-    AtomicSplitCutover, CutoverContext, DurableSplitState, ShardRouter, ShardSplit,
-    SplitEngineAdapter, SplitOrchestratorAdapter, SplitRuntime, SplitStateStore,
+    AtomicSplitCutover, CommittedSplitRoute, CutoverContext, DurableSplitState, ShardRouter,
+    ShardSplit, SplitEngineAdapter, SplitOrchestratorAdapter, SplitRuntime, SplitStateStore,
 };
 
 #[derive(Default)]
@@ -30,6 +30,12 @@ impl AtomicSplitCutover for Engine {
     fn install_split_route(&mut self, _context: &CutoverContext) -> Result<u64, Self::Error> {
         self.installs += 1;
         Ok(self.installs as u64)
+    }
+    fn recover_split_route(
+        &mut self,
+        _split: &terrabase::shard_split::SplitContext,
+    ) -> Result<Option<CommittedSplitRoute>, Self::Error> {
+        Ok(None)
     }
 }
 

@@ -4821,9 +4821,9 @@ impl StoragePort for SqliteStorage {
             )
             .optional()
             .map_err(|_| UsageStorageError::Unavailable)?;
-		if stopped_at.is_some_and(|cutoff| {
-			i64::try_from(fact.window().end_millis()).is_ok_and(|end| end > cutoff)
-		}) {
+        if stopped_at.is_some_and(|cutoff| {
+            i64::try_from(fact.window().end_millis()).is_ok_and(|end| end > cutoff)
+        }) {
             return Err(UsageStorageError::IdentityConflict);
         }
         // Usage facts share the commit sequence space, exactly the
