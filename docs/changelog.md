@@ -1,7 +1,6 @@
 # Changelog
 
-TerraScale is pre-launch (waitlist beta). This changelog starts with the first
-beta release.
+TerraScale is pre-launch. This changelog starts with the first public release.
 
 What you can rely on before then:
 

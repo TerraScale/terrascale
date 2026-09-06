@@ -20,16 +20,12 @@ These Terms of Service ("Terms") govern your use of TerraScale, provided by
 [LEGAL ENTITY NAME — O-5], [JURISDICTION — O-5], [ADDRESS]. Effective
 [EFFECTIVE DATE].
 
-## Beta posture
+## Public launch
 
-TerraScale launches as a waitlist beta. Billing is real from day one; each
-beta account receives $50 in credits. Registration opens to everyone after
-the waitlist criteria are met. Your data is durable from the first day: beta
-status never weakens durability.
-
-Beta access is invitation-based and may be limited or withdrawn while the
-service is evaluated. Nothing in the beta posture changes the pricing,
-security, deletion, or data-ownership statements that apply to an account.
+TerraScale launches with public self-service registration and database
+creation, subject to automated account and abuse controls. There is no
+waitlist, invitation requirement, or beta-credit program. Billing and data
+durability apply from the first day of service.
 
 ## The service
 

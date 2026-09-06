@@ -6,8 +6,8 @@ production membership, dashboard persistence and credentials, database route
 identity, contract publication, and the health data consumed by routing.
 Several strong unit suites pass while those connections remain incomplete.
 
-The owner identified `ts-orchestrator/GOAL.md` as the latest operational design.
-The workspace and all eleven repository goals now incorporate its GRU master,
+The owner identified the workspace `GOAL.md` as the latest operational design.
+The workspace and all eleven workspace goals now incorporate its GRU master,
 same-host controllers, fixed global R3, greenfield replacement policy, and
 Firecracker acceptance requirements. The owner's additional requirements are
 part of those goals: `ts-proxy` must balance REST around failed or overloaded
@@ -531,8 +531,8 @@ gate appear green.
 All eleven repositories had HEAD equal to `origin/develop`, one primary worktree,
 and no staged changes at the final inventory. Unrelated working edits remained
 in their original repositories. The review and architecture atlas were committed
-and pushed to `ts-docs`; workspace goals are also preserved as explicitly labeled
-review-time snapshots in `workspace-goals-2026-09-04/`.
+and pushed to `ts-docs`. Current requirements are maintained in the workspace
+and workspace goals; duplicated goal snapshots have been removed.
 
 The default docs live gate was attempted and refused missing sandbox URL, API
 key and database ID. The explicitly selected stub lane passed independently;

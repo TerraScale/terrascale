@@ -7,8 +7,8 @@ designed to take less than five minutes. There is nothing to install locally:
 production use the same engine in the same regions.
 
 ::: warning Pre-launch
-TerraScale is in waitlist beta. Billing is real from day one, with $50 of
-credits per beta account. Every snippet runs against a real cloud sandbox branch
+TerraScale is preparing for public self-service launch. Billing starts when
+the service opens. Runnable snippets require a real cloud sandbox branch
 pre-filled with the reader's key; if that branch or its credentials are
 unavailable, the runner fails closed rather than substituting a local result.
 See [Runnable snippets](/snippets). The remote snippet gate is separate from

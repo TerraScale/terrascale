@@ -3,19 +3,21 @@
 <!-- i18n:fallback:de -->
 > **Übersetzung ausstehend.** Diese Seite wurde noch nicht auf Deutsch geprüft und zeigt den englischen Originalinhalt.
 
-# Quickstart
+# Quickstart: a live Next.js query
 
-TerraScale is a cloud database. There is nothing to install locally: no
-customer-run emulator or local database process. `terrascale dev` gives you a
-personal cloud branch of your project's database, and dev and prod run the same
-engine in the same regions.
+This is the shortest path from a new Next.js app to a cloud-backed live query.
+With Node, the TerraScale CLI, and an API key already available, the path is
+designed to take less than five minutes. There is nothing to install locally:
+`terrascale dev` creates or reuses a cloud development branch, and dev and
+production use the same engine in the same regions.
 
 ::: warning Pre-launch
-TerraScale is in waitlist beta. Billing is real from day one, with $50 of
-credits per beta account. Every snippet runs against a real cloud sandbox branch
+TerraScale is preparing for public self-service launch. Billing starts when
+the service opens. Runnable snippets require a real cloud sandbox branch
 pre-filled with the reader's key; if that branch or its credentials are
 unavailable, the runner fails closed rather than substituting a local result.
-See [Runnable snippets](/de/snippets).
+See [Runnable snippets](/de/snippets). The remote snippet gate is separate from
+this browser quickstart and never substitutes a local result.
 :::
 
 ## 1. Create an app
@@ -23,13 +25,24 @@ See [Runnable snippets](/de/snippets).
 ```bash
 npx create-terrascale-app@latest my-app
 cd my-app
+npm install
+cp .env.example .env.local
 ```
 
 `terrascale` is a Go binary from the separate `ts-cli` repository, not an npm
-dependency. Install it from a checkout with `go install ./cmd/terrascale`.
-The currently published CLI branch lifecycle is
-`terrascale dev <database> --watch=false --no-log-tail`; seed execution,
-log tailing, and codegen watch are pending their public CLI contracts.
+dependency. Install it from a CLI release (or, while developing the CLI, from
+its checkout with `go install ./cmd/terrascale`). The branch-only command below
+uses only the public database-scoped lifecycle:
+
+```bash
+# TERRASCALE_API_KEY must be exported for the CLI; .env.local is read by Next.js only.
+terrascale dev <database> --watch=false --no-log-tail
+```
+
+The command talks to the cloud service. It never starts an engine on your
+machine. Seed execution, log tailing, and codegen watch are separate CLI
+capabilities; do not add those flags unless the CLI release you installed
+advertises their contracts.
 
 The starter is a Next.js app wired to `@terrascale/sdk`. Sign in when prompted.
 A card is required at signup for fraud screening; you can continue on the free
@@ -64,53 +77,84 @@ terrascale codegen     # generates types when the CLI contract is published
 
 ## 3. Open a cloud dev branch
 
-```bash
-terrascale dev <database> --watch=false --no-log-tail
-```
-
-This creates or reuses a cloud branch of the named database. The current CLI
-does not claim seed execution, log tailing, codegen watch, or fault injection;
-those flags fail closed until their public routes exist. The branch runs in the
-cloud service, not in a local database process or customer-run emulator.
+This creates or reuses a cloud branch of the named database. It prints the
+branch name, source, and selected region; it does not print credentials or a
+database id. Use the dashboard/API response to obtain the branch database id,
+then put that id, the API URL, and a scoped API key in the generated
+`.env.local` (the `.env.example` lists the names). The branch runs in the cloud
+service, not in a local database process or customer-run emulator.
 
 ## 4. Attach a live query
 
-The current SDK exposes typed document operations, schema/SQL builders, named
-management clients, and a reactive `TerraScaleSyncV1Client`. A live query uses
-the exact current SDK call below and must include `databaseId`:
+Queries use the SDK's schema-bound, typed SQL builder. It emits parameterized,
+read-only `SELECT` SQL; there is no TQL or collection-query facade. The
+reactive client attaches the builder's descriptor and requires `databaseId`:
 
 ```ts
-import { TerraScaleSyncV1Client } from '@terrascale/sdk'
+import { Direction, select, TerraScaleSyncV1Client } from '@terrascale/sdk'
+import { posts, title, publishedAt } from './schema'
 
-const databaseId = process.env.TERRASCALE_DATABASE_ID!
+const databaseId = process.env.NEXT_PUBLIC_TERRASCALE_DATABASE_ID!
 const sync = new TerraScaleSyncV1Client({
-  apiBaseUrl: process.env.TERRASCALE_API_URL,
-  accessToken: process.env.TERRASCALE_API_KEY,
+  apiBaseUrl: process.env.NEXT_PUBLIC_TERRASCALE_API_URL,
+  accessToken: process.env.NEXT_PUBLIC_TERRASCALE_API_KEY,
 })
+
+const postsQuery = select(posts)
+  .columns([title, publishedAt])
+  .orderByField(publishedAt, Direction.Desc)
+  .limit(20)
+  .subscribe()
+const parameters = new TextEncoder().encode(JSON.stringify(
+  postsQuery.parameters,
+))
 
 const live = await sync.subscribe({
   databaseId,
   subscription: 'posts',
-  query: 'SELECT * FROM posts ORDER BY publishedAt DESC LIMIT 20',
-  parameters: new Uint8Array(),
+  query: postsQuery.sql,
+  parameters,
 })
 const stop = live.view.subscribe(() => {
-  // Projected fields are canonical JSON bytes; parse at the browser boundary.
+  // Projected fields are canonical JSON bytes; decode at the browser boundary.
   render(live.view.getVisibleItems())
 })
+
+// Checkpoints are opaque. Persist this value if you want to resume later;
+// never inspect or construct its bytes.
+const checkpoint = live.checkpoint()
+if (live.reset) {
+  console.info(`live view reset: ${live.reset.reason}`)
+}
+
+// On a later attach, a stale checkpoint (retention, schema, rules, or branch
+// rebase) is reported as a typed reset. The SDK installs a fresh authorized
+// snapshot and exposes the reason; reconnect is only needed for a manually
+// controlled transport.
+const resumed = await sync.subscribe({
+  databaseId, subscription: 'posts-resumed', query: postsQuery.sql, parameters,
+  ...(checkpoint === undefined ? {} : { checkpoint }),
+})
+if (resumed.reset) console.info(`resumed with fresh snapshot: ${resumed.reset.reason}`)
+resumed.close()
 
 // On teardown: stop(); live.close()
 ```
 
-`Query.raw(sql, parameters).execute()` and `.subscribe()` create validated
-descriptors for the same read-only SQL contract. The starter's schema-bound
-builder follows the same pattern and its document write uses
-`client.documents.put`.
+`Query.raw(sql, parameters)` remains available for a validated, parameterized
+read-only statement when a schema-bound builder is not practical. It cannot
+perform DDL or DML. The starter uses the typed builder; document writes stay
+blocked until the
+published Database API contract is available.
 
 ## 5. Verify it is live
 
-Open the app in two tabs. Add a post in one tab; the document write is served by
-the regional API and both tabs update from the same CDN-backed live result view.
+Open the app in two tabs to attach the same CDN-backed live result view. The
+starter does not perform writes while the typed Database API contract is
+pending. The CRUD snippet demonstrates writes against the qualified sandbox;
+see [pricing](/de/pricing/) for billing (writes and logical document/history
+storage are billed; reads, queries, egress, delivery, fan-out, and subscribers
+are free).
 
 ## Where to go next
 
@@ -119,5 +163,5 @@ the regional API and both tabs update from the same CDN-backed live result view.
 - [Sync model](/de/concepts/sync) — shared views, the immutable delta log, the CDN
 - [SQL](/de/concepts/sql) — the live subset, `execute`-only queries, codegen
 - [Pricing philosophy](/de/concepts/pricing-philosophy) — why only writes and storage are billed
-- [Runnable snippets](/de/snippets) — CRUD, SQL, and live subscriptions; pending
-  tenant, branch, backup, and export fixtures are marked as non-runnable
+- [Runnable snippets](/de/snippets) — CRUD, SQL, and live subscriptions against a
+  real sandbox; unavailable credentials fail the remote gate

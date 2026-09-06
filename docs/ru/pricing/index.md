@@ -128,7 +128,14 @@ WebSocket concurrency and distinct-view caps are unbilled abuse guards, not
 prices.
 
 See [pricing philosophy](/ru/concepts/pricing-philosophy) for why the model looks
-like this. Billing is live from day one of the waitlist beta, with $50 credits
-per beta account.
+like this. Billing starts with public self-service launch.
 
 Generated detail: [pricing sheet](/ru/pricing) · [limits](/ru/limits).
+
+## Card verification and paid usage
+
+A valid verified card is required before creating a database, including on
+Free. Automated fraud checks apply. Free has no time limit while the account
+remains eligible and usage stays within its allowance. Customers can subscribe
+and explicitly enable paid usage above that allowance. A stored card alone
+does not authorize overage charges; review the rates and spend controls first.

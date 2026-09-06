@@ -21,9 +21,8 @@ This Privacy Policy explains how [LEGAL ENTITY NAME — O-5],
 [JURISDICTION — O-5], [ADDRESS] handles personal data. Effective
 [EFFECTIVE DATE].
 
-TerraScale is in a waitlist beta. A waitlist submission may include your
-email, organization, and invitation or onboarding details so we can operate
-the waitlist and send service or launch updates. [PLACEHOLDER — waitlist
+TerraScale is preparing for public self-service registration. Account and
+onboarding information is used to provide the service. [PLACEHOLDER — account
 retention and communications choices pending O-5 review.]
 
 ## What we store

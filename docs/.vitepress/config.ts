@@ -185,7 +185,7 @@ const EN_STRINGS: LocaleStrings = {
   next: 'Next page',
   updated: 'Last updated',
   footer:
-    'TerraScale developer documentation. Pre-launch, waitlist beta.',
+    'TerraScale developer documentation. Preparing for public self-service launch.',
 }
 
 const flatNav = (
@@ -244,7 +244,7 @@ const STRINGS: Record<string, LocaleStrings> = {
     next: 'Página siguiente',
     updated: 'Última actualización',
     footer:
-      'Infraestructura para flujos de base de datos, autenticación, colas, facturación, SDK, CLI y panel. Prelanzamiento, beta con lista de espera.',
+      'Documentación de TerraScale para bases de datos, autenticación, facturación, SDK, CLI y panel. En preparación para el lanzamiento público.',
   },
   'pt-br': {
     nav: flatNav({
@@ -288,7 +288,7 @@ const STRINGS: Record<string, LocaleStrings> = {
     next: 'Próxima página',
     updated: 'Última atualização',
     footer:
-      'Infraestrutura para fluxos de banco de dados, autenticação, filas, cobrança, SDK, CLI e painel. Pré-lançamento, beta com lista de espera.',
+      'Documentação do TerraScale para banco de dados, autenticação, cobrança, SDK, CLI e painel. Em preparação para o lançamento público.',
   },
   fr: {
     nav: flatNav({

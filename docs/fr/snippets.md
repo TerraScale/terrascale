@@ -5,18 +5,26 @@
 
 # Snippets
 
-Runnable snippets run against a real sandbox branch pre-filled with the
-reader's key (D-56). `npm test` is the remote, fail-closed qualification mode.
-It requires all three environment variables below. `npm run test:stub` is the
-explicit local mode and does not qualify the remote contract.
+Runnable snippets run against a real cloud sandbox branch pre-filled with the
+reader's key (D-56). `npm test` is the remote, fail-closed launch gate. It
+requires all three environment variables below and exits non-zero when the
+sandbox is unavailable; an absent sandbox is a failed gate, not a passing
+fixture run. `npm run test:stub` is an explicit local-development harness and
+never qualifies the remote contract or launch.
 
 ```bash
 TERRASCALE_SANDBOX_URL=https://<branch>.<region>.api.terrascale.tech \
 TERRASCALE_API_KEY=ts_... \
 TERRASCALE_DATABASE_ID=db_... \
 npm test
+# Local-only smoke test; this is not launch qualification.
 npm run test:stub
 ```
+
+Do not put a production credential in a snippet fixture. Use a disposable
+cloud dev branch and rotate its key after qualification. The runner sends API
+credentials only to the configured API origin; reactive snapshot and log
+requests use the short-lived view capability header.
 
 The runnable examples target the published `@terrascale/sdk` 0.3.0 surface.
 Tenant, branch, backup, and export fixtures are retained below but skipped

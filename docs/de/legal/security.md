@@ -44,7 +44,7 @@ promise an acknowledgement or remediation deadline until the owner approves
 one: [PLACEHOLDER — acknowledgement and remediation timeframes pending].
 [PLACEHOLDER — safe-harbor wording requires legal approval; any permitted
 good-faith testing is limited to resources you own or are authorized to test;
-no bounty program is approved for the beta.]
+no bounty program is approved for launch.]
 
 ## Key hierarchy
 

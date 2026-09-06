@@ -24,6 +24,6 @@ owner's legal review are complete.]
 - [Security](./security.md) — vulnerability disclosure and `security.txt`.
 - [Support policy](./support.md) — Discord, email, Scale shared channel; no ticketing product, no phone.
 
-These pages describe the intended waitlist-beta posture. They are not an
+These pages describe the intended public self-service launch. They are not an
 offer, contract, or notice until the placeholders are replaced and the pages
 are expressly approved for publication.
