@@ -763,6 +763,11 @@ public sealed class TerraScaleClient
                 }
 
                 var delay = GetRetryDelay(response, attempt);
+                if (delay > MaxRetryAfter)
+                {
+                    return response;
+                }
+
                 AddRetryEvent(activity, attempt + 1, delay, $"HTTP {(int)response.StatusCode}");
                 response.Dispose();
                 await DelayRetryAsync(delay, requestCancellationToken).ConfigureAwait(false);
@@ -1254,7 +1259,7 @@ public sealed class TerraScaleClient
     }
 
     private static TimeSpan BoundRetryAfter(TimeSpan delay) =>
-        delay <= TimeSpan.Zero ? TimeSpan.Zero : delay > MaxRetryAfter ? MaxRetryAfter : delay;
+        delay <= TimeSpan.Zero ? TimeSpan.Zero : delay;
 
     private static Task DelayRetryAsync(TimeSpan delay, CancellationToken cancellationToken) =>
         delay == TimeSpan.Zero ? Task.CompletedTask : Task.Delay(delay, cancellationToken);

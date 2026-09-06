@@ -67,6 +67,34 @@ public sealed class TerraScaleClientTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task LongRetryAfterReturnsGuidanceWithoutRetryingEarly(bool useDate)
+    {
+        var retryAfter = useDate
+            ? new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddMinutes(5))
+            : new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMinutes(5));
+        var handler = new RetryHandler { RetryAfter = retryAfter };
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleClient(httpClient, new TerraScaleClientOptions
+        {
+            BaseAddress = new Uri("https://api.example.invalid/"),
+            BearerToken = "caller-token",
+            IdempotencyKeyFactory = () => "sql-operation-key",
+            MaxRetryAttempts = 1,
+            RetryDelay = TimeSpan.Zero,
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var exception = await Assert.ThrowsAsync<TerraScaleApiException>(() =>
+            client.Sql.ExecuteAsync("database-a", TerraScaleSqlQuery.Raw("SELECT * FROM docs"), cancellationToken: deadline.Token));
+
+        await Assert.That(exception!.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(exception.RetryAfter > TimeSpan.FromMinutes(4)).IsTrue();
+        await Assert.That(handler.IdempotencyKeys.Count).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task EndpointValidationRejectsInsecureProductionAndCredentialBearingUris()
     {
         using var httpClient = new HttpClient(new RecordingHandler("[]"));
@@ -114,6 +142,8 @@ public sealed class TerraScaleClientTests
     {
         private int attempts;
 
+        public System.Net.Http.Headers.RetryConditionHeaderValue? RetryAfter { get; init; }
+
         public List<string?> IdempotencyKeys { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -126,10 +156,12 @@ public sealed class TerraScaleClientTests
             var statusCode = Interlocked.Increment(ref attempts) == 1
                 ? HttpStatusCode.ServiceUnavailable
                 : HttpStatusCode.OK;
-            return Task.FromResult(new HttpResponseMessage(statusCode)
+            var response = new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent("{\"matched\":1,\"rows\":[]}", Encoding.UTF8, "application/json"),
-            });
+            };
+            response.Headers.RetryAfter = RetryAfter;
+            return Task.FromResult(response);
         }
     }
 }

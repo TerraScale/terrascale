@@ -48,6 +48,7 @@ public sealed record TerraScaleClientOptions
 
     /// <summary>
     /// Number of transient retry attempts after the initial request. The default is zero and the maximum is eight.
+    /// Responses requesting a Retry-After delay longer than 30 seconds are returned as errors without automatic retry.
     /// </summary>
     public int MaxRetryAttempts { get; set; }
 
