@@ -1,6 +1,5 @@
 import {
   createAdapterFactory,
-  type AdapterFactory,
   type CleanedWhere,
   type CustomAdapter,
   type DBAdapter,
@@ -50,14 +49,37 @@ type ConsumeInput = Parameters<CustomAdapter["consumeOne"]>[0];
 type IncrementInput = Parameters<CustomAdapter["incrementOne"]>[0];
 type CountInput = Parameters<CustomAdapter["count"]>[0];
 
-export type TerraScaleAuthAdapterFactory = AdapterFactory<BetterAuthOptions>;
+export type TerraScaleAuthAdapterFactory = (options: BetterAuthOptions) => TerraScaleAuthDatabaseAdapter;
+export class TerraScaleAuthAdapterError extends Error {
+  readonly code: string;
+  readonly details: unknown;
+
+  constructor(message: string, code: string, details: unknown) {
+    super(message);
+    this.name = "TerraScaleAuthAdapterError";
+    this.code = code;
+    this.details = details;
+  }
+}
+export type TerraScaleAuthIndexInput = {
+  readonly model: string;
+  readonly fields: readonly string[];
+  readonly unique?: boolean | undefined;
+};
+export type TerraScaleAuthTransactionAdapter = Omit<DBAdapter<BetterAuthOptions>, "transaction"> & {
+  readonly index: (input: TerraScaleAuthIndexInput) => Promise<void>;
+};
+export type TerraScaleAuthDatabaseAdapter = Omit<DBAdapter<BetterAuthOptions>, "transaction"> & {
+  readonly index: (input: TerraScaleAuthIndexInput) => Promise<void>;
+  readonly transaction: <T>(callback: (adapter: TerraScaleAuthTransactionAdapter) => Promise<T>) => Promise<T>;
+};
 
 /** Build the Better Auth 1.7.2 adapter factory over the public auth API. */
 export function createTerraScaleAuthAdapter(
   client: AuthPersistenceClient,
   database: string,
 ): TerraScaleAuthAdapterFactory {
-  return (options: BetterAuthOptions): DBAdapter<BetterAuthOptions> => {
+  return (options: BetterAuthOptions): TerraScaleAuthDatabaseAdapter => {
     const factoryOptions: BetterAuthOptions = {
       ...options,
       advanced: {
@@ -66,6 +88,7 @@ export function createTerraScaleAuthAdapter(
       },
     };
     let ensureSchema: () => Promise<void> = async () => undefined;
+    let directIndex: ((input: TerraScaleAuthIndexInput) => Promise<void>) | undefined;
     const factory = createAdapterFactory<BetterAuthOptions>({
       config: {
         adapterId: "terrascale-control-plane-auth",
@@ -85,10 +108,17 @@ export function createTerraScaleAuthAdapter(
       adapter: (factoryConfig) => {
         const result = customAdapter(factoryConfig, directPort(client, database), true);
         ensureSchema = result.ensure;
+        directIndex = result.index;
         return result.adapter;
       },
     });
-    return factory(factoryOptions);
+    const adapter = factory(factoryOptions);
+    return Object.assign(adapter, {
+      index: (input: TerraScaleAuthIndexInput) => {
+        if (directIndex === undefined) throw new Error("Auth adapter index operation is unavailable.");
+        return directIndex(input);
+      },
+    }) as TerraScaleAuthDatabaseAdapter;
   };
 }
 
@@ -140,7 +170,8 @@ async function serializedTransactionCallback<T>(
 function transactionAdapter(
   options: BetterAuthOptions,
   operations: AuthTransactionOperations,
-): Omit<DBAdapter<BetterAuthOptions>, "transaction"> {
+): TerraScaleAuthTransactionAdapter {
+  let scopedIndex: ((input: TerraScaleAuthIndexInput) => Promise<void>) | undefined;
   const factory = createAdapterFactory<BetterAuthOptions>({
     config: {
       adapterId: "terrascale-control-plane-auth-transaction",
@@ -152,18 +183,27 @@ function transactionAdapter(
       supportsUUIDs: false,
       transaction: false,
     },
-    adapter: (factoryConfig) => customAdapter(factoryConfig, transactionPort(operations), false).adapter,
+    adapter: (factoryConfig) => {
+      const result = customAdapter(factoryConfig, transactionPort(operations), false);
+      scopedIndex = result.index;
+      return Object.assign(result.adapter, { index: result.index });
+    },
   });
   const adapter = factory(options);
   const { transaction: _transaction, ...scoped } = adapter;
-  return scoped;
+  if (scopedIndex === undefined) throw new Error("Auth transaction index operation is unavailable.");
+  return { ...scoped, index: scopedIndex };
 }
 
 function customAdapter(
   config: Parameters<NonNullable<Parameters<typeof createAdapterFactory>[0]["adapter"]>>[0],
   port: Port,
   provisionIndexes: boolean,
-): { readonly adapter: CustomAdapter; readonly ensure: () => Promise<void> } {
+): {
+  readonly adapter: CustomAdapter;
+  readonly ensure: () => Promise<void>;
+  readonly index: (input: TerraScaleAuthIndexInput) => Promise<void>;
+} {
   const operationKey = () => `better-auth-${globalThis.crypto.randomUUID()}`;
   const mutationOptions = (): AuthMutationOptions => ({ idempotencyKey: operationKey() });
   const queryOptions = (): AuthQueryOptions => ({});
@@ -227,6 +267,18 @@ function customAdapter(
     }
     await ready;
   };
+  const namedIndex = async (input: TerraScaleAuthIndexInput): Promise<void> => {
+    if (input.unique === false) throw new TypeError("TerraScale auth indexes must be unique.");
+    await ensure();
+    const request = {
+      model: config.getModelName(input.model),
+      fields: input.fields.map(field => config.getFieldName({ model: input.model, field })),
+    };
+    const result = unwrap(await port.index(request, { idempotencyKey: `better-auth-index-${globalThis.crypto.randomUUID()}` }));
+    if (result.matched !== true || result.record !== null) {
+      throw new TypeError("Auth index operation returned an invalid success result.");
+    }
+  };
   const adapter: CustomAdapter = {
     create: async <T extends Record<string, any>>(input: CreateInput & { data: T }) => {
       await ensure();
@@ -259,7 +311,7 @@ function customAdapter(
     incrementOne: async <T>(input: IncrementInput) => { await ensure(); return outputRecord(unwrap(await port.incrementOne({ model: input.model, predicates: where(input.model, input.where, "incrementOne"), increment: input.increment, ...(input.set === undefined ? {} : { set: jsonObject(input.set) }) }, mutationOptions())).record) as T | null; },
     count: async (input: CountInput) => { await ensure(); return safeCount(unwrap(await port.count({ model: input.model, predicates: where(input.model, input.where ?? [], "count") }, queryOptions())).count); },
   };
-  return { adapter, ensure };
+  return { adapter, ensure, index: namedIndex };
 }
 
 function directPort(client: AuthPersistenceClient, database: string): Port {
@@ -311,10 +363,7 @@ function joins(input: JoinConfig): readonly AuthQueryJoin[] {
 
 function unwrap(result: TerraScaleResult<AuthPersistenceResult>): AuthPersistenceResult {
   if (result.ok) return result.value;
-  const error = new Error(result.error.message);
-  error.name = "TerraScaleAuthAdapterError";
-  Object.assign(error, { code: result.error.code, details: result.error });
-  throw error;
+  throw new TerraScaleAuthAdapterError(result.error.message, result.error.code, result.error);
 }
 
 function outputRecord(record: Record<string, unknown> | JsonObject | null, select?: readonly string[]): JsonObject | null {

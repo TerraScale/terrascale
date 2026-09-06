@@ -1,4 +1,5 @@
 import type { TerraScaleResult } from "./result.js";
+import type { Where as OfficialBetterAuthWhere } from "@better-auth/core/db/adapter";
 
 export {
   AuthTransactionOutcomeUnknownError,
@@ -38,8 +39,14 @@ export type {
   AuthQueryJoin,
 } from "./auth-persistence.js";
 
-export { createTerraScaleAuthAdapter } from "./better-auth-factory.js";
-export type { TerraScaleAuthAdapterFactory } from "./better-auth-factory.js";
+export { TerraScaleAuthAdapterError, createTerraScaleAuthAdapter } from "./better-auth-factory.js";
+export type {
+  TerraScaleAuthAdapterFactory,
+  TerraScaleAuthDatabaseAdapter,
+  TerraScaleAuthIndexInput,
+  TerraScaleAuthTransactionAdapter,
+} from "./better-auth-factory.js";
+export type TerraScaleAuthWhere = OfficialBetterAuthWhere;
 
 /** The comparison operators understood by Better Auth's database adapter. */
 export type BetterAuthWhere = {
