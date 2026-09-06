@@ -64,6 +64,7 @@ class OpenApiGenerator:
         self.document = document
         self.schemas = document.get("components", {}).get("schemas", {})
         self.inline: dict[str, dict] = {}
+        self._normalized: dict[str, dict] = {}
 
     def resolve(self, schema: dict) -> dict:
         if isinstance(schema, bool):
@@ -74,22 +75,71 @@ class OpenApiGenerator:
             return self.schemas.get(name, {})
         return schema
 
+    def normalize(self, schema: dict, stack: tuple[str, ...] = ()) -> dict:
+        """Return the object view of a schema, expanding object allOf members."""
+        if isinstance(schema, bool):
+            return {}
+        if "$ref" in schema:
+            name = schema["$ref"].rsplit("/", 1)[-1]
+            if name in stack:
+                cycle = " -> ".join((*stack, name))
+                raise ContractError(f"cyclic object allOf reference: {cycle}")
+            if name in self._normalized:
+                target = self._normalized[name]
+            else:
+                target = self.normalize(self.schemas.get(name, {}), (*stack, name))
+                self._normalized[name] = target
+            # A sibling description on a ref is harmless and should not affect
+            # the referenced shape.
+            return target
+        if "allOf" not in schema:
+            return schema
+        merged = {key: value for key, value in schema.items() if key != "allOf"}
+        merged["type"] = "object"
+        properties: dict[str, dict] = {}
+        required: list[str] = []
+        parts = [*schema["allOf"]]
+        for part in parts:
+            part = self.normalize(part, stack)
+            if part.get("type") != "object" and not part.get("properties"):
+                raise ContractError("object allOf member must be an object schema")
+            for field, definition in part.get("properties", {}).items():
+                if field in properties and properties[field] != definition:
+                    raise ContractError(f"incompatible duplicate allOf property {field!r}")
+                properties.setdefault(field, definition)
+            for field in part.get("required", []):
+                if field not in required:
+                    required.append(field)
+        for field, definition in schema.get("properties", {}).items():
+            if field in properties and properties[field] != definition:
+                raise ContractError(f"incompatible duplicate allOf property {field!r}")
+            properties.setdefault(field, definition)
+        for field in schema.get("required", []):
+            if field not in required:
+                required.append(field)
+        merged["properties"] = properties
+        if required:
+            merged["required"] = required
+        return merged
+
     def collect_inline(self) -> None:
         for name, schema in self.schemas.items():
             self._collect_schema(schema, name)
 
     def _collect_schema(self, schema: dict, owner: str) -> None:
-        schema = self.resolve(schema)
+        if schema.get("allOf"):
+            schema = self.normalize(schema)
         if schema.get("type") == "object":
             for field, child in schema.get("properties", {}).items():
-                child_resolved = self.resolve(child)
+                child_resolved = self.normalize(child)
                 if "$ref" not in child and child_resolved.get("type") == "object":
                     name = owner + pascal(field)
                     self.inline.setdefault(name, child_resolved)
                     self._collect_schema(child_resolved, name)
                 elif "$ref" not in child and child_resolved.get("type") == "array":
-                    item = self.resolve(child_resolved.get("items", {}))
-                    if "$ref" not in child_resolved.get("items", {}) and item.get("type") == "object":
+                    item_schema = child_resolved.get("items", {})
+                    item = self.normalize(item_schema)
+                    if "$ref" not in item_schema and item.get("type") == "object":
                         name = owner + pascal(field)
                         self.inline.setdefault(name, item)
                         self._collect_schema(item, name)
@@ -97,15 +147,17 @@ class OpenApiGenerator:
     def type_name(self, schema: dict, owner: str, nullable: bool = False) -> str:
         if isinstance(schema, bool):
             return "JsonElement?" if nullable else "JsonElement"
+        if schema.get("allOf"):
+            schema = self.normalize(schema)
         if "$ref" in schema:
-            target = self.resolve(schema)
+            target = self.normalize(schema)
             if schema["$ref"].endswith("/JsonValue"):
                 result = "JsonElement"
             elif target.get("type") == "object":
                 result = pascal(schema["$ref"].rsplit("/", 1)[-1])
             else:
                 result = self.type_name(target, owner)
-        elif schema.get("oneOf") or schema.get("anyOf") or schema.get("allOf"):
+        elif schema.get("oneOf") or schema.get("anyOf"):
             result = "JsonElement"
         elif isinstance(schema.get("type"), list):
             non_null = [t for t in schema["type"] if t != "null"]
@@ -140,7 +192,7 @@ class OpenApiGenerator:
 
     def model_schema(self, name: str) -> dict:
         if name in self.schemas:
-            return self.schemas[name]
+            return self.normalize(self.schemas[name], (name,))
         return self.inline[name]
 
     def models(self) -> str:
@@ -150,11 +202,15 @@ class OpenApiGenerator:
             if schema.get("type") != "object":
                 continue
             required = set(schema.get("required", []))
+            allocated: set[str] = set()
             fields = []
             for field, definition in schema.get("properties", {}).items():
                 definition = dict(definition)
                 nullable = field not in required or "null" in definition.get("type", []) if isinstance(definition.get("type"), list) else field not in required
                 property_name = pascal(field)
+                while property_name == pascal(name) or property_name in allocated:
+                    property_name += "Value"
+                allocated.add(property_name)
                 type_text = self.type_name(definition, name + property_name, nullable)
                 required_attribute = ", JsonRequired" if field in required else ", JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)"
                 fields.append(f"[property: JsonPropertyName({string_literal(field)}){required_attribute}] {type_text} {property_name}")

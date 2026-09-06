@@ -243,7 +243,7 @@ public sealed record HistoryResponse(
 );
 
 public sealed record Increment(
-    [property: JsonPropertyName("increment"), JsonRequired] IReadOnlyDictionary<string, double> Increment,
+    [property: JsonPropertyName("increment"), JsonRequired] IReadOnlyDictionary<string, double> IncrementValue,
     [property: JsonPropertyName("model"), JsonRequired] string Model,
     [property: JsonPropertyName("predicates"), JsonRequired] IReadOnlyList<PredicateInput> Predicates,
     [property: JsonPropertyName("set"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, JsonElement>? Set
@@ -444,6 +444,14 @@ public sealed record WebhookEndpoint(
 
 public sealed record WebhookList(
     [property: JsonPropertyName("webhooks"), JsonRequired] IReadOnlyList<WebhookEndpoint> Webhooks
+);
+
+public sealed record WebhookSecretResponse(
+    [property: JsonPropertyName("created_at"), JsonRequired] long CreatedAt,
+    [property: JsonPropertyName("deleted"), JsonRequired] bool Deleted,
+    [property: JsonPropertyName("endpoint"), JsonRequired] string Endpoint,
+    [property: JsonPropertyName("id"), JsonRequired] string Id,
+    [property: JsonPropertyName("secret"), JsonRequired] string Secret
 );
 
 public sealed record BatchRequestOperations(

@@ -75,6 +75,7 @@ using System.Text.Json.Serialization;
 [JsonSerializable(typeof(UsageSummary))]
 [JsonSerializable(typeof(WebhookEndpoint))]
 [JsonSerializable(typeof(WebhookList))]
+[JsonSerializable(typeof(WebhookSecretResponse))]
 [JsonSerializable(typeof(BatchRequestOperations))]
 [JsonSerializable(typeof(ConditionalUpdateExpected))]
 [JsonSerializable(typeof(ConditionalUpdateUpdate))]
