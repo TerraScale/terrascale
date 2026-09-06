@@ -2,6 +2,7 @@ use super::*;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Duration;
 use terrabase::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
 
 fn scope(seed: u8) -> DatabaseRouteScope {
@@ -55,6 +56,7 @@ fn synthetic() -> Synthetic {
         );
     }
     let (stop, _) = watch::channel(false);
+    let join = tokio::spawn(async { Ok(()) });
     Synthetic {
         peers: ReplicationPeers {
             cuts: Arc::new(ReplicationCuts::default()),
@@ -65,7 +67,9 @@ fn synthetic() -> Synthetic {
             live_workers,
             stop,
             draining: std::sync::atomic::AtomicBool::new(false),
-            join: tokio::spawn(async { Ok(()) }),
+            worker_status: join.abort_handle(),
+            join: tokio::sync::Mutex::new(Some(join)),
+            drain_result: std::sync::Mutex::new(None),
         },
         receivers,
         progress,
@@ -126,6 +130,30 @@ async fn begin_drain_rejects_new_lanes_and_drain_still_joins_owner() {
     assert!(synthetic.peers.add_databases(batch(request(scope(1), scope(2)))).await.is_err());
     assert!(synthetic.progress.boundaries().unwrap().is_empty());
     assert!(synthetic.peers.drain().await.is_ok());
+}
+
+#[tokio::test]
+async fn cancelled_drain_retains_join_for_retry_and_caches_failure() {
+    let mut synthetic = synthetic();
+    let pending = tokio::spawn(async { std::future::pending::<Result<(), String>>().await });
+    synthetic.peers.worker_status = pending.abort_handle();
+    *synthetic.peers.join.lock().await = Some(pending);
+    let timed_out = tokio::time::timeout(Duration::from_millis(1), synthetic.peers.drain()).await;
+    assert!(timed_out.is_err());
+    assert!(synthetic.peers.join.lock().await.is_some());
+    synthetic.peers.join.lock().await.as_ref().unwrap().abort();
+    let first = synthetic.peers.drain().await;
+    let second = synthetic.peers.drain().await;
+    assert!(first.is_err());
+    assert_eq!(first, second);
+}
+
+#[tokio::test]
+async fn concurrent_drains_share_cached_completion() {
+    let synthetic = synthetic();
+    let (first, second) = tokio::join!(synthetic.peers.drain(), synthetic.peers.drain());
+    assert_eq!(first, second);
+    assert!(first.is_ok());
 }
 
 #[tokio::test]

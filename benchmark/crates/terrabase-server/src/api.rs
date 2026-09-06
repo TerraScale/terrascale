@@ -4996,7 +4996,7 @@ mod tests {
                 format!("/api/v1/databases/tt/collections/orders/documents/item-1?at={at_millis}"),
             )
             .await;
-            assert_eq!(status, StatusCode::OK, "the past serves");
+            assert_eq!(status, StatusCode::OK, "the past serves: {body}");
             assert!(body.contains("\"value\":1"), "the old value serves: {body}");
             assert!(!body.contains("\"value\":2"), "the new value stays out: {body}");
         }

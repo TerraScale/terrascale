@@ -5,6 +5,7 @@ use crate::replication_peers::{
 use crate::replication_runtime::ReplicationProgress;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use terrabase::encryption::{
     DatabaseKeySource, DatabaseKeyVersion, KeyPurpose, KeyScope, KeyVersionMetadata,
@@ -88,7 +89,7 @@ impl ProductionDataRuntime {
     ///
     /// # Errors
     /// Reports failed peer shutdown.
-    pub async fn drain(self) -> Result<(), String> {
+    pub async fn drain(&self) -> Result<(), String> {
         self.begin_drain();
         self.peers.drain().await
     }
@@ -238,6 +239,7 @@ pub struct ProductionAdmissionRuntime {
     usage: Arc<crate::usage_admission::UsageAdmissionJournal>,
     snapshot_max_bytes: u64,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+    draining: AtomicBool,
 }
 
 impl ProductionAdmissionRuntime {
@@ -412,6 +414,7 @@ impl ProductionAdmissionRuntime {
             usage,
             snapshot_max_bytes,
             registry,
+            draining: AtomicBool::new(false),
         })
     }
 
@@ -515,6 +518,9 @@ impl ProductionAdmissionRuntime {
     /// # Errors
     /// Refuses changed authority, missing admitted records, or failed worker startup.
     pub async fn reconcile(&mut self) -> Result<(), String> {
+        if self.draining.load(Ordering::Acquire) {
+            return Err("production admission runtime is draining".into());
+        }
         if let Some(data) = &self.data {
             data.peers.ensure_running()?;
         }
@@ -799,9 +805,12 @@ impl ProductionAdmissionRuntime {
     ///
     /// # Errors
     /// Reports a failed bounded peer drain.
-    pub async fn drain(mut self) -> Result<(), String> {
-        if let Some(data) = self.data.take() {
+    pub async fn drain(&self) -> Result<(), String> {
+        self.draining.store(true, Ordering::Release);
+        if let Some(data) = self.data.as_ref() {
             data.drain().await?;
+        } else {
+            self.progress.fence();
         }
         Ok(())
     }

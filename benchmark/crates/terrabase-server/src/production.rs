@@ -775,7 +775,7 @@ mod tests {
         fn drain(&self, _: Duration) -> ProductionDataPlaneDrain<'_> {
             Box::pin(async move {
                 self.calls.fetch_add(1, Ordering::AcqRel);
-                self.started.notify_waiters();
+                self.started.notify_one();
                 tokio::task::yield_now().await;
                 if self.pending.load(Ordering::Acquire) {
                     return std::future::pending().await;
@@ -954,7 +954,10 @@ mod tests {
     async fn production_member_concurrent_drains_run_data_plane_once() {
         let (runtime, root, spec, plane) =
             runtime_with_async_drain("async-member-concurrent", false);
-        let (first, second) = tokio::join!(runtime.drain(), runtime.drain());
+        let runtime = Arc::new(runtime);
+        let other = Arc::clone(&runtime);
+        let (first, second) = tokio::join!(runtime.drain(), other.drain());
+        assert!(first.storage.is_ok() && second.storage.is_ok());
         assert!(first.data_plane.is_ok() && second.data_plane.is_ok());
         assert_eq!(plane.calls.load(Ordering::Acquire), 1);
         assert!(plane.lease.lock().unwrap().is_none());
@@ -982,8 +985,15 @@ mod tests {
     async fn production_member_cancelled_drain_can_retry() {
         let (runtime, root, spec, plane) =
             runtime_with_async_drain("async-member-cancel-retry", true);
-        let cancelled = tokio::time::timeout(Duration::from_millis(20), runtime.drain()).await;
-        assert!(cancelled.is_err());
+        {
+            let drain = runtime.drain();
+            tokio::pin!(drain);
+            tokio::select! {
+                report = &mut drain => panic!("drain completed before cancellation: {report:?}"),
+                () = plane.started.notified() => {}
+            }
+        }
+        assert!(plane.lease.lock().unwrap().is_some());
         plane.pending.store(false, Ordering::Release);
         let report = runtime.drain().await;
         assert!(report.data_plane.is_ok() && report.storage.is_ok());
@@ -996,8 +1006,15 @@ mod tests {
     async fn production_member_retirement_rejects_cancelled_normal_drain() {
         let (runtime, root, spec, plane) =
             runtime_with_async_drain("async-member-retire-cancelled", true);
-        let cancelled = tokio::time::timeout(Duration::from_millis(20), runtime.drain()).await;
-        assert!(cancelled.is_err());
+        {
+            let drain = runtime.drain();
+            tokio::pin!(drain);
+            tokio::select! {
+                report = &mut drain => panic!("drain completed before cancellation: {report:?}"),
+                () = plane.started.notified() => {}
+            }
+        }
+        assert!(plane.lease.lock().unwrap().is_some());
         let retirement = runtime.retire_epoch().await;
         assert_eq!(retirement.data_plane, Err(ProductionDataPlaneError::Persistence));
         drop(plane.lease.lock().unwrap().take());

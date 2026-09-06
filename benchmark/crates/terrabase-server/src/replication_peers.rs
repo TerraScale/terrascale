@@ -173,7 +173,10 @@ pub struct ReplicationPeers {
     live_workers: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
     stop: watch::Sender<bool>,
     draining: AtomicBool,
-    join: tokio::task::JoinHandle<Result<(), String>>,
+    // Observe completion without contending with join ownership; never abort here.
+    worker_status: tokio::task::AbortHandle,
+    join: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<(), String>>>>,
+    drain_result: std::sync::Mutex<Option<Result<(), String>>>,
 }
 fn failure(error: impl std::fmt::Debug) -> String {
     format!("replication peer: {error:?}")
@@ -342,7 +345,9 @@ impl ReplicationPeers {
         Ok(Self {
             stop,
             draining: AtomicBool::new(false),
-            join,
+            worker_status: join.abort_handle(),
+            join: tokio::sync::Mutex::new(Some(join)),
+            drain_result: std::sync::Mutex::new(None),
             observations,
             live_workers,
             admissions,
@@ -453,7 +458,7 @@ impl ReplicationPeers {
     /// A failed worker requires a fresh runtime; previously verified receipts cannot revive it.
     pub fn ensure_running(&self) -> Result<(), String> {
         if self.draining.load(Ordering::Acquire)
-            || self.join.is_finished()
+            || self.worker_status.is_finished()
             || *self.stop.borrow()
             || self.live_workers.lock().map_err(failure)?.len() != self.admissions.len()
         {
@@ -497,11 +502,26 @@ impl ReplicationPeers {
     }
 
     /// Stops admission and sessions and releases the runtime owner.
+    /// Cancellation retains the worker join handle so a later call can finish
+    /// the same drain and observe the cached result.
     /// # Errors
     /// Reports a worker panic or an endpoint ownership violation.
-    pub async fn drain(self) -> Result<(), String> {
+    pub async fn drain(&self) -> Result<(), String> {
         self.begin_drain();
-        self.join.await.map_err(failure)?
+        if let Some(result) = self.drain_result.lock().map_err(failure)?.clone() {
+            return result;
+        }
+        let mut join = self.join.lock().await;
+        if let Some(result) = self.drain_result.lock().map_err(failure)?.clone() {
+            return result;
+        }
+        let result = match join.as_mut() {
+            Some(handle) => handle.await.map_err(failure).and_then(|result| result),
+            None => Err("replication peer owner has no worker handle".into()),
+        };
+        *join = None;
+        *self.drain_result.lock().map_err(failure)? = Some(result.clone());
+        result
     }
 }
 

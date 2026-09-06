@@ -897,3 +897,59 @@ production adapter. The server Clippy run (`70416`) failed with 76 test-build
 diagnostics including one new redundant Copy clone in the TLS fixture; that
 clone was removed and the ten production tests rerun. The pre-existing server
 lint backlog remains. No full-workspace or production-readiness claim is made.
+
+
+Shared Member shutdown now accepts `&self`, serializes concurrent callers, and
+retains successful component results while allowing unfinished cleanup to retry.
+Attachment serializes with the admission fence. Epoch retirement refuses any
+previous normal shutdown attempt, including cancellation. Clippy caught a route
+mutex temporary held across the refusal-path transport await; separate local
+values now release the lock before awaiting.
+
+All nine cluster production tests passed (`89812`), and cluster all-target
+Clippy passed after the lock fix (`76210`). All fifteen server production tests
+passed (`30424`), including concurrent Arc callers, timeout/retry, cancellation
+triggered by an explicit adapter-start notification, retirement refusal, and late
+attachment rejection. Independent final review found no material defect. Logs:
+`/tmp/terrascale-shared-drain-cluster.log`,
+`/tmp/terrascale-shared-drain-cluster-clippy.log`, and
+`/tmp/terrascale-shared-drain-server.log`. Server all-target Clippy still fails
+with 75 test-build diagnostics (`14906`), logged at
+`/tmp/terrascale-shared-drain-server-clippy.log`. These tests use a probe adapter;
+they do not qualify real production worker ownership or complete startup.
+
+
+ReplicationPeers now retains its join handle behind an async mutex and awaits
+it by mutable reference. Cancellation leaves ownership available for retry;
+completed success and worker errors are cached. Synchronous health reads use
+`AbortHandle::is_finished` only for observation, avoiding contention on the drain
+mutex. ProductionDataRuntime and ProductionAdmissionRuntime expose shared drains.
+Admission retains its data owner, fences even an empty progress ledger, and
+rejects later reconciliation, preventing a second receiver after shutdown.
+
+Nine peer admission/shutdown tests passed (`77595`), including cancellation with
+retained join ownership, cached task failure, and concurrent successful drain.
+Independent review found no material defects. Cluster production tests passed
+again after the lock fix (`45803`). Server all-target Clippy remains at 75
+test-build diagnostics (`54358`); existing function-length diagnostics reflect
+the added lines. Logs: `/tmp/terrascale-retained-peer-drain-tests.log`,
+`/tmp/terrascale-retained-peer-drain-clippy.log`, and
+`/tmp/terrascale-shared-drain-cluster-final.log`. The peer tests use synthetic
+tasks: real peer/engine-lease shutdown integration and the attached production
+adapter remain unfinished.
+
+
+The broader server library run (`8863`) finished with 351 passed, one failed,
+three ignored, and the known restore performance test excluded.
+`api::tests::document_time_travel_at_returns_the_old_value` returned HTTP 500.
+An isolated rerun passed (`98986`), so the cause is not established. The assertion
+now includes the response body to make recurrence diagnosable; no behavior or
+assertion was relaxed. Logs: `/tmp/terrascale-retained-drain-server-library.log`
+and `/tmp/terrascale-time-travel-recheck.log`. This run is not a green suite.
+
+The broader rerun with response-body diagnostics passed (`47146`): 352 passed,
+three ignored, and the same known restore performance test excluded. Log:
+`/tmp/terrascale-retained-drain-server-library-recheck.log`. The preceding HTTP
+500 remains an unexplained intermittent failure, not a proven fix. No additional
+repeat runs are justified without new evidence. Production composition and the
+full workspace check remain incomplete; all ULID and concurrent work is retained.
