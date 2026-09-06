@@ -813,3 +813,21 @@ returns its artifact directly; the caller supplies the optional completion
 wrapper. Cancellation, staged-manifest refusal, durable resume and shutdown
 checkpoint tests passed after that cleanup. `git diff --check` passed. No
 complete workspace check or production-readiness success is claimed.
+
+
+The duplicate partial index on operation-fact identity was removed from schema
+creation, normal-open migration, and transactional branch import. The WITHOUT
+ROWID primary key preserves stronger uniqueness and the existing lookup path.
+The legacy-snapshot test explicitly creates the old index before verifying its
+removal. Review found no dependent forced-index query or lost constraint.
+The isolated restore benchmark still failed at 12.255299851 seconds (`43182`);
+no measured speedup is claimed.
+
+The full SQLite selection exposed an inconsistent pruning-gap fixture: both a
+saved causal prefix and a retained publication still proved the deliberately
+missing sequence. The fixture now removes those contradictory proofs, retaining
+the original expected prefix of one. Its targeted regression passed (`47935`),
+then all 119 SQLite tests passed (`73356`). Engine all-target Clippy passed with
+warnings denied (`77086`). Logs: `/tmp/terrascale-sqlite-index-removal-final.log`
+and `/tmp/terrascale-sqlite-cleanup-clippy.log`. The server lint backlog and
+restore performance gate remain unresolved.

@@ -2494,6 +2494,16 @@ fn pruning_preserves_a_gap_instead_of_promoting_the_maximum_sequence() {
         writer
             .execute("UPDATE documents SET origin_seq = origin_seq + 1 WHERE origin_seq >= 2", [])
             .unwrap();
+        // The durable prefix is the proven causal state; keep it aligned with
+        // the intentionally introduced gap instead of leaving the old cached
+        // prefix to authorize the synthetic rows after it.
+        writer.execute("UPDATE origin_prefixes SET seq = 1", []).unwrap();
+        // The publication journal is another durable proof of causal progress.
+        // Remove the missing publication too, so neither source fills the gap.
+        writer
+            .execute("DELETE FROM replication_publication_records WHERE local_seq = 2", [])
+            .unwrap();
+        writer.execute("DELETE FROM replication_publications WHERE origin_seq = 2", []).unwrap();
     }
     backdate_all_rows(&storage);
     storage.advance_consumer_frontier("replication", 3).unwrap();
