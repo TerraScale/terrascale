@@ -60,7 +60,6 @@ public sealed class TerraScaleClient
         Collections = new TerraScaleCollectionsClient(this);
         Documents = new TerraScaleDocumentsClient(this);
         Regions = new TerraScaleRegionsClient(this);
-        DatabaseBranches = new TerraScaleDatabaseBranchesClient(this);
         Backups = new TerraScaleBackupsClient(this);
         Management = new TerraScaleManagementClient(this);
         Tenants = new TerraScaleTenantsClient(this);
@@ -109,11 +108,6 @@ public sealed class TerraScaleClient
     /// TerraScale region catalog operations.
     /// </summary>
     public TerraScaleRegionsClient Regions { get; }
-
-    /// <summary>
-    /// Physical database branch capability and clone-request operations.
-    /// </summary>
-    public TerraScaleDatabaseBranchesClient DatabaseBranches { get; }
 
     /// <summary>
     /// Project database backup, restore point, and restore operations.

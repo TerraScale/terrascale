@@ -689,14 +689,19 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
                 return new TerraScaleReactivePollResult(new TerraScaleReactiveHeartbeat(), etag);
             case TerraScaleReactiveDelta delta when delta.ToRevision < Offset: return new TerraScaleReactivePollResult(new TerraScaleReactiveHeartbeat(), etag);
             case TerraScaleReactiveDelta: throw new TerraScaleReactiveProtocolException("The reactive delta has a revision gap and requires a reset.");
-            case TerraScaleReactiveSnapshotFrame snapshot: Attachment.ValidateCheckpoint(snapshot.Snapshot.Checkpoint); CurrentSnapshot = snapshot.Snapshot; Offset = snapshot.Snapshot.Revision; break;
-            case TerraScaleReactiveReset reset: CurrentSnapshot = reset.Snapshot; Offset = reset.Snapshot.Revision; SessionState = TerraScaleViewSessionState.Resetting; break;
+            case TerraScaleReactiveSnapshotFrame snapshot: ValidateAuthorizationGeneration(snapshot.Snapshot); Attachment.ValidateCheckpoint(snapshot.Snapshot.Checkpoint); CurrentSnapshot = snapshot.Snapshot; Offset = snapshot.Snapshot.Revision; break;
+            case TerraScaleReactiveReset reset: ValidateAuthorizationGeneration(reset.Snapshot); CurrentSnapshot = reset.Snapshot; Offset = reset.Snapshot.Revision; SessionState = TerraScaleViewSessionState.Resetting; break;
             case TerraScaleReactiveRouteChange: NeedsResume = true; break;
             case TerraScaleReactiveBackpressure backpressure: Paused = backpressure.Mode == TerraScaleReactiveBackpressureMode.Pause; break;
             case TerraScaleReactiveError { Code: TerraScaleReactiveErrorCode.AuthenticationExpired }: SessionState = TerraScaleViewSessionState.Resuming; break;
             case TerraScaleReactiveError { Code: TerraScaleReactiveErrorCode.PermissionDenied }: SessionState = TerraScaleViewSessionState.Resetting; break;
         }
         LastETag = etag; return new TerraScaleReactivePollResult(frame, etag);
+    }
+    private void ValidateAuthorizationGeneration(TerraScaleReactiveSnapshot snapshot)
+    {
+        if (snapshot.AuthorizationGeneration < CurrentSnapshot.AuthorizationGeneration)
+            throw new TerraScaleReactiveProtocolException("The reactive snapshot moved to an older authorization generation.");
     }
     private static IReadOnlyList<TerraScaleReactiveItem> ApplyOperations(IReadOnlyList<TerraScaleReactiveItem> source, IReadOnlyList<TerraScaleReactiveOperation> operations)
     {

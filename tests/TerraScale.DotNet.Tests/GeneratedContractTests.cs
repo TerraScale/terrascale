@@ -69,4 +69,18 @@ public sealed class GeneratedContractTests
         await Assert.That(delta.Fields).Contains("checkpoint");
         await Assert.That(delta.Direction).IsEqualTo("server_to_client");
     }
+
+    [Test]
+    public async Task GeneratedBranchModelsRoundTripPublishedWireNames()
+    {
+        var request = new RestoreRequest(7, "branch-a");
+        var json = JsonSerializer.Serialize(request, TerraScaleContractJsonContext.Default.RestoreRequest);
+        await Assert.That(json).IsEqualTo("{\"at\":7,\"name\":\"branch-a\"}");
+
+        var response = JsonSerializer.Deserialize(
+            "{\"name\":\"branch-a\",\"placement\":\"GRU\",\"residency\":\"br-only\",\"deleted\":false,\"created_at\":7,\"parent\":\"main\"}",
+            TerraScaleContractJsonContext.Default.DatabaseRecord);
+        await Assert.That(response).IsNotNull();
+        await Assert.That(response!.Parent).IsEqualTo("main");
+    }
 }

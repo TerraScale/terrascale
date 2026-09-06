@@ -202,6 +202,26 @@ public sealed class TerraScaleReactiveHttpClientTests
     }
 
     [Test]
+    public async Task MatchingButStaleAuthorizationChangeIsRejected()
+    {
+        using var handler = new ReactiveHandler(pollFrame: Envelope(8, body: AuthorizationChanged(0, 0)));
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+    }
+
+    [Test]
+    public async Task OrdinaryStaleSnapshotIsRejected()
+    {
+        using var handler = new ReactiveHandler(pollFrame: Envelope(3, body: SnapshotMessage("sub", Snapshot(3, 0, 0, "Y3AtMA=="))));
+        using var httpClient = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(httpClient, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+    }
+
+    [Test]
     public async Task DeltaOperationsUpdateTheCurrentSnapshot()
     {
         var insert = new byte[] { 0x91, 0x94, 0x01, 0xa1, (byte)'x', 0x00, 0x90 };

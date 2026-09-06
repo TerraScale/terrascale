@@ -113,6 +113,38 @@ public sealed class TerraScaleDatabasesClient
         return client.SendAsync<TerraScaleDatabaseRecord>(HttpMethod.Post, $"/api/v1/databases/{Escape(database)}/restore", body: null, cancellationToken);
     }
 
+    /// <summary>Lists branches whose parent is the named database.</summary>
+    public async Task<IReadOnlyList<DatabaseRecord>> ListBranchesAsync(
+        string database,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        var response = await client.SendJsonAsync(
+            HttpMethod.Get,
+            $"/api/v1/databases/{Escape(database)}/branches",
+            TerraScaleContractJsonContext.Default.BranchListResponse,
+            cancellationToken).ConfigureAwait(false);
+        return response.Branches;
+    }
+
+    /// <summary>Creates a branch from a named database at an optional history point.</summary>
+    public Task<DatabaseRecord> CreateBranchAsync(
+        string database,
+        RestoreRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
+        return client.SendJsonAsync(
+            HttpMethod.Post,
+            $"/api/v1/databases/{Escape(database)}/branches",
+            request,
+            TerraScaleContractJsonContext.Default.RestoreRequest,
+            TerraScaleContractJsonContext.Default.DatabaseRecord,
+            cancellationToken);
+    }
+
     private static string Escape(string value) =>
         Uri.EscapeDataString(value.Trim());
 }
