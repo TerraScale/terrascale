@@ -300,8 +300,9 @@ impl ProductionAdmissionRuntime {
         );
         let callback: crate::admission::StorageAdmission = Arc::new(move |record| {
             storage(record)?;
+            let selected_regions = record.regions.iter().cloned().collect::<BTreeSet<_>>();
             declarations
-                .register_database(record_scope(record)?, &record.region)
+                .register_database(record_scope(record)?, &record.region, &selected_regions)
                 .map_err(failure)?;
             admitted
                 .lock()
@@ -451,6 +452,45 @@ impl ProductionAdmissionRuntime {
             .values()
             .cloned()
             .collect::<Vec<_>>();
+        // A stopped writer remains in the immutable admission journal for
+        // deletion/retry bookkeeping, but its live replication lane and
+        // customer route must be retired after the durable lifecycle fence.
+        // Do this before the active fast path below, otherwise a restart
+        // reconciliation would leave the old lane serving indefinitely.
+        let local_member = self.config.environment.member.to_text();
+        for record in &records {
+            if !self.active.contains(&record.database_id) {
+                continue;
+            }
+            let scope = record_scope(record)?;
+            let assignment = match self.journal.load_assignment(scope) {
+                Ok(assignment) => assignment,
+                Err(error @ terrabase_cluster::wal_route::WalAssignmentError::InvalidProof) => {
+                    return Err(failure(error));
+                }
+                Err(error) => return Err(failure(error)),
+            };
+            if assignment.writer.member().as_str() != local_member {
+                // Followers retain their physical maintenance ownership here;
+                // follower retirement is a separate exclusive-file workflow.
+                continue;
+            }
+            let id = terrabase::member::DatabaseId::try_new(&record.database_id).map_err(failure)?;
+            let lease = self.member.acquire(&id).map_err(failure)?;
+            let tenant = terrabase::types::TenantId::try_new(&record.tenant_id).map_err(failure)?;
+            let lifecycle = lease
+                .engine()
+                .lifecycle_state(&lease.engine().scope_for(&tenant))
+                .map_err(failure)?;
+            if !lifecycle.access_revoked() {
+                continue;
+            }
+            if let Some(data) = &self.data {
+                data.peers.remove_database(scope).await?;
+            }
+            self.runtime.retire_route(scope).map_err(failure)?;
+            self.active.remove(&record.database_id);
+        }
         let mut databases = Vec::new();
         let mut newly_active = Vec::new();
         for record in records {

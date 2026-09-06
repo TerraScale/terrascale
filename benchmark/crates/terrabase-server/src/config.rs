@@ -69,6 +69,8 @@ pub struct ProductionDatabase {
     pub database: DatabaseUlid,
     /// Canonical home Region.
     pub region: RegionCode,
+    /// Exact immutable residency Regions selected for this database.
+    pub selected_regions: BTreeSet<RegionCode>,
     /// Distinct absolute durable location.
     pub location: PathBuf,
     /// Durable authorization-policy journal path.
@@ -554,6 +556,7 @@ struct FileProductionDatabase {
     project: String,
     database: String,
     region: String,
+    selected_regions: Vec<String>,
     location: PathBuf,
     policy_journal: PathBuf,
     backup_root: PathBuf,
@@ -850,6 +853,19 @@ impl ServerConfig {
             let project = parse_ulid(&entry.project, ConfigError::InvalidProductionBoundary)?;
             let database = parse_ulid(&entry.database, ConfigError::InvalidProductionBoundary)?;
             let region = parse_region(&entry.region)?;
+            if entry.selected_regions.is_empty() || entry.selected_regions.len() > 3 {
+                return Err(ConfigError::InvalidProductionBoundary);
+            }
+            let selected_regions = entry
+                .selected_regions
+                .iter()
+                .map(|selected| parse_region(selected))
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            if selected_regions.len() != entry.selected_regions.len()
+                || !selected_regions.contains(&region)
+            {
+                return Err(ConfigError::InvalidProductionBoundary);
+            }
             if !identities.insert((tenant, project, database))
                 || !database_ids.insert(database)
                 || projects.insert(project, tenant).is_some_and(|owner| owner != tenant)
@@ -887,6 +903,7 @@ impl ServerConfig {
                 project,
                 database,
                 region,
+                selected_regions,
                 location,
                 policy_journal,
                 backup_root,
@@ -1259,7 +1276,9 @@ fn production_regions_missing(
     databases: &[ProductionDatabase],
     placement: &ProductionPlacement,
 ) -> bool {
-    databases.iter().any(|database| !placement.regions.contains_key(&database.region))
+    databases.iter().any(|database| {
+        database.selected_regions.iter().any(|region| !placement.regions.contains_key(region))
+    })
 }
 
 fn production_socket(value: &str, allow_wildcard: bool) -> Result<SocketAddr, ConfigError> {
@@ -1687,6 +1706,7 @@ tenant = "01ARZ3NDEKTSV4RRFFQ69G5FAX"
 project = "01ARZ3NDEKTSV4RRFFQ69G5FAY"
 database = "01ARZ3NDEKTSV4RRFFQ69G5FAZ"
 region = "GRU"
+selected_regions = ["GRU"]
 location = "/var/lib/terrabase/db-a"
 policy_journal = "/var/lib/terrabase/policy-a"
 backup_root = "/var/lib/terrabase/backup-a"
@@ -1859,6 +1879,22 @@ address = "0.0.0.0:7202"
         let wildcard = production_valid()
             .replace("tbep_listen = \"127.0.0.1:8421\"", "tbep_listen = \"0.0.0.0:8421\"");
         assert!(matches!(ServerConfig::parse(&wildcard), Err(ConfigError::InvalidListenAddress)));
+    }
+
+    #[test]
+    fn production_requires_exact_selected_residency_with_local_region() {
+        let missing = production_valid().replace("selected_regions = [\"GRU\"]\n", "");
+        assert!(ServerConfig::parse(&missing).is_err());
+        let duplicate = production_valid().replace(
+            "selected_regions = [\"GRU\"]",
+            "selected_regions = [\"GRU\", \"GRU\"]",
+        );
+        assert!(ServerConfig::parse(&duplicate).is_err());
+        let foreign = production_valid().replace(
+            "selected_regions = [\"GRU\"]",
+            "selected_regions = [\"SFO\"]",
+        );
+        assert!(ServerConfig::parse(&foreign).is_err());
     }
 
     #[test]

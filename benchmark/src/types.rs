@@ -118,7 +118,9 @@ impl TenantScope {
         Self { tenant, engine_identity }
     }
 
-    pub(crate) fn tenant(&self) -> &TenantId {
+    /// Returns the tenant validated when this engine scope was created.
+    #[must_use]
+    pub fn tenant(&self) -> &TenantId {
         &self.tenant
     }
 

@@ -569,6 +569,21 @@ impl ProductionMemberRuntime {
         Ok(())
     }
 
+    /// Retires a customer route after its replication workers have drained.
+    /// The root Member catalog remains intact for deletion and maintenance;
+    /// removing this route only prevents new public acquisitions.
+    ///
+    /// # Errors
+    /// Refuses retirement while the runtime is draining.
+    pub fn retire_route(&self, scope: DatabaseRouteScope) -> Result<(), ProductionMemberError> {
+        let admission = lock_unpoisoned(&self.membership_admission);
+        if *admission != MembershipAdmission::Admitted || self.draining.load(Ordering::Acquire) {
+            return Err(ProductionMemberError::MembershipMismatch);
+        }
+        lock_unpoisoned(&self.routes).routes.remove(&scope);
+        Ok(())
+    }
+
     /// Assembles one process after storage and QUIC have opened.
     ///
     /// The constructor proves exact agreement between the root database

@@ -120,7 +120,7 @@ pub(in crate::api) fn replicate(
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         )
         .unwrap();
-        let copied: u64 = connection
+        let copied: i64 = connection
             .query_row(
                 "SELECT COALESCE(MAX(sequence), 0) FROM (
                 SELECT MAX(commit_seq) AS sequence FROM documents
@@ -132,6 +132,7 @@ pub(in crate::api) fn replicate(
                 |row| row.get(0),
             )
             .unwrap();
+        let copied = u64::try_from(copied).expect("nonnegative physical follower sequence");
         assert!(copied >= sequence, "physical follower must include the observed writer boundary");
         progress.advance_regional(scope, sequence);
         return;

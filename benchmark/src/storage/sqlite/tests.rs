@@ -2542,7 +2542,7 @@ fn json_storage_preserves_envelope_unicode_nonfinite_and_rejects_invalid_input()
     let bytes = super::encode_document_body(&document);
     assert_eq!(
         bytes,
-        "{\"$collection\":\"json\",\"$id\":\"json-doc\",\"$value\":{\"text\":\"line\\ncafé\"},\"$version\":0}"
+        "{\"$collection\":\"json\",\"$id\":\"json-doc\",\"$value\":{\"text\":\"line\\u000a café\"},\"$version\":0}"
             .as_bytes()
     );
     assert_eq!(super::decode_document_body(&bytes).unwrap().value(), &value);
@@ -2555,11 +2555,24 @@ fn json_storage_preserves_envelope_unicode_nonfinite_and_rejects_invalid_input()
         );
         let bytes = super::encode_document_body(&document);
         let restored = super::decode_document_body(&bytes).unwrap();
-        assert_eq!(restored.value(), &DocumentValue::Number(number));
+        let DocumentValue::Number(restored) = restored.value() else {
+            panic!("the floating-point value changed type");
+        };
+        assert_eq!(restored.to_bits(), number.to_bits());
     }
 
-    assert!(super::decode_document_body(br#"{"$collection":"json","$id":"json-doc","$value":null,"$version":0} trailing"#).is_none());
-    assert!(super::decode_document_body(br#"{"$collection":"json","$id":"json-doc","$value":[1,],"$version":0}"#).is_none());
+    assert!(
+        super::decode_document_body(
+            br#"{"$collection":"json","$id":"json-doc","$value":null,"$version":0} trailing"#
+        )
+        .is_none()
+    );
+    assert!(
+        super::decode_document_body(
+            br#"{"$collection":"json","$id":"json-doc","$value":[1,],"$version":0}"#
+        )
+        .is_none()
+    );
 }
 
 #[test]

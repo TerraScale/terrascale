@@ -2543,7 +2543,7 @@ fn decode_session_header(
     }
     let bytes = URL_SAFE_NO_PAD.decode(value).map_err(|_| invalid_session_token())?;
     let token = SessionToken::decode(&bytes).map_err(|_| invalid_session_token())?;
-    if URL_SAFE_NO_PAD.encode(&token.encode()) != value {
+    if URL_SAFE_NO_PAD.encode(token.encode()) != value {
         return Err(invalid_session_token());
     }
     Ok(Some(token))
@@ -2569,7 +2569,7 @@ fn open_session<'engine>(
 /// observes the durable multi-origin frontier, so this never substitutes the
 /// global storage sequence for an origin sequence.
 fn with_session(response: &mut Response, token: &SessionToken) {
-    let encoded = URL_SAFE_NO_PAD.encode(&token.encode());
+    let encoded = URL_SAFE_NO_PAD.encode(token.encode());
     if let Ok(value) = HeaderValue::from_str(&encoded) {
         response.headers_mut().insert(SESSION_HEADER.clone(), value);
     }
@@ -4324,7 +4324,7 @@ mod tests {
         let mut token = SessionToken::for_epoch(7).expect("epoch");
         token.advance(RegionId::try_new("GRU").expect("origin"), 11).expect("frontier");
         token.advance(RegionId::try_new("FRA").expect("origin"), 19).expect("frontier");
-        let encoded = URL_SAFE_NO_PAD.encode(&token.encode());
+        let encoded = URL_SAFE_NO_PAD.encode(token.encode());
         let mut headers = axum::http::HeaderMap::new();
         headers.insert(SESSION_HEADER.clone(), HeaderValue::from_str(&encoded).expect("header"));
         assert_eq!(decode_session_header(&headers).expect("decode"), Some(token));
@@ -5628,7 +5628,7 @@ mod tests {
             .oneshot(
                 Request::get("/api/v1/databases/prod/collections/users/documents/a")
                     .header(auth, key)
-                    .header(SESSION_HEADER.clone(), URL_SAFE_NO_PAD.encode(&session.encode()))
+                    .header(SESSION_HEADER.clone(), URL_SAFE_NO_PAD.encode(session.encode()))
                     .body(Body::empty())
                     .expect("causal read request"),
             )
@@ -6383,7 +6383,7 @@ mod tests {
                 .oneshot(
                     Request::get(path)
                         .header(auth, key)
-                        .header(SESSION_HEADER.clone(), URL_SAFE_NO_PAD.encode(&future.encode()))
+                        .header(SESSION_HEADER.clone(), URL_SAFE_NO_PAD.encode(future.encode()))
                         .header("if-none-match", etag.clone())
                         .body(Body::empty())
                         .expect("request"),

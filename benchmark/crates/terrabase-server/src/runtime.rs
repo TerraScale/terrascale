@@ -549,6 +549,11 @@ fn open_production_placement_journal(
                     database.database,
                 ),
                 database.region.as_str().to_owned(),
+                database
+                    .selected_regions
+                    .iter()
+                    .map(|region| region.as_str().to_owned())
+                    .collect(),
             )
         }),
     )
@@ -1085,7 +1090,7 @@ fn set_socket_mode(path: &Path, mode: u32) -> Result<(), DaemonError> {
 
 /// A redacted daemon startup or shutdown failure.
 #[derive(Debug)]
-enum DaemonError {
+pub(crate) enum DaemonError {
     Engine(String),
     SecretFile,
     PrivateKeyPermissions,

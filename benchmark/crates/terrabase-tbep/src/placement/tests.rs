@@ -9,6 +9,10 @@ pub(crate) struct Fixture {
 
 impl Fixture {
     pub fn new() -> Self {
+        Self::with_selected(std::collections::BTreeSet::from(["GRU".into()]))
+    }
+
+    pub fn with_selected(selected_regions: std::collections::BTreeSet<String>) -> Self {
         let cluster = ClusterUlid::generate().to_text();
         let member = MemberUlid::generate().to_text();
         let peer = MemberUlid::generate().to_text();
@@ -26,7 +30,14 @@ impl Fixture {
                 .expect("private root");
         }
         let boundary =
-            PlacementBoundary::new("production", &cluster, &member, 1, 1, [(scope, "GRU".into())])
+            PlacementBoundary::new(
+                "production",
+                &cluster,
+                &member,
+                1,
+                1,
+                [(scope, "GRU".into(), selected_regions)],
+            )
                 .expect("boundary");
         let request = pb::PlacementStageRequest {
             expected_revision: 0,
@@ -178,7 +189,19 @@ fn invalid_roles_residency_scope_and_environment_are_rejected_before_write() {
 
 #[test]
 fn canonicalizes_one_assignment_per_scope_and_selected_region() {
-    let fixture = Fixture::new();
+    let local_only_fixture = Fixture::new();
+    let local_only_journal = local_only_fixture.open();
+    let mut local_only = local_only_fixture.request.clone();
+    local_only.proposal.as_mut().unwrap().regions.push(pb::PlacementRegionSeats {
+        region: "SFO".into(),
+        members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
+    });
+    assert!(local_only_journal.stage("principal", "local-only", local_only).is_ok());
+
+    let fixture = Fixture::with_selected(std::collections::BTreeSet::from([
+        "GRU".into(),
+        "SFO".into(),
+    ]));
     let journal = fixture.open();
     let mut request = fixture.request.clone();
     let proposal = request.proposal.as_mut().unwrap();
@@ -196,6 +219,33 @@ fn canonicalizes_one_assignment_per_scope_and_selected_region() {
     });
     let staged = journal.stage("principal", "two-regions", request).unwrap();
     assert_eq!(staged.proposal.unwrap().assignments.len(), 2);
+
+    let mut missing = fixture.request.clone();
+    missing.proposal.as_mut().unwrap().regions.push(pb::PlacementRegionSeats {
+        region: "SFO".into(),
+        members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
+    });
+    assert_eq!(journal.stage("principal", "missing-region", missing), Err(PlacementError::Invalid));
+
+    let mut extra = fixture.request.clone();
+    let extra_proposal = extra.proposal.as_mut().unwrap();
+    extra_proposal.regions.push(pb::PlacementRegionSeats {
+        region: "SFO".into(),
+        members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
+    });
+    extra_proposal.regions.push(pb::PlacementRegionSeats {
+        region: "FRA".into(),
+        members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
+    });
+    let extra_members = extra_proposal.regions[2].members.clone();
+    let extra_scope = extra_proposal.assignments[0].clone();
+    extra_proposal.assignments.push(pb::PlacementDatabaseAssignment {
+        region: "FRA".into(),
+        writer_member: extra_members[0].clone(),
+        follower_member: extra_members[1].clone(),
+        ..extra_scope
+    });
+    assert_eq!(journal.stage("principal", "extra-region", extra), Err(PlacementError::Invalid));
 
     let mut duplicate = fixture.request.clone();
     let duplicate_assignment = duplicate.proposal.as_ref().unwrap().assignments[0].clone();

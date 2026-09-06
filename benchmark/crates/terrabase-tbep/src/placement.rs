@@ -64,7 +64,9 @@ pub struct PlacementBoundary {
     member: String,
     generation: u64,
     epoch: u64,
-    databases: std::sync::Arc<std::sync::RwLock<BTreeMap<DatabaseRouteScope, String>>>,
+    databases: std::sync::Arc<
+        std::sync::RwLock<BTreeMap<DatabaseRouteScope, (String, BTreeSet<String>)>>,
+    >,
 }
 
 impl PlacementBoundary {
@@ -78,14 +80,22 @@ impl PlacementBoundary {
         member: &str,
         generation: u64,
         epoch: u64,
-        databases: impl IntoIterator<Item = (DatabaseRouteScope, String)>,
+        databases: impl IntoIterator<Item = (DatabaseRouteScope, String, BTreeSet<String>)>,
     ) -> Result<Self, PlacementError> {
         MemberWorkloadIdentity::try_new(environment, cluster, member)
             .map_err(|_| PlacementError::Invalid)?;
         let mut scopes = BTreeMap::new();
-        for (scope, region) in databases {
-            RegionCatalog::production().parse(&region).map_err(|_| PlacementError::Invalid)?;
-            if scopes.insert(scope, region).is_some() || scopes.len() > 1024 {
+        for (scope, local_region, selected_regions) in databases {
+            RegionCatalog::production().parse(&local_region).map_err(|_| PlacementError::Invalid)?;
+            if selected_regions.is_empty()
+                || selected_regions.len() > 3
+                || !selected_regions.contains(&local_region)
+                || selected_regions.iter().any(|region| {
+                    RegionCatalog::production().parse(region).is_err()
+                })
+                || scopes.insert(scope, (local_region, selected_regions)).is_some()
+                || scopes.len() > 1024
+            {
                 return Err(PlacementError::Invalid);
             }
         }
@@ -102,7 +112,11 @@ impl PlacementBoundary {
         })
     }
 
-    fn canonicalize(&self, proposal: &mut pb::PlacementProposal) -> Result<(), PlacementError> {
+    fn canonicalize(
+        &self,
+        proposal: &mut pb::PlacementProposal,
+        require_declared_databases: bool,
+    ) -> Result<(), PlacementError> {
         let databases = self.databases.read().map_err(|_| PlacementError::Storage)?;
         if proposal.environment != self.environment
             || proposal.cluster != self.cluster
@@ -110,7 +124,7 @@ impl PlacementBoundary {
             || proposal.epoch == 0
             || proposal.regions.is_empty()
             || proposal.regions.len() > 3
-            || proposal.assignments.len() > databases.len() * proposal.regions.len()
+            || proposal.assignments.len() > databases.len() * 3
             || proposal.encoded_len() > MAX_PLACEMENT_PROPOSAL_BYTES
         {
             return Err(PlacementError::Invalid);
@@ -146,7 +160,8 @@ impl PlacementBoundary {
                 &assignment.database,
             )
             .map_err(|_| PlacementError::Invalid)?;
-            let local_region = databases.get(&scope).ok_or(PlacementError::Invalid)?;
+            let (local_region, selected_regions) =
+                databases.get(&scope).ok_or(PlacementError::Invalid)?;
             if !assignments.insert((scope, assignment.region.clone()))
                 || !seats.contains_key(&assignment.region)
                 || assignment.writer_member == assignment.follower_member
@@ -161,12 +176,18 @@ impl PlacementBoundary {
                 return Err(PlacementError::Invalid);
             }
         }
-        if assignments.len() != databases.len() * proposal.regions.len()
-            || databases.iter().any(|(scope, local_region)| {
-                proposal.regions.iter().any(|region| {
-                    !assignments.contains(&(*scope, region.region.clone()))
-                }) || !assignments.contains(&(*scope, local_region.clone()))
-            })
+        let mut assignment_regions: BTreeMap<DatabaseRouteScope, BTreeSet<String>> = BTreeMap::new();
+        for (scope, region) in &assignments {
+            assignment_regions.entry(*scope).or_default().insert(region.clone());
+        }
+        for (scope, regions) in &assignment_regions {
+            let (_, selected_regions) = databases.get(scope).ok_or(PlacementError::Invalid)?;
+            if regions != selected_regions {
+                return Err(PlacementError::Invalid);
+            }
+        }
+        if require_declared_databases
+            && databases.keys().any(|scope| !assignment_regions.contains_key(scope))
         {
             return Err(PlacementError::Invalid);
         }
@@ -220,6 +241,7 @@ impl PlacementJournal {
              CREATE TABLE IF NOT EXISTS proposals (revision INTEGER PRIMARY KEY, operation TEXT NOT NULL UNIQUE, principal TEXT NOT NULL, expected_revision INTEGER NOT NULL, proposal BLOB NOT NULL);
              CREATE TABLE IF NOT EXISTS accepted (sequence INTEGER PRIMARY KEY, proposal_revision INTEGER NOT NULL, proof BLOB NOT NULL, digest TEXT NOT NULL UNIQUE);
              CREATE TABLE IF NOT EXISTS declared (tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL PRIMARY KEY, region TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS selected_regions (tenant TEXT NOT NULL, project TEXT NOT NULL, database TEXT NOT NULL, region TEXT NOT NULL, PRIMARY KEY(tenant,project,database,region));
              PRAGMA user_version=1;"
         ).map_err(|_| PlacementError::Storage)?;
         transaction
@@ -240,6 +262,8 @@ impl PlacementJournal {
         }
         {
             let mut scopes = boundary.databases.write().map_err(|_| PlacementError::Storage)?;
+            let configured = scopes.clone();
+            let mut persisted_selected: BTreeMap<DatabaseRouteScope, BTreeSet<String>> = BTreeMap::new();
             let mut statement = transaction
                 .prepare("SELECT tenant,project,database,region FROM declared")
                 .map_err(|_| PlacementError::Storage)?;
@@ -252,25 +276,56 @@ impl PlacementJournal {
                 let scope = DatabaseRouteScope::try_new(&tenant, &project, &database)
                     .map_err(|_| PlacementError::Storage)?;
                 RegionCatalog::production().parse(&region).map_err(|_| PlacementError::Storage)?;
-                if scopes.get(&scope).is_some_and(|existing| existing != &region)
+                let selected = scopes
+                    .get(&scope)
+                    .filter(|(_, selected)| selected.contains(&region))
+                    .map(|(_, selected)| selected.clone())
+                    .unwrap_or_else(|| BTreeSet::from([region.clone()]));
+                if scopes.get(&scope).is_some_and(|(existing, _)| existing != &region)
                     || scopes.len() > 1024
                 {
                     return Err(PlacementError::Storage);
                 }
-                scopes.insert(scope, region);
+                scopes.insert(scope, (region, selected));
             }
-            for (scope, region) in scopes.iter() {
+            let mut statement = transaction
+                .prepare("SELECT tenant,project,database,region FROM selected_regions")
+                .map_err(|_| PlacementError::Storage)?;
+            let mut rows = statement.query([]).map_err(|_| PlacementError::Storage)?;
+            while let Some(row) = rows.next().map_err(|_| PlacementError::Storage)? {
+                let tenant: String = row.get(0).map_err(|_| PlacementError::Storage)?;
+                let project: String = row.get(1).map_err(|_| PlacementError::Storage)?;
+                let database: String = row.get(2).map_err(|_| PlacementError::Storage)?;
+                let region: String = row.get(3).map_err(|_| PlacementError::Storage)?;
+                let scope = DatabaseRouteScope::try_new(&tenant, &project, &database)
+                    .map_err(|_| PlacementError::Storage)?;
+                RegionCatalog::production().parse(&region).map_err(|_| PlacementError::Storage)?;
+                persisted_selected.entry(scope).or_default().insert(region);
+            }
+            for (scope, (local_region, selected_regions)) in scopes.iter_mut() {
+                if let Some(persisted) = persisted_selected.get(scope) {
+                    if configured.get(scope).is_some_and(|(_, selected)| selected != persisted) {
+                        return Err(PlacementError::Storage);
+                    }
+                    *selected_regions = persisted.clone();
+                }
+                if !selected_regions.contains(local_region) {
+                    return Err(PlacementError::Storage);
+                }
                 transaction
                     .execute(
                         "INSERT OR IGNORE INTO declared VALUES (?1,?2,?3,?4)",
-                        params![
-                            scope.tenant().to_text(),
-                            scope.project().to_text(),
-                            scope.database().to_text(),
-                            region
-                        ],
+                        params![scope.tenant().to_text(), scope.project().to_text(), scope.database().to_text(), local_region],
                     )
                     .map_err(|_| PlacementError::Storage)?;
+                for region in selected_regions {
+                    transaction
+                        .execute(
+                            "INSERT OR IGNORE INTO selected_regions VALUES (?1,?2,?3,?4)",
+                            params![scope.tenant().to_text(), scope.project().to_text(), scope.database().to_text(), region],
+                        )
+                        .map_err(|_| PlacementError::Storage)?;
+                }
             }
         }
         transaction.commit().map_err(|_| PlacementError::Storage)?;
@@ -306,7 +361,7 @@ impl PlacementJournal {
             return Err(PlacementError::Invalid);
         }
         let proposal = request.proposal.as_mut().ok_or(PlacementError::Invalid)?;
-        self.boundary.canonicalize(proposal)?;
+        self.boundary.canonicalize(proposal, true)?;
         let encoded = proposal.encode_to_vec();
         let expected =
             i64::try_from(request.expected_revision).map_err(|_| PlacementError::Conflict)?;
@@ -400,7 +455,9 @@ impl PlacementJournal {
         }
         let mut proposal =
             pb::PlacementProposal::decode(bytes).map_err(|_| PlacementError::Storage)?;
-        self.boundary.canonicalize(&mut proposal).map_err(|_| PlacementError::Storage)?;
+        self.boundary
+            .canonicalize(&mut proposal, false)
+            .map_err(|_| PlacementError::Storage)?;
         if proposal.encode_to_vec() != bytes {
             return Err(PlacementError::Storage);
         }
@@ -759,6 +816,7 @@ impl terrabase_cluster::wal_route::DurableWalAssignmentSource for PlacementJourn
                 .map_err(|_| PlacementError::Storage)?
                 .get(&scope)
                 .cloned()
+                .map(|(local_region, _)| local_region)
                 .ok_or(PlacementError::Invalid)?;
             let assignment = proposal
                 .assignments
@@ -805,35 +863,66 @@ impl PlacementJournal {
     /// This does not grant membership, a writer role, or public access.
     ///
     /// # Errors
-    /// Rejects changed identity/Region, bounds, and failed durable registration.
+    /// Rejects changed identity/Region set, bounds, and failed durable registration.
     pub fn register_database(
         &self,
         scope: DatabaseRouteScope,
-        region: &str,
+        local_region: &str,
+        selected_regions: &BTreeSet<String>,
     ) -> Result<(), PlacementError> {
-        RegionCatalog::production().parse(region).map_err(|_| PlacementError::Invalid)?;
+        RegionCatalog::production().parse(local_region).map_err(|_| PlacementError::Invalid)?;
+        if selected_regions.is_empty()
+            || selected_regions.len() > 3
+            || !selected_regions.contains(local_region)
+            || selected_regions.iter().any(|region| {
+                RegionCatalog::production().parse(region).is_err()
+            })
+        {
+            return Err(PlacementError::Invalid);
+        }
         let connection = self.connection.lock().map_err(|_| PlacementError::Storage)?;
         let mut scopes = self.boundary.databases.write().map_err(|_| PlacementError::Storage)?;
         if let Some(existing) = scopes.get(&scope) {
-            return if existing == region { Ok(()) } else { Err(PlacementError::Conflict) };
+            return if existing.0 == local_region && existing.1 == *selected_regions {
+                Ok(())
+            } else {
+                Err(PlacementError::Conflict)
+            };
         }
         if scopes.len() >= 1024
             || scopes.keys().any(|existing| existing.database() == scope.database())
         {
             return Err(PlacementError::Conflict);
         }
-        connection
+        let transaction = connection
+            .unchecked_transaction()
+            .map_err(|_| PlacementError::Storage)?;
+        transaction
             .execute(
                 "INSERT INTO declared VALUES (?1,?2,?3,?4)",
                 params![
                     scope.tenant().to_text(),
                     scope.project().to_text(),
                     scope.database().to_text(),
-                    region
+                    local_region
                 ],
             )
             .map_err(|_| PlacementError::Storage)?;
-        scopes.insert(scope, region.to_owned());
+        for region in selected_regions {
+            transaction
+                .execute(
+                    "INSERT INTO selected_regions VALUES (?1,?2,?3,?4)",
+                    params![
+                        scope.tenant().to_text(),
+                        scope.project().to_text(),
+                        scope.database().to_text(),
+                        region
+                    ],
+                )
+                .map_err(|_| PlacementError::Storage)?;
+        }
+        transaction.commit().map_err(|_| PlacementError::Storage)?;
+        scopes.insert(scope, (local_region.to_owned(), selected_regions.clone()));
         Ok(())
     }
 }

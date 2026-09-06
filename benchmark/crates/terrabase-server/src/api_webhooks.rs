@@ -71,7 +71,7 @@ fn secret_response(status: StatusCode, response: &webhook::WebhookSecretResponse
     response
 }
 
-#[utoipa::path(post, path = "/api/v1/databases/{name}/webhooks/{id}/rotate-secret", request_body = (content = webhook::RotateWebhookSecret, required = false), responses((status = 200, description = "One-time rotated signing secret", body = webhook::WebhookSecretResponse)))]
+#[utoipa::path(post, path = "/api/v1/databases/{name}/webhooks/{id}/rotate-secret", request_body = Option<webhook::RotateWebhookSecret>, responses((status = 200, description = "One-time rotated signing secret", body = webhook::WebhookSecretResponse)))]
 pub(super) async fn rotate_secret(
     State(state): State<Arc<ApiState>>,
     Path((name, id)): Path<(String, String)>,

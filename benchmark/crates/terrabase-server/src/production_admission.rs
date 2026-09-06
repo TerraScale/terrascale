@@ -138,8 +138,12 @@ fn lifecycle_allows_origin_activation(
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::lifecycle_allows_origin_activation;
-    use std::{fs, time::Duration};
+    use super::{AcceptedAdmission, lifecycle_allows_origin_activation, storage_admission};
+    use crate::{
+        admission::{AdmissionHost, AdmissionRecord},
+        admitted_databases::AdmittedDatabaseRegistry,
+    };
+    use std::{fs, sync::Arc, time::Duration};
     use terrabase::{
         engine::lifecycle_state::DeletionIntent,
         identity::{DatabaseUlid, ProjectUlid, TenantUlid},
@@ -150,6 +154,182 @@ mod tests {
         regions::RegionCode,
         types::TenantId,
     };
+
+    fn record(scope: &DatabaseScope, member: &str) -> AdmissionRecord {
+        AdmissionRecord {
+            environment: "production".into(),
+            tenant_id: scope.tenant().to_text(),
+            project_id: scope.project().to_text(),
+            database_id: scope.database().to_text(),
+            parent_database_id: None,
+            key_version: "01ARZ3NDEKTSV4RRFFQ69G5FB0".into(),
+            name: scope.database().to_text(),
+            regions: vec!["GRU".into()],
+            residency: "GRU".into(),
+            operation_id: "admission-replay".into(),
+            region: "GRU".into(),
+            member_id: member.into(),
+        }
+    }
+
+    fn replay_case(accepted: bool) {
+        let root = std::env::temp_dir()
+            .join(format!("terrabase-admission-host-replay-{}", DatabaseUlid::generate()));
+        let member_id = terrabase::identity::MemberUlid::generate();
+        let fenced = DatabaseScope::new(
+            "production",
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+        .unwrap();
+        let unrelated = DatabaseScope::new(
+            "production",
+            TenantUlid::generate(),
+            ProjectUlid::generate(),
+            DatabaseUlid::generate(),
+            RegionCode::GRU,
+        )
+        .unwrap();
+        let specs = [
+            DatabaseSpec::scoped(fenced.clone(), &fenced.database().to_text()),
+            DatabaseSpec::scoped(unrelated.clone(), &unrelated.database().to_text()),
+        ];
+        fs::create_dir_all(&root).unwrap();
+        let fenced_id = DatabaseId::from(fenced.database());
+        let unrelated_id = DatabaseId::from(unrelated.database());
+        let fixture = crate::test_keys::key_delivery();
+        let open = || {
+            let mut keys = crate::test_keys::storage_keys_with_provider(
+                &fenced,
+                fixture.provider.clone(),
+            );
+            keys.extend(crate::test_keys::storage_keys_with_provider(
+                &unrelated,
+                fixture.provider.clone(),
+            ));
+            Member::open_production(&root, specs.clone(), AdmissionLimits::new(4, 2), keys).unwrap()
+        };
+        let authority: Arc<
+            dyn Fn(&AdmissionRecord) -> Result<Option<AcceptedAdmission>, String> + Send + Sync,
+        > = Arc::new(|record| {
+            Ok(Some(AcceptedAdmission {
+                partition: format!("partition-{}", record.database_id),
+                revision: "revision".into(),
+                origin: RegionCode::GRU,
+                epoch: 1,
+                local_is_writer: true,
+            }))
+        });
+        let member = open();
+        member.accept_database_role(&fenced_id, &Writer).unwrap();
+        member.accept_database_role(&unrelated_id, &Writer).unwrap();
+        let registry = Arc::new(AdmittedDatabaseRegistry::new(Arc::new(|| true)));
+        let callback = storage_admission(
+            member.clone(),
+            registry.clone(),
+            fixture.provider.clone(),
+            authority.clone(),
+            4,
+            1,
+        );
+        let host =
+            AdmissionHost::open(&root, "production".into(), RegionCode::GRU, member_id, callback)
+                .unwrap();
+        assert!(member.acquire(&fenced_id).is_ok());
+        host.admit(record(&fenced, &member_id.to_text())).unwrap();
+        host.admit(record(&unrelated, &member_id.to_text())).unwrap();
+        let fenced_host = registry.resolve(&fenced.database().to_text()).unwrap().unwrap();
+        let fenced_tenant = TenantId::try_new(&fenced.tenant().to_text()).unwrap();
+        let initial_scope = fenced_host.host.engine().scope_for(&fenced_tenant);
+        let prepared = fenced_host
+            .host
+            .engine()
+            .lifecycle_prepare_deletion(&initial_scope, "delete-replay")
+            .unwrap();
+        if accepted {
+            let cutoff = prepared.deletion_preparation.as_ref().unwrap().minimum_cutoff_millis;
+            fenced_host
+                .host
+                .engine()
+                .lifecycle_accept_deletion(
+                    &initial_scope,
+                    terrabase::engine::lifecycle_state::DeletionIntent {
+                        operation_id: "delete-replay".into(),
+                        usage_stopped_at: cutoff,
+                        retain_until: Some(cutoff + 1),
+                    },
+                )
+                .unwrap();
+        }
+        assert_eq!(fenced_host.host.engine().origin_epoch().unwrap().0, 1);
+        drop(fenced_host);
+        drop(host);
+        drop(registry);
+        member.close(Duration::from_secs(1)).unwrap();
+
+        let reopened = open();
+        reopened.accept_database_role(&fenced_id, &Writer).unwrap();
+        reopened.accept_database_role(&unrelated_id, &Writer).unwrap();
+        let registry = Arc::new(AdmittedDatabaseRegistry::new(Arc::new(|| true)));
+        let callback = storage_admission(
+            reopened.clone(),
+            registry.clone(),
+            fixture.provider.clone(),
+            authority,
+            4,
+            2,
+        );
+        let host =
+            AdmissionHost::open(&root, "production".into(), RegionCode::GRU, member_id, callback)
+                .unwrap();
+        let fenced_host = registry.resolve(&fenced.database().to_text()).unwrap().unwrap();
+        let scope = fenced_host.host.engine().scope_for(&fenced_tenant);
+        let state = fenced_host.host.engine().lifecycle_state(&scope).unwrap();
+        assert!(state.access_revoked());
+        assert_eq!(fenced_host.host.engine().origin_epoch().unwrap().0, 1);
+        let unrelated_host = registry.resolve(&unrelated.database().to_text()).unwrap().unwrap();
+        assert_eq!(unrelated_host.host.engine().origin_epoch().unwrap().0, 1);
+        assert!(unrelated_host.host.engine().activate_origin_epoch(1).is_ok());
+        assert_eq!(
+            fenced_host.host.engine().lifecycle_prepare_deletion(&scope, "delete-replay").unwrap(),
+            state
+        );
+        if accepted {
+            let cutoff = state.deletion.as_ref().unwrap().usage_stopped_at;
+            let retried = fenced_host
+                .host
+                .engine()
+                .lifecycle_accept_deletion(
+                    &scope,
+                    terrabase::engine::lifecycle_state::DeletionIntent {
+                        operation_id: "delete-replay".into(),
+                        usage_stopped_at: cutoff,
+                        retain_until: state.deletion.as_ref().unwrap().retain_until,
+                    },
+                )
+                .unwrap();
+            assert!(retried.deletion.is_some());
+        }
+        drop(fenced_host);
+        drop(unrelated_host);
+        drop(host);
+        drop(registry);
+        drop(fixture);
+        reopened.close(Duration::from_secs(1)).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn admission_host_restart_retains_preparation_fence_and_unrelated_writer() {
+        replay_case(false);
+    }
+
+    #[test]
+    fn admission_host_restart_retains_accepted_deletion_fence_and_retry() {
+        replay_case(true);
+    }
 
     struct Writer;
     impl DatabaseRoleAuthority for Writer {
@@ -174,9 +354,10 @@ mod tests {
         };
         let fenced = make_scope();
         let unrelated = make_scope();
+        fs::create_dir_all(&root).unwrap();
         let specs = [
-            DatabaseSpec::scoped(fenced.clone(), "fenced"),
-            DatabaseSpec::scoped(unrelated.clone(), "unrelated"),
+            DatabaseSpec::scoped(fenced.clone(), &fenced.database().to_text()),
+            DatabaseSpec::scoped(unrelated.clone(), &unrelated.database().to_text()),
         ];
         let mut keys = crate::test_keys::storage_keys(&fenced);
         keys.extend(crate::test_keys::storage_keys(&unrelated));

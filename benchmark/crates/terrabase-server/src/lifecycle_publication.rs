@@ -43,7 +43,7 @@ impl LifecyclePublicationSnapshot {
         project: String,
         database: String,
         observed_at: u64,
-        state: &terrabase::engine::LifecycleState,
+        state: &terrabase::engine::lifecycle_state::LifecycleState,
     ) -> Result<Self, PublicationError> {
         Ok(Self {
             schema_version: 1,
@@ -375,7 +375,7 @@ mod tests {
             "project".into(),
             "database".into(),
             at,
-            &terrabase::engine::LifecycleState::default(),
+            &terrabase::engine::lifecycle_state::LifecycleState::default(),
         )
         .unwrap()
     }

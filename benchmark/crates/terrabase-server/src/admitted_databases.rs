@@ -11,7 +11,7 @@ use terrabase_tbep::member_host::MemberHost;
 /// One published database bound to its existing Member storage lease.
 pub struct AdmittedDatabase {
     /// Lock-free high-water of fully authorized native requests.
-    pub activity: terrabase::engine::AuthorizedActivity,
+    pub activity: terrabase::engine::lifecycle_state::AuthorizedActivity,
     /// Persisted authenticated immutable ownership and placement.
     pub record: AdmissionRecord,
     /// The same engine lease used by Member admission and replication.

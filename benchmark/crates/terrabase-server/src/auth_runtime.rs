@@ -164,7 +164,7 @@ impl AuthRuntime {
             let keys = self.production.keys.clone().ok_or("auth key delivery missing")?;
             let environment = self.production.environment.name.as_str().to_owned();
             let store = tokio::task::spawn_blocking(move || {
-                use terrabase::encryption::key_delivery::{
+                use terrabase::encryption::{
                     OciVaultDatabaseKeys, OciVaultKeyDelivery,
                 };
                 use terrabase::encryption::{KeyPurpose, KeyScope, KeyVersionMetadata};

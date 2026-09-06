@@ -34,10 +34,16 @@ Without this configuration the missing-membership startup refusal remains.
 `Stage` carries `expected_revision`, a complete proposal, and the usual
 `x-tb-idempotency-key`. Proposals bind the exact environment and cluster, positive
 generation and replica epoch, one to three disjoint RF=2 Region seat pairs, and
-an explicit writer/follower assignment for every enabled local database. Database
-identities and Regions must exactly match the local configured catalog; the
-proposal cannot widen residency or add a database. Seat ordering never chooses
-a writer. Region seats and assignments are canonically sorted before persistence.
+an explicit local writer/follower assignment for every enabled local database.
+Each database's assignment Regions are its selected residency set: a database
+may use only one Region while the proposal carries seats for several Regions.
+Every additional selected Region carries its own writer/follower pair, and the
+pair must use that Region's authenticated seats. Database identities must match
+the local configured catalog; the proposal cannot widen local admission or add
+an unknown database. Seat ordering never chooses a writer. Region seats and
+assignments are canonically sorted before persistence. Retained accepted
+proposals remain valid when a later local database is registered; the later
+proposal must include that database before it can be staged.
 
 The first successful Stage requires expected revision zero. A replacement uses
 the current local revision and strictly increases both generation and epoch.

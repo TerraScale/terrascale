@@ -2,6 +2,7 @@ use super::*;
 use base64::Engine as _;
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use serde_json::{Value, json};
+use terrabase::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
 use terrabase_cluster::production::DurableMembershipSource as _;
 use terrabase_cluster::wal_route::DurableWalAssignmentSource as _;
 use transition::{Request, Signed, TransitionMember, TransitionTrust, hash};
@@ -201,7 +202,10 @@ fn authenticated_wrong_tuple_digest_genesis_and_signer_never_admit() {
 
 #[test]
 fn successor_needs_one_fence_from_each_old_pair_and_exact_predecessor() {
-    let mut fixture = tests::Fixture::new();
+    let mut fixture = tests::Fixture::with_selected(std::collections::BTreeSet::from([
+        "GRU".into(),
+        "SFO".into(),
+    ]));
     fixture.request.proposal.as_mut().unwrap().regions.push(pb::PlacementRegionSeats {
         region: "SFO".into(),
         members: vec![MemberUlid::generate().to_text(), MemberUlid::generate().to_text()],
@@ -250,6 +254,54 @@ fn successor_needs_one_fence_from_each_old_pair_and_exact_predecessor() {
     reopened.configure_transition_trust(pins).unwrap();
     assert_eq!(reopened.accepted().unwrap(), accepted);
     assert!(reopened.load_admitted_placement().is_ok());
+}
+
+#[test]
+fn accepted_proposal_survives_new_local_database_registration() {
+    let fixture = tests::Fixture::new();
+    let journal = fixture.open();
+    let proposal = stage(&journal, fixture.request.clone(), "first");
+    journal.configure_transition_trust(trust(&proposal)).unwrap();
+    let first = proof(&proposal, "first", None, &[]);
+    journal.accept("first", &acceptance(&first, 1)).unwrap();
+    let original_scope = *fixture.boundary.databases.read().unwrap().keys().next().unwrap();
+
+    let added_scope = DatabaseRouteScope::new(
+        TenantUlid::generate(),
+        ProjectUlid::generate(),
+        DatabaseUlid::generate(),
+    );
+    journal
+        .register_database(added_scope, "GRU", &std::collections::BTreeSet::from(["GRU".into()]))
+        .unwrap();
+    assert_eq!(journal.load_assignment(original_scope).unwrap().epoch, 1);
+    assert_eq!(journal.accepted_proposal().unwrap().revision, 1);
+
+    let mut successor = fixture.request.clone();
+    successor.expected_revision = 1;
+    let successor_proposal = successor.proposal.as_mut().unwrap();
+    successor_proposal.generation = 2;
+    successor_proposal.epoch = 2;
+    let seats = successor_proposal.regions[0].members.clone();
+    successor_proposal.assignments.push(pb::PlacementDatabaseAssignment {
+        tenant: added_scope.tenant().to_text(),
+        project: added_scope.project().to_text(),
+        database: added_scope.database().to_text(),
+        region: "GRU".into(),
+        writer_member: seats[0].clone(),
+        follower_member: seats[1].clone(),
+    });
+    let successor = stage(&journal, successor, "second");
+    let second = proof(&successor, "second", Some(&first), &[]);
+    journal.accept("second", &acceptance(&second, 2)).unwrap();
+    assert_eq!(journal.load_assignment(added_scope).unwrap().epoch, 2);
+
+    drop(journal);
+    let reopened = fixture.open();
+    reopened.configure_transition_trust(trust(&proposal)).unwrap();
+    assert_eq!(reopened.accepted().unwrap().epoch, 2);
+    assert_eq!(reopened.load_assignment(original_scope).unwrap().epoch, 2);
+    assert_eq!(reopened.load_assignment(added_scope).unwrap().epoch, 2);
 }
 
 #[test]
