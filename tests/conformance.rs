@@ -1,4 +1,4 @@
-//! SDK conformance suite stub (GOAL D-13).
+//! SDK behavior checks not covered by the independent producer corpus.
 //!
 //! terrabase publishes HTTP + reactive fixtures with the pinned contract;
 //! an SDK is not done until it passes. Until those fixtures land, this suite
