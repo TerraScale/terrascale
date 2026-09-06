@@ -439,7 +439,7 @@ async fn export_download_preserves_binary_body_and_authentication() {
 #[tokio::test]
 async fn provisioning_acceptance_is_distinct_from_database_creation() {
     use terrascale::CreateDatabaseResult;
-    let operation = json!({"operation_id":"op","database_id":"db-id","key_version":"key-1","name":"orders","regions":["GRU"],"residency":"br-only","state":"Pending"});
+    let operation = json!({"environment":"production","tenant_id":"tenant","project_id":"project","operation_id":"op","database_id":"db-id","parent_database_id":null,"key_version":"key-1","name":"orders","regions":["GRU"],"residency":"br-only","state":"Pending"});
     let mock = Mock::new(vec![
         Response::json(202, &operation),
         Response::json(202, &json!({"name":"orders"})),
@@ -616,7 +616,7 @@ async fn development_operations_use_branch_confirmation_and_bounded_wire_fields(
 async fn operations_poll_durable_provisioning_with_get() {
     let mock = Mock::new(vec![Response::json(
         200,
-        &json!({"operation_id":"op","database_id":"db-id","key_version":"key-1","name":"orders","regions":["GRU"],"residency":"br-only","state":"Ready"}),
+        &json!({"environment":"production","tenant_id":"tenant","project_id":"project","operation_id":"op","database_id":"db-id","parent_database_id":null,"key_version":"key-1","name":"orders","regions":["GRU"],"residency":"br-only","state":"Ready"}),
     )]);
     let operation = client(Arc::clone(&mock))
         .management()
