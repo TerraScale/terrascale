@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using TerraScale.DotNet;
+using TerraScale.DotNet.Generated;
 
 namespace TerraScale.DotNet.Tests;
 
@@ -30,12 +31,12 @@ public sealed class TerraScaleBackupConfirmationRequestTests
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var restored = await client.Backups.RestoreAsync("orders", new TerraScaleRestoreRequest("orders-copy", 1_735_689_600_000));
+        var restored = await client.Backups.RestoreAsync("orders", new RestoreRequest(1_735_689_600_000, "orders-copy"));
 
         await Assert.That(handler.Request).IsEqualTo(new RecordedRequest(
             HttpMethod.Post,
             "https://api.example.invalid/api/v1/databases/orders/backups/restore",
-            "{\"name\":\"orders-copy\",\"at\":1735689600000}"));
+            "{\"at\":1735689600000,\"name\":\"orders-copy\"}"));
         await Assert.That(restored.Name).IsEqualTo("orders-copy");
     }
 
@@ -46,7 +47,7 @@ public sealed class TerraScaleBackupConfirmationRequestTests
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
-        var exception = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.RestoreAsync("orders", new TerraScaleRestoreRequest(" ")));
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() => client.Backups.RestoreAsync("orders", new RestoreRequest(null, " ")));
 
         await Assert.That(exception).IsNotNull();
         await Assert.That(handler.Request).IsNull();

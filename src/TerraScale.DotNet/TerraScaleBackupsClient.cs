@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+using TerraScale.DotNet.Generated;
 
 #pragma warning disable CS1591
 
@@ -11,44 +11,34 @@ public sealed class TerraScaleBackupsClient
 
     internal TerraScaleBackupsClient(TerraScaleClient client) => this.client = client;
 
-    /// <summary>Returns Litestream readiness for a database.</summary>
-    public Task<TerraScaleBackupReadiness> ListAsync(string database, CancellationToken cancellationToken = default)
+    /// <summary>Returns native backup readiness for a database.</summary>
+    public Task<BackupStatusResponse> ListAsync(string database, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(database);
-        return client.SendAsync<TerraScaleBackupReadiness>(
+        return client.SendJsonAsync(
             HttpMethod.Get,
             $"/api/v1/databases/{Escape(database)}/backups",
-            body: null,
+            TerraScaleContractJsonContext.Default.BackupStatusResponse,
             cancellationToken);
     }
 
     /// <summary>Restores a backup into a new database.</summary>
-    public Task<TerraScaleDatabaseRecord> RestoreAsync(
+    public Task<DatabaseRecord> RestoreAsync(
         string database,
-        TerraScaleRestoreRequest request,
+        RestoreRequest request,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(database);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
-        return client.SendAsync<TerraScaleDatabaseRecord>(
+        return client.SendJsonAsync(
             HttpMethod.Post,
             $"/api/v1/databases/{Escape(database)}/backups/restore",
             request,
+            TerraScaleContractJsonContext.Default.RestoreRequest,
+            TerraScaleContractJsonContext.Default.DatabaseRecord,
             cancellationToken);
     }
 
     private static string Escape(string value) => Uri.EscapeDataString(value.Trim());
 }
-
-/// <summary>Litestream readiness for one database.</summary>
-public sealed record TerraScaleBackupReadiness(
-    [property: JsonRequired] bool Ready,
-    [property: JsonRequired] bool Streaming);
-
-/// <summary>Request to restore a backup into a new database.</summary>
-public sealed record TerraScaleRestoreRequest(
-    [property: JsonRequired] string Name,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? At = null);
-
-#pragma warning restore CS1591
