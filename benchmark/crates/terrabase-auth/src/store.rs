@@ -1,3 +1,7 @@
+// OpenRaft's concrete storage error is intentionally preserved throughout
+// this storage boundary; boxing it would alter the pinned trait-facing API.
+#![allow(clippy::result_large_err)]
+
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::io::Cursor;
@@ -285,10 +289,10 @@ fn conflicts(connection: &Connection, model: &str, id: &str, record: &Record) ->
             continue;
         }
         for index in &fields {
-            if let Some(value) = index_value(record, index) {
-                if index_value(&other, index).as_ref() == Some(&value) {
-                    return Ok(true);
-                }
+            if let Some(value) = index_value(record, index)
+                && index_value(&other, index).as_ref() == Some(&value)
+            {
+                return Ok(true);
             }
         }
     }
@@ -341,14 +345,14 @@ fn apply_joins(
         let mut related_bytes = 0usize;
         if let Some(key) = key.filter(|_| cap > 0) {
             if join.to_field == "id" {
-                if let Some(id) = key.as_str() {
-                    if let Some(found) = read_record(connection, &join.model, id)? {
-                        let size = encode(&found)?.len();
-                        if !scan.admit(size) || size > available_bytes {
-                            return Ok(None);
-                        }
-                        related.push(found);
+                if let Some(id) = key.as_str()
+                    && let Some(found) = read_record(connection, &join.model, id)?
+                {
+                    let size = encode(&found)?.len();
+                    if !scan.admit(size) || size > available_bytes {
+                        return Ok(None);
                     }
+                    related.push(found);
                 }
             } else {
                 let mut statement = connection
@@ -440,10 +444,10 @@ fn validate_final_records(
         let fields: Vec<String> = decode(&fields.map_err(storage)?)?;
         let mut seen = std::collections::BTreeSet::new();
         for record in replacements.values() {
-            if let Some(value) = index_value(record, &fields) {
-                if !seen.insert(encode(&value)?) {
-                    return Ok(true);
-                }
+            if let Some(value) = index_value(record, &fields)
+                && !seen.insert(encode(&value)?)
+            {
+                return Ok(true);
             }
         }
         // Unchanged rows already satisfy this index. Compare only against the
@@ -672,10 +676,10 @@ fn execute_action(transaction: &Transaction<'_>, action: &Action) -> Result<Outc
             }
             let mut seen = std::collections::BTreeSet::new();
             for (_, record) in records(transaction, model)? {
-                if let Some(value) = index_value(&record, fields) {
-                    if !seen.insert(encode(&value)?) {
-                        return Ok(Outcome::UniqueConflict);
-                    }
+                if let Some(value) = index_value(&record, fields)
+                    && !seen.insert(encode(&value)?)
+                {
+                    return Ok(Outcome::UniqueConflict);
                 }
             }
             transaction

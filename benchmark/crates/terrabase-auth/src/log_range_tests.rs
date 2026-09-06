@@ -60,7 +60,8 @@ async fn log_reader_applies_all_range_bounds_and_uses_index() {
     );
 
     let plan = store.explain_log_range_for_test().unwrap().join(" ");
-    assert!(plan.contains("USING INDEX sqlite_autoindex_raft_log_1"), "{plan}");
+    assert!(plan.contains("SEARCH raft_log USING INDEX sqlite_autoindex_raft_log_1"), "{plan}");
+    assert!(plan.contains("log_index>?") && plan.contains("log_index<?"), "{plan}");
 }
 
 #[tokio::test]

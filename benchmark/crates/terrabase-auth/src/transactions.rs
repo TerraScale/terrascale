@@ -1,3 +1,7 @@
+// Transaction helpers retain OpenRaft's concrete storage error type required
+// by the surrounding admission API; boxing it would change that API.
+#![allow(clippy::result_large_err)]
+
 use super::*;
 
 const MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -29,12 +33,12 @@ fn save(transaction: &Transaction<'_>, id: &str, workspace: &Workspace) -> Resul
 
 // Rejections before dispatch must also prevent a partial transaction commit.
 pub(super) fn poison_operation(transaction: &Transaction<'_>, action: &Action) -> Result<()> {
-    if let Action::TransactionOperation { transaction_id, .. } = action {
-        if let Some(mut workspace) = load(transaction, transaction_id)? {
-            workspace.failed = true;
-            workspace.commands.clear();
-            save(transaction, transaction_id, &workspace)?;
-        }
+    if let Action::TransactionOperation { transaction_id, .. } = action
+        && let Some(mut workspace) = load(transaction, transaction_id)?
+    {
+        workspace.failed = true;
+        workspace.commands.clear();
+        save(transaction, transaction_id, &workspace)?;
     }
     Ok(())
 }

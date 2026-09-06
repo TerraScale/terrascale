@@ -458,3 +458,29 @@ rather than resolve the production concern.
 
 Authenticated physical WAL/receipt transport also passed on the final request
 transport source (`19121`, one test). No root Cargo processes remain running.
+
+
+The next timing investigation isolated all three large join cases: all passed
+(`89330`, 3 passed / 347 deliberately filtered, qualification exit 101).
+No local query exceeded 10 ms. Root then found a concrete growth defect:
+`try_get_log_entries` selected and JSON-decoded every retained Raft log row
+before filtering in Rust. It now normalizes all unsigned range bounds and
+uses the existing primary-key range in SQL, preserving gaps and rejecting
+key/entry mismatches. Tests prove unsigned extrema, empty/reversed ranges,
+out-of-range malformed rows, in-range corruption, and a bounded index search.
+Independent review found no material issue. All 32 auth tests, including the
+maintained OpenRaft storage suite, passed (`38190`).
+
+The full public SDK/HTTP/encrypted two-voter run with indexed log reads passed
+all 350 cleanup-patched maintained cases (`64296`, zero failed/skipped, Rust
+exit 0, 325.26 seconds). Repeated large join cases stayed at 12.711, 12.840,
+and 12.226 seconds instead of growing past 30 seconds. No fixture reset,
+assertion relaxation, deadline increase, or opt-in SDK read retries were used.
+Log: `/tmp/terrascale-auth-indexed-log-diagnostic.log`; comparison table:
+`bench/auth-authority-2026-09-06.md`. The unmodified upstream utility remains
+separately unqualified. This is not full daemon/provider qualification.
+
+Strict auth-crate Clippy passed (`94964`, `--all-targets --no-deps -D warnings`)
+after mechanical lint fixes and documented allowances preserving concrete
+OpenRaft error types. Two existing engine dependency unused-import warnings
+remain. No root commits or pushes were requested or performed.

@@ -1,3 +1,7 @@
+// The pinned OpenRaft storage error is intentionally returned unchanged from
+// the blocking boundary; boxing it would change the concrete trait API.
+#![allow(clippy::result_large_err)]
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;

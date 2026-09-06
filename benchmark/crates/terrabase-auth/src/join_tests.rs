@@ -86,7 +86,7 @@ async fn explicit_joins_are_bounded_projected_and_snapshot_consistent() {
     assert_eq!(records[0]["id"], "u1");
     assert_eq!(records[0]["profile"]["name"], "Ada");
     assert_eq!(records[0]["posts"].as_array().unwrap().len(), 2);
-    assert!(records[0].get("score").is_none());
+    assert!(!records[0].contains_key("score"));
     assert_eq!(records[1]["profile"], serde_json::Value::Null);
     assert_eq!(records[1]["posts"], json!([]));
 

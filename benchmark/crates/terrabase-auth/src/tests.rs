@@ -1,3 +1,7 @@
+// OpenRaft's concrete RPC error remains pinned in this test transport helper;
+// boxing it would obscure the API shape under test.
+#![allow(clippy::result_large_err)]
+
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -298,7 +302,7 @@ async fn find_sort_preserves_numeric_precision_and_projects_after_ordering() {
     .await;
     assert!(matches!(found, Outcome::Records { records } if records.len() == 2
         && records[0]["id"] == "b" && records[1]["id"] == "a"
-        && records[0].get("secret").is_none()));
+        && !records[0].contains_key("secret")));
 }
 
 #[tokio::test]

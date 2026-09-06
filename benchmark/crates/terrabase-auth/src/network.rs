@@ -165,7 +165,7 @@ impl AuthNetwork {
             return Err(AuthorityError::Unavailable);
         }
         let envelope: Envelope =
-            serde_json::from_slice(&bytes).map_err(|_| AuthorityError::Unavailable)?;
+            serde_json::from_slice(bytes).map_err(|_| AuthorityError::Unavailable)?;
         if envelope.protocol != "terrabase.auth.raft.v1"
             || envelope.group != self.group.as_ref()
             || self.voters.get(&envelope.sender) != Some(connection.peer().member())

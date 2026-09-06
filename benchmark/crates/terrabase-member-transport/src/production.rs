@@ -791,10 +791,18 @@ impl ProductionQuicEndpoint {
     /// Returns a typed transport error when the
     /// local certificate identity differs from the configured identity, TLS
     /// material cannot be installed, or the UDP address cannot be bound.
-    #[allow(clippy::too_many_lines)]
     pub fn bind(
         config: ProductionTransportConfig,
         tls: ProductionTlsMaterial,
+    ) -> Result<Self, ProductionTransportError> {
+        Self::bind_with_ack_delay(config, tls, None)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn bind_with_ack_delay(
+        config: ProductionTransportConfig,
+        tls: ProductionTlsMaterial,
+        ack_delay: Option<Duration>,
     ) -> Result<Self, ProductionTransportError> {
         let leaf =
             tls.certificate_chain.first().ok_or(ProductionTransportError::InvalidTlsMaterial)?;
@@ -858,6 +866,11 @@ impl ProductionQuicEndpoint {
                 .map_err(|_| ProductionTransportError::InvalidLimits)?,
         );
         let mut transport = quinn::TransportConfig::default();
+        if let Some(ack_delay) = ack_delay {
+            let mut ack_frequency = quinn::AckFrequencyConfig::default();
+            ack_frequency.max_ack_delay(Some(ack_delay));
+            transport.ack_frequency_config(Some(ack_frequency));
+        }
         transport
             .max_concurrent_bidi_streams(stream_count)
             .max_concurrent_uni_streams(stream_count)
@@ -2210,6 +2223,13 @@ mod tests {
     pub(super) fn endpoint_pair_with_max_frame(
         maximum_frame_bytes: usize,
     ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
+        Self::endpoint_pair_with_max_frame_and_ack_delay(maximum_frame_bytes, None)
+    }
+
+    pub(super) fn endpoint_pair_with_max_frame_and_ack_delay(
+        maximum_frame_bytes: usize,
+        ack_delay: Option<Duration>,
+    ) -> (ProductionQuicEndpoint, ProductionQuicEndpoint) {
         let first_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("first port");
         let second_socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("second port");
         let first_address = first_socket.local_addr().expect("first address");
@@ -2284,9 +2304,11 @@ mod tests {
         )
         .expect("second config");
 
-        let first = ProductionQuicEndpoint::bind(first_config, first_tls).expect("first endpoint");
+        let first = ProductionQuicEndpoint::bind_with_ack_delay(first_config, first_tls, ack_delay)
+            .expect("first endpoint");
         let second =
-            ProductionQuicEndpoint::bind(second_config, second_tls).expect("second endpoint");
+            ProductionQuicEndpoint::bind_with_ack_delay(second_config, second_tls, ack_delay)
+                .expect("second endpoint");
         (first, second)
     }
 
@@ -2806,5 +2828,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod ack_timing_tests;
 #[cfg(test)]
 mod request_tests;
