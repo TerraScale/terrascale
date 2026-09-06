@@ -314,7 +314,7 @@ export class TerraScaleHttp {
   }
 
   private resolveIdempotencyKey<TBody>(options: TerraScaleRequestOptions<TBody>): string | undefined {
-    if (!isMutation(options.method) || options.idempotencyKey === false) {
+    if ((!isMutation(options.method) && options.idempotencyKey === undefined) || options.idempotencyKey === false) {
       return undefined;
     }
 

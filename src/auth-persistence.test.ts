@@ -28,3 +28,19 @@ it("returns deterministic transaction conflicts without automatic replay", async
   expect(result.ok).toBe(false);
   if (!result.ok) expect(result.error.code).toBe("transaction_conflict");
 });
+
+it("stages findOne only with an explicit transaction identity and stable key", async () => {
+  const requests: Request[] = [];
+  const client = createAuthPersistenceClient({ fetch: async input => {
+    requests.push(new Request(input));
+    return Response.json({ record: { id: "one" }, matched: true });
+  } });
+  await client.findOne("db", "user", "one", { transactionId: "tx-one", idempotencyKey: "find-one" });
+  expect(requests[0]?.headers.get("x-terrascale-auth-transaction")).toBe("tx-one");
+  expect(requests[0]?.headers.get("idempotency-key")).toBe("find-one");
+  await client.findOne("db", "user", "one");
+  expect(requests[1]?.headers.has("x-terrascale-auth-transaction")).toBe(false);
+  expect(requests[1]?.headers.has("idempotency-key")).toBe(false);
+  expect(() => client.findOne("db", "user", "one", { transactionId: "tx-one" })).toThrow(TypeError);
+  expect(() => client.findOne("db", "user", "one", { idempotencyKey: "find-one" })).toThrow(TypeError);
+});

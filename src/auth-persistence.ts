@@ -26,6 +26,7 @@ export type AuthPersistenceResult = {
 export type AuthRequestOptions = { readonly signal?: AbortSignal };
 export type AuthTransactionOptions = AuthRequestOptions & { readonly idempotencyKey: string };
 export type AuthMutationOptions = AuthTransactionOptions & { readonly transactionId?: string };
+export type AuthFindOneOptions = AuthRequestOptions & { readonly transactionId?: string; readonly idempotencyKey?: string };
 
 /** Named server-side persistence operations backed by the admitted auth authority. */
 export class AuthPersistenceClient {
@@ -51,8 +52,15 @@ export class AuthPersistenceClient {
     return this.#http.request({ method: "POST", path: `${authPath(database)}/index`, routeName: "databases.index", body: request, ...mutationOptions(options) });
   }
 
-  findOne(database: string, model: string, id: string, options: AuthRequestOptions = {}): Promise<TerraScaleResult<AuthPersistenceResult>> {
-    return this.#http.request({ method: "GET", path: `${authPath(database)}/records/${segment(model)}/${segment(id)}`, routeName: "databases.findOne", signal: options.signal });
+  findOne(database: string, model: string, id: string, options: AuthFindOneOptions = {}): Promise<TerraScaleResult<AuthPersistenceResult>> {
+    if (options.transactionId === undefined) {
+      if (options.idempotencyKey !== undefined) throw new TypeError("findOne idempotencyKey requires transactionId.");
+      return this.#http.request({ method: "GET", path: `${authPath(database)}/records/${segment(model)}/${segment(id)}`, routeName: "databases.findOne", signal: options.signal });
+    }
+    if (options.idempotencyKey === undefined) throw new TypeError("findOne transactionId requires idempotencyKey.");
+    identity(options.transactionId, "transactionId", 128);
+    identity(options.idempotencyKey, "idempotencyKey", 256);
+    return this.#http.request({ method: "GET", path: `${authPath(database)}/records/${segment(model)}/${segment(id)}`, routeName: "databases.findOne", signal: options.signal, idempotencyKey: options.idempotencyKey, headers: { "x-terrascale-auth-transaction": options.transactionId } });
   }
 
   findPage(database: string, request: AuthPageQuery, options: AuthMutationOptions): Promise<TerraScaleResult<AuthPersistenceResult>> {
