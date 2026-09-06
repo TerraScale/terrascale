@@ -585,8 +585,9 @@ impl NativeBackupFleet {
         provider: Provider,
         point: Option<&str>,
         target: &crate::engine::EngineConfig,
+        identity: &super::restore::RestoreIdentity,
     ) -> Result<super::RecoveryReceipt, FleetError> {
-        self.restore_selected(database, provider, point, None, target).await
+        self.restore_selected(database, provider, point, None, target, identity).await
     }
 
     /// Restores every complete transaction through an inclusive Unix millisecond
@@ -600,8 +601,9 @@ impl NativeBackupFleet {
         provider: Provider,
         at_unix_millis: u64,
         target: &crate::engine::EngineConfig,
+        identity: &super::restore::RestoreIdentity,
     ) -> Result<super::RecoveryReceipt, FleetError> {
-        self.restore_selected(database, provider, None, Some(at_unix_millis), target).await
+        self.restore_selected(database, provider, None, Some(at_unix_millis), target, identity).await
     }
 
     async fn restore_selected(
@@ -611,6 +613,7 @@ impl NativeBackupFleet {
         point: Option<&str>,
         at: Option<u64>,
         target: &crate::engine::EngineConfig,
+        identity: &super::restore::RestoreIdentity,
     ) -> Result<super::RecoveryReceipt, FleetError> {
         let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
         let owner = target.owner().ok_or(FleetError::Configuration)?;
@@ -651,6 +654,7 @@ impl NativeBackupFleet {
                     &staging,
                     target,
                     reader.as_ref(),
+                    identity,
                 )
                 .map_err(|_| FleetError::Capture);
             }
@@ -660,11 +664,13 @@ impl NativeBackupFleet {
                     &staging,
                     target,
                     reader.as_ref(),
+                    identity,
                 ),
                 None => super::RestorePlan::restore_latest_encrypted_with_config(
                     &staging,
                     target,
                     reader.as_ref(),
+                    identity,
                 ),
             }
             .map_err(|_| FleetError::Capture)

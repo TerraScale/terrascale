@@ -169,12 +169,13 @@ pub async fn restore_snapshot(
     staging: &Path,
     reader: &dyn BackupReader,
     binding: WalReplicaBinding,
+    source_region: RegionCode,
     placement: &PlacementLock,
     target: PathBuf,
     keys: Arc<dyn DatabaseKeySource>,
     max_bytes: u64,
 ) -> Result<(WalFollowerDriver, WalCheckpointMessage), SnapshotBackupError> {
-    validate_residency(binding.scope().region(), destination.admitted_region(), placement)?;
+    validate_residency(source_region, destination.admitted_region(), placement)?;
     destination
         .download_point_with_byte_limit(prefix, staging, max_bytes)
         .await

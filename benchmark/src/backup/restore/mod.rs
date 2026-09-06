@@ -582,6 +582,16 @@ pub struct RecoveryReceipt {
     largest_tenant_archive_bytes: u64,
 }
 
+/// Durable identity binding a restore publication to its admitted operation.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RestoreIdentity {
+    pub operation_id: String,
+    pub source_database_id: String,
+    pub target_database_id: String,
+    pub provider: String,
+    pub selection: String,
+}
+
 impl RecoveryReceipt {
     /// Returns the requested inclusive durable commit-clock cutoff, when restoring by time.
     #[must_use]
@@ -925,9 +935,10 @@ impl RestorePlan {
         destination: &Path,
         target: &EngineConfig,
         cipher: &dyn BackupReader,
+        identity: &RestoreIdentity,
     ) -> Result<RecoveryReceipt, BackupError> {
         let chain = resolve_encrypted_chain(destination, cipher, &Selection::Latest)?;
-        execute_configured_restore(destination, target, cipher, &chain, None)
+        execute_configured_restore(destination, target, cipher, &chain, None, identity)
     }
 
     /// Restores a named encrypted chain into an explicitly owned, encrypted target.
@@ -935,18 +946,19 @@ impl RestorePlan {
     /// # Errors
     /// Rejects invalid identities, missing target owner/keys, or invalid archives.
     pub fn restore_recovery_point_encrypted_with_config(
-        identity: &str,
+        point_identity: &str,
         destination: &Path,
         target: &EngineConfig,
         cipher: &dyn BackupReader,
+        identity: &RestoreIdentity,
     ) -> Result<RecoveryReceipt, BackupError> {
-        crate::backup::manifest::validate_identity(identity)?;
+        crate::backup::manifest::validate_identity(point_identity)?;
         let chain = resolve_encrypted_chain(
             destination,
             cipher,
-            &Selection::Point { identity: identity.to_owned() },
+            &Selection::Point { identity: point_identity.to_owned() },
         )?;
-        execute_configured_restore(destination, target, cipher, &chain, None)
+        execute_configured_restore(destination, target, cipher, &chain, None, identity)
     }
 
     /// Restores through an inclusive timestamp into an owned, encrypted target.
@@ -959,9 +971,10 @@ impl RestorePlan {
         destination: &Path,
         target: &EngineConfig,
         cipher: &dyn BackupReader,
+        identity: &RestoreIdentity,
     ) -> Result<RecoveryReceipt, BackupError> {
         let chain = resolve_timestamp_chain(destination, cipher, requested_unix_millis)?;
-        execute_configured_restore(destination, target, cipher, &chain, Some(requested_unix_millis))
+        execute_configured_restore(destination, target, cipher, &chain, Some(requested_unix_millis), identity)
     }
 
     /// Restores the destination's newest recovery point, consuming the
@@ -1247,6 +1260,7 @@ fn execute_configured_restore(
     cipher: &dyn BackupReader,
     chain: &[BackupManifest],
     cutoff: Option<u64>,
+    identity: &RestoreIdentity,
 ) -> Result<RecoveryReceipt, BackupError> {
     if !target.has_encrypted_owner() {
         return Err(BackupError::DestinationUnavailable);
@@ -1282,7 +1296,7 @@ fn execute_configured_restore(
         drop(guard);
         drop(reopened);
         let facts = replay.into_facts(verification);
-        publish(&staging, path)?;
+        publish_with_identity(&staging, path, identity)?;
         Ok(facts)
     })();
     match outcome {
@@ -1357,6 +1371,21 @@ impl StagingDir {
 /// Returns [`BackupError::DestinationUnavailable`] when the rename fails;
 /// the caller discards the staging tree on that path.
 fn publish(staging: &StagingDir, target: &Path) -> Result<(), BackupError> {
+    if rustix::fs::renameat_with(
+        rustix::fs::CWD, staging.path(), rustix::fs::CWD, target,
+        rustix::fs::RenameFlags::NOREPLACE,
+    ).is_err() {
+        return Err(BackupError::DestinationUnavailable);
+    }
+    if let Some(parent) = target.parent() { super::sync_directory(parent)?; }
+    Ok(())
+}
+
+fn publish_with_identity(staging: &StagingDir, target: &Path, identity: &RestoreIdentity) -> Result<(), BackupError> {
+    let marker = serde_json::to_vec(identity).map_err(|_| BackupError::DestinationUnavailable)?;
+    std::fs::write(staging.path().join(".terrabase-restore-marker"), marker)
+        .map_err(|_| BackupError::DestinationUnavailable)?;
+    super::sync_directory(staging.path())?;
     if rustix::fs::renameat_with(
         rustix::fs::CWD,
         staging.path(),

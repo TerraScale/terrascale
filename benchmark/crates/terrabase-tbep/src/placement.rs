@@ -519,8 +519,7 @@ impl PlacementJournal {
                 && row.5 == grant.region
                 && row.6 == grant.member
                 && row.7 == i64::try_from(grant.accepted_placement_revision).unwrap_or_default()
-                && row.8 == grant.accepted_proof_digest
-                ;
+                && row.8 == grant.accepted_proof_digest;
             if !same {
                 return Err(PlacementError::RetryMismatch);
             }

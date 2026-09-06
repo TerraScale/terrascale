@@ -983,12 +983,14 @@ impl ExportService {
         let service = self.clone();
         let job = job_id.to_owned();
         let member = member.to_owned();
+        let load_job = job.clone();
+        let load_member = member.clone();
         let (database, manifest, format) = tokio::task::spawn_blocking(move || {
-            if !safe_member_path(&member) {
+            if !safe_member_path(&load_member) {
                 return Err(ExportError::InvalidRequest("invalid member"));
             }
             let state =
-                service.store.load(&job)?.ok_or(ExportError::InvalidRequest("unknown job"))?;
+                service.store.load(&load_job)?.ok_or(ExportError::InvalidRequest("unknown job"))?;
             validate_state(&state)?;
             if state.status != JobStatus::Complete {
                 return Err(ExportError::InvalidRequest("export incomplete"));
@@ -1121,7 +1123,7 @@ impl Worker {
         state.status = JobStatus::Running;
         state.error = None;
         self.store.save(&state)?;
-        let result: Result<Option<ArtifactFact>, ExportError> = (|| async {
+        let result: Result<Option<ArtifactFact>, ExportError> = async {
             if self.cancellation_requested(job_id)? {
                 return Ok(None);
             }
@@ -1138,7 +1140,7 @@ impl Worker {
             }
             writer.commit(&manifest).await?;
             Ok(Some(manifest))
-        })()
+        }
         .await;
         match result {
             Ok(Some(manifest)) => {

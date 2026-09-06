@@ -429,7 +429,7 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
         .with_owner(owner.clone())
         .with_storage_keys(crate::engine::test_storage_keys(&owner, 72));
     let receipt =
-        RestorePlan::restore_latest_encrypted_with_config(&destination, &config, &*cipher)
+        RestorePlan::restore_latest_encrypted_with_config(&destination, &config, &*cipher, &crate::backup::restore::RestoreIdentity { operation_id: "test".into(), source_database_id: "source".into(), target_database_id: "target".into(), provider: "oci".into(), selection: "latest".into() })
             .expect("encrypted restore runs");
     assert_eq!(receipt.selected_identity(), backup.manifest().identity());
     assert_eq!(receipt.restored_documents(), 1);
@@ -451,7 +451,7 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
         .with_owner(owner.clone())
         .with_storage_keys(std::sync::Arc::new(UnavailableKeys));
     assert!(
-        RestorePlan::restore_latest_encrypted_with_config(&destination, &unavailable, &*cipher)
+        RestorePlan::restore_latest_encrypted_with_config(&destination, &unavailable, &*cipher, &crate::backup::restore::RestoreIdentity { operation_id: "test".into(), source_database_id: "source".into(), target_database_id: "target".into(), provider: "oci".into(), selection: "latest".into() })
             .is_err()
     );
     assert!(!rejected.exists());

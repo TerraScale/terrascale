@@ -78,6 +78,8 @@ pub mod production_backup;
 /// Production export owner composition; local export fallback remains test-only.
 pub mod production_export;
 pub(crate) mod public_admission;
+#[cfg(test)]
+mod budget_http_tests;
 
 /// Joined live delivery catchup observations.
 pub mod catchup_observation;

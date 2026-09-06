@@ -176,7 +176,7 @@ impl ArtifactPort for LocalPort {
                 directory,
                 job_id: format!("{database}/{job_id}"),
                 crypto: Arc::clone(&self.crypto),
-            }))
+            }) as Box<dyn ArtifactWriter>)
         })
     }
 }

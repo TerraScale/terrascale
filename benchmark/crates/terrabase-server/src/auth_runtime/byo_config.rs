@@ -197,7 +197,7 @@ impl FileTenantJwtConfig {
             cache_ttl: Duration::from_secs(self.cache_ttl_secs),
             generation: self.generation,
         };
-        config.validate().map_err(|_| "invalid BYO-JWT policy".into())?;
+        config.validate().map_err(|_| String::from("invalid BYO-JWT policy"))?;
         Ok(config)
     }
 }
@@ -211,7 +211,7 @@ pub struct HttpsJwksFetcher {
 impl HttpsJwksFetcher {
     /// Uses the platform root store and AWS-LC crypto provider.
     pub fn new() -> Self {
-        let roots = webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect();
+        let roots: rustls::RootCertStore = webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect();
         let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
             rustls::crypto::aws_lc_rs::default_provider(),
         ))
@@ -326,7 +326,7 @@ impl JwtSignatureVerifier for AwsLcJwtVerifier {
         signing_input: &[u8],
         signature: &[u8],
     ) -> bool {
-        let material = match algorithm {
+        let material: Option<Vec<u8>> = match algorithm {
             Algorithm::Rs256 => rsa_spki(key),
             Algorithm::Es256 => key.material("x").and_then(|x| key.material("y")).map(|y| {
                 let x = key.material("x").expect("x checked");

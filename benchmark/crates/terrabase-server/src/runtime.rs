@@ -1244,6 +1244,7 @@ async fn serve_public_api(
                 .map_err(|_| DaemonError::Engine("local export dependencies unavailable".into()))?,
         )),
         delegated_identity,
+        byo_jwt: None,
         development: Arc::default(),
         replication_progress: None,
         admitted_databases: None,

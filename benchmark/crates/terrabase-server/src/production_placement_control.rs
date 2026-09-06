@@ -116,7 +116,7 @@ impl ProductionPlacementDataControl {
     }
 
     fn scope(
-        request: &pb::PlacementControlServiceReadinessRequest,
+        request: &pb::PlacementReadinessRequest,
     ) -> Result<DatabaseRouteScope, terrabase_tbep::placement::PlacementError> {
         DatabaseRouteScope::try_new(&request.tenant, &request.project, &request.database)
             .map_err(|_| terrabase_tbep::placement::PlacementError::Invalid)
@@ -145,7 +145,7 @@ impl PlacementDataControl for ProductionPlacementDataControl {
 
     fn readiness(
         &self,
-        request: &pb::PlacementControlServiceReadinessRequest,
+        request: &pb::PlacementReadinessRequest,
     ) -> Result<Vec<u8>, terrabase_tbep::placement::PlacementError> {
         let scope = Self::scope(request)?;
         let snapshot = self

@@ -45,6 +45,8 @@ pub mod streaming;
 pub mod types;
 pub mod usage;
 
+pub use usage::UsageAdmissionContext;
+
 #[cfg(any(test, feature = "bench-tools"))]
 #[doc(hidden)]
 pub mod benchmarks;

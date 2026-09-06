@@ -86,15 +86,18 @@ impl LifecycleOperationGrant {
 /// Implementations own durable idempotency and native side effects. The TBEP
 /// adapter only authenticates the channel and validates the signed assignment
 /// envelope before calling this port.
-pub type LifecycleFuture<'a> = Pin<Box<dyn Future<Output = Result<pb::LifecycleControlResponse, String>> + Send + 'a>>;
+pub type LifecycleFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<pb::LifecycleControlResponse, String>> + Send + 'a>>;
 
 /// Async native lifecycle owner boundary.
 pub trait LifecycleControl: Send + Sync {
+    /// Reads verified facts from an admitted restored target.
+    fn restore_stats(&self, request: &pb::RestoreStatsRequest) -> RestoreStatsFuture<'_> {
+        let _ = request;
+        Box::pin(async { Err("native restore stats owner is not composed".into()) })
+    }
     /// Restores an exact authenticated recovery point into an admitted target.
-    fn restore_to_target(
-        &self,
-        request: &pb::RestoreToTargetRequest,
-    ) -> LifecycleFuture<'_> {
+    fn restore_to_target(&self, request: &pb::RestoreToTargetRequest) -> LifecycleFuture<'_> {
         let _ = request;
         Box::pin(async { Err("native restore owner is not composed".into()) })
     }
@@ -135,6 +138,8 @@ pub trait LifecycleControl: Send + Sync {
         operation: &str,
     ) -> LifecycleFuture<'_>;
 }
+/// Async result returned by the native restore facts owner.
+pub type RestoreStatsFuture<'a> = Pin<Box<dyn Future<Output = Result<pb::RestoreStatsResponse, String>> + Send + 'a>>;
 
 /// Bounded lifecycle refusal categories.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

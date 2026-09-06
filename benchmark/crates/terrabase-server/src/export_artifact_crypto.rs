@@ -8,7 +8,9 @@ use crate::export_api::{
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::Path;
-use terrabase::encryption::{ArtifactCipher, Compression, DatabaseKeyLease, EncryptionContext};
+use terrabase::encryption::{
+    ArtifactCipher, Compression, DatabaseKey, DatabaseKeyLease, EncryptionContext, ProviderMode,
+};
 
 /// Lease-scoped encryption operation used by production artifact writers.
 /// Implementations must perform key use inside the active authorization
@@ -333,7 +335,7 @@ impl ArtifactWriter for LocalWriter {
             let manifest_path = self.directory.join(&manifest.path);
             ensure_no_symlink_components(&manifest_path)?;
             let encrypted = encrypted_member(&manifest_path)?;
-            if fact(&manifest.path, &encrypted) != *manifest {
+            if fact(&manifest.path, &encrypted) != manifest {
                 return Err(ExportError::IdempotencyConflict);
             }
             self.crypto.open(&self.job_id, &manifest.path, &encrypted)?;

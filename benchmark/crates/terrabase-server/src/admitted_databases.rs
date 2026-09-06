@@ -72,7 +72,7 @@ pub struct RestoreReservation {
     record: AdmissionRecord,
     location: PathBuf,
     activated: bool,
-    path_guard: Arc<std::sync::Mutex<BTreeSet<PathBuf>>>,
+    permit: terrabase::member::RestorePermit,
 }
 
 impl RestoreReservation {
@@ -86,6 +86,19 @@ impl RestoreReservation {
     #[must_use]
     pub fn location(&self) -> &std::path::Path {
         &self.location
+    }
+
+    /// Reacquires the target through the owning Member while retaining the
+    /// exclusion. Only this reservation may cross the restore boundary.
+    pub fn reacquire(
+        &self,
+        member: &terrabase::member::Member,
+    ) -> Result<DatabaseLease, String> {
+        let id = terrabase::member::DatabaseId::try_new(&self.record.database_id)
+            .map_err(|_| "restore target identity is invalid")?;
+        member
+            .acquire_existing_for_restore(&id, &self.permit)
+            .map_err(|_| "restore target reacquisition refused".to_owned())
     }
 
     /// Reinstalls the same admitted identity after a successful restore.
@@ -104,20 +117,10 @@ impl RestoreReservation {
                 return Err(error);
             }
         }
-        if result.is_ok() {
-            if let Ok(mut paths) = self.path_guard.lock() {
-                paths.remove(&location);
-            }
-        }
+        // Dropping the owned permit releases the exclusion only after the
+        // admitted host has been republished (and activated when required).
+        drop(self.permit);
         result
-    }
-}
-
-impl Drop for RestoreReservation {
-    fn drop(&mut self) {
-        if let Ok(mut paths) = self.path_guard.lock() {
-            paths.remove(&self.location);
-        }
     }
 }
 
@@ -191,14 +194,15 @@ impl AdmittedDatabaseRegistry {
                 return Err("restore target engine is still referenced".into());
             }
         };
-        let lease =
-            host.into_admitted_lease().map_err(|_| "restore target lease is not exclusive")?;
-        drop(lease);
+        let lease = host.into_admitted_lease().map_err(|_| "restore target lease is not exclusive")?;
+        let permit = lease
+            .reserve_restore()
+            .map_err(|_| "restore target lease is not exclusive")?;
         let result = RestoreReservation {
             record,
             location,
             activated,
-            path_guard: Arc::clone(&self.restore_paths),
+            permit,
         };
         drop(databases);
         drop(serving);

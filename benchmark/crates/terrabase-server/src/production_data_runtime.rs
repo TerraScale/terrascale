@@ -522,6 +522,53 @@ pub struct ProductionAdmissionRuntime {
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
 }
 
+/// Bridges the durable recovery worker to the production data owner. The
+/// worker never receives a target resolver or fleet handle directly.
+pub struct ProductionRestoreExecutor {
+    runtime: Arc<ProductionAdmissionRuntime>,
+    backups: Arc<crate::native_backup_runtime::NativeBackupRuntime>,
+}
+
+impl ProductionRestoreExecutor {
+    #[must_use]
+    pub fn new(
+        runtime: Arc<ProductionAdmissionRuntime>,
+        backups: Arc<crate::native_backup_runtime::NativeBackupRuntime>,
+    ) -> Self {
+        Self { runtime, backups }
+    }
+}
+
+impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
+    fn execute<'a>(
+        &'a self,
+        request: &'a crate::native_recovery::NativeRestoreRequest,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<crate::native_recovery::NativeRestoreOutcome, String>> + Send + 'a>> {
+        Box::pin(async move {
+            let provider = match request.provider.as_str() {
+                "oci" => terrabase::backup::object_store::Provider::Oci,
+                "tigris" => terrabase::backup::object_store::Provider::Tigris,
+                _ => return Err("restore provider is not approved".into()),
+            };
+            let point = match &request.selection {
+                crate::native_recovery::NativeRestoreSelection::PointId(point) => Some(point.as_str()),
+                crate::native_recovery::NativeRestoreSelection::AtUnixMillis(_) => {
+                    return Err("timestamp restore executor is unavailable".into())
+                }
+            };
+            let receipt = self.runtime.restore_native_to_target(
+                &self.backups,
+                &request.source_database_id,
+                &request.target_database_id,
+                provider,
+                point,
+                &request.operation_id,
+            ).await?;
+            Ok(crate::native_recovery::NativeRestoreOutcome { receipt: receipt.render() })
+        })
+    }
+}
+
 impl ProductionAdmissionRuntime {
     /// Opens and replays the authenticated admission journal against the existing
     /// Member. No accepted role is inferred from configuration or a staged proposal.
@@ -1067,8 +1114,7 @@ impl ProductionAdmissionRuntime {
         let target_location = reservation.location().to_path_buf();
         let recover = |reservation: crate::admitted_databases::RestoreReservation,
                        error: String| {
-            let id = terrabase::member::DatabaseId::try_new(target).map_err(failure)?;
-            let lease = self.member.acquire_existing(&id).map_err(failure)?;
+            let lease = reservation.reacquire(&self.member).map_err(failure)?;
             reservation.complete(&self.registry, lease, 1).map_err(failure)?;
             Err(error)
         };
@@ -1138,15 +1184,18 @@ impl ProductionAdmissionRuntime {
             Ok(config) => config.with_owner(owner).with_storage_keys(Arc::new(target_keys)),
             Err(error) => return recover(reservation, failure(error)),
         };
-        let placement = match terrabase::backup::PlacementLock::explicit(
-            record
-                .regions
-                .iter()
-                .map(|value| value.parse())
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| "invalid restore target placement".to_owned()),
-        )
-        .map_err(|_| "invalid restore target placement".to_owned())
+        let regions = match record
+            .regions
+            .iter()
+            .map(|value| value.parse())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "invalid restore target placement".to_owned())
+        {
+            Ok(regions) => regions,
+            Err(error) => return recover(reservation, error),
+        };
+        let placement = match terrabase::backup::PlacementLock::explicit(regions)
+            .map_err(|_| "invalid restore target placement".to_owned())
         {
             Ok(placement) => placement,
             Err(error) => return recover(reservation, error),
@@ -1162,8 +1211,7 @@ impl ProductionAdmissionRuntime {
             )
             .await
             .map_err(|_| "native restore failed or target authority was unavailable".to_owned());
-        let id = terrabase::member::DatabaseId::try_new(target).map_err(failure)?;
-        let lease = self.member.acquire_existing(&id).map_err(failure)?;
+        let lease = reservation.reacquire(&self.member).map_err(failure)?;
         reservation.complete(&self.registry, lease, 1)?;
         match restored {
             Ok(receipt) => {

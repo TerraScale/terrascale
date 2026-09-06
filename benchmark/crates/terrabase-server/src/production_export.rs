@@ -178,7 +178,7 @@ impl ArtifactWriter for ProductionWriter {
             let mut inner = inner;
             let facts = inner.existing_facts().await?;
             reconcile_remote_facts(&inner, &destination, &prefix, &database, &job, &facts).await?;
-            Box::new(inner).commit(manifest).await?;
+            Box::new(inner).commit(&manifest).await?;
             let marker = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
             put_remote_exact(
                 &destination,

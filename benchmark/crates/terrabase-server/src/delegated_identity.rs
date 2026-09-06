@@ -491,12 +491,16 @@ pub(crate) mod tests {
         let responses = reply.clone();
         let expected = serde_json::json!({"token":"delegated-token","organizationId":organization,"projectId":project,
             "databaseId":database,"action":action,"audience":"https://api.example"});
+        let verified_expected = serde_json::json!({"verifiedIssuer":"https://issuer.example",
+            "verifiedSubject":"user-1","audience":"https://api.example","organizationId":organization,
+            "projectId":project,"databaseId":database,"action":action});
         let task = tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
                 let server = Arc::new(server.clone());
                 let responses = responses.clone();
                 let expected = expected.clone();
+                let verified_expected = verified_expected.clone();
                 tokio::spawn(async move {
                     let Ok(stream) = tokio_rustls::TlsAcceptor::from(server).accept(stream).await
                     else {
@@ -509,6 +513,7 @@ pub(crate) mod tests {
                                 move |request: hyper::Request<hyper::body::Incoming>| {
                                     let responses = responses.clone();
                                     let expected = expected.clone();
+                                    let verified_expected = verified_expected.clone();
                                     async move {
                                         assert_eq!(
                                             request.headers()["x-terrascale-identity-service-key"],
@@ -522,7 +527,23 @@ pub(crate) mod tests {
                                             request.into_body().collect().await.unwrap().to_bytes();
                                         let input: serde_json::Value =
                                             serde_json::from_slice(&body).unwrap();
-                                        assert_eq!(input, expected);
+                                        if input.get("token").is_some() {
+                                            assert_eq!(input, expected);
+                                        } else {
+                                            assert_eq!(input, verified_expected);
+                                        }
+                                        let delay = responses
+                                            .lock()
+                                            .unwrap()
+                                            .get("delayMs")
+                                            .and_then(serde_json::Value::as_u64)
+                                            .unwrap_or(0);
+                                        if delay != 0 {
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                delay,
+                                            ))
+                                            .await;
+                                        }
                                         Ok::<_, std::convert::Infallible>(hyper::Response::new(
                                             Full::new(Bytes::from(
                                                 responses.lock().unwrap().to_string(),

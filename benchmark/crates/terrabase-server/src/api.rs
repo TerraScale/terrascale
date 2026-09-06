@@ -2762,11 +2762,12 @@ fn stage_batch_operation(
                 &mut merged,
                 &json_value(item.get("value").unwrap_or(&serde_json::Value::Null)),
             );
+            let units = document_value_bytes(&merged);
             let patched = Document::new(id, collection.clone(), merged);
             if transaction.put(patched, ExpectedVersion::Any).is_err() {
                 return Err(("staging_refused", "the patch could not stage"));
             }
-            Ok(terrabase::usage::write_units_for_bytes(document_value_bytes(&merged)))
+            Ok(terrabase::usage::write_units_for_bytes(units))
         }
         Some("delete") => {
             if transaction.read_in_collection(collection, &id).ok().flatten().is_none() {
@@ -3570,6 +3571,7 @@ async fn patch_document(
     };
     let mut merged = existing.value().clone();
     merge_patch(&mut merged, &json_value(&value));
+    let units = document_value_bytes(&merged);
     let probe = (collection.clone(), id.clone());
     let patched = Document::new(id.clone(), collection.clone(), merged);
     if let Err(error) = attach_write_budget(
@@ -3579,7 +3581,7 @@ async fn patch_document(
         engine.database_owner().project().to_string().as_str(),
         &database_id,
         &operation_id,
-        terrabase::usage::write_units_for_bytes(document_value_bytes(patched.value())),
+        terrabase::usage::write_units_for_bytes(units),
     ) {
         return error.into_response();
     }
@@ -4466,6 +4468,8 @@ pub(crate) fn json_response(status: StatusCode, body: String) -> Response {
 
 #[cfg(test)]
 mod tests {
+    #[path = "../../byo_router_tests.rs"]
+    mod byo_router_tests;
     #[path = "conditional_create.rs"]
     mod conditional_create;
     mod cors;

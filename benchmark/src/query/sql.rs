@@ -1116,14 +1116,6 @@ pub fn validate_parameters(text: &str, parameters: &SqlParameters) -> Result<(),
     validate_match_values(&parsed, parameters)?;
     validate_paging_bounds(&parsed, parameters)?;
     let subset = classify_live_subset(&parsed);
-    // SQLite's execute-only adapter receives the original SQL text.  A raw
-    // MATCH expression there would let FTS syntax in a literal alter query
-    // semantics, whereas the typed path always analyzes and quotes terms.
-    // Refuse that shape until it has a typed lowering instead of passing it
-    // through as an unvalidated FTS program.
-    if matches!(subset, LiveSubset::ExecuteOnly { .. }) && statement_has_match(&parsed) {
-        return Err(unsupported("MATCH execute-only"));
-    }
     if matches!(subset, LiveSubset::Live) {
         match lower(&parsed, parameters) {
             Ok(_) => return Ok(()),
@@ -1149,24 +1141,6 @@ pub fn validate_parameters(text: &str, parameters: &SqlParameters) -> Result<(),
         }
     }
     Ok(())
-}
-
-fn statement_has_match(parsed: &ParsedSql) -> bool {
-    struct MatchFound(bool);
-    impl Visitor for MatchFound {
-        type Break = ();
-
-        fn pre_visit_expr(&mut self, expression: &Expr) -> ControlFlow<Self::Break> {
-            if matches!(expression, Expr::BinaryOp { op: BinaryOperator::Match, .. }) {
-                self.0 = true;
-            }
-            ControlFlow::Continue(())
-        }
-    }
-
-    let mut found = MatchFound(false);
-    let _ = parsed.statement().visit(&mut found);
-    found.0
 }
 
 /// Validates every SQL `MATCH` operand before either the typed or SQLite
@@ -1631,15 +1605,11 @@ mod tests {
         .unwrap();
         validate_parameters("SELECT * FROM users WHERE body MATCH :query", &parameters).unwrap();
 
-        let execute_only = SqlParameters::new();
-        assert_eq!(
-            validate_parameters(
-                "SELECT * FROM users JOIN archive ON users.id = archive.id WHERE users.body MATCH 'quick OR secret'",
-                &execute_only,
-            )
-            .unwrap_err()
-            .class(),
-            SqlErrorClass::UnsupportedStatement
-        );
+        validate_parameters(
+            "SELECT * FROM users JOIN archive ON users.id = archive.id WHERE users.body MATCH :query",
+            &SqlParameters::try_new(&[("query", DocumentValue::String("quick OR secret".into()))])
+                .unwrap(),
+        )
+        .unwrap();
     }
 }

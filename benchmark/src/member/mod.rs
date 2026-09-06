@@ -864,6 +864,7 @@ struct MemberInner {
     membership_authority: Mutex<Option<Arc<dyn MembershipAuthority>>>,
     replication_authority: Mutex<Option<Arc<dyn ReplicationHealthAuthority>>>,
     clock_offset_seconds: Mutex<Option<f64>>,
+    restore_paths: Arc<Mutex<BTreeSet<PathBuf>>>,
 }
 
 /// Callback invoked immediately before a resident database is closed. The
@@ -1002,6 +1003,7 @@ impl Member {
                 membership_authority: Mutex::new(None),
                 replication_authority: Mutex::new(None),
                 clock_offset_seconds: Mutex::new(Some(0.0)),
+                restore_paths: Arc::new(Mutex::new(BTreeSet::new())),
             }),
         })
     }
@@ -1260,7 +1262,7 @@ impl Member {
     /// [`MemberError::UnknownDatabase`] for an unconfigured identity, or a
     /// typed capacity/storage refusal.
     pub fn acquire(&self, database: &DatabaseId) -> Result<DatabaseLease, MemberError> {
-        self.acquire_with_policy(database, true)
+        self.acquire_with_policy(database, true, None)
     }
 
     /// Acquires a lease only from an already materialized durable location.
@@ -1268,13 +1270,27 @@ impl Member {
     /// database file. SQLite may still create sidecar files for an existing
     /// database while opening it.
     pub fn acquire_existing(&self, database: &DatabaseId) -> Result<DatabaseLease, MemberError> {
-        self.acquire_with_policy(database, false)
+        self.acquire_with_policy(database, false, None)
+    }
+
+    /// Reacquires a database while its owner still holds an exclusive restore
+    /// reservation. The reservation remains held until publication completes.
+    pub fn acquire_existing_for_restore(
+        &self,
+        database: &DatabaseId,
+        permit: &RestorePermit,
+    ) -> Result<DatabaseLease, MemberError> {
+        if permit.database != *database {
+            return Err(MemberError::DatabaseBusy(database.clone()));
+        }
+        self.acquire_with_policy(database, false, Some(permit))
     }
 
     fn acquire_with_policy(
         &self,
         database: &DatabaseId,
         allow_create: bool,
+        restore: Option<&RestorePermit>,
     ) -> Result<DatabaseLease, MemberError> {
         if *lock_unpoisoned(&self.inner.lifecycle) != LifecycleState::Serving {
             return Err(MemberError::Draining);
@@ -1286,6 +1302,14 @@ impl Member {
                 .databases
                 .get(database)
                 .ok_or_else(|| MemberError::UnknownDatabase(database.clone()))?;
+            let restoring = lock_unpoisoned(&self.inner.restore_paths).contains(&entry.location);
+            if restoring
+                && !restore.is_some_and(|permit| {
+                    permit.database == *database && permit.location == entry.location
+                })
+            {
+                return Err(MemberError::DatabaseBusy(database.clone()));
+            }
             if entry.production
                 && !entry
                     .accepted_role
@@ -1323,6 +1347,7 @@ impl Member {
             engine,
             _global: global,
             _local: local,
+            restore_paths: Arc::clone(&self.inner.restore_paths),
         })
     }
 
@@ -1554,6 +1579,32 @@ pub struct DatabaseLease {
     engine: Arc<Engine>,
     _global: AdmissionPermit,
     _local: AdmissionPermit,
+    restore_paths: Arc<Mutex<BTreeSet<PathBuf>>>,
+}
+
+/// Exclusive per-path exclusion held while a restore replaces database bytes.
+pub struct RestorePermit {
+    database: DatabaseId,
+    location: PathBuf,
+    path_guard: Arc<Mutex<BTreeSet<PathBuf>>>,
+}
+
+impl RestorePermit {
+    /// Returns the database identity protected by this permit.
+    #[must_use]
+    pub fn database_id(&self) -> &DatabaseId { &self.database }
+
+    /// Returns the protected durable location.
+    #[must_use]
+    pub fn location(&self) -> &Path { &self.location }
+}
+
+impl Drop for RestorePermit {
+    fn drop(&mut self) {
+        if let Ok(mut paths) = self.path_guard.lock() {
+            paths.remove(&self.location);
+        }
+    }
 }
 
 impl DatabaseLease {
@@ -1574,6 +1625,24 @@ impl DatabaseLease {
     #[must_use]
     pub fn database_owner(&self) -> &DatabaseOwner {
         self.engine.database_owner()
+    }
+
+    /// Converts this sole admitted lease into an exclusive restore permit.
+    /// The engine and admission permits are dropped before the permit returns.
+    pub fn reserve_restore(self) -> Result<RestorePermit, MemberError> {
+        let location = self.location.clone();
+        let database = self.database.clone();
+        let path_guard = Arc::clone(&self.restore_paths);
+        let mut paths = self
+            .restore_paths
+            .lock()
+            .map_err(|_| MemberError::DatabaseBusy(database.clone()))?;
+        if !paths.insert(location.clone()) {
+            return Err(MemberError::DatabaseBusy(database));
+        }
+        drop(paths);
+        drop(self);
+        Ok(RestorePermit { database, location, path_guard })
     }
 }
 

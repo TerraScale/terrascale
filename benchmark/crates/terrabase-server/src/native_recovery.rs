@@ -5,6 +5,8 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::{fs::File, path::Path};
+use std::future::Future;
+use std::pin::Pin;
 use terrabase::backup::worker::NativeBackupFleet;
 use terrabase_tbep::member_host::MemberHost;
 use tokio::sync::Notify;
@@ -171,8 +173,19 @@ pub enum NativeRestorePhase {
 pub struct NativeRestoreOperation {
     pub request: NativeRestoreRequest,
     pub phase: NativeRestorePhase,
-    pub receipt: Option<terrabase::backup::RecoveryReceipt>,
+    pub receipt: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeRestoreOutcome {
+    pub receipt: String,
+}
+
+/// Production restore owner. Implementations reserve the target and publish
+/// only after provider installation and authorized reacquisition.
+pub trait RestoreExecutor: Send + Sync {
+    fn execute<'a>(&'a self, request: &'a NativeRestoreRequest) -> Pin<Box<dyn Future<Output = Result<NativeRestoreOutcome, String>> + Send + 'a>>;
 }
 
 /// Compact authoritative operation record. It contains no customer values or keys.
@@ -213,15 +226,7 @@ pub struct NativeRecoveryRuntime {
     notify: Arc<Notify>,
     worker_error: Mutex<Option<NativeRecoveryError>>,
     _worker_lease: Arc<File>,
-    restore_target: Arc<
-        dyn Fn(
-                &str,
-            ) -> Result<
-                (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
-                String,
-            > + Send
-            + Sync,
-    >,
+    restore_executor: Arc<dyn RestoreExecutor>,
 }
 
 impl NativeRecoveryRuntime {
@@ -234,15 +239,7 @@ impl NativeRecoveryRuntime {
         fleet: Arc<Mutex<NativeBackupFleet>>,
         registry: Arc<AdmittedDatabaseRegistry>,
         limits: NativeRecoveryLimits,
-        restore_target: Arc<
-            dyn Fn(
-                    &str,
-                ) -> Result<
-                    (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
-                    String,
-                > + Send
-                + Sync,
-        >,
+        restore_executor: Arc<dyn RestoreExecutor>,
     ) -> Result<(Arc<Self>, NativeRecoveryWorker), NativeRecoveryError> {
         let limits = limits.validate()?;
         let executor =
@@ -296,7 +293,7 @@ impl NativeRecoveryRuntime {
             notify: Arc::new(Notify::new()),
             worker_error: Mutex::new(None),
             _worker_lease: Arc::new(worker_lease),
-            restore_target,
+            restore_executor,
         });
         let (stop, stopped) = tokio::sync::oneshot::channel();
         let worker_runtime = Arc::clone(&runtime);
@@ -307,9 +304,7 @@ impl NativeRecoveryRuntime {
                     let runtime = Arc::clone(&worker_runtime);
                     let observed = Arc::clone(&runtime);
                     async move {
-                        let result = tokio::task::spawn_blocking(move || runtime.process_pending())
-                            .await
-                            .map_err(|_| NativeRecoveryError::Unavailable)?;
+                        let result = runtime.process_pending().await;
                         if let Ok(_) = result {
                             *observed
                                 .worker_error
@@ -488,8 +483,8 @@ impl NativeRecoveryRuntime {
             .transpose()
     }
 
-    fn process_pending(self: &Arc<Self>) -> Result<bool, NativeRecoveryError> {
-        if self.process_restore_pending()? {
+    async fn process_pending(self: &Arc<Self>) -> Result<bool, NativeRecoveryError> {
+        if self.process_restore_pending().await? {
             return Ok(true);
         }
         let pending = {
@@ -591,13 +586,13 @@ impl NativeRecoveryRuntime {
         Ok(true)
     }
 
-    fn process_restore_pending(&self) -> Result<bool, NativeRecoveryError> {
+    async fn process_restore_pending(&self) -> Result<bool, NativeRecoveryError> {
         let row = {
             let connection =
                 self.operations.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
             connection
                 .query_row(
-                    "SELECT record FROM native_restore_operations WHERE phase='accepted' ORDER BY operation_id LIMIT 1",
+                    "SELECT record FROM native_restore_operations WHERE phase IN ('accepted','restoring','verifying','uncertain') ORDER BY operation_id LIMIT 1",
                     [],
                     |row| row.get::<_, Vec<u8>>(0),
                 )
@@ -618,41 +613,16 @@ impl NativeRecoveryRuntime {
         {
             return Err(NativeRecoveryError::VerificationFailed);
         }
-        let (target, placement) = (self.restore_target)(&request.target_database_id)
-            .map_err(|_| NativeRecoveryError::Unavailable)?;
-        let resolved_regions = placement
-            .regions()
-            .map(|region| region.as_str().to_owned())
-            .collect::<Vec<_>>();
-        if resolved_regions != request.placement {
-            return Err(NativeRecoveryError::VerificationFailed);
-        }
         operation.phase = NativeRestorePhase::Restoring;
         self.save_restore(&operation)?;
-        let provider = match request.provider.as_str() {
-            "oci" => terrabase::backup::object_store::Provider::Oci,
-            "tigris" => terrabase::backup::object_store::Provider::Tigris,
-            _ => return Err(NativeRecoveryError::InvalidRequest),
-        };
-        let receipt = {
-            let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-            let result = match &request.selection {
-                NativeRestoreSelection::PointId(point) => tokio::runtime::Handle::current()
-                    .block_on(fleet.restore_from_provider(
-                        &request.source_database_id,
-                        provider,
-                        Some(point),
-                        &target,
-                    )),
-                NativeRestoreSelection::AtUnixMillis(millis) => tokio::runtime::Handle::current()
-                    .block_on(fleet.restore_at_from_provider(
-                        &request.source_database_id,
-                        provider,
-                        *millis,
-                        &target,
-                    )),
-            };
-            result.map_err(map_fleet_error)?
+        let receipt = match self.restore_executor.execute(request).await {
+            Ok(outcome) => outcome.receipt,
+            Err(_) => {
+                operation.phase = NativeRestorePhase::Uncertain;
+                operation.error = Some("native restore remains repairable; retry the operation".into());
+                self.save_restore(&operation)?;
+                return Ok(true);
+            }
         };
         operation.phase = NativeRestorePhase::Verifying;
         operation.receipt = Some(receipt);
@@ -804,16 +774,11 @@ mod tests {
         ))
     }
 
-    fn restore_target() -> Arc<
-        dyn Fn(
-                &str,
-            ) -> Result<
-                (terrabase::engine::EngineConfig, terrabase::backup::PlacementLock),
-                String,
-            > + Send
-            + Sync,
-    > {
-        Arc::new(|_| Err("restore target unavailable in capture fixture".into()))
+    struct RejectRestore;
+    impl RestoreExecutor for RejectRestore {
+        fn execute<'a>(&'a self, _request: &'a NativeRestoreRequest) -> Pin<Box<dyn Future<Output = Result<NativeRestoreOutcome, String>> + Send + 'a>> {
+            Box::pin(async { Err("restore target unavailable in capture fixture".into()) })
+        }
     }
 
     #[tokio::test]
@@ -826,7 +791,7 @@ mod tests {
             fleet(),
             Arc::clone(&registry),
             limits(),
-            restore_target(),
+            Arc::new(RejectRestore),
         )
         .unwrap();
         worker.shutdown().await.unwrap();
@@ -848,7 +813,7 @@ mod tests {
             fleet(),
             Arc::clone(&registry),
             limits(),
-            restore_target(),
+            Arc::new(RejectRestore),
         )
         .unwrap();
         let source = records[0].database_id.clone();
