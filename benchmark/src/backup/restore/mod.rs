@@ -605,12 +605,65 @@ pub struct RestoreIdentity {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+/// Authenticated facts recovered from a published restore marker.
+pub struct RestoreMarkerFacts {
+    /// The complete durable identity written by the restore publisher.
+    pub identity: RestoreIdentity,
+    /// Target sequence at publication.
+    pub target_sequence: u64,
+    /// Logical checksum at publication.
+    pub logical_checksum: String,
+    /// Restored document count.
+    pub restored_documents: u64,
+    /// Restored family record count.
+    pub restored_family_records: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 struct RestoreMarker {
     identity: RestoreIdentity,
     target_sequence: u64,
     logical_checksum: String,
     restored_documents: u64,
     restored_family_records: u64,
+}
+
+/// Reads the encrypted restore marker from an already published target.
+///
+/// `None` means the target has no marker for this operation. A malformed
+/// marker is reported as a checksum failure so callers cannot treat it as a
+/// successful replay.
+pub fn read_restore_marker(
+    engine: &Engine,
+    identity: &RestoreIdentity,
+) -> Result<Option<RestoreMarkerFacts>, BackupError> {
+    let tenant = TenantId::try_new(engine.database_owner().tenant().to_text().as_str())
+        .map_err(|_| BackupError::DestinationUnavailable)?;
+    let key = format!("restore/{}", identity.operation_id);
+    let guard = engine.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
+    let snapshot = guard.port.published_state().0;
+    let Some(value) = guard
+        .port
+        .private_metadata_at(&tenant, &key, snapshot)
+        .map_err(|_| BackupError::DestinationUnavailable)?
+    else {
+        return Ok(None);
+    };
+    let crate::types::DocumentValue::String(value) = value else {
+        return Err(BackupError::ChecksumMismatch);
+    };
+    let marker: RestoreMarker =
+        serde_json::from_str(&value).map_err(|_| BackupError::ChecksumMismatch)?;
+    if marker.identity != *identity {
+        return Err(BackupError::ChecksumMismatch);
+    }
+    Ok(Some(RestoreMarkerFacts {
+        identity: marker.identity,
+        target_sequence: marker.target_sequence,
+        logical_checksum: marker.logical_checksum,
+        restored_documents: marker.restored_documents,
+        restored_family_records: marker.restored_family_records,
+    }))
 }
 
 impl RecoveryReceipt {
@@ -1301,6 +1354,12 @@ fn execute_configured_restore(
         return Err(BackupError::DestinationUnavailable);
     }
     let path = target.location();
+    if target
+        .owner()
+        .is_none_or(|owner| owner.database().to_text() != identity.target_database_id)
+    {
+        return Err(BackupError::DestinationUnavailable);
+    }
     admit_target(path)?;
     // Config construction creates an empty directory. Remove only that admitted
     // empty placeholder so failed restores leave no target and NOREPLACE works.

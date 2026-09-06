@@ -5084,15 +5084,19 @@ impl Transaction<'_> {
             return CommitOutcome::Rejected(CommitError::StorageFailure);
         }
         let engine = self.engine;
-        let Ok(_barrier) = engine.origin_commit_barrier.read() else {
-            return CommitOutcome::Rejected(CommitError::StorageFailure);
-        };
         if engine.lifecycle_is_paused(&self.scope).unwrap_or(true) {
             return CommitOutcome::Rejected(CommitError::StorageFailure);
         }
         let started = Instant::now();
         let metrics = Arc::clone(&self.engine.metrics);
-        let outcome = self.commit_unobserved(durability);
+        let outcome = if self.internal_maintenance {
+            self.commit_unobserved(durability)
+        } else {
+            let Ok(_barrier) = engine.origin_commit_barrier.read() else {
+                return CommitOutcome::Rejected(CommitError::StorageFailure);
+            };
+            self.commit_unobserved(durability)
+        };
         let metric_result = match &outcome {
             CommitOutcome::Committed(_) => MetricCommitResult::Committed,
             CommitOutcome::Rejected(CommitError::StorageFailure) => MetricCommitResult::Failed,

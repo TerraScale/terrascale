@@ -10,6 +10,7 @@ use terrabase_tbep::lifecycle::LifecycleGrantAction;
 /// Receipt of a completed native lifecycle effect.
 pub enum NativeLifecycleReceipt {
     Snapshot(crate::native_recovery::RecoveryPointFacts),
+    Restore(crate::native_recovery::NativeRestoreReceipt),
     State(terrabase::engine::lifecycle_state::LifecycleOperationOutcome),
     Backup(terrabase::backup::worker::LifecycleReceipt),
 }
@@ -135,9 +136,11 @@ impl TbepLifecycleControl {
             &context.operation_grant,
             Some(&restore_request_digest(request)?),
         )?;
-        let _receipt = self.control.worker.restore_to_target(request).await?;
-        Err("native restore admitted; retry for terminal verified facts".into())
-/
+        let receipt = self.control.worker.restore_to_target(request).await?;
+        match receipt {
+            NativeLifecycleReceipt::Restore(facts) => Ok(terrabase_tbep::proto::terrabase::v1::LifecycleControlResponse { status: 1, operation_id: request.operation_id.clone(), detail: String::new(), recovery_point_id: facts.selected_identity, recovery_point_digest: facts.logical_content_checksum, placement: Vec::new() }),
+            _ => Err("native restore has no verified receipt".into()),
+        }
     }
 
     fn assignment(
@@ -178,7 +181,10 @@ impl TbepLifecycleControl {
                             operation_id: operation.to_owned(),
                             detail: String::new(),
                             recovery_point_id: facts.recovery_point_id,
-                            recovery_point_digest: facts.checksum,
+                            // The wire digest is the authenticated backup
+                            // manifest identity. Logical content checksum is
+                            // returned by RestoreStats after restore.
+                            recovery_point_digest: facts.recovery_point_id.clone(),
                             placement: facts.placement,
                         })
                     }
@@ -218,6 +224,10 @@ impl TbepLifecycleControl {
 }
 
 impl terrabase_tbep::lifecycle::LifecycleControl for TbepLifecycleControl {
+    fn restore_stats(&self, request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest) -> terrabase_tbep::lifecycle::RestoreStatsFuture<'_> {
+        let request = request.clone();
+        Box::pin(async move { self.control.restore_stats(&request).await })
+    }
     fn restore_to_target(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
@@ -319,11 +329,16 @@ pub struct AcceptedLifecycleAssignment {
 /// Native lifecycle owner supplied by member and backup composition.
 #[async_trait::async_trait]
 pub trait NativeLifecycleWorker: Send + Sync {
+    /// Reads complete verified restore facts for an exact target identity.
+    async fn restore_stats(&self, request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest) -> Result<crate::native_recovery::NativeRestoreReceipt, String> {
+        let _ = request;
+        Err("native restore stats owner is not composed".into())
+    }
     /// Admits an exact native restore operation into the durable recovery owner.
     async fn restore_to_target(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
-    ) -> Result<NativeLifecycleReceipt, String> {
+    ) -> Result<(), String> {
         let _ = request;
         Err("native restore owner is not composed".into())
     }
@@ -384,6 +399,10 @@ pub struct RegistryLifecycleWorker {
 
 #[async_trait::async_trait]
 impl NativeLifecycleWorker for RegistryLifecycleWorker {
+    async fn restore_stats(&self, request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest) -> Result<crate::native_recovery::NativeRestoreReceipt, String> {
+        let recovery = self.recovery.as_ref().ok_or("native restore stats owner is not composed")?;
+        recovery.verified_restore_stats(&request.operation_id, &request.target_database, &request.target_owner, &request.journal_cut, request.restore_epoch).map_err(|_| "native restore stats unavailable".to_owned())?.ok_or_else(|| "native restore is not complete or identity mismatched".to_owned())
+    }
     async fn restore_to_target(
         &self,
         request: &terrabase_tbep::proto::terrabase::v1::RestoreToTargetRequest,
@@ -412,10 +431,11 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
                 request.context.as_ref().ok_or("restore context is missing")?.region.clone(),
             ],
         };
-        recovery
-            .admit_restore(operation)
-            .map(|_| Err("native restore admitted; retry for terminal verified facts".into()))
-            .map_err(|_| "native restore admission refused".into())
+        let admitted = recovery.admit_restore(operation).map_err(|_| "native restore admission refused".to_owned())?;
+        match admitted.receipt {
+            Some(receipt) => Ok(NativeLifecycleReceipt::Restore(receipt)),
+            None => Err("native restore admitted; retry for terminal verified facts".into()),
+        }
     }
 
     async fn ensure_snapshot(
@@ -494,6 +514,13 @@ pub struct ProductionLifecycleControl {
 }
 
 impl ProductionLifecycleControl {
+    pub async fn restore_stats(&self, request: &terrabase_tbep::proto::terrabase::v1::RestoreStatsRequest) -> Result<terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse, String> {
+        let context = request.context.as_ref().ok_or("restore stats context is missing")?;
+        let assignment = TbepLifecycleControl::assignment(context);
+        self.authority.verify(&assignment, LifecycleGrantAction::RestoreToTarget, &request.operation_id, &context.authority_signature, &context.operation_grant, Some(&request.journal_cut))?;
+        let receipt = self.worker.restore_stats(request).await?;
+        Ok(terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse { operation_id: request.operation_id.clone(), target_owner: request.target_owner.clone(), target_database: request.target_database.clone(), checksum: receipt.logical_content_checksum, row_count: receipt.restored_documents, journal_cut: request.journal_cut.clone(), placement: vec![context.region.clone()] })
+    }
     /// Ensures a complete snapshot after verifying accepted authority.
     pub async fn ensure_snapshot(
         &self,
@@ -555,11 +582,7 @@ impl ProductionLifecycleControl {
         operation_grant: &[u8],
     ) -> Result<NativeLifecycleReceipt, String> {
         self.authority.verify(assignment, action, operation, signature, operation_grant, None)?;
-        self.worker.verify_snapshot_placement(assignment, operation).await.map(|_| {
-            NativeLifecycleReceipt::State(
-                terrabase::engine::lifecycle_state::LifecycleOperationOutcome::AlreadyApplied,
-            )
-        })
+        self.worker.verify_snapshot_placement(assignment, operation).await
     }
 
     pub async fn delete_owned_data(
@@ -572,5 +595,31 @@ impl ProductionLifecycleControl {
     ) -> Result<(), String> {
         self.authority.verify(assignment, action, operation, signature, operation_grant, None)?;
         self.worker.delete_owned_data(assignment, operation).await
+    }
+}
+
+#[cfg(test)]
+mod restore_digest_tests {
+    use super::restore_request_digest;
+    use terrabase_tbep::proto::terrabase::v1::{RestoreProvider, RestoreToTargetRequest};
+
+    #[test]
+    fn restore_request_digest_matches_cross_language_vector() {
+        let request = RestoreToTargetRequest {
+            source_owner: "source-owner".into(),
+            source_database: "source-database".into(),
+            recovery_point_id: "recovery-point".into(),
+            recovery_point_digest: "recovery-digest".into(),
+            target_owner: "target-owner".into(),
+            target_database: "target-database".into(),
+            journal_cut: "journal-cut".into(),
+            restore_epoch: 7,
+            provider: RestoreProvider::Oci as i32,
+            ..Default::default()
+        };
+        assert_eq!(
+            restore_request_digest(&request).expect("digest"),
+            "8de75d48c6ed3bba6d0b05f266c390a3fb36c155ba423a225e8e733fae64413d"
+        );
     }
 }

@@ -209,7 +209,25 @@ impl Engine {
         if !context.permit.is_valid() || state.context() != Some(context.split) {
             return Err(RouteCatalogError::Malformed);
         }
+        if context.permit.required() < context.drained_through
+            || state.source_high_water() > context.drained_through
+            || state.acked_through() > context.drained_through
+        {
+            return Err(RouteCatalogError::Conflict);
+        }
+        let _fence = self
+            .origin_commit_barrier
+            .write()
+            .map_err(|_| RouteCatalogError::Engine(EngineError::StorageFailure))?;
+        // A writer may have committed before this exclusive fence was
+        // acquired while the split worker still carried the old watermark.
+        // The published sequence is the engine's durable upper bound for all
+        // origin writes, so the target must cover it before cutover proceeds.
+        if context.drained_through < self.published_sequence()?.get() {
+            return Err(RouteCatalogError::Conflict);
+        }
         let mut tx = self.begin(scope, self.read_snapshot(scope)?, operation)?;
+        tx.internal_maintenance = true;
         let route_key = key(context.split.database_incarnation());
         let current = bytes(tx.read_private_metadata(&route_key)?)?
             .ok_or(RouteCatalogError::Malformed)?;

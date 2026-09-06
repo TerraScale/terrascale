@@ -105,7 +105,8 @@ pub mod worker;
 
 pub use manifest::{BackupManifest, BackupMember, BackupTenantCount};
 pub use restore::{
-    RecoveryReceipt, RestoreChainLink, RestoredTenant, verify_latest_chain_encrypted,
+    read_restore_marker, RecoveryReceipt, RestoreChainLink, RestoreMarkerFacts, RestoredTenant,
+    verify_latest_chain_encrypted,
 };
 
 use std::collections::BTreeMap;

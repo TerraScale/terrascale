@@ -197,14 +197,27 @@ pub struct NativeRestoreOperation {
     /// Durable execution phase.
     pub phase: NativeRestorePhase,
     /// Secret-safe rendered receipt after successful restore.
-    pub receipt: Option<String>,
+    pub receipt: Option<NativeRestoreReceipt>,
     /// Safe failure classification.
     pub error: Option<String>,
 }
 
+/// Structured facts produced only after native restore verification.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NativeRestoreReceipt {
+    /// Authenticated selected manifest identity.
+    pub selected_identity: String,
+    /// Logical BLAKE3 checksum of restored content.
+    pub logical_content_checksum: String,
+    /// Number of restored logical documents.
+    pub restored_documents: u64,
+    /// Selected source journal boundary.
+    pub journal_cut: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeRestoreOutcome {
-    pub receipt: String,
+    pub receipt: NativeRestoreReceipt,
 }
 
 /// Production restore owner. Implementations reserve the target and publish
@@ -255,6 +268,7 @@ pub struct NativeRecoveryRuntime {
     worker_error: Mutex<Option<NativeRecoveryError>>,
     _worker_lease: Arc<File>,
     restore_executor: Arc<dyn RestoreExecutor>,
+    restore_target_resolver: Arc<dyn Fn(&str) -> Result<(terrabase::engine::EngineConfig, terrabase::backup::PlacementLock), String> + Send + Sync>,
 }
 
 impl NativeRecoveryRuntime {
@@ -268,6 +282,7 @@ impl NativeRecoveryRuntime {
         registry: Arc<AdmittedDatabaseRegistry>,
         limits: NativeRecoveryLimits,
         restore_executor: Arc<dyn RestoreExecutor>,
+        restore_target_resolver: Arc<dyn Fn(&str) -> Result<(terrabase::engine::EngineConfig, terrabase::backup::PlacementLock), String> + Send + Sync>,
     ) -> Result<(Arc<Self>, NativeRecoveryWorker), NativeRecoveryError> {
         let limits = limits.validate()?;
         let executor =
@@ -322,6 +337,7 @@ impl NativeRecoveryRuntime {
             worker_error: Mutex::new(None),
             _worker_lease: Arc::new(worker_lease),
             restore_executor,
+            restore_target_resolver,
         });
         let (stop, stopped) = tokio::sync::oneshot::channel();
         let worker_runtime = Arc::clone(&runtime);
@@ -511,6 +527,43 @@ impl NativeRecoveryRuntime {
             .transpose()
     }
 
+    /// Returns the original admitted request after checking its target grant.
+    pub fn restore_request(
+        &self,
+        operation_id: &str,
+        target: &str,
+        target_owner: &str,
+    ) -> Result<Option<NativeRestoreRequest>, NativeRecoveryError> {
+        let Some(operation) = self.restore_status(operation_id)? else { return Ok(None) };
+        if operation.request.target_database_id != target
+            || operation.request.target_owner != target_owner
+        {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
+        Ok(Some(operation.request))
+    }
+
+    /// Returns facts only for a complete restore with exact identity binding.
+    pub fn verified_restore_stats(
+        &self,
+        operation_id: &str,
+        target: &str,
+        target_owner: &str,
+        journal_cut: &str,
+        restore_epoch: u64,
+    ) -> Result<Option<NativeRestoreReceipt>, NativeRecoveryError> {
+        let Some(operation) = self.restore_status(operation_id)? else { return Ok(None) };
+        if operation.phase != NativeRestorePhase::Complete
+            || operation.request.target_database_id != target
+            || operation.request.target_owner != target_owner
+            || operation.request.journal_cut != journal_cut
+            || operation.request.restore_epoch != restore_epoch
+        {
+            return Ok(None);
+        }
+        Ok(operation.receipt)
+    }
+
     async fn process_pending(self: &Arc<Self>) -> Result<bool, NativeRecoveryError> {
         if self.process_restore_pending().await? {
             return Ok(true);
@@ -630,10 +683,15 @@ impl NativeRecoveryRuntime {
         let Some(bytes) = row else { return Ok(false) };
         let mut operation: NativeRestoreOperation =
             serde_json::from_slice(&bytes).map_err(|_| NativeRecoveryError::VerificationFailed)?;
-        if matches!(operation.phase, NativeRestorePhase::Verifying)
-            && operation.receipt.is_some()
-        {
-            operation.phase = NativeRestorePhase::Complete;
+        if matches!(operation.phase, NativeRestorePhase::Restoring | NativeRestorePhase::Verifying | NativeRestorePhase::Uncertain) {
+            if let Some(receipt) = self.read_published_restore(&operation)? {
+                operation.receipt = Some(receipt);
+                operation.phase = NativeRestorePhase::Complete;
+                operation.error = None;
+            } else {
+                operation.phase = NativeRestorePhase::Uncertain;
+                operation.error = Some("native restore outcome requires authenticated target readback".into());
+            }
             self.save_restore(&operation)?;
             return Ok(true);
         }
@@ -663,9 +721,34 @@ impl NativeRecoveryRuntime {
         operation.phase = NativeRestorePhase::Verifying;
         operation.receipt = Some(receipt);
         self.save_restore(&operation)?;
-        operation.phase = NativeRestorePhase::Complete;
-        self.save_restore(&operation)?;
         Ok(true)
+    }
+
+    fn read_published_restore(&self, operation: &NativeRestoreOperation) -> Result<Option<NativeRestoreReceipt>, NativeRecoveryError> {
+        let (config, _) = (self.restore_target_resolver)(&operation.request.target_database_id)
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
+        let engine = terrabase::engine::Engine::open(config)
+            .map_err(|_| NativeRecoveryError::Unavailable)?;
+        let request = &operation.request;
+        let journal_cut = request.journal_cut.parse().map_err(|_| NativeRecoveryError::VerificationFailed)?;
+        let identity = terrabase::backup::RestoreIdentity {
+            operation_id: request.operation_id.clone(),
+            source_database_id: request.source_database_id.clone(),
+            target_database_id: request.target_database_id.clone(),
+            provider: request.provider.clone(),
+            selection: match &request.selection { NativeRestoreSelection::PointId(value) => value.clone(), NativeRestoreSelection::AtUnixMillis(value) => value.to_string() },
+            expected_manifest_digest: request.recovery_point_digest.clone(),
+            expected_journal_boundary: journal_cut,
+            restore_epoch: request.restore_epoch,
+        };
+        let Some(marker) = terrabase::backup::read_restore_marker(&engine, &identity)
+            .map_err(|_| NativeRecoveryError::VerificationFailed)? else { return Ok(None) };
+        Ok(Some(NativeRestoreReceipt {
+            selected_identity: request.recovery_point_id.clone(),
+            logical_content_checksum: marker.logical_checksum,
+            restored_documents: marker.restored_documents,
+            journal_cut,
+        }))
     }
 
     fn save_restore(&self, operation: &NativeRestoreOperation) -> Result<(), NativeRecoveryError> {
@@ -832,6 +915,7 @@ mod tests {
             Arc::clone(&registry),
             limits(),
             Arc::new(RejectRestore),
+            Arc::new(|_| Err("target unavailable".into())),
         )
         .unwrap();
         worker.shutdown().await.unwrap();
@@ -854,6 +938,7 @@ mod tests {
             Arc::clone(&registry),
             limits(),
             Arc::new(RejectRestore),
+            Arc::new(|_| Err("target unavailable".into())),
         )
         .unwrap();
         let source = records[0].database_id.clone();

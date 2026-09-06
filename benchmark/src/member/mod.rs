@@ -1633,14 +1633,18 @@ impl DatabaseLease {
 
     /// Converts this sole admitted lease into an exclusive restore permit.
     /// The engine and admission permits are dropped before the permit returns.
-    pub fn reserve_restore(self) -> Result<RestorePermit, MemberError> {
+    pub fn reserve_restore(self) -> Result<RestorePermit, (DatabaseLease, MemberError)> {
         let location = self.location.clone();
         let database = self.database.clone();
         let path_guard = Arc::clone(&self.restore_paths);
-        let mut paths =
-            self.restore_paths.lock().map_err(|_| MemberError::DatabaseBusy(database.clone()))?;
+        let restore_paths = Arc::clone(&self.restore_paths);
+        let mut paths = match restore_paths.lock() {
+            Ok(paths) => paths,
+            Err(_) => return Err((self, MemberError::DatabaseBusy(database.clone()))),
+        };
         if !paths.insert(location.clone()) {
-            return Err(MemberError::DatabaseBusy(database));
+            drop(paths);
+            return Err((self, MemberError::DatabaseBusy(database)));
         }
         drop(paths);
         drop(self);

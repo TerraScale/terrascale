@@ -391,6 +391,7 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             Arc::clone(&admission),
             Arc::clone(&native),
         )),
+        admission.native_restore_target_resolver(),
     )
     .map_err(|_| {
         Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(

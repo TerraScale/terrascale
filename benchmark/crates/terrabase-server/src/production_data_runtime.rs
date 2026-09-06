@@ -604,7 +604,7 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
             };
             let point = match &request.selection {
                 crate::native_recovery::NativeRestoreSelection::PointId(point) => {
-                    Some(point.as_str())
+                    Some(point.clone())
                 }
                 crate::native_recovery::NativeRestoreSelection::AtUnixMillis(_) => {
                     return Err("timestamp restore executor is unavailable".into());
@@ -620,7 +620,7 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                     &request.source_database_id,
                     &request.target_database_id,
                     provider,
-                    point,
+                    point.as_deref(),
                     &request.operation_id,
                     &request.recovery_point_digest,
                     expected_cut,
@@ -632,7 +632,7 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
             {
                 return Err("authenticated recovery manifest facts do not match request".into());
             }
-            Ok(crate::native_recovery::NativeRestoreOutcome { receipt: receipt.render() })
+            Ok(crate::native_recovery::NativeRestoreOutcome { receipt: crate::native_recovery::NativeRestoreReceipt { selected_identity: receipt.selected_identity().to_owned(), logical_content_checksum: receipt.logical_checksum().to_owned(), restored_documents: receipt.restored_documents(), journal_cut: receipt.selected_boundary().get() } })
         })
     }
 }

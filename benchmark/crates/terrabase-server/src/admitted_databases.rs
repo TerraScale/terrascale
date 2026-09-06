@@ -206,7 +206,7 @@ impl AdmittedDatabaseRegistry {
         let lease = host.into_admitted_lease().map_err(|_| "restore target lease is not exclusive")?;
         let permit = match lease.reserve_restore() {
             Ok(permit) => permit,
-            Err(_) => {
+            Err((lease, _)) => {
                 let host = Arc::new(MemberHost::from_admitted(lease, location.clone(), 1));
                 databases.insert(database.to_owned(), Arc::new(AdmittedDatabase { activity, record, host }));
                 if activated { serving.insert(database.to_owned()); }

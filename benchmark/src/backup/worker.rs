@@ -664,7 +664,19 @@ impl NativeBackupFleet {
     ) -> Result<super::RecoveryReceipt, FleetError> {
         let stream = self.streams.get(database).ok_or(FleetError::Configuration)?;
         let owner = target.owner().ok_or(FleetError::Configuration)?;
-        if !target.has_encrypted_owner() || !stream.config.placement.allows(owner.region()) {
+        let expected_selection = match (point, at) {
+            (Some(point), None) => point.to_owned(),
+            (None, Some(at)) => at.to_string(),
+            (None, None) => "latest".into(),
+            (Some(_), Some(_)) => return Err(FleetError::Configuration),
+        };
+        if !target.has_encrypted_owner()
+            || !stream.config.placement.allows(owner.region())
+            || identity.source_database_id != database
+            || identity.target_database_id != owner.database().to_text()
+            || identity.provider != format!("{provider:?}").to_lowercase()
+            || identity.selection != expected_selection
+        {
             return Err(FleetError::Configuration);
         }
         let destination = stream
