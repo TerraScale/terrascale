@@ -2609,7 +2609,7 @@ pub(crate) fn document_host(
 ) -> Result<Arc<terrabase_tbep::member_host::MemberHost>, ApiError> {
     if let Some(admitted) = &state.admitted_databases {
         let database = admitted
-            .resolve(name)
+            .resolve_serving(name)
             .map_err(|_| ApiError::storage_failure())?
             .ok_or_else(|| ApiError::database_not_found(name))?;
         let record = database.public_record().map_err(|_| ApiError::storage_failure())?;
@@ -2662,7 +2662,7 @@ pub(crate) fn database_record(
 ) -> Result<crate::control::DatabaseRecord, ApiError> {
     if let Some(admitted) = &state.admitted_databases {
         return admitted
-            .resolve(name)
+            .resolve_metadata(name)
             .map_err(|_| ApiError::storage_failure())?
             .map(|database| database.public_record().map_err(|_| ApiError::storage_failure()))
             .transpose()?
@@ -2681,7 +2681,7 @@ pub(crate) fn database_records(
     state: &ApiState,
 ) -> Result<Vec<crate::control::DatabaseRecord>, ApiError> {
     if let Some(admitted) = &state.admitted_databases {
-        return admitted.records().map_err(|_| ApiError::storage_failure());
+        return admitted.public_records().map_err(|_| ApiError::storage_failure());
     }
     state
         .control
@@ -3808,7 +3808,7 @@ async fn create_branch(
         let Some(registry) = &state.admitted_databases else {
             return ApiError::control_unavailable().into_response();
         };
-        let parent = match registry.resolve(&name) {
+        let parent = match registry.resolve_serving(&name) {
             Ok(Some(value)) => value,
             Ok(None) => return ApiError::database_not_found(&name).into_response(),
             Err(_) => return ApiError::storage_failure().into_response(),

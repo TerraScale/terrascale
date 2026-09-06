@@ -177,13 +177,7 @@ impl ReplicationProgress {
             }
         }
         let mut databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
-        let new_count = entries
-            .iter()
-            .filter(|(scope, selected)| match databases.get(scope) {
-                Some(existing) => !(!existing.fenced && existing.selected == *selected),
-                None => true,
-            })
-            .count();
+        let new_count = entries.keys().filter(|scope| !databases.contains_key(scope)).count();
         if databases.len().saturating_add(new_count) > terrabase::member::MAX_DATABASES {
             return Err(ReplicationWaitError::NotAdmitted);
         }
@@ -437,5 +431,67 @@ mod tests {
             progress.advance_region(scope(), "fra", &BTreeMap::new()),
             Err(ReplicationWaitError::NotAdmitted)
         );
+    }
+
+    #[test]
+    fn batch_rejects_later_invalid_entry_without_partial_progress() {
+        let progress = ReplicationProgress::default();
+        let other = DatabaseRouteScope::try_new(
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAZ",
+        )
+        .unwrap();
+        assert!(
+            progress
+                .admit_many(BTreeMap::from([
+                    (scope(), BTreeSet::from(["GRU".into()])),
+                    (other, BTreeSet::new()),
+                ]))
+                .is_err()
+        );
+        assert_eq!(progress.selected_regions(scope()), Err(ReplicationWaitError::NotAdmitted));
+    }
+
+    #[test]
+    fn identical_batch_registration_preserves_existing_progress() {
+        let progress = ReplicationProgress::default();
+        progress.admit(scope(), BTreeSet::from(["GRU".into()])).unwrap();
+        progress.advance_regional(scope(), 7);
+        progress.admit_many(BTreeMap::from([(scope(), BTreeSet::from(["GRU".into()]))])).unwrap();
+        assert_eq!(progress.boundaries().unwrap()[&scope()].regional_sequence, 7);
+    }
+
+    #[test]
+    fn batch_rejects_conflicting_and_fenced_existing_assignments() {
+        let progress = ReplicationProgress::default();
+        progress.admit(scope(), BTreeSet::from(["GRU".into()])).unwrap();
+        assert!(
+            progress
+                .admit_many(BTreeMap::from([(scope(), BTreeSet::from(["SFO".into()]))]))
+                .is_err()
+        );
+        progress.fence_database(scope());
+        assert!(
+            progress
+                .admit_many(BTreeMap::from([(scope(), BTreeSet::from(["GRU".into()]))]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn batch_rejects_new_scope_capacity_overflow_atomically() {
+        let progress = ReplicationProgress::default();
+        let mut entries = BTreeMap::new();
+        for _ in 0..=terrabase::member::MAX_DATABASES {
+            let scope = DatabaseRouteScope::new(
+                terrabase::identity::TenantUlid::generate(),
+                terrabase::identity::ProjectUlid::generate(),
+                terrabase::identity::DatabaseUlid::generate(),
+            );
+            entries.insert(scope, BTreeSet::from(["GRU".into()]));
+        }
+        assert!(progress.admit_many(entries).is_err());
+        assert!(progress.boundaries().unwrap().is_empty());
     }
 }

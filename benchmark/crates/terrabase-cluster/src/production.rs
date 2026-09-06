@@ -510,7 +510,7 @@ pub struct ProductionMemberRuntime {
     wal_bindings: Mutex<WalBindings>,
     placement: ProductionPlacement,
     routes: Mutex<DatabaseRoutingCatalog>,
-    published_routes: Mutex<BTreeSet<DatabaseRouteScope>>,
+    published_routes: Mutex<PublishedRoutes>,
     member: Member,
     transport: Arc<ProductionQuicEndpoint>,
     membership_admission: Mutex<MembershipAdmission>,
@@ -521,6 +521,34 @@ pub struct ProductionMemberRuntime {
 /// Owns revocation even when the runtime is dropped without graceful drain.
 #[derive(Default)]
 struct WalBindings(BTreeMap<DatabaseRouteScope, WalReplicaBinding>);
+
+#[derive(Default)]
+struct PublishedRoutes(BTreeSet<DatabaseRouteScope>);
+
+impl PublishedRoutes {
+    fn contains(&self, scope: &DatabaseRouteScope) -> bool {
+        self.0.contains(scope)
+    }
+
+    fn activate(
+        &mut self,
+        scopes: &[DatabaseRouteScope],
+        routes: &DatabaseRoutingCatalog,
+    ) -> Result<(), ProductionMemberError> {
+        let requested = scopes.iter().copied().collect::<BTreeSet<_>>();
+        if requested.len() != scopes.len()
+            || requested.iter().any(|scope| routes.resolve(scope).is_none())
+        {
+            return Err(ProductionMemberError::InvalidRoutingCatalog);
+        }
+        self.0.extend(requested);
+        Ok(())
+    }
+
+    fn remove(&mut self, scope: &DatabaseRouteScope) {
+        self.0.remove(scope);
+    }
+}
 
 impl WalBindings {
     fn fence(&self) {
@@ -585,14 +613,7 @@ impl ProductionMemberRuntime {
             return Err(ProductionMemberError::MembershipMismatch);
         }
         let routes = lock_unpoisoned(&self.routes);
-        let requested = scopes.iter().copied().collect::<BTreeSet<_>>();
-        if requested.len() != scopes.len()
-            || requested.iter().any(|scope| routes.resolve(scope).is_none())
-        {
-            return Err(ProductionMemberError::InvalidRoutingCatalog);
-        }
-        lock_unpoisoned(&self.published_routes).extend(requested);
-        Ok(())
+        lock_unpoisoned(&self.published_routes).activate(scopes, &routes)
     }
 
     /// Retires a customer route after its replication workers have drained.
@@ -617,6 +638,7 @@ impl ProductionMemberRuntime {
     /// catalog, routing catalog, placement, and transport admission table. It
     /// does not admit traffic. The durable membership source and data-plane
     /// adapter must still be attached, and their facts must pass readiness.
+    /// Configured routes also require explicit activation after lane admission.
     ///
     /// # Errors
     ///
@@ -655,7 +677,7 @@ impl ProductionMemberRuntime {
             return Err(ProductionMemberError::TransportMismatch);
         }
 
-        let published_routes = routes.routes.keys().copied().collect();
+        let published_routes = PublishedRoutes::default();
         Ok(Self {
             placement,
             routes: Mutex::new(routes),
@@ -868,10 +890,8 @@ impl ProductionMemberRuntime {
         if !lock_unpoisoned(&self.published_routes).contains(scope) {
             return Err(ProductionAdmissionError::UnknownDatabaseScope);
         }
-        let database = routes
-            .resolve(scope)
-            .cloned()
-            .ok_or(ProductionAdmissionError::UnknownDatabaseScope)?;
+        let database =
+            routes.resolve(scope).cloned().ok_or(ProductionAdmissionError::UnknownDatabaseScope)?;
         let lease = self.member.acquire(&database).map_err(ProductionAdmissionError::Storage)?;
         drop(admission);
         Ok(ProductionDatabaseLease { scope: *scope, lease })
@@ -1053,7 +1073,7 @@ mod tests {
 
     use super::{
         DatabaseRouteScope, DatabaseRoutingCatalog, ProductionMemberError, ProductionPlacement,
-        ProductionRegionSeats,
+        ProductionRegionSeats, PublishedRoutes,
     };
 
     fn value(number: u128) -> Ulid {
@@ -1164,6 +1184,35 @@ mod tests {
             DatabaseRoutingCatalog::try_new([first, first]).err(),
             Some(ProductionMemberError::InvalidRoutingCatalog)
         );
+    }
+
+    #[test]
+    fn staged_routes_publish_only_after_valid_atomic_batch() {
+        let first = scope(1);
+        let second = scope(2);
+        let routes = DatabaseRoutingCatalog::try_new([first, second]).unwrap();
+        let mut published = PublishedRoutes::default();
+
+        assert!(!published.contains(&first));
+        let unknown = DatabaseRouteScope::new(
+            first.tenant(),
+            first.project(),
+            DatabaseUlid::from_value(value(4)),
+        );
+        assert_eq!(
+            published.activate(&[first, unknown], &routes),
+            Err(ProductionMemberError::InvalidRoutingCatalog)
+        );
+        assert!(!published.contains(&first));
+        assert!(!published.contains(&second));
+
+        published.activate(&[first, second], &routes).unwrap();
+        assert!(published.contains(&first));
+        assert!(published.contains(&second));
+        published.activate(&[first, second], &routes).unwrap();
+        published.remove(&first);
+        assert!(!published.contains(&first));
+        assert!(published.contains(&second));
     }
     struct MembershipSource(Result<ProductionPlacement, super::MembershipSourceError>);
 

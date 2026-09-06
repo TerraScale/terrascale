@@ -183,7 +183,8 @@ impl ReplicationPeers {
         progress: Arc<ReplicationProgress>,
         batch: PeerDatabaseBatch,
     ) -> Result<Self, String> {
-        Self::start_with_dispatch(runtime, progress, batch, None)
+        batch.validate()?;
+        Self::start_inner(runtime, progress, batch.lanes, batch.selected_regions, None)
     }
 
     /// Starts workers with an application-control dispatcher.
@@ -191,10 +192,10 @@ impl ReplicationPeers {
         runtime: Arc<ProductionMemberRuntime>,
         progress: Arc<ReplicationProgress>,
         batch: PeerDatabaseBatch,
-        dispatcher: Option<Arc<dyn PeerControlDispatcher>>,
+        dispatcher: Arc<dyn PeerControlDispatcher>,
     ) -> Result<Self, String> {
         batch.validate()?;
-        Self::start_inner(runtime, progress, batch.lanes, batch.selected_regions, dispatcher)
+        Self::start_inner(runtime, progress, batch.lanes, batch.selected_regions, Some(dispatcher))
     }
     fn start_inner(
         runtime: Arc<ProductionMemberRuntime>,
@@ -224,7 +225,6 @@ impl ReplicationPeers {
             }
             validated.push((id, lanes));
         }
-        progress.admit_many(selected_regions).map_err(failure)?;
         let observations: PeerObservations = Arc::default();
         for (id, lanes) in &validated {
             observe(&observations, id.as_str(), lanes, false);
@@ -254,7 +254,10 @@ impl ReplicationPeers {
         let worker_observations = observations.clone();
         let (stop, stopped) = watch::channel(false);
         let worker_stop = stop.clone();
-        let join = tokio::spawn(async move {
+        let runtime_handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| "replication startup requires an active Tokio runtime")?;
+        progress.admit_many(selected_regions).map_err(failure)?;
+        let join = runtime_handle.spawn(async move {
             let mut workers = tokio::task::JoinSet::new();
             let mut incoming = BTreeMap::new();
             for (id, lanes, new_lanes) in validated {
@@ -340,10 +343,9 @@ impl ReplicationPeers {
     /// Adds newly accepted scopes to the bounded persistent peer workers.
     /// # Errors
     /// Rejects duplicate scopes, unadmitted peers, exceeded bounds, or stopped workers.
-    pub async fn add_databases(
-        &self,
-        peers: BTreeMap<String, Vec<PeerDatabase>>,
-    ) -> Result<(), String> {
+    pub async fn add_databases(&self, batch: PeerDatabaseBatch) -> Result<(), String> {
+        batch.validate()?;
+        let PeerDatabaseBatch { lanes: peers, selected_regions } = batch;
         // Reserve every bounded worker queue before publishing any assignment.
         // Cancellation or a closed receiver releases reservations without leaving
         // admission tombstones or a partially delivered multi-peer database.
@@ -383,6 +385,7 @@ impl ReplicationPeers {
                     }
                 }
             }
+            self.progress.admit_many(selected_regions).map_err(failure)?;
             admitted.extend(unique);
         }
         // No await occurs after the admission commit, so cancellation cannot

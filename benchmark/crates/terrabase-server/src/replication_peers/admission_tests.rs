@@ -76,6 +76,47 @@ fn request(a: DatabaseRouteScope, b: DatabaseRouteScope) -> BTreeMap<String, Vec
     BTreeMap::from([("peer-a".into(), vec![lane(a)]), ("peer-b".into(), vec![lane(b)])])
 }
 
+fn batch(lanes: BTreeMap<String, Vec<PeerDatabase>>) -> PeerDatabaseBatch {
+    let selected_regions = lanes
+        .values()
+        .flat_map(|lanes| {
+            lanes.iter().map(|lane| (lane.scope, std::collections::BTreeSet::from(["GRU".into()])))
+        })
+        .collect();
+    PeerDatabaseBatch { lanes, selected_regions }
+}
+
+#[tokio::test]
+async fn incomplete_or_conflicting_metadata_leaves_queues_and_progress_unchanged() {
+    for mode in 0..3 {
+        let mut state = synthetic();
+        let a = scope(1);
+        let b = scope(2);
+        let mut request = batch(request(a, b));
+        match mode {
+            0 => {
+                request.selected_regions.remove(&b);
+            }
+            1 => {
+                request.selected_regions.insert(scope(3), ["GRU".into()].into_iter().collect());
+            }
+            _ => {
+                request.selected_regions.insert(b, Default::default());
+            }
+        }
+        assert!(state.peers.add_databases(request).await.is_err());
+        assert!(state.progress.boundaries().unwrap().is_empty());
+        assert!(state.peers.admitted.lock().unwrap().is_empty());
+        assert!(state.observations.lock().unwrap().is_empty());
+        for receiver in state.receivers.values_mut() {
+            assert!(matches!(
+                receiver.receiver.as_mut().unwrap().try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+        }
+    }
+}
+
 #[tokio::test]
 async fn closed_later_queue_leaves_earlier_queue_and_admission_unchanged() {
     let mut synthetic = synthetic();
@@ -83,13 +124,14 @@ async fn closed_later_queue_leaves_earlier_queue_and_admission_unchanged() {
     let b = scope(2);
     drop(synthetic.receivers.remove("peer-b").unwrap());
 
-    assert!(synthetic.peers.add_databases(request(a, b)).await.is_err());
+    assert!(synthetic.peers.add_databases(batch(request(a, b))).await.is_err());
     assert!(matches!(
         synthetic.receivers.get_mut("peer-a").unwrap().receiver.as_mut().unwrap().try_recv(),
         Err(mpsc::error::TryRecvError::Empty)
     ));
     assert!(synthetic.peers.admitted.lock().unwrap().is_empty());
     assert!(synthetic.peers.observations().lock().unwrap().is_empty());
+    assert!(synthetic.progress.boundaries().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -110,7 +152,7 @@ async fn receiver_closed_after_reservation_cannot_publish_partial_admission() {
         .lock()
         .unwrap()
         .insert(("peer-a".into(), a), PeerFacts { connected: true, ..PeerFacts::default() });
-    let add = synthetic.peers.add_databases(request(a, b));
+    let add = synthetic.peers.add_databases(batch(request(a, b)));
     tokio::pin!(add);
     for _ in 0..100 {
         if synthetic.peers.admissions.get("peer-a").unwrap().capacity() == 0 {
@@ -132,6 +174,7 @@ async fn receiver_closed_after_reservation_cannot_publish_partial_admission() {
     assert!(synthetic.peers.admitted.lock().unwrap().is_empty());
     assert!(synthetic.peers.observations().lock().unwrap().contains_key(&("peer-a".into(), a)));
     assert!(synthetic.progress.selected_regions(a).is_err());
+    assert!(!synthetic.progress.boundaries().unwrap().contains_key(&b));
     assert!(!synthetic.observations.lock().unwrap().get(&("peer-a".into(), a)).unwrap().connected);
 }
 
@@ -150,7 +193,7 @@ async fn cancelled_reservation_releases_prior_queue_capacity_for_retry() {
 
     let result = tokio::time::timeout(
         std::time::Duration::from_millis(10),
-        synthetic.peers.add_databases(request(a, b)),
+        synthetic.peers.add_databases(batch(request(a, b))),
     )
     .await;
     assert!(result.is_err());
@@ -160,11 +203,14 @@ async fn cancelled_reservation_releases_prior_queue_capacity_for_retry() {
     ));
     assert!(synthetic.peers.admitted.lock().unwrap().is_empty());
     assert!(synthetic.peers.observations().lock().unwrap().is_empty());
+    assert!(synthetic.progress.boundaries().unwrap().is_empty());
 
     assert!(
         matches!(synthetic.receivers.get_mut("peer-b").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.is_empty())
     );
-    synthetic.peers.add_databases(request(a, b)).await.unwrap();
+    synthetic.peers.add_databases(batch(request(a, b))).await.unwrap();
+    assert!(synthetic.progress.selected_regions(a).is_ok());
+    assert!(synthetic.progress.selected_regions(b).is_ok());
     assert!(
         matches!(synthetic.receivers.get_mut("peer-a").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.len() == 1)
     );
@@ -183,7 +229,7 @@ async fn successful_admission_sends_each_lane_once_and_duplicate_is_atomic() {
         ("peer-a".into(), vec![lane(a), lane(b)]),
         ("peer-b".into(), vec![lane(c)]),
     ]);
-    synthetic.peers.add_databases(peers).await.unwrap();
+    synthetic.peers.add_databases(batch(peers)).await.unwrap();
     assert!(
         matches!(synthetic.receivers.get_mut("peer-a").unwrap().recv().await, Some(PeerCommand::Add(lanes)) if lanes.len() == 2)
     );
@@ -198,7 +244,7 @@ async fn successful_admission_sends_each_lane_once_and_duplicate_is_atomic() {
         ("peer-a".into(), vec![lane(a), lane(b)]),
         ("peer-b".into(), vec![lane(c)]),
     ]);
-    assert!(synthetic.peers.add_databases(duplicate).await.is_err());
+    assert!(synthetic.peers.add_databases(batch(duplicate)).await.is_err());
     assert!(matches!(
         synthetic.receivers.get_mut("peer-a").unwrap().receiver.as_mut().unwrap().try_recv(),
         Err(mpsc::error::TryRecvError::Empty)

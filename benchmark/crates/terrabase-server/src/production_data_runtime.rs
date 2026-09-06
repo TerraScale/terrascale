@@ -1,5 +1,7 @@
 //! Accepted database assignments assembled into the live, lease-owning data plane.
-use crate::replication_peers::{PeerDatabase, PhysicalDriver, ReplicationPeers, SnapshotReceiver};
+use crate::replication_peers::{
+    PeerDatabase, PeerDatabaseBatch, PhysicalDriver, ReplicationPeers, SnapshotReceiver,
+};
 use crate::replication_runtime::ReplicationProgress;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -51,7 +53,7 @@ impl ProductionDataRuntime {
         databases: Vec<ProductionDatabaseAssignment>,
         dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
     ) -> Result<Self, String> {
-        let peers = build_peer_databases(&runtime, &progress, source, databases).await?;
+        let peers = build_peer_databases(&runtime, source, databases).await?;
         let peers =
             ReplicationPeers::start_with_dispatch(runtime, progress.clone(), peers, dispatcher)?;
         Ok(Self { peers, progress })
@@ -79,11 +81,11 @@ impl ProductionDataRuntime {
 /// Refuses any incomplete accepted assignment or failed encrypted snapshot capture.
 pub async fn build_peer_databases(
     runtime: &Arc<ProductionMemberRuntime>,
-    progress: &Arc<ReplicationProgress>,
     source: &dyn DurableWalAssignmentSource,
     databases: Vec<ProductionDatabaseAssignment>,
-) -> Result<BTreeMap<String, Vec<PeerDatabase>>, String> {
+) -> Result<PeerDatabaseBatch, String> {
     let mut lanes: BTreeMap<String, Vec<PeerDatabase>> = BTreeMap::new();
+    let mut selected_regions = BTreeMap::new();
     let mut seen = BTreeSet::new();
     for database in databases {
         if !seen.insert(database.scope) || database.snapshot_max_bytes == 0 {
@@ -190,9 +192,9 @@ pub async fn build_peer_databases(
                 });
             }
         }
-        progress.admit(database.scope, database.selected_regions).map_err(failure)?;
+        selected_regions.insert(database.scope, database.selected_regions);
     }
-    Ok(lanes)
+    Ok(PeerDatabaseBatch { lanes, selected_regions })
 }
 
 fn failure(error: impl std::fmt::Debug) -> String {
@@ -211,6 +213,7 @@ pub struct ProductionAdmissionRuntime {
     host: Arc<crate::admission::AdmissionHost>,
     config: crate::config::ProductionConfig,
     active: BTreeSet<String>,
+    pending_publication: BTreeMap<DatabaseRouteScope, Option<String>>,
     data: Option<ProductionDataRuntime>,
     dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
     usage: Arc<crate::usage_admission::UsageAdmissionJournal>,
@@ -384,6 +387,7 @@ impl ProductionAdmissionRuntime {
             host: Arc::new(host),
             config,
             active: BTreeSet::new(),
+            pending_publication: BTreeMap::new(),
             data: None,
             dispatcher,
             usage,
@@ -565,7 +569,9 @@ impl ProductionAdmissionRuntime {
             }
             self.runtime.retire_route(scope).map_err(failure)?;
             self.active.remove(&record.database_id);
+            self.pending_publication.remove(&scope);
         }
+        self.publish_pending()?;
         let mut databases = Vec::new();
         let mut newly_active = Vec::new();
         for record in records {
@@ -679,16 +685,36 @@ impl ProductionAdmissionRuntime {
                     .map(|assignment| (assignment.region.clone(), assignment.writer_member.clone()))
                     .collect(),
             });
-            newly_active.push(record.database_id);
+            let local_writer = assignments.iter().any(|assignment| {
+                assignment.region == record.region && assignment.writer_member == local_member
+            });
+            newly_active.push((scope, record.database_id, local_writer));
         }
         if databases.is_empty() {
             return Ok(());
         }
         let data = self.data.as_ref().ok_or("shared member receiver is unavailable")?;
-        let lanes =
-            build_peer_databases(&self.runtime, &self.progress, &*self.journal, databases).await?;
+        let lanes = build_peer_databases(&self.runtime, &*self.journal, databases).await?;
         data.peers.add_databases(lanes).await?;
-        self.active.extend(newly_active);
+        // The queue commit cannot be canceled halfway. Record its phase before
+        // attempting fallible public publication, so retries never reinstall lanes.
+        for (scope, database, writer) in newly_active {
+            self.active.insert(database.clone());
+            self.pending_publication.insert(scope, writer.then_some(database));
+        }
+        self.publish_pending()
+    }
+
+    fn publish_pending(&mut self) -> Result<(), String> {
+        if self.pending_publication.is_empty() {
+            return Ok(());
+        }
+        let scopes = self.pending_publication.keys().copied().collect::<Vec<_>>();
+        let writers =
+            self.pending_publication.values().filter_map(Clone::clone).collect::<Vec<_>>();
+        self.runtime.activate_routes(&scopes).map_err(failure)?;
+        self.registry.activate(&writers)?;
+        self.pending_publication.clear();
         Ok(())
     }
 

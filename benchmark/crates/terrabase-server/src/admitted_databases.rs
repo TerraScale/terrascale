@@ -1,7 +1,7 @@
 //! Public routing over immutable admitted identities and retained Member leases.
 use crate::{admission::AdmissionRecord, control::DatabaseRecord};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::{Arc, RwLock},
 };
@@ -49,13 +49,18 @@ impl AdmittedDatabase {
 pub struct AdmittedDatabaseRegistry {
     ready: Arc<dyn Fn() -> bool + Send + Sync>,
     databases: RwLock<BTreeMap<String, Arc<AdmittedDatabase>>>,
+    serving: RwLock<BTreeSet<String>>,
 }
 
 impl AdmittedDatabaseRegistry {
     /// Binds every serving lookup to the complete Member's current readiness.
     #[must_use]
     pub fn new(ready: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
-        Self { ready, databases: RwLock::new(BTreeMap::new()) }
+        Self {
+            ready,
+            databases: RwLock::new(BTreeMap::new()),
+            serving: RwLock::new(BTreeSet::new()),
+        }
     }
 
     /// Publishes only after real Member admission, retaining its resource-accounted lease.
@@ -114,6 +119,60 @@ impl AdmittedDatabaseRegistry {
             .cloned())
     }
 
+    /// Publishes a validated batch only after replication lanes are committed.
+    /// Missing entries refuse the entire batch; identical retries are harmless.
+    pub fn activate(&self, databases: &[String]) -> Result<(), String> {
+        let mut serving = self.serving.write().map_err(|_| "admitted activation unavailable")?;
+        let retained = self.databases.read().map_err(|_| "admitted registry unavailable")?;
+        if databases.iter().any(|id| !retained.contains_key(id)) {
+            return Err("activation database is not retained".into());
+        }
+        serving.extend(databases.iter().cloned());
+        Ok(())
+    }
+
+    /// Public lookup excludes retained entries whose lanes are still pending.
+    pub fn resolve_serving(&self, database: &str) -> Result<Option<Arc<AdmittedDatabase>>, String> {
+        let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        if !serving.contains(database) {
+            return Ok(None);
+        }
+        self.resolve(database)
+    }
+
+    /// Metadata can describe a terminal deletion without reopening document access.
+    pub fn resolve_metadata(
+        &self,
+        database: &str,
+    ) -> Result<Option<Arc<AdmittedDatabase>>, String> {
+        let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        let retained = self.resolve(database)?;
+        match retained {
+            Some(entry) if serving.contains(database) || entry.public_record()?.deleted => {
+                Ok(Some(entry))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// Public metadata excludes pending entries but retains terminal deletion records.
+    pub fn public_records(&self) -> Result<Vec<DatabaseRecord>, String> {
+        if !(self.ready)() {
+            return Err("Member is not ready to serve".into());
+        }
+        let serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        self.databases
+            .read()
+            .map_err(|_| "admitted registry unavailable")?
+            .iter()
+            .filter_map(|(id, database)| match database.public_record() {
+                Ok(record) if serving.contains(id) || record.deleted => Some(Ok(record)),
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect()
+    }
+
     /// Enumerates admitted databases for bounded maintenance drivers.
     pub fn records(&self) -> Result<Vec<DatabaseRecord>, String> {
         if !(self.ready)() {
@@ -125,7 +184,7 @@ impl AdmittedDatabaseRegistry {
             .map_err(|_| "admitted registry unavailable")?
             .values()
             .map(|database| database.public_record())
-            .collect())
+            .collect::<Result<Vec<_>, _>>()?)
     }
 }
 
@@ -198,7 +257,33 @@ pub(crate) mod tests {
             let lease = member.acquire(&id).unwrap();
             registry.publish(record.clone(), lease, root.join(&record.database_id), 1).unwrap();
         }
+        registry
+            .activate(&records.iter().map(|record| record.database_id.clone()).collect::<Vec<_>>())
+            .unwrap();
         (registry, member, records, root)
+    }
+
+    #[test]
+    fn public_activation_requires_the_entire_retained_batch() {
+        let (registry, member, records, root) = fixture();
+        registry.serving.write().unwrap().clear();
+        assert!(registry.resolve(&records[0].database_id).unwrap().is_some());
+        assert!(registry.resolve_serving(&records[0].database_id).unwrap().is_none());
+        assert!(registry.resolve_metadata(&records[0].database_id).unwrap().is_none());
+        assert!(registry.public_records().unwrap().is_empty());
+        assert!(
+            registry
+                .activate(&[records[0].database_id.clone(), DatabaseUlid::generate().to_text()])
+                .is_err()
+        );
+        assert!(registry.resolve_serving(&records[0].database_id).unwrap().is_none());
+        let batch = records.iter().map(|record| record.database_id.clone()).collect::<Vec<_>>();
+        registry.activate(&batch).unwrap();
+        registry.activate(&batch).unwrap();
+        assert_eq!(registry.public_records().unwrap().len(), 2);
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -244,7 +329,8 @@ pub(crate) mod tests {
         assert!(!before.deleted);
         assert_eq!(before.deleted_at, None);
 
-        engine.lifecycle_prepare_deletion(&scope, "delete-1").unwrap();
+        let prepared_state = engine.lifecycle_prepare_deletion(&scope, "delete-1").unwrap();
+        let cutoff = prepared_state.deletion_preparation.unwrap().minimum_cutoff_millis;
         let prepared = first.public_record().unwrap();
         assert!(!prepared.deleted);
         assert!(registry.resolve(&records[0].database_id).unwrap().is_some());
@@ -254,14 +340,24 @@ pub(crate) mod tests {
                 &scope,
                 terrabase::engine::lifecycle_state::DeletionIntent {
                     operation_id: "delete-1".into(),
-                    usage_stopped_at: 42,
-                    retain_until: Some(100),
+                    usage_stopped_at: cutoff,
+                    retain_until: Some(cutoff + 100),
                 },
             )
             .unwrap();
         let deleted = first.public_record().unwrap();
         assert!(deleted.deleted);
-        assert_eq!(deleted.deleted_at, Some(42));
+        assert_eq!(deleted.deleted_at, Some(i64::try_from(cutoff).unwrap()));
+        registry.serving.write().unwrap().remove(&records[0].database_id);
+        assert!(registry.resolve_metadata(&records[0].database_id).unwrap().is_some());
+        assert!(registry.resolve_serving(&records[0].database_id).unwrap().is_none());
+        assert!(
+            registry
+                .public_records()
+                .unwrap()
+                .iter()
+                .any(|record| record.name == records[0].database_id && record.deleted)
+        );
         assert!(registry.resolve(&records[0].database_id).unwrap().is_some());
 
         let unrelated =
@@ -269,6 +365,7 @@ pub(crate) mod tests {
         assert!(!unrelated.deleted);
         assert_eq!(unrelated.deleted_at, None);
 
+        drop(first);
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();
