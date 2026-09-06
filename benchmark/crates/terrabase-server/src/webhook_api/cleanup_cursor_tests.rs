@@ -70,8 +70,28 @@ async fn cleanup_failure_does_not_block_multi_page_cursor_progress() {
     assert!(first.cleanup_pending);
     assert_eq!(first.publications, MAX_JOURNAL_PAGE);
     storage.checkpoint_dispatch(&scope, None, first.cursor).expect("checkpoint first page");
-    let second = service.dispatch(&scope, first.cursor).await.expect("second page");
-    assert!(second.cleanup_pending);
+    let mut cursor = first.cursor;
+    let mut second = None;
+    for _ in 0..40 {
+        let report = service.dispatch(&scope, cursor).await.expect("later page");
+        assert!(report.cleanup_pending);
+        if report.publications == 44 {
+            second = Some(report);
+        }
+        storage.checkpoint_dispatch(&scope, cursor, report.cursor).expect("checkpoint later page");
+        cursor = report.cursor;
+        if delivery
+            .base
+            .seen_events
+            .lock()
+            .expect("events lock")
+            .iter()
+            .any(|id| id.ends_with(":event-257"))
+        {
+            break;
+        }
+    }
+    let second = second.expect("second page");
     assert_eq!(second.publications, 44);
     assert!(second.attempted > 0);
     assert!(delivery.base.sent.load(Ordering::SeqCst) >= 1);
@@ -82,10 +102,12 @@ async fn cleanup_failure_does_not_block_multi_page_cursor_progress() {
             .lock()
             .expect("events lock")
             .iter()
-            .any(|id| id.ends_with(":event-257"))
+            .any(|id| id.ends_with(":event-257")),
+        "second-page event was not delivered"
     );
     assert!(storage.endpoint(&scope, &live.id).expect("live lookup").is_some());
     drop(service);
+    drop(storage);
     let Ok(engine) = Arc::try_unwrap(engine) else { panic!("sole engine") };
     engine.shutdown().expect("shutdown");
     std::fs::remove_dir_all(root).expect("cleanup");

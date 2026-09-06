@@ -92,10 +92,11 @@ impl ShardSplit {
 
     /// Restores a split from its durable state.
     pub fn from_durable_state(state: DurableSplitState) -> Result<Self, SplitStateError> {
-        if state.split_key().is_empty()
-            || state.lower().is_some_and(|lower| lower >= state.split_key())
-        {
+        if state.split_key().is_empty() {
             return Err(SplitStateError::EmptySplitKey);
+        }
+        if state.lower().is_some_and(|lower| lower >= state.split_key()) {
+            return Err(SplitStateError::Malformed);
         }
         Ok(Self {
             split_key: state.split_key().to_vec(),

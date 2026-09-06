@@ -31,6 +31,7 @@ pub mod production_metrics;
 pub mod production_placement_control;
 pub mod production_readiness;
 pub mod production_runtime;
+pub mod production_tbep_host;
 pub mod provisioning;
 pub mod reactive_api;
 mod read_operation;

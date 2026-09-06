@@ -150,6 +150,7 @@ struct Stream {
     due: Instant,
     pending_since: Option<Instant>,
     closing: bool,
+    paused: bool,
 }
 
 /// A single shared scheduler, invoked by the member's background runtime.
@@ -230,6 +231,7 @@ impl NativeBackupFleet {
                 due: Instant::now(),
                 pending_since: None,
                 closing: false,
+                paused: false,
             },
         );
         Ok(())
@@ -245,7 +247,7 @@ impl NativeBackupFleet {
         database: &str,
     ) -> Result<super::BackupManifest, FleetError> {
         let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
-        if stream.closing {
+        if stream.closing || stream.paused {
             return Err(FleetError::Configuration);
         }
         stream.health.protected = false;
@@ -435,13 +437,34 @@ impl NativeBackupFleet {
         self.streams.remove(database);
     }
 
+    /// Pauses capture for one stream while retaining its policy and artifacts.
+    pub fn pause(&mut self, database: &str) -> Result<(), FleetError> {
+        let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
+        if stream.closing {
+            return Err(FleetError::Configuration);
+        }
+        stream.paused = true;
+        Ok(())
+    }
+
+    /// Resumes capture for one retained stream without changing its identity.
+    pub fn resume(&mut self, database: &str) -> Result<(), FleetError> {
+        let stream = self.streams.get_mut(database).ok_or(FleetError::Configuration)?;
+        if stream.closing {
+            return Err(FleetError::Configuration);
+        }
+        stream.paused = false;
+        stream.due = Instant::now();
+        Ok(())
+    }
+
     /// Runs each due stream once, continuing independent databases on failure.
     /// Capture/upload remains outside client acknowledgements. The configured
     /// ten-second interval is a scheduling target, never an RPO claim.
     pub async fn sync_once(&mut self) -> Vec<(String, FleetError)> {
         let mut failures = Vec::new();
         for (identity, stream) in &mut self.streams {
-            if stream.closing || stream.due > Instant::now() {
+            if stream.closing || stream.paused || stream.due > Instant::now() {
                 continue;
             }
             let source = stream.config.engine.engine().journaled_high_water();

@@ -15,6 +15,27 @@ impl SqliteStorage {
         let tx = writer
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| LifecycleError::Unavailable)?;
+        let operation = match &command {
+            LifecycleCommand::Pause(id) => Some((id, true)),
+            LifecycleCommand::Resume(id) => Some((id, false)),
+            _ => None,
+        };
+        if let Some((id, paused)) = operation {
+            if id.is_empty() || id.len() > 128 {
+                return Err(LifecycleError::Invalid);
+            }
+            let prior: Option<(String, i64)> = tx.query_row(
+                "SELECT action, paused FROM lifecycle_operations WHERE tenant=?1 AND operation_id=?2",
+                params![tenant.as_str(), id], |row| Ok((row.get(0)?, row.get(1)?))).optional()
+                .map_err(|_| LifecycleError::Unavailable)?;
+            if let Some((action, prior_paused)) = prior {
+                let expected = if paused { "pause" } else { "resume" };
+                if action != expected || prior_paused != i64::from(paused) {
+                    return Err(LifecycleError::Conflict);
+                }
+                return Ok(state);
+            }
+        }
         let bytes: Option<Vec<u8>> = tx
             .query_row(
                 "SELECT body FROM database_lifecycle WHERE tenant=?1",
@@ -133,13 +154,13 @@ impl SqliteStorage {
                     .map_err(|()| LifecycleError::Conflict)?;
                 state.deletion = Some(intent);
             }
-            LifecycleCommand::Pause => {
+            LifecycleCommand::Pause(_) => {
                 if state.access_revoked() {
                     return Err(LifecycleError::Revoked);
                 }
                 state.paused = true;
             }
-            LifecycleCommand::Resume => {
+            LifecycleCommand::Resume(_) => {
                 if state.access_revoked() {
                     return Err(LifecycleError::Revoked);
                 }
@@ -152,6 +173,9 @@ impl SqliteStorage {
         state.generation = state.generation.checked_add(1).ok_or(LifecycleError::Invalid)?;
         let body = encode(&state);
         tx.execute("INSERT INTO database_lifecycle VALUES (?1,?2) ON CONFLICT(tenant) DO UPDATE SET body=excluded.body", params![tenant.as_str(), body]).map_err(|_| LifecycleError::Unavailable)?;
+        if let Some((id, paused)) = operation {
+            tx.execute("INSERT INTO lifecycle_operations(tenant,operation_id,action,paused) VALUES (?1,?2,?3,?4)", params![tenant.as_str(), id, if paused { "pause" } else { "resume" }, i64::from(paused)]).map_err(|_| LifecycleError::Unavailable)?;
+        }
         tx.commit().map_err(|_| LifecycleError::Unavailable)?;
         Ok(state)
     }

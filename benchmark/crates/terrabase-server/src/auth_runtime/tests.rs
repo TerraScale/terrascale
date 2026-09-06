@@ -1141,9 +1141,26 @@ async fn lost_consume_response_replays_the_same_public_operation() {
         .await
         .unwrap();
     connection.send_frame(&frame).await.unwrap();
-    // The request has crossed the authenticated transport; closing the client
-    // now models the caller losing the response after transmission.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Synchronize on the durable public state transition before closing the
+    // client. This proves the request was accepted and applied, so the close
+    // models loss of the response rather than a race with transport delivery.
+    let domain = fixture.runtime.domains.read().unwrap().values().next().unwrap().clone();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if domain
+                .authority
+                .find_one("token".into(), "single-use".into())
+                .await
+                .unwrap()
+                .is_none()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("consume must be durably applied before simulating response loss");
     drop(connection);
 
     let mut replay = None;

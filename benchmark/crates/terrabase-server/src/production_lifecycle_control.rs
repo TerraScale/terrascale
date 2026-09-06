@@ -168,6 +168,8 @@ pub trait NativeLifecycleWorker: Send + Sync {
 pub struct RegistryLifecycleWorker {
     /// Durable admitted database registry.
     pub registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+    /// Optional native backup fleet retained by the production composition.
+    pub backups: Option<Arc<std::sync::Mutex<terrabase::backup::worker::NativeBackupFleet>>>,
 }
 
 impl NativeLifecycleWorker for RegistryLifecycleWorker {
@@ -184,15 +186,20 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
     ) -> Result<(), String> {
-        self.registry.pause(&assignment.database)
+        self.registry.pause(&assignment.database, _operation)
     }
 
     fn stop_native_backup(
         &self,
-        _assignment: &AcceptedLifecycleAssignment,
+        assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
     ) -> Result<(), String> {
-        Err("native backup fleet is not attached".into())
+        let backups = self.backups.as_ref().ok_or("native backup fleet is not attached")?;
+        backups
+            .lock()
+            .map_err(|_| "native backup fleet poisoned")?
+            .pause(&assignment.database)
+            .map_err(|_| "native backup pause refused")
     }
 
     fn reactivate(
@@ -200,7 +207,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         assignment: &AcceptedLifecycleAssignment,
         _operation: &str,
     ) -> Result<(), String> {
-        self.registry.resume(&assignment.database)
+        self.registry.resume(&assignment.database, _operation)
     }
 }
 

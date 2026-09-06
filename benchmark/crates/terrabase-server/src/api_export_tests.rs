@@ -229,7 +229,7 @@ async fn http_export_reads_real_documents_and_recovers_after_runtime_restart() {
         decode(request(&app, "GET", &accepted.status_path, "").await).await;
     assert_eq!(interrupted.status, JobStatus::Running);
     let recovering = Arc::clone(&state);
-    tokio::task::spawn_blocking(move || super::super::recover_exports(&recovering))
+    tokio::spawn(async move { super::super::recover_exports(&recovering).await })
         .await
         .unwrap()
         .unwrap();

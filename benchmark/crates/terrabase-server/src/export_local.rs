@@ -1,5 +1,6 @@
 //! Restart-safe encrypted export artifacts for explicitly local installations.
 
+use crate::export_api::ExportFuture;
 use crate::export_api::{
     ArtifactFact, ArtifactPort, ArtifactWriter, EncryptionAttestation, ExportDestination,
     ExportError, MAX_METADATA_BYTES, MAX_PAGE_BYTES, MAX_PAGE_RECORDS, PlacementLock,
@@ -126,82 +127,88 @@ impl ArtifactPort for LocalPort {
             key_version: "local-export-v1".into(),
         })
     }
-    fn read_member(
-        &self,
-        job_id: &str,
-        database: &str,
-        member: &str,
-        manifest: &ArtifactFact,
-    ) -> Result<Vec<u8>, ExportError> {
-        if !safe_member_path(job_id)
-            || Path::new(job_id).components().count() != 1
-            || !safe_member_path(database)
-            || Path::new(database).components().count() != 1
-            || !safe_member_path(member)
-            || member == "COMMITTED"
-            || manifest.path != "manifest.json"
-        {
-            return Err(ExportError::DestinationUnavailable);
-        }
-        let directory = self.root.join(database).join(job_id);
-        let expected = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
-        if bounded_read(&directory.join("COMMITTED"), 1024)? != expected.as_bytes() {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        let manifest_bytes = encrypted_member(&directory.join("manifest.json"))?;
-        if fact("manifest.json", &manifest_bytes) != *manifest {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        let binding = format!("{database}/{job_id}");
-        let manifest_plaintext = self.crypto.open(&binding, "manifest.json", &manifest_bytes)?;
-        if member == "manifest.json" {
-            return Ok(manifest_plaintext);
-        }
-        let manifest: LocalManifest = serde_json::from_slice(&manifest_plaintext)
-            .map_err(|_| ExportError::IdempotencyConflict)?;
-        let expected = manifest
-            .members
-            .iter()
-            .find(|fact| fact.path == member)
-            .ok_or(ExportError::DestinationUnavailable)?;
-        let encrypted = encrypted_member(&directory.join(member))?;
-        if fact(member, &encrypted) != *expected {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        self.crypto.open(&binding, member, &encrypted)
+    fn read_member<'a>(
+        &'a self,
+        job_id: &'a str,
+        database: &'a str,
+        member: &'a str,
+        manifest: &'a ArtifactFact,
+    ) -> ExportFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            if !safe_member_path(job_id)
+                || Path::new(job_id).components().count() != 1
+                || !safe_member_path(database)
+                || Path::new(database).components().count() != 1
+                || !safe_member_path(member)
+                || member == "COMMITTED"
+                || manifest.path != "manifest.json"
+            {
+                return Err(ExportError::DestinationUnavailable);
+            }
+            let directory = self.root.join(database).join(job_id);
+            let expected =
+                format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
+            if bounded_read(&directory.join("COMMITTED"), 1024)? != expected.as_bytes() {
+                return Err(ExportError::IdempotencyConflict);
+            }
+            let manifest_bytes = encrypted_member(&directory.join("manifest.json"))?;
+            if fact("manifest.json", &manifest_bytes) != *manifest {
+                return Err(ExportError::IdempotencyConflict);
+            }
+            let binding = format!("{database}/{job_id}");
+            let manifest_plaintext =
+                self.crypto.open(&binding, "manifest.json", &manifest_bytes)?;
+            if member == "manifest.json" {
+                return Ok(manifest_plaintext);
+            }
+            let manifest: LocalManifest = serde_json::from_slice(&manifest_plaintext)
+                .map_err(|_| ExportError::IdempotencyConflict)?;
+            let expected = manifest
+                .members
+                .iter()
+                .find(|fact| fact.path == member)
+                .ok_or(ExportError::DestinationUnavailable)?;
+            let encrypted = encrypted_member(&directory.join(member))?;
+            if fact(member, &encrypted) != *expected {
+                return Err(ExportError::IdempotencyConflict);
+            }
+            self.crypto.open(&binding, member, &encrypted)
+        })
     }
-    fn open(
-        &self,
-        job_id: &str,
-        database: &str,
-        destination: &ExportDestination,
-        placement: &PlacementLock,
-    ) -> Result<Box<dyn ArtifactWriter>, ExportError> {
-        let ExportDestination::File { root, region } = destination else {
-            return Err(ExportError::DestinationUnavailable);
-        };
-        if !placement.allows(*region) {
-            return Err(ExportError::PlacementMismatch);
-        }
-        if !safe_member_path(job_id)
-            || Path::new(job_id).components().count() != 1
-            || !safe_member_path(database)
-            || Path::new(database).components().count() != 1
-        {
-            return Err(ExportError::DestinationUnavailable);
-        }
-        if root != &self.root {
-            return Err(ExportError::DestinationUnavailable);
-        }
-        let directory = self.root.join(database).join(job_id);
-        ensure_no_symlink_components(&directory)?;
-        fs::create_dir_all(&directory).map_err(|error| io_error(&error))?;
-        ensure_no_symlink_components(&directory)?;
-        Ok(Box::new(LocalWriter {
-            directory,
-            job_id: format!("{database}/{job_id}"),
-            crypto: Arc::clone(&self.crypto),
-        }))
+    fn open<'a>(
+        &'a self,
+        job_id: &'a str,
+        database: &'a str,
+        destination: &'a ExportDestination,
+        placement: &'a PlacementLock,
+    ) -> ExportFuture<'a, Box<dyn ArtifactWriter>> {
+        Box::pin(async move {
+            let ExportDestination::File { root, region } = destination else {
+                return Err(ExportError::DestinationUnavailable);
+            };
+            if !placement.allows(*region) {
+                return Err(ExportError::PlacementMismatch);
+            }
+            if !safe_member_path(job_id)
+                || Path::new(job_id).components().count() != 1
+                || !safe_member_path(database)
+                || Path::new(database).components().count() != 1
+            {
+                return Err(ExportError::DestinationUnavailable);
+            }
+            if root != &self.root {
+                return Err(ExportError::DestinationUnavailable);
+            }
+            let directory = self.root.join(database).join(job_id);
+            ensure_no_symlink_components(&directory)?;
+            fs::create_dir_all(&directory).map_err(|error| io_error(&error))?;
+            ensure_no_symlink_components(&directory)?;
+            Ok(Box::new(LocalWriter {
+                directory,
+                job_id: format!("{database}/{job_id}"),
+                crypto: Arc::clone(&self.crypto),
+            }))
+        })
     }
 }
 impl LocalWriter {
@@ -225,94 +232,101 @@ impl LocalWriter {
 }
 
 impl ArtifactWriter for LocalWriter {
-    fn put(&mut self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError> {
-        if !safe_member_path(path) || plaintext.len() > MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) {
-            return Err(ExportError::InvalidRequest("artifact member is unsafe or too large"));
-        }
-        let target = self.directory.join(path);
-        ensure_no_symlink_components(&target)?;
-        match fs::symlink_metadata(&target) {
-            Ok(_) => return self.verify_member(path, plaintext),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(ExportError::Io(error.to_string())),
-        }
-        let encrypted = self.crypto.seal(&self.job_id, path, plaintext)?;
-        if publish_artifact(&target, &encrypted)? {
-            Ok(fact(path, &encrypted))
-        } else {
-            self.verify_member(path, plaintext)
-        }
+    fn put<'a>(&'a mut self, path: &'a str, plaintext: &'a [u8]) -> ExportFuture<'a, ArtifactFact> {
+        Box::pin(async move {
+            if !safe_member_path(path) || plaintext.len() > MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) {
+                return Err(ExportError::InvalidRequest("artifact member is unsafe or too large"));
+            }
+            let target = self.directory.join(path);
+            ensure_no_symlink_components(&target)?;
+            match fs::symlink_metadata(&target) {
+                Ok(_) => return self.verify_member(path, plaintext),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(ExportError::Io(error.to_string())),
+            }
+            let encrypted = self.crypto.seal(&self.job_id, path, plaintext)?;
+            if publish_artifact(&target, &encrypted)? {
+                Ok(fact(path, &encrypted))
+            } else {
+                self.verify_member(path, plaintext)
+            }
+        })
     }
 
-    fn existing_facts(&mut self) -> Result<Vec<ArtifactFact>, ExportError> {
-        let mut pending = vec![self.directory.clone()];
-        let mut facts = Vec::new();
+    fn existing_facts<'a>(&'a mut self) -> ExportFuture<'a, Vec<ArtifactFact>> {
+        Box::pin(async move {
+            let mut pending = vec![self.directory.clone()];
+            let mut facts = Vec::new();
 
-        while let Some(directory) = pending.pop() {
-            let entries =
-                fs::read_dir(&directory).map_err(|error| ExportError::Io(error.to_string()))?;
-            for entry in entries {
-                let entry = entry.map_err(|error| ExportError::Io(error.to_string()))?;
-                let file_type =
-                    entry.file_type().map_err(|error| ExportError::Io(error.to_string()))?;
-                if file_type.is_symlink() {
-                    return Err(ExportError::DestinationUnavailable);
-                }
-                let path = entry.path();
-                if file_type.is_dir() {
-                    pending.push(path);
-                    continue;
-                }
-                if !file_type.is_file() || path.file_name().is_some_and(|name| name == "COMMITTED")
-                {
-                    continue;
-                }
-                let relative = path
-                    .strip_prefix(&self.directory)
-                    .map_err(|_| ExportError::DestinationUnavailable)?;
-                let member = relative.to_str().ok_or(ExportError::DestinationUnavailable)?;
-                // Publication temporaries use this exact, case-sensitive suffix.
-                #[allow(clippy::case_sensitive_file_extension_comparisons)]
-                if member.ends_with(".part") || !safe_member_path(member) {
-                    continue;
-                }
-                let encrypted = encrypted_member(&path)?;
-                if encrypted.len() > MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) + 4096 {
-                    return Err(ExportError::DestinationUnavailable);
-                }
-                self.crypto
-                    .open(&self.job_id, member, &encrypted)
-                    .map_err(|_| ExportError::IdempotencyConflict)?;
-                facts.push(fact(member, &encrypted));
-                if facts.len() > MAX_PAGE_RECORDS.saturating_mul(4) {
-                    return Err(ExportError::DestinationUnavailable);
+            while let Some(directory) = pending.pop() {
+                let entries =
+                    fs::read_dir(&directory).map_err(|error| ExportError::Io(error.to_string()))?;
+                for entry in entries {
+                    let entry = entry.map_err(|error| ExportError::Io(error.to_string()))?;
+                    let file_type =
+                        entry.file_type().map_err(|error| ExportError::Io(error.to_string()))?;
+                    if file_type.is_symlink() {
+                        return Err(ExportError::DestinationUnavailable);
+                    }
+                    let path = entry.path();
+                    if file_type.is_dir() {
+                        pending.push(path);
+                        continue;
+                    }
+                    if !file_type.is_file()
+                        || path.file_name().is_some_and(|name| name == "COMMITTED")
+                    {
+                        continue;
+                    }
+                    let relative = path
+                        .strip_prefix(&self.directory)
+                        .map_err(|_| ExportError::DestinationUnavailable)?;
+                    let member = relative.to_str().ok_or(ExportError::DestinationUnavailable)?;
+                    // Publication temporaries use this exact, case-sensitive suffix.
+                    #[allow(clippy::case_sensitive_file_extension_comparisons)]
+                    if member.ends_with(".part") || !safe_member_path(member) {
+                        continue;
+                    }
+                    let encrypted = encrypted_member(&path)?;
+                    if encrypted.len() > MAX_METADATA_BYTES.max(MAX_PAGE_BYTES) + 4096 {
+                        return Err(ExportError::DestinationUnavailable);
+                    }
+                    self.crypto
+                        .open(&self.job_id, member, &encrypted)
+                        .map_err(|_| ExportError::IdempotencyConflict)?;
+                    facts.push(fact(member, &encrypted));
+                    if facts.len() > MAX_PAGE_RECORDS.saturating_mul(4) {
+                        return Err(ExportError::DestinationUnavailable);
+                    }
                 }
             }
-        }
-        facts.sort_by(|left, right| left.path.cmp(&right.path));
-        Ok(facts)
+            facts.sort_by(|left, right| left.path.cmp(&right.path));
+            Ok(facts)
+        })
     }
 
-    fn commit(self: Box<Self>, manifest: &ArtifactFact) -> Result<(), ExportError> {
-        if manifest.path != "manifest.json" {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        let manifest_path = self.directory.join(&manifest.path);
-        ensure_no_symlink_components(&manifest_path)?;
-        let encrypted = encrypted_member(&manifest_path)?;
-        if fact(&manifest.path, &encrypted) != *manifest {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        self.crypto.open(&self.job_id, &manifest.path, &encrypted)?;
-        let marker = self.directory.join("COMMITTED");
-        ensure_no_symlink_components(&marker)?;
-        let bytes = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
-        if !publish_artifact(&marker, bytes.as_bytes())?
-            && bounded_read(&marker, 1024)? != bytes.as_bytes()
-        {
-            return Err(ExportError::IdempotencyConflict);
-        }
-        Ok(())
+    fn commit(self: Box<Self>, manifest: &ArtifactFact) -> ExportFuture<'static, ()> {
+        Box::pin(async move {
+            if manifest.path != "manifest.json" {
+                return Err(ExportError::IdempotencyConflict);
+            }
+            let manifest_path = self.directory.join(&manifest.path);
+            ensure_no_symlink_components(&manifest_path)?;
+            let encrypted = encrypted_member(&manifest_path)?;
+            if fact(&manifest.path, &encrypted) != *manifest {
+                return Err(ExportError::IdempotencyConflict);
+            }
+            self.crypto.open(&self.job_id, &manifest.path, &encrypted)?;
+            let marker = self.directory.join("COMMITTED");
+            ensure_no_symlink_components(&marker)?;
+            let bytes = format!("{}\t{}\t{}\n", manifest.path, manifest.length, manifest.checksum);
+            if !publish_artifact(&marker, bytes.as_bytes())?
+                && bounded_read(&marker, 1024)? != bytes.as_bytes()
+            {
+                return Err(ExportError::IdempotencyConflict);
+            }
+            Ok(())
+        })
     }
 }
 

@@ -17,13 +17,19 @@ where
     let mut stopping = false;
     let mut deadline = None;
     let mut backoff = Duration::from_millis(25);
+    let mut immediate = false;
     loop {
         if let Some(until) = deadline
             && tokio::time::Instant::now() >= until
         {
             return true;
         }
-        if !stopping {
+        if !immediate {
+            if stopping {
+                immediate = true;
+            }
+        }
+        if !immediate {
             tokio::select! {
                 _ = &mut stop => {
                     stopping = true;
@@ -32,37 +38,38 @@ where
                 _ = notify.notified() => {}
             }
         }
+        immediate = false;
         match process().await {
             Ok(true) => {
                 backoff = Duration::from_millis(25);
+                immediate = true;
                 continue;
             }
             Ok(false) if stopping => return false,
             Ok(false) => {
                 // Notifications are coalesced; waiting here also prevents an idle spin.
-                tokio::select! {
-                    _ = &mut stop => {
-                        stopping = true;
-                        deadline = Some(tokio::time::Instant::now() + DRAIN_DEADLINE);
-                    },
-                    _ = notify.notified() => {}
-                }
+                immediate = false;
             }
             Err(error) => {
                 eprintln!("native recovery worker error; retrying: {error:?}");
-                if stopping {
+                let delay = if stopping {
                     let Some(until) = deadline else { return true };
                     if tokio::time::Instant::now() >= until {
                         return true;
                     }
-                    tokio::time::sleep(
-                        backoff.min(until.saturating_duration_since(tokio::time::Instant::now())),
-                    )
-                    .await;
+                    backoff.min(until.saturating_duration_since(tokio::time::Instant::now()))
                 } else {
-                    tokio::time::sleep(backoff).await;
+                    backoff
+                };
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {}
+                    _ = &mut stop => {
+                        stopping = true;
+                        deadline = Some(tokio::time::Instant::now() + DRAIN_DEADLINE);
+                    }
                 }
                 backoff = (backoff * 2).min(MAX_BACKOFF);
+                immediate = true;
             }
         }
     }
@@ -92,7 +99,7 @@ mod tests {
         tokio::task::yield_now().await;
         stop.send(()).unwrap();
         worker.await.unwrap();
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
@@ -118,6 +125,6 @@ mod tests {
         }
         stop.send(()).unwrap();
         worker.await.unwrap();
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 }

@@ -564,6 +564,8 @@ pub struct ApiState {
     pub keys: Option<Arc<crate::api_keys::KeyStore>>,
     /// Live product identity authority; absent configuration denies delegated credentials.
     pub delegated_identity: Option<Arc<crate::delegated_identity::IdentityVerifier>>,
+    /// Optional tenant-pinned BYO-JWT admission; absent denies JWT-shaped bearers.
+    pub byo_jwt: Option<Arc<dyn crate::auth_runtime::byo_config::ByoJwtAdmission>>,
     /// The databases registry (D-52). `None` until the member boots with a
     /// data root; the database routes answer the typed unavailable error.
     pub control: Option<Arc<crate::control::ControlPlane>>,
@@ -638,6 +640,7 @@ impl ApiState {
             metrics,
             keys,
             delegated_identity,
+            byo_jwt: None,
             control: None,
             catalog: None,
             scope,
@@ -1537,6 +1540,21 @@ async fn admit_bearer(
                 });
             }
             Ok(principal)
+        }
+        _ if state.byo_jwt.is_some() && token.matches('.').count() == 2 => {
+            let admission = state.byo_jwt.as_ref().expect("checked above");
+            let context = admission
+                .authenticate(token, unix_seconds())
+                .await
+                .map_err(|_| ApiError::unauthorized())?;
+            crate::auth_runtime::byo_config::principal_for(
+                &context,
+                database_of(path),
+                collection_of(path),
+                required_verb(method, path),
+                project_operation,
+            )
+            .ok_or_else(ApiError::unauthorized)
         }
         _ => match (&state.delegated_identity, database_of(path)) {
             (Some(identity), Some(database)) => identity
@@ -4367,6 +4385,7 @@ mod tests {
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
             delegated_identity: None,
+            byo_jwt: None,
             keys: None,
             control: None,
             catalog: None,
@@ -4417,6 +4436,7 @@ mod tests {
             region: RegionCode::GRU,
             metrics: Arc::new(MetricsRegistry::new()),
             delegated_identity: None,
+            byo_jwt: None,
             keys: Some(Arc::new(KeyStore::with_keys(&[(
                 "tskey_test_abcdefghijklmnop",
                 "bootstrap",

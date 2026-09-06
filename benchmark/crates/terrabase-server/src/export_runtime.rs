@@ -95,7 +95,7 @@ impl ExportRuntime {
         Ok(Arc::new(service))
     }
 
-    pub(crate) fn recover_pending(
+    pub(crate) async fn recover_pending(
         &self,
         database_id: &str,
         service: &ExportService,
@@ -125,7 +125,7 @@ impl ExportRuntime {
                     // One recovery worker processes interrupted jobs in bounded
                     // indexed pages without delaying admitted data service.
                     let _active = active;
-                    let _ = service.clone_for_worker().run(job);
+                    let _ = service.clone_for_worker().run(job).await;
                 }
             }
             after = jobs.last().cloned();

@@ -132,7 +132,9 @@ impl Engine {
                 // exact same-operation loser idempotent; a different marker
                 // remains a conflict.
                 if let Some(existing) = installed_cut(config, &marker) {
-                    let _ = fs::remove_dir_all(&staging);
+                    fs::remove_dir_all(&staging)
+                        .map_err(|_| EngineOpenError::StorageUnavailable)?;
+                    sync_parent(target)?;
                     return Ok(StorageSequence::new(existing));
                 }
                 return Err(EngineOpenError::StorageUnavailable);

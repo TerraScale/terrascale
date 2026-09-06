@@ -350,7 +350,7 @@ mod tests;
 
 /// Restarts accepted work from durable state after a member process restart.
 /// Call once on the blocking pool when composing the admitted member state.
-pub(crate) fn recover_exports(state: &ApiState) -> Result<(), ApiError> {
+pub(crate) async fn recover_exports(state: &ApiState) -> Result<(), ApiError> {
     let Some(runtime) = state.exports.as_ref() else {
         return Ok(());
     };
@@ -362,6 +362,7 @@ pub(crate) fn recover_exports(state: &ApiState) -> Result<(), ApiError> {
         let host = document_host(state, &record.name)?;
         runtime
             .recover_pending(&host.engine().database_id().to_text(), &service)
+            .await
             .map_err(|error| export_error(&error))?;
     }
     Ok(())

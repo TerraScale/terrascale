@@ -94,19 +94,19 @@ impl ProductionDataLifecycle {
     }
 
     /// Durably pauses one admitted database while retaining its identity and data.
-    pub fn pause_database(&self, database: &str) -> Result<(), String> {
+    pub fn pause_database(&self, database: &str, operation_id: &str) -> Result<(), String> {
         if self.is_draining() {
             return Err("production data lifecycle is draining".into());
         }
-        self.registry.pause(database)
+        self.registry.pause(database, operation_id)
     }
 
     /// Resumes one previously paused admitted database using its retained identity.
-    pub fn reactivate_database(&self, database: &str) -> Result<(), String> {
+    pub fn reactivate_database(&self, database: &str, operation_id: &str) -> Result<(), String> {
         if self.is_draining() {
             return Err("production data lifecycle is draining".into());
         }
-        self.registry.resume(database)
+        self.registry.resume(database, operation_id)
     }
 
     /// Returns the installed runtime without transferring ownership.

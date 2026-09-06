@@ -69,8 +69,8 @@ pub(crate) enum LifecycleCommand {
     Protection(bool),
     Activity(u64),
     Delete(DeletionIntent),
-    Pause,
-    Resume,
+    Pause(String),
+    Resume(String),
 }
 
 impl Engine {
@@ -140,18 +140,26 @@ impl Engine {
     ///
     /// # Errors
     /// Returns an invalid-scope or unavailable-storage error.
-    pub fn lifecycle_pause(&self, scope: &TenantScope) -> Result<LifecycleState, LifecycleError> {
+    pub fn lifecycle_pause(
+        &self,
+        scope: &TenantScope,
+        operation_id: &str,
+    ) -> Result<LifecycleState, LifecycleError> {
         let _barrier =
             self.origin_commit_barrier.write().map_err(|_| LifecycleError::Unavailable)?;
-        self.lifecycle_command(scope, LifecycleCommand::Pause)
+        self.lifecycle_command(scope, LifecycleCommand::Pause(operation_id.to_owned()))
     }
 
     /// Resumes authorized activity for a tenant by clearing its durable pause state.
     ///
     /// # Errors
     /// Returns an invalid-scope or unavailable-storage error.
-    pub fn lifecycle_resume(&self, scope: &TenantScope) -> Result<LifecycleState, LifecycleError> {
-        self.lifecycle_command(scope, LifecycleCommand::Resume)
+    pub fn lifecycle_resume(
+        &self,
+        scope: &TenantScope,
+        operation_id: &str,
+    ) -> Result<LifecycleState, LifecycleError> {
+        self.lifecycle_command(scope, LifecycleCommand::Resume(operation_id.to_owned()))
     }
     fn lifecycle_command(
         &self,
@@ -203,7 +211,7 @@ mod tests {
         let observed = engine.lifecycle_flush_activity(&scope, 123).unwrap();
         assert_eq!(engine.lifecycle_flush_activity(&scope, 122).unwrap(), observed);
         engine.lifecycle_set_protection(&scope, true).unwrap();
-        let paused = engine.lifecycle_pause(&scope).unwrap();
+        let paused = engine.lifecycle_pause(&scope, "pause-1").unwrap();
         assert!(paused.paused);
         assert!(paused.deletion_protection);
         assert_eq!(paused.last_authorized_request_at, Some(123));
@@ -211,7 +219,7 @@ mod tests {
         let engine = Engine::open(EngineConfig::durable(&path).unwrap()).unwrap();
         let scope = engine.scope_for(&tenant);
         assert!(engine.lifecycle_state(&scope).unwrap().paused);
-        let resumed = engine.lifecycle_resume(&scope).unwrap();
+        let resumed = engine.lifecycle_resume(&scope, "resume-1").unwrap();
         assert!(!resumed.paused);
         assert!(resumed.deletion_protection);
         let at = u64::try_from(

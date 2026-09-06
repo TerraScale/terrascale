@@ -1848,6 +1848,7 @@ impl Replay {
         let mut guard = engine.storage.lock().map_err(|_| BackupError::DestinationUnavailable)?;
         let snapshot_sequence = guard.port.published_state().0;
         let intent = CommitIntent {
+            budget_allocation: None,
             tenant: tenant.clone(),
             digest,
             snapshot_sequence,

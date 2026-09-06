@@ -214,7 +214,7 @@ fn paused_lifecycle_rejects_writes_until_resume() {
         LocalDurability::Synced,
     ));
 
-    engine.lifecycle_pause(&scope).expect("pause");
+    engine.lifecycle_pause(&scope, "pause-1").expect("pause");
     assert_eq!(
         rejected_error(commit_put(
             &engine,
@@ -230,7 +230,7 @@ fn paused_lifecycle_rejects_writes_until_resume() {
     );
     assert!(read_document(&engine, "tenant-a", "doc-2").is_none());
 
-    engine.lifecycle_resume(&scope).expect("resume");
+    engine.lifecycle_resume(&scope, "resume-1").expect("resume");
     committed_sequence(commit_put(
         &engine,
         "tenant-a",
@@ -848,6 +848,7 @@ fn intent(operation: &str, writes: Vec<StagedWrite>, durability: LocalDurability
         snapshot_sequence: StorageSequence::new(0),
         durability,
         usage_admission: None,
+        budget_allocation: None,
         internal_maintenance: false,
         expected_origin_epoch: Some(0),
         expected_uniform_context: None,
@@ -1764,6 +1765,7 @@ fn commit_as(
         snapshot_sequence: storage.published_state().0,
         durability: LocalDurability::Written,
         usage_admission: None,
+        budget_allocation: None,
         internal_maintenance: false,
         expected_origin_epoch: Some(0),
         expected_uniform_context: None,

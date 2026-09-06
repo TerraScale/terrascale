@@ -2169,6 +2169,22 @@ mod tests {
             now,
             terrabase::regions::RegionCode::GRU,
         ));
+        assert!(!verify_origin_proof(
+            &headers,
+            &Method::GET,
+            &target.parse::<Uri>().expect("target"),
+            &keys,
+            now,
+            terrabase::regions::RegionCode::SFO,
+        ));
+        assert!(!verify_origin_proof(
+            &headers,
+            &Method::GET,
+            &target.parse::<Uri>().expect("target"),
+            &keys,
+            now,
+            terrabase::regions::RegionCode::FRA,
+        ));
 
         headers.insert(
             ORIGIN_PROOF_HEADER,

@@ -1034,6 +1034,7 @@ pub(crate) struct LifecycleStore {
     forbidden: BTreeSet<(String, String)>,
     audits: VecDeque<(String, String, LifecycleAuditEntry)>,
     evidence: BTreeMap<(String, String, [u8; 32]), ShadowEvidence>,
+    pins: BTreeSet<(String, String, [u8; 32])>,
 }
 
 const LIFECYCLE_MAX_FRAME: usize = 512 * 1024;
@@ -1047,6 +1048,7 @@ enum LifecycleDetail<'a> {
     Forbid,
     Retire,
     Evidence(&'a ShadowEvidence),
+    Pin(&'a [u8; 32]),
 }
 
 impl LifecycleDetail<'_> {
@@ -1056,6 +1058,7 @@ impl LifecycleDetail<'_> {
             Self::Forbid => 2,
             Self::Retire => 3,
             Self::Evidence(_) => 4,
+            Self::Pin(_) => 5,
         }
     }
 }
@@ -1070,6 +1073,7 @@ impl LifecycleStore {
             forbidden: BTreeSet::new(),
             audits: VecDeque::new(),
             evidence: BTreeMap::new(),
+            pins: BTreeSet::new(),
         };
         loop {
             let page = storage.index_lifecycle_events(store.next_sequence, 64)?;
@@ -1151,12 +1155,22 @@ impl LifecycleStore {
                 self.evidence.insert(evidence_key, evidence);
                 self.indexes.get_mut(&key).ok_or(())?.generation = generation;
             }
+            5 => {
+                let template_digest = cursor.array32()?;
+                let view = self.indexes.get_mut(&key).ok_or(())?;
+                if view.phase != LifecyclePhase::Active || !view.visible {
+                    return Err(());
+                }
+                view.pinned = true;
+                view.generation = generation;
+                self.pins.insert((tenant.clone(), id.clone(), template_digest));
+            }
             _ => return Err(()),
         }
         if cursor.offset != payload.len() {
             return Err(());
         }
-        if kind != 4 {
+        if kind != 4 && kind != 5 {
             self.invalidate_evidence(&key.0, &key.1);
         }
         self.audits.push_back((
@@ -1170,6 +1184,7 @@ impl LifecycleStore {
                     2 => "forbid",
                     3 => "retire",
                     4 => "evidence",
+                    5 => "pin",
                     _ => return Err(()),
                 }
                 .to_owned(),
@@ -1256,16 +1271,20 @@ impl LifecycleStore {
             payload.push(u8::from(view.zero_stale_reads));
             payload.push(u8::from(view.regression_free));
         }
-        if let LifecycleDetail::Evidence(evidence) = detail {
-            payload.extend_from_slice(&evidence.template_digest);
-            put_samples(&mut payload, &evidence.baseline)?;
-            put_samples(&mut payload, &evidence.candidate)?;
+        match detail {
+            LifecycleDetail::Evidence(evidence) => {
+                payload.extend_from_slice(&evidence.template_digest);
+                put_samples(&mut payload, &evidence.baseline)?;
+                put_samples(&mut payload, &evidence.candidate)?;
+            }
+            LifecycleDetail::Pin(template_digest) => payload.extend_from_slice(template_digest),
+            _ => {}
         }
         if payload.len() > LIFECYCLE_MAX_FRAME {
             return Err(());
         }
         storage.append_index_lifecycle_event(sequence, &payload)?;
-        if kind != 4 {
+        if kind != 4 && view.is_none_or(|value| value.phase != LifecyclePhase::Active) {
             self.invalidate_evidence(tenant, id);
         }
         self.next_sequence = next_sequence;
@@ -1281,6 +1300,7 @@ impl LifecycleStore {
                     2 => "forbid",
                     3 => "retire",
                     4 => "evidence",
+                    5 => "pin",
                     _ => "unknown",
                 }
                 .to_owned(),
@@ -1449,6 +1469,42 @@ impl LifecycleStore {
         if let Some(view) = view {
             self.indexes.insert(key, view);
         }
+        Ok(())
+    }
+
+    /// Persists one exact normalized template pin without collapsing it into
+    /// the index-wide customer pin flag.
+    pub(crate) fn pin_template(
+        &mut self,
+        storage: &mut dyn StoragePort,
+        identity: (&str, &str),
+        template: &str,
+        at_millis: u64,
+    ) -> Result<(), ()> {
+        if template.is_empty() || template.len() > 4096 {
+            return Err(());
+        }
+        let key = (identity.0.to_owned(), identity.1.to_owned());
+        let mut view = self.indexes.get(&key).cloned().ok_or(())?;
+        if view.phase != LifecyclePhase::Active || !view.visible {
+            return Err(());
+        }
+        let digest = *blake3::hash(template.as_bytes()).as_bytes();
+        if self.pins.contains(&(key.0.clone(), key.1.clone(), digest)) {
+            return Ok(());
+        }
+        view.pinned = true;
+        self.append(
+            storage,
+            LifecycleDetail::Pin(&digest),
+            Some(&view),
+            identity,
+            at_millis,
+            digest,
+        )?;
+        view.generation = self.generation(identity.0);
+        self.indexes.insert(key.clone(), view);
+        self.pins.insert((key.0, key.1, digest));
         Ok(())
     }
 

@@ -10,8 +10,13 @@
 mod storage_closure;
 pub use storage_closure::{StorageUsageClosure, StorageUsageInterval};
 
+mod budget;
 mod placement;
 
+pub use budget::{
+    ALLOCATION_SIGNING_DOMAIN, AllocationEnvelope, AllocationError, AllocationGrant,
+    MAX_ALLOCATION_BYTES, SignedAllocation, VerifiedAllocation,
+};
 pub use placement::UsagePlacement;
 
 use std::{

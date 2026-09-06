@@ -870,7 +870,7 @@ impl IndexCoordinatorAdapter for EngineIndexAdapter<'_> {
                         request.expected_generation,
                         request.at_millis,
                     )
-                    .map_err(map_engine_error),
+                    .map_err(|error| map_engine_error(&error)),
                 CoordinatorCommand::Pin(request) => self
                     .engine
                     .auto_index_pin_template(
@@ -879,7 +879,7 @@ impl IndexCoordinatorAdapter for EngineIndexAdapter<'_> {
                         &request.template,
                         request.expected_generation,
                     )
-                    .map_err(map_engine_error),
+                    .map_err(|error| map_engine_error(&error)),
                 CoordinatorCommand::Retire(request) => self
                     .engine
                     .auto_index_retire(
@@ -888,7 +888,7 @@ impl IndexCoordinatorAdapter for EngineIndexAdapter<'_> {
                         request.expected_generation,
                         request.at_millis,
                     )
-                    .map_err(map_engine_error),
+                    .map_err(|error| map_engine_error(&error)),
                 CoordinatorCommand::Forbid(request) => {
                     self.engine
                         .auto_index_forbid_shape(
@@ -897,14 +897,14 @@ impl IndexCoordinatorAdapter for EngineIndexAdapter<'_> {
                             &request.shape,
                             request.expected_generation,
                         )
-                        .map_err(map_engine_error)?;
+                        .map_err(|error| map_engine_error(&error))?;
                     self.engine
                         .auto_index_lifecycle_snapshot(
                             &tenant,
                             scope.collection.as_deref(),
                             MAX_INDEX_LIST + 1,
                         )
-                        .map_err(map_engine_error)
+                        .map_err(|error| map_engine_error(&error))
                         .and_then(|snapshot| {
                             snapshot
                                 .indexes
@@ -914,7 +914,10 @@ impl IndexCoordinatorAdapter for EngineIndexAdapter<'_> {
                         })
                 }
             };
-        result.map(|index| coordinator_index(index, index.generation))
+        result.map(|index| {
+            let generation = index.generation;
+            coordinator_index(index, generation)
+        })
     }
 
     fn audit(
@@ -957,19 +960,19 @@ impl IndexCoordinatorAdapter for EngineIndexAdapter<'_> {
         let snapshot = self
             .engine
             .auto_index_lifecycle_snapshot(&tenant, scope.collection.as_deref(), MAX_INDEX_LIST + 1)
-            .map_err(map_engine_error)?;
+            .map_err(|error| map_engine_error(&error))?;
         // Evidence is keyed by the exact normalized template digest. The API
         // exposes one bounded aggregate, so use the first retained template
         // deterministically and reject an index with no durable evidence.
         let digest = self
             .engine
             .auto_index_shadow_evidence_digest(&tenant, index_id)
-            .map_err(map_engine_error)?
+            .map_err(|error| map_engine_error(&error))?
             .ok_or(IndexAdapterError::InvalidTransition)?;
         let evidence = self
             .engine
             .auto_index_shadow_evidence(&tenant, index_id, digest, limit)
-            .map_err(map_engine_error)?
+            .map_err(|error| map_engine_error(&error))?
             .ok_or(IndexAdapterError::InvalidTransition)?;
         if !snapshot.indexes.iter().any(|index| index.id == index_id) {
             return Err(IndexAdapterError::InvalidTransition);

@@ -23,6 +23,9 @@ use terrabase_tbep::auth_bootstrap::AuthBootstrapJournal;
 use terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapGrant;
 use utoipa::ToSchema;
 
+/// Production BYO-JWT provider and tenant policy composition.
+pub mod byo_config;
+
 use crate::api_keys::{KeyStore, Scope, Verbs};
 use crate::config::{ProductionConfig, PublicApiConfig};
 

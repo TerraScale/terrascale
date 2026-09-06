@@ -240,19 +240,22 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         }
     };
     let member_for_cleanup = parts.member.clone();
-    let member = match terrabase_cluster::production::ProductionMemberRuntime::try_new(
-        parts.placement.clone(),
-        parts.routes.clone(),
-        parts.member,
-        transport,
-    ) {
-        Ok(member) => member,
-        Err(error) => {
-            let error = ProductionStartupError::Member(error)
-                .with_storage_cleanup(member_for_cleanup.close(config.shutdown_grace));
-            return Err(Box::new(DaemonError::ProductionStartup(error)));
-        }
-    };
+    let member_for_admission = parts.member.clone();
+    let member = Arc::new(
+        match terrabase_cluster::production::ProductionMemberRuntime::try_new(
+            parts.placement.clone(),
+            parts.routes.clone(),
+            parts.member,
+            transport,
+        ) {
+            Ok(member) => member,
+            Err(error) => {
+                let error = ProductionStartupError::Member(error)
+                    .with_storage_cleanup(member_for_cleanup.close(config.shutdown_grace));
+                return Err(Box::new(DaemonError::ProductionStartup(error)));
+            }
+        },
+    );
 
     if let Some(journal) = journal {
         if let Err(error) = member.admit_membership(&*journal) {
@@ -281,13 +284,197 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             .with_storage_cleanup(report.storage);
         return Err(Box::new(DaemonError::ProductionStartup(error)));
     }
+    // The registry is the sole public admission gate.  Keep it closed until
+    // admission, replication, native backup, and recovery have all been
+    // assembled against this exact Member.
+    let serving = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let readiness = {
+        let serving = Arc::clone(&serving);
+        Arc::new(move || serving.load(std::sync::atomic::Ordering::Acquire))
+    };
+    let registry = Arc::new(crate::admitted_databases::AdmittedDatabaseRegistry::new(readiness));
+    let progress = Arc::new(crate::replication_runtime::ReplicationProgress::default());
+    let endpoint = member.shared_transport();
+    let public = config.public_api.as_ref();
+    let auth = if let (Some(control), Some(public)) = (production.control.as_ref(), public) {
+        let auth_journal = open_pending_auth_journal(control, production).map_err(|error| {
+            Box::new(DaemonError::ProductionStartup(error)) as Box<dyn Error + Send + Sync>
+        })?;
+        let auth = crate::auth_runtime::AuthRuntime::new(
+            endpoint,
+            auth_journal,
+            production.clone(),
+            public,
+        )
+        .map_err(|detail| {
+            Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                crate::production::ProductionComponentError {
+                    component: crate::production::ProductionComponent::PublicApi,
+                    detail: "auth runtime could not be composed",
+                },
+            ))) as Box<dyn Error + Send + Sync>
+        })?;
+        auth.reconcile_for_shared_listener().await.map_err(|_| {
+            Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+                crate::production::ProductionComponentError {
+                    component: crate::production::ProductionComponent::PublicApi,
+                    detail: "auth group reconciliation failed",
+                },
+            ))) as Box<dyn Error + Send + Sync>
+        })?;
+        Some(auth)
+    } else {
+        None
+    };
+    let dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher> = auth
+        .clone()
+        .map(|auth| auth as Arc<dyn crate::replication_peers::PeerControlDispatcher>)
+        .ok_or_else(|| DaemonError::ProductionConfigurationMissing)?;
+    let admission_config = production.clone();
+    let admission_journal =
+        journal.clone().ok_or_else(|| DaemonError::ProductionConfigurationMissing)?;
+    let mut admission = crate::production_data_runtime::ProductionAdmissionRuntime::new(
+        Arc::clone(&member),
+        member_for_admission,
+        admission_config,
+        admission_journal,
+        Arc::clone(&registry),
+        Arc::clone(&progress),
+        production.transport.max_inflight,
+        config.instance_id,
+        64 * 1024 * 1024,
+        dispatcher,
+    )
+    .map_err(|_| {
+        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+            crate::production::ProductionComponentError {
+                component: crate::production::ProductionComponent::Replication,
+                detail: "production admission could not be composed",
+            },
+        ))) as Box<dyn Error + Send + Sync>
+    })?;
+    admission.reconcile().await.map_err(|_| {
+        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+            crate::production::ProductionComponentError {
+                component: crate::production::ProductionComponent::Replication,
+                detail: "accepted data lifecycle could not start",
+            },
+        ))) as Box<dyn Error + Send + Sync>
+    })?;
+    let limits = terrabase::backup::worker::FleetLimits {
+        streams: production.databases.iter().filter(|database| database.enabled).count().max(1),
+        staging_bytes_per_stream: 16 * 1024 * 1024,
+        points_per_stream: 64,
+    };
+    let native = Arc::new(admission.compose_native_backup(limits).map_err(|_| {
+        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+            crate::production::ProductionComponentError {
+                component: crate::production::ProductionComponent::Backup,
+                detail: "native backup fleet could not be composed",
+            },
+        ))) as Box<dyn Error + Send + Sync>
+    })?);
+    admission = admission
+        .with_native_deletion(native.fleet())
+        .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+    let recovery_root = parts_root_for_recovery(production);
+    let (recovery, recovery_worker) = crate::native_recovery::NativeRecoveryRuntime::new(
+        &recovery_root,
+        native.fleet(),
+        Arc::clone(&registry),
+        crate::native_recovery::NativeRecoveryLimits {
+            pending_operations: 128,
+            retained_operations: 512,
+        },
+    )
+    .map_err(|_| {
+        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+            crate::production::ProductionComponentError {
+                component: crate::production::ProductionComponent::Backup,
+                detail: "native recovery could not be composed",
+            },
+        ))) as Box<dyn Error + Send + Sync>
+    })?;
+    let Some(public) = public else {
+        return Err(Box::new(DaemonError::ProductionConfigurationMissing));
+    };
+    if production
+        .control
+        .as_ref()
+        .and_then(|control| control.receipt_signing_key_file.as_ref())
+        .is_none()
+    {
+        return Err(Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+            crate::production::ProductionComponentError {
+                component: crate::production::ProductionComponent::Backup,
+                detail: "native recovery receipt signer is not configured",
+            },
+        ))));
+    }
+    let region = public_api_region(config.region)?;
+    let primary = production
+        .databases
+        .iter()
+        .find(|database| database.enabled)
+        .ok_or(DaemonError::ProductionConfigurationMissing)?;
+    let state = crate::api::ApiState::production(
+        native,
+        Arc::clone(&recovery),
+        region,
+        Arc::new(terrabase::observability::MetricsRegistry::new()),
+        Arc::clone(&registry),
+        Arc::clone(&progress),
+        (primary.tenant.to_text(), primary.project.to_text()),
+        None,
+        parts_root_for_recovery(production),
+        None,
+        Arc::new(crate::guards::AbuseGuards::default()),
+        Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
+        Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
+        None,
+        None,
+        None,
+        None,
+    );
+    let prepared = admission.prepare_public(public, state, auth).await.map_err(|_| {
+        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+            crate::production::ProductionComponentError {
+                component: crate::production::ProductionComponent::PublicApi,
+                detail: "production public API could not be prepared",
+            },
+        ))) as Box<dyn Error + Send + Sync>
+    })?;
+    serving.store(true, std::sync::atomic::Ordering::Release);
+    let status = prepared.status();
+    let public_task = tokio::spawn(prepared.serve(async {
+        let _ = wait_for_shutdown().await;
+    }));
+    while !status.is_serving() {
+        tokio::task::yield_now().await;
+    }
+    let result = public_task.await.map_err(|_| DaemonError::ShutdownTimeout)?;
+    let _ = recovery_worker.shutdown().await;
+    admission.drain().await.map_err(|_| DaemonError::ShutdownTimeout)?;
+    serving.store(false, std::sync::atomic::Ordering::Release);
     let report = member.drain().await;
-    let error = ProductionStartupError::Component(crate::production::ProductionComponentError {
-        component: crate::production::ProductionComponent::Replication,
-        detail: "durable production data plane is not composed",
-    })
-    .with_storage_cleanup(report.storage);
-    Err(Box::new(DaemonError::ProductionStartup(error)))
+    report.storage.map_err(|error| {
+        Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
+            crate::production::ProductionComponentError {
+                component: crate::production::ProductionComponent::Replication,
+                detail: "production Member drain failed",
+            },
+        ))) as Box<dyn Error + Send + Sync>
+    })?;
+    result.map_err(|_| Box::new(DaemonError::ShutdownTimeout) as Box<dyn Error + Send + Sync>)
+}
+
+fn parts_root_for_recovery(production: &crate::config::ProductionConfig) -> std::path::PathBuf {
+    production
+        .databases
+        .iter()
+        .find(|database| database.enabled)
+        .map(|database| database.location.join("recovery"))
+        .unwrap_or_else(|| std::env::temp_dir().join("terrabase-recovery"))
 }
 
 /// Runs authenticated control intent and lifecycle observations while admission is
@@ -890,8 +1077,8 @@ async fn serve_public_api(
     });
     let listener = tokio::net::TcpListener::bind(public.listen).await?;
     let recover_state = Arc::clone(&state);
-    let export_recovery = tokio::task::spawn_blocking(move || {
-        if crate::api::recover_exports(&recover_state).is_err() {
+    let export_recovery = tokio::spawn(async move {
+        if crate::api::recover_exports(&recover_state).await.is_err() {
             eprintln!("export recovery failed; durable jobs remain available for retry");
         }
     });

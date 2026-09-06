@@ -4,7 +4,7 @@ use crate::types::{
     CollectionName, Document, DocumentId, ExpectedVersion, LocalDurability, OperationId,
     StorageSequence, TenantId,
 };
-use crate::usage::UsageAdmissionContext;
+use crate::usage::{UsageAdmissionContext, VerifiedAllocation};
 
 use super::StorageRootId;
 
@@ -130,6 +130,8 @@ pub(crate) struct CommitIntent {
     /// Trusted usage admission bound atomically to this origin mutation.
     /// Replication, repair, and internal writes carry `None` and never mint.
     pub(crate) usage_admission: Option<UsageAdmissionContext>,
+    /// Verified regional write allocation consumed atomically with this commit.
+    pub(crate) budget_allocation: Option<VerifiedAllocation>,
     /// Engine-internal TTL cleanup and restore replay are unbilled.
     pub(crate) internal_maintenance: bool,
     /// Original source content, independent of the merged publication bytes.

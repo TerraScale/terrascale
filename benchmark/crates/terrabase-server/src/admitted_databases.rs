@@ -75,7 +75,7 @@ pub struct AdmittedDatabaseRegistry {
 
 impl AdmittedDatabaseRegistry {
     /// Durably pauses one admitted database while retaining its host and data.
-    pub fn pause(&self, database: &str) -> Result<(), String> {
+    pub fn pause(&self, database: &str, operation_id: &str) -> Result<(), String> {
         let entry = self
             .resolve_metadata(database)?
             .ok_or_else(|| "database is not admitted".to_owned())?;
@@ -84,13 +84,13 @@ impl AdmittedDatabaseRegistry {
         entry
             .host
             .engine()
-            .lifecycle_pause(&entry.host.engine().scope_for(&tenant))
+            .lifecycle_pause(&entry.host.engine().scope_for(&tenant), operation_id)
             .map_err(|_| "database pause failed")?;
         Ok(())
     }
 
     /// Resumes one paused admitted database without replacing its identity.
-    pub fn resume(&self, database: &str) -> Result<(), String> {
+    pub fn resume(&self, database: &str, operation_id: &str) -> Result<(), String> {
         let entry = self
             .resolve_metadata(database)?
             .ok_or_else(|| "database is not admitted".to_owned())?;
@@ -99,7 +99,7 @@ impl AdmittedDatabaseRegistry {
         entry
             .host
             .engine()
-            .lifecycle_resume(&entry.host.engine().scope_for(&tenant))
+            .lifecycle_resume(&entry.host.engine().scope_for(&tenant), operation_id)
             .map_err(|_| "database resume failed")?;
         Ok(())
     }
@@ -764,13 +764,13 @@ pub(crate) mod tests {
         let tenant = terrabase::types::TenantId::try_new(&records[0].tenant_id).unwrap();
         let scope = engine.scope_for(&tenant);
 
-        registry.pause(database).unwrap();
+        registry.pause(database, "pause-1").unwrap();
         assert!(engine.lifecycle_state(&scope).unwrap().paused);
         assert!(registry.resolve(database).unwrap().is_none());
         assert!(registry.resolve_serving(database).unwrap().is_none());
         assert!(registry.resolve_metadata(database).unwrap().is_some());
 
-        registry.resume(database).unwrap();
+        registry.resume(database, "resume-1").unwrap();
         assert!(!engine.lifecycle_state(&scope).unwrap().paused);
         let resumed = registry.resolve(database).unwrap().unwrap();
         assert!(Arc::ptr_eq(&admitted, &resumed));
@@ -778,8 +778,8 @@ pub(crate) mod tests {
         engine.lifecycle_prepare_deletion(&scope, "delete-after-pause").unwrap();
         assert!(registry.resolve(database).unwrap().is_some());
         assert!(registry.resolve_serving(database).unwrap().is_none());
-        assert!(registry.pause(database).is_err());
-        assert!(registry.resume(database).is_err());
+        assert!(registry.pause(database, "pause-2").is_err());
+        assert!(registry.resume(database, "resume-2").is_err());
 
         drop(admitted);
         drop(registry);

@@ -21,10 +21,15 @@
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
+use std::future::Future;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+pub(crate) type ExportFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, ExportError>> + Send + 'a>>;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
@@ -353,7 +358,7 @@ pub trait ArtifactWriter: Send {
     /// # Errors
     ///
     /// Returns encryption, path, I/O, or conflicting-content errors.
-    fn put(&mut self, path: &str, plaintext: &[u8]) -> Result<ArtifactFact, ExportError>;
+    fn put<'a>(&'a mut self, path: &'a str, plaintext: &'a [u8]) -> ExportFuture<'a, ArtifactFact>;
     /// Returns facts for members already present in a resumable staging
     /// artifact.  A restart uses this to rebuild the manifest without
     /// retaining document bytes in the durable job state.  Ports that do not
@@ -364,15 +369,15 @@ pub trait ArtifactWriter: Send {
     ///
     /// Returns an I/O or verification failure, or `DependencyUnavailable`
     /// when the port does not support recovery.
-    fn existing_facts(&mut self) -> Result<Vec<ArtifactFact>, ExportError> {
-        Err(ExportError::DependencyUnavailable)
+    fn existing_facts<'a>(&'a mut self) -> ExportFuture<'a, Vec<ArtifactFact>> {
+        Box::pin(async { Err(ExportError::DependencyUnavailable) })
     }
     /// Atomically publishes the completed bundle and its commit marker.
     ///
     /// # Errors
     ///
     /// Returns a manifest-verification, publication, or durability failure.
-    fn commit(self: Box<Self>, manifest: &ArtifactFact) -> Result<(), ExportError>;
+    fn commit(self: Box<Self>, manifest: &ArtifactFact) -> ExportFuture<'static, ()>;
 }
 
 /// Destination/provider seam.  `open` must reject an absent key/provider.
@@ -381,14 +386,14 @@ pub trait ArtifactPort: Send + Sync + 'static {
     ///
     /// # Errors
     /// Refuses unavailable providers, uncommitted exports, or invalid artifacts.
-    fn read_member(
-        &self,
-        _job_id: &str,
-        _database: &str,
-        _member: &str,
-        _manifest: &ArtifactFact,
-    ) -> Result<Vec<u8>, ExportError> {
-        Err(ExportError::DependencyUnavailable)
+    fn read_member<'a>(
+        &'a self,
+        _job_id: &'a str,
+        _database: &'a str,
+        _member: &'a str,
+        _manifest: &'a ArtifactFact,
+    ) -> ExportFuture<'a, Vec<u8>> {
+        Box::pin(async { Err(ExportError::DependencyUnavailable) })
     }
 
     /// Returns provider/key metadata without exposing key material.
@@ -398,13 +403,13 @@ pub trait ArtifactPort: Send + Sync + 'static {
     /// # Errors
     ///
     /// Returns a placement, provider, key, destination-validation, or I/O error.
-    fn open(
-        &self,
-        job_id: &str,
-        database: &str,
-        destination: &ExportDestination,
-        placement: &PlacementLock,
-    ) -> Result<Box<dyn ArtifactWriter>, ExportError>;
+    fn open<'a>(
+        &'a self,
+        job_id: &'a str,
+        database: &'a str,
+        destination: &'a ExportDestination,
+        placement: &'a PlacementLock,
+    ) -> ExportFuture<'a, Box<dyn ArtifactWriter>>;
 }
 
 /// The durable state of one export.  Metadata and cursors are small control
@@ -842,7 +847,7 @@ impl ExportService {
         }
         let service = self.clone();
         let after = after.map(str::to_owned);
-        tokio::task::spawn_blocking(move || {
+        tokio::spawn(async move {
             service
                 .store
                 .list(after.as_deref(), limit)?
@@ -965,7 +970,7 @@ impl ExportService {
                 return Err(ExportError::InvalidRequest("export incomplete"));
             }
             let manifest = state.manifest.ok_or(ExportError::IdempotencyConflict)?;
-            service.artifacts.read_member(&job, &state.database, &member, &manifest)
+            service.artifacts.read_member(&job, &state.database, &member, &manifest).await
         })
         .await
         .map_err(|_| ExportError::DependencyUnavailable)?
@@ -987,9 +992,9 @@ impl ExportService {
         };
         let worker = self.clone_for_worker();
         let job = job_id.to_owned();
-        tokio::task::spawn_blocking(move || {
+        tokio::spawn(async move {
             let _active = active;
-            worker.run(&job)
+            worker.run(&job).await
         });
         Ok(())
     }
@@ -1075,7 +1080,7 @@ impl Drop for ActiveJob {
 }
 
 impl Worker {
-    fn run(&self, job_id: &str) -> Result<(), ExportError> {
+    async fn run(&self, job_id: &str) -> Result<(), ExportError> {
         if self.stop_requested.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -1091,22 +1096,25 @@ impl Worker {
         state.status = JobStatus::Running;
         state.error = None;
         self.store.save(&state)?;
-        let result: Result<Option<ArtifactFact>, ExportError> = (|| {
+        let result: Result<Option<ArtifactFact>, ExportError> = (|| async {
             if self.cancellation_requested(job_id)? {
                 return Ok(None);
             }
             let placement = PlacementLock::new(state.placement.iter().copied())?;
-            let mut writer =
-                self.artifacts.open(job_id, &state.database, &state.destination, &placement)?;
-            let Some(manifest) = self.run_inner(&mut state, &mut writer)? else {
+            let mut writer = self
+                .artifacts
+                .open(job_id, &state.database, &state.destination, &placement)
+                .await?;
+            let Some(manifest) = self.run_inner(&mut state, &mut writer).await? else {
                 return Ok(None);
             };
             if self.cancellation_requested(job_id)? {
                 return Ok(None);
             }
-            writer.commit(&manifest)?;
+            writer.commit(&manifest).await?;
             Ok(Some(manifest))
-        })();
+        })()
+        .await;
         match result {
             Ok(Some(manifest)) => {
                 state.manifest = Some(manifest);
@@ -1144,18 +1152,18 @@ impl Worker {
         }
     }
 
-    fn run_inner(
+    async fn run_inner(
         &self,
         state: &mut ExportJobState,
         writer: &mut Box<dyn ArtifactWriter>,
     ) -> Result<Option<ArtifactFact>, ExportError> {
         let metadata = metadata_members(&state.snapshot)?;
-        let (mut facts_by_path, mut facts) = recover_facts(writer, metadata.len() + 4)?;
+        let (mut facts_by_path, mut facts) = recover_facts(writer, metadata.len() + 4).await?;
         for (path, bytes) in metadata {
             if self.cancellation_requested(&state.job_id)? {
                 return Ok(None);
             }
-            let fact = put_checked(writer, &path, &bytes)?;
+            let fact = put_checked(writer, &path, &bytes).await?;
             if facts_by_path.insert(fact.path.clone()) {
                 facts.push(fact);
             }
@@ -1198,14 +1206,14 @@ impl Worker {
                 let page_number = state.pages;
                 if !jsonl.is_empty() {
                     let path = format!("documents/{page_number:012}.jsonl");
-                    let fact = put_checked(writer, &path, &jsonl)?;
+                    let fact = put_checked(writer, &path, &jsonl).await?;
                     if facts_by_path.insert(fact.path.clone()) {
                         facts.push(fact);
                     }
                 }
                 if !history.is_empty() {
                     let path = format!("history/{page_number:012}.jsonl");
-                    let fact = put_checked(writer, &path, &history)?;
+                    let fact = put_checked(writer, &path, &history).await?;
                     if facts_by_path.insert(fact.path.clone()) {
                         facts.push(fact);
                     }
@@ -1231,17 +1239,17 @@ impl Worker {
             // the crash/idempotency ordering guarantee.
             self.store.save(state)?;
         }
-        publish_bundle(writer, state, &mut facts_by_path, &mut facts).map(Some)
+        publish_bundle(writer, state, &mut facts_by_path, &mut facts).await.map(Some)
     }
 }
 
-fn recover_facts(
+async fn recover_facts(
     writer: &mut Box<dyn ArtifactWriter>,
     capacity: usize,
 ) -> Result<(BTreeSet<String>, Vec<ArtifactFact>), ExportError> {
     let mut paths = BTreeSet::new();
     let mut facts = Vec::with_capacity(capacity);
-    for fact in writer.existing_facts()? {
+    for fact in writer.existing_facts().await? {
         validate_fact(&fact)?;
         if matches!(fact.path.as_str(), "checksums.txt" | "manifest.json") {
             continue;
@@ -1254,7 +1262,7 @@ fn recover_facts(
     Ok((paths, facts))
 }
 
-fn publish_bundle(
+async fn publish_bundle(
     writer: &mut Box<dyn ArtifactWriter>,
     state: &ExportJobState,
     paths: &mut BTreeSet<String>,
@@ -1270,12 +1278,12 @@ fn publish_bundle(
         checksum_bytes.extend_from_slice(fact.checksum.as_bytes());
         checksum_bytes.push(b'\n');
     }
-    let checksums = put_checked(writer, "checksums.txt", &checksum_bytes)?;
+    let checksums = put_checked(writer, "checksums.txt", &checksum_bytes).await?;
     if paths.insert(checksums.path.clone()) {
         facts.push(checksums);
     }
     let manifest = manifest_bytes(state, facts)?;
-    put_checked(writer, "manifest.json", &manifest)
+    put_checked(writer, "manifest.json", &manifest).await
 }
 
 fn validate_fact(fact: &ArtifactFact) -> Result<(), ExportError> {
@@ -1295,12 +1303,12 @@ fn bundle_member_path(path: &str) -> bool {
         .any(|prefix| path.starts_with(prefix))
 }
 
-fn put_checked(
+async fn put_checked(
     writer: &mut Box<dyn ArtifactWriter>,
     path: &str,
     plaintext: &[u8],
 ) -> Result<ArtifactFact, ExportError> {
-    let fact = writer.put(path, plaintext)?;
+    let fact = writer.put(path, plaintext).await?;
     validate_fact(&fact)?;
     if fact.path != path
         || (!matches!(path, "checksums.txt" | "manifest.json") && !bundle_member_path(path))

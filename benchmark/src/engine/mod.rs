@@ -307,12 +307,17 @@ const fn map_usage_storage_error(error: UsageStorageError) -> UsageCommandError 
     }
 }
 
-fn usage_bound_commit_digest(base: u64, context: Option<&UsageAdmissionContext>) -> u64 {
-    let Some(context) = context else { return base };
+fn usage_bound_commit_digest(
+    base: u64,
+    context: Option<&UsageAdmissionContext>,
+    allocation: Option<&crate::usage::VerifiedAllocation>,
+) -> u64 {
+    if context.is_none() && allocation.is_none() { return base; }
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"terrascale.commit.usage-admission.v1\0");
     hasher.update(&base.to_le_bytes());
-    hasher.update(&context.digest_bytes());
+    if let Some(context) = context { hasher.update(&context.digest_bytes()); }
+    if let Some(allocation) = allocation { hasher.update(allocation.payload_digest()); }
     let digest = hasher.finalize();
     u64::from_le_bytes(digest.as_bytes()[..8].try_into().expect("blake3 has eight bytes"))
 }
@@ -2070,6 +2075,7 @@ impl Engine {
             snapshot_sequence,
             operation,
             usage_admission: None,
+            budget_allocation: None,
             internal_maintenance: false,
             expected_origin_epoch: origin_epoch,
             expected_uniform_context: None,
@@ -3696,14 +3702,12 @@ impl Engine {
         if view.phase != crate::auto_index::LifecyclePhase::Active {
             return Err(EngineError::Conflict);
         }
-        view.pinned = true;
         lifecycle
-            .control(
+            .pin_template(
                 self.lock_storage()?.port.as_mut(),
                 (tenant.as_str(), index_id),
-                false,
+                template,
                 Self::now_millis(),
-                *blake3::hash(template.as_bytes()).as_bytes(),
             )
             .map_err(|()| EngineError::StorageFailure)?;
         view.generation = lifecycle.generation(tenant.as_str());
@@ -3902,6 +3906,73 @@ impl Engine {
         lifecycle
             .install(storage.port.as_mut(), view.clone(), at_millis, [0; 32])
             .map_err(|()| EngineError::StorageFailure)?;
+        view.generation = lifecycle.generation(tenant.as_str());
+        Ok(view)
+    }
+
+    /// Publishes a completed, verified hidden index to the planner. The
+    /// optimistic generation and retained shadow evidence are checked while
+    /// the lifecycle and storage locks are held, so a stale verifier cannot
+    /// expose a candidate after another lifecycle transition.
+    pub fn auto_index_activate(
+        &self,
+        tenant: &TenantId,
+        index_id: &str,
+        expected_generation: u64,
+        at_millis: u64,
+    ) -> Result<crate::auto_index::LifecycleIndexView, EngineError> {
+        self.validate_tenant(tenant)?;
+        let mut lifecycle =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        if lifecycle.generation(tenant.as_str()) != expected_generation {
+            return Err(EngineError::Conflict);
+        }
+        let mut view =
+            lifecycle.index(tenant.as_str(), index_id).cloned().ok_or(EngineError::Conflict)?;
+        if view.phase != crate::auto_index::LifecyclePhase::Shadowing
+            || view.visible
+            || view.target_watermark != Some(view.covered_watermark)
+            || lifecycle.evidence_digest(tenant.as_str(), index_id).is_none()
+        {
+            return Err(EngineError::Conflict);
+        }
+        view.phase = crate::auto_index::LifecyclePhase::Active;
+        view.visible = true;
+        view.zero_stale_reads = true;
+        view.regression_free = true;
+        lifecycle
+            .install(self.lock_storage()?.port.as_mut(), view.clone(), at_millis, [0; 32])
+            .map_err(|_| EngineError::StorageFailure)?;
+        view.generation = lifecycle.generation(tenant.as_str());
+        Ok(view)
+    }
+
+    /// Hides an active index immediately after a verified regression. The
+    /// physical hidden table remains available for delayed cleanup.
+    pub fn auto_index_revert(
+        &self,
+        tenant: &TenantId,
+        index_id: &str,
+        expected_generation: u64,
+        at_millis: u64,
+    ) -> Result<crate::auto_index::LifecycleIndexView, EngineError> {
+        self.validate_tenant(tenant)?;
+        let mut lifecycle =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        if lifecycle.generation(tenant.as_str()) != expected_generation {
+            return Err(EngineError::Conflict);
+        }
+        let mut view =
+            lifecycle.index(tenant.as_str(), index_id).cloned().ok_or(EngineError::Conflict)?;
+        if view.phase != crate::auto_index::LifecyclePhase::Active || !view.visible {
+            return Err(EngineError::Conflict);
+        }
+        view.phase = crate::auto_index::LifecyclePhase::Invisible;
+        view.visible = false;
+        view.regression_free = false;
+        lifecycle
+            .install(self.lock_storage()?.port.as_mut(), view.clone(), at_millis, [0; 32])
+            .map_err(|_| EngineError::StorageFailure)?;
         view.generation = lifecycle.generation(tenant.as_str());
         Ok(view)
     }
@@ -4468,6 +4539,7 @@ pub struct Transaction<'engine> {
     snapshot_sequence: StorageSequence,
     operation: OperationId,
     usage_admission: Option<UsageAdmissionContext>,
+    budget_allocation: Option<crate::usage::VerifiedAllocation>,
     internal_maintenance: bool,
     expected_origin_epoch: u64,
     expected_uniform_context: Option<Vec<u8>>,
@@ -4544,6 +4616,24 @@ impl Transaction<'_> {
             return Err(UsageCommandError::InvalidRequest);
         }
         self.usage_admission = Some(context);
+        Ok(())
+    }
+
+    /// Attaches a verified regional allocation. The allocation is consumed in
+    /// the same SQLite transaction as the document and usage fact.
+    pub fn attach_usage_budget(
+        &mut self,
+        allocation: crate::usage::VerifiedAllocation,
+    ) -> Result<(), UsageCommandError> {
+        if allocation.grant().operation_id != self.operation.as_str()
+            || allocation.grant().database_id.is_empty()
+        {
+            return Err(UsageCommandError::IdentityMismatch);
+        }
+        if self.budget_allocation.is_some() {
+            return Err(UsageCommandError::InvalidRequest);
+        }
+        self.budget_allocation = Some(allocation);
         Ok(())
     }
 
@@ -4813,6 +4903,7 @@ impl Transaction<'_> {
     fn commit_unobserved(mut self, durability: LocalDurability) -> CommitOutcome {
         let writes = std::mem::take(&mut self.writes);
         let usage_admission = self.usage_admission.take();
+        let budget_allocation = self.budget_allocation.take();
         if usage_admission.is_some() && durability != LocalDurability::Synced {
             return CommitOutcome::Rejected(CommitError::UsageRequiresSynced);
         }
@@ -4841,10 +4932,11 @@ impl Transaction<'_> {
         let intent = CommitIntent {
             tenant: self.scope.tenant().clone(),
             operation: self.operation.clone(),
-            digest: usage_bound_commit_digest(write_digest, usage_admission.as_ref()),
+            digest: usage_bound_commit_digest(write_digest, usage_admission.as_ref(), budget_allocation.as_ref()),
             snapshot_sequence: self.snapshot_sequence,
             durability,
             usage_admission,
+            budget_allocation,
             internal_maintenance: self.internal_maintenance,
             expected_origin_epoch: if replicated { None } else { Some(self.expected_origin_epoch) },
             expected_uniform_context: self.expected_uniform_context.take(),

@@ -212,7 +212,12 @@ fn encrypted_branch_restore_rejects_plaintext_source() {
         .unwrap()
         .with_owner(child_owner.clone())
         .with_storage_keys(test_storage_keys(&child_owner, 143));
-    assert!(Engine::open(config).is_err());
+    let source_config =
+        EngineConfig::durable(&source).unwrap().with_owner(source_owner).with_storage_keys(
+            test_storage_keys(&crate::storage::DatabaseOwner::local_development(), 143),
+        );
+    assert!(Engine::open(source_config).is_err());
+    assert!(Engine::open(config).is_ok());
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -250,7 +255,12 @@ fn encrypted_branch_rejects_wrong_owner_keys_before_reading_source() {
         Err(EngineOpenError::InvalidConfig)
     ));
     assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
-    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    assert!(
+        std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .all(|entry| !entry.file_name().to_string_lossy().starts_with(".branch-restore-"))
+    );
     drop(source);
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -56,7 +56,7 @@ async fn disconnected_client_discovers_cancels_and_resumes_the_same_durable_expo
     Arc::get_mut(&mut state).unwrap().exports =
         Some(Arc::new(export::ExportRuntime::local(&root, RegionCode::GRU).unwrap()));
     let recovering = state.clone();
-    tokio::task::spawn_blocking(move || recover_exports(&recovering)).await.unwrap().unwrap();
+    tokio::spawn(async move { recover_exports(&recovering).await }).await.unwrap().unwrap();
     let app = router(state);
     let cancelled = call(&app, "GET", &path, "").await;
     assert_eq!(cancelled["status"], "Cancelled");

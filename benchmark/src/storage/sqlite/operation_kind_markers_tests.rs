@@ -26,6 +26,7 @@ fn metadata_intent(operation: &str, maintenance: bool, writes: Vec<StagedWrite>)
         snapshot_sequence: StorageSequence::new(0),
         durability: LocalDurability::Written,
         usage_admission: None,
+        budget_allocation: None,
         internal_maintenance: maintenance,
         expected_origin_epoch: Some(0),
         expected_uniform_context: None,
