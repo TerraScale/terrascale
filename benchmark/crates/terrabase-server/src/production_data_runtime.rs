@@ -25,6 +25,8 @@ mod host_readiness;
 mod public_server;
 mod readiness_inventory;
 mod transition_retirement;
+#[cfg(test)]
+mod transition_retirement_tests;
 
 pub use host_readiness::WriterHostReadiness;
 pub use public_server::{PreparedProductionPublic, PublicServingStatus};
@@ -51,6 +53,7 @@ pub struct ProductionDatabaseAssignment {
 
 /// Owns the running replication workers and their retained Member leases.
 pub struct ProductionDataRuntime {
+    runtime: std::sync::Weak<ProductionMemberRuntime>,
     peers: ReplicationPeers,
     progress: Arc<ReplicationProgress>,
 }
@@ -58,7 +61,7 @@ pub struct ProductionDataRuntime {
 /// Shared owner for the one process-wide accepted replication runtime.
 pub struct ProductionDataLifecycle {
     data: OnceLock<ProductionDataRuntime>,
-    startup: tokio::sync::Mutex<()>,
+    startup: Arc<tokio::sync::Mutex<()>>,
     draining: AtomicBool,
     progress: Arc<ReplicationProgress>,
     registry: Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
@@ -75,7 +78,7 @@ impl ProductionDataLifecycle {
     ) -> Self {
         Self {
             data: OnceLock::new(),
-            startup: tokio::sync::Mutex::new(()),
+            startup: Arc::new(tokio::sync::Mutex::new(())),
             draining: AtomicBool::new(false),
             progress,
             registry,
@@ -263,10 +266,11 @@ impl ProductionDataRuntime {
         databases: Vec<ProductionDatabaseAssignment>,
         dispatcher: Arc<dyn crate::replication_peers::PeerControlDispatcher>,
     ) -> Result<Self, String> {
+        let owner = Arc::downgrade(&runtime);
         let peers = build_peer_databases(&runtime, source, databases).await?;
         let peers =
             ReplicationPeers::start_with_dispatch(runtime, progress.clone(), peers, dispatcher)?;
-        Ok(Self { peers, progress })
+        Ok(Self { runtime: owner, peers, progress })
     }
 
     /// Live authenticated replication observations, never configuration-derived health.
@@ -1098,6 +1102,7 @@ mod lifecycle_tests {
         let lifecycle = ProductionDataLifecycle::new(progress.clone(), registry.clone());
         let failure = "terminal peer failure";
         let data = ProductionDataRuntime {
+            runtime: std::sync::Weak::new(),
             peers: crate::replication_peers::failed_peer_owner(failure),
             progress,
         };

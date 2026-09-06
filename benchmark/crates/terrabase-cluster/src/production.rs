@@ -1005,6 +1005,8 @@ impl ProductionMemberRuntime {
     /// serving admission, and every retained WAL binding are revoked before
     /// the attached data plane is asked to stop accepting work. Callers must
     /// persist the durable transition intent before invoking this method.
+    /// WAL revocation may wait for an in-flight persistence operation. Async
+    /// callers must invoke this barrier on a blocking worker.
     /// The method does not close storage or claim that the epoch has drained;
     /// [`Self::retire_epoch`] performs that later bounded retirement.
     pub fn begin_epoch_retirement(&self) {

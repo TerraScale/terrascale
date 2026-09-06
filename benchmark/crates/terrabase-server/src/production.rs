@@ -919,6 +919,31 @@ pub(crate) mod tests {
         (runtime, root, spec)
     }
 
+    struct AcceptedMembership(super::ProductionPlacement);
+
+    impl terrabase_cluster::production::DurableMembershipSource for AcceptedMembership {
+        fn load_admitted_placement(
+            &self,
+        ) -> Result<super::ProductionPlacement, terrabase_cluster::production::MembershipSourceError>
+        {
+            Ok(self.0.clone())
+        }
+    }
+
+    struct AcceptedAssignment(terrabase_cluster::wal_route::WalAssignment);
+
+    impl terrabase_cluster::wal_route::DurableWalAssignmentSource for AcceptedAssignment {
+        fn load_assignment(
+            &self,
+            _: DatabaseRouteScope,
+        ) -> Result<
+            terrabase_cluster::wal_route::WalAssignment,
+            terrabase_cluster::wal_route::WalAssignmentError,
+        > {
+            Ok(self.0.clone())
+        }
+    }
+
     #[tokio::test]
     async fn epoch_retirement_fences_runtime_arcs_and_allows_a_new_epoch_after_drain() {
         let (runtime, root, spec) = runtime_for_readiness("epoch-retirement-barrier");
@@ -926,14 +951,45 @@ pub(crate) mod tests {
         let route = DatabaseRouteScope::new(owner.tenant(), owner.project(), owner.database());
         let runtime = Arc::new(runtime);
 
+        let config = runtime.transport().config();
+        let local =
+            MemberUlid::from_text(config.local_identity().member().as_str()).expect("local member");
+        let peer = MemberUlid::from_text(
+            config.peers().next().expect("peer").identity().member().as_str(),
+        )
+        .expect("peer member");
+        let placement = super::ProductionPlacement::try_new(
+            local,
+            runtime.facts().placement_generation,
+            runtime.facts().replica_set_epoch,
+            [super::ProductionRegionSeats::try_new(RegionCode::GRU, [local, peer]).expect("seats")],
+        )
+        .expect("placement");
+        runtime.admit_membership(&AcceptedMembership(placement)).expect("membership");
+        let binding = runtime
+            .bind_wal_replica(
+                route,
+                &AcceptedAssignment(terrabase_cluster::wal_route::WalAssignment {
+                    scope: route,
+                    generation: runtime.facts().placement_generation,
+                    epoch: runtime.facts().replica_set_epoch,
+                    writer: config.local_identity().clone(),
+                    follower: config.peers().next().expect("peer").identity().clone(),
+                }),
+            )
+            .expect("wal binding");
+        assert!(runtime.acquire_replication(&route).is_ok());
+
         runtime.begin_epoch_retirement();
         runtime.begin_epoch_retirement();
         assert!(runtime.acquire_replication(&route).is_err());
+        assert!(binding.is_fenced());
 
         let runtime = Arc::try_unwrap(runtime).unwrap_or_else(|_| panic!("runtime Arc retained"));
         let retired = runtime.retire_epoch().await;
         assert!(retired.data_plane.is_ok());
         let database = retired.member.database_ids().next().expect("database");
+        retired.member.close_database(&database).expect("close idle old-epoch engine");
         retired
             .member
             .accept_database_role(&database, &DatabaseRoleAuthorityForEpoch(2))

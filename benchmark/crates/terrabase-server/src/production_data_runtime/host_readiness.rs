@@ -98,7 +98,7 @@ fn snapshot_scope(snapshot: &AdmittedDatabaseSnapshot) -> Option<DatabaseRouteSc
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use std::sync::Arc;
     use terrabase::identity::{DatabaseUlid, ProjectUlid, TenantUlid};
@@ -124,7 +124,7 @@ mod tests {
         }
     }
 
-    fn writer_fixture()
+    pub(in crate::production_data_runtime) fn writer_fixture()
     -> (AdmittedDatabaseSnapshot, DatabaseRouteScope, terrabase::member::Member, std::path::PathBuf)
     {
         let root =

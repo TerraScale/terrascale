@@ -59,9 +59,13 @@ impl ProductionDataLifecycle {
         {
             return Err("prepared transition does not name this runtime".into());
         }
-        let _startup = self.startup.lock().await;
-        if self.get().is_none() {
-            return Err("transition has no retained replication runtime".into());
+        let startup = Arc::clone(&self.startup).lock_owned().await;
+        let owner = self
+            .get()
+            .and_then(|data| data.runtime.upgrade())
+            .ok_or("transition has no retained replication runtime")?;
+        if !Arc::ptr_eq(&owner, &runtime) {
+            return Err("transition runtime does not own this lifecycle".into());
         }
         let expected = self
             .expected
@@ -78,6 +82,7 @@ impl ProductionDataLifecycle {
         }
         let lifecycle = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
+            let _startup = startup;
             // WAL revocation may wait for a physical persistence critical section.
             // Keep it and the Engine barriers off Tokio's async worker threads.
             runtime.begin_epoch_retirement();
@@ -139,4 +144,91 @@ fn fence_writer_hosts(
         sequences.insert(scope, sequence);
     }
     Ok(TransitionWriterFences { sequences, hosts })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use terrabase::engine::{CommitError, CommitOutcome};
+    use terrabase::types::{LocalDurability, OperationId, TenantId};
+
+    fn expected(scope: DatabaseRouteScope) -> BTreeMap<DatabaseRouteScope, ExpectedScope> {
+        BTreeMap::from([(
+            scope,
+            ExpectedScope {
+                scope,
+                generation: 1,
+                epoch: 1,
+                local_region: "GRU".into(),
+                local_is_writer: true,
+                physical_peer: "peer".into(),
+                remote_writers: BTreeMap::new(),
+            },
+        )])
+    }
+
+    #[test]
+    fn fences_real_retained_writer_and_preadmitted_transaction() {
+        let (snapshot, scope, member, root) = super::super::host_readiness::tests::writer_fixture();
+        let database = Arc::clone(&snapshot.database);
+        let engine = database.host.engine();
+        engine.activate_origin_epoch(1).unwrap();
+        let tenant = TenantId::try_new(&scope.tenant().to_text()).unwrap();
+        let tenant_scope = engine.scope_for(&tenant);
+        let tx = engine
+            .begin(
+                &tenant_scope,
+                engine.read_snapshot(&tenant_scope).unwrap(),
+                OperationId::try_new("before-fence").unwrap(),
+            )
+            .unwrap();
+        let fences = fence_writer_hosts(&expected(scope), vec![snapshot], 1).unwrap();
+        assert_eq!(fences.sequences().len(), 1);
+        assert_eq!(engine.origin_epoch().unwrap(), (1, true));
+        assert_eq!(
+            tx.commit(LocalDurability::Synced),
+            CommitOutcome::Rejected(CommitError::Conflict)
+        );
+        // A retry reaches the same Engine and preserves the irreversible fence.
+        let repeated = fence_writer_hosts(
+            &expected(scope),
+            vec![AdmittedDatabaseSnapshot { database: Arc::clone(&database), activated: false }],
+            1,
+        )
+        .unwrap();
+        assert_eq!(repeated.sequences(), fences.sequences());
+        assert!(engine.activate_origin_epoch(1).is_err());
+        drop(repeated);
+        drop(fences);
+        drop(database);
+        member.close(std::time::Duration::from_secs(2)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_or_wrong_epoch_inventory_never_claims_writer_fence() {
+        let (snapshot, scope, member, root) = super::super::host_readiness::tests::writer_fixture();
+        snapshot.database.host.engine().activate_origin_epoch(1).unwrap();
+        assert!(fence_writer_hosts(&expected(scope), Vec::new(), 1).is_err());
+        let database = Arc::clone(&snapshot.database);
+        assert!(fence_writer_hosts(&expected(scope), vec![snapshot], 2).is_err());
+        assert_eq!(database.host.engine().origin_epoch().unwrap(), (1, false));
+        drop(database);
+        member.close(std::time::Duration::from_secs(2)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn follower_inventory_opens_no_writer_and_needs_no_origin_fence() {
+        let scope = DatabaseRouteScope::new(
+            terrabase::identity::TenantUlid::generate(),
+            terrabase::identity::ProjectUlid::generate(),
+            terrabase::identity::DatabaseUlid::generate(),
+        );
+        let mut inventory = expected(scope);
+        inventory.get_mut(&scope).unwrap().local_is_writer = false;
+        let fences = fence_writer_hosts(&inventory, Vec::new(), 1).unwrap();
+        assert!(fences.sequences().is_empty());
+        assert!(fences.hosts().is_empty());
+    }
 }
