@@ -196,8 +196,9 @@ it("cancels an in-flight export download through its typed options", async () =>
 
 it("distinguishes accepted production provisioning from a ready database", async () => {
   const accepted = {
+    environment: "production", tenant_id: "tenant-id", project_id: "project-id",
     operation_id: "create-one", database_id: "database-id", key_version: "key-version",
-    name: "primary", regions: ["GRU"], residency: "br-only", state: "pending",
+    name: "primary", regions: ["GRU"], residency: "br-only", parent_database_id: null, state: "pending",
   };
   const requests: Request[] = [];
   const client = createTerraScaleManagementClient({ fetch: async input => {
@@ -217,6 +218,11 @@ it("distinguishes accepted production provisioning from a ready database", async
   const rejected = await mismatched.databases.create({ name: "primary", placement: ["GRU"] });
   expect(rejected.ok).toBe(false);
   if (!rejected.ok) expect(rejected.error.kind).toBe("invalid-response");
+  const incomplete = { ...accepted, project_id: undefined };
+  const incompleteClient = createTerraScaleManagementClient({ fetch: async () => Response.json(incomplete, { status: 202 }) });
+  const incompleteResult = await incompleteClient.databases.create({ name: "primary", placement: ["GRU"], residency: "br-only", operation_id: "create-one" });
+  expect(incompleteResult.ok).toBe(false);
+  if (!incompleteResult.ok) expect(incompleteResult.error.code).toBe("invalid_create_response");
 });
 
 it("requires exact branch confirmation and bounds admission faults before transport", async () => {

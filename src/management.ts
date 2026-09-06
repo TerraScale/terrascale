@@ -51,12 +51,16 @@ export type Database = {
   readonly parent: string | null;
 };
 export type ProvisioningOperation = {
+  readonly environment: string;
+  readonly tenant_id: string;
+  readonly project_id: string;
   readonly operation_id: string;
   readonly database_id: string;
   readonly key_version: string;
   readonly name: string;
   readonly regions: readonly string[];
   readonly residency: string;
+  readonly parent_database_id: string | null;
   /** Acknowledged authority progress; acceptance does not mean serving readiness. */
   readonly state: string;
 };
@@ -609,6 +613,7 @@ function isDatabase(value: unknown): value is Database {
 function isProvisioningOperation(value: unknown): value is ProvisioningOperation {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
-  return ["operation_id", "database_id", "key_version", "name", "residency", "state"].every(key => typeof record[key] === "string")
+  return ["environment", "tenant_id", "project_id", "operation_id", "database_id", "key_version", "name", "residency", "state"].every(key => typeof record[key] === "string")
+    && (record.parent_database_id === null || typeof record.parent_database_id === "string")
     && Array.isArray(record.regions) && record.regions.every(region => typeof region === "string");
 }
