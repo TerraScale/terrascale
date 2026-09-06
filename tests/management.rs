@@ -770,7 +770,7 @@ async fn webhook_secret_rotation_never_retries_while_create_requires_stable_iden
 #[tokio::test]
 async fn exports_discover_and_cancel_with_durable_progress() {
     use terrascale::{ExportCancellation, ExportJobStatus};
-    let status = json!({"job_id":"job","status":"Cancelled","created_at_millis":1,"phase":"Documents","cancellation":"complete","pages":2,"records":5,"estimated_records":null,"progress_basis_points":1000,"resume_cursor":"resume","manifest":null,"error":null,"write_index":3});
+    let status = json!({"job_id":"job","status":"Cancelled","created_at_millis":1,"phase":"Documents","cancellation":"complete","pages":2,"records":5,"estimated_records":null,"progress_basis_points":1000,"resume_cursor":"resume","manifest":null,"error":null});
     let mock = Mock::new(vec![
         Response::json(
             200,
