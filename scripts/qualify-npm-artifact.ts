@@ -14,7 +14,7 @@ const execute = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = parseArguments(process.argv.slice(2));
 const output = path.resolve(root, options.output);
-if (options.release && output !== path.join(root, npmReleasePolicy.outputRoot)) {
+if (options.release && options.tarball === undefined && output !== path.join(root, npmReleasePolicy.outputRoot)) {
   throw new Error(`Release qualification output must be ${npmReleasePolicy.outputRoot}.`);
 }
 await requireAbsent(output);
@@ -49,11 +49,20 @@ try {
   }
 
   await mkdir(output, { recursive: true });
-  const packed = JSON.parse((await runNpm(npmCli, ["pack", "--ignore-scripts", "--json", "--pack-destination", output], root)).stdout);
-  if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0]?.filename !== "string") {
-    throw new Error("npm pack did not describe exactly one artifact.");
+  let tarball;
+  let originalArtifact;
+  if (options.tarball !== undefined) {
+    if (!path.isAbsolute(options.tarball)) throw new Error("--tarball must be an absolute path.");
+    originalArtifact = await readFile(options.tarball);
+    tarball = path.join(output, path.basename(options.tarball));
+    await writeFile(tarball, originalArtifact, { flag: "wx" });
+  } else {
+    const packed = JSON.parse((await runNpm(npmCli, ["pack", "--ignore-scripts", "--json", "--pack-destination", output], root)).stdout);
+    if (!Array.isArray(packed) || packed.length !== 1 || typeof packed[0]?.filename !== "string") {
+      throw new Error("npm pack did not describe exactly one artifact.");
+    }
+    tarball = path.join(output, packed[0].filename);
   }
-  const tarball = path.join(output, packed[0].filename);
   const tarballRealPath = await realpath(tarball);
   if (path.dirname(tarballRealPath) !== await realpath(output)) throw new Error("npm pack artifact escaped the output directory.");
   await run("tar", ["-xzf", tarball, "-C", workspace], root);
@@ -70,6 +79,7 @@ try {
   const graphs = {
     root: await browserGraph(packageDirectory, "dist/index.js"),
     admin: await browserGraph(packageDirectory, "dist/admin.js"),
+    betterAuthWorkerd: await browserGraph(packageDirectory, "dist/better-auth.js"),
   };
 
   await mkdir(consumer);
@@ -77,6 +87,14 @@ try {
   await runNpm(npmCli, ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], consumer);
   const journey = path.join(consumer, "qualify.ts");
   await writeFile(journey, consumerJourney);
+
+  // Exercise the installed package's condition selection, including browser
+  // rejection even when Node's own condition is also present.
+  await run(process.execPath, ["--conditions=workerd", journey], consumer, qualificationEnvironment());
+  await run(process.execPath, ["--conditions=browser", "--input-type=module", "-e", `
+    import assert from "node:assert/strict";
+    await assert.rejects(import("@terrascale/sdk/better-auth"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
+  `], consumer, qualificationEnvironment());
 
   const runtimes = [];
   for (const executable of options.nodes) {
@@ -124,6 +142,14 @@ try {
     throw new Error("Packed license metadata and LICENSE must both identify Apache-2.0.");
   }
 
+  const artifactBytes = await readFile(tarball);
+  if (originalArtifact !== undefined && (
+    !artifactBytes.equals(originalArtifact) ||
+    !(await readFile(options.tarball)).equals(originalArtifact)
+  )) throw new Error("Prepacked npm artifact changed during qualification.");
+  let unpackedSize = 0;
+  for (const file of files) unpackedSize += (await readFile(path.join(packageDirectory, file))).length;
+
   const limitations = [];
   if (!options.release) limitations.push("Diagnostic qualification was not produced in fail-closed release mode.");
   if (!source.clean) limitations.push("The qualified Git worktree contained uncommitted source changes.");
@@ -143,16 +169,16 @@ try {
       name: manifest.name,
       version: manifest.version,
       filename: path.basename(tarball),
-      sha256: sha256(await readFile(tarball)),
-      integrity: packed[0].integrity,
-      size: packed[0].size,
-      unpackedSize: packed[0].unpackedSize,
+      sha256: sha256(artifactBytes),
+      integrity: `sha512-${createHash("sha512").update(artifactBytes).digest("base64")}`,
+      size: artifactBytes.length,
+      unpackedSize,
       fileCount: files.length,
     },
     boundaries: {
       exports: manifest.exports,
       browserEntrypointGraphs: graphs,
-      betterAuthExport: "node-only",
+      betterAuthExport: "node-and-workerd-server-only",
       packedSecretScan: "passed",
     },
     contract,
@@ -173,10 +199,11 @@ try {
 }
 
 function parseArguments(args) {
-  const result = { output: "artifacts/npm-qualification", nodes: [], allowDirty: false, release: false };
+  const result = { output: "artifacts/npm-qualification", nodes: [], allowDirty: false, release: false, tarball: undefined };
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
-    if (argument === "--output") result.output = requiredValue(args, ++index, argument);
+    if (argument === "--tarball") result.tarball = requiredValue(args, ++index, argument);
+    else if (argument === "--output") result.output = requiredValue(args, ++index, argument);
     else if (argument === "--node") result.nodes.push(requiredValue(args, ++index, argument));
     else if (argument === "--allow-dirty") result.allowDirty = true;
     else if (argument === "--release") result.release = true;
@@ -223,8 +250,8 @@ function qualifyManifest(manifest) {
   }
   for (const name of ["./better-auth"]) {
     const entry = manifest.exports?.[name];
-    if (typeof entry?.node !== "string" || typeof entry?.types !== "string") throw new Error(`${name} must be explicitly Node-only.`);
-    if ("import" in entry || "browser" in entry || "default" in entry) throw new Error(`${name} is reachable without the Node condition.`);
+    if (typeof entry?.node !== "string" || typeof entry?.workerd !== "string" || typeof entry?.types !== "string") throw new Error(`${name} must expose explicit Node and Workerd server conditions.`);
+    if (entry.browser !== null || "import" in entry || "default" in entry) throw new Error(`${name} must block browser and generic imports.`);
   }
 }
 

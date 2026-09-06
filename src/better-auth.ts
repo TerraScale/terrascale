@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import type { TerraScaleResult } from "./result.js";
 
 /** The comparison operators understood by Better Auth's database adapter. */
@@ -113,14 +111,6 @@ export type BetterAuthDatabaseOperations = {
    * without it fails with `contract_gap` rather than falling back to SQLite.
    */
   readonly index?: ((input: BetterAuthIndexInput & BetterAuthMutationInput) => Promise<TerraScaleResult<void>>) | undefined;
-  /** Compatibility spelling used by some generated contract revisions. */
-  readonly ensureIndex?:
-    | ((input: BetterAuthIndexInput & BetterAuthMutationInput) => Promise<TerraScaleResult<void>>)
-    | undefined;
-  /** Compatibility spelling used by some generated contract revisions. */
-  readonly createIndex?:
-    | ((input: BetterAuthIndexInput & BetterAuthMutationInput) => Promise<TerraScaleResult<void>>)
-    | undefined;
   readonly transaction: <T>(
     callback: (operations: Omit<BetterAuthDatabaseOperations, "transaction">) => Promise<T>,
   ) => Promise<T>;
@@ -247,15 +237,16 @@ export function createLocalBetterAuthHttpOperations(
     deleteMany: (input) => request("deleteMany", input),
     consumeOne: (input) => request("consumeOne", input),
     incrementOne: (input) => request("incrementOne", input),
-    transaction: (callback) => callback(operationsWithoutTransaction(operations)),
+    transaction: async () => {
+      throw new BetterAuthAdapterError(
+        "The local HTTP auth bridge cannot execute atomic transaction callbacks.",
+        "transaction_unsupported",
+        { atomicTransactions: false },
+      );
+    },
     migrate: (input) => request("migrate", input),
   };
   return operations;
-}
-
-function operationsWithoutTransaction(operations: BetterAuthDatabaseOperations) {
-  const { transaction: _transaction, ...rest } = operations;
-  return rest;
 }
 
 function reviveDates(value: unknown): unknown {
@@ -326,7 +317,7 @@ function createAdapter(
 
   const id = options.id ?? "terrascale-database-api";
   if (id.trim().length === 0) throw new TypeError("The Better Auth adapter id cannot be empty.");
-  const key = options.idempotencyKeyFactory ?? (() => randomUUID());
+  const key = options.idempotencyKeyFactory ?? (() => globalThis.crypto.randomUUID());
   const nextKey = (): string => {
     if (keyScope !== undefined) {
       const ordinal = keyScope.cursor++;
@@ -372,7 +363,7 @@ function createAdapter(
     await invokeMutation(operation, idempotencyKey);
   };
 
-  const indexOperation = operations.index ?? operations.ensureIndex ?? operations.createIndex;
+  const indexOperation = operations.index;
 
   /* Keep validation in one place so a malformed factory fails before a
    * producer call and can never emit a credential-like key. */

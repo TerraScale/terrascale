@@ -1,4 +1,5 @@
 import { createTerraScaleClient, type TerraScaleClient } from "./factory.js";
+import { createTerraScaleManagementClient, type TerraScaleManagementClient } from "./management.js";
 import type { FetchLike } from "./config.js";
 import { type TerraScaleBase, type TerraScaleRequestMetric, type TerraScaleRouteName } from "./http.js";
 
@@ -13,21 +14,7 @@ const pathTemplateSegments = new Map<string, string>([
 
 /** Canonical producer operations not implemented by this SDK slice. */
 export const expectedContractGapRouteNames = [
-  "databases.listDatabases",
-  "databases.createDatabase",
-  "databases.deleteDatabase",
-  "databases.getDatabase",
-  "databases.listBackups",
-  "databases.restoreBackup",
-  "databases.listBranches",
-  "databases.createBranch",
-  "databases.listCollections",
-  "databases.documentHistory",
-  "databases.batchDocuments",
-  "databases.listIndexes",
-  "databases.createIndex",
   "databases.websocket",
-  "databases.restoreDatabase",
   "health.health",
 ] as const;
 
@@ -63,7 +50,7 @@ export type CapturedSdkRoute = {
 
 type CaptureOperation = {
   readonly client: string;
-  readonly invoke: (client: TerraScaleClient) => Promise<unknown>;
+  readonly invoke: (client: TerraScaleClient, management: TerraScaleManagementClient) => Promise<unknown>;
   readonly operation: string;
   readonly routeName: TerraScaleRouteName;
 };
@@ -89,24 +76,26 @@ async function captureRoute(operation: CaptureOperation, routeFetch?: FetchLike,
       ? new Response("{}", { status: 200, headers: { "content-type": "application/json" } })
       : routeFetch(request);
   };
-  const client = createTerraScaleClient({
+  const config = {
     apiBaseUrl: "https://api.terrascale.test",
     fetch: captureFetch,
     requestMetricRecorder: (metric: TerraScaleRequestMetric): void => { capturedMetric = metric; },
-  });
-  const result = await operation.invoke(client);
+  };
+  const client = createTerraScaleClient(config);
+  const management = createTerraScaleManagementClient(config);
+  const result = await operation.invoke(client, management);
   if (assertRouted && isRoutingFailure(result)) {
     throw new Error(`Local route exercise failed for ${operation.client}.${operation.operation}: ${result.error.code} (${result.error.kind}).`);
   }
   if (capturedRequest === undefined) throw new Error(`Route capture for ${operation.client}.${operation.operation} made no request.`);
   if (capturedMetric === undefined) throw new Error(`Route capture for ${operation.client}.${operation.operation} recorded no route metric.`);
+  if (capturedMetric.routeName !== operation.routeName) throw new Error(`Route metric mismatch for ${operation.operation}.`);
   return {
     base: capturedMetric.base,
     client: operation.client,
     method: capturedRequest.method,
     operation: operation.operation,
     pathTemplate: pathToTemplate(new URL(capturedRequest.url).pathname),
-    // Legacy dashboard wrappers use labels that predate the producer manifest.
     routeName: operation.routeName,
     sourceContract: await capturedSourceContract(capturedRequest),
   };
@@ -150,6 +139,63 @@ function pathToTemplate(pathname: string): string {
 }
 
 const captureOperations: readonly CaptureOperation[] = [
+  {
+    client: "databases", operation: "listDatabases", routeName: "databases.listDatabases",
+    invoke: (_client, management) => management.databases.list(),
+  },
+  {
+    client: "databases", operation: "createDatabase", routeName: "databases.createDatabase",
+    invoke: (_client, management) => management.databases.create({ name: sampleIds.database, placement: ["GRU"], residency: null }),
+  },
+  {
+    client: "databases", operation: "getDatabase", routeName: "databases.getDatabase",
+    invoke: (_client, management) => management.databases.get(sampleIds.database),
+  },
+  {
+    client: "databases", operation: "deleteDatabase", routeName: "databases.deleteDatabase",
+    invoke: (_client, management) => management.databases.delete(sampleIds.database, { confirm: true }),
+  },
+  {
+    client: "databases", operation: "restoreDatabase", routeName: "databases.restoreDatabase",
+    invoke: (_client, management) => management.databases.restore(sampleIds.database),
+  },
+  {
+    client: "databases", operation: "listBackups", routeName: "databases.listBackups",
+    invoke: (_client, management) => management.backups.listBackups(sampleIds.database),
+  },
+  {
+    client: "databases", operation: "restoreBackup", routeName: "databases.restoreBackup",
+    invoke: (_client, management) => management.backups.restoreBackup(sampleIds.database, { name: "restored", at: 123 }),
+  },
+  {
+    client: "databases", operation: "listBranches", routeName: "databases.listBranches",
+    invoke: (_client, management) => management.branches.list(sampleIds.database),
+  },
+  {
+    client: "databases", operation: "createBranch", routeName: "databases.createBranch",
+    invoke: (_client, management) => management.branches.create(sampleIds.database, { name: "branch", at: 123 }),
+  },
+  {
+    client: "databases", operation: "listCollections", routeName: "databases.listCollections",
+    invoke: (_client, management) => management.collections.list(sampleIds.database),
+  },
+  {
+    client: "databases", operation: "listIndexes", routeName: "databases.listIndexes",
+    invoke: (_client, management) => management.collections.listIndexes(sampleIds.database, sampleIds.collection),
+  },
+  {
+    client: "databases", operation: "createIndex", routeName: "databases.createIndex",
+    invoke: (_client, management) => management.collections.createIndex(sampleIds.database, sampleIds.collection, { field: "email" }),
+  },
+  {
+    client: "databases", operation: "documentHistory", routeName: "databases.documentHistory",
+    invoke: (client) => client.documents.history(sampleIds.database, sampleIds.collection, sampleIds.documentId, { limit: 25, after: "cursor-1" }),
+  },
+  {
+    client: "databases", operation: "batchDocuments", routeName: "databases.batchDocuments",
+    invoke: (client) => client.documents.batch(sampleIds.database, sampleIds.collection, { operations: [{ op: "put", id: sampleIds.documentId, value: { active: true } }] }),
+  },
+
   {
     client: "databases", operation: "listDocuments", routeName: "databases.listDocuments",
     invoke: (client) => client.documents.list(sampleIds.database, sampleIds.collection, { limit: 25, after: "cursor-1" }),

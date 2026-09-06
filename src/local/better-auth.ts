@@ -1,4 +1,4 @@
-import type { BetterAuthDatabaseOperations, BetterAuthWhere } from "../better-auth.js";
+import { BetterAuthAdapterError, type BetterAuthDatabaseOperations, type BetterAuthWhere } from "../better-auth.js";
 import { ok } from "../result.js";
 import type { TerraScaleSqliteStore } from "./store.js";
 
@@ -90,8 +90,12 @@ export function createLocalBetterAuthDatabaseOperations(
       for (const [field, amount] of Object.entries(input.increment)) updated[field] = Number(row[field] ?? 0) + Number(amount);
       return success("incrementOne", save(input.model, updated));
     },
-    async transaction(callback: any) {
-      return callback(operationsWithoutTransaction(operations));
+    async transaction() {
+      throw new BetterAuthAdapterError(
+        "The local SQLite auth adapter cannot execute atomic transaction callbacks.",
+        "transaction_unsupported",
+        { atomicTransactions: false },
+      );
     },
     async migrate() {
       return { code: "local_sqlite_ready", path: "better-auth" };
@@ -142,11 +146,6 @@ export async function handleLocalBetterAuthRequest(
     case "migrate": return operations.migrate?.(body);
     default: throw new TypeError(`Unsupported Better Auth operation: ${action}`);
   }
-}
-
-function operationsWithoutTransaction(operations: BetterAuthDatabaseOperations) {
-  const { transaction: _transaction, ...rest } = operations;
-  return rest;
 }
 
 function select(row: Row, fields: readonly string[] | undefined): Row {

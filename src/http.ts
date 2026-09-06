@@ -134,14 +134,15 @@ export class TerraScaleHttp {
       idempotencyKey = this.resolveIdempotencyKey(options);
       let attempt = 0;
       let repaired421 = false;
+      let requestRegionHint = options.regionHint;
       while (true) {
         let responseReceived = false;
         let fetchStarted = false;
         try {
-          const requestBase = this.baseUrl(options.regionHint);
-          const globalFirstContact = this.isGlobalFirstContact(requestBase, options.regionHint);
+          const requestBase = this.baseUrl(requestRegionHint);
+          const globalFirstContact = this.isGlobalFirstContact(requestBase, requestRegionHint);
           const url = buildUrl(requestBase, options.path, options.query);
-          const headers = await this.buildHeaders(options, idempotencyKey);
+          const headers = await this.buildHeaders({ ...options, regionHint: requestRegionHint }, idempotencyKey);
           const requestInit: RequestInit = {
             method: options.method,
             headers,
@@ -188,11 +189,12 @@ export class TerraScaleHttp {
             return ok(options.routeName, response.status, response.headers, body.value as TResponse);
           }
 
-          if (response.status === 421 && !repaired421) {
+          if (response.status === 421 && !repaired421 && this.config.regionAffinity !== "strict") {
             const repaired = placementRegion(response.headers);
-            if (repaired !== undefined && repaired !== this.#pinnedRegion) {
+            if (repaired !== undefined && repaired !== (requestRegionHint ?? this.#pinnedRegion)) {
               this.#pinnedRegion = repaired;
               repaired421 = true;
+              requestRegionHint = repaired;
               // Placement is authoritative for this one replay, including
               // when the original request supplied a per-call hint.
               attempt++;
@@ -202,9 +204,14 @@ export class TerraScaleHttp {
 
           const error = errorFromResponse(response, body.ok ? body.value : body.raw);
           if (this.canRetry(options.method, idempotencyKey, attempt, response.status)) {
-            await delayForRetry(retryDelay(response, this.config.retryDelayMs, attempt), options.signal);
-            attempt++;
-            continue;
+            const delayMs = retryDelay(response, this.config.retryDelayMs, attempt);
+            // Preserve the server response when its backoff exceeds our automatic
+            // retry window. Capping Retry-After would send the request too early.
+            if (delayMs <= 30_000) {
+              await delayForRetry(delayMs, options.signal);
+              attempt++;
+              continue;
+            }
           }
 
           return err(
@@ -454,12 +461,12 @@ function retryDelay(response: Response | undefined, baseDelayMs: number, attempt
   if (retryAfter !== null && retryAfter !== undefined) {
     const seconds = Number(retryAfter);
     if (Number.isFinite(seconds) && seconds >= 0) {
-      return Math.min(seconds * 1_000, 30_000);
+      return seconds * 1_000;
     }
 
     const date = Date.parse(retryAfter);
     if (Number.isFinite(date)) {
-      return Math.min(Math.max(0, date - Date.now()), 30_000);
+      return Math.max(0, date - Date.now());
     }
   }
 

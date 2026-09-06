@@ -356,8 +356,9 @@ async function createCandidateFixture(checkout: string, workspace: string): Prom
       browserEntrypointGraphs: {
         root: ["dist/index.js"],
         admin: ["dist/admin.js"],
+        betterAuthWorkerd: ["dist/better-auth.js"],
       },
-      betterAuthExport: "node-only",
+      betterAuthExport: "node-and-workerd-server-only",
       packedSecretScan: "passed",
     },
     contract: {

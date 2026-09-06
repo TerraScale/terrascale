@@ -12,11 +12,11 @@ workflow.
 typecheck, build, and Vitest. Browser tests and artifact qualification exist
 as separate commands; `make check` does not run them.
 
-The current `ts-deploy` path archives build outputs but publishes npm from the
-checkout. It does not yet prove that the tested package and published bytes
-are identical. The [workspace deployment goal](../../GOAL.md#ts-deploy) requires
-packing once, checking that tarball, and publishing the same bytes with scripts
-disabled. This remains implementation work before release.
+The `ts-deploy` npm path packs once, passes the candidate tarball to this
+repository's qualifier, verifies its hash after qualification, and publishes
+that same tarball with lifecycle scripts disabled. Failed qualification or
+changed bytes stop publication. Default candidate outputs use the ignored
+`artifacts/` directory so qualification can verify clean source.
 
 This is the launch verification minimum. Browser, clean-consumer, and real-API
 qualification still need passing results. Broader compliance attestations are
@@ -43,22 +43,28 @@ Release mode reads exact executable paths from `TERRASCALE_NODE_22` and
 the declared Node 24 executable and reviewed npm installation:
 
 ```bash
-npm run qualify:artifact -- --release --output artifacts/candidate
+npm run qualify:artifact -- --release --tarball /absolute/path/to/candidate.tgz --output /absolute/path/to/qualification
 ```
 
-The optional diagnostic qualifier in release mode refuses dirty source, unsupported or mismatched runtimes, an
-existing output directory, and `--allow-dirty`. It packs once, installs that
-tarball into a clean consumer, checks exports and browser/server boundaries,
-scans packed contents for secrets, audits production dependencies, and verifies
-license and pinned contract evidence. The diagnostic record binds source,
-tarball, route/OpenAPI digests, Node executables, npm installation, and results.
-Diagnostic receipts and receipts with limitations cannot admit a release.
+Release qualification refuses dirty source, unsupported or mismatched
+runtimes, an existing output directory, and `--allow-dirty`. With `--tarball`,
+it copies the supplied bytes without repacking, installs them into a clean
+consumer, and verifies the original stayed unchanged. Without `--tarball`,
+it creates a new diagnostic candidate with `npm pack`.
 
-The optional qualifier is not the publication path and its detailed receipt
-is not an additional launch requirement. Production publication must preserve
-the tested artifact, isolate npm credentials, and refuse changed bytes. npm
-publication is immutable. An interrupted publish has an unknown outcome until
-the registry and artifact records are inspected.
+The qualifier checks exports, scans packed contents for secrets, audits
+production dependencies, and verifies license and pinned contract evidence.
+The Better Auth export supports explicit `node` and `workerd` server
+conditions and rejects browser resolution. Its Workerd import graph contains
+no Node-only modules. A Node process selecting the Workerd export verifies
+package resolution; the real dashboard Worker journey remains separate
+runtime evidence.
+
+The record binds source, tarball, route/OpenAPI digests, Node executables,
+npm installation, and results. Diagnostic receipts and receipts with
+limitations cannot admit a release. npm publication is immutable. An
+interrupted publish has an unknown outcome until the registry and artifact
+records are inspected.
 
 ## Evidence required before public release
 

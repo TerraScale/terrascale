@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "vitest";
 
 import { createTerraScaleClient, resolveRuntimeConfig } from "./index.js";
+import { TerraScaleHttp } from "./http.js";
 
 const projectId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const databaseId = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
@@ -88,6 +89,66 @@ describe("regional routing consistency", () => {
     assert.equal(requests[0]!.headers.get("x-terrascale-preferred-region"), "FRA");
     assert.equal(new URL(requests[1]!.url).hostname, "sfo.api.terrascale.tech");
     assert.equal(requests[1]!.headers.has("x-terrascale-preferred-region"), false);
+  });
+
+  test("repairs a misplaced per-call region hint once and preserves write identity", async () => {
+    const requests: Request[] = [];
+    const http = new TerraScaleHttp({
+      accessToken: "token",
+      fetch: async input => {
+        requests.push(input instanceof Request ? input : new Request(input));
+        return requests.length === 1
+          ? Response.json({ error: "misdirected" }, {
+            status: 421,
+            headers: { "x-terrascale-placement": "FRA" },
+          })
+          : Response.json({});
+      },
+    });
+    // Even a prior pin must not prevent repair of a conflicting per-call hint.
+    http.pinRegion("FRA");
+    http.setSessionToken("session-frontier");
+    const result = await http.request({
+      method: "POST",
+      path: `/api/v1/databases/${databaseId}/documents`,
+      routeName: "documents.insert",
+      regionHint: "GRU",
+      idempotencyKey: "stable-write",
+      body: { value: "unchanged" },
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(requests.map(request => new URL(request.url).hostname), [
+      "gru.api.terrascale.tech", "fra.api.terrascale.tech",
+    ]);
+    assert.deepEqual(requests.map(request => request.headers.get("x-terrascale-preferred-region")), ["GRU", "FRA"]);
+    for (const request of requests) {
+      assert.equal(request.headers.get("idempotency-key"), "stable-write");
+      assert.equal(request.headers.get("authorization"), "Bearer token");
+      assert.equal(request.headers.get("x-terrascale-session"), "session-frontier");
+      assert.deepEqual(await request.json(), { value: "unchanged" });
+    }
+  });
+
+  test("surfaces 421 without leaving a strict region", async () => {
+    let requests = 0;
+    const http = new TerraScaleHttp({
+      preferredRegion: "SFO",
+      regionAffinity: "strict",
+      fetch: async () => {
+        requests++;
+        return Response.json({ error: "misdirected" }, {
+          status: 421,
+          headers: { "x-terrascale-placement": "FRA" },
+        });
+      },
+    });
+    const result = await http.request({
+      method: "GET", path: `/api/v1/databases/${databaseId}`, routeName: "databases.get",
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 421);
+    assert.equal(requests, 1);
+    assert.equal(http.pinnedRegion, "SFO");
   });
 
   test("preserves typed conflicts and public degraded routing metadata", async () => {

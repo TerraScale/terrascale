@@ -374,15 +374,15 @@ function verifyQualificationReceipt(context) {
     "betterAuthExport",
     "packedSecretScan",
   ], "npm qualification boundaries");
-  requireExactKeys(receipt.boundaries.browserEntrypointGraphs, ["root", "admin"], "npm browser graph evidence");
-  for (const graph of [receipt.boundaries.browserEntrypointGraphs.root, receipt.boundaries.browserEntrypointGraphs.admin]) {
+  requireExactKeys(receipt.boundaries.browserEntrypointGraphs, ["root", "admin", "betterAuthWorkerd"], "npm browser graph evidence");
+  for (const graph of [receipt.boundaries.browserEntrypointGraphs.root, receipt.boundaries.browserEntrypointGraphs.admin, receipt.boundaries.browserEntrypointGraphs.betterAuthWorkerd]) {
     if (!Array.isArray(graph) || graph.length < 1 || graph.some((entry) => typeof entry !== "string")) {
       throw new Error("npm qualification browser graph evidence is invalid.");
     }
   }
   if (
     JSON.stringify(receipt.boundaries.exports) !== JSON.stringify(packageJson.exports) ||
-    receipt.boundaries.betterAuthExport !== "node-only" ||
+    receipt.boundaries.betterAuthExport !== "node-and-workerd-server-only" ||
     receipt.boundaries.packedSecretScan !== "passed"
   ) {
     throw new Error("npm qualification package-boundary evidence is invalid.");

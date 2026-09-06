@@ -280,6 +280,27 @@ describe("TerraScaleHttp request policy", () => {
     assert.deepEqual(requests.map(request => request.method), ["POST", "POST", "POST"]);
   });
 
+  test("returns server backoff beyond the automatic retry window without retrying early", async () => {
+    for (const retryAfter of ["60", new Date(Date.now() + 120_000).toUTCString()]) {
+      let requests = 0;
+      const http = new TerraScaleHttp({
+        maxRetryAttempts: 1,
+        retryDelayMs: 0,
+        fetch: async () => {
+          requests++;
+          return Response.json({ code: "overloaded", message: "Retry later." }, {
+            status: 429, headers: { "retry-after": retryAfter },
+          });
+        },
+      });
+      const result = await http.request({ method: "GET", path: "/api/v1/regions", routeName: "regions.list" });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 429);
+      assert.equal(result.headers?.get("retry-after"), retryAfter);
+      assert.equal(requests, 1);
+    }
+  });
+
   test("does not retry a non-idempotent organization create after a transient failure", async () => {
     let fetchCount = 0;
     const client = createTerraScaleClient({
