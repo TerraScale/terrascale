@@ -134,9 +134,6 @@ type SchemaFTS struct {
 	Fields []string `json:"fields"`
 }
 
-// TtlDef is retained as a compatibility spelling for TTLDef.
-type TtlDef = TTLDef
-
 // TTLDef declares the root field containing an expiry timestamp.
 type TTLDef struct {
 	Field string `json:"field"`
@@ -333,9 +330,6 @@ func (b *CollectionBuilder) TTL(field string) *CollectionBuilder {
 	b.ttl = &ttl
 	return b
 }
-
-// Ttl is a compatibility alias for TTL.
-func (b *CollectionBuilder) Ttl(field string) *CollectionBuilder { return b.TTL(field) }
 
 // HistoryRetention sets per-collection history retention in days (1-30).
 func (b *CollectionBuilder) HistoryRetention(days int) *CollectionBuilder {
