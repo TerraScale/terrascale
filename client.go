@@ -100,6 +100,8 @@ type Config struct {
 	AccessToken string
 	// TokenProvider returns the credential dynamically, if set.
 	TokenProvider func() string
+	// TenantID and ProjectID select an authorized scope; they do not grant access.
+	TenantID string
 	// ProjectID is sent as X-TerraScale-Project-ID when non-empty.
 	ProjectID string
 	// PreferredRegion is the failover hint or strict pin target.
@@ -227,6 +229,14 @@ func NewClient(cfg Config) (*Client, error) {
 		}
 	}
 
+	for name, selector := range map[string]string{"tenant ID": cfg.TenantID, "project ID": cfg.ProjectID} {
+		for _, char := range selector {
+			if char < 0x20 || char == 0x7f {
+				return nil, fmt.Errorf("sdk: %s must contain no control characters", name)
+			}
+		}
+	}
+
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
@@ -242,6 +252,7 @@ func NewClient(cfg Config) (*Client, error) {
 		AccessToken:      cfg.AccessToken,
 		TokenProvider:    cfg.TokenProvider,
 		ProjectID:        cfg.ProjectID,
+		TenantID:         cfg.TenantID,
 		PreferredRegion:  preferred,
 		Affinity:         affinity,
 		HTTPClient:       httpClient,
@@ -447,6 +458,7 @@ type requestConfig struct {
 	deleteConfirmation string
 	schemaIfMatch      string
 	responseMediaType  string
+	createOnly         bool
 }
 
 // RequestOption customizes one request.
@@ -477,6 +489,10 @@ func WithSessionToken(token string) RequestOption {
 func WithConsistency(cs Consistency) RequestOption {
 	return func(r *requestConfig) { r.consistency = cs }
 }
+
+// WithCreateOnly requires a document PUT to create a new identity atomically.
+// It is rejected for PATCH, DELETE and other operations.
+func WithCreateOnly() RequestOption { return func(r *requestConfig) { r.createOnly = true } }
 
 // WithSchemaGeneration applies a schema only if its strong generation matches.
 // Pass the Generation returned by GetCollectionSchema.
@@ -545,6 +561,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return fmt.Errorf("sdk: path %q is outside the public /api/v1 contract", path)
 	}
 	rc := resolveRequestOptions(opts)
+	if rc.createOnly && (method != http.MethodPut || route != "documents.put" || rc.schemaIfMatch != "") {
+		return &ValidationError{Field: "create-only", Message: "supported only for document PUT without If-Match"}
+	}
 	if rc.regionHint != "" {
 		region, err := ParseRegionCode(string(rc.regionHint))
 		if err != nil {
@@ -714,9 +733,7 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 	if payload != nil {
 		h.Set("Content-Type", "application/json")
 	}
-	if c.cfg.ProjectID != "" {
-		h.Set("X-TerraScale-Project-ID", c.cfg.ProjectID)
-	}
+	c.decorateScopeHeaders(h)
 	hint := rc.regionHint
 	if hint == "" && (c.cfg.Affinity == AffinityFailover || c.cfg.Affinity == AffinityStrict) {
 		// A learned 421 pin wins over the configured preferred region. Strict
@@ -750,6 +767,9 @@ func (c *Client) roundTrip(ctx context.Context, method, base, path string, query
 	}
 	if rc.deleteConfirmation != "" {
 		h.Set("X-TerraScale-Delete-Confirmation", rc.deleteConfirmation)
+	}
+	if rc.createOnly {
+		h.Set("If-None-Match", "*")
 	}
 	if rc.schemaIfMatch != "" {
 		h.Set("If-Match", rc.schemaIfMatch)
@@ -1079,5 +1099,14 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+func (c *Client) decorateScopeHeaders(headers http.Header) {
+	if c.cfg.TenantID != "" {
+		headers.Set("X-TerraScale-Tenant-ID", c.cfg.TenantID)
+	}
+	if c.cfg.ProjectID != "" {
+		headers.Set("X-TerraScale-Project-ID", c.cfg.ProjectID)
 	}
 }

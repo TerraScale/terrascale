@@ -441,3 +441,45 @@ func TestClientDoesNotFollowCredentialOrMutationRedirects(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateOnlyDocumentPUTAndScopeSelectors(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != "PUT" || r.Header.Get("If-None-Match") != "*" {
+			t.Errorf("missing create-only precondition: %s %v", r.Method, r.Header)
+		}
+		if r.Header.Get("X-TerraScale-Tenant-ID") != "tenant-1" || r.Header.Get("X-TerraScale-Project-ID") != "project-1" {
+			t.Error("scope selectors missing")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			_, _ = w.Write([]byte(`{"revision":"r1"}`))
+			return
+		}
+		w.WriteHeader(412)
+		_, _ = w.Write([]byte(`{"error":{"code":"precondition_failed","message":"document already exists","fix":"use an update operation"}}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL, TenantID: "tenant-1", ProjectID: "project-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Documents.Create(t.Context(), "demo", "orders", "order-1", map[string]int{"count": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Documents.Put(t.Context(), "demo", "orders", "order-1", map[string]int{"count": 2}, WithCreateOnly()); err == nil {
+		t.Fatal("precondition failure hidden")
+	}
+	for _, method := range []string{"PATCH", "DELETE", "POST"} {
+		if err := client.do(t.Context(), method, "/api/v1/databases/demo/collections/orders/documents/order-1", nil, nil, nil, "documents.put", WithCreateOnly()); err == nil {
+			t.Fatalf("create-only accepted for %s", method)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("unsupported precondition reached HTTP: %d", calls)
+	}
+	if _, err := NewClient(Config{TenantID: "bad\nselector"}); err == nil {
+		t.Fatal("invalid tenant selector accepted")
+	}
+}

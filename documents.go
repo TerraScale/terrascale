@@ -134,11 +134,10 @@ func rawJSON(value any, label string) (json.RawMessage, error) {
 	return json.RawMessage(encoded), nil
 }
 
-// Create stores a document at a caller-owned ID. TerraBase has no
-// server-assigned-ID POST route, so Create and Upsert use the same PUT wire
-// operation.
+// Create stores a document at a caller-owned ID only when it does not exist.
+// The producer enforces If-None-Match: * atomically at the storage commit.
 func (d *DocumentsClient) Create(ctx context.Context, databaseID, collection, docID string, value any, opts ...RequestOption) (*DocumentWriteResponse, error) {
-	return d.Put(ctx, databaseID, collection, docID, value, opts...)
+	return d.Put(ctx, databaseID, collection, docID, value, append(opts, WithCreateOnly())...)
 }
 
 // Put creates or replaces a document (the public upsert operation).

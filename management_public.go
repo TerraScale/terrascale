@@ -71,17 +71,39 @@ const (
 	ExportRunning       ExportState = "Running"
 	ExportComplete      ExportState = "Complete"
 	ExportFailed        ExportState = "Failed"
+	ExportCancelled     ExportState = "Cancelled"
+)
+
+type ExportPhase string
+
+const (
+	ExportDocuments ExportPhase = "Documents"
+	ExportHistory   ExportPhase = "History"
+	ExportDone      ExportPhase = "Done"
+)
+
+type ExportCancellation string
+
+const (
+	ExportCancellationAvailable   ExportCancellation = "available"
+	ExportCancellationRequested   ExportCancellation = "requested"
+	ExportCancellationComplete    ExportCancellation = "complete"
+	ExportCancellationUnavailable ExportCancellation = "unavailable"
 )
 
 type ExportStatus struct {
-	JobID               string          `json:"job_id"`
-	Status              ExportState     `json:"status"`
-	Records             uint64          `json:"records"`
-	EstimatedRecords    *uint64         `json:"estimated_records"`
-	ProgressBasisPoints uint16          `json:"progress_basis_points"`
-	ResumeCursor        string          `json:"resume_cursor"`
-	Manifest            *ExportArtifact `json:"manifest"`
-	Error               *string         `json:"error"`
+	CreatedAtMillis     uint64             `json:"created_at_millis"`
+	Phase               ExportPhase        `json:"phase"`
+	Cancellation        ExportCancellation `json:"cancellation"`
+	Pages               uint64             `json:"pages"`
+	JobID               string             `json:"job_id"`
+	Status              ExportState        `json:"status"`
+	Records             uint64             `json:"records"`
+	EstimatedRecords    *uint64            `json:"estimated_records"`
+	ProgressBasisPoints uint16             `json:"progress_basis_points"`
+	ResumeCursor        string             `json:"resume_cursor"`
+	Manifest            *ExportArtifact    `json:"manifest"`
+	Error               *string            `json:"error"`
 }
 type ExportArtifact struct {
 	Path     string `json:"path"`
@@ -357,8 +379,10 @@ func (d *DatabasesClient) RotateWebhookSecret(ctx context.Context, database, id 
 	if err := managementMutation(opts); err != nil {
 		return nil, err
 	}
+	// Rotation has no idempotency replay contract, even if shared options carry a key.
+	opts = append(opts, WithoutIdempotency())
 	var out WebhookSecretResponse
-	if err := d.c.do(ctx, "POST", path+"/rotate-secret", nil, request, &out, "rotate_webhook_secret", opts...); err != nil {
+	if err := d.c.do(ctx, "POST", path+"/rotate-secret", nil, request, &out, "rotate_secret", opts...); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -474,6 +498,54 @@ func (o *OperationsClient) Get(ctx context.Context, operationID string, opts ...
 	}
 	if out.OperationID != operationID {
 		return nil, fmt.Errorf("sdk: operation response identity does not match the request")
+	}
+	return &out, nil
+}
+
+// ExportList exposes durable jobs and an opaque cursor for the next page.
+type ExportList struct {
+	Exports    []ExportStatus `json:"exports"`
+	NextCursor *string        `json:"next_cursor"`
+}
+
+func (d *DatabasesClient) ListExports(ctx context.Context, database, after string, limit int, opts ...RequestOption) (*ExportList, error) {
+	if err := managementContext(ctx); err != nil {
+		return nil, err
+	}
+	path, err := databasePath(database)
+	if err != nil {
+		return nil, err
+	}
+	if limit < 0 || limit > 50 {
+		return nil, &ValidationError{Field: "limit", Message: "must be between 1 and 50, or zero for the server default"}
+	}
+	query := url.Values{}
+	if after != "" {
+		query.Set("after", after)
+	}
+	if limit > 0 {
+		query.Set("limit", fmt.Sprint(limit))
+	}
+	var out ExportList
+	if err := d.c.do(ctx, "GET", path+"/exports", query, nil, &out, "list_exports", opts...); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CancelExport requests cancellation at a safe boundary. Inspect the returned
+// cancellation state; an accepted request does not mean work has stopped yet.
+func (d *DatabasesClient) CancelExport(ctx context.Context, database, jobID string, opts ...RequestOption) (*ExportStatus, error) {
+	path, err := managementResourcePath(ctx, database, "exports", jobID)
+	if err != nil {
+		return nil, err
+	}
+	if err := managementMutation(opts); err != nil {
+		return nil, err
+	}
+	var out ExportStatus
+	if err := d.c.do(ctx, "POST", path+"/cancel", nil, nil, &out, "cancel_export", opts...); err != nil {
+		return nil, err
 	}
 	return &out, nil
 }

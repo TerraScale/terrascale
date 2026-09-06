@@ -247,11 +247,18 @@ func TestWebhookSecretRotationIsBoundedAndNeverImplicitlyRetried(t *testing.T) {
 	if attempts != 1 {
 		t.Fatalf("rotation repeated %d times", attempts)
 	}
+	if _, err := client.Databases.RotateWebhookSecret(t.Context(), "demo", "hook-1", RotateWebhookSecretRequest{OverlapSeconds: &zero}, WithIdempotencyKey("unsupported-replay")); err == nil {
+		t.Fatal("rotation failure hidden")
+	}
+	if attempts != 2 {
+		t.Fatalf("rotation with a caller key repeated %d times", attempts)
+	}
+
 	tooLong := uint32(3601)
 	if _, err := client.Databases.RotateWebhookSecret(t.Context(), "demo", "hook-1", RotateWebhookSecretRequest{OverlapSeconds: &tooLong}); err == nil {
 		t.Fatal("unbounded overlap accepted")
 	}
-	if attempts != 1 {
+	if attempts != 2 {
 		t.Fatal("invalid rotation reached HTTP")
 	}
 }
@@ -329,5 +336,43 @@ func TestOperationsGetPollsWithoutRepeatingCreation(t *testing.T) {
 	}
 	if operation.State != "pending" || operation.OperationID != "operation/one" {
 		t.Fatalf("lost operation progress: %+v", operation)
+	}
+}
+
+func TestExportDiscoveryAndCancellationPreserveProgress(t *testing.T) {
+	const status = `{"job_id":"job-1","status":"Running","created_at_millis":18446744073709551615,"phase":"History","cancellation":"requested","pages":18446744073709551615,"records":9007199254740993,"estimated_records":null,"progress_basis_points":5000,"resume_cursor":"opaque","manifest":null,"error":null}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.RequestURI() {
+		case "GET /api/v1/databases/demo/exports?after=job-0&limit=50":
+			_, _ = w.Write([]byte(`{"exports":[` + status + `],"next_cursor":"job-1"}`))
+		case "POST /api/v1/databases/demo/exports/job-1/cancel":
+			_, _ = w.Write([]byte(status))
+		default:
+			t.Errorf("wrong export lifecycle route: %s %s", r.Method, r.URL)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := client.Databases.ListExports(t.Context(), "demo", "job-0", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.NextCursor == nil || *list.NextCursor != "job-1" || list.Exports[0].Pages != math.MaxUint64 || list.Exports[0].CreatedAtMillis != math.MaxUint64 {
+		t.Fatalf("discovery lost metadata: %+v", list)
+	}
+	cancelled, err := client.Databases.CancelExport(t.Context(), "demo", "job-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled.Cancellation != ExportCancellationRequested || cancelled.Status != ExportRunning || cancelled.Phase != ExportHistory {
+		t.Fatalf("cancel request incorrectly terminal: %+v", cancelled)
+	}
+	if _, err := client.Databases.ListExports(t.Context(), "demo", "", 51); err == nil {
+		t.Fatal("unbounded list accepted")
 	}
 }

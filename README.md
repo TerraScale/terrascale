@@ -60,3 +60,14 @@ use standard padded base64 JSON strings (Go `[]byte` encoding).
 
 Use `Operations.Get` with the original operation ID to discover provisioning
 progress. Reading status never resubmits database creation.
+
+`TenantID` and `ProjectID` select the requested scope; authorization remains
+server-enforced. `Documents.Create` sends `If-None-Match: *` for atomic create-only
+writes. `Put` remains an upsert unless passed `WithCreateOnly`; that option is
+rejected on other methods. Webhook rotation never retries automatically because
+its one-time secret has no replay contract, even when shared options carry a key.
+
+`ListExports` discovers durable jobs with bounded pagination. `CancelExport`
+requests cancellation at a safe page boundary; inspect the returned
+`Cancellation` state rather than assuming the job stopped immediately. Export
+status retains phase, page counts and creation time alongside record progress.

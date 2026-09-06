@@ -717,6 +717,7 @@ func (c *Client) fetchSnapshotChunks(ctx context.Context, attach *attachResponse
 			return nil, "", err
 		}
 		req.Header.Set("Accept", "application/msgpack")
+		c.decorateScopeHeaders(req.Header)
 		capHeader, _ := normalizeCapabilityHeader(attach.CapabilityHeader)
 		req.Header.Set(capHeader, attach.Capability)
 		if token := c.token(); token != "" {
@@ -923,6 +924,7 @@ func (s *Subscription) pollOnce(ctx context.Context) ([]Update, Checkpoint, stri
 		return nil, "", "", "", nil, err
 	}
 	req.Header.Set("Accept", "application/msgpack")
+	s.c.decorateScopeHeaders(req.Header)
 	if s.capability != "" {
 		header := s.capabilityHeader
 		if header == "" {
