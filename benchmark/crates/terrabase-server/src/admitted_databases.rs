@@ -326,6 +326,175 @@ impl AdmittedDatabaseRegistry {
     }
 }
 
+impl AdmittedDatabaseRegistry {
+    /// Collects actual admitted lifecycle observations without inventing missing scopes.
+    ///
+    /// # Errors
+    /// Returns an error when the Member is not ready or draining, a registry
+    /// lock is poisoned, lifecycle state cannot be read, or observations are
+    /// unavailable for multi-region records.
+    pub fn lifecycle_snapshots(
+        &self,
+        now: u64,
+    ) -> Result<Vec<crate::lifecycle_publication::LifecyclePublicationSnapshot>, String> {
+        if !(self.ready)() {
+            return Err("Member is not ready to publish lifecycle".into());
+        }
+        let _serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
+        if self.draining.load(Ordering::Acquire) {
+            return Err("Member is not ready to publish lifecycle".into());
+        }
+        let databases: Vec<_> = self
+            .databases
+            .read()
+            .map_err(|_| "admitted registry unavailable")?
+            .values()
+            .cloned()
+            .collect();
+        let mut snapshots = Vec::with_capacity(databases.len());
+        for database in databases {
+            // A local observation cannot certify database-wide inactivity while
+            // another selected Region may still be serving authorized requests.
+            if database.record.regions.len() != 1 {
+                return Err("regional lifecycle aggregation unavailable".into());
+            }
+            let engine = database.host.engine();
+            let tenant = terrabase::types::TenantId::try_new(database.host.tenant())
+                .map_err(|_| "invalid admitted database")?;
+            let scope = engine.scope_for(&tenant);
+            let mut state =
+                engine.lifecycle_state(&scope).map_err(|_| "lifecycle source unavailable")?;
+            if state.deletion.is_none()
+                && let Some(activity) = database.activity.pending()
+            {
+                state = engine
+                    .lifecycle_flush_activity(&scope, activity)
+                    .map_err(|_| "activity flush unavailable")?;
+            }
+            snapshots.push(
+                crate::lifecycle_publication::LifecyclePublicationSnapshot::from_native(
+                    database.record.tenant_id.clone(),
+                    database.record.project_id.clone(),
+                    database.record.database_id.clone(),
+                    now,
+                    &state,
+                )
+                .map_err(|_| "invalid lifecycle observation")?,
+            );
+        }
+        Ok(snapshots)
+    }
+    /// Executes a protected, durable deletion stop against the retained engine lease.
+    /// The exact operation and boundary survive restart in the database `SQLite` file.
+    ///
+    /// # Errors
+    /// Returns an error when the record is not admitted, preparation or cutoff boundaries do not match, native fencing fails, or reactive revocation fails.
+    pub fn stop(
+        &self,
+        record: &AdmissionRecord,
+        request: &crate::admission::StopRequest,
+    ) -> Result<(), String> {
+        let database = self.resolve(&record.database_id)?.ok_or("database not admitted")?;
+        if database.record != *record {
+            return Err("immutable stop admission mismatch".into());
+        }
+        let cutoff = request.cutoff_millis()?;
+        let retain_until = request
+            .retain_until
+            .as_ref()
+            .map(|text| {
+                let retention = chrono::DateTime::parse_from_rfc3339(text)
+                    .map_err(|_| "invalid retention boundary")?;
+                if retention.timestamp_subsec_nanos() % 1_000_000 != 0 {
+                    return Err("retention boundary requires millisecond precision");
+                }
+                u64::try_from(retention.timestamp_millis())
+                    .map_err(|_| "invalid retention boundary")
+            })
+            .transpose()?;
+        let engine = database.host.engine();
+        let tenant = terrabase::types::TenantId::try_new(database.host.tenant())
+            .map_err(|_| "invalid admitted tenant")?;
+        let scope = engine.scope_for(&tenant);
+        let prepared =
+            engine.lifecycle_state(&scope).map_err(|_| "native lifecycle state unavailable")?;
+        if prepared
+            .deletion_preparation
+            .as_ref()
+            .is_none_or(|intent| intent.operation_id != request.operation_id)
+        {
+            return Err("native deletion requires matching preparation".into());
+        }
+        engine
+            .lifecycle_accept_deletion(
+                &scope,
+                terrabase::engine::lifecycle_state::DeletionIntent {
+                    operation_id: request.operation_id.clone(),
+                    usage_stopped_at: cutoff,
+                    retain_until,
+                },
+            )
+            .map_err(|_| "native lifecycle stop refused")?;
+        let (epoch, _) = engine.origin_epoch().map_err(|_| "origin fence unavailable")?;
+        engine.fence_origin(epoch).map_err(|_| "origin fence failed")?;
+        crate::reactive_api::revoke_database(
+            &record.tenant_id,
+            &record.project_id,
+            &record.database_id,
+        )
+        .map_err(|_| "reactive revocation failed")?;
+        Ok(())
+    }
+    /// Atomically protects the deletion operation against subsequent writes/protection changes.
+    ///
+    /// # Errors
+    /// Returns an error when the record is not admitted, native preparation fails, or reactive revocation fails.
+    pub fn prepare_stop(
+        &self,
+        record: &AdmissionRecord,
+        request: &crate::admission::PrepareStopRequest,
+    ) -> Result<u64, String> {
+        let database = self.resolve(&record.database_id)?.ok_or("database not admitted")?;
+        if database.record != *record {
+            return Err("immutable prepare admission mismatch".into());
+        }
+        let engine = database.host.engine();
+        let tenant = terrabase::types::TenantId::try_new(database.host.tenant())
+            .map_err(|_| "invalid admitted tenant")?;
+        let scope = engine.scope_for(&tenant);
+        let state = engine
+            .lifecycle_prepare_deletion(&scope, &request.operation_id)
+            .map_err(|_| "native lifecycle prepare refused")?;
+        crate::reactive_api::revoke_database(
+            &record.tenant_id,
+            &record.project_id,
+            &record.database_id,
+        )
+        .map_err(|_| "reactive revocation failed")?;
+        state
+            .deletion_preparation
+            .map(|value| value.minimum_cutoff_millis)
+            .ok_or("missing prepared boundary".into())
+    }
+    /// Reads durable native deletion protection; no activity or policy defaults are synthesized.
+    ///
+    /// # Errors
+    /// Returns an error when the record is not admitted, the Member is not ready or draining, a registry lock is poisoned, or lifecycle storage cannot be read.
+    pub fn stop_preflight(&self, record: &AdmissionRecord) -> Result<bool, String> {
+        let database = self.resolve(&record.database_id)?.ok_or("database not admitted")?;
+        if database.record != *record {
+            return Err("immutable preflight admission mismatch".into());
+        }
+        let engine = database.host.engine();
+        let tenant = terrabase::types::TenantId::try_new(database.host.tenant())
+            .map_err(|_| "invalid admitted tenant")?;
+        let state = engine
+            .lifecycle_state(&engine.scope_for(&tenant))
+            .map_err(|_| "native lifecycle state unavailable")?;
+        Ok(state.deletion_protection)
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -337,6 +506,13 @@ pub(crate) mod tests {
         },
         regions::RegionCode,
     };
+
+    struct Writer;
+    impl DatabaseRoleAuthority for Writer {
+        fn accepted_role(&self, _: &terrabase::member::DatabaseId) -> Option<AcceptedDatabaseRole> {
+            Some(AcceptedDatabaseRole { epoch: 1, role: DatabaseRole::Writer })
+        }
+    }
 
     pub(crate) fn fixture() -> (AdmittedDatabaseRegistry, Member, Vec<AdmissionRecord>, PathBuf) {
         let root = std::env::temp_dir().join(format!("admitted-api-{}", DatabaseUlid::generate()));
@@ -383,15 +559,6 @@ pub(crate) mod tests {
         let registry = AdmittedDatabaseRegistry::new(Arc::new(|| true));
         for record in &records {
             let id = terrabase::member::DatabaseId::try_new(&record.database_id).unwrap();
-            struct Writer;
-            impl DatabaseRoleAuthority for Writer {
-                fn accepted_role(
-                    &self,
-                    _: &terrabase::member::DatabaseId,
-                ) -> Option<AcceptedDatabaseRole> {
-                    Some(AcceptedDatabaseRole { epoch: 1, role: DatabaseRole::Writer })
-                }
-            }
             member.accept_database_role(&id, &Writer).unwrap();
             let lease = member.acquire(&id).unwrap();
             registry.publish(record.clone(), lease, root.join(&record.database_id), 1).unwrap();
@@ -524,7 +691,8 @@ pub(crate) mod tests {
             assert_eq!(admitted.host.tenant(), record.tenant_id);
             let id = terrabase::member::DatabaseId::try_new(&record.database_id).unwrap();
             let lease = member.acquire(&id).unwrap();
-            assert!(std::ptr::eq(admitted.host.engine(), &*lease));
+            let lease_ptr = std::ptr::from_ref::<terrabase::engine::Engine>(&*lease);
+            assert!(std::ptr::eq(admitted.host.engine(), lease_ptr));
         }
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();
@@ -584,166 +752,5 @@ pub(crate) mod tests {
         drop(registry);
         member.close(std::time::Duration::from_secs(1)).unwrap();
         std::fs::remove_dir_all(root).unwrap();
-    }
-}
-
-impl AdmittedDatabaseRegistry {
-    /// Collects actual admitted lifecycle observations without inventing missing scopes.
-    pub fn lifecycle_snapshots(
-        &self,
-        now: u64,
-    ) -> Result<Vec<crate::lifecycle_publication::LifecyclePublicationSnapshot>, String> {
-        if !(self.ready)() {
-            return Err("Member is not ready to publish lifecycle".into());
-        }
-        let _serving = self.serving.read().map_err(|_| "admitted activation unavailable")?;
-        if self.draining.load(Ordering::Acquire) {
-            return Err("Member is not ready to publish lifecycle".into());
-        }
-        let databases: Vec<_> = self
-            .databases
-            .read()
-            .map_err(|_| "admitted registry unavailable")?
-            .values()
-            .cloned()
-            .collect();
-        let mut snapshots = Vec::with_capacity(databases.len());
-        for database in databases {
-            // A local observation cannot certify database-wide inactivity while
-            // another selected Region may still be serving authorized requests.
-            if database.record.regions.len() != 1 {
-                return Err("regional lifecycle aggregation unavailable".into());
-            }
-            let engine = database.host.engine();
-            let tenant = terrabase::types::TenantId::try_new(database.host.tenant())
-                .map_err(|_| "invalid admitted database")?;
-            let scope = engine.scope_for(&tenant);
-            let mut state =
-                engine.lifecycle_state(&scope).map_err(|_| "lifecycle source unavailable")?;
-            if state.deletion.is_none()
-                && let Some(activity) = database.activity.pending()
-            {
-                state = engine
-                    .lifecycle_flush_activity(&scope, activity)
-                    .map_err(|_| "activity flush unavailable")?;
-            }
-            snapshots.push(
-                crate::lifecycle_publication::LifecyclePublicationSnapshot::from_native(
-                    database.record.tenant_id.clone(),
-                    database.record.project_id.clone(),
-                    database.record.database_id.clone(),
-                    now,
-                    &state,
-                )
-                .map_err(|_| "invalid lifecycle observation")?,
-            );
-        }
-        Ok(snapshots)
-    }
-    /// Executes a protected, durable deletion stop against the retained engine lease.
-    /// The exact operation and boundary survive restart in the database SQLite file.
-    pub fn stop(
-        &self,
-        record: &AdmissionRecord,
-        request: &crate::admission::StopRequest,
-    ) -> Result<(), String> {
-        let database = self.resolve(&record.database_id)?.ok_or("database not admitted")?;
-        if database.record != *record {
-            return Err("immutable stop admission mismatch".into());
-        }
-        let cutoff = request.cutoff_millis()?;
-        let retain_until = request
-            .retain_until
-            .as_ref()
-            .map(|text| {
-                let retention = chrono::DateTime::parse_from_rfc3339(text)
-                    .map_err(|_| "invalid retention boundary")?;
-                if retention.timestamp_subsec_nanos() % 1_000_000 != 0 {
-                    return Err("retention boundary requires millisecond precision");
-                }
-                u64::try_from(retention.timestamp_millis())
-                    .map_err(|_| "invalid retention boundary")
-            })
-            .transpose()?;
-        let engine = database.host.engine();
-        let tenant = terrabase::types::TenantId::try_new(database.host.tenant())
-            .map_err(|_| "invalid admitted tenant")?;
-        let scope = engine.scope_for(&tenant);
-        let prepared =
-            engine.lifecycle_state(&scope).map_err(|_| "native lifecycle state unavailable")?;
-        if prepared
-            .deletion_preparation
-            .as_ref()
-            .is_none_or(|intent| intent.operation_id != request.operation_id)
-        {
-            return Err("native deletion requires matching preparation".into());
-        }
-        engine
-            .lifecycle_accept_deletion(
-                &scope,
-                terrabase::engine::lifecycle_state::DeletionIntent {
-                    operation_id: request.operation_id.clone(),
-                    usage_stopped_at: cutoff,
-                    retain_until,
-                },
-            )
-            .map_err(|_| "native lifecycle stop refused")?;
-        let (epoch, _) = engine.origin_epoch().map_err(|_| "origin fence unavailable")?;
-        engine.fence_origin(epoch).map_err(|_| "origin fence failed")?;
-        crate::reactive_api::revoke_database(
-            &record.tenant_id,
-            &record.project_id,
-            &record.database_id,
-        )
-        .map_err(|_| "reactive revocation failed")?;
-        Ok(())
-    }
-}
-
-impl AdmittedDatabaseRegistry {
-    /// Atomically protects the deletion operation against subsequent writes/protection changes.
-    pub fn prepare_stop(
-        &self,
-        record: &AdmissionRecord,
-        request: &crate::admission::PrepareStopRequest,
-    ) -> Result<u64, String> {
-        let database = self.resolve(&record.database_id)?.ok_or("database not admitted")?;
-        if database.record != *record {
-            return Err("immutable prepare admission mismatch".into());
-        }
-        let engine = database.host.engine();
-        let tenant = terrabase::types::TenantId::try_new(database.host.tenant())
-            .map_err(|_| "invalid admitted tenant")?;
-        let scope = engine.scope_for(&tenant);
-        let state = engine
-            .lifecycle_prepare_deletion(&scope, &request.operation_id)
-            .map_err(|_| "native lifecycle prepare refused")?;
-        crate::reactive_api::revoke_database(
-            &record.tenant_id,
-            &record.project_id,
-            &record.database_id,
-        )
-        .map_err(|_| "reactive revocation failed")?;
-        state
-            .deletion_preparation
-            .map(|value| value.minimum_cutoff_millis)
-            .ok_or("missing prepared boundary".into())
-    }
-}
-
-impl AdmittedDatabaseRegistry {
-    /// Reads durable native deletion protection; no activity or policy defaults are synthesized.
-    pub fn stop_preflight(&self, record: &AdmissionRecord) -> Result<bool, String> {
-        let database = self.resolve(&record.database_id)?.ok_or("database not admitted")?;
-        if database.record != *record {
-            return Err("immutable preflight admission mismatch".into());
-        }
-        let engine = database.host.engine();
-        let tenant = terrabase::types::TenantId::try_new(database.host.tenant())
-            .map_err(|_| "invalid admitted tenant")?;
-        let state = engine
-            .lifecycle_state(&engine.scope_for(&tenant))
-            .map_err(|_| "native lifecycle state unavailable")?;
-        Ok(state.deletion_protection)
     }
 }

@@ -843,7 +843,7 @@ impl ProductionAdmissionRuntime {
             // Replay the durable record first. The callback independently
             // classifies revoked storage as maintenance-only and publishes its
             // retained lease without creating a route or writer epoch.
-            self.host.admit(record.clone())?;
+            self.host.admit(&record)?;
             if self.usage.resolve(&record, proposal.epoch, &proof_digest)?.is_none() {
                 // Missing current usage keeps nonrevoked storage closed; a
                 // revoked replay was already published by the callback above.

@@ -197,11 +197,11 @@ impl AdmissionHost {
     ///
     /// # Errors
     /// Returns a refusal for conflicting retries or storage/durability failures.
-    pub fn admit(&self, record: AdmissionRecord) -> Result<(), String> {
-        self.validate(&record)?;
+    pub fn admit(&self, record: &AdmissionRecord) -> Result<(), String> {
+        self.validate(record)?;
         let mut records = self.records.lock().map_err(|_| "admission lock poisoned")?;
         if let Some(existing) = records.get(&record.database_id) {
-            if existing != &record {
+            if existing != record {
                 return Err("immutable admission conflict".into());
             }
         } else {
@@ -229,7 +229,7 @@ impl AdmissionHost {
                 .map_err(|_| "manifest directory sync failed")?;
             records.insert(record.database_id.clone(), record.clone());
         }
-        (self.admit_storage)(&record)
+        (self.admit_storage)(record)
     }
 }
 
@@ -253,37 +253,6 @@ impl AdmissionHost {
             response::IntoResponse,
             routing::post,
         };
-        async fn admit(
-            State(host): State<Arc<AdmissionHost>>,
-            body: axum::body::Bytes,
-        ) -> axum::response::Response {
-            let Ok(record) = serde_json::from_slice::<AdmissionRecord>(&body) else {
-                return StatusCode::BAD_REQUEST.into_response();
-            };
-            let operation_id = record.operation_id.clone();
-            let database_id = record.database_id.clone();
-            match tokio::task::spawn_blocking(move || host.admit(record)).await {
-                Ok(Ok(())) => (StatusCode::OK, [("content-type", "application/json")], serde_json::json!({"operation_id": operation_id,"database_id": database_id,"state":"admitted"}).to_string()).into_response(),
-                _ => StatusCode::CONFLICT.into_response(),
-            }
-        }
-        async fn stop(
-            State(host): State<Arc<AdmissionHost>>,
-            body: axum::body::Bytes,
-        ) -> axum::response::Response {
-            let Ok(request) = serde_json::from_slice::<StopRequest>(&body) else {
-                return StatusCode::BAD_REQUEST.into_response();
-            };
-            match tokio::task::spawn_blocking(move || host.stop(request)).await {
-                Ok(Ok(receipt)) => axum::Json(receipt).into_response(),
-                _ => StatusCode::CONFLICT.into_response(),
-            }
-        }
-        if self.identity_delivery.is_some() && orchestrator_uid != 62010 {
-            return Err(std::io::Error::other("identity delivery requires orchestrator UID"));
-        }
-        let identity_router =
-            self.identity_delivery.as_ref().map(|delivery| delivery.clone().router());
         async fn prepare_stop(
             State(host): State<Arc<AdmissionHost>>,
             body: axum::body::Bytes,
@@ -308,6 +277,37 @@ impl AdmissionHost {
                 _ => StatusCode::CONFLICT.into_response(),
             }
         }
+        async fn admit(
+            State(host): State<Arc<AdmissionHost>>,
+            body: axum::body::Bytes,
+        ) -> axum::response::Response {
+            let Ok(record) = serde_json::from_slice::<AdmissionRecord>(&body) else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
+            let operation_id = record.operation_id.clone();
+            let database_id = record.database_id.clone();
+            match tokio::task::spawn_blocking(move || host.admit(&record)).await {
+                Ok(Ok(())) => (StatusCode::OK, [("content-type", "application/json")], serde_json::json!({"operation_id": operation_id,"database_id": database_id,"state":"admitted"}).to_string()).into_response(),
+                _ => StatusCode::CONFLICT.into_response(),
+            }
+        }
+        async fn stop(
+            State(host): State<Arc<AdmissionHost>>,
+            body: axum::body::Bytes,
+        ) -> axum::response::Response {
+            let Ok(request) = serde_json::from_slice::<StopRequest>(&body) else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
+            match tokio::task::spawn_blocking(move || host.stop(request)).await {
+                Ok(Ok(receipt)) => axum::Json(receipt).into_response(),
+                _ => StatusCode::CONFLICT.into_response(),
+            }
+        }
+        if self.identity_delivery.is_some() && orchestrator_uid != 62010 {
+            return Err(std::io::Error::other("identity delivery requires orchestrator UID"));
+        }
+        let identity_router =
+            self.identity_delivery.as_ref().map(|delivery| delivery.clone().router());
         let usage_router =
             self.usage_delivery.clone().map(super::usage_admission::UsageAdmissionJournal::router);
         let router = Router::new()
@@ -396,11 +396,11 @@ mod tests {
         .unwrap();
         let mut zero_time = record.clone();
         zero_time.created_at = 0;
-        assert!(host.admit(zero_time).is_err());
+        assert!(host.admit(&zero_time).is_err());
         let mut negative_time = record.clone();
         negative_time.created_at = -1;
-        assert!(host.admit(negative_time).is_err());
-        assert!(host.admit(record.clone()).is_err());
+        assert!(host.admit(&negative_time).is_err());
+        assert!(host.admit(&record).is_err());
         drop(host);
         let host =
             AdmissionHost::open(&root, "production".into(), RegionCode::GRU, member, callback)
@@ -408,12 +408,12 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         let mut conflict = record.clone();
         conflict.project_id = ProjectUlid::generate().to_string();
-        assert!(host.admit(conflict).is_err());
+        assert!(host.admit(&conflict).is_err());
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        host.admit(record.clone()).unwrap();
+        host.admit(&record).unwrap();
         let mut changed_time = record;
         changed_time.created_at += 1;
-        assert!(host.admit(changed_time).is_err());
+        assert!(host.admit(&changed_time).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }

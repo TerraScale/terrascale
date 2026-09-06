@@ -46,6 +46,46 @@ pub enum AcceptedAdmission {
 pub type AdmissionAuthority =
     Arc<dyn Fn(&AdmissionRecord) -> Result<Option<AcceptedAdmission>, String> + Send + Sync>;
 
+fn register_storage(
+    member: &Member,
+    provider: &OciVaultKeyDelivery,
+    record: &AdmissionRecord,
+    per_database: usize,
+) -> Result<(RegionCode, TenantId), String> {
+    let region = record.region.parse::<RegionCode>().map_err(|_| "invalid origin")?;
+    let tenant = TenantUlid::from_text(&record.tenant_id).map_err(|_| "invalid tenant")?;
+    let project = ProjectUlid::from_text(&record.project_id).map_err(|_| "invalid project")?;
+    let database = DatabaseUlid::from_text(&record.database_id).map_err(|_| "invalid database")?;
+    let version =
+        DatabaseKeyVersion::from_text(&record.key_version).map_err(|_| "invalid key version")?;
+    let scope = DatabaseScope::try_new(&record.environment, tenant, project, database, region)
+        .map_err(|_| "invalid owner")?;
+    let key_scope = KeyScope::new_with_project(
+        &record.environment,
+        tenant,
+        project,
+        database,
+        KeyPurpose::Data,
+    )
+    .map_err(|_| "invalid key scope")?;
+    let keys = Arc::new(
+        OciVaultDatabaseKeys::new(
+            provider.clone(),
+            KeyVersionMetadata::new(key_scope, version),
+            region,
+        )
+        .map_err(|_| "key authorization unavailable")?,
+    );
+    member
+        .add_production_database(
+            DatabaseSpec::scoped(scope, &record.database_id),
+            per_database,
+            keys,
+        )
+        .map_err(|_| "database storage admission refused")?;
+    Ok((region, TenantId::try_new(&record.tenant_id).map_err(|_| "invalid tenant")?))
+}
+
 /// Constructs the replay and live callback used by the authenticated admission host.
 /// Storage is opened only after accepted writer authority and exact OCI key authorization.
 #[must_use]
@@ -58,41 +98,12 @@ pub fn storage_admission(
     instance: u64,
 ) -> StorageAdmission {
     Arc::new(move |record| {
-        let region = record.region.parse::<RegionCode>().map_err(|_| "invalid origin")?;
-        let tenant = TenantUlid::from_text(&record.tenant_id).map_err(|_| "invalid tenant")?;
-        let project = ProjectUlid::from_text(&record.project_id).map_err(|_| "invalid project")?;
-        let database =
-            DatabaseUlid::from_text(&record.database_id).map_err(|_| "invalid database")?;
-        let version = DatabaseKeyVersion::from_text(&record.key_version)
-            .map_err(|_| "invalid key version")?;
-        let scope = DatabaseScope::try_new(&record.environment, tenant, project, database, region)
-            .map_err(|_| "invalid owner")?;
-        let key_scope = KeyScope::new_with_project(
-            &record.environment,
-            tenant,
-            project,
-            database,
-            KeyPurpose::Data,
-        )
-        .map_err(|_| "invalid key scope")?;
-        let keys = Arc::new(
-            OciVaultDatabaseKeys::new(
-                provider.clone(),
-                KeyVersionMetadata::new(key_scope, version),
-                region,
-            )
-            .map_err(|_| "key authorization unavailable")?,
-        );
-        let specification = DatabaseSpec::scoped(scope, &record.database_id);
-        member
-            .add_production_database(specification, per_database, keys)
-            .map_err(|_| "database storage admission refused")?;
+        let (region, tenant_id) = register_storage(&member, &provider, record, per_database)?;
         // Registration precedes placement proposal. A pending scope is durable but
         // remains closed and absent from public routing until an authenticated retry.
         let Some(accepted) = authority(record)? else {
             return Ok(());
         };
-        let tenant_id = TenantId::try_new(&record.tenant_id).map_err(|_| "invalid tenant")?;
         match accepted {
             AcceptedAdmission::Maintenance { epoch, origin, local_is_writer } => {
                 if epoch == 0 || origin != region {
@@ -187,6 +198,7 @@ mod tests {
         admitted_databases::AdmittedDatabaseRegistry,
     };
     use std::{
+        collections::BTreeMap,
         fs,
         sync::{
             Arc,
@@ -247,8 +259,8 @@ mod tests {
         )
         .unwrap();
         let specs = [
-            DatabaseSpec::scoped(fenced.clone(), &fenced.database().to_text()),
-            DatabaseSpec::scoped(unrelated.clone(), &unrelated.database().to_text()),
+            DatabaseSpec::scoped(fenced.clone(), fenced.database().to_text()),
+            DatabaseSpec::scoped(unrelated.clone(), unrelated.database().to_text()),
         ];
         fs::create_dir_all(&root).unwrap();
         let fenced_id = DatabaseId::from(fenced.database());
@@ -304,8 +316,10 @@ mod tests {
             AdmissionHost::open(&root, "production".into(), RegionCode::GRU, member_id, callback)
                 .unwrap();
         drop(member.acquire(&fenced_id).expect("initial encrypted writer acquisition"));
-        host.admit(record(&fenced, &member_id.to_text())).unwrap();
-        host.admit(record(&unrelated, &member_id.to_text())).unwrap();
+        let fenced_record = record(&fenced, &member_id.to_text());
+        let unrelated_record = record(&unrelated, &member_id.to_text());
+        host.admit(&fenced_record).unwrap();
+        host.admit(&unrelated_record).unwrap();
         let fenced_host = registry.resolve(&fenced.database().to_text()).unwrap().unwrap();
         let fenced_tenant = TenantId::try_new(&fenced.tenant().to_text()).unwrap();
         let initial_scope = fenced_host.host.engine().scope_for(&fenced_tenant);
@@ -374,7 +388,7 @@ mod tests {
                 Document::new(
                     DocumentId::try_new("restart-doc").unwrap(),
                     CollectionName::try_new("users").unwrap(),
-                    DocumentValue::Object(Default::default()),
+                    DocumentValue::Object(BTreeMap::default()),
                 ),
                 ExpectedVersion::Any,
             )
@@ -447,8 +461,8 @@ mod tests {
         let unrelated = make_scope();
         fs::create_dir_all(&root).unwrap();
         let specs = [
-            DatabaseSpec::scoped(fenced.clone(), &fenced.database().to_text()),
-            DatabaseSpec::scoped(unrelated.clone(), &unrelated.database().to_text()),
+            DatabaseSpec::scoped(fenced.clone(), fenced.database().to_text()),
+            DatabaseSpec::scoped(unrelated.clone(), unrelated.database().to_text()),
         ];
         let mut keys = crate::test_keys::storage_keys(&fenced);
         keys.extend(crate::test_keys::storage_keys(&unrelated));

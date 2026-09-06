@@ -93,6 +93,7 @@ pub enum PublicationError {
     /// The transport or acknowledgement was unavailable or invalid.
     Unavailable,
 }
+type PriorPublication = (i64, Option<String>, Option<i64>, Option<Vec<u8>>);
 /// One durable pending payload per database and a globally bounded sender.
 pub struct NativeLifecyclePublisher {
     store: Mutex<rusqlite::Connection>,
@@ -187,7 +188,6 @@ impl NativeLifecyclePublisher {
         .map_err(|_| PublicationError::Invalid)?;
         let mut store = self.store.lock().map_err(|_| PublicationError::Storage)?;
         let tx = store.transaction().map_err(|_| PublicationError::Storage)?;
-        type PriorPublication = (i64, Option<String>, Option<i64>, Option<Vec<u8>>);
         let prior: Option<PriorPublication> = tx.query_row(
             "SELECT generation, observed, pending_generation, payload FROM lifecycle_publication_outbox WHERE scope=?1", [&scope],
             |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(|_| PublicationError::Storage)?;
