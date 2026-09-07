@@ -34,7 +34,7 @@ type ContractFrame struct {
 
 const (
 	ContractVersion           = "v1"
-	ContractOpenAPIBLAKE3     = "5303d7b02b82410250b7a4a6e314a525cf69644624701dc424a72a9df1268595"
+	ContractOpenAPIBLAKE3     = "05d640bef461d93e090571d67934cb82f43834018065f5a8f70602585d852320"
 	ContractMessagePackBLAKE3 = "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27"
 )
 
@@ -72,7 +72,7 @@ var ContractOperations = []ContractMetadata{
 	{"get_database", "GET", "/api/v1/databases/{name}", "", "DatabaseRecord"},
 	{"get_document", "GET", "/api/v1/databases/{name}/collections/{collection}/documents/{id}", "", "JsonValue"},
 	{"get_export", "GET", "/api/v1/databases/{name}/exports/{job_id}", "", "ExportStatus"},
-	{"get_provisioning_operation", "GET", "/api/v1/operations/{operation_id}", "", "ProvisioningOperation"},
+	{"get_provisioning_operation", "GET", "/api/v1/operations/{operation_id}", "", "OperationSummary"},
 	{"get_schema", "GET", "/api/v1/databases/{name}/collections/{collection}/schema", "", "SchemaDocument"},
 	{"health", "GET", "/api/v1/health", "", "HealthResponse"},
 	{"increment_one", "POST", "/api/v1/databases/{database}/auth/incrementOne", "Increment", "AuthResult"},
