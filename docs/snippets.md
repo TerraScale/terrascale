@@ -22,9 +22,13 @@ credentials only to the configured API origin; reactive snapshot and log
 requests use the short-lived view capability header.
 
 The runnable examples target the published `@terrascale/sdk` 0.3.0 surface.
-Tenant, branch, backup, and export fixtures are retained below but skipped
-until their producer contracts are published. The stub mode is deterministic
-and never counts as remote qualification.
+Tenant, branch, and backup fixtures are retained below but skipped until their
+producer contracts are published. The typed export API is available in the
+SDK, but its producer qualification remains pending, so its fixture is still
+skipped. Downloads return plaintext artifact bytes with the declared length
+and BLAKE3 checksum from the `X-TerraScale-Artifact-Length` and
+`X-TerraScale-Artifact-Checksum` headers. The stub mode is deterministic and
+never counts as remote qualification.
 
 ## Document CRUD
 
@@ -61,7 +65,10 @@ fixture is intentionally skipped in both modes.
 
 ## Logical export
 
-The typed export operation is not in the pinned SDK yet. Its fixture remains in
-the source tree but is intentionally skipped by both runner modes.
+The typed export operation is available in the pinned SDK, but producer
+qualification is still pending. Its fixture remains in the source tree and is
+intentionally skipped by both runner modes. The API returns plaintext artifact
+bytes plus the declared length and BLAKE3 checksum metadata from response
+headers.
 
 <<< ./snippets/exports.ts
