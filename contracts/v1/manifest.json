@@ -5,7 +5,7 @@
     {
       "path": "conformance/http.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "ea2ecc502f645b8cb6b5e4c5c6d2994dbe6e4e1054ca2a60b9abbff0d15c791c"
+      "blake3": "ee4aa8a158d8e37902035ddc48f61e45c80f31d9a28011e69a3c0a65c3d3b6a7"
     },
     {
       "path": "conformance/msgpack/hostile-vectors.json",
@@ -20,7 +20,7 @@
     {
       "path": "conformance/reactive.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "4d4ccbf1a8bbc4bb2545f30977ab42d80c6e618ea127f3c5e8dc631a0a96aad4"
+      "blake3": "f92d0c63f48209500c260473bf8cc86e37f1e197c8c840e16bd75fa756ed2693"
     },
     {
       "path": "msgpack/hostile-vectors.json",
@@ -40,12 +40,12 @@
     {
       "path": "openapi.json",
       "mediaType": "application/vnd.oai.openapi+json;version=3.1",
-      "blake3": "742cfc08269cebdf7d486f8606fab0154fb3b828bf774c13524f4f30d3b69da0"
+      "blake3": "5303d7b02b82410250b7a4a6e314a525cf69644624701dc424a72a9df1268595"
     },
     {
       "path": "proto/terrabase/v1/engine.proto",
       "mediaType": "text/x-protobuf",
-      "blake3": "6a7c5b26c5e964910fe87706cfe8c175366a88c986bba3e7cdff0af2ab8c7ed3"
+      "blake3": "eddd647a5824625e069bbc43f64aff2f685f50ca79613e13bc3e643428925fe2"
     },
     {
       "path": "proto/terrabase/v1/family.proto",

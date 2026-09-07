@@ -646,7 +646,7 @@ async fn database_create_consumes_every_producer_success_status() {
             .iter()
             .map(|response| response["status"].as_u64().unwrap())
             .collect::<Vec<_>>(),
-        [201, 202]
+        [202]
     );
 }
 

@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "b5ed25d097b7991030df5c4841dd5f29b9d1125c550ac668eb949f3e0dd369ea";
-pub const OPENAPI_BLAKE3: &str = "742cfc08269cebdf7d486f8606fab0154fb3b828bf774c13524f4f30d3b69da0";
+    "50cb882fbb94860ca7eec5e1b440bf530bd8b3a69df53fed489324c162cd35ff";
+pub const OPENAPI_BLAKE3: &str = "5303d7b02b82410250b7a4a6e314a525cf69644624701dc424a72a9df1268595";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
     "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
 pub const MSGPACK_PROTOCOL: &str = "terrascale.sync.v1.msgpack";
@@ -23,7 +23,7 @@ pub struct ContractArtifact {
 pub const ARTIFACTS: &[ContractArtifact] = &[
     ContractArtifact {
         path: "conformance/http.json",
-        blake3: "ea2ecc502f645b8cb6b5e4c5c6d2994dbe6e4e1054ca2a60b9abbff0d15c791c",
+        blake3: "ee4aa8a158d8e37902035ddc48f61e45c80f31d9a28011e69a3c0a65c3d3b6a7",
     },
     ContractArtifact {
         path: "conformance/msgpack/hostile-vectors.json",
@@ -35,7 +35,7 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "conformance/reactive.json",
-        blake3: "4d4ccbf1a8bbc4bb2545f30977ab42d80c6e618ea127f3c5e8dc631a0a96aad4",
+        blake3: "f92d0c63f48209500c260473bf8cc86e37f1e197c8c840e16bd75fa756ed2693",
     },
     ContractArtifact {
         path: "msgpack/hostile-vectors.json",
@@ -51,11 +51,11 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     },
     ContractArtifact {
         path: "openapi.json",
-        blake3: "742cfc08269cebdf7d486f8606fab0154fb3b828bf774c13524f4f30d3b69da0",
+        blake3: "5303d7b02b82410250b7a4a6e314a525cf69644624701dc424a72a9df1268595",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/engine.proto",
-        blake3: "6a7c5b26c5e964910fe87706cfe8c175366a88c986bba3e7cdff0af2ab8c7ed3",
+        blake3: "eddd647a5824625e069bbc43f64aff2f685f50ca79613e13bc3e643428925fe2",
     },
     ContractArtifact {
         path: "proto/terrabase/v1/family.proto",
@@ -160,15 +160,15 @@ pub const ROUTES: &[Route] = &[
         operation_id: "create_branch",
         method: HttpMethod::Post,
         path: "/api/v1/databases/{name}/branches",
-        request_model: Some("RestoreRequest"),
-        response_model: Some("DatabaseRecord"),
+        request_model: Some("CreateBranchRequest"),
+        response_model: Some("ProvisioningOperation"),
     },
     Route {
         operation_id: "create_database",
         method: HttpMethod::Post,
         path: "/api/v1/databases",
         request_model: Some("CreateDatabaseRequest"),
-        response_model: Some("DatabaseRecord"),
+        response_model: Some("ProvisioningOperation"),
     },
     Route {
         operation_id: "create_export",
@@ -203,7 +203,7 @@ pub const ROUTES: &[Route] = &[
         method: HttpMethod::Delete,
         path: "/api/v1/databases/{name}",
         request_model: None,
-        response_model: Some("DatabaseRecord"),
+        response_model: Some("DeletionOperation"),
     },
     Route {
         operation_id: "delete_document",
@@ -239,6 +239,13 @@ pub const ROUTES: &[Route] = &[
         path: "/api/v1/databases/{name}/webhooks/{id}",
         request_model: None,
         response_model: Some("WebhookEndpoint"),
+    },
+    Route {
+        operation_id: "deletion_status",
+        method: HttpMethod::Get,
+        path: "/api/v1/databases/{name}/deletions/{operation_id}",
+        request_model: None,
+        response_model: Some("DeletionOperation"),
     },
     Route {
         operation_id: "development_fault",
@@ -416,6 +423,13 @@ pub const ROUTES: &[Route] = &[
         response_model: Some("IndexListResponse"),
     },
     Route {
+        operation_id: "list_operations",
+        method: HttpMethod::Get,
+        path: "/api/v1/operations",
+        request_model: None,
+        response_model: Some("OperationPage"),
+    },
+    Route {
         operation_id: "list_webhooks",
         method: HttpMethod::Get,
         path: "/api/v1/databases/{name}/webhooks",
@@ -462,7 +476,7 @@ pub const ROUTES: &[Route] = &[
         method: HttpMethod::Post,
         path: "/api/v1/databases/{name}/backups/restore",
         request_model: Some("RestoreRequest"),
-        response_model: Some("DatabaseRecord"),
+        response_model: Some("ProvisioningOperation"),
     },
     Route {
         operation_id: "restore_database",
@@ -653,16 +667,24 @@ pub mod models {
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct CreateBranchRequest {
+        pub name: String,
+        pub operation_id: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct CreateDatabaseRequest {
         pub name: String,
-        pub operation_id: Option<String>,
+        pub operation_id: String,
         pub placement: Vec<String>,
-        pub residency: Option<String>,
+        pub residency: String,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct CreateExport {
+        pub format: Option<TransferFormat>,
         pub idempotency_key: String,
+        pub scope: Option<ExportScope>,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -694,6 +716,14 @@ pub mod models {
         pub parent: Option<String>,
         pub placement: String,
         pub residency: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct DeletionOperation {
+        pub cutoff: String,
+        pub request: std::collections::BTreeMap<String, serde_json::Value>,
+        pub state: String,
+        pub targets: Vec<std::collections::BTreeMap<String, serde_json::Value>>,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -780,6 +810,8 @@ pub mod models {
     }
 
     pub type ExportPhase = serde_json::Value;
+
+    pub type ExportScope = serde_json::Value;
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct ExportStatus {
@@ -898,6 +930,27 @@ pub mod models {
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct OperationPage {
+        pub covered_kinds: Vec<String>,
+        pub next_cursor: Option<String>,
+        pub operations: Vec<OperationSummary>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    pub struct OperationSummary {
+        pub cancellable: bool,
+        pub cancellation_reason: String,
+        pub created_at: Option<String>,
+        pub database_id: String,
+        pub kind: String,
+        pub name: String,
+        pub operation_id: String,
+        pub revision: Option<i64>,
+        pub stage: String,
+        pub state: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct PageJoin {
         #[serde(rename = "fromField")]
         pub from_field: String,
@@ -993,6 +1046,7 @@ pub mod models {
     pub struct RestoreRequest {
         pub at: Option<i64>,
         pub name: String,
+        pub operation_id: String,
     }
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1060,6 +1114,8 @@ pub mod models {
         #[serde(rename = "transactionId")]
         pub transaction_id: String,
     }
+
+    pub type TransferFormat = serde_json::Value;
 
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     pub struct TtlDescriptor {
@@ -1283,6 +1339,6 @@ pub const MESSAGE_VECTOR_SHA256: &str =
 pub const HOSTILE_VECTOR_SHA256: &str =
     "e6d8e6d92a87fe4d37fb00e5b441d0c351eecaf6117e5ac50631ce94d18890f5";
 pub const HTTP_CONFORMANCE_SHA256: &str =
-    "df3708eb9537f190b4beb00c0152216f202bef020dbb60049f1cf2dbcb93137e";
+    "0e588af0bf794ae7d04a299e0adbf03db6a130453afa5e2d34465860e3092dce";
 pub const REACTIVE_CONFORMANCE_SHA256: &str =
-    "5e6c87a3fc3fef237174dfec7b78e994c4f14b18348fa1965b698e897ff70370";
+    "e185fd35f4673940f6769b32f4174b479b1c2085e15e6302e37d34e025848880";

@@ -848,6 +848,121 @@ service PlacementControlService {
   rpc Readiness(PlacementReadinessRequest) returns (PlacementDrainResponse);
 }
 
+// Authenticated private lifecycle control. Every mutation is bound to the
+// accepted placement and authority proof; mTLS identity alone is insufficient.
+service LifecycleControlService {
+  rpc ResolveRecoveryPoint(ResolveRecoveryPointRequest) returns (ResolveRecoveryPointResponse);
+  rpc RestoreToTarget(RestoreToTargetRequest) returns (LifecycleControlResponse);
+  rpc RestoreStats(RestoreStatsRequest) returns (RestoreStatsResponse);
+  rpc EnsureSnapshot(LifecycleControlRequest) returns (LifecycleControlResponse);
+  rpc VerifySnapshotPlacement(LifecycleControlRequest) returns (LifecycleControlResponse);
+  rpc CloseDatabase(LifecycleControlRequest) returns (LifecycleControlResponse);
+  rpc StopNativeBackup(LifecycleControlRequest) returns (LifecycleControlResponse);
+  rpc Reactivate(LifecycleReactivateRequest) returns (LifecycleControlResponse);
+  rpc DeleteOwnedData(LifecycleControlRequest) returns (LifecycleControlResponse);
+}
+
+// Read-only source resolution under its accepted placement and lifecycle grant.
+message ResolveRecoveryPointRequest {
+  LifecycleControlContext context = 1;
+  string operation_id = 2;
+  string selection_kind = 3; // latest or point_id; unsupported time selections refuse.
+  string point_id = 4;
+  uint64 unix_millis = 5;
+}
+message ResolveRecoveryPointResponse {
+  string operation_id = 1;
+  string source_database = 2;
+  string recovery_point_id = 3;
+  string recovery_point_digest = 4;
+  string journal_cut = 5;
+  RestoreProvider provider = 6;
+  uint64 captured_at_millis = 7;
+  string checksum = 8;
+  uint64 row_count = 9;
+  repeated string placement = 10;
+}
+
+message RestoreStatsRequest {
+  LifecycleControlContext context = 1;
+  string operation_id = 2;
+  string target_owner = 3;
+  string target_database = 4;
+  string journal_cut = 5;
+  uint64 restore_epoch = 6;
+}
+message RestoreStatsResponse {
+  string operation_id = 1;
+  string target_owner = 2;
+  string target_database = 3;
+  string checksum = 4;
+  int64 row_count = 5;
+  string journal_cut = 6;
+  repeated string placement = 7;
+  bytes signed_completed_receipt = 8; // Complete-only pinned Ed25519 observation.
+}
+
+message RestoreToTargetRequest {
+  LifecycleControlContext context = 1;
+  string operation_id = 2;
+  string source_owner = 3; // Exact tenantID/projectID tuple.
+  string source_database = 4;
+  string recovery_point_id = 5;
+  string recovery_point_digest = 6;
+  string target_owner = 7; // Exact tenantID/projectID tuple.
+  string target_database = 8;
+  string journal_cut = 9;
+  uint64 restore_epoch = 10;
+  RestoreProvider provider = 11;
+}
+
+enum RestoreProvider {
+  RESTORE_PROVIDER_UNSPECIFIED = 0;
+  RESTORE_PROVIDER_OCI = 1;
+  RESTORE_PROVIDER_TIGRIS = 2;
+}
+
+message LifecycleControlContext {
+  string environment = 1;
+  string tenant = 2;
+  string project = 3;
+  string database = 4;
+  string region = 5;
+  string member = 6;
+  uint64 placement_revision = 7;
+  uint64 authority_epoch = 8;
+  string authority_lease = 9;
+  bytes authority_signature = 10;
+  bytes operation_grant = 11;
+}
+
+message LifecycleControlRequest {
+  LifecycleControlContext context = 1;
+  string operation_id = 2;
+}
+
+message LifecycleReactivateRequest {
+  LifecycleControlRequest request = 1;
+}
+
+enum LifecycleStatus {
+  LIFECYCLE_STATUS_UNSPECIFIED = 0;
+  LIFECYCLE_STATUS_APPLIED = 1;
+  LIFECYCLE_STATUS_ALREADY_APPLIED = 2;
+  LIFECYCLE_STATUS_UNAVAILABLE = 3;
+  LIFECYCLE_STATUS_ACCEPTED = 4;
+}
+
+message LifecycleControlResponse {
+  LifecycleStatus status = 1;
+  string operation_id = 2;
+  string detail = 3;
+  string recovery_point_id = 4;
+  string recovery_point_digest = 5;
+  repeated string placement = 6;
+  bytes signed_completed_receipt = 7; // Empty until restore completion.
+}
+
 message PlacementRegionSeats {
   string region = 1; // GRU, SFO, or FRA.
   repeated string members = 2; // Exactly two distinct canonical Member ULIDs.

@@ -223,7 +223,7 @@ async fn public_documents_sql_and_exports_consume_producer_vectors() {
             .exports()
             .download("demo", "sample", "sample")
             .await
-            .map(|v| Value::String(String::from_utf8(v).unwrap()))
+            .map(|v| Value::String(String::from_utf8(v.bytes).unwrap()))
     })
     .await;
     exercise_public_route(&op("create_export"), |c| async move {
@@ -307,10 +307,20 @@ fn response(status: u16, vector: &Value) -> Response {
     };
     Response {
         status,
-        headers: vec![
-            ("content-type".into(), media.into()),
-            ("x-request-id".into(), "producer-conformance".into()),
-        ],
+        headers: {
+            let mut headers = vec![
+                ("content-type".into(), media.into()),
+                ("x-request-id".into(), "producer-conformance".into()),
+            ];
+            if media == "application/octet-stream" {
+                headers.push((
+                    "x-terrascale-artifact-length".into(),
+                    bytes.len().to_string(),
+                ));
+                headers.push(("x-terrascale-artifact-checksum".into(), "0".repeat(64)));
+            }
+            headers
+        },
         body: bytes,
     }
 }
@@ -485,7 +495,7 @@ async fn public_database_create_consumes_every_producer_response_and_error_once(
             .iter()
             .map(|v| (false, v)),
     );
-    assert_eq!(cases.len(), 13);
+    assert_eq!(cases.len(), 12);
 
     for (success, vector) in cases {
         let status = vector["status"].as_u64().unwrap() as u16;
