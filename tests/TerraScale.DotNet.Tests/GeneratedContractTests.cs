@@ -30,7 +30,7 @@ public sealed class GeneratedContractTests
         await Assert.That(databaseType).IsNotNull();
         await Assert.That(requestType).IsNotNull();
 
-        using var document = JsonDocument.Parse("{\"name\":\"demo\",\"placement\":[\"GRU\"]}");
+        using var document = JsonDocument.Parse("{\"name\":\"demo\",\"placement\":[\"GRU\"],\"operation_id\":\"op-1\",\"residency\":null}");
         var request = JsonSerializer.Deserialize(document.RootElement.GetRawText(), requestType!);
         await Assert.That(request).IsNotNull();
     }
@@ -75,7 +75,7 @@ public sealed class GeneratedContractTests
     {
         var request = new RestoreRequest(7, "branch-a", "restore-op-1");
         var json = JsonSerializer.Serialize(request, TerraScaleContractJsonContext.Default.RestoreRequest);
-        await Assert.That(json).IsEqualTo("{\"at\":7,\"name\":\"branch-a\"}");
+        await Assert.That(json).IsEqualTo("{\"at\":7,\"name\":\"branch-a\",\"operation_id\":\"restore-op-1\"}");
 
         var response = JsonSerializer.Deserialize(
             "{\"name\":\"branch-a\",\"placement\":\"GRU\",\"residency\":\"br-only\",\"deleted\":false,\"created_at\":7,\"parent\":\"main\"}",
