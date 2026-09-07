@@ -86,6 +86,20 @@ impl LiveKeys {
     }
 }
 
+fn materials_disjoint(keys: &LiveKeys) -> bool {
+    let capability = [
+        keys.capability.current.as_slice(),
+        keys.capability.previous.as_deref().unwrap_or(&[]),
+    ];
+    let origin = [
+        keys.origin.current.as_slice(),
+        keys.origin.previous.as_deref().unwrap_or(&[]),
+    ];
+    capability.iter().all(|candidate| {
+        candidate.is_empty() || origin.iter().all(|other| other.is_empty() || *candidate != other)
+    })
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct TlsMaterial {
     workload: Vec<u8>,
@@ -346,6 +360,12 @@ fn bind_inner(
         persist(state_file, &value)?;
         value
     };
+    if !materials_disjoint(&durable.active)
+        || durable.staged.as_ref().is_some_and(|keys| !materials_disjoint(keys))
+        || durable.rollback.as_ref().is_some_and(|keys| !materials_disjoint(keys))
+    {
+        return Err(io::Error::other("rotation rings must contain disjoint material"));
+    }
     if let Some((controller, _)) = &tls {
         if durable.state == "fenced" {
             controller.fence();
@@ -450,7 +470,13 @@ fn stage_rotation(service: &Service, request: &Request, next: &mut Durable) -> i
     let origin_previous = zeroize::Zeroizing::new(
         STANDARD.decode(&request.origin_previous_key).map_err(|_| invalid())?,
     );
-    if current == origin_current {
+    if current == origin_current
+        || (!previous.is_empty() && previous == origin_current)
+        || (!origin_previous.is_empty() && current == origin_previous)
+        || (!previous.is_empty()
+            && !origin_previous.is_empty()
+            && previous == origin_previous)
+    {
         return Err(invalid());
     }
     let overlap = !previous.is_empty();
@@ -525,7 +551,8 @@ fn publish_rotation(
     digest: String,
 ) -> io::Result<Receipt> {
     let invalid = || io::Error::other("invalid rotation transition");
-    let valid_until = next.staged.as_ref().unwrap_or(&next.active).origin.expires_at;
+    let active = next.staged.as_ref().unwrap_or(&next.active);
+    let valid_until = active.origin.expires_at.min(active.capability.expires_at);
     let receipt = Receipt {
         generation: if request.action == "retire" { request.generation } else { next.generation },
         valid_until,
@@ -629,16 +656,22 @@ fn apply(service: &Service, request: &Request) -> io::Result<Receipt> {
             next.state = "active".into();
         }
         "retire" => {
-            if (request.generation != next.active.previous_generation
-                && request.generation != next.active.origin_previous_generation)
-                || next.state != "active"
-            {
+            if next.state != "active" {
                 return Err(invalid());
             }
-            next.active.previous_generation = 0;
-            next.active.origin_previous_generation = 0;
-            next.active.origin.previous = None;
-            next.active.capability.previous = None;
+            let retire_capability = request.generation == next.active.previous_generation;
+            let retire_origin = request.generation == next.active.origin_previous_generation;
+            if !retire_capability && !retire_origin {
+                return Err(invalid());
+            }
+            if retire_capability {
+                next.active.previous_generation = 0;
+                next.active.capability.previous = None;
+            }
+            if retire_origin {
+                next.active.origin_previous_generation = 0;
+                next.active.origin.previous = None;
+            }
             next.rollback = None;
         }
         "rollback" => {
@@ -675,7 +708,7 @@ mod tests {
         Request {
             operation_id: operation.into(),
             action: action.into(),
-            generation: 2,
+            generation: 3,
             expires_at: now() + 3600,
             current_key_id: "new".into(),
             current_key: STANDARD.encode(b"new-key-with-at-least-32-bytes-000"),
@@ -685,7 +718,7 @@ mod tests {
             previous_key_id: "old".into(),
             previous_key: STANDARD.encode(b"old-key-with-at-least-32-bytes-000"),
             previous_expires_at: now() + 600,
-            previous_generation: 1,
+            previous_generation: 2,
             origin_previous_key_id: "origin-old".into(),
             origin_previous_key: STANDARD.encode(b"origin-old-key-at-least-32-bytes-"),
             origin_previous_generation: 1,
@@ -729,6 +762,7 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         let old = b"old-key-with-at-least-32-bytes-000";
+        let origin_old = b"origin-old-key-at-least-32-bytes-";
         let new = b"new-key-with-at-least-32-bytes-000";
         let origin_new = b"origin-new-key-at-least-32-bytes-";
         let make = || {
@@ -736,7 +770,7 @@ mod tests {
                 &dir.join("control.sock"),
                 &dir.join("state.json"),
                 vec![42; 32],
-                &OriginProofKeyRing::new(old, None::<&[u8]>).unwrap(),
+                &OriginProofKeyRing::new(origin_old, None::<&[u8]>).unwrap(),
                 &CapabilityKeyRing::new(old, None::<&[u8]>).unwrap(),
             )
             .unwrap()
@@ -750,8 +784,17 @@ mod tests {
         .await;
         assert!(matches!(unauthenticated, Err((StatusCode::UNAUTHORIZED, _))));
         let stage = request("stage", "stage");
+        let mut cross_role_collision = request("stage", "cross-role-collision");
+        cross_role_collision.origin_current_key = cross_role_collision.previous_key.clone();
+        cross_role_collision.origin_current_key_id = "origin-collision".into();
+        cross_role_collision.origin_previous_key.clear();
+        cross_role_collision.origin_previous_key_id.clear();
+        cross_role_collision.origin_previous_generation = 0;
+        cross_role_collision.origin_previous_expires_at = 0;
+        assert!(apply(&bound.service, &cross_role_collision).is_err());
+        assert_eq!(bound.service.inner.lock().unwrap().durable.generation, 0);
         apply(&bound.service, &stage).unwrap();
-        assert!(accepts(&bound.origin, old));
+        assert!(accepts(&bound.origin, origin_old));
         assert!(!accepts(&bound.origin, origin_new));
         assert!(apply(&bound.service, &request("activate", "early-activate")).is_err());
         apply(&bound.service, &request("verify", "verify")).unwrap();
@@ -764,7 +807,7 @@ mod tests {
             assert_eq!(live.origin.current, origin_new);
             assert_ne!(live.capability.current, live.origin.current);
         }
-        assert!(accepts(&bound.origin, old));
+        assert!(accepts(&bound.origin, origin_old));
         assert!(accepts(&bound.origin, origin_new));
         let mut conflict = request("fence", "activate");
         conflict.generation = 2;
@@ -790,10 +833,19 @@ mod tests {
         let mut retire = request("retire", "retire");
         retire.generation = 1;
         apply(&restored.service, &retire).unwrap();
-        assert!(!accepts(&restored.origin, old));
+        assert!(!accepts(&restored.origin, origin_old));
         assert!(accepts(&restored.origin, origin_new));
+        {
+            let live = restored.service.live.read().unwrap();
+            assert!(live.capability.previous.is_some());
+            assert!(live.origin.previous.is_none());
+        }
+        let mut retire_capability = request("retire", "retire-capability");
+        retire_capability.generation = 2;
+        apply(&restored.service, &retire_capability).unwrap();
+        assert!(restored.service.live.read().unwrap().capability.previous.is_none());
         apply(&restored.service, &request("fence", "fence")).unwrap();
-        assert!(!accepts(&restored.origin, new));
+        assert!(!accepts(&restored.origin, origin_new));
         drop(restored);
         std::fs::remove_dir_all(dir).unwrap();
     }

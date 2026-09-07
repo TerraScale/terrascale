@@ -3929,6 +3929,10 @@ impl Engine {
     /// optimistic generation and retained shadow evidence are checked while
     /// the lifecycle and storage locks are held, so a stale verifier cannot
     /// expose a candidate after another lifecycle transition.
+    ///
+    /// # Errors
+    /// Returns [`EngineError`] when the tenant, generation, lifecycle phase,
+    /// shadow evidence, or durable installation is invalid.
     pub fn auto_index_activate(
         &self,
         tenant: &TenantId,
@@ -3957,13 +3961,17 @@ impl Engine {
         view.regression_free = true;
         lifecycle
             .install(self.lock_storage()?.port.as_mut(), view.clone(), at_millis, [0; 32])
-            .map_err(|_| EngineError::StorageFailure)?;
+            .map_err(|()| EngineError::StorageFailure)?;
         view.generation = lifecycle.generation(tenant.as_str());
         Ok(view)
     }
 
     /// Hides an active index immediately after a verified regression. The
     /// physical hidden table remains available for delayed cleanup.
+    ///
+    /// # Errors
+    /// Returns [`EngineError`] when the tenant, generation, lifecycle phase,
+    /// or durable installation is invalid.
     pub fn auto_index_revert(
         &self,
         tenant: &TenantId,
@@ -4045,6 +4053,10 @@ impl Engine {
     /// evidence record of an index. The digest is required to retrieve the
     /// exact paired sample set without exposing a template through the
     /// lifecycle API.
+    ///
+    /// # Errors
+    /// Returns [`EngineError`] when the tenant is foreign or lifecycle state
+    /// cannot be locked.
     pub fn auto_index_shadow_evidence_digest(
         &self,
         tenant: &TenantId,
@@ -4061,6 +4073,10 @@ impl Engine {
     /// Records bounded paired shadow samples in the durable lifecycle journal.
     /// The lifecycle generation is checked and advanced atomically with the
     /// evidence event; recording evidence never changes planner visibility.
+    ///
+    /// # Errors
+    /// Returns [`EngineError`] when the tenant, evidence, lifecycle state, or
+    /// durable evidence record is invalid.
     pub fn auto_index_record_shadow_evidence(
         &self,
         tenant: &TenantId,
@@ -4080,12 +4096,16 @@ impl Engine {
                 evidence,
                 at_millis,
             )
-            .map_err(|_| EngineError::Conflict)
+            .map_err(|()| EngineError::Conflict)
     }
 
     /// Measures a paired ordinary/hidden execution against one immutable
     /// snapshot and commits the resulting samples. Every value comes from
     /// SQLite statement counters; no timing or inferred estimate is admitted.
+    ///
+    /// # Errors
+    /// Returns [`EngineError`] when the scope, sample bounds, snapshot, or
+    /// shadow measurement is invalid.
     pub fn auto_index_measure_shadow(
         &self,
         scope: &TenantScope,
@@ -4095,9 +4115,9 @@ impl Engine {
         samples: u16,
         at_millis: u64,
     ) -> Result<crate::auto_index::ShadowEvidence, EngineError> {
-        if !(20..=crate::auto_index::MAX_SHADOW_SAMPLES as u16).contains(&samples)
-            || template_digest == [0; 32]
-        {
+        let max_samples = u16::try_from(crate::auto_index::MAX_SHADOW_SAMPLES)
+            .map_err(|_| EngineError::InvalidDocument)?;
+        if !(20..=max_samples).contains(&samples) || template_digest == [0; 32] {
             return Err(EngineError::InvalidDocument);
         }
         self.validate_scope(scope)?;
@@ -4137,6 +4157,10 @@ impl Engine {
     /// Admits at most one live shadow sample per template/candidate each
     /// interval and records its measured counters against the caller's
     /// immutable snapshot.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "query observer callback carries one measured sample"
+    )]
     pub(crate) fn sample_auto_index_shadow(
         &self,
         scope: &TenantScope,
@@ -4182,13 +4206,12 @@ impl Engine {
             u64::from(comparison.candidate.rows),
         ));
         let sample_count = entry.1.len();
-        drop(entry);
-        if samples.len() > 256 {
-            if let Some(oldest) =
+        let _ = entry;
+        if samples.len() > 256
+            && let Some(oldest) =
                 samples.iter().min_by_key(|(_, (last, _, _))| *last).map(|(key, _)| key.clone())
-            {
-                samples.remove(&oldest);
-            }
+        {
+            samples.remove(&oldest);
         }
         if sample_count < 20 {
             return;
@@ -4828,6 +4851,10 @@ impl Transaction<'_> {
     }
 
     /// Binds the serving router's owner and generation to this origin write.
+    ///
+    /// # Errors
+    /// Returns [`EngineError`] when the token is invalid or an admission is
+    /// already bound.
     pub fn bind_shard_admission(
         &mut self,
         token: crate::shard_split::ShardAdmissionToken,
@@ -4841,6 +4868,10 @@ impl Transaction<'_> {
 
     /// Attaches a verified regional allocation. The allocation is consumed in
     /// the same SQLite transaction as the document and usage fact.
+    ///
+    /// # Errors
+    /// Returns [`UsageCommandError`] when the allocation does not match this
+    /// operation or an allocation is already attached.
     pub fn attach_usage_budget(
         &mut self,
         allocation: crate::usage::VerifiedAllocation,

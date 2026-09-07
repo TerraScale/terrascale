@@ -588,6 +588,24 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
         {
             return Err("restore target placement or owner mismatch".into());
         }
+        let (authority_epoch, authority_lease, accepted_proof_digest) =
+            if let Some(retained) = retained.as_ref() {
+                (
+                    retained.authority_epoch,
+                    retained.authority_lease.clone(),
+                    retained.accepted_proof_digest.clone(),
+                )
+            } else {
+                let context = request.context.as_ref().ok_or("restore context is missing")?;
+                let proof_digest = self
+                    .journal
+                    .as_ref()
+                    .ok_or("placement authority is unavailable")?
+                    .verify_lifecycle_grant(&context.operation_grant)
+                    .map_err(|_| "lifecycle operation grant is invalid")?
+                    .accepted_proof_digest;
+                (context.authority_epoch, context.authority_lease.clone(), proof_digest)
+            };
         let operation = crate::native_recovery::NativeRestoreRequest {
             operation_id: request.operation_id.clone(),
             source_owner: request.source_owner.clone(),
@@ -598,33 +616,9 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             target_database_id: request.target_database.clone(),
             journal_cut: request.journal_cut.clone(),
             restore_epoch: request.restore_epoch,
-            authority_epoch: request
-                .context
-                .as_ref()
-                .ok_or("restore context is missing")?
-                .authority_epoch,
-            authority_lease: request
-                .context
-                .as_ref()
-                .ok_or("restore context is missing")?
-                .authority_lease
-                .clone(),
-            accepted_proof_digest: if let Some(journal) = &self.journal {
-                journal
-                    .verify_lifecycle_grant(
-                        &request
-                            .context
-                            .as_ref()
-                            .ok_or("restore context is missing")?
-                            .operation_grant,
-                    )
-                    .map_err(|_| "lifecycle operation grant is invalid")?
-                    .accepted_proof_digest
-            } else if let Some(retained) = retained.as_ref() {
-                retained.accepted_proof_digest.clone()
-            } else {
-                return Err("placement authority is unavailable".into());
-            },
+            authority_epoch,
+            authority_lease,
+            accepted_proof_digest,
             provider: match terrabase_tbep::proto::terrabase::v1::RestoreProvider::try_from(
                 request.provider,
             ) {

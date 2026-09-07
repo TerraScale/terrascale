@@ -100,6 +100,10 @@ pub enum AllocationError {
 
 impl VerifiedAllocation {
     /// Verifies the exact producer bytes and all local identity bindings.
+    ///
+    /// The argument list is the frozen producer/consumer binding contract;
+    /// keep it positional so callers cannot accidentally omit an identity.
+    #[expect(clippy::too_many_arguments, reason = "frozen allocation verification contract")]
     pub fn verify(
         signed_bytes: &[u8],
         expected_key_id: &str,

@@ -10,6 +10,8 @@ struct Engine {
     state: Option<DurableSplitState>,
     installs: usize,
     verified: usize,
+    fail_create: bool,
+    creates: usize,
 }
 
 impl SplitStateStore for Engine {
@@ -51,6 +53,11 @@ impl SplitEngineAdapter for Engine {
         &mut self,
         _context: &terrabase::shard_split::SplitContext,
     ) -> Result<(), Self::DataError> {
+        self.creates += 1;
+        if self.fail_create {
+            self.fail_create = false;
+            return Err(());
+        }
         Ok(())
     }
     fn rollback_split_target(
@@ -130,6 +137,24 @@ fn runtime_reopens_same_operation_and_revalidates_placement() {
     let mut resumed = SplitRuntime::new(engine, Orchestrator::default(), ShardRouter::single(1));
     assert!(resumed.resume().unwrap());
     assert_eq!(resumed.split().unwrap().context().unwrap().split_id(), 9);
+}
+
+#[test]
+fn resume_retries_target_creation_after_durable_admission() {
+    let context = terrabase::shard_split::SplitContext::new(10, 20, 1, 2, 3, 0);
+    let split = ShardSplit::plan_with_context(None, b"m".to_vec(), context).unwrap();
+    let mut persisted = Engine { fail_create: true, ..Engine::default() };
+    persisted.state = Some({
+        let mut split = split;
+        split.begin_backfill().unwrap();
+        split.durable_state()
+    });
+    let mut runtime = SplitRuntime::new(persisted, Orchestrator::default(), ShardRouter::single(1));
+
+    assert!(matches!(runtime.resume(), Err(terrabase::shard_split::SplitRuntimeError::Data(()))));
+    assert!(runtime.split().is_none());
+    assert!(runtime.resume().unwrap());
+    assert_eq!(runtime.split().unwrap().context(), Some(context));
 }
 
 #[derive(Default)]

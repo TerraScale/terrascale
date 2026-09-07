@@ -456,9 +456,11 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         causal: None,
     };
     let progress = Arc::new(ReplicationProgress::default());
+    progress.advance_regional_from_peer(scope, peer.member().as_str(), 8);
+    assert!(progress.regional_covers(scope, 8).unwrap());
     let peers = ReplicationPeers::start(
         runtime.clone(),
-        progress,
+        progress.clone(),
         PeerDatabaseBatch {
             lanes: BTreeMap::from([(peer.member().as_str().to_owned(), vec![lane])]),
             selected_regions: BTreeMap::from([(scope, BTreeSet::from(["GRU".into()]))]),
@@ -467,9 +469,17 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     .unwrap();
     let observations = peers.observations();
     let remote_task = tokio::spawn(async move {
-        for _ in 0..2 {
+        for index in 0..2 {
             let Some(connection) = remote.accept().await.unwrap() else { return };
             let _ = connection.receive_frame().await;
+            let Some(checkpoint) = connection.receive_frame().await.ok() else { return };
+            let request = WalCheckpointMessage::decode(&checkpoint).expect("encoded checkpoint");
+            if index == 1 {
+                // Echoing the request is deliberately not a valid response:
+                // the writer must refuse it and keep readiness fenced until a
+                // real follower checkpoint and readiness cut arrive.
+                connection.send_frame(&request.encode().unwrap()).await.unwrap();
+            }
             // Closing immediately after authentication forces the real session
             // owner through its transport-error fence and restart path.
             drop(connection);
@@ -489,6 +499,7 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     })
     .await
     .expect("first authenticated session");
+    assert!(progress.regional_covers(scope, 8).unwrap());
     let second = tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             if let Some(facts) =
@@ -503,11 +514,13 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
     .await
     .expect("replacement session");
     assert!(second > first);
+    assert!(progress.regional_covers(scope, 8).is_err(), "fenced evidence must not cover before a fresh response");
     let facts = observations.lock().unwrap();
     let facts = facts.get(&(peer.member().as_str().to_owned(), scope)).unwrap();
     assert!(facts.physical.is_none(), "closed session must not publish physical proof");
     assert!(facts.readiness.is_none(), "closed session must not publish readiness proof");
     drop(facts);
+    assert!(peers.ensure_running().is_ok(), "terminal command path remains usable after session restart");
     peers.drain().await.unwrap();
     remote_task.await.unwrap();
     drop(runtime);

@@ -681,15 +681,30 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     result.map_err(|_| Box::new(DaemonError::ShutdownTimeout) as Box<dyn Error + Send + Sync>)
     }.await;
     if let Err(error) = startup_result {
-        if let Some(recovery_worker) = recovery_worker.take() {
-            let _ = recovery_worker.shutdown().await;
-        }
-        let _ = admission_for_startup_cleanup.drain().await;
-        let _ = native_for_startup_cleanup.drain();
-        let _ = member_for_startup_cleanup.drain().await;
+        cleanup_failed_production_startup(
+            recovery_worker.take(),
+            &admission_for_startup_cleanup,
+            &native_for_startup_cleanup,
+            &member_for_startup_cleanup,
+        )
+        .await;
         return Err(error);
     }
     Ok(())
+}
+
+async fn cleanup_failed_production_startup(
+    recovery_worker: Option<crate::native_recovery::NativeRecoveryWorker>,
+    admission: &crate::production_data_runtime::ProductionAdmissionRuntime,
+    native: &crate::native_backup_runtime::NativeBackupRuntime,
+    member: &terrabase_cluster::production::ProductionMemberRuntime,
+) {
+    if let Some(recovery_worker) = recovery_worker {
+        let _ = recovery_worker.shutdown().await;
+    }
+    let _ = admission.drain().await;
+    let _ = native.drain();
+    let _ = member.drain().await;
 }
 
 fn parts_root_for_recovery(production: &crate::config::ProductionConfig) -> std::path::PathBuf {

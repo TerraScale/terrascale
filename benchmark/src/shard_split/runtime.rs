@@ -125,7 +125,16 @@ where
         self.orchestrator
             .validate_split_placement(context.database_incarnation(), context.placement_epoch())
             .map_err(SplitRuntimeError::Placement)?;
-        if split.phase() == SplitPhase::CutOver {
+        // Admission persists Backfilling before invoking the data adapter.
+        // Replay idempotent target creation so a restart can safely resume
+        // copying after a crash or a failed create response.
+        if matches!(
+            split.phase(),
+            SplitPhase::Planned | SplitPhase::Backfilling | SplitPhase::CatchingUp
+        ) {
+            self.engine.create_split_target(&context).map_err(SplitRuntimeError::Data)?;
+        }
+        if matches!(split.phase(), SplitPhase::CutOver | SplitPhase::Complete) {
             let route = self
                 .engine
                 .recover_split_route(&context)
