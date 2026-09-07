@@ -408,7 +408,10 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
     let startup_result: Result<(), Box<dyn Error + Send + Sync>> = async {
     let lifecycle_fleet = native.fleet();
     let Some(public) = public else {
-        return Err(Box::new(DaemonError::ProductionConfigurationMissing));
+        return Err(
+            Box::new(DaemonError::ProductionConfigurationMissing)
+                as Box<dyn Error + Send + Sync>,
+        );
     };
     let control = production.control.as_ref().ok_or(DaemonError::ProductionConfigurationMissing)?;
     let receipt_signer = crate::native_recovery_receipt::NativeRecoveryReceiptSigner::from_file(
@@ -583,11 +586,21 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
         backups: Some(lifecycle_fleet),
         recovery: Some(Arc::clone(&recovery)),
         receipts,
-        journal: Some(journal.clone().ok_or(DaemonError::ProductionConfigurationMissing)?),
+        journal: Some(
+            journal
+                .clone()
+                .ok_or_else(|| {
+                    Box::new(DaemonError::ProductionConfigurationMissing)
+                        as Box<dyn Error + Send + Sync>
+                })?,
+        ),
     });
     let lifecycle_authority =
         Arc::new(crate::production_lifecycle_control::PlacementLifecycleAuthority::new(
-            journal.clone().ok_or(DaemonError::ProductionConfigurationMissing)?,
+            journal.clone().ok_or_else(|| {
+                Box::new(DaemonError::ProductionConfigurationMissing)
+                    as Box<dyn Error + Send + Sync>
+            })?,
         ));
     let lifecycle = Arc::new(crate::production_lifecycle_control::TbepLifecycleControl::new(
         Arc::new(crate::production_lifecycle_control::ProductionLifecycleControl {

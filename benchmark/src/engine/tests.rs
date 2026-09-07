@@ -34,7 +34,7 @@ fn location(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("terrabase-w31-engine-{tag}-{}-{index}", std::process::id()))
 }
 
-fn open_engine(tag: &str) -> (PathBuf, Engine) {
+pub(super) fn open_engine(tag: &str) -> (PathBuf, Engine) {
     let dir = location(tag);
     let engine =
         Engine::open(EngineConfig::durable(&dir).expect("durable location")).expect("engine opens");
@@ -53,7 +53,7 @@ fn document_id(name: &str) -> DocumentId {
     DocumentId::try_new(name).expect("valid identifier")
 }
 
-fn operation(name: &str) -> OperationId {
+pub(super) fn operation(name: &str) -> OperationId {
     OperationId::try_new(name).expect("valid identifier")
 }
 
@@ -89,7 +89,7 @@ fn usage_record_request(fact_id: &str, recorded_at_millis: u64) -> UsageRecordRe
     .expect("usage request")
 }
 
-fn tenant_scope(engine: &Engine, tenant_name: &str) -> TenantScope {
+pub(super) fn tenant_scope(engine: &Engine, tenant_name: &str) -> TenantScope {
     TenantScope::from_parts(tenant(tenant_name), engine.identity())
 }
 

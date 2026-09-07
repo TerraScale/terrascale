@@ -81,6 +81,7 @@ pub(crate) struct ParticipantReplicationPublication {
 #[cfg(test)]
 mod publication_tests {
     use super::*;
+    use crate::types::DocumentValue;
 
     #[test]
     fn publication_roundtrip_preserves_observations_schema_and_conflict() {
@@ -299,7 +300,7 @@ mod tests {
 #[cfg(test)]
 mod roundtrip_tests {
     use super::*;
-    use crate::types::ExpectedVersion;
+    use crate::types::{DocumentValue, ExpectedVersion};
 
     fn doc() -> Document {
         Document::new(

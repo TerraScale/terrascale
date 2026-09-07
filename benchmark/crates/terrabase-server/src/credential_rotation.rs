@@ -311,6 +311,7 @@ fn bind_inner(
     }
     let initial = LiveKeys {
         previous_generation: 0,
+        origin_previous_generation: 0,
         tls: tls.as_ref().map(|(_, material)| material.clone()),
         origin: origin
             .live
@@ -757,6 +758,12 @@ mod tests {
         let activate = request("activate", "activate");
         apply(&bound.service, &activate).unwrap();
         apply(&bound.service, &activate).unwrap();
+        {
+            let live = bound.service.live.read().unwrap();
+            assert_eq!(live.capability.current, new);
+            assert_eq!(live.origin.current, origin_new);
+            assert_ne!(live.capability.current, live.origin.current);
+        }
         assert!(accepts(&bound.origin, old));
         assert!(accepts(&bound.origin, origin_new));
         let mut conflict = request("fence", "activate");

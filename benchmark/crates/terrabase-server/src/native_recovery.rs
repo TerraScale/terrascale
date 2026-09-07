@@ -1170,7 +1170,7 @@ mod tests {
             target_owner: format!("{}/{}", records[1].tenant_id, records[1].project_id),
             target_database_id: records[1].database_id.clone(),
             journal_cut: "1".into(),
-            restore_epoch: 1,
+            restore_epoch: 2,
             authority_epoch: 7,
             authority_lease: "lease".into(),
             accepted_proof_digest: "a".repeat(64),
@@ -1188,6 +1188,18 @@ mod tests {
         // A paused target is retained but deliberately absent from resolve().
         assert!(registry.resolve(&request.target_database_id).unwrap().is_none());
         runtime.admit_restore(request.clone()).unwrap();
+        let mut altered_authority = request.clone();
+        altered_authority.authority_epoch = 8;
+        assert_eq!(
+            runtime.admit_restore(altered_authority),
+            Err(NativeRecoveryError::VerificationFailed)
+        );
+        let mut altered_restore = request.clone();
+        altered_restore.restore_epoch = 3;
+        assert_eq!(
+            runtime.admit_restore(altered_restore),
+            Err(NativeRecoveryError::VerificationFailed)
+        );
         let operation = NativeRestoreOperation {
             request,
             phase: NativeRestorePhase::Uncertain,
