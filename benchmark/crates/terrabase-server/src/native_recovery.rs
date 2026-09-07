@@ -60,6 +60,17 @@ pub struct NativeRecoveryWorker {
 }
 
 impl NativeRecoveryWorker {
+    /// Signals the worker and waits without detaching its join handle.
+    ///
+    /// This is reserved for owned shutdown paths, where releasing the Member
+    /// lease must wait for any uncancellable provider operation to finish.
+    pub async fn await_completion(self) -> Result<(), NativeRecoveryError> {
+        *self.runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? = true;
+        let _ = self.stop.send(tokio::time::Instant::now());
+        self.join.await.map_err(|_| NativeRecoveryError::Unavailable)?;
+        Ok(())
+    }
+
     /// Signals the worker and waits for its owned task to finish.
     pub async fn shutdown(self) -> Result<(), NativeRecoveryError> {
         *self.runtime.lifecycle.lock().map_err(|_| NativeRecoveryError::Unavailable)? = true;

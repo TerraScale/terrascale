@@ -460,8 +460,6 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         causal: None,
     };
     let progress = Arc::new(ReplicationProgress::default());
-    progress.advance_regional_from_peer(scope, peer.member().as_str(), 8);
-    assert!(progress.regional_covers(scope, 8).unwrap());
     let peers = ReplicationPeers::start(
         runtime.clone(),
         progress.clone(),
@@ -471,6 +469,8 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         },
     )
     .unwrap();
+    progress.advance_regional_from_peer(scope, peer.member().as_str(), 8);
+    assert!(progress.regional_covers(scope, 8).unwrap());
     let observations = peers.observations();
     let follower_binding = WalReplicaBinding::new(
         scope,

@@ -163,11 +163,18 @@ impl NativeBackupRuntime {
     ) -> Result<(), NativeBackupRuntimeError> {
         let mut interval = tokio::time::interval(period);
         loop {
+            if *shutdown.borrow() {
+                return Ok(());
+            }
             tokio::select! {
+                biased;
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() { return Ok(()); }
                 }
                 _ = interval.tick() => {
+                    if *shutdown.borrow() {
+                        return Ok(());
+                    }
                     let runtime = Arc::clone(&self);
                     tokio::task::spawn_blocking(move || {
                         tokio::runtime::Handle::current().block_on(runtime.tick())
@@ -412,6 +419,84 @@ fn validate_operation_id(operation_id: &str) -> Result<(), NativeBackupRuntimeEr
 #[cfg(test)]
 mod restore_tests {
     use super::*;
+
+    fn runtime_fixture(
+        label: &str,
+    ) -> (
+        Arc<NativeBackupRuntime>,
+        Arc<crate::admitted_databases::AdmittedDatabaseRegistry>,
+        terrabase::member::Member,
+        std::path::PathBuf,
+        String,
+    ) {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let record = &records[0];
+        let scope = terrabase::member::DatabaseScope::new(
+            &record.environment,
+            record.tenant_id.parse().unwrap(),
+            record.project_id.parse().unwrap(),
+            record.database_id.parse().unwrap(),
+            record.region.parse().unwrap(),
+        )
+        .unwrap();
+        let target = registry
+            .retained_snapshot()
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.database.record.database_id == record.database_id)
+            .unwrap();
+        let runtime = NativeBackupRuntime::new(
+            FleetLimits {
+                streams: 1,
+                staging_bytes_per_stream: 4 * 1024 * 1024,
+                points_per_stream: 4,
+            },
+            [NativeBackupInput {
+                engine: Arc::new(AdmittedBackupEngine::new(Arc::clone(&target.database.host))),
+                keys: Arc::new(
+                    terrabase::backup::worker::OciBackupKeys::new(crate::test_keys::backup_keys(
+                        &scope,
+                    ))
+                    .unwrap(),
+                ),
+                destinations: vec![(
+                    terrabase::backup::object_store::Provider::Oci,
+                    Arc::new(terrabase::backup::object_store::ObjectDestination::for_test(
+                        terrabase::backup::object_store::Provider::Oci,
+                        Arc::new(object_store::memory::InMemory::new()),
+                        4 * 1024 * 1024,
+                        8 * 1024 * 1024,
+                    )),
+                )],
+                policy_revision: "supervisor-policy".into(),
+                retention_days: 1,
+                staging: root.join(label),
+                placement: PlacementLock::explicit([record.region.parse().unwrap()]).unwrap(),
+            }],
+        )
+        .unwrap();
+        let database = record.database_id.clone();
+        (Arc::new(runtime), registry, member, root, database)
+    }
+
+    #[tokio::test]
+    async fn pre_signalled_supervisor_does_not_tick_and_drain_releases_host_lease() {
+        let (runtime, registry, member, root, database) = runtime_fixture("supervisor-pre-stop");
+        let (shutdown, receiver) = tokio::sync::watch::channel(true);
+        runtime.supervise(std::time::Duration::from_millis(1), receiver).await.unwrap();
+        assert!(!root.join("supervisor-pre-stop").exists());
+        assert!(runtime.contains(&database));
+
+        registry.pause(&database, "supervisor-drain").unwrap();
+        runtime.drain().unwrap();
+        assert!(!runtime.contains(&database));
+        assert!(registry.reserve_restore(&database).is_ok());
+        drop(shutdown);
+        drop(registry);
+        member.close(std::time::Duration::from_secs(1)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn restore_suspension_releases_real_admitted_host_and_rebinds_after_cancellation() {
         let (registry, member, records, root) = crate::admitted_databases::tests::fixture();

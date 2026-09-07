@@ -1194,6 +1194,7 @@ fn success_schema(operation_id: &str) -> Option<&'static str> {
         "list_databases" => Some("DatabaseListResponse"),
         "list_branches" => Some("BranchListResponse"),
         "create_database" | "create_branch" | "restore_backup" => Some("ProvisioningOperation"),
+        "get_provisioning_operation" => Some("OperationSummary"),
         "delete_database" => Some("DeletionOperation"),
         "deletion_status" => Some("DeletionOperation"),
         "get_database" | "restore_database" => Some("DatabaseRecord"),

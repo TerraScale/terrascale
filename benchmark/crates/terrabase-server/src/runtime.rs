@@ -599,10 +599,6 @@ async fn serve_admitted_production(
                 public_status.clone(),
             )))
             .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-        let (metrics_stop, metrics_signal) = tokio::sync::oneshot::channel();
-        let metrics_task = tokio::spawn(prepared_metrics.serve(async {
-            let _ = metrics_signal.await;
-        }));
         // The production TBEP endpoint uses the same retained-host registry as
         // the HTTP surface.  It is created only after native composition, so no
         // second engine or location based adapter can be opened.
@@ -661,12 +657,16 @@ async fn serve_admitted_production(
         )?;
         let mut grpc_handle =
             grpc.serve_tls_reloadable(production.transport.tbep_listen, grpc_tls)?;
+        let (metrics_stop, metrics_signal) = tokio::sync::oneshot::channel();
+        let metrics_task = tokio::spawn(prepared_metrics.serve(async {
+            let _ = metrics_signal.await;
+        }));
         serving.store(true, std::sync::atomic::Ordering::Release);
         let status = public_status;
         let mut public_task = tokio::spawn(prepared.serve(async {
             let _ = wait_for_shutdown().await;
         }));
-        tokio::time::timeout(config.shutdown_grace, async {
+        let readiness = tokio::time::timeout(config.shutdown_grace, async {
             loop {
                 if status.is_serving() {
                     break Ok::<(), DaemonError>(());
@@ -683,7 +683,15 @@ async fn serve_admitted_production(
             }
         })
         .await
-        .map_err(|_| DaemonError::ShutdownTimeout)??;
+        .map_err(|_| DaemonError::ShutdownTimeout)?;
+        if let Err(error) = readiness {
+            serving.store(false, std::sync::atomic::Ordering::Release);
+            grpc_handle.begin_drain();
+            let _ = tokio::task::spawn_blocking(move || grpc_handle.shutdown_and_wait()).await;
+            let _ = metrics_stop.send(());
+            let _ = metrics_task.await;
+            return Err(Box::new(error) as Box<dyn Error + Send + Sync>);
+        }
         let result = public_task.await.map_err(|_| DaemonError::ShutdownTimeout)?;
         let _ = metrics_stop.send(());
         metrics_task
@@ -696,16 +704,16 @@ async fn serve_admitted_production(
             .map_err(|_| DaemonError::ShutdownTimeout)?
             .map_err(|_| DaemonError::ShutdownTimeout)?;
         let recovery_worker = recovery_worker.take().ok_or(DaemonError::ShutdownTimeout)?;
-        let _ = recovery_worker.shutdown().await;
+        let _ = recovery_worker.await_completion().await;
         let _ = native_stop.send(true);
         let native_task = native_task.take().ok_or(DaemonError::ShutdownTimeout)?;
         let _ = native_task
             .await
             .map_err(|_| DaemonError::ShutdownTimeout)?
             .map_err(|_| DaemonError::ShutdownTimeout)?;
+        serving.store(false, std::sync::atomic::Ordering::Release);
         admission.drain().await.map_err(|_| DaemonError::ShutdownTimeout)?;
         native_shutdown.drain().map_err(|_| DaemonError::ShutdownTimeout)?;
-        serving.store(false, std::sync::atomic::Ordering::Release);
         let report = member.drain().await;
         report.storage.map_err(|error| {
             Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
@@ -744,7 +752,7 @@ async fn cleanup_failed_production_startup(
     member: &terrabase_cluster::production::ProductionMemberRuntime,
 ) {
     if let Some(recovery_worker) = recovery_worker {
-        let _ = recovery_worker.shutdown().await;
+        let _ = recovery_worker.await_completion().await;
     }
     let _ = native_stop.send(true);
     if let Some(native_task) = native_task {

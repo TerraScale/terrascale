@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
-  "openapiBlake3": "5303d7b02b82410250b7a4a6e314a525cf69644624701dc424a72a9df1268595",
-  "openapiSha256": "1db95e5dd6044bb35328377551447bdadc691b774122e42706025b22a5916b79",
+  "openapiBlake3": "05d640bef461d93e090571d67934cb82f43834018065f5a8f70602585d852320",
+  "openapiSha256": "353dcf000d8450ee06cd8fc094b4fa8eb05b3d29f8aae2218886a7edf55d4026",
   "operations": [
     {
       "errors": [
@@ -4444,12 +4444,20 @@
       },
       "response": {
         "body": "sample",
+        "headers": {
+          "x-terrascale-artifact-checksum": "15d61c69cbe868bcde776d350a56102fd8128d40415a8fefa508a53e9b8bf6d9",
+          "x-terrascale-artifact-length": "6"
+        },
         "mediaType": "application/octet-stream",
         "status": 200
       },
       "responses": [
         {
           "body": "sample",
+          "headers": {
+            "x-terrascale-artifact-checksum": "15d61c69cbe868bcde776d350a56102fd8128d40415a8fefa508a53e9b8bf6d9",
+            "x-terrascale-artifact-length": "6"
+          },
           "mediaType": "application/octet-stream",
           "status": 200
         }
@@ -5583,17 +5591,16 @@
       },
       "response": {
         "body": {
+          "cancellable": false,
+          "cancellation_reason": "sample",
+          "created_at": null,
           "database_id": "sample",
-          "environment": "sample",
-          "key_version": "sample",
+          "kind": "sample",
           "name": "sample",
           "operation_id": "sample",
-          "parent_database_id": null,
-          "project_id": "sample",
-          "regions": [],
-          "residency": "sample",
-          "state": "sample",
-          "tenant_id": "sample"
+          "revision": null,
+          "stage": "sample",
+          "state": "sample"
         },
         "mediaType": "application/json",
         "status": 200
@@ -5601,17 +5608,16 @@
       "responses": [
         {
           "body": {
+            "cancellable": false,
+            "cancellation_reason": "sample",
+            "created_at": null,
             "database_id": "sample",
-            "environment": "sample",
-            "key_version": "sample",
+            "kind": "sample",
             "name": "sample",
             "operation_id": "sample",
-            "parent_database_id": null,
-            "project_id": "sample",
-            "regions": [],
-            "residency": "sample",
-            "state": "sample",
-            "tenant_id": "sample"
+            "revision": null,
+            "stage": "sample",
+            "state": "sample"
           },
           "mediaType": "application/json",
           "status": 200
