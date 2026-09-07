@@ -70,6 +70,18 @@ public sealed class TerraScaleManagementClientTests
     }
 
     [Test]
+    public async Task ExportDownloadValidatesArtifactMetadata()
+    {
+        foreach (var variant in new[] { "03", "4", "3, 3" })
+        {
+            using var http = new HttpClient(new ArtifactHandler(variant, new string('a', 64), [1, 2, 3]));
+            var client = Client(http);
+            await Assert.That(async () => await client.Management.Exports.DownloadArtifactAsync("db", "job", "member"))
+                .Throws<Exception>();
+        }
+    }
+
+    [Test]
     public async Task UInt64UsageAndRequiredFieldsRetainThePublishedContract()
     {
         const string json = "{\"tenant_id\":\"tenant\",\"database_id\":\"database\",\"snapshot_sequence\":18446744073709551615,\"storage_complete_through_millis\":null,\"meters\":[{\"meter\":\"document_write_units\",\"units\":\"18446744073709551616\"},{\"meter\":\"storage_byte_seconds\",\"units\":\"0\"}],\"reads\":{\"total_reads\":18446744073709551615}}";
@@ -121,12 +133,7 @@ public sealed class TerraScaleManagementClientTests
             case "resume_export": return await management.Exports.ResumeAsync("sample", "sample", "cursor");
             case "cancel_export": return await management.Exports.CancelAsync("sample", "sample");
             case "download_export":
-                using (var destination = new MemoryStream())
-                {
-                    await management.Exports.DownloadArtifactAsync("sample", "sample", "sample", destination);
-                    await Assert.That(destination.CanWrite).IsTrue();
-                    return destination.ToArray();
-                }
+                return (await management.Exports.DownloadArtifactAsync("sample", "sample", "sample")).Bytes;
             case "development_fault": return await management.Development.SetFaultAsync("sample", Request(operation, TerraScaleContractJsonContext.Default.DevelopmentFaultRequest));
             case "clear_development_fault": return await management.Development.ClearFaultAsync("sample");
             case "development_logs": return await management.Development.LogsAsync("sample");
@@ -163,8 +170,28 @@ public sealed class TerraScaleManagementClientTests
             {
                 var media = fixture.GetProperty("mediaType").GetString()!;
                 response.Content = new StringContent(media == "application/octet-stream" ? body.GetString()! : body.GetRawText(), Encoding.UTF8, media);
+                if (media == "application/octet-stream")
+                {
+                    response.Headers.Add("X-TerraScale-Artifact-Length", response.Content.Headers.ContentLength!.Value.ToString());
+                    response.Headers.Add("X-TerraScale-Artifact-Checksum", new string('a', 64));
+                }
             }
             return response;
+        }
+    }
+
+    private sealed class ArtifactHandler(string length, string checksum, byte[] body) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(body),
+            };
+            response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+            response.Headers.Add("X-TerraScale-Artifact-Length", length);
+            response.Headers.Add("X-TerraScale-Artifact-Checksum", checksum);
+            return Task.FromResult(response);
         }
     }
 }
