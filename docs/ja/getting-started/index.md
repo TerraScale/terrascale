@@ -77,8 +77,8 @@ export const schema = defineSchema({
 ```
 
 ```bash
-terrascale push        # currently unavailable; use when the CLI contract is published
-terrascale codegen     # currently unavailable; use when the CLI contract is published
+terrascale push        # applies schema to the selected branch
+terrascale codegen     # generates types from the schema file
 ```
 
 ## 3. Open a cloud dev branch
