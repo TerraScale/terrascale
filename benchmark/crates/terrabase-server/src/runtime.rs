@@ -1696,6 +1696,7 @@ mod tests {
             AdmittedBackupEngine, NativeBackupInput, NativeBackupRuntime,
         };
         use crate::native_recovery::{NativeRecoveryLimits, NativeRecoveryRuntime};
+        use std::os::unix::fs::PermissionsExt;
         use terrabase::backup::object_store::{ObjectDestination, Provider};
         use terrabase::backup::{
             PlacementLock,
@@ -1712,6 +1713,7 @@ mod tests {
 
         let keys = crate::test_keys::key_delivery();
         let (registry, storage, records, root) = crate::admitted_databases::tests::fixture();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         let registry = Arc::new(registry);
         let record = &records[0];
         let scope = DatabaseScope::new(
@@ -1725,7 +1727,7 @@ mod tests {
         let local = MemberUlid::generate();
         let peer = MemberUlid::generate();
         let cluster = ClusterUlid::generate();
-        let production = crate::auth_runtime::tests::admitted_fixture::production_config(
+        let mut production = crate::auth_runtime::tests::admitted_fixture::production_config(
             (scope.tenant(), scope.project(), scope.database()),
             cluster,
             local,
@@ -1733,6 +1735,15 @@ mod tests {
             &root,
             &keys,
         );
+        production.control = Some(crate::config::ProductionControl {
+            proposal_journal: root.join("placement.sqlite"),
+            orchestrator_principals: BTreeSet::new(),
+            observer_principals: BTreeSet::new(),
+            transition: None,
+            receipt_signing_key_file: Some(root.join("missing-receipt-signing.key")),
+            receipt_signing_key_id: Some("startup-receipt".into()),
+            export_cursor_key_file: None,
+        });
         let placement = ProductionPlacement::try_new(
             local,
             1,
@@ -1839,7 +1850,10 @@ mod tests {
             client_ca: root.join("missing-ca.crt"),
             member_principals: BTreeSet::new(),
             uds: None,
-            public_api: None,
+            public_api: Some(crate::auth_runtime::tests::admitted_fixture::public_config(
+                &root,
+                root.join("bootstrap.key"),
+            )),
             replication_peers: Vec::new(),
             observability_listen: "127.0.0.1:0".parse().unwrap(),
             max_message_bytes: terrabase_tbep::registry::MAX_FRAME_BYTES,

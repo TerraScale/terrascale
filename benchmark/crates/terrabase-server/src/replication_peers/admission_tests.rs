@@ -447,7 +447,7 @@ async fn real_session_io_failure_fences_old_session_before_restart() {
         ProductionMemberRuntime::try_new(placement.clone(), parts.routes, parts.member, transport)
             .unwrap(),
     );
-    runtime.admit_membership(&AcceptedMembership(placement)).unwrap();
+    runtime.admit_membership(&AcceptedMembership(placement.clone())).unwrap();
     let database_lease: Arc<dyn WalEngineHandle> =
         Arc::new(runtime.acquire_replication(&scope).unwrap());
     let lane = PeerDatabase {
