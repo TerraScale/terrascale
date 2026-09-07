@@ -1,7 +1,7 @@
 # TerraScale docs (`ts-docs`)
 
-Product docs site source: runnable snippets (D-56), `llms.txt`, launch-post
-drafts (L-5), and the pricing/limits pages generated from D-16/D-17/D-21/D-25/D-64 (L-1 draft).
+Product docs site source: runnable snippets, `llms.txt`, launch-post drafts,
+and pricing/limits pages generated from the checked-in pricing data.
 
 Single authority for product decisions is the workspace-root `GOAL.md`; this
 repo holds docs source only.

@@ -20,14 +20,14 @@ const routes = [
   ["/concepts/sql", "SQL: live subset, allow-list, typed builder, auto-indexing."],
   ["/concepts/pricing-philosophy", "Pricing philosophy: writes + storage are the only billed dimensions."],
   ["/guides/", "Guides overview."],
-  ["/pricing", "Pricing (L-1 draft, generated from D-16/D-17/D-21/D-25/D-64): writes + storage billed, everything else free."],
+  ["/pricing", "Pricing (draft, generated from checked-in pricing data): writes + storage billed, everything else free."],
   ["/pricing/", "Pricing & limits: plans, quotas, guards, shared organization allowances."],
-  ["/limits", "Limits and unbilled abuse guards (D-25/D-64), generated from the same source as pricing."],
-  ["/snippets", "Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key (D-56); tenant, branch, backup, and export fixtures are retained but skipped until their producer contracts are published."],
-  ["/blog/reads-are-free", "Launch post draft (L-5): Reads are free — how."],
+  ["/limits", "Limits and unbilled abuse guards, generated from the same source as pricing."],
+  ["/snippets", "Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key; database-scoped branch, backup, and export routes are published, while project-scoped producer fixtures and tenant provisioning remain skipped until their contracts are published."],
+  ["/blog/reads-are-free", "Launch post draft: Reads are free — how."],
   ["/blog/benchmarks", "Benchmark publication policy: no measured results published."],
   ["/blog/replication", "Draft: choosing durability across Regions."],
-  ["/blog/database-per-customer", "Launch post draft (L-5): a database per customer."],
+  ["/blog/database-per-customer", "Launch post draft: a database per customer."],
   ["/legal/", "Legal overview: ToS, Privacy, DPA, security.txt, Support."],
   ["/legal/terms", "Terms of Service"],
   ["/legal/privacy", "Privacy Policy"],
@@ -60,7 +60,7 @@ Base URL: ${base}
 
 ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
 
-## Pricing summary (L-1 draft; full tables in /pricing and /pricing/)
+## Pricing summary (draft; full tables in /pricing and /pricing/)
 
 - Billed: writes (4 KiB units multiplied by selected Regions before allowances) and storage
   (logical bytes x regions at $/GB-month). Overage/PAYG: $1 per 1M writes,

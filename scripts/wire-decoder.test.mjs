@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { canonicalEnvelope, canonicalMessage } from "./run-snippets.mjs";
 
-const envelope = (body) => Uint8Array.from([0x97, 1, 0, 0, 4, 0, 0, ...body]);
+const envelope = (body) => Uint8Array.from([0x97, 1, 0, 0, 4, ...uint64(0n), ...uint64(0n), ...body]);
 const uint64 = (value) => {
   const bytes = new Uint8Array(9);
   bytes[0] = 0xcf;
@@ -14,7 +14,7 @@ test("reactive revision offsets preserve all 64 bits", () => {
   const revision = 9007199254740993n;
   // Delta: subscription, generation, from/to revision, operations, digest, checkpoint.
   const message = canonicalMessage(canonicalEnvelope(envelope([
-    0x97, 0xa1, 0x76, 1, ...uint64(revision), ...uint64(revision + 1n),
+    0x97, 0xa1, 0x76, ...uint64(1n), ...uint64(revision), ...uint64(revision + 1n),
     0x90, 0xa0, 0xc4, 0,
   ])));
   assert.equal(message.from_revision, revision);
@@ -24,8 +24,8 @@ test("reactive revision offsets preserve all 64 bits", () => {
   assert.equal(url.searchParams.get("offset"), "9007199254740994");
 });
 
-test("small 64-bit encoded values retain ordinary number representation", () => {
-  assert.equal(canonicalEnvelope(envelope([0x91, ...uint64(42n)])).body[0], 42);
+test("small 64-bit encoded values retain bigint representation", () => {
+  assert.equal(canonicalEnvelope(envelope([0x91, ...uint64(42n)])).body[0], 42n);
 });
 
 test("malformed container lengths and excessive nesting fail within input bounds", () => {
@@ -34,14 +34,14 @@ test("malformed container lengths and excessive nesting fail within input bounds
     [0x91, 0xdf, 0xff, 0xff, 0xff, 0xff],
     [...Array(65).fill(0x91), 0xc0],
   ]) {
-    assert.throws(() => canonicalEnvelope(envelope(body)), /truncated MessagePack|nesting limit/);
+    assert.throws(() => canonicalEnvelope(envelope(body)), /truncated MessagePack|nesting limit|maps are forbidden/);
   }
 });
 
-test("duplicate map keys cannot overwrite decoded values", () => {
+test("maps are rejected by the indexed protocol", () => {
   assert.throws(() => canonicalEnvelope(envelope([
     0x91, 0x82, 0xa1, 0x61, 1, 0xa1, 0x61, 2,
-  ])), /invalid MessagePack map key/);
+  ])), /MessagePack maps are forbidden/);
 });
 
 
@@ -60,6 +60,7 @@ test("correlation identifiers preserve the unsigned 64-bit protocol range", () =
 // Small independent wire encoder for the remote-runner request/response test.
 function encode(value) {
   if (Number.isInteger(value) && value >= 0 && value < 128) return [value];
+  if (typeof value === "bigint") return uint64(value);
   if (typeof value === "string") {
     const bytes = [...new TextEncoder().encode(value)];
     return bytes.length < 32 ? [0xa0 | bytes.length, ...bytes] : [0xd9, bytes.length, ...bytes];
@@ -92,15 +93,15 @@ test("remote runner attaches the configured database and follows the server view
     if (url.pathname === "/api/v1/reactive/views") {
       assert.equal(JSON.parse(options.body).databaseId, "demo");
       assert.equal(headers.get("authorization"), "Bearer test-api-token");
-      return Response.json({ view, generation: 1, capability: "test-capability", log: "/log", snapshot_chunks: ["/snapshot"] });
+      return Response.json({ view, generation: 1, capability: "test-capability", capability_header: "X-TerraScale-View-Capability", log: "/log", snapshot_chunks: ["/snapshot"] });
     }
     if (url.pathname === "/snapshot" || url.pathname === "/log") {
       assert.equal(headers.get("authorization"), null);
       assert.equal(headers.get("x-terrascale-view-capability"), "test-capability");
       const body = url.pathname === "/snapshot"
-        ? [3, [view, [1, 1, 0, [], "0".repeat(64), new Uint8Array()]]]
-        : [4, [view, 1, 0, 1, [[1, "e-1", 0, []]], "0".repeat(64), new Uint8Array()]];
-      return new Response(Uint8Array.from(encode([1, 0, 0, body[0], 0, 0, body[1]])));
+        ? [3, [view, [1n, 1n, 0n, [], "0".repeat(64), new Uint8Array()]]]
+        : [4, [view, 1n, 0n, 1n, [[1, "e-1", 0, []]], "0".repeat(64), new Uint8Array()]];
+      return new Response(Uint8Array.from(encode([1, 0, 0, body[0], 0n, 0n, body[1]])));
     }
     assert.equal(url.pathname, "/api/v1/databases/demo/collections/events/documents/e-1");
     return Response.json({ revision: "1" });

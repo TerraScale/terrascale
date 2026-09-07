@@ -24,9 +24,9 @@ const llmsGenerated = spawnSync(process.execPath, [join(root, "scripts", "genera
 assert.equal(llmsGenerated.status, 0, llmsGenerated.stdout + llmsGenerated.stderr);
 const results = await runAll(stub ? "stub" : "remote");
 if (stub) console.warn("LOCAL-ONLY: stub snippets are smoke tests; remote launch qualification is not passed.");
-const heartbeat = Uint8Array.from([0x97, 0x01, 0x00, 0x00, 0x06, 0x00, 0x00, 0x90]);
+const heartbeat = Uint8Array.from([0x97, 0x01, 0x00, 0x00, 0x06, 0xcf, 0, 0, 0, 0, 0, 0, 0, 0, 0xcf, 0, 0, 0, 0, 0, 0, 0, 0, 0x90]);
 assert.equal(canonicalEnvelope(heartbeat).kind, "heartbeat", "canonical indexed heartbeat decodes");
-assert.throws(() => canonicalEnvelope(Uint8Array.from([0x81, 0xa1, 0x74, 0xa5, 0xa5, 0x64, 0x65, 0x6c, 0x74, 0x61])), /indexed envelope|trailing bytes/u, "legacy map frames fail closed");
+assert.throws(() => canonicalEnvelope(Uint8Array.from([0x81, 0xa1, 0x74, 0xa5, 0xa5, 0x64, 0x65, 0x6c, 0x74, 0x61])), /indexed envelope|trailing bytes|maps are forbidden/u, "legacy map frames fail closed");
 assert.ok(results.length >= 3, "expected runnable CRUD, SQL, and subscribe snippets");
 for (const name of ["crud.ts", "sql.ts", "subscribe.ts"]) {
   assert.ok(results.some(({ file }) => file === name), `${name} ran`);
@@ -74,7 +74,7 @@ for (const [page, needles] of [
 }
 
 const llms = read("docs/public/llms.txt");
-assert.ok(llms.includes("tenant, branch, backup, and export fixtures are retained but skipped"), "llms marks unpublished management fixtures as non-runnable");
+assert.ok(llms.includes("database-scoped branch, backup, and export routes are published"), "llms distinguishes published database routes from skipped producer fixtures");
 assert.ok(!llms.includes("live subscriptions, and tenants run"), "llms does not claim unpublished tenant snippets run");
 for (const route of [
   "/", "/getting-started", "/getting-started/", "/concepts",

@@ -43,8 +43,7 @@ class MsgpackCursor {
   view(bytes) { return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); }
 
   integer64(value) {
-    return value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)
-      ? Number(value) : value;
+    return value;
   }
 
   array(length) {
@@ -93,16 +92,7 @@ class MsgpackCursor {
     }
   }
 
-  map(length) {
-    if (length > Math.floor((this.bytes.length - this.offset) / 2)) throw new Error("truncated MessagePack map");
-    const result = Object.create(null);
-    for (let index = 0; index < length; index += 1) {
-      const key = this.value();
-      if (typeof key !== "string" || Object.hasOwn(result, key)) throw new Error("invalid MessagePack map key");
-      result[key] = this.value();
-    }
-    return result;
-  }
+  map() { throw new Error("MessagePack maps are forbidden by the indexed reactive protocol"); }
 }
 
 function decodeMessagePack(bytes) {
@@ -118,16 +108,11 @@ function bytesToBase64(bytes) {
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 }
-function unsignedInteger64(value) {
-  return typeof value === "bigint"
-    ? value >= 0n && value <= 0xffffffffffffffffn
-    : Number.isSafeInteger(value) && value >= 0;
-}
 function canonicalEnvelope(bytes) {
   const value = decodeMessagePack(bytes);
   if (!Array.isArray(value) || value.length !== 7) throw new Error("pending canonical reactive contract: envelope must be an indexed array of seven fields");
   const [major, minor, features, tag, correlation, causation, body] = value;
-  if (major !== 1 || minor !== 0 || features !== 0 || !Number.isSafeInteger(tag) || !unsignedInteger64(correlation) || !unsignedInteger64(causation)) {
+  if (major !== 1 || minor !== 0 || features !== 0 || !Number.isSafeInteger(tag) || typeof correlation !== "bigint" || typeof causation !== "bigint" || correlation < 0n || causation < 0n) {
     throw new Error("pending canonical reactive contract: expected protocol 1.0 indexed envelope");
   }
   const messages = { 3: "snapshot", 4: "delta", 5: "reset", 6: "heartbeat", 8: "authorization_changed", 9: "region_route_change", 10: "error", 11: "backpressure" };
@@ -149,11 +134,11 @@ function canonicalMessage(envelope) {
   if (envelope.kind === "snapshot") {
     if (body.length !== 2 || typeof body[0] !== "string" || !Array.isArray(body[1])) throw new Error("pending canonical reactive contract: invalid snapshot");
     const snapshot = body[1];
-    if (snapshot.length !== 6 || !Array.isArray(snapshot[3])) throw new Error("pending canonical reactive contract: invalid snapshot body");
+    if (snapshot.length !== 6 || typeof snapshot[0] !== "bigint" || typeof snapshot[1] !== "bigint" || typeof snapshot[2] !== "bigint" || !Array.isArray(snapshot[3])) throw new Error("pending canonical reactive contract: invalid snapshot body");
     return { kind: "snapshot", subscription: body[0], snapshot: { view_generation: snapshot[0], authorization_generation: snapshot[1], revision: snapshot[2], items: snapshot[3].map((item) => ({ identity: item[0], fields: canonicalFields(item[1]) })), digest: snapshot[4], checkpoint: snapshot[5] } };
   }
   if (envelope.kind === "delta") {
-    if (body.length !== 7 || typeof body[0] !== "string" || !Array.isArray(body[4])) throw new Error("pending canonical reactive contract: invalid delta");
+    if (body.length !== 7 || typeof body[0] !== "string" || typeof body[1] !== "bigint" || typeof body[2] !== "bigint" || typeof body[3] !== "bigint" || !Array.isArray(body[4])) throw new Error("pending canonical reactive contract: invalid delta");
     return { kind: "delta", subscription: body[0], view_generation: body[1], from_revision: body[2], to_revision: body[3], operations: body[4], digest: body[5], checkpoint: body[6] };
   }
   if (envelope.kind === "reset") {
@@ -366,12 +351,8 @@ export function createRemoteSandbox() {
     async subscribe({ databaseId: requestedDatabaseId, subscription, query, parameters }) {
       if (requestedDatabaseId !== database) throw new Error("remote databaseId does not match TERRASCALE_DATABASE_ID");
       const { value } = await reactiveRequest({ databaseId: database, subscription, statement: query, parameters: bytesToBase64(parameters), checkpoint: null, transport: "http" });
-      const view = value?.viewId ?? value?.view_id ?? value?.view;
-      const generation = value?.generation ?? value?.view_generation;
-      const capability = value?.capability ?? value?.viewCapability ?? value?.view_capability;
-      const rawLogUrl = value?.logUrl ?? value?.log_url ?? value?.log;
-      const snapshots = value?.snapshotUrls ?? value?.snapshot_urls ?? value?.snapshotChunkUrls ?? value?.snapshot_chunks;
-      if (typeof view !== "string" || !Number.isInteger(Number(generation)) || typeof capability !== "string" || typeof rawLogUrl !== "string" || !Array.isArray(snapshots)) {
+      const { view, generation, snapshot_chunks: snapshots, log: rawLogUrl, capability, capability_header: capabilityHeader } = value ?? {};
+      if (typeof view !== "string" || !Number.isInteger(Number(generation)) || typeof capability !== "string" || typeof capabilityHeader !== "string" || capabilityHeader.toLowerCase() !== VIEW_CAPABILITY_HEADER || typeof rawLogUrl !== "string" || !Array.isArray(snapshots)) {
         throw new Error("pending canonical reactive contract: attach response is missing canonical view metadata");
       }
       const logUrl = resolveSandboxUrl(rawLogUrl, base, "reactive log");

@@ -28,14 +28,14 @@ Base URL: https://docs.terrascale.tech
 - SQL: live subset, allow-list, typed builder, auto-indexing.: https://docs.terrascale.tech/concepts/sql
 - Pricing philosophy: writes + storage are the only billed dimensions.: https://docs.terrascale.tech/concepts/pricing-philosophy
 - Guides overview.: https://docs.terrascale.tech/guides/
-- Pricing (L-1 draft, generated from D-16/D-17/D-21/D-25/D-64): writes + storage billed, everything else free.: https://docs.terrascale.tech/pricing
+- Pricing (draft, generated from checked-in pricing data): writes + storage billed, everything else free.: https://docs.terrascale.tech/pricing
 - Pricing & limits: plans, quotas, guards, shared organization allowances.: https://docs.terrascale.tech/pricing/
-- Limits and unbilled abuse guards (D-25/D-64), generated from the same source as pricing.: https://docs.terrascale.tech/limits
-- Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key (D-56); tenant, branch, backup, and export fixtures are retained but skipped until their producer contracts are published.: https://docs.terrascale.tech/snippets
-- Launch post draft (L-5): Reads are free — how.: https://docs.terrascale.tech/blog/reads-are-free
+- Limits and unbilled abuse guards, generated from the same source as pricing.: https://docs.terrascale.tech/limits
+- Runnable snippets: CRUD, SQL, and live subscriptions run against a real sandbox branch pre-filled with the reader's key; database-scoped branch, backup, and export routes are published, while project-scoped producer fixtures and tenant provisioning remain skipped until their contracts are published.: https://docs.terrascale.tech/snippets
+- Launch post draft: Reads are free — how.: https://docs.terrascale.tech/blog/reads-are-free
 - Benchmark publication policy: no measured results published.: https://docs.terrascale.tech/blog/benchmarks
 - Draft: choosing durability across Regions.: https://docs.terrascale.tech/blog/replication
-- Launch post draft (L-5): a database per customer.: https://docs.terrascale.tech/blog/database-per-customer
+- Launch post draft: a database per customer.: https://docs.terrascale.tech/blog/database-per-customer
 - Legal overview: ToS, Privacy, DPA, security.txt, Support.: https://docs.terrascale.tech/legal/
 - Terms of Service: https://docs.terrascale.tech/legal/terms
 - Privacy Policy: https://docs.terrascale.tech/legal/privacy
@@ -44,7 +44,7 @@ Base URL: https://docs.terrascale.tech
 - Support policy: https://docs.terrascale.tech/legal/support
 - Changelog.: https://docs.terrascale.tech/changelog
 
-## Pricing summary (L-1 draft; full tables in /pricing and /pricing/)
+## Pricing summary (draft; full tables in /pricing and /pricing/)
 
 - Billed: writes (4 KiB units multiplied by selected Regions before allowances) and storage
   (logical bytes x regions at $/GB-month). Overage/PAYG: $1 per 1M writes,
