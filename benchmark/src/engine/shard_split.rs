@@ -258,18 +258,24 @@ impl Engine {
             .is_some())
     }
     /// Loads the route catalog for a database incarnation from a snapshot.
+    /// Reservation-free: the origin-commit fast path calls this on every
+    /// commit, so it must not reserve the shared `route-load` operation
+    /// identity. Reserving it turned concurrent distinct-document commits
+    /// into spurious `Conflict` rejections via the fail-closed
+    /// `unwrap_or(true)` in the commit path.
     pub(crate) fn load_shard_route_catalog(
         &self,
         scope: &TenantScope,
         incarnation: u128,
     ) -> Result<Option<RouteCatalog>, RouteCatalogError> {
-        let tx = self.begin(
-            scope,
-            self.read_snapshot(scope)?,
-            OperationId::try_new("route-load").map_err(|_| RouteCatalogError::Malformed)?,
-        )?;
-        bytes(tx.read_private_metadata(&key(incarnation))?)
-            .and_then(|value| value.map_or(Ok(None), |raw| decode_catalog(&raw).map(Some)))
+        let snapshot = self.read_snapshot(scope)?;
+        let value = self
+            .lock_storage()
+            .map_err(RouteCatalogError::from)?
+            .port
+            .private_metadata_at(scope.tenant(), &key(incarnation), snapshot.sequence())
+            .map_err(|()| RouteCatalogError::Engine(EngineError::StorageFailure))?;
+        bytes(value).and_then(|value| value.map_or(Ok(None), |raw| decode_catalog(&raw).map(Some)))
     }
 
     /// Atomically installs route bytes and the durable cutover split record.
