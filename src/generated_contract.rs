@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub const CONTRACT_VERSION: &str = "v1";
 pub const MANIFEST_SHA256: &str =
-    "2831326446fda4cfbd09e784434d6e77f2bb5f643f0cdc95861c3e0045227a73";
+    "880ee3d1a9e09a4caccaae7f567f7eb21708044bcc70db1193654f79cff36052";
 pub const OPENAPI_BLAKE3: &str = "05d640bef461d93e090571d67934cb82f43834018065f5a8f70602585d852320";
 pub const MSGPACK_MANIFEST_BLAKE3: &str =
     "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
@@ -32,6 +32,10 @@ pub const ARTIFACTS: &[ContractArtifact] = &[
     ContractArtifact {
         path: "conformance/msgpack/message-vectors.json",
         blake3: "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c",
+    },
+    ContractArtifact {
+        path: "conformance/origin-proof.json",
+        blake3: "5364b464193257d9a25f1ded3070e23fd9d913a4542e337ada004bb6497cb305",
     },
     ContractArtifact {
         path: "conformance/reactive.json",
