@@ -1193,10 +1193,10 @@ fn success_schema(operation_id: &str) -> Option<&'static str> {
         "health" | "regions" => Some("HealthResponse"),
         "list_databases" => Some("DatabaseListResponse"),
         "list_branches" => Some("BranchListResponse"),
-        "create_database" | "create_branch" => Some("ProvisioningOperation"),
+        "create_database" | "create_branch" | "restore_backup" => Some("ProvisioningOperation"),
         "delete_database" => Some("DeletionOperation"),
         "deletion_status" => Some("DeletionOperation"),
-        "get_database" | "restore_database" | "restore_backup" => Some("DatabaseRecord"),
+        "get_database" | "restore_database" => Some("DatabaseRecord"),
         "list_collections" => Some("CollectionsResponse"),
         "list_indexes" => Some("IndexListResponse"),
         "create_index" => Some("IndexCreatedResponse"),
@@ -1249,7 +1249,7 @@ fn openapi_schemas() -> serde_json::Value {
         "CreateDatabaseRequest": { "type": "object", "required": ["name", "placement", "residency", "operation_id"], "description": "Production provisioning requires an immutable placement, residency constraint and stable operation identifier.", "properties": { "operation_id": { "type": "string" }, "name": { "type": "string" }, "placement": { "type": "array", "minItems": 1, "items": { "type": "string" } }, "residency": { "type": "string" } } },
         "CreateIndexRequest": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" } } },
         "BatchRequest": { "type": "object", "required": ["operations"], "properties": { "operations": { "type": "array", "minItems": 1, "maxItems": 1000, "items": { "type": "object", "required": ["op", "id"], "properties": { "op": { "type": "string", "enum": ["put", "patch", "delete"] }, "id": { "type": "string" }, "value": { "$ref": "#/components/schemas/JsonValue" } } } } } },
-        "RestoreRequest": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "at": { "type": "integer", "format": "int64" } } },
+        "RestoreRequest": { "type": "object", "required": ["name", "operation_id"], "properties": { "name": { "type": "string" }, "at": { "type": "integer", "format": "int64" }, "operation_id": { "type": "string" } } },
         "CreateBranchRequest": { "type": "object", "required": ["name", "operation_id"], "description": "Production branch allocation is asynchronous and does not accept a point-in-time selector.", "properties": { "name": { "type": "string" }, "operation_id": { "type": "string" } } },
         "DeletionOperation": { "type": "object", "required": ["request", "state", "cutoff", "targets"], "description": "Durable asynchronous database deletion progress.", "properties": { "request": { "type": "object", "required": ["environment", "tenant_id", "project_id", "database_id", "operation_id"], "properties": { "environment": { "type": "string" }, "tenant_id": { "type": "string" }, "project_id": { "type": "string" }, "database_id": { "type": "string" }, "operation_id": { "type": "string" } } }, "state": { "type": "string", "enum": ["preparing", "stopping", "cleanup_pending"] }, "cutoff": { "type": "string", "format": "date-time" }, "targets": { "type": "array", "items": { "type": "object", "required": ["stop"], "properties": { "stop": { "type": "object", "additionalProperties": true } } } } } },
         "AttachViewRequest": { "type": "object", "required": ["databaseId", "statement"], "properties": { "databaseId": { "type": "string" }, "statement": { "type": "string" }, "parameters": { "type": "string", "description": "Base64 encoded SQL parameter bytes" }, "checkpoint": { "type": ["string", "null"], "description": "Base64 encoded opaque resume checkpoint" }, "subscription": { "type": ["string", "null"] }, "entitlement_epoch": { "type": "integer", "format": "int64" } } },
@@ -4166,13 +4166,56 @@ async fn list_backups(State(state): State<Arc<ApiState>>, Path(name): Path<Strin
 /// `POST /databases/{name}/backups/restore` — restores to a NEW database
 /// (D-29: a restore never lands on the live file), optionally at a point
 /// in time (`"at"`: unix milliseconds).
-#[utoipa::path(post, path = "/api/v1/databases/{name}/backups/restore", responses((status = 201, description = "Backup restored into a new database")))]
+#[utoipa::path(post, path = "/api/v1/databases/{name}/backups/restore", responses((status = 202, description = "Backup restore accepted", body = crate::provisioning::ProvisioningOperation)))]
 async fn restore_backup(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
+    Extension(principal): Extension<crate::api_keys::Principal>,
     body: String,
 ) -> Response {
-    restore_or_branch(state, name, body, RestoreFlavor::Restore).await
+    if !principal.scope().admits_database(Verbs::ADMIN, &name) {
+        return ApiError::forbidden("database restore").into_response();
+    }
+    if let Some(authority) = &state.provisioning {
+        let registry = match &state.admitted_databases {
+            Some(registry) => registry,
+            None => return ApiError::control_unavailable().into_response(),
+        };
+        let source = match registry.resolve_serving(&name) {
+            Ok(Some(value)) => value,
+            Ok(None) => return ApiError::database_not_found(&name).into_response(),
+            Err(_) => return ApiError::storage_failure().into_response(),
+        };
+        let Some((principal_tenant, principal_project)) = principal.owner() else {
+            return ApiError::forbidden("restore requires a project credential").into_response();
+        };
+        if source.record.tenant_id != principal_tenant || source.record.project_id != principal_project {
+            return ApiError::forbidden("restore source is outside credential scope").into_response();
+        }
+        let value: serde_json::Value = match serde_json::from_str(&body) {
+            Ok(value) => value,
+            Err(_) => return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest).into_response(),
+        };
+        let (Some(target), Some(operation)) = (
+            value.get("name").and_then(serde_json::Value::as_str),
+            value.get("operation_id").and_then(serde_json::Value::as_str),
+        ) else {
+            return provisioning_error(crate::provisioning::ProvisioningError::InvalidRequest).into_response();
+        };
+        let selection = match value.get("at").and_then(serde_json::Value::as_u64) {
+            Some(unix_millis) => serde_json::json!({"kind":"unix_millis","unix_millis":unix_millis}),
+            None => serde_json::json!({"kind":"latest"}),
+        };
+        let scope = crate::delegated_identity::VerifiedProjectScope {
+            tenant_id: source.record.tenant_id.clone(),
+            project_id: source.record.project_id.clone(),
+        };
+        return match authority.restore(&scope, &source.record.database_id, target, selection, operation).await {
+            Ok(value) => json_response(StatusCode::ACCEPTED, serde_json::to_string(&value).unwrap_or_default()),
+            Err(error) => provisioning_error(error).into_response(),
+        };
+    }
+    ApiError::backup("native restore provisioning authority is unavailable").into_response()
 }
 
 /// `POST /databases/{name}/branches` — restore plus register with parent

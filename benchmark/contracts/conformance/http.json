@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
-  "openapiBlake3": "742cfc08269cebdf7d486f8606fab0154fb3b828bf774c13524f4f30d3b69da0",
-  "openapiSha256": "0c14374467957a836e24e4e3aef554aff5d1405c6d08cf7323938c288f7e1833",
+  "openapiBlake3": "48d8396861afa5511ec70bf034306285853e1d8314bbfc19b6cf6bd9aa3ea2fe",
+  "openapiSha256": "f66cad1f7a1e1afe501a8800610818310f2345b6bd0a4d5b5a350a8538554d89",
   "operations": [
     {
       "errors": [
@@ -1819,8 +1819,8 @@
         "body": {
           "mediaType": "application/json",
           "value": {
-            "at": 0,
-            "name": "sample"
+            "name": "sample",
+            "operation_id": "sample"
           }
         },
         "headers": {
@@ -1832,28 +1832,38 @@
       },
       "response": {
         "body": {
-          "created_at": 0,
-          "deleted": false,
+          "database_id": "sample",
+          "environment": "sample",
+          "key_version": "sample",
           "name": "sample",
-          "parent": null,
-          "placement": "sample",
-          "residency": "sample"
+          "operation_id": "sample",
+          "parent_database_id": null,
+          "project_id": "sample",
+          "regions": [],
+          "residency": "sample",
+          "state": "sample",
+          "tenant_id": "sample"
         },
         "mediaType": "application/json",
-        "status": 201
+        "status": 202
       },
       "responses": [
         {
           "body": {
-            "created_at": 0,
-            "deleted": false,
+            "database_id": "sample",
+            "environment": "sample",
+            "key_version": "sample",
             "name": "sample",
-            "parent": null,
-            "placement": "sample",
-            "residency": "sample"
+            "operation_id": "sample",
+            "parent_database_id": null,
+            "project_id": "sample",
+            "regions": [],
+            "residency": "sample",
+            "state": "sample",
+            "tenant_id": "sample"
           },
           "mediaType": "application/json",
-          "status": 201
+          "status": 202
         }
       ]
     },
@@ -1989,9 +1999,9 @@
             "name": "sample",
             "operation_id": "sample",
             "placement": [
-              "sample"
+              "GRU"
             ],
-            "residency": null
+            "residency": "br-only"
           }
         },
         "headers": {
@@ -2001,31 +2011,31 @@
         "path": "/api/v1/databases",
         "query": {}
       },
+      "requestSemantics": {
+        "kind": "requires_live_state",
+        "preconditions": [
+          "admitted_authenticated_scope",
+          "provisioning_authority"
+        ]
+      },
       "response": {
         "body": {
-          "created_at": 0,
-          "deleted": false,
+          "database_id": "sample",
+          "environment": "sample",
+          "key_version": "sample",
           "name": "sample",
-          "parent": null,
-          "placement": "sample",
-          "residency": "sample"
+          "operation_id": "sample",
+          "parent_database_id": null,
+          "project_id": "sample",
+          "regions": [],
+          "residency": "sample",
+          "state": "sample",
+          "tenant_id": "sample"
         },
         "mediaType": "application/json",
-        "status": 201
+        "status": 202
       },
       "responses": [
-        {
-          "body": {
-            "created_at": 0,
-            "deleted": false,
-            "name": "sample",
-            "parent": null,
-            "placement": "sample",
-            "residency": "sample"
-          },
-          "mediaType": "application/json",
-          "status": 201
-        },
         {
           "body": {
             "database_id": "sample",
@@ -2174,7 +2184,9 @@
         "body": {
           "mediaType": "application/json",
           "value": {
-            "idempotency_key": "sample"
+            "format": "native",
+            "idempotency_key": "sample",
+            "scope": "all"
           }
         },
         "headers": {
@@ -2821,7 +2833,8 @@
       "request": {
         "body": null,
         "headers": {
-          "authorization": "Bearer conformance-key"
+          "authorization": "Bearer conformance-key",
+          "idempotency-key": "sample"
         },
         "method": "DELETE",
         "path": "/api/v1/databases/demo",
@@ -2829,28 +2842,36 @@
       },
       "response": {
         "body": {
-          "created_at": 0,
-          "deleted": false,
-          "name": "sample",
-          "parent": null,
-          "placement": "sample",
-          "residency": "sample"
+          "cutoff": "sample",
+          "request": {
+            "database_id": "sample",
+            "environment": "sample",
+            "operation_id": "sample",
+            "project_id": "sample",
+            "tenant_id": "sample"
+          },
+          "state": "preparing",
+          "targets": []
         },
         "mediaType": "application/json",
-        "status": 200
+        "status": 202
       },
       "responses": [
         {
           "body": {
-            "created_at": 0,
-            "deleted": false,
-            "name": "sample",
-            "parent": null,
-            "placement": "sample",
-            "residency": "sample"
+            "cutoff": "sample",
+            "request": {
+              "database_id": "sample",
+              "environment": "sample",
+              "operation_id": "sample",
+              "project_id": "sample",
+              "tenant_id": "sample"
+            },
+            "state": "preparing",
+            "targets": []
           },
           "mediaType": "application/json",
-          "status": 200
+          "status": 202
         }
       ]
     },
@@ -3771,6 +3792,175 @@
           "status": 504
         }
       ],
+      "operationId": "deletion_status",
+      "request": {
+        "body": null,
+        "headers": {
+          "authorization": "Bearer conformance-key"
+        },
+        "method": "GET",
+        "path": "/api/v1/databases/demo/deletions/sample",
+        "query": {}
+      },
+      "response": {
+        "body": {
+          "cutoff": "sample",
+          "request": {
+            "database_id": "sample",
+            "environment": "sample",
+            "operation_id": "sample",
+            "project_id": "sample",
+            "tenant_id": "sample"
+          },
+          "state": "preparing",
+          "targets": []
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "cutoff": "sample",
+            "request": {
+              "database_id": "sample",
+              "environment": "sample",
+              "operation_id": "sample",
+              "project_id": "sample",
+              "tenant_id": "sample"
+            },
+            "state": "preparing",
+            "targets": []
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
       "operationId": "development_fault",
       "request": {
         "body": {
@@ -4396,21 +4586,25 @@
           "value": {
             "cancelled": false,
             "explain": false,
-            "parameters": {
-              "sample": null
-            },
-            "sql": "sample",
+            "parameters": {},
+            "sql": "SELECT * FROM orders",
             "timeout_ms": 1
           }
         },
         "headers": {
           "authorization": "Bearer conformance-key",
-          "x-terrascale-cancelled": true,
           "x-terrascale-timeout-ms": 1
         },
         "method": "POST",
         "path": "/api/v1/databases/demo/sql",
         "query": {}
+      },
+      "requestSemantics": {
+        "kind": "requires_live_state",
+        "preconditions": [
+          "admitted_authenticated_scope",
+          "collection_exists"
+        ]
       },
       "response": {
         "body": {
@@ -7786,6 +7980,164 @@
           "status": 504
         }
       ],
+      "operationId": "list_operations",
+      "request": {
+        "body": null,
+        "headers": {
+          "authorization": "Bearer conformance-key"
+        },
+        "method": "GET",
+        "path": "/api/v1/operations",
+        "query": {
+          "after": "sample",
+          "limit": 1
+        }
+      },
+      "response": {
+        "body": {
+          "covered_kinds": [],
+          "next_cursor": null,
+          "operations": []
+        },
+        "mediaType": "application/json",
+        "status": 200
+      },
+      "responses": [
+        {
+          "body": {
+            "covered_kinds": [],
+            "next_cursor": null,
+            "operations": []
+          },
+          "mediaType": "application/json",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "errors": [
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 400 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 400
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unauthorized",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 401 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 401
+        },
+        {
+          "body": {
+            "error": {
+              "code": "forbidden",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 403 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 403
+        },
+        {
+          "body": {
+            "error": {
+              "code": "not_found",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 404 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 404
+        },
+        {
+          "body": {
+            "error": {
+              "code": "conflict",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 409 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 409
+        },
+        {
+          "body": {
+            "error": {
+              "code": "misdirected_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 421 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 421
+        },
+        {
+          "body": {
+            "error": {
+              "code": "invalid_request",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 422 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 422
+        },
+        {
+          "body": {
+            "error": {
+              "code": "abuse_guard_exceeded",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 429 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 429
+        },
+        {
+          "body": {
+            "error": {
+              "code": "request_failed",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 500 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 500
+        },
+        {
+          "body": {
+            "error": {
+              "code": "unavailable",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 503 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 503
+        },
+        {
+          "body": {
+            "error": {
+              "code": "timeout",
+              "fix": "follow the contract and retry when safe",
+              "message": "conformance 504 response"
+            }
+          },
+          "mediaType": "application/json",
+          "status": 504
+        }
+      ],
       "operationId": "list_webhooks",
       "request": {
         "body": null,
@@ -7941,18 +8293,25 @@
       "request": {
         "body": {
           "mediaType": "application/json",
-          "value": null
+          "value": {}
         },
         "headers": {
           "authorization": "Bearer conformance-key",
           "idempotency-key": "sample",
-          "if-match": "sample",
-          "x-terrascale-durability": "regional",
-          "x-terrascale-session": "sample"
+          "if-match": "\"revision-1\"",
+          "x-terrascale-durability": "regional"
         },
         "method": "PATCH",
         "path": "/api/v1/databases/demo/collections/orders/documents/order-1",
         "query": {}
+      },
+      "requestSemantics": {
+        "kind": "requires_live_state",
+        "preconditions": [
+          "admitted_authenticated_scope",
+          "document_exists",
+          "matching_etag"
+        ]
       },
       "response": {
         "body": {
@@ -8099,19 +8458,24 @@
       "request": {
         "body": {
           "mediaType": "application/json",
-          "value": null
+          "value": {}
         },
         "headers": {
           "authorization": "Bearer conformance-key",
           "idempotency-key": "sample",
-          "if-match": "sample",
-          "if-none-match": "sample",
-          "x-terrascale-durability": "regional",
-          "x-terrascale-session": "sample"
+          "if-none-match": "*",
+          "x-terrascale-durability": "regional"
         },
         "method": "PUT",
         "path": "/api/v1/databases/demo/collections/orders/documents/order-1",
         "query": {}
+      },
+      "requestSemantics": {
+        "kind": "requires_live_state",
+        "preconditions": [
+          "admitted_authenticated_scope",
+          "document_absent"
+        ]
       },
       "response": {
         "body": {
@@ -8826,28 +9190,38 @@
       },
       "response": {
         "body": {
-          "created_at": 0,
-          "deleted": false,
+          "database_id": "sample",
+          "environment": "sample",
+          "key_version": "sample",
           "name": "sample",
-          "parent": null,
-          "placement": "sample",
-          "residency": "sample"
+          "operation_id": "sample",
+          "parent_database_id": null,
+          "project_id": "sample",
+          "regions": [],
+          "residency": "sample",
+          "state": "sample",
+          "tenant_id": "sample"
         },
         "mediaType": "application/json",
-        "status": 201
+        "status": 202
       },
       "responses": [
         {
           "body": {
-            "created_at": 0,
-            "deleted": false,
+            "database_id": "sample",
+            "environment": "sample",
+            "key_version": "sample",
             "name": "sample",
-            "parent": null,
-            "placement": "sample",
-            "residency": "sample"
+            "operation_id": "sample",
+            "parent_database_id": null,
+            "project_id": "sample",
+            "regions": [],
+            "residency": "sample",
+            "state": "sample",
+            "tenant_id": "sample"
           },
           "mediaType": "application/json",
-          "status": 201
+          "status": 202
         }
       ]
     },

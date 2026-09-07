@@ -56,6 +56,50 @@ pub struct ProvisioningOperation {
 }
 
 impl ProvisioningClient {
+    /// Submits an idempotent restore operation to the durable authority.
+    pub async fn restore(
+        &self,
+        scope: &crate::delegated_identity::VerifiedProjectScope,
+        source_database: &str,
+        target_name: &str,
+        selection: serde_json::Value,
+        operation_id: &str,
+    ) -> Result<ProvisioningOperation, ProvisioningError> {
+        if source_database.is_empty() || target_name.is_empty() || !valid_operation_id(operation_id) {
+            return Err(ProvisioningError::InvalidRequest);
+        }
+        let _permit = self.permits.try_acquire().map_err(|_| ProvisioningError::Unavailable)?;
+        let body = serde_json::to_vec(&serde_json::json!({
+            "environment": self.environment,
+            "tenant_id": scope.tenant_id,
+            "project_id": scope.project_id,
+            "source_database_id": source_database,
+            "name": target_name,
+            "selection": selection,
+            "operation_id": operation_id,
+        }))
+        .map_err(|_| ProvisioningError::Unavailable)?;
+        let result: ProvisioningOperation = tokio::time::timeout(
+            Duration::from_secs(10),
+            self.exchange("/internal/v1/databases/restore", body, hyper::StatusCode::ACCEPTED),
+        )
+        .await
+        .map_err(|_| ProvisioningError::Unavailable)??;
+        if result.environment != self.environment
+            || result.tenant_id != scope.tenant_id
+            || result.project_id != scope.project_id
+            || result.operation_id != operation_id
+            || result.name != target_name
+            || result.parent_database_id.is_some()
+            || !canonical_ulid(&result.database_id)
+            || !canonical_ulid(&result.key_version)
+            || !matches!(result.state.as_str(), "accepted" | "pending")
+        {
+            return Err(ProvisioningError::Unavailable);
+        }
+        Ok(result)
+    }
+
     /// Pins the local authority UID and deployment-owned environment.
     ///
     /// # Errors

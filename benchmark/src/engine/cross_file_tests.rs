@@ -86,9 +86,9 @@ fn participant_prepare_resolves_exactly_across_engine_reopen() {
     let tenant = TenantId::try_new("tenant").unwrap();
     let operation = OperationId::try_new("participant-op").unwrap();
     let write = ParticipantWrite::Put { document: Document::new(DocumentId::try_new("doc").unwrap(), CollectionName::try_new("items").unwrap(), DocumentValue::Object(BTreeMap::new())), expected: ExpectedVersion::Any };
-    let payload = crate::storage::participant::encode_prepare_payload(std::slice::from_ref(&write), &[], &[]).unwrap();
+    let payload = crate::storage::participant::encode_prepare_payload(std::slice::from_ref(&write), &[], &[], None).unwrap();
     let identity = ParticipantIdentity { tenant: tenant.clone(), database_incarnation: u128::from_be_bytes(engine.database_id().as_bytes().to_owned()), operation, participant: "file-a".into(), owner: "owner".into(), digest: *blake3::hash(&payload).as_bytes(), epoch: 1, snapshot: StorageSequence::new(1) };
-    let prepare = ParticipantPrepare { identity: identity.clone(), writes: vec![write], metadata: Vec::new(), schema_envelopes: Vec::new() };
+    let prepare = ParticipantPrepare { identity: identity.clone(), writes: vec![write], metadata: Vec::new(), schema_envelopes: Vec::new(), replication_publication: None };
     engine.storage.lock().unwrap().port.prepare_participant(&prepare).unwrap();
     assert!(engine.storage.lock().unwrap().port.resolve_participant(&identity).unwrap().is_some());
     engine.shutdown().unwrap();

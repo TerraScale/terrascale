@@ -403,7 +403,10 @@ async fn four_voter_encrypted_logs_survive_authority_restart() {
         .unwrap();
     assert!(matches!(outcome, terrabase_auth::Outcome::Record { .. }));
     fixture.workers[0].abort();
+    let receiver = fixture.workers.remove(0);
+    let _ = receiver.await;
     fixture.runtime.shutdown().await;
+    drop(fixture.authorities.remove(0));
     let public = super::tests::admitted_fixture::public_config(
         &fixture.root,
         fixture.root.join("bootstrap.key"),
@@ -415,13 +418,19 @@ async fn four_voter_encrypted_logs_survive_authority_restart() {
         &public,
     )
     .unwrap();
+    // Drop the old runtime and its exclusive SQLite handle before reopening the log.
+    fixture.runtime = runtime.clone();
     runtime.reconcile().await.unwrap();
-    fixture.authorities[0] =
-        runtime.domains.read().unwrap().values().next().unwrap().authority.clone();
+    fixture
+        .authorities
+        .insert(0, runtime.domains.read().unwrap().values().next().unwrap().authority.clone());
     let receiver = runtime.clone();
-    fixture.workers[0] = tokio::spawn(async move {
-        let _ = receiver.receive().await;
-    });
+    fixture.workers.insert(
+        0,
+        tokio::spawn(async move {
+            let _ = receiver.receive().await;
+        }),
+    );
     fixture.runtime = runtime;
     wait_ready(&fixture.authorities[0]).await;
     let retained = fixture.authorities[0].find_one("user".into(), "retained".into()).await.unwrap();

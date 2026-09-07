@@ -126,7 +126,7 @@ pub(crate) fn encode_expected(out: &mut Vec<u8>, expected: ExpectedVersion) {
     }
 }
 
-fn encode_value(out: &mut Vec<u8>, value: &DocumentValue, depth: usize) {
+pub(crate) fn encode_value(out: &mut Vec<u8>, value: &DocumentValue, depth: usize) {
     if depth > MAX_VALUE_DEPTH {
         return;
     }
@@ -166,7 +166,7 @@ fn encode_value(out: &mut Vec<u8>, value: &DocumentValue, depth: usize) {
     }
 }
 
-fn decode_value(reader: &mut Reader<'_>, depth: usize) -> Option<DocumentValue> {
+pub(crate) fn decode_value(reader: &mut Reader<'_>, depth: usize) -> Option<DocumentValue> {
     if depth > MAX_VALUE_DEPTH {
         return None;
     }

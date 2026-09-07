@@ -538,7 +538,10 @@ mod tests {
         for field in 0..5 {
             let mut expected = facts();
             match field {
-                0 => expected.target_database_id = "01ARZ3NDEKTSV4RRFFQ69G5FAZ".into(),
+                0 => {
+                    expected.target_database_id = "01ARZ3NDEKTSV4RRFFQ69G5FAZ".into();
+                    expected.target_incarnation = expected.target_database_id.clone();
+                }
                 1 => expected.operation_id = "foreign-operation".into(),
                 2 => expected.restore_epoch += 1,
                 3 => expected.source_journal_cut += 1,

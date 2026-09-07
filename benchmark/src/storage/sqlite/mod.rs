@@ -4490,7 +4490,7 @@ impl StoragePort for SqliteStorage {
         let identity = &prepare.identity;
         if prepare.writes.len() > 1024 { return Err(()); }
         let writes: Vec<_> = prepare.writes.clone();
-        let payload = crate::storage::participant::encode_prepare_payload(&writes, &prepare.metadata, &prepare.schema_envelopes)?;
+        let payload = crate::storage::participant::encode_prepare_payload(&writes, &prepare.metadata, &prepare.schema_envelopes, prepare.replication_publication.as_ref())?;
         if payload.len() > 64 * 1024 * 1024 { return Err(()); }
         if *blake3::hash(&payload).as_bytes() != identity.digest { return Err(()); }
         let mut connection = self.writer.lock().map_err(|_| ())?;
@@ -4500,7 +4500,7 @@ impl StoragePort for SqliteStorage {
         let matched: bool = transaction.query_row("SELECT owner=?5 AND epoch=?7 AND snapshot=?8 AND digest=?6 FROM participant_prepares WHERE tenant=?1 AND incarnation=?2 AND operation=?3 AND participant=?4", rusqlite::params![identity.tenant.to_string(), identity.database_incarnation.to_string(), identity.operation.to_string(), identity.participant, identity.owner, identity.digest.as_slice(), i64::try_from(identity.epoch).map_err(|_| ())?, i64::try_from(identity.snapshot.get()).map_err(|_| ())?], |row| row.get(0)).map_err(|_| ())?;
         if !matched { return Err(()); }
         transaction.commit().map_err(|_| ())?;
-        Ok(crate::storage::ParticipantPrepareReceipt { identity: identity.clone(), writes: prepare.writes.clone(), metadata: prepare.metadata.clone(), schema_envelopes: prepare.schema_envelopes.clone() })
+        Ok(crate::storage::ParticipantPrepareReceipt { identity: identity.clone(), writes: prepare.writes.clone(), metadata: prepare.metadata.clone(), schema_envelopes: prepare.schema_envelopes.clone(), replication_publication: prepare.replication_publication.clone() })
     }
     fn resolve_participant(&mut self, identity: &crate::storage::ParticipantIdentity) -> Result<Option<crate::storage::ParticipantPrepareReceipt>, ()> {
         let connection = self.writer.lock().map_err(|_| ())?;
@@ -4514,12 +4514,13 @@ impl StoragePort for SqliteStorage {
                 if *blake3::hash(&payload).as_bytes() != identity.digest {
                     return Err(());
                 }
-                let (writes, metadata, schema_envelopes) = crate::storage::participant::decode_prepare_payload(&payload)?;
+                let (writes, metadata, schema_envelopes, replication_publication) = crate::storage::participant::decode_prepare_payload(&payload)?;
                 Ok(Some(crate::storage::ParticipantPrepareReceipt {
                     identity: identity.clone(),
                     writes,
                     metadata,
                     schema_envelopes,
+                    replication_publication,
                 }))
             }
             Some(_) => Err(()),

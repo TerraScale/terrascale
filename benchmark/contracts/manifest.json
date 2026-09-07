@@ -5,7 +5,7 @@
     {
       "path": "conformance/http.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "ea2ecc502f645b8cb6b5e4c5c6d2994dbe6e4e1054ca2a60b9abbff0d15c791c"
+      "blake3": "8ef6ef1dc5dbb0738bcdf03cdeca72494e5c046955558d153da6d5c77145a77c"
     },
     {
       "path": "conformance/msgpack/hostile-vectors.json",
@@ -20,7 +20,7 @@
     {
       "path": "conformance/reactive.json",
       "mediaType": "application/vnd.terrascale.conformance.v1+json",
-      "blake3": "4d4ccbf1a8bbc4bb2545f30977ab42d80c6e618ea127f3c5e8dc631a0a96aad4"
+      "blake3": "a62879edb6bc6ef758f798018a84caba1d5e72cd7ab8ce86caa41f5f711e72d5"
     },
     {
       "path": "msgpack/hostile-vectors.json",
@@ -40,12 +40,12 @@
     {
       "path": "openapi.json",
       "mediaType": "application/vnd.oai.openapi+json;version=3.1",
-      "blake3": "742cfc08269cebdf7d486f8606fab0154fb3b828bf774c13524f4f30d3b69da0"
+      "blake3": "48d8396861afa5511ec70bf034306285853e1d8314bbfc19b6cf6bd9aa3ea2fe"
     },
     {
       "path": "proto/terrabase/v1/engine.proto",
       "mediaType": "text/x-protobuf",
-      "blake3": "6a7c5b26c5e964910fe87706cfe8c175366a88c986bba3e7cdff0af2ab8c7ed3"
+      "blake3": "afc89d35d212332a4ae60ec1beb60c8589cdfe5b80948a3c4bb67188fb3cb643"
     },
     {
       "path": "proto/terrabase/v1/family.proto",
