@@ -120,12 +120,12 @@ impl RestoreReservation {
         lease: DatabaseLease,
         instance: u64,
     ) -> Result<(), String> {
-        self.rollback = None;
         let activated = self.activated;
         let location = self.location.clone();
         let database_id = self.record.database_id.clone();
-        let result = registry.publish(self.record.clone(), lease, location.clone(), instance);
-        if result.is_ok() && activated {
+        registry.publish(self.record.clone(), lease, location.clone(), instance)?;
+        self.rollback = None;
+        if activated {
             if let Err(error) = registry.activate(&[database_id]) {
                 return Err(error);
             }
@@ -136,7 +136,7 @@ impl RestoreReservation {
             paths.remove(&location);
         }
         drop(self.permit.take());
-        result
+        Ok(())
     }
 }
 
@@ -845,6 +845,8 @@ pub(crate) mod tests {
             .reserve_restore(database)
             .unwrap()
             .rollback_on_drop(member.clone(), Arc::clone(&registry));
+        let id = terrabase::member::DatabaseId::try_new(database).unwrap();
+        member.close_database(&id).expect("release resident engine before installation");
         drop(reservation);
         assert!(registry.resolve_serving(database).unwrap().is_none());
         let retry = registry

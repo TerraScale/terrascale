@@ -359,7 +359,7 @@ pub(crate) mod admitted_fixture {
         journal
             .bootstrap(
                 "test",
-                terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapServiceBootstrapRequest {
+                terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapRequest {
                     operation_id: Ulid::new().to_string(),
                     grant: Some(grant),
                 },

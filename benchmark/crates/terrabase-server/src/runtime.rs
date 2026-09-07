@@ -488,7 +488,11 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
                 },
             )
             .map(|verifier| {
-                Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()))
+                {
+                    let verifier = Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()));
+                    verifier.start_membership_poll();
+                    verifier
+                }
             })
             .map_err(|_| DaemonError::ProductionConfigurationMissing)
         })
@@ -1211,7 +1215,11 @@ async fn serve_public_api(
                 },
             )
             .map(|verifier| {
-                Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()))
+                {
+                    let verifier = Arc::new(verifier.with_service_key_file(identity.service_key_file.clone()));
+                    verifier.start_membership_poll();
+                    verifier
+                }
             })
             .map_err(|_| DaemonError::Engine("invalid identity authority configuration".into()))
         })

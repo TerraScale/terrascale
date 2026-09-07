@@ -225,8 +225,14 @@ impl ObjectDestination {
         })
     }
 
-    #[cfg(test)]
-    pub(super) fn for_test(
+    /// Constructs an injected object-store fixture for cross-crate regression tests.
+    ///
+    /// This bypasses provider admission and must never qualify a cloud provider
+    /// or be used by production composition. Available only to tests or with
+    /// the explicit `test-support` feature.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn for_test(
         provider: Provider,
         store: Arc<dyn ObjectStore>,
         max_artifact_bytes: u64,

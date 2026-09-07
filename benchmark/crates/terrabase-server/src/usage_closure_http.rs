@@ -182,6 +182,8 @@ mod tests {
         let backups = Arc::new(crate::backup::BackupStreams::open_member());
         let backup_root = std::env::temp_dir().join("usage-closure-private-api");
         Arc::new(ApiState {
+            budget: None,
+            byo_jwt: None,
             native_backups: None,
             native_recovery: None,
             native_restore_target: None,

@@ -120,11 +120,12 @@ pub struct Principal {
     expires_at: Option<u64>,
     /// Immutable tenant/project owner, when this is a customer credential.
     owner: Option<(String, String)>,
+    membership_scope: Option<String>,
 }
 
 impl Principal {
     pub(crate) fn delegated(label: String, scope: Scope, expires_at: u64) -> Self {
-        Self { label, scope, expires_at: Some(expires_at), owner: None }
+        Self { label, scope, expires_at: Some(expires_at), owner: None, membership_scope: None }
     }
 
     /// Creates a customer principal bound to one immutable project owner.
@@ -134,7 +135,16 @@ impl Principal {
         expires_at: u64,
         owner: (String, String),
     ) -> Self {
-        Self { label, scope, expires_at: Some(expires_at), owner: Some(owner) }
+        Self { label, scope, expires_at: Some(expires_at), owner: Some(owner), membership_scope: None }
+    }
+
+    pub(crate) fn with_membership_scope(mut self, scope: String) -> Self {
+        self.membership_scope = Some(scope);
+        self
+    }
+
+    pub(crate) fn membership_scope(&self) -> Option<&str> {
+        self.membership_scope.as_deref()
     }
 
     /// Caps a producer admission by an earlier verified credential expiry.
@@ -262,7 +272,7 @@ impl KeyStore {
     ) {
         self.register_principal(
             key,
-            Principal { label: label.to_owned(), scope, expires_at, owner: Some(owner) },
+            Principal { label: label.to_owned(), scope, expires_at, owner: Some(owner), membership_scope: None },
         );
     }
 
@@ -281,7 +291,7 @@ impl KeyStore {
     ) {
         self.register_principal(
             key,
-            Principal { label: label.to_owned(), scope, expires_at, owner: None },
+            Principal { label: label.to_owned(), scope, expires_at, owner: None, membership_scope: None },
         );
     }
 
@@ -535,17 +545,21 @@ mod tests {
     #[test]
     fn expiry_bound_is_half_open_and_unbounded_keys_ignore_the_clock() {
         let principal = super::Principal {
+            owner: None,
             label: "probe".to_owned(),
             scope: Scope::every_database(Verbs::READ),
             expires_at: Some(1_000),
+            membership_scope: None,
         };
         assert!(!principal.is_expired_at(999), "before the bound admits");
         assert!(principal.is_expired_at(1_000), "at the bound refuses");
         assert!(principal.is_expired_at(1_001), "past the bound refuses");
         let bootstrap = super::Principal {
+            owner: None,
             label: "bootstrap".to_owned(),
             scope: Scope::every_database(Verbs::ALL),
             expires_at: None,
+            membership_scope: None,
         };
         assert!(!bootstrap.is_expired_at(u64::MAX), "never-expiring admits at any clock");
         assert_eq!(bootstrap.expires_at(), None);

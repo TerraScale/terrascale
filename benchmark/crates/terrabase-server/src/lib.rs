@@ -84,3 +84,5 @@ pub mod catchup_observation;
 
 #[cfg(all(test, target_os = "linux"))]
 mod test_keys;
+
+mod membership_revocations;

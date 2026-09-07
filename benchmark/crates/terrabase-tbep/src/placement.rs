@@ -504,7 +504,9 @@ impl PlacementJournal {
             return Err(PlacementError::Conflict);
         }
         let action = serde_json::to_string(&grant.action).map_err(|_| PlacementError::Storage)?;
-        let existing: Option<(String, String, String, String, String, String, String, i64, String, String, i64, String)> = transaction
+        let revision = i64::try_from(grant.accepted_placement_revision).map_err(|_| PlacementError::Invalid)?;
+        let epoch = i64::try_from(grant.authority_epoch).map_err(|_| PlacementError::Invalid)?;
+        let existing: Option<(String, String, String, String, String, String, String, i64, String, i64, String, String)> = transaction
             .query_row(
                 "SELECT action,environment,tenant,project,database,region,member,placement_revision,proof_digest,authority_epoch,authority_lease,restore_request_digest FROM lifecycle_operations WHERE operation_id=?1",
                 [grant.operation_id.as_str()],
@@ -518,18 +520,19 @@ impl PlacementJournal {
                 && row.4 == grant.database
                 && row.5 == grant.region
                 && row.6 == grant.member
-                && row.7 == i64::try_from(grant.accepted_placement_revision).unwrap_or_default()
+                && row.7 == revision
                 && row.8 == grant.accepted_proof_digest
                 && row.11 == grant.accepted_restore_request_digest;
             if !same {
                 return Err(PlacementError::RetryMismatch);
             }
-            transaction.execute("UPDATE lifecycle_operations SET authority_epoch=?2,authority_lease=?3,restore_request_digest=?4,issued_at=?5,expires_at=?6 WHERE operation_id=?1", params![grant.operation_id, i64::try_from(grant.authority_epoch).map_err(|_| PlacementError::Invalid)?, grant.authority_lease, grant.accepted_restore_request_digest, grant.issued_at_unix_millis, grant.expires_at_unix_millis]).map_err(|_| PlacementError::Storage)?;
+            transaction.execute("UPDATE lifecycle_operations SET authority_epoch=?2,authority_lease=?3,restore_request_digest=?4,issued_at=?5,expires_at=?6 WHERE operation_id=?1", params![grant.operation_id, epoch, grant.authority_lease, grant.accepted_restore_request_digest, grant.issued_at_unix_millis, grant.expires_at_unix_millis]).map_err(|_| PlacementError::Storage)?;
+            transaction.execute("INSERT INTO lifecycle_authority(id,epoch) VALUES (1,?1) ON CONFLICT(id) DO UPDATE SET epoch=MAX(epoch,excluded.epoch)", params![epoch]).map_err(|_| PlacementError::Storage)?;
             transaction.commit().map_err(|_| PlacementError::Storage)?;
             return Ok(false);
         }
-        transaction.execute("INSERT INTO lifecycle_operations VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)", params![grant.operation_id, action, grant.environment, grant.tenant, grant.project, grant.database, grant.region, grant.member, i64::try_from(grant.accepted_placement_revision).map_err(|_| PlacementError::Invalid)?, grant.accepted_proof_digest, i64::try_from(grant.authority_epoch).map_err(|_| PlacementError::Invalid)?, grant.authority_lease, grant.accepted_restore_request_digest, grant.issued_at_unix_millis, grant.expires_at_unix_millis]).map_err(|_| PlacementError::Conflict)?;
-        transaction.execute("INSERT INTO lifecycle_authority(id,epoch) VALUES (1,?1) ON CONFLICT(id) DO UPDATE SET epoch=MAX(epoch,excluded.epoch)", params![i64::try_from(grant.authority_epoch).map_err(|_| PlacementError::Invalid)?]).map_err(|_| PlacementError::Storage)?;
+        transaction.execute("INSERT INTO lifecycle_operations VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)", params![grant.operation_id, action, grant.environment, grant.tenant, grant.project, grant.database, grant.region, grant.member, i64::try_from(grant.accepted_placement_revision).map_err(|_| PlacementError::Invalid)?, grant.accepted_proof_digest, epoch, grant.authority_lease, grant.accepted_restore_request_digest, grant.issued_at_unix_millis, grant.expires_at_unix_millis]).map_err(|_| PlacementError::Conflict)?;
+        transaction.execute("INSERT INTO lifecycle_authority(id,epoch) VALUES (1,?1) ON CONFLICT(id) DO UPDATE SET epoch=MAX(epoch,excluded.epoch)", params![epoch]).map_err(|_| PlacementError::Storage)?;
         transaction.commit().map_err(|_| PlacementError::Storage)?;
         Ok(true)
     }

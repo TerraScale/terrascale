@@ -1023,7 +1023,7 @@ pub async fn attach_view(
         Ok(materialization) => materialization,
         Err(error) => return error.into_response(),
     };
-    let (response, _) = match store().attach_materialized(
+    let (mut response, _) = match store().attach_materialized(
         &request,
         &scope,
         state.region,
@@ -1042,6 +1042,9 @@ pub async fn attach_view(
             return error.into_response();
         }
     };
+    if let Err(error) = bind_membership_capability(&state, &mut response, principal.membership_scope()) {
+        return error.into_response();
+    }
     observe_authorized_activity(&state, &request.database_id);
     let Ok(mut body) = serde_json::to_vec(&response) else {
         return frame_error().into_response();
@@ -1071,7 +1074,7 @@ pub async fn snapshot(
         return unknown_view().into_response();
     }
     if let Err(error) =
-        verify_view_header(&headers, &view, generation, proof.is_some(), &state.capability_keys)
+        verify_view_header(&headers, &view, generation, proof.is_some(), &state)
     {
         return error.into_response();
     }
@@ -1097,7 +1100,7 @@ pub async fn view_log(
         return invalid_offset().into_response();
     };
     if let Err(error) =
-        verify_view_header(&headers, &view, generation, proof.is_some(), &state.capability_keys)
+        verify_view_header(&headers, &view, generation, proof.is_some(), &state)
     {
         return error.into_response();
     }
@@ -1170,7 +1173,7 @@ pub async fn view_websocket(
     headers: HeaderMap,
     upgrade: WebSocketUpgrade,
 ) -> Response {
-    let credential = match websocket_capability(&headers, &view, generation, &state.capability_keys)
+    let credential = match websocket_capability(&headers, &view, generation, &state)
     {
         Ok(credential) => credential,
         Err(error) => return error.into_response(),
@@ -1240,7 +1243,7 @@ pub(crate) fn websocket_capability(
     headers: &HeaderMap,
     view: &str,
     generation: u64,
-    keys: &CapabilityKeyRing,
+    state: &ApiState,
 ) -> Result<String, ApiError> {
     let mut protocol = false;
     let mut credential = None;
@@ -1260,7 +1263,7 @@ pub(crate) fn websocket_capability(
         return Err(capability_error());
     }
     let credential = credential.ok_or_else(capability_error)?;
-    verify_socket_capability(view, generation, credential, keys)?;
+    verify_socket_capability(view, generation, credential, state)?;
     Ok(credential.to_owned())
 }
 
@@ -1268,14 +1271,35 @@ fn verify_socket_capability(
     view: &str,
     generation: u64,
     credential: &str,
-    keys: &CapabilityKeyRing,
+    state: &ApiState,
 ) -> Result<(), ApiError> {
     let expected = store().capability_claims(view, generation)?;
-    keys.verifier()
+    let claims = state.capability_keys.verifier()
         .ok_or_else(capability_error)?
         .verify_claims(credential, &expected, now_seconds())
-        .map(|_| ())
-        .map_err(|_| capability_error())
+        .map_err(|_| capability_error())?;
+    check_membership_scope(state, &claims.authorization_scope)
+}
+
+fn check_membership_scope(state: &ApiState, scope: &str) -> Result<(), ApiError> {
+    if let Some((database, membership)) = scope.split_once(':')
+        && crate::membership_revocations::valid_scope(database)
+    {
+        if !state.delegated_identity.as_ref().is_some_and(|identity| identity.membership.admits(membership, now_seconds())) {
+            return Err(capability_error());
+        }
+    }
+    Ok(())
+}
+
+fn bind_membership_capability(state: &ApiState, response: &mut AttachResponse, membership: Option<&str>) -> Result<(), ApiError> {
+    let Some(membership) = membership else { return Ok(()); };
+    let expected = store().capability_claims(&response.view, response.generation)?;
+    let scope = format!("{}:{membership}", expected.authorization_scope);
+    check_membership_scope(state, &scope)?;
+    response.capability = capability_for_region(&response.view, response.generation, &scope,
+        expected.entitlement_epoch, expected.region, now_seconds(), &state.capability_keys);
+    Ok(())
 }
 
 struct WsPermit {
@@ -1533,7 +1557,7 @@ fn verify_view_header(
     view: &str,
     generation: u64,
     origin_proof: bool,
-    capability_keys: &CapabilityKeyRing,
+    state: &ApiState,
 ) -> Result<(), ApiError> {
     // A verified edge proof attests that the edge already checked the
     // capability and strips it before forwarding. Direct regional callers
@@ -1546,12 +1570,12 @@ fn verify_view_header(
         return Err(capability_error());
     };
     let expected = store().capability_claims(view, generation)?;
-    capability_keys
+    let claims = state.capability_keys
         .verifier()
         .ok_or_else(capability_error)?
         .verify_claims(raw, &expected, now_seconds())
-        .map(|_| ())
-        .map_err(|_| capability_error())
+        .map_err(|_| capability_error())?;
+    check_membership_scope(state, &claims.authorization_scope)
 }
 
 /// Deterministically mints a D-14 capability for conformance tests.

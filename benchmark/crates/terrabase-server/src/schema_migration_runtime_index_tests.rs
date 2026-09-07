@@ -32,7 +32,8 @@ async fn production_tick_publishes_initial_declared_index_without_migration() {
     assert_eq!(response.status(), crate::api::StatusCode::OK);
 
     assert_eq!(super::drive_database(&state, "demo", None).as_deref(), Some("orders"));
-    let engine = document_host(&state, "demo").unwrap().engine();
+    let host = document_host(&state, "demo").unwrap();
+    let engine = host.engine();
     let descriptor = engine
         .index_descriptors()
         .unwrap()

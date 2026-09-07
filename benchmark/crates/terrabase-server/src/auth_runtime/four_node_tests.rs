@@ -25,7 +25,6 @@ use terrabase_cluster::production::{
 };
 use terrabase_tbep::auth_bootstrap::{AuthBootstrapBoundary, AuthBootstrapJournal};
 use terrabase_tbep::proto::terrabase::v1::{AuthGroupBootstrapGrant, AuthGroupVoter};
-use tower::ServiceExt;
 
 struct Fixture {
     runtime: Arc<AuthRuntime>,
@@ -101,7 +100,7 @@ fn endpoints(ids: &[MemberWorkloadIdentity]) -> Vec<Arc<ProductionQuicEndpoint>>
                         id.clone(),
                         peer_region,
                         addresses[peer],
-                        format!("member-{peer}.internal"),
+                        &format!("member-{peer}.internal"),
                     )
                     .unwrap()
                 })
@@ -197,7 +196,7 @@ async fn create() -> Fixture {
     journal
         .bootstrap(
             "test",
-            terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapServiceBootstrapRequest {
+            terrabase_tbep::proto::terrabase::v1::AuthGroupBootstrapRequest {
                 operation_id: Ulid::new().to_string(),
                 grant: Some(grant.clone()),
             },

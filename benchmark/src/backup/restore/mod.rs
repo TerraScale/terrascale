@@ -1412,6 +1412,9 @@ fn execute_configured_restore(
         write_restore_metadata(&reopened, identity, &facts)?;
         verify_restore_metadata(&reopened, identity, &facts)?;
         if replace_existing {
+            reopened
+                .activate_origin_epoch(identity.restore_epoch)
+                .map_err(|_| BackupError::DestinationUnavailable)?;
             let tenant = TenantId::try_new(reopened.database_owner().tenant().to_text().as_str())
                 .map_err(|_| BackupError::DestinationUnavailable)?;
             reopened
@@ -1427,6 +1430,9 @@ fn execute_configured_restore(
     })();
     match outcome {
         Ok(facts) => {
+            if replace_existing {
+                staging.discard();
+            }
             let mut result = receipt(chain, facts);
             result.requested_unix_millis = cutoff;
             Ok(result)

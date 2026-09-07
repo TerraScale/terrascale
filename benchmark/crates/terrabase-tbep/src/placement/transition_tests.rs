@@ -156,6 +156,8 @@ fn pending_is_not_membership_and_acceptance_survives_restart_without_control_ser
 fn authenticated_wrong_tuple_digest_genesis_and_signer_never_admit() {
     let fixture = tests::Fixture::new();
     let journal = fixture.open();
+    let proposal = stage(&journal, fixture.request.clone(), "lifecycle-proof");
+    journal.configure_transition_trust(trust(&proposal)).unwrap();
     let proposal = stage(&journal, fixture.request.clone(), "first");
     journal.configure_transition_trust(trust(&proposal)).unwrap();
     let valid = proof(&proposal, "first", None, &[]);
@@ -203,6 +205,62 @@ fn authenticated_wrong_tuple_digest_genesis_and_signer_never_admit() {
     );
     assert!(journal.accept("different-operation", &acceptance(&valid, 1)).is_err());
     journal.accept("first", &acceptance(&valid, 1)).unwrap();
+}
+
+#[test]
+fn signed_lifecycle_grant_replays_and_rejects_mutation_after_reopen() {
+    let fixture = tests::Fixture::new();
+    let journal = fixture.open();
+    let grant = terrabase::lifecycle::LifecycleOperationGrant {
+        version: 1,
+        domain: "terrascale-lifecycle-operation-v1".into(),
+        environment: fixture.request.environment.clone(),
+        tenant: "tenant".into(),
+        project: "project".into(),
+        database: "database".into(),
+        region: "GRU".into(),
+        member: "member".into(),
+        action: terrabase::lifecycle::LifecycleGrantAction::CloseDatabase,
+        operation_id: "lifecycle-replay".into(),
+        accepted_proof_digest: "a".repeat(64),
+        accepted_placement_revision: 1,
+        authority_epoch: 1,
+        authority_lease: "lease".into(),
+        accepted_restore_request_digest: String::new(),
+        issued_at_unix_millis: 1,
+        expires_at_unix_millis: 2,
+    };
+    let signed = envelope(&serde_json::to_value(&grant).unwrap());
+    let verified = journal.verify_lifecycle_grant(&signed).unwrap();
+    assert!(journal.admit_lifecycle_operation(&verified).unwrap());
+    assert!(!journal.admit_lifecycle_operation(&verified).unwrap());
+    drop(journal);
+    let reopened = fixture.open();
+    reopened.configure_transition_trust(trust(&proposal)).unwrap();
+    let verified = reopened.verify_lifecycle_grant(&signed).unwrap();
+    assert!(!reopened.admit_lifecycle_operation(&verified).unwrap());
+    let mut changed = verified.clone();
+    changed.accepted_proof_digest = "b".repeat(64);
+    assert_eq!(
+        reopened.admit_lifecycle_operation(&changed),
+        Err(PlacementError::RetryMismatch)
+    );
+    let mut changed = verified.clone();
+    changed.accepted_restore_request_digest = "c".repeat(64);
+    assert_eq!(
+        reopened.admit_lifecycle_operation(&changed),
+        Err(PlacementError::RetryMismatch)
+    );
+    let mut renewed = verified.clone();
+    renewed.authority_epoch = 2;
+    assert!(!reopened.admit_lifecycle_operation(&renewed).unwrap());
+    let mut stale = verified;
+    stale.operation_id = "lifecycle-stale-new".into();
+    stale.authority_epoch = 1;
+    assert_eq!(
+        reopened.admit_lifecycle_operation(&stale),
+        Err(PlacementError::Conflict)
+    );
 }
 
 #[test]

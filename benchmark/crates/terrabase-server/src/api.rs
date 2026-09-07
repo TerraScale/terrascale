@@ -1472,7 +1472,7 @@ async fn authenticate(
             request.headers(),
             view,
             generation,
-            &state.capability_keys,
+            &state,
         ) {
             Ok(_) => next.run(request).await,
             Err(error) => error.into_response(),

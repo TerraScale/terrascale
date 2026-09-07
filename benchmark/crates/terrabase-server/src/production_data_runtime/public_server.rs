@@ -201,6 +201,7 @@ mod tests {
         let timetravel =
             Arc::new(crate::backup::TimeTravelCache::new(Arc::clone(&backups), &backup_root));
         Arc::new(crate::api::ApiState {
+            budget: None,
             native_backups: None,
             native_recovery: None,
             native_restore_target: None,
@@ -212,6 +213,7 @@ mod tests {
             metrics: Arc::new(MetricsRegistry::new()),
             keys: None,
             delegated_identity: None,
+            byo_jwt: None,
             control: None,
             catalog: None,
             scope: ("test-tenant".into(), "test-project".into()),

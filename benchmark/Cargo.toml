@@ -39,6 +39,8 @@ required-features = ["bench-tools"]
 # Enables the audited served benchmark command. This is kept opt-in so the
 # engine's normal library build does not include benchmark orchestration.
 bench-tools = []
+# Injected fixtures for cross-crate regression tests; never enable in production.
+test-support = []
 
 [[test]]
 name = "observability"

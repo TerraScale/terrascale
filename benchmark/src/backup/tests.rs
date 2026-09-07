@@ -473,6 +473,29 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
     assert_eq!(reopened.database_owner(), &owner);
     let restored_scope = scope(&reopened, owner.tenant().to_text().as_str());
     assert!(reopened.lifecycle_state(&restored_scope).unwrap().paused);
+    let restore_identity = crate::backup::restore::RestoreIdentity {
+        operation_id: "test".into(),
+        source_database_id: "source".into(),
+        target_database_id: owner.database().to_text(),
+        provider: "oci".into(),
+        selection: "latest".into(),
+        expected_manifest_digest: backup.manifest().identity().into(),
+        expected_journal_boundary: backup.manifest().boundary_sequence().get(),
+        restore_epoch: 1,
+    };
+    assert!(
+        crate::backup::restore::read_restore_marker(&reopened, &restore_identity)
+            .unwrap()
+            .is_some()
+    );
+    let mut wrong_identity = restore_identity.clone();
+    wrong_identity.operation_id = "unpublished-operation".into();
+    assert!(
+        crate::backup::restore::read_restore_marker(&reopened, &wrong_identity).unwrap().is_none()
+    );
+    let mut wrong_identity = restore_identity.clone();
+    wrong_identity.provider = "tigris".into();
+    assert!(crate::backup::restore::read_restore_marker(&reopened, &wrong_identity).is_err());
     reopened.lifecycle_resume(&restored_scope, "resume-restored").unwrap();
     let snapshot = reopened.read_snapshot(&restored_scope).unwrap();
     let transaction =
@@ -480,6 +503,20 @@ fn encrypted_restore_authenticates_the_native_backup_archive() {
     assert!(transaction.read(&document_id("old-doc")).unwrap().is_none());
     assert!(transaction.read(&document_id("doc-1")).unwrap().is_some());
     drop(transaction);
+    committed(put(
+        &reopened,
+        owner.tenant().to_text().as_str(),
+        "post-restore-put",
+        "doc-2",
+        "users",
+        text("after-restore"),
+        LocalDurability::Synced,
+    ));
+    assert!(
+        crate::backup::restore::read_restore_marker(&reopened, &restore_identity)
+            .unwrap()
+            .is_some()
+    );
     drop(reopened);
     let rejected = location("encrypted-restore-unavailable-key");
     let unavailable = EngineConfig::durable(&rejected)

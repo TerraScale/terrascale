@@ -547,7 +547,8 @@ impl NativeRecoveryRuntime {
     }
 
     /// Explicitly retries authenticated target readback for an uncertain
-    /// restore. This never authorizes another provider execution.
+    /// restore. Provider execution is retried only after authenticated readback
+    /// proves the paused target has no publication marker.
     pub fn retry_restore_readback(
         &self,
         operation_id: &str,
@@ -733,6 +734,14 @@ impl NativeRecoveryRuntime {
                 operation.receipt = Some(receipt);
                 operation.phase = NativeRestorePhase::Complete;
                 operation.error = None;
+            } else if operation.phase == NativeRestorePhase::Verifying
+                && operation.receipt.is_none()
+            {
+                // An explicit retry found the original paused target. Atomic
+                // publication always includes the marker, so no replacement
+                // was committed and provider execution may safely restart.
+                operation.phase = NativeRestorePhase::Accepted;
+                operation.error = None;
             } else {
                 operation.phase = NativeRestorePhase::Uncertain;
                 operation.error =
@@ -806,6 +815,14 @@ impl NativeRecoveryRuntime {
         let Some(marker) = terrabase::backup::read_restore_marker(engine, &identity)
             .map_err(|_| NativeRecoveryError::VerificationFailed)?
         else {
+            let tenant = terrabase::types::TenantId::try_new(&target.database.record.tenant_id)
+                .map_err(|_| NativeRecoveryError::VerificationFailed)?;
+            let state = engine
+                .lifecycle_state(&engine.scope_for(&tenant))
+                .map_err(|_| NativeRecoveryError::Unavailable)?;
+            if !state.paused || state.access_revoked() {
+                return Err(NativeRecoveryError::VerificationFailed);
+            }
             return Ok(None);
         };
         Ok(Some(NativeRestoreReceipt {
@@ -1045,14 +1062,16 @@ mod tests {
             Arc::new(RejectRestore),
         )
         .unwrap();
+        worker.shutdown().await.unwrap();
+        registry.pause(&records[1].database_id, "pause-uncertain").unwrap();
         let request = NativeRestoreRequest {
             operation_id: "uncertain-operation".into(),
-            source_owner: "tenant/project".into(),
+            source_owner: format!("{}/{}", records[0].tenant_id, records[0].project_id),
             source_database_id: records[0].database_id.clone(),
             recovery_point_id: "point".into(),
             recovery_point_digest: "a".repeat(64),
-            target_owner: "tenant/project".into(),
-            target_database_id: "target-database".into(),
+            target_owner: format!("{}/{}", records[1].tenant_id, records[1].project_id),
+            target_database_id: records[1].database_id.clone(),
             journal_cut: "1".into(),
             restore_epoch: 1,
             provider: "oci".into(),
@@ -1071,13 +1090,22 @@ mod tests {
             .unwrap()
             .execute(
                 "INSERT INTO native_restore_operations(operation_id,source_database_id,target_database_id,phase,record) VALUES(?1,?2,?3,'uncertain',?4)",
-                rusqlite::params!["uncertain-operation", records[0].database_id, "target-database", serde_json::to_vec(&operation).unwrap()],
+                rusqlite::params!["uncertain-operation", records[0].database_id, records[1].database_id, serde_json::to_vec(&operation).unwrap()],
             )
             .unwrap();
         let retried = runtime.retry_restore_readback("uncertain-operation").unwrap();
         assert_eq!(retried.phase, NativeRestorePhase::Verifying);
         assert!(retried.receipt.is_none());
-        worker.shutdown().await.unwrap();
+        assert!(runtime.process_restore_pending().await.unwrap());
+        assert_eq!(
+            runtime.restore_status("uncertain-operation").unwrap().unwrap().phase,
+            NativeRestorePhase::Accepted
+        );
+        assert!(runtime.process_restore_pending().await.unwrap());
+        assert_eq!(
+            runtime.restore_status("uncertain-operation").unwrap().unwrap().phase,
+            NativeRestorePhase::Uncertain
+        );
         drop(member);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1115,6 +1143,11 @@ mod tests {
             receipt: None,
             error: None,
         };
+        assert_eq!(
+            runtime.read_published_restore(&operation),
+            Err(NativeRecoveryError::VerificationFailed)
+        );
+        registry.pause(&record.database_id, "pause-readback").unwrap();
         assert!(runtime.read_published_restore(&operation).unwrap().is_none());
         worker.shutdown().await.unwrap();
         drop(member);

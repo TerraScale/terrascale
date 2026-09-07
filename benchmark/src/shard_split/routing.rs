@@ -86,6 +86,11 @@ pub struct RouteTable {
 }
 
 impl RouteTable {
+    /// Restores the durable generation after codec validation.
+    pub(crate) fn with_generation(mut self, generation: u64) -> Self {
+        self.generation = generation;
+        self
+    }
     /// Builds a validated table from routes.
     pub fn new(mut routes: Vec<ShardRoute>) -> Result<Self, RouteError> {
         routes.sort_by(|left, right| left.lower.cmp(&right.lower));

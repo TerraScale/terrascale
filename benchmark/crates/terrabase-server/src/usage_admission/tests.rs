@@ -157,7 +157,7 @@ fn setup_journal(
     .unwrap();
     let placement_path = root.join("placement.sqlite");
     let journal = Arc::new(PlacementJournal::open(&placement_path, boundary).unwrap());
-    let request = pb::PlacementControlServiceStageRequest {
+    let request = pb::PlacementStageRequest {
         expected_revision: 0,
         proposal: Some(pb::PlacementProposal {
             environment: route.environment.clone(),
@@ -265,7 +265,7 @@ fn accepted_proof(
     journal
         .accept(
             "usage-op",
-            &pb::PlacementControlServiceAcceptRequest { proposal_revision: 1, proof: envelope },
+            &pb::PlacementAcceptRequest { proposal_revision: 1, proof: envelope },
         )
         .unwrap()
         .proof_digest

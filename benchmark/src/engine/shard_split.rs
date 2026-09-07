@@ -186,7 +186,9 @@ pub(crate) fn decode_catalog(bytes: &[u8]) -> Result<RouteCatalog, RouteCatalogE
     if r.at != bytes.len() {
         return Err(RouteCatalogError::Malformed);
     }
-    let table = RouteTable::new(routes).map_err(|_| RouteCatalogError::Malformed)?;
+    let table = RouteTable::new(routes)
+        .map_err(|_| RouteCatalogError::Malformed)?
+        .with_generation(generation);
     Ok(RouteCatalog { table, generation })
 }
 

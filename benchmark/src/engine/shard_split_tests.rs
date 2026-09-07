@@ -8,7 +8,7 @@ fn catalog_codec_round_trip_and_rejects_bad_inputs() {
         ShardRoute::new(2, Some(b"m".to_vec()), None).unwrap(),
     ])
     .unwrap();
-    let catalog = RouteCatalog { table, generation: 7 };
+    let catalog = RouteCatalog { table: table.with_generation(7), generation: 7 };
     let encoded = encode_catalog(&catalog).unwrap();
     assert_eq!(decode_catalog(&encoded).unwrap(), catalog);
     for bad in [vec![], vec![2], {

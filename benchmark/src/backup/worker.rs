@@ -1241,22 +1241,29 @@ mod tests {
         .unwrap();
         fleet.attach(config()).unwrap();
         assert!(fleet.sync_once().await.is_empty());
-        assert_eq!(
-            engine.lifecycle_pause(&scope, "pause-a"),
-            Err(crate::engine::lifecycle_state::LifecycleError::Conflict)
-        );
         engine.lifecycle_resume(&scope, "resume-b").unwrap();
+        let _ = engine.lifecycle_pause(&scope, "pause-a");
+        assert!(!engine.lifecycle_state(&scope).unwrap().paused);
         fleet.resume(&owner.database().to_string()).unwrap();
     }
 
     fn restore_config(
         label: &str,
         owner: &crate::storage::DatabaseOwner,
-    ) -> crate::engine::EngineConfig {
-        crate::engine::EngineConfig::durable(location(label))
+    ) -> (crate::storage::DatabaseOwner, crate::engine::EngineConfig) {
+        let target_owner = crate::storage::DatabaseOwner::try_new(
+            owner.environment().as_str(),
+            owner.tenant(),
+            owner.project(),
+            terrabase::identity::DatabaseUlid::generate(),
+            owner.region(),
+        )
+        .unwrap();
+        let config = crate::engine::EngineConfig::durable(location(label))
             .unwrap()
-            .with_owner(owner.clone())
-            .with_storage_keys(crate::engine::test_storage_keys(owner, 71))
+            .with_owner(target_owner.clone())
+            .with_storage_keys(crate::engine::test_storage_keys(&target_owner, 71));
+        (target_owner, config)
     }
 
     #[test]
@@ -1326,16 +1333,17 @@ mod tests {
                     .unwrap()
                     .is_empty()
             );
+            let (target_owner, target_config) = restore_config("fleet-outage-restore", engine.database_owner());
             let receipt = fleet
                 .restore_from_provider(
                     &identity,
                     Provider::Oci,
                     None,
-                    &restore_config("fleet-outage-restore", engine.database_owner()),
+                    &target_config,
                     &crate::backup::restore::RestoreIdentity {
                         operation_id: "fleet-outage-restore-op".into(),
                         source_database_id: identity.clone(),
-                        target_database_id: "fleet-outage-restore".into(),
+                        target_database_id: target_owner.database().to_string(),
                         provider: "oci".into(),
                         selection: "latest".into(),
                         expected_manifest_digest:
@@ -1572,16 +1580,17 @@ mod tests {
             ));
             assert!(fleet.sync_once().await.is_empty());
             for provider in [Provider::Oci, Provider::Tigris] {
+                let (target_owner, target_config) = restore_config("fleet-restore", engine.database_owner());
                 let receipt = fleet
                     .restore_from_provider(
                         &identity,
                         provider,
                         None,
-                        &restore_config("fleet-restore", engine.database_owner()),
+                        &target_config,
                         &crate::backup::restore::RestoreIdentity {
                             operation_id: format!("fleet-restore-{provider:?}"),
                             source_database_id: identity.clone(),
-                            target_database_id: "fleet-restore".into(),
+                            target_database_id: target_owner.database().to_string(),
                             provider: format!("{provider:?}").to_lowercase(),
                             selection: "latest".into(),
                             expected_manifest_digest:

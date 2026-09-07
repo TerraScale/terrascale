@@ -282,6 +282,8 @@ mod tests {
 
     fn state(id: char) -> ExportJobState {
         ExportJobState {
+            format: crate::export_formats::TransferFormat::Native,
+            scope: crate::export_formats::ExportScope::All,
             job_id: id.to_string().repeat(32),
             database: "db".into(),
             destination: ExportDestination::File {

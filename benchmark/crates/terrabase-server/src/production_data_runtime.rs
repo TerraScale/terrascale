@@ -613,6 +613,9 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
             };
             let expected_cut =
                 request.journal_cut.parse::<u64>().map_err(|_| "restore journal cut is invalid")?;
+            // Release authorization observations before transferring the target's sole lease.
+            drop(target);
+            drop(admitted);
             let receipt = tokio::task::spawn_blocking(move || {
                 tokio::runtime::Handle::current().block_on(runtime.restore_native_to_target(
                     &backups,
@@ -637,7 +640,7 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
                 receipt: crate::native_recovery::NativeRestoreReceipt {
                     selected_identity: receipt.selected_identity().to_owned(),
                     logical_content_checksum: receipt.logical_checksum().to_owned(),
-                    restored_documents: receipt.restored_documents(),
+                    restored_documents: receipt.documents_read_back(),
                     journal_cut: receipt.selected_boundary().get(),
                 },
             })

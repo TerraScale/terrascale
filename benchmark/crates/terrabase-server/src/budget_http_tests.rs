@@ -334,8 +334,15 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
                 assert_eq!(&body, expected);
             } else {
                 first = Some(body);
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
         }
+        let changed = Request::put("/api/v1/databases/prod/collections/users/documents/doc-1")
+            .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+            .header("idempotency-key", "budget")
+            .body(Body::from(r#"{"name":"Grace"}"#))
+            .unwrap();
+        assert_eq!(app.clone().oneshot(changed).await.unwrap().status(), StatusCode::CONFLICT);
         binding.lock().unwrap().holder = "another-writer".into();
         assert_eq!(
             fixture.router().oneshot(deliver()).await.unwrap().status(),

@@ -102,6 +102,14 @@ impl Session {
 
         let result = match &self.authorization {
             Authorization::Bearer { principal, credential } => {
+                if let Some(scope) = principal.membership_scope() {
+                    let now = super::now_seconds();
+                    if principal.is_expired_at(now.saturating_mul(1000))
+                        || !self.state.delegated_identity.as_ref().is_some_and(|identity| identity.membership.admits(scope, now)) {
+                        return Err(ErrorCode::PermissionDenied);
+                    }
+                    return Ok(());
+                }
                 let admitted = self
                     .state
                     .keys
@@ -121,7 +129,7 @@ impl Session {
                     view,
                     *generation,
                     credential,
-                    &self.state.capability_keys,
+                    &self.state,
                 )
                 .map_err(|_| ErrorCode::AuthenticationExpired)
             }
@@ -138,7 +146,7 @@ impl Session {
     ) -> Result<(super::AttachResponse, String), ErrorCode> {
         let principal = match &self.authorization {
             Authorization::Bearer { principal, .. } => principal,
-            Authorization::View { view, generation, .. } => {
+            Authorization::View { view, generation, credential } => {
                 let views = store().views.lock().map_err(|_| ErrorCode::Unavailable)?;
                 let active = views
                     .get(view)
@@ -152,10 +160,10 @@ impl Session {
                 {
                     return Err(ErrorCode::PermissionDenied);
                 }
-                return Ok((
-                    super::attach_response(active, &self.state.capability_keys),
-                    view.clone(),
-                ));
+                let mut response = super::attach_response(active, &self.state.capability_keys);
+                // A view-only socket cannot widen its credential or extend its lease.
+                response.capability = credential.clone();
+                return Ok((response, view.clone()));
             }
         };
         let (tenant, project) = crate::api::database_owner_scope(&self.state, &self.database)
@@ -171,7 +179,7 @@ impl Session {
         .map_err(|_| ErrorCode::Overloaded)?;
         let prepared = prepare_view(&self.state, &host, request, &scope, Some(principal))
             .map_err(|_| ErrorCode::PermissionDenied)?;
-        store()
+        let (mut response, view) = store()
             .attach_materialized(
                 request,
                 &scope,
@@ -180,7 +188,10 @@ impl Session {
                 &self.state.capability_keys,
                 Some(&self.state.guards),
             )
-            .map_err(|_| ErrorCode::Unavailable)
+            .map_err(|_| ErrorCode::Unavailable)?;
+        super::bind_membership_capability(&self.state, &mut response, principal.membership_scope())
+            .map_err(|_| ErrorCode::PermissionDenied)?;
+        Ok((response, view))
     }
 
     fn unsubscribe(&mut self, subscription: &str) {

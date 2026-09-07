@@ -43,6 +43,8 @@ pub struct IdentityVerifier {
     service_key_file: Option<std::path::PathBuf>,
     tls: Arc<rustls::ClientConfig>,
     permits: tokio::sync::Semaphore,
+    pub(crate) membership: crate::membership_revocations::MembershipRevocations,
+    membership_started: std::sync::atomic::AtomicBool,
 }
 
 /// Invalid configuration, authority refusal, or unavailable live authority.
@@ -70,6 +72,7 @@ struct Admission {
     collection: Option<String>,
     action: Option<String>,
     expires_at: Option<u64>,
+    membership_scope: Option<String>,
 }
 
 impl IdentityVerifier {
@@ -142,6 +145,8 @@ impl IdentityVerifier {
             service_key_file: None,
             tls,
             permits: tokio::sync::Semaphore::new(32),
+            membership: Default::default(),
+            membership_started: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -170,7 +175,7 @@ impl IdentityVerifier {
             "audience":self.audience,"organizationId":"probe","projectId":"probe",
             "databaseId":"probe","action":"read"}))
         .map_err(|_| IdentityError::Unavailable)?;
-        let response = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
+        let response: Admission = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
             .await
             .map_err(|_| IdentityError::Unavailable)??;
         if response.active { Err(IdentityError::Denied) } else { Ok(()) }
@@ -213,7 +218,7 @@ impl IdentityVerifier {
         }
         let body = serde_json::to_vec(&input).map_err(|_| IdentityError::Denied)?;
         let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
-        let admission = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
+        let admission: Admission = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
             .await
             .map_err(|_| IdentityError::Unavailable)??;
         let now = std::time::SystemTime::now()
@@ -242,12 +247,13 @@ impl IdentityVerifier {
             || Scope::database(database, verb),
             |name| Scope::database_collection(database, name, verb),
         );
+        let membership_scope = admission.membership_scope.filter(|s| crate::membership_revocations::valid_scope(s)).ok_or(IdentityError::Denied)?;
         Ok(Principal::delegated_for_owner(
             subject,
             admitted_scope,
             expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
             (organization.to_owned(), project.to_owned()),
-        ))
+        ).with_membership_scope(membership_scope))
     }
 
     /// Revalidates a locally signature-verified BYO-JWT subject through the
@@ -287,7 +293,7 @@ impl IdentityVerifier {
             input["collection"] = collection.into();
         }
         let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
-        let admission = tokio::time::timeout(
+        let admission: Admission = tokio::time::timeout(
             Duration::from_secs(5),
             self.exchange(serde_json::to_vec(&input).map_err(|_| IdentityError::Denied)?),
         )
@@ -318,12 +324,13 @@ impl IdentityVerifier {
             || Scope::database(database, verb),
             |name| Scope::database_collection(database, name, verb),
         );
+        let membership_scope = admission.membership_scope.filter(|s| crate::membership_revocations::valid_scope(s)).ok_or(IdentityError::Denied)?;
         Ok(Principal::delegated_for_owner(
             mapped_subject,
             scope,
             expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
             (organization.to_owned(), project.to_owned()),
-        ))
+        ).with_membership_scope(membership_scope))
     }
 
     /// Project-wide variant of [`Self::admit_verified_byo`].
@@ -385,7 +392,36 @@ impl IdentityVerifier {
         ))
     }
 
-    async fn exchange(&self, body: Vec<u8>) -> Result<Admission, IdentityError> {
+    /// Starts one bounded control poll per identity authority, never per socket.
+    pub(crate) fn start_membership_poll(self: &Arc<Self>) {
+        use std::sync::atomic::Ordering;
+        if self.membership_started.swap(true, Ordering::AcqRel) { return; }
+        let authority = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                let Some(current) = authority.upgrade() else { return; };
+                let _ = current.refresh_membership().await;
+                drop(current);
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        });
+    }
+
+    pub(crate) async fn refresh_membership(&self) -> Result<(), IdentityError> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Reply { active: bool, membership_revocations: crate::membership_revocations::Snapshot }
+        let body = serde_json::to_vec(&serde_json::json!({"kind":"revocations","audience":self.audience}))
+            .map_err(|_| IdentityError::Unavailable)?;
+        let reply: Reply = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
+            .await.map_err(|_| IdentityError::Unavailable)??;
+        if reply.active { return Err(IdentityError::Denied); }
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| IdentityError::Unavailable)?.as_secs();
+        self.membership.install(reply.membership_revocations, now).map_err(|_| IdentityError::Unavailable)
+    }
+
+    async fn exchange<T: serde::de::DeserializeOwned>(&self, body: Vec<u8>) -> Result<T, IdentityError> {
         let host = self.endpoint.host().ok_or(IdentityError::Configuration)?;
         let port = self.endpoint.port_u16().unwrap_or(443);
         let name =
@@ -485,7 +521,7 @@ pub(crate) mod tests {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
         let reply = Arc::new(Mutex::new(
             serde_json::json!({"active":true,"issuer":"https://identity.example","audience":"https://api.example",
-            "subject":"user-1","organizationId":organization,"projectId":project,"databaseId":database,
+            "subject":"user-1","membershipScope":format!("scope-{}", "a".repeat(64)),"organizationId":organization,"projectId":project,"databaseId":database,
             "action":action,"scopes":[format!("database:{action}")],"expiresAt":now+60}),
         ));
         let responses = reply.clone();

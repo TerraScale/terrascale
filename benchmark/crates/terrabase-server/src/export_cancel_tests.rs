@@ -90,6 +90,8 @@ fn fixture(stop: bool) -> Fixture {
     service.stop_requested = stop_requested;
     store
         .create(&ExportJobState {
+            format: crate::export_formats::TransferFormat::Native,
+            scope: crate::export_formats::ExportScope::All,
             job_id: job.clone(),
             database: "db".into(),
             destination: request.destination.clone(),

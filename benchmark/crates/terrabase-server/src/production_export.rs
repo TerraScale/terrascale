@@ -306,9 +306,9 @@ pub fn new_production_export(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backup::object_store::Provider;
     use crate::export_artifact_crypto::LocalCrypto;
     use object_store::memory::InMemory;
+    use terrabase::backup::object_store::Provider;
 
     #[test]
     fn cursor_key_reference_requires_exact_nonzero_key() {
@@ -329,7 +329,6 @@ mod tests {
     fn errors_are_redacted() {
         assert_eq!(format!("{:?}", ProductionExportError::CursorKey), "CursorKey");
     }
-
     #[tokio::test]
     async fn remote_member_requires_manifest_authorization() {
         let destination = Arc::new(ObjectDestination::for_test(
@@ -362,6 +361,11 @@ mod tests {
             )
             .await
             .unwrap();
+        // The object exists and decrypts, but the committed manifest does not
+        // authorize it. Denial must therefore enforce membership, not absence.
+        let secret_ciphertext = crypto.seal(binding, "secret", b"secret-data").unwrap();
+        let secret_fact = fact("secret", &secret_ciphertext);
+        destination.put_member(&format!("{base}/secret"), secret_ciphertext).await.unwrap();
         let root =
             std::env::temp_dir().join(format!("terrabase-export-resume-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -387,7 +391,15 @@ mod tests {
         };
         let placement = PlacementLock::single(terrabase::regions::RegionCode::GRU);
         let mut writer = port.open("job", "db", &destination_config, &placement).await.unwrap();
-        assert_eq!(writer.existing_facts().await.unwrap(), vec![page_fact]);
+        assert_eq!(
+            writer.existing_facts().await.unwrap(),
+            vec![manifest_fact.clone(), page_fact, secret_fact]
+        );
+        // Resume inventories ciphertext, but does not grant read authorization.
+        assert!(matches!(
+            port.read_member("job", "db", "secret", &manifest_fact).await,
+            Err(ExportError::DestinationUnavailable)
+        ));
         assert!(root.join("db/job/page").exists());
         drop(writer);
         let _ = std::fs::remove_dir_all(root);

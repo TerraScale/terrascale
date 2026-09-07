@@ -381,16 +381,15 @@ pub trait NativeLifecycleWorker: Send + Sync {
         let _ = request;
         Err("native restore stats owner is not composed".into())
     }
-    /// Returns the digest of the durably recorded restore request.
-    async fn restore_request_digest(
+    /// Returns the digest and full placement of the durably recorded restore request.
+    async fn restore_request_facts(
         &self,
         _operation: &str,
         _target: &str,
         _owner: &str,
-    ) -> Result<String, String> {
+    ) -> Result<(String, Vec<String>), String> {
         Err("native restore request is unavailable".into())
     }
-    /// Admits an exact native restore operation into the durable recovery owner.
     /// Admits an exact native restore operation into the durable recovery owner.
     async fn restore_to_target(
         &self,
@@ -473,12 +472,12 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             .map_err(|_| "native restore stats unavailable".to_owned())?
             .ok_or_else(|| "native restore is not complete or identity mismatched".to_owned())
     }
-    async fn restore_request_digest(
+    async fn restore_request_facts(
         &self,
         operation: &str,
         target: &str,
         owner: &str,
-    ) -> Result<String, String> {
+    ) -> Result<(String, Vec<String>), String> {
         let recovery = self.recovery.as_ref().ok_or("native restore owner is not composed")?;
         let request = recovery
             .restore_request(operation, target, owner)
@@ -504,7 +503,7 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
             provider,
             ..Default::default()
         };
-        restore_request_digest(&wire)
+        Ok((restore_request_digest(&wire)?, request.placement))
     }
     async fn restore_to_target(
         &self,
@@ -633,22 +632,21 @@ impl ProductionLifecycleControl {
     ) -> Result<terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse, String> {
         let context = request.context.as_ref().ok_or("restore stats context is missing")?;
         let assignment = TbepLifecycleControl::assignment(context);
+        let (request_digest, placement) = self
+            .worker
+            .restore_request_facts(
+                &request.operation_id,
+                &request.target_database,
+                &request.target_owner,
+            )
+            .await?;
         self.authority.verify(
             &assignment,
             LifecycleGrantAction::RestoreToTarget,
             &request.operation_id,
             &context.authority_signature,
             &context.operation_grant,
-            Some(
-                &self
-                    .worker
-                    .restore_request_digest(
-                        &request.operation_id,
-                        &request.target_database,
-                        &request.target_owner,
-                    )
-                    .await?,
-            ),
+            Some(&request_digest),
         )?;
         let receipt = self.worker.restore_stats(request).await?;
         Ok(terrabase_tbep::proto::terrabase::v1::RestoreStatsResponse {
@@ -659,7 +657,7 @@ impl ProductionLifecycleControl {
             row_count: i64::try_from(receipt.restored_documents)
                 .map_err(|_| "restore row count exceeds the wire range")?,
             journal_cut: request.journal_cut.clone(),
-            placement: vec![context.region.clone()],
+            placement,
         })
     }
     /// Ensures a complete snapshot after verifying accepted authority.

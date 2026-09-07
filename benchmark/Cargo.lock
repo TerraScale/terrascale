@@ -2653,6 +2653,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "object_store",
  "rcgen",
  "rmp",
  "rusqlite",
