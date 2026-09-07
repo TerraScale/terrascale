@@ -17,8 +17,8 @@ public sealed record OperationSummary(
     [property: JsonPropertyName("name"), JsonRequired] string Name,
     [property: JsonPropertyName("state"), JsonRequired] string State,
     [property: JsonPropertyName("stage"), JsonRequired] string Stage,
-    [property: JsonPropertyName("created_at"), JsonRequired] string CreatedAt,
-    [property: JsonPropertyName("revision"), JsonRequired] ulong Revision,
+    [property: JsonPropertyName("created_at")] string? CreatedAt,
+    [property: JsonPropertyName("revision")] ulong? Revision,
     [property: JsonPropertyName("cancellable"), JsonRequired] bool Cancellable,
     [property: JsonPropertyName("cancellation_reason"), JsonRequired] string CancellationReason
 );

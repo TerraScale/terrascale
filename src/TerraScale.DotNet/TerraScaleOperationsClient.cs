@@ -18,11 +18,6 @@ public sealed class TerraScaleOperationsClient(TerraScaleClient client)
             throw new ArgumentOutOfRangeException(nameof(limit), "Limit must be between 1 and 50.");
         }
 
-        if (after is not null && after.Length > 256)
-        {
-            throw new ArgumentException("Operation discovery cursors must be at most 256 characters.", nameof(after));
-        }
-
         var route = "/api/v1/operations?";
         if (after is not null)
         {
@@ -31,7 +26,7 @@ public sealed class TerraScaleOperationsClient(TerraScaleClient client)
 
         route += "limit=" + limit.ToString(CultureInfo.InvariantCulture);
         return client.SendJsonAsync(HttpMethod.Get, route,
-            TerraScaleOperationDiscoveryJsonContext.Default.OperationPage, cancellationToken);
+            TerraScaleContractJsonContext.Default.OperationPage, cancellationToken);
     }
 
     public Task<ProvisioningOperation> GetAsync(string operationId, CancellationToken cancellationToken = default) =>
