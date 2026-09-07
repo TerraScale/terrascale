@@ -211,7 +211,7 @@ impl ImportStore {
         records: u64,
     ) -> rusqlite::Result<()> {
         let connection = self.connection.lock().expect("import store lock");
-        if connection.execute("UPDATE import_jobs SET pending_operation=?2,pending_cursor=?3,pending_records=?4 WHERE operation_id=?1 AND state='running' AND pending_operation IS NULL", params![id, operation, cursor, records])? != 1 { return Err(rusqlite::Error::InvalidQuery); }
+        if connection.execute("UPDATE import_jobs SET pending_operation=?2,pending_cursor=?3,pending_records=?4 WHERE operation_id=?1 AND state='running' AND pending_operation IS NULL", params![id, operation, cursor as i64, records as i64])? != 1 { return Err(rusqlite::Error::InvalidQuery); }
         Ok(())
     }
 

@@ -3,10 +3,10 @@
 use super::{CommitError, CommitOutcome, Engine, EngineError, EngineOpenError};
 use crate::{
     shard_split::{
-        canonical_shard_key, decode_canonical_shard_key, AtomicSplitCutover, CommittedSplitRoute,
-        CopyBatch, CopyEntry, CutoverContext, DurableSplitState, RangeCopySource, RangeCopyTarget,
-        RouteTable, ShardAdmissionToken, ShardRoute, ShardSplit, SplitContext, SplitEngineAdapter,
-        SplitPhase, SplitStateStore,
+        AtomicSplitCutover, CommittedSplitRoute, CopyBatch, CopyEntry, CutoverContext,
+        DurableSplitState, RangeCopySource, RangeCopyTarget, RouteTable, ShardAdmissionToken,
+        ShardRoute, ShardSplit, SplitContext, SplitEngineAdapter, SplitPhase, SplitStateStore,
+        canonical_shard_key, decode_canonical_shard_key,
     },
     types::{
         DocumentValue, ExpectedVersion, LocalDurability, OperationId, StorageSequence, TenantScope,
@@ -59,6 +59,18 @@ impl ScopedShardEngine {
                 .map_err(|_| EngineOpenError::InvalidConfig)?;
         config = config.with_replication_origin(origin);
         Engine::open(config)
+    }
+
+    /// Reopens a committed target without treating missing storage as a new
+    /// database. Its durable split identity is validated separately.
+    pub(crate) fn open_existing_target(
+        &self,
+        context: &SplitContext,
+    ) -> Result<Engine, EngineOpenError> {
+        if !crate::storage::database_file(&self.target_path(context)).is_file() {
+            return Err(EngineOpenError::StorageUnavailable);
+        }
+        self.open_target(context)
     }
 
     fn target_scope(target: &Engine, source_scope: &TenantScope) -> TenantScope {
@@ -210,13 +222,81 @@ impl SplitEngineAdapter for ScopedShardEngine {
     }
 
     fn verify_split_target(&mut self, context: &SplitContext) -> Result<(), Self::DataError> {
-        self.create_split_target(context)
+        if context.database_incarnation() != self.incarnation {
+            return Err(EngineError::Conflict);
+        }
+        let state =
+            self.load().map_err(|_| EngineError::StorageFailure)?.ok_or(EngineError::Conflict)?;
+        if !matches!(state.phase(), SplitPhase::CutOver | SplitPhase::Complete) {
+            return Err(EngineError::Conflict);
+        }
+        let identity = Self::target_identity(*context, &state)?;
+        let target = self.open_existing_target(context).map_err(|_| EngineError::StorageFailure)?;
+        let scope = Self::target_scope(&target, &self.scope);
+        if Self::target_identity_at(&target, &scope)?.as_deref() != Some(identity.as_slice()) {
+            return Err(EngineError::Conflict);
+        }
+        // Compare the actual stored documents, including their versions. A
+        // target identity proves ownership, never that the data was copied.
+        // Any unavailable historical boundary or mismatch retains the source.
+        let source = range_fingerprint(
+            &self.engine,
+            &self.scope,
+            StorageSequence::new(state.source_high_water()),
+            &state,
+        )?;
+        let copied =
+            range_fingerprint(&target, &scope, target.read_snapshot(&scope)?.sequence(), &state)?;
+        if source != copied {
+            return Err(EngineError::Conflict);
+        }
+        Ok(())
     }
 
     fn cleanup_split_source(&mut self, _context: &SplitContext) -> Result<(), Self::DataError> {
         // Source deletion requires the range-copy worker's durable cursor and
         // is intentionally left to that worker after verification.
         Ok(())
+    }
+}
+
+/// Streams bounded pages into an unambiguous digest of the complete moved
+/// range. Counts and length prefixes prevent concatenation ambiguities.
+fn range_fingerprint(
+    engine: &Engine,
+    scope: &TenantScope,
+    boundary: StorageSequence,
+    state: &DurableSplitState,
+) -> Result<(u64, [u8; 32]), EngineError> {
+    let mut after = None;
+    let mut count = 0_u64;
+    let mut digest = blake3::Hasher::new();
+    digest.update(b"shard-range-verification-v1\0");
+    loop {
+        let page = engine.snapshot_records_from(scope.tenant().clone(), boundary, after, 256)?;
+        let done = page.len() < 256;
+        after = page
+            .last()
+            .map(|record| (record.document().collection().clone(), record.document().id().clone()));
+        for record in page {
+            let document = record.document();
+            let key = canonical_shard_key(document.collection(), document.id());
+            if key.as_slice() >= state.split_key() {
+                return Ok((count, *digest.finalize().as_bytes()));
+            }
+            if state.lower().is_some_and(|lower| key.as_slice() < lower) {
+                continue;
+            }
+            let value = crate::storage::encode_document_body(document);
+            digest.update(&(key.len() as u64).to_be_bytes());
+            digest.update(&key);
+            digest.update(&(value.len() as u64).to_be_bytes());
+            digest.update(&value);
+            count = count.checked_add(1).ok_or(EngineError::StorageFailure)?;
+        }
+        if done {
+            return Ok((count, *digest.finalize().as_bytes()));
+        }
     }
 }
 

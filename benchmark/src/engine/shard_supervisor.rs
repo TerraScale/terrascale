@@ -55,8 +55,8 @@ where
     target: Arc<Engine>,
     copier: Option<RangeCopier>,
     catchup: Option<ShardJournalCatchUp>,
-    fence: WriterFence,
     scope: TenantScope,
+    journal_since_checkpoint: usize,
 }
 
 impl<O> ShardSplitSupervisor<O>
@@ -73,15 +73,17 @@ where
     ) -> Result<Self, SplitSupervisorError<O::Error>> {
         let adapter = ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
             .map_err(|_| SplitSupervisorError::MissingRoute)?;
+        let context = split.context().ok_or(SplitSupervisorError::MissingRoute)?;
+        let mut runtime = SplitRuntime::new(adapter, orchestrator, router);
+        runtime.admit(split).map_err(SplitSupervisorError::Runtime)?;
         let target = Arc::new(
-            adapter
-                .open_target(&split.context().ok_or(SplitSupervisorError::MissingRoute)?)
+            ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
+                .map_err(|_| SplitSupervisorError::MissingRoute)?
+                .open_existing_target(&context)
                 .map_err(SplitSupervisorError::TargetOpen)?,
         );
         let source = ScopedShardRangeSource::new(Arc::clone(&engine), &scope)
             .map_err(|_| SplitSupervisorError::MissingRoute)?;
-        let mut runtime = SplitRuntime::new(adapter, orchestrator, router);
-        runtime.admit(split).map_err(SplitSupervisorError::Runtime)?;
         let state = runtime.split().expect("admitted split").durable_state();
         let copier =
             RangeCopier::new(state.lower().map(ToOwned::to_owned), state.split_key().to_vec())
@@ -93,8 +95,8 @@ where
             target,
             copier: Some(copier),
             catchup: None,
-            fence: WriterFence::new(),
             scope,
+            journal_since_checkpoint: 0,
         })
     }
 
@@ -116,7 +118,7 @@ where
         let target = Arc::new(
             ScopedShardEngine::new(Arc::clone(&engine), scope.clone())
                 .map_err(|_| SplitSupervisorError::MissingRoute)?
-                .open_target(&context)
+                .open_existing_target(&context)
                 .map_err(SplitSupervisorError::TargetOpen)?,
         );
         let source = ScopedShardRangeSource::new(Arc::clone(&engine), &scope)
@@ -155,8 +157,8 @@ where
             target,
             copier,
             catchup,
-            fence: WriterFence::new(),
             scope,
+            journal_since_checkpoint: 0,
         }))
     }
 
@@ -205,22 +207,33 @@ where
             return Ok(SplitStep::Progress);
         }
         if let Some(catchup) = &mut self.catchup {
-            let count = catchup.step(catchup_limit).map_err(SplitSupervisorError::CatchUp)?;
+            self.journal_since_checkpoint +=
+                catchup.step(catchup_limit).map_err(SplitSupervisorError::CatchUp)?;
             let high = catchup.source_high_water().map_err(SplitSupervisorError::CatchUp)?;
-            self.runtime
-                .note_frontiers(high, catchup.applied_through(), high)
-                .map_err(SplitSupervisorError::Runtime)?;
-            if count > 0 || catchup.applied_through() < high {
+            if catchup.applied_through() < high {
+                // A checkpoint itself adds one source publication. Amortize
+                // that write so even one-group pages eventually reach the tail.
+                if self.journal_since_checkpoint >= 1024 {
+                    self.runtime
+                        .note_frontiers(high, catchup.applied_through(), high)
+                        .map_err(SplitSupervisorError::Runtime)?;
+                    self.journal_since_checkpoint = 0;
+                }
                 return Ok(SplitStep::Progress);
             }
-            self.fence.begin_drain(high).map_err(|_| SplitSupervisorError::MissingRoute)?;
-            self.fence.note_acked(high).map_err(|_| SplitSupervisorError::MissingRoute)?;
-            let permit = self
-                .fence
+            // Each attempt obtains a fresh permit. The engine's exclusive
+            // commit barrier performs the actual fence and may reject a stale
+            // frontier when a writer wins the race.
+            let mut fence = WriterFence::new();
+            fence.begin_drain(high).map_err(|_| SplitSupervisorError::MissingRoute)?;
+            fence.note_acked(high).map_err(|_| SplitSupervisorError::MissingRoute)?;
+            let permit = fence
                 .try_fence(catchup.applied_through())
                 .map_err(|_| SplitSupervisorError::MissingRoute)?;
-            let generation =
-                self.runtime.cut_over(permit, high).map_err(SplitSupervisorError::Runtime)?;
+            let generation = self
+                .runtime
+                .cut_over_caught_up(permit, high)
+                .map_err(SplitSupervisorError::Runtime)?;
             self.runtime.complete().map_err(SplitSupervisorError::Runtime)?;
             self.catchup = None;
             return Ok(SplitStep::Complete { generation });

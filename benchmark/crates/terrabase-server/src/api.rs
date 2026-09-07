@@ -2101,6 +2101,20 @@ async fn create_database(
     let residency = request.get("residency").and_then(serde_json::Value::as_str);
     match control.create(name, &placement, residency) {
         Ok(record) => {
+            // Local-composition guard knob: a benchmark subject must not be
+            // throttled by the Free plan's read-rate cell. Production never
+            // reads this environment; the billing lane owns its plans there.
+            if state.standalone_durability
+                && let Some(rps) = std::env::var("TERRABASE_LOCAL_GUARD_READ_RPS")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .filter(|value| *value > 0)
+            {
+                let limits = crate::guards::Plan::Free.limits();
+                state
+                    .guards
+                    .set_limits_override(name, crate::guards::AbuseLimits { read_query_rps: rps, ..limits });
+            }
             // The backup stream attaches at creation (S-06): open the
             // engine location so the database file exists, then start one
             // stream child for it from its first moment. The plan comes
@@ -2579,6 +2593,25 @@ impl WriteDurability {
         engine_scope: &terrabase::types::TenantScope,
         headers: &axum::http::HeaderMap,
     ) -> Result<Self, ApiError> {
+        Self::prepare_inner(state, engine, engine_scope, headers, false).await
+    }
+
+    async fn prepare_replay(
+        state: &ApiState,
+        engine: &terrabase::Engine,
+        engine_scope: &terrabase::types::TenantScope,
+        headers: &axum::http::HeaderMap,
+    ) -> Result<Self, ApiError> {
+        Self::prepare_inner(state, engine, engine_scope, headers, true).await
+    }
+
+    async fn prepare_inner(
+        state: &ApiState,
+        engine: &terrabase::Engine,
+        engine_scope: &terrabase::types::TenantScope,
+        headers: &axum::http::HeaderMap,
+        replay: bool,
+    ) -> Result<Self, ApiError> {
         let class = Durability::of_header(headers)?;
         let unavailable = || durability_unavailable(class == Durability::Global);
         let progress = state.replication_progress.clone().ok_or_else(unavailable)?;
@@ -2613,7 +2646,7 @@ impl WriteDurability {
         // Sequence zero checks the accepted assignment and fencing state;
         // it does not establish durability for any committed operation.
         progress.wait_regional(scope, 0, timeout).await.map_err(|_| unavailable())?;
-        let uniform_context = if class == Durability::Global {
+        let uniform_context = if class == Durability::Global && !replay {
             let context = engine
                 .durable_origin_prefixes(engine_scope)
                 .map_err(|_| ApiError::storage_failure())?;
@@ -2684,7 +2717,11 @@ fn write_operation(headers: &axum::http::HeaderMap, kind: &str) -> Result<Operat
     let identity = match headers.get("idempotency-key") {
         Some(value) => {
             let key = value.to_str().map_err(|_| ApiError::invalid_header("Idempotency-Key"))?;
-            format!("{kind}-idem-{key}")
+            let namespace = match kind {
+                "api-put" | "api-patch" | "api-delete" => "api-document",
+                _ => kind,
+            };
+            format!("{namespace}-idem-{key}")
         }
         None => format!("{kind}-{}", unix_millis_nanos()),
     };
@@ -3271,6 +3308,95 @@ fn check_if_match(
     }
 }
 
+/// The original request, independent of the live merge base and assigned revision.
+fn document_request_fingerprint(
+    method: &str,
+    collection: &CollectionName,
+    id: &DocumentId,
+    value: Option<&serde_json::Value>,
+    headers: &axum::http::HeaderMap,
+) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"document-request-v1");
+    let mut field = |bytes: &[u8]| {
+        hash.update(&(bytes.len() as u64).to_le_bytes());
+        hash.update(bytes);
+    };
+    field(method.as_bytes());
+    field(collection.as_str().as_bytes());
+    field(id.as_str().as_bytes());
+    field(&value.map_or_else(Vec::new, |value| value.to_string().into_bytes()));
+    for name in ["if-match", "if-none-match"] {
+        field(name.as_bytes());
+        let values = headers.get_all(name);
+        field(&(values.iter().count() as u64).to_le_bytes());
+        for value in values {
+            field(value.as_bytes());
+        }
+    }
+    *hash.finalize().as_bytes()
+}
+
+fn document_request_error(error: terrabase::EngineError) -> ApiError {
+    match error {
+        terrabase::EngineError::OperationIdReuse { .. } => ApiError {
+            status: StatusCode::CONFLICT,
+            code: "commit_rejected",
+            message: "the idempotency key already names a different request".into(),
+            fix: "retry the original method, path, body, and preconditions, or use a new key".into(),
+            placement: None,
+        },
+        _ => ApiError::storage_failure(),
+    }
+}
+
+#[allow(clippy::too_many_arguments, reason = "replay needs the authorized write request and original identity")]
+async fn replay_document_request(
+    state: &ApiState,
+    engine: &terrabase::Engine,
+    scope: &terrabase::types::TenantScope,
+    headers: &axum::http::HeaderMap,
+    operation: &OperationId,
+    fingerprint: [u8; 32],
+    collection: &CollectionName,
+    id: &DocumentId,
+) -> Result<Option<Response>, ApiError> {
+    if !has_idempotency_key(headers) {
+        return Ok(None);
+    }
+    let Some((receipt, revision)) = engine
+        .resolve_document_request(scope, operation.clone(), fingerprint)
+        .map_err(document_request_error)?
+    else {
+        return Ok(None);
+    };
+    let durability = WriteDurability::prepare_replay(state, engine, scope, headers).await?;
+    durability.confirm(engine, scope, &receipt).await?;
+    let mut session = open_session(engine, scope, headers)?;
+    document_write_response(&mut session, collection, id, revision).map(Some)
+}
+
+fn document_write_response(
+    session: &mut Session<'_>,
+    collection: &CollectionName,
+    id: &DocumentId,
+    revision: Option<String>,
+) -> Result<Response, ApiError> {
+    let token = refresh_session(session, collection, id)?;
+    let mut response = match revision {
+        Some(revision) => {
+            let mut response = json_response(StatusCode::OK, format!("{{\"revision\":\"{revision}\"}}"));
+            if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
+                response.headers_mut().insert(axum::http::header::ETAG, etag);
+            }
+            response
+        }
+        None => json_response(StatusCode::NO_CONTENT, String::new()),
+    };
+    with_session(&mut response, &token);
+    Ok(response)
+}
+
 /// One document's live revision for a response `ETag`: the same probe the
 /// GET path answers `If-None-Match` from, so a write's `ETag` always names
 /// what the next `GET` serves.
@@ -3566,7 +3692,21 @@ async fn put_document(
             .into_response();
         }
     };
-    let document = Document::new(id, collection, json_value(&value));
+    let document = Document::new(id.clone(), collection.clone(), json_value(&value));
+    let operation = match write_operation(&headers, "api-put") {
+        Ok(operation) => operation,
+        Err(error) => return error.into_response(),
+    };
+    let fingerprint = if has_idempotency_key(&headers) {
+        document_request_fingerprint("PUT", &collection, &id, Some(&value), &headers)
+    } else {
+        [0; 32]
+    };
+    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {},
+        Err(error) => return error.into_response(),
+    }
     let mut session = match open_session(engine, &scope, &headers) {
         Ok(session) => session,
         Err(error) => return error.into_response(),
@@ -3579,18 +3719,25 @@ async fn put_document(
         return ApiError::storage_failure().into_response();
     };
     mark(trace, &mut t, "read_snapshot");
-    let operation = match write_operation(&headers, "api-put") {
-        Ok(operation) => operation,
-        Err(error) => return error.into_response(),
-    };
     let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
     mark(trace, &mut t, "durability_prepare");
-    let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
-        return ApiError::storage_failure().into_response();
+    let mut transaction = match engine.begin(&scope, snapshot, operation.clone()) {
+        Ok(transaction) => transaction,
+        Err(terrabase::EngineError::OperationIdReuse { .. }) => {
+            return durability_unknown().into_response();
+        }
+        Err(_) => return ApiError::storage_failure().into_response(),
     };
+    // The operation reservation now excludes a simultaneous publisher of
+    // this identity. Recheck before any live-state precondition or merge.
+    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {},
+        Err(error) => return error.into_response(),
+    }
     let database_id = engine.database_owner().database().to_text();
     let operation_id = transaction.operation_id().clone();
     let units = terrabase::usage::write_units_for_bytes(
@@ -3629,7 +3776,6 @@ async fn put_document(
             Err(_) => return ApiError::storage_failure().into_response(),
         }
     };
-    let probe = (document.collection().clone(), document.id().clone());
     if let Err(reason) = transaction.put(document, expected) {
         return ApiError {
             status: StatusCode::CONFLICT,
@@ -3640,42 +3786,45 @@ async fn put_document(
         }
         .into_response();
     }
+    if has_idempotency_key(&headers) {
+        if let Err(error) = transaction.bind_document_request(fingerprint) {
+            return document_request_error(error).into_response();
+        }
+    }
     if let Err(error) = durability.guard(&mut transaction) {
         return error.into_response();
     }
-    match transaction.commit(LocalDurability::Synced) {
-        CommitOutcome::Committed(receipt) => {
-            if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
-                return error.into_response();
-            }
-            let revision = match live_revision(engine, &scope, &probe.0, &probe.1) {
-                Ok(revision) => revision,
-                Err(error) => return error.into_response(),
-            };
-            let mut response =
-                json_response(StatusCode::OK, format!("{{\"revision\":\"{revision}\"}}"));
-            if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
-                response.headers_mut().insert(axum::http::header::ETAG, etag);
-            }
     mark(trace, &mut t, "staging");
-    match transaction.commit(LocalDurability::Synced) {
+    let outcome = transaction.commit(LocalDurability::Synced);
+    if !matches!(outcome, CommitOutcome::Committed(_)) {
+        match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+            Ok(Some(response)) => return response,
+            Ok(None) => {},
+            Err(error) => return error.into_response(),
+        }
+    }
+    match outcome {
         CommitOutcome::Committed(receipt) => {
             mark(trace, &mut t, "commit");
             if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
                 return error.into_response();
             }
-            mark(trace, &mut t, "durability_confirm");
-            let revision = match live_revision(engine, &scope, &probe.0, &probe.1) {
-                Ok(revision) => revision,
-                Err(error) => return error.into_response(),
+            let revision = if has_idempotency_key(&headers) {
+                match engine.resolve_document_request(&scope, operation.clone(), fingerprint) {
+                    Ok(Some((_, revision))) => revision,
+                    Ok(None) => return ApiError::storage_failure().into_response(),
+                    Err(error) => return document_request_error(error).into_response(),
+                }
+            } else {
+                match live_revision(engine, &scope, &collection, &id) {
+                    Ok(revision) => Some(revision),
+                    Err(error) => return error.into_response(),
+                }
             };
-            mark(trace, &mut t, "live_revision");
-            let token = match refresh_session(&mut session, &probe.0, &probe.1) {
-                Ok(token) => token,
-                Err(error) => return error.into_response(),
-            };
-            with_session(&mut response, &token);
-            response
+            match document_write_response(&mut session, &collection, &id, revision) {
+                Ok(response) => response,
+                Err(error) => error.into_response(),
+            }
         }
         CommitOutcome::Rejected(terrabase::CommitError::Conflict) if create_only => {
             ApiError::precondition_failed("If-None-Match: * needs the document to be absent")
@@ -3722,12 +3871,22 @@ async fn patch_document(
         Ok(parts) => parts,
         Err(error) => return error.into_response(),
     };
-    let mut session = match open_session(engine, &scope, &headers) {
-        Ok(session) => session,
-        Err(error) => return error.into_response(),
-    };
     let operation = match write_operation(&headers, "api-patch") {
         Ok(operation) => operation,
+        Err(error) => return error.into_response(),
+    };
+    let fingerprint = if has_idempotency_key(&headers) {
+        document_request_fingerprint("PATCH", &collection, &id, Some(&value), &headers)
+    } else {
+        [0; 32]
+    };
+    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {},
+        Err(error) => return error.into_response(),
+    }
+    let mut session = match open_session(engine, &scope, &headers) {
+        Ok(session) => session,
         Err(error) => return error.into_response(),
     };
     let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
@@ -3738,9 +3897,20 @@ async fn patch_document(
         Ok(snapshot) => snapshot,
         Err(error) => return session_error(error).into_response(),
     };
-    let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
-        return ApiError::storage_failure().into_response();
+    let mut transaction = match engine.begin(&scope, snapshot, operation.clone()) {
+        Ok(transaction) => transaction,
+        Err(terrabase::EngineError::OperationIdReuse { .. }) => {
+            return durability_unknown().into_response();
+        }
+        Err(_) => return ApiError::storage_failure().into_response(),
     };
+    // The operation reservation now excludes a simultaneous publisher of
+    // this identity. Recheck before any live-state precondition or merge.
+    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {},
+        Err(error) => return error.into_response(),
+    }
     let database_id = engine.database_owner().database().to_text();
     let operation_id = transaction.operation_id().clone();
     if let Err(error) = check_if_match(&headers, &transaction, &collection, &id) {
@@ -3756,7 +3926,6 @@ async fn patch_document(
     let mut merged = existing.value().clone();
     merge_patch(&mut merged, &json_value(&value));
     let units = document_value_bytes(&merged);
-    let probe = (collection.clone(), id.clone());
     let patched = Document::new(id.clone(), collection.clone(), merged);
     if let Err(error) = attach_write_budget(
         &state,
@@ -3769,14 +3938,9 @@ async fn patch_document(
     ) {
         return error.into_response();
     }
-    // The merge base is snapshot state, not the logical request: with an
-    // idempotency key the expected clause is Any so an unchanged-state
-    // retry replays; without one the base version must hold.
-    let expected = if has_idempotency_key(&headers) {
-        ExpectedVersion::Any
-    } else {
-        ExpectedVersion::Exact(existing.metadata().version())
-    };
+    // The original patch is replayed from its durable fingerprint; a new
+    // publication must still hold the exact merge-base version.
+    let expected = ExpectedVersion::Exact(existing.metadata().version());
     if let Err(reason) = transaction.put(patched, expected) {
         return ApiError {
             status: StatusCode::CONFLICT,
@@ -3787,29 +3951,43 @@ async fn patch_document(
         }
         .into_response();
     }
+    if has_idempotency_key(&headers) {
+        if let Err(error) = transaction.bind_document_request(fingerprint) {
+            return document_request_error(error).into_response();
+        }
+    }
     if let Err(error) = durability.guard(&mut transaction) {
         return error.into_response();
     }
-    match transaction.commit(LocalDurability::Synced) {
+    let outcome = transaction.commit(LocalDurability::Synced);
+    if !matches!(outcome, CommitOutcome::Committed(_)) {
+        match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+            Ok(Some(response)) => return response,
+            Ok(None) => {},
+            Err(error) => return error.into_response(),
+        }
+    }
+    match outcome {
         CommitOutcome::Committed(receipt) => {
             if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
                 return error.into_response();
             }
-            let revision = match live_revision(engine, &scope, &probe.0, &probe.1) {
-                Ok(revision) => revision,
-                Err(error) => return error.into_response(),
+            let revision = if has_idempotency_key(&headers) {
+                match engine.resolve_document_request(&scope, operation.clone(), fingerprint) {
+                    Ok(Some((_, revision))) => revision,
+                    Ok(None) => return ApiError::storage_failure().into_response(),
+                    Err(error) => return document_request_error(error).into_response(),
+                }
+            } else {
+                match live_revision(engine, &scope, &collection, &id) {
+                    Ok(revision) => Some(revision),
+                    Err(error) => return error.into_response(),
+                }
             };
-            let mut response =
-                json_response(StatusCode::OK, format!("{{\"revision\":\"{revision}\"}}"));
-            if let Ok(etag) = HeaderValue::from_str(&format!("\"{revision}\"")) {
-                response.headers_mut().insert(axum::http::header::ETAG, etag);
+            match document_write_response(&mut session, &collection, &id, revision) {
+                Ok(response) => response,
+                Err(error) => error.into_response(),
             }
-            let token = match refresh_session(&mut session, &collection, &id) {
-                Ok(token) => token,
-                Err(error) => return error.into_response(),
-            };
-            with_session(&mut response, &token);
-            response
         }
         CommitOutcome::Unknown(_) => durability_unknown().into_response(),
         CommitOutcome::Rejected(reason) => ApiError {
@@ -3929,6 +4107,20 @@ async fn delete_document(
     let Ok(id) = DocumentId::try_new(&id) else {
         return invalid_identifier("document identifier", &id).into_response();
     };
+    let operation = match write_operation(&headers, "api-delete") {
+        Ok(operation) => operation,
+        Err(error) => return error.into_response(),
+    };
+    let fingerprint = if has_idempotency_key(&headers) {
+        document_request_fingerprint("DELETE", &collection, &id, None, &headers)
+    } else {
+        [0; 32]
+    };
+    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {},
+        Err(error) => return error.into_response(),
+    }
     let mut session = match open_session(engine, &scope, &headers) {
         Ok(session) => session,
         Err(error) => return error.into_response(),
@@ -3940,32 +4132,29 @@ async fn delete_document(
     let Ok(snapshot) = engine.read_snapshot(&scope) else {
         return ApiError::storage_failure().into_response();
     };
-    let operation = match write_operation(&headers, "api-delete") {
-        Ok(operation) => operation,
-        Err(error) => return error.into_response(),
-    };
     let durability = match WriteDurability::prepare(&state, engine, &scope, &headers).await {
         Ok(durability) => durability,
         Err(error) => return error.into_response(),
     };
-    let Ok(mut transaction) = engine.begin(&scope, snapshot, operation) else {
-        return ApiError::storage_failure().into_response();
+    let mut transaction = match engine.begin(&scope, snapshot, operation.clone()) {
+        Ok(transaction) => transaction,
+        Err(terrabase::EngineError::OperationIdReuse { .. }) => {
+            return durability_unknown().into_response();
+        }
+        Err(_) => return ApiError::storage_failure().into_response(),
     };
+    // The operation reservation now excludes a simultaneous publisher of
+    // this identity. Recheck before any live-state precondition or merge.
+    match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {},
+        Err(error) => return error.into_response(),
+    }
     if let Err(error) = check_if_match(&headers, &transaction, &collection, &id) {
         return error.into_response();
     }
     if !present {
-        // A timed-out delete has already removed its document. Only a
-        // known committed identity may reach the engine's digest-checked
-        // replay path; a fresh key must still receive not_found.
-        let replay = has_idempotency_key(&headers)
-            && matches!(
-                engine.resolve_commit(&scope, transaction.operation_id().clone()),
-                Ok(terrabase::DurableResolution::Committed(_))
-            );
-        if !replay {
-            return document_not_found(collection.as_str(), id.as_str()).into_response();
-        }
+        return document_not_found(collection.as_str(), id.as_str()).into_response();
     }
     let database_id = engine.database_owner().database().to_text();
     let operation_id = transaction.operation_id().clone();
@@ -3995,21 +4184,40 @@ async fn delete_document(
     // existence, and this route read the target above); the commit's
     // conflict rejection is the version check.
     transaction.delete_in_collection(&collection, id.clone(), expected);
+    if has_idempotency_key(&headers) {
+        if let Err(error) = transaction.bind_document_request(fingerprint) {
+            return document_request_error(error).into_response();
+        }
+    }
     if let Err(error) = durability.guard(&mut transaction) {
         return error.into_response();
     }
-    match transaction.commit(LocalDurability::Synced) {
+    let outcome = transaction.commit(LocalDurability::Synced);
+    if !matches!(outcome, CommitOutcome::Committed(_)) {
+        match replay_document_request(&state, engine, &scope, &headers, &operation, fingerprint, &collection, &id).await {
+            Ok(Some(response)) => return response,
+            Ok(None) => {},
+            Err(error) => return error.into_response(),
+        }
+    }
+    match outcome {
         CommitOutcome::Committed(receipt) => {
             if let Err(error) = durability.confirm(engine, &scope, &receipt).await {
                 return error.into_response();
             }
-            let token = match refresh_session(&mut session, &collection, &id) {
-                Ok(token) => token,
-                Err(error) => return error.into_response(),
+            let revision = if has_idempotency_key(&headers) {
+                match engine.resolve_document_request(&scope, operation.clone(), fingerprint) {
+                    Ok(Some((_, revision))) => revision,
+                    Ok(None) => return ApiError::storage_failure().into_response(),
+                    Err(error) => return document_request_error(error).into_response(),
+                }
+            } else {
+                None
             };
-            let mut response = json_response(StatusCode::NO_CONTENT, String::new());
-            with_session(&mut response, &token);
-            response
+            match document_write_response(&mut session, &collection, &id, revision) {
+                Ok(response) => response,
+                Err(error) => error.into_response(),
+            }
         }
         CommitOutcome::Unknown(_) => durability_unknown().into_response(),
         CommitOutcome::Rejected(reason) => ApiError {
@@ -4745,6 +4953,8 @@ mod tests {
     mod byo_router_tests;
     #[path = "conditional_create.rs"]
     mod conditional_create;
+    #[path = "conditional_replay.rs"]
+    mod conditional_replay;
     #[path = "api_session_query_tests.rs"]
     mod api_session_query_tests;
     mod cors;

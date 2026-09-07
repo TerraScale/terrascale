@@ -30,6 +30,7 @@ mod origin_fencing;
 mod patch;
 mod physical_restore;
 mod private_metadata;
+mod document_request;
 mod recovery_statistics;
 mod repair_summary;
 mod replicated_publication;
@@ -5263,6 +5264,9 @@ impl Transaction<'_> {
     }
 
     fn commit_unobserved(mut self, durability: LocalDurability) -> CommitOutcome {
+        if !self.valid_document_request_binding() {
+            return CommitOutcome::Rejected(CommitError::Validation);
+        }
         let writes = std::mem::take(&mut self.writes);
         let usage_admission = self.usage_admission.take();
         let budget_allocation = self.budget_allocation.take();

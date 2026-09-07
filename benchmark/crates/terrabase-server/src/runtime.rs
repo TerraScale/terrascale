@@ -361,11 +361,9 @@ async fn run_production(config: ServerConfig) -> Result<(), Box<dyn Error + Send
             },
         ))) as Box<dyn Error + Send + Sync>
     })?;
-    let limits = terrabase::backup::worker::FleetLimits {
-        streams: production.databases.iter().filter(|database| database.enabled).count().max(1),
-        staging_bytes_per_stream: 16 * 1024 * 1024,
-        points_per_stream: 64,
-    };
+    let limits = production
+        .native_backup_limits()
+        .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
     let native = Arc::new(admission.compose_native_backup(limits).map_err(|_| {
         Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
             crate::production::ProductionComponentError {
@@ -584,7 +582,8 @@ async fn serve_admitted_production(
         );
         let imports = crate::api::imports::ImportRuntime::open(primary.backup_root.join("imports"))
             .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
-        Arc::get_mut(&mut state).expect("unique production API state").imports = Some(Arc::new(imports));
+        Arc::get_mut(&mut state).expect("unique production API state").imports =
+            Some(Arc::new(imports));
         let prepared = admission.prepare_public(public, state, auth).await.map_err(|_| {
             Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
                 crate::production::ProductionComponentError {

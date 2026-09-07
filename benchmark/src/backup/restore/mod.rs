@@ -106,7 +106,7 @@ const READBACK_PAGE: u32 = 256;
 // ---------------------------------------------------------------------------
 
 /// Which recovery point one restore selects.
-enum Selection {
+pub(super) enum Selection {
     /// The destination's newest chain head, with its complete chain.
     Latest,
     /// Exactly the named sealed recovery point, with the chain down to and
@@ -164,7 +164,7 @@ fn resolve_encrypted_chain(
     resolve_encrypted_points_chain(&points, selection)
 }
 
-fn resolve_encrypted_points_chain(
+pub(super) fn resolve_encrypted_points_chain(
     points: &[BackupManifest],
     selection: &Selection,
 ) -> Result<Vec<BackupManifest>, BackupError> {
@@ -250,7 +250,14 @@ fn resolve_timestamp_chain(
     requested: u64,
 ) -> Result<Vec<BackupManifest>, BackupError> {
     let points = discover_encrypted_points(destination, cipher)?;
-    let parents = index_chain_parents(&points);
+    resolve_timestamp_points_chain(&points, requested)
+}
+
+pub(super) fn resolve_timestamp_points_chain(
+    points: &[BackupManifest],
+    requested: u64,
+) -> Result<Vec<BackupManifest>, BackupError> {
+    let parents = index_chain_parents(points);
     let mut roots = BTreeMap::new();
     let mut selected = None;
     let mut selected_rank = None;

@@ -203,6 +203,10 @@ pub(crate) mod admitted_fixture {
         let (tenant, project, database) = scope;
         let environment = EnvironmentName::try_new("production").unwrap();
         ProductionConfig {
+            backup_disk: crate::config::ProductionBackupDisk {
+                staging_bytes_per_stream: 8 * 1024 * 1024 * 1024,
+                total_staging_bytes: 8 * 1024 * 1024 * 1024,
+            },
             environment: ProductionEnvironment { name: environment, cluster, member },
             databases: vec![ProductionDatabase {
                 tenant,

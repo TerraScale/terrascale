@@ -299,7 +299,7 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
         assert_eq!(response.status(), StatusCode::CREATED);
         let host = super::super::document_host(&state, "prod").unwrap();
         let database = host.engine().database_owner().database().to_text();
-        let (signed, spki) = signed_for("terrabase-local", &database, "api-put-idem-budget", paid);
+        let (signed, spki) = signed_for("terrabase-local", &database, "api-document-idem-budget", paid);
         let binding = Arc::new(std::sync::Mutex::new(Binding {
             organization: "terrabase-local".into(),
             holder: "holder".into(),
@@ -388,18 +388,18 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
             .join("terrabase.sqlite3");
         let connection = rusqlite::Connection::open(path).unwrap();
         let consumption: (i64, i64, i64) = connection.query_row(
-            "SELECT COUNT(*), SUM(units_total), SUM(units_remaining) FROM usage_budget_allocations WHERE operation='api-put-idem-budget'",
+            "SELECT COUNT(*), SUM(units_total), SUM(units_remaining) FROM usage_budget_allocations WHERE operation='api-document-idem-budget'",
             [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
         assert_eq!(consumption, (1, 1, 0), "paid={paid}");
         let journal_connection =
             rusqlite::Connection::open(fixture.root.join("usage-admissions.sqlite")).unwrap();
         let admitted_at: i64 = journal_connection.query_row(
-            "SELECT accepted_at_millis FROM operation_admissions WHERE operation='api-put-idem-budget'",
+            "SELECT accepted_at_millis FROM operation_admissions WHERE operation='api-document-idem-budget'",
             [], |row| row.get(0),
         ).unwrap();
         let fact_at: i64 = connection
             .query_row(
-                "SELECT start_millis FROM usage_facts WHERE fact_id='api-put-idem-budget'",
+                "SELECT start_millis FROM usage_facts WHERE fact_id='api-document-idem-budget'",
                 [],
                 |row| row.get(0),
             )
@@ -407,7 +407,7 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
         assert_eq!(fact_at, admitted_at, "the retry retains the first local accounting window");
         let facts: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM usage_facts WHERE fact_id='api-put-idem-budget'",
+                "SELECT COUNT(*) FROM usage_facts WHERE fact_id='api-document-idem-budget'",
                 [],
                 |row| row.get(0),
             )

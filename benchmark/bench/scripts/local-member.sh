@@ -141,7 +141,10 @@ cmd_up() {
   envelope_require
   local cpus
   cpus="$(envelope_cpu_set)"
-  log "starting $REGION member: api 127.0.0.1:$API_PORT under $TERRABASE_BENCH_ENVELOPE_SPEC on cpus $cpus"
+  # A benchmark subject runs far past the Free plan's 100 read rps; the
+  # local composition lifts only that cell (see create_database in api.rs).
+  export TERRABASE_LOCAL_GUARD_READ_RPS="${LOCAL_MEMBER_GUARD_READ_RPS:-1000000}"
+  log "starting $REGION member: api 127.0.0.1:$API_PORT under $TERRABASE_BENCH_ENVELOPE_SPEC on cpus $cpus (guard read rps $TERRABASE_LOCAL_GUARD_READ_RPS)"
   # The measured subject and the bench drivers share one fenced scope, which
   # is exactly the evidence shape the drivers record. The system scope is
   # used when the user manager cannot delegate cpuset (see

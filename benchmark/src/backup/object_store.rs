@@ -388,6 +388,76 @@ impl ObjectDestination {
         .await
     }
 
+    /// Verifies remote artifacts against an authenticated retained manifest.
+    /// Streams ciphertext members without recreating local archive history.
+    ///
+    /// # Errors
+    /// Refuses missing, altered, oversized or unpublished artifacts.
+    pub async fn verify_manifest(
+        &self,
+        prefix: &str,
+        manifest_path: &Path,
+        manifest: &super::BackupManifest,
+    ) -> Result<(), TransferError> {
+        validate_prefix(prefix)?;
+        let index = self.read_bounded(&object_key(prefix, INDEX)?, INDEX_LIMIT).await?;
+        let entries = parse_index(&index, self.max_artifact_bytes, self.max_point_bytes)?;
+        if entries.len() != manifest.members().len() + 1 {
+            return Err(TransferError::Integrity);
+        }
+        let expected = fs::read(manifest_path).map_err(|_| TransferError::LocalIo)?;
+        let actual = self
+            .read_bounded(
+                &object_key(prefix, super::manifest::ENCRYPTED_MANIFEST_FILE)?,
+                self.max_artifact_bytes,
+            )
+            .await?;
+        let manifest_entry = entries
+            .iter()
+            .find(|entry| entry.name == super::manifest::ENCRYPTED_MANIFEST_FILE)
+            .ok_or(TransferError::Integrity)?;
+        if expected != actual
+            || manifest_entry.length != actual.len() as u64
+            || manifest_entry.digest != blake3::hash(&actual)
+        {
+            return Err(TransferError::Integrity);
+        }
+        for member in manifest.members() {
+            let entry = entries
+                .iter()
+                .find(|entry| entry.name == member.name())
+                .ok_or(TransferError::Integrity)?;
+            if entry.length != member.length() {
+                return Err(TransferError::Integrity);
+            }
+            let response = self
+                .store
+                .get(&object_key(prefix, member.name())?)
+                .await
+                .map_err(|_| TransferError::Unavailable)?;
+            let mut chunks = response.into_stream();
+            let mut digest = aws_lc_rs::digest::Context::new(&aws_lc_rs::digest::SHA256);
+            let mut transport_digest = blake3::Hasher::new();
+            let mut length = 0_u64;
+            while let Some(chunk) = chunks.next().await {
+                let chunk = chunk.map_err(|_| TransferError::Unavailable)?;
+                length = length.checked_add(chunk.len() as u64).ok_or(TransferError::Integrity)?;
+                if length > member.length() {
+                    return Err(TransferError::Integrity);
+                }
+                digest.update(&chunk);
+                transport_digest.update(&chunk);
+            }
+            if length != member.length()
+                || hex::encode(digest.finish().as_ref()) != member.digest()
+                || transport_digest.finalize() != entry.digest
+            {
+                return Err(TransferError::Integrity);
+            }
+        }
+        Ok(())
+    }
+
     /// Deletes one retired recovery point after the caller validates retention.
     ///
     /// Invalidates its publication index and encrypted manifest before deleting

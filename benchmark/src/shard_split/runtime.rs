@@ -207,6 +207,30 @@ where
         self.engine.save(&split.durable_state()).map_err(SplitRuntimeError::State)
     }
 
+    /// Commits a fully applied journal frontier with the route itself. Saving
+    /// an intermediate checkpoint would append another source publication and
+    /// move the very frontier the worker just drained.
+    pub(crate) fn cut_over_caught_up(
+        &mut self,
+        permit: CutoverPermit,
+        through: u64,
+    ) -> Result<
+        u64,
+        SplitRuntimeError<
+            <E as SplitStateStore>::Error,
+            E::DataError,
+            <E as AtomicSplitCutover>::Error,
+            O::Error,
+        >,
+    > {
+        let split =
+            self.split.as_mut().ok_or(SplitRuntimeError::WrongPhase(SplitPhase::Planned))?;
+        split.note_source_high_water(through);
+        split.note_target_applied(through);
+        split.note_acked(through);
+        self.cut_over(permit, through)
+    }
+
     /// Atomically installs routing, then publishes the session frontier.
     /// Publication is never attempted until the engine confirms its commit.
     pub fn cut_over(

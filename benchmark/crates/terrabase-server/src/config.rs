@@ -190,6 +190,8 @@ pub struct ProductionConfig {
     pub environment: ProductionEnvironment,
     /// One-to-many isolated database catalog.
     pub databases: Vec<ProductionDatabase>,
+    /// Explicit local native-backup disk reservation, separate from RAM and database storage.
+    pub backup_disk: ProductionBackupDisk,
     /// RF=2 placement generation and replica-set epoch.
     pub placement: ProductionPlacement,
     /// Separate TBEP, QUIC, and metrics bindings.
@@ -204,6 +206,64 @@ pub struct ProductionConfig {
     pub budget: Option<ProductionBudgetConfig>,
     /// Explicit local admission listener and persistent Member root.
     pub member_admission: Option<ProductionMemberAdmission>,
+}
+
+/// Disk allocation for local native-backup archives and restore scratch.
+/// Operators must size the archive allowance for encoded records, including
+/// per-record encryption overhead; logical storage quotas alone do not bound it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProductionBackupDisk {
+    /// Per-database disk bytes: half active archives, half rotation/restore scratch.
+    pub staging_bytes_per_stream: u64,
+    /// Aggregate bytes reserved on this member's backup filesystem.
+    pub total_staging_bytes: u64,
+}
+
+impl ProductionConfig {
+    /// Validates the declared disk reservation before composing backup capture.
+    pub(crate) fn native_backup_limits(
+        &self,
+    ) -> Result<terrabase::backup::worker::FleetLimits, ConfigError> {
+        let disk = self.backup_disk;
+        let streams = self.databases.iter().filter(|database| database.enabled).count().max(1);
+        let active_bytes = disk.staging_bytes_per_stream / 2;
+        let archive_bytes = active_bytes
+            .checked_sub(2 * 1024 * 1024)
+            .filter(|bytes| *bytes > 0)
+            .ok_or(ConfigError::InvalidProductionBoundary)?;
+        let reserved = disk
+            .staging_bytes_per_stream
+            .checked_mul(
+                u64::try_from(streams).map_err(|_| ConfigError::InvalidProductionBoundary)?,
+            )
+            .ok_or(ConfigError::InvalidProductionBoundary)?;
+        if reserved > disk.total_staging_bytes || disk.total_staging_bytes > i64::MAX as u64 {
+            return Err(ConfigError::InvalidProductionBoundary);
+        }
+        for database in self.databases.iter().filter(|database| database.enabled) {
+            // This is a necessary capacity floor, not a guarantee that all
+            // encoded records fit. The explicit archive ceiling remains hard.
+            if archive_bytes < database.quotas.max_storage_bytes {
+                return Err(ConfigError::InvalidProductionBoundary);
+            }
+            let backup = database.backup.as_ref().ok_or(ConfigError::InvalidProductionBoundary)?;
+            if backup
+                .destinations
+                .iter()
+                .any(|destination| destination.max_point_bytes < active_bytes)
+            {
+                return Err(ConfigError::InvalidProductionBoundary);
+            }
+        }
+        Ok(terrabase::backup::worker::FleetLimits {
+            streams,
+            staging_bytes_per_stream: disk.staging_bytes_per_stream,
+            // This bounds only the local active chain and replacement root;
+            // provider retention uses the separate authenticated inventory.
+            points_per_stream: 64,
+        })
+    }
 }
 
 /// Pinned GRU write-budget signer and policy/consent epochs.
@@ -584,6 +644,7 @@ struct FileProductionConfig {
     environment: FileProductionEnvironment,
     #[serde(default)]
     databases: Vec<FileProductionDatabase>,
+    backup_disk: ProductionBackupDisk,
     placement: FileProductionPlacement,
     transport: FileProductionTransport,
     release: FileReleaseBinding,
@@ -1190,6 +1251,7 @@ impl ServerConfig {
             })
             .transpose()?;
         let production = ProductionConfig {
+            backup_disk: file.backup_disk,
             environment,
             databases,
             placement,
@@ -1213,6 +1275,7 @@ impl ServerConfig {
                 .transpose()?,
             member_admission,
         };
+        production.native_backup_limits()?;
         let first = production.databases.iter().find(|database| database.enabled);
         let local_region = production
             .placement
@@ -1918,6 +1981,10 @@ allow_wildcard = false
         r#"
 mode = "production"
 
+[backup_disk]
+staging_bytes_per_stream = 8589934592
+total_staging_bytes = 8589934592
+
 [environment]
 name = "prod"
 cluster = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
@@ -1940,7 +2007,7 @@ enabled = true
 [databases.backup]
 policy_revision = "backup-policy-1"
 retention_days = 7
-destinations = [{ provider = "oci", endpoint = "https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com", signing_region = "sa-saopaulo-1", bucket = "backup-a", verified_geography = "br", permitted_geographies = ["br"], placement_revision = "placement-4", access_key_file = "/run/secrets/backup-access", secret_key_file = "/run/secrets/backup-secret", max_artifact_bytes = 1048576, max_point_bytes = 16777216 }]
+destinations = [{ provider = "oci", endpoint = "https://objectstorage.sa-saopaulo-1.compat.objectstorage.sa-saopaulo-1.oraclecloud.com", signing_region = "sa-saopaulo-1", bucket = "backup-a", verified_geography = "br", permitted_geographies = ["br"], placement_revision = "placement-4", access_key_file = "/run/secrets/backup-access", secret_key_file = "/run/secrets/backup-secret", max_artifact_bytes = 1048576, max_point_bytes = 4294967296 }]
 
 [placement]
 generation = 4
@@ -1986,6 +2053,31 @@ capabilities = ["production", "tbep", "quic", "metrics", "oci-vault"]
         assert_eq!(production.transport.peers.len(), 3);
         assert_eq!(production.release.capabilities.len(), 5);
         assert_eq!(production.databases[0].encryption_provider, KeyProviderIdentity::OciVault);
+    }
+
+    #[test]
+    fn production_backup_disk_requires_explicit_rotation_and_aggregate_capacity() {
+        let valid = production_valid();
+        for invalid in [
+            valid.replace("[backup_disk]\nstaging_bytes_per_stream = 8589934592\ntotal_staging_bytes = 8589934592\n", ""),
+            valid.replace("total_staging_bytes = 8589934592", "total_staging_bytes = 8589934591"),
+            valid.replace("staging_bytes_per_stream = 8589934592", "staging_bytes_per_stream = 16777216"),
+            valid.replace("max_point_bytes = 4294967296", "max_point_bytes = 16777216"),
+        ] {
+            assert!(ServerConfig::parse(&invalid).is_err());
+        }
+        let mut production = ServerConfig::parse(&valid).unwrap().production.unwrap();
+        let limits = production.native_backup_limits().unwrap();
+        assert_eq!(limits.staging_bytes_per_stream, 8 * 1024 * 1024 * 1024);
+        let mut second = production.databases[0].clone();
+        second.database = DatabaseUlid::generate();
+        production.databases.push(second);
+        assert!(production.native_backup_limits().is_err());
+        production.backup_disk.total_staging_bytes *= 2;
+        assert_eq!(production.native_backup_limits().unwrap().streams, 2);
+        production.backup_disk.staging_bytes_per_stream = u64::MAX;
+        production.backup_disk.total_staging_bytes = u64::MAX;
+        assert!(production.native_backup_limits().is_err());
     }
 
     #[test]
