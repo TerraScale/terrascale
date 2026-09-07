@@ -76,6 +76,18 @@ export type Database = {
   readonly residency: string;
   readonly parent: string | null;
 };
+export type DeletionOperation = {
+  readonly request: {
+    readonly environment: string;
+    readonly tenant_id: string;
+    readonly project_id: string;
+    readonly database_id: string;
+    readonly operation_id: string;
+  };
+  readonly state: "preparing" | "stopping" | "cleanup_pending";
+  readonly cutoff: string;
+  readonly targets: readonly { readonly stop: Record<string, unknown> }[];
+};
 export type ProvisioningOperation = {
   readonly environment: string;
   readonly tenant_id: string;
@@ -125,7 +137,10 @@ export type IndexDescriptor = {
 };
 export type IndexListResponse = { readonly indexes: readonly IndexDescriptor[] };
 export type IndexCreatedResponse = { readonly field: string; readonly state: "active" | "building" };
-export type DeleteDatabaseOptions = Models.DeleteProjectDatabaseOptions;
+export type DeleteDatabaseOptions = Models.DeleteProjectDatabaseOptions & {
+  /** Stable identity required by the producer for safe deletion retries. */
+  readonly idempotencyKey: string;
+};
 export type DatabaseBranchCapabilityResponse = Models.DatabaseBranchCapabilityResponse;
 export type CreateDatabaseBranchRequest = Models.CreateDatabaseBranchRequest;
 export type ConfigureBackupPolicyRequest = Models.ConfigureBackupPolicyRequest;
@@ -179,10 +194,23 @@ export class ManagementDatabasesClient {
 
   delete(databaseId: string, options: DeleteDatabaseOptions): Promise<TerraScaleResult<Database>> {
     if (options?.confirm !== true) throw new TypeError("Database deletion requires options.confirm to be true.");
+    requireText(options.idempotencyKey, "idempotencyKey", 128);
     return this.#http.request({
       method: "DELETE",
       path: databasePath(databaseId),
       routeName: "databases.deleteDatabase",
+      idempotencyKey: options.idempotencyKey,
+    });
+  }
+
+  deletionStatus(databaseId: string, operationId: string, options: ManagementRequestOptions = {}): Promise<TerraScaleResult<DeletionOperation>> {
+    requireText(databaseId, "databaseId", 256);
+    requireText(operationId, "operationId", 128);
+    return this.#http.request({
+      method: "GET",
+      path: `${databasePath(databaseId)}/deletions/${idSegment(operationId, "operation id")}`,
+      routeName: "databases.deletionStatus",
+      signal: options.signal,
     });
   }
 

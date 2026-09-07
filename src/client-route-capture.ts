@@ -224,6 +224,14 @@ const captureOperations: readonly CaptureOperation[] = [
     invoke: (_client, management) => management.operations.get("operation-1"),
   },
   {
+    client: "databases", operation: "deletionStatus", routeName: "databases.deletionStatus",
+    invoke: (_client, management) => management.databases.deletionStatus(sampleIds.database, "operation-1"),
+  },
+  {
+    client: "databases", operation: "listOperations", routeName: "databases.listOperations",
+    invoke: (_client, management) => management.operations.list({ limit: 25, after: "operation-previous" }),
+  },
+  {
     client: "databases", operation: "developmentFault", routeName: "databases.developmentFault",
     invoke: (_client, management) => management.development.setFault(sampleIds.database, { confirmBranch: sampleIds.database, fault: "latency", durationMs: 1000, maxOperations: 1, delayMs: 25 }),
   },
@@ -310,7 +318,7 @@ const captureOperations: readonly CaptureOperation[] = [
   },
   {
     client: "databases", operation: "deleteDatabase", routeName: "databases.deleteDatabase",
-    invoke: (_client, management) => management.databases.delete(sampleIds.database, { confirm: true }),
+    invoke: (_client, management) => management.databases.delete(sampleIds.database, { confirm: true, idempotencyKey: "delete-primary" }),
   },
   {
     client: "databases", operation: "restoreDatabase", routeName: "databases.restoreDatabase",

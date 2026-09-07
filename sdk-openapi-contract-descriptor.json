@@ -12584,7 +12584,7 @@
                                   },
                                   "revision": {
                                     "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
-                                    "format": "int64",
+                                    "format": "uint64",
                                     "minimum": 0,
                                     "type": [
                                       "integer",
@@ -12641,7 +12641,7 @@
                                 },
                                 "revision": {
                                   "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
-                                  "format": "int64",
+                                  "format": "uint64",
                                   "minimum": 0,
                                   "type": [
                                     "integer",
@@ -12727,7 +12727,7 @@
                                     },
                                     "revision": {
                                       "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
-                                      "format": "int64",
+                                      "format": "uint64",
                                       "minimum": 0,
                                       "type": [
                                         "integer",
@@ -12784,7 +12784,7 @@
                                       },
                                       "revision": {
                                         "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
-                                        "format": "int64",
+                                        "format": "uint64",
                                         "minimum": 0,
                                         "type": [
                                           "integer",
@@ -12842,7 +12842,7 @@
                                   },
                                   "revision": {
                                     "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
-                                    "format": "int64",
+                                    "format": "uint64",
                                     "minimum": 0,
                                     "type": [
                                       "integer",
@@ -12928,7 +12928,7 @@
                               },
                               "revision": {
                                 "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
-                                "format": "int64",
+                                "format": "uint64",
                                 "minimum": 0,
                                 "type": [
                                   "integer",
@@ -13011,226 +13011,190 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProvisioningOperation",
+                  "$ref": "#/components/schemas/OperationSummary",
                   "siblings": {
                     "resolved": {
-                      "description": "The durable authority result. Creation only acknowledges pending work.",
                       "properties": {
-                        "database_id": {
-                          "description": "Canonical database ULID allocated durably by the authority.",
+                        "cancellable": {
+                          "type": "boolean"
+                        },
+                        "cancellation_reason": {
                           "type": "string"
                         },
-                        "environment": {
-                          "description": "Deployment environment owning the operation.",
-                          "type": "string"
-                        },
-                        "key_version": {
-                          "description": "Persisted encryption key version.",
-                          "type": "string"
-                        },
-                        "name": {
-                          "description": "Immutable database name.",
-                          "type": "string"
-                        },
-                        "operation_id": {
-                          "description": "Stable operation identifier supplied by the caller.",
-                          "type": "string"
-                        },
-                        "parent_database_id": {
-                          "description": "Parent identity of a provisioned branch.",
+                        "created_at": {
+                          "description": "Optional because some owner journals do not persist a creation time.",
                           "type": [
                             "string",
                             "null"
                           ]
                         },
-                        "project_id": {
-                          "description": "Authoritatively bound project identity.",
+                        "database_id": {
                           "type": "string"
                         },
-                        "regions": {
-                          "description": "Immutable requested serving regions.",
-                          "items": {
-                            "type": "string"
-                          },
-                          "type": "array"
+                        "kind": {
+                          "type": "string"
                         },
-                        "residency": {
-                          "description": "Immutable residency constraint.",
+                        "name": {
+                          "type": "string"
+                        },
+                        "operation_id": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "stage": {
                           "type": "string"
                         },
                         "state": {
-                          "description": "Authority progress; create never implies serving readiness.",
-                          "type": "string"
-                        },
-                        "tenant_id": {
-                          "description": "Authoritatively bound tenant identity.",
+                          "description": "Queued, running, or succeeded, derived only from committed owner state.",
                           "type": "string"
                         }
                       },
                       "required": [
-                        "environment",
-                        "tenant_id",
-                        "project_id",
                         "operation_id",
+                        "kind",
                         "database_id",
-                        "key_version",
                         "name",
-                        "regions",
-                        "residency",
-                        "state"
+                        "state",
+                        "stage",
+                        "cancellable",
+                        "cancellation_reason"
                       ],
                       "type": "object"
                     },
                     "siblings": {
                       "resolved": {
-                        "description": "The durable authority result. Creation only acknowledges pending work.",
                         "properties": {
-                          "database_id": {
-                            "description": "Canonical database ULID allocated durably by the authority.",
+                          "cancellable": {
+                            "type": "boolean"
+                          },
+                          "cancellation_reason": {
                             "type": "string"
                           },
-                          "environment": {
-                            "description": "Deployment environment owning the operation.",
-                            "type": "string"
-                          },
-                          "key_version": {
-                            "description": "Persisted encryption key version.",
-                            "type": "string"
-                          },
-                          "name": {
-                            "description": "Immutable database name.",
-                            "type": "string"
-                          },
-                          "operation_id": {
-                            "description": "Stable operation identifier supplied by the caller.",
-                            "type": "string"
-                          },
-                          "parent_database_id": {
-                            "description": "Parent identity of a provisioned branch.",
+                          "created_at": {
+                            "description": "Optional because some owner journals do not persist a creation time.",
                             "type": [
                               "string",
                               "null"
                             ]
                           },
-                          "project_id": {
-                            "description": "Authoritatively bound project identity.",
+                          "database_id": {
                             "type": "string"
                           },
-                          "regions": {
-                            "description": "Immutable requested serving regions.",
-                            "items": {
-                              "type": "string"
-                            },
-                            "type": "array"
+                          "kind": {
+                            "type": "string"
                           },
-                          "residency": {
-                            "description": "Immutable residency constraint.",
+                          "name": {
+                            "type": "string"
+                          },
+                          "operation_id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          },
+                          "stage": {
                             "type": "string"
                           },
                           "state": {
-                            "description": "Authority progress; create never implies serving readiness.",
-                            "type": "string"
-                          },
-                          "tenant_id": {
-                            "description": "Authoritatively bound tenant identity.",
+                            "description": "Queued, running, or succeeded, derived only from committed owner state.",
                             "type": "string"
                           }
                         },
                         "required": [
-                          "environment",
-                          "tenant_id",
-                          "project_id",
                           "operation_id",
+                          "kind",
                           "database_id",
-                          "key_version",
                           "name",
-                          "regions",
-                          "residency",
-                          "state"
+                          "state",
+                          "stage",
+                          "cancellable",
+                          "cancellation_reason"
                         ],
                         "type": "object"
                       }
                     }
                   },
                   "resolved": {
-                    "description": "The durable authority result. Creation only acknowledges pending work.",
                     "properties": {
-                      "database_id": {
-                        "description": "Canonical database ULID allocated durably by the authority.",
+                      "cancellable": {
+                        "type": "boolean"
+                      },
+                      "cancellation_reason": {
                         "type": "string"
                       },
-                      "environment": {
-                        "description": "Deployment environment owning the operation.",
-                        "type": "string"
-                      },
-                      "key_version": {
-                        "description": "Persisted encryption key version.",
-                        "type": "string"
-                      },
-                      "name": {
-                        "description": "Immutable database name.",
-                        "type": "string"
-                      },
-                      "operation_id": {
-                        "description": "Stable operation identifier supplied by the caller.",
-                        "type": "string"
-                      },
-                      "parent_database_id": {
-                        "description": "Parent identity of a provisioned branch.",
+                      "created_at": {
+                        "description": "Optional because some owner journals do not persist a creation time.",
                         "type": [
                           "string",
                           "null"
                         ]
                       },
-                      "project_id": {
-                        "description": "Authoritatively bound project identity.",
+                      "database_id": {
                         "type": "string"
                       },
-                      "regions": {
-                        "description": "Immutable requested serving regions.",
-                        "items": {
-                          "type": "string"
-                        },
-                        "type": "array"
+                      "kind": {
+                        "type": "string"
                       },
-                      "residency": {
-                        "description": "Immutable residency constraint.",
+                      "name": {
+                        "type": "string"
+                      },
+                      "operation_id": {
+                        "type": "string"
+                      },
+                      "revision": {
+                        "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "stage": {
                         "type": "string"
                       },
                       "state": {
-                        "description": "Authority progress; create never implies serving readiness.",
-                        "type": "string"
-                      },
-                      "tenant_id": {
-                        "description": "Authoritatively bound tenant identity.",
+                        "description": "Queued, running, or succeeded, derived only from committed owner state.",
                         "type": "string"
                       }
                     },
                     "required": [
-                      "environment",
-                      "tenant_id",
-                      "project_id",
                       "operation_id",
+                      "kind",
                       "database_id",
-                      "key_version",
                       "name",
-                      "regions",
-                      "residency",
-                      "state"
+                      "state",
+                      "stage",
+                      "cancellable",
+                      "cancellation_reason"
                     ],
                     "type": "object"
                   }
                 }
               }
             },
-            "description": "Durable provisioning operation"
+            "description": "Durable operation"
           },
           "status": "200"
         }
       ],
       "routeName": "databases.getProvisioningOperation",
       "sdkRequestType": "void",
-      "sdkResponseType": "ProvisioningOperation"
+      "sdkResponseType": "OperationSummary"
     },
     {
       "base": "api",
@@ -50819,7 +50783,7 @@
     }
   ],
   "sources": {
-    "openApiSha256": "1db95e5dd6044bb35328377551447bdadc691b774122e42706025b22a5916b79",
-    "routeManifestSha256": "0a67e3be425cbe12b2ef2ba27d995b921882d9a435ff99e1078d2a53dcdfc908"
+    "openApiSha256": "353dcf000d8450ee06cd8fc094b4fa8eb05b3d29f8aae2218886a7edf55d4026",
+    "routeManifestSha256": "a47c275ffee733867806e21a73709aa7e1cb25785692f701707831d58d59864d"
   }
 }

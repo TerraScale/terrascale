@@ -142,7 +142,7 @@ describe("TerraScaleClient route contracts", () => {
     }
     assert.equal(requests.filter(request => request.method === "DELETE").length, 0);
 
-    const deleteResult = await client.databases.delete(databaseId, { confirm: true });
+    const deleteResult = await client.databases.delete(databaseId, { confirm: true, idempotencyKey: "delete-test" });
     assert.equal(deleteResult.ok, true);
     if (deleteResult.ok) {
       assert.deepEqual(deleteResult.value, deletedDatabase);

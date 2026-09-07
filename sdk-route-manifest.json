@@ -677,7 +677,7 @@
       "method": "GET",
       "pathTemplate": "/api/v1/operations/{operation_id}",
       "requestType": "void",
-      "responseType": "ProvisioningOperation"
+      "responseType": "OperationSummary"
     },
     {
       "base": "api",
