@@ -40,7 +40,7 @@ struct Fixture {
 fn limits() -> ProductionTransportLimits {
     ProductionTransportLimits::try_new(
         16 * 1024 * 1024,
-        8,
+        32,
         8,
         128 * 1024 * 1024,
         Duration::from_secs(5),
@@ -228,7 +228,7 @@ async fn create() -> Fixture {
     ]);
     let placement = BTreeSet::from([ProductionRegion::Gru, ProductionRegion::Sfo]);
     let mut authorities = Vec::new();
-    for i in 0..4 {
+    for i in 1..4 {
         let store = SqliteStore::open_encrypted(
             &root.join(format!("voter-{i}.sqlite")),
             &group,
@@ -249,14 +249,6 @@ async fn create() -> Fixture {
             .unwrap(),
         );
     }
-    authorities[0]
-        .initialize(
-            AuthNetwork::new(endpoints[0].clone(), &group, voter_map.clone(), &placement)
-                .unwrap()
-                .initial_nodes(),
-        )
-        .await
-        .unwrap();
     let token = "four-node-bootstrap-key-01234567890123456789".to_owned();
     let key_path = root.join("bootstrap.key");
     std::fs::write(&key_path, &token).unwrap();
@@ -273,6 +265,8 @@ async fn create() -> Fixture {
     let public = super::tests::admitted_fixture::public_config(&root, key_path);
     let runtime = AuthRuntime::new(endpoints[0].clone(), journal, production, &public).unwrap();
     runtime.reconcile().await.unwrap();
+    // Node one is the runtime-owned authority, sharing its encrypted log and receiver.
+    authorities.insert(0, runtime.domains.read().unwrap()[&group].authority.clone());
     let mut workers = Vec::new();
     let runtime_receiver = runtime.clone();
     workers.push(tokio::spawn(async move {
@@ -299,6 +293,7 @@ async fn create() -> Fixture {
             }
         }));
     }
+    wait_ready(&authorities[0]).await;
     Fixture {
         runtime,
         authorities,
@@ -309,6 +304,19 @@ async fn create() -> Fixture {
         token,
         keys,
     }
+}
+
+async fn wait_ready(authority: &AuthAuthority) {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            if authority.find_one("user".into(), "readiness".into()).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("four admitted voters must elect a leader and complete a quorum read");
 }
 
 async fn stop(fixture: Fixture) {
@@ -373,7 +381,7 @@ async fn four_voters_deny_mutation_without_quorum() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn four_voter_encrypted_logs_survive_authority_restart() {
-    let fixture = create().await;
+    let mut fixture = create().await;
     let outcome = fixture.authorities[0]
         .mutate(Command {
             idempotency_key: "retained".into(),
@@ -386,15 +394,29 @@ async fn four_voter_encrypted_logs_survive_authority_restart() {
         .await
         .unwrap();
     assert!(matches!(outcome, terrabase_auth::Outcome::Record { .. }));
-    let paths: Vec<_> = (0..4).map(|i| fixture.root.join(format!("voter-{i}.sqlite"))).collect();
-    for worker in &fixture.workers {
-        worker.abort();
-    }
-    for authority in &fixture.authorities {
-        let _ = authority.shutdown().await;
-    }
-    for path in paths {
-        assert!(path.exists(), "encrypted voter log was lost: {}", path.display());
-    }
+    fixture.workers[0].abort();
+    fixture.runtime.shutdown().await;
+    let public = super::tests::admitted_fixture::public_config(
+        &fixture.root,
+        fixture.root.join("bootstrap.key"),
+    );
+    let runtime = AuthRuntime::new(
+        fixture.endpoints[0].clone(),
+        fixture.runtime.journal.clone(),
+        fixture.runtime.production.clone(),
+        &public,
+    )
+    .unwrap();
+    runtime.reconcile().await.unwrap();
+    fixture.authorities[0] =
+        runtime.domains.read().unwrap().values().next().unwrap().authority.clone();
+    let receiver = runtime.clone();
+    fixture.workers[0] = tokio::spawn(async move {
+        let _ = receiver.receive().await;
+    });
+    fixture.runtime = runtime;
+    wait_ready(&fixture.authorities[0]).await;
+    let retained = fixture.authorities[0].find_one("user".into(), "retained".into()).await.unwrap();
+    assert_eq!(retained.unwrap()["id"], serde_json::json!("retained"));
     stop(fixture).await;
 }

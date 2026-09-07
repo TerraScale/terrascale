@@ -96,7 +96,8 @@ async fn byo_router_admits_same_owner_route() {
     let (service, key) = service();
     let now = unix_seconds();
     let token = token("https://api.example", now + 60, Some(&["read"]), &key);
-    let (verifier, _, parent_task) = crate::delegated_identity::tests::authority().await;
+    let (verifier, reply, parent_task) = crate::delegated_identity::tests::authority().await;
+    reply.lock().unwrap()["issuer"] = json!("https://issuer.example");
     let mut state = super::state();
     let editable = Arc::get_mut(&mut state).unwrap();
     editable.byo_jwt = Some(Arc::new(service));
@@ -138,6 +139,7 @@ async fn request_with_service(
     delay_ms: u64,
 ) -> axum::response::Response {
     let (verifier, reply, parent_task) = crate::delegated_identity::tests::authority().await;
+    reply.lock().unwrap()["issuer"] = json!("https://issuer.example");
     if delay_ms != 0 {
         reply.lock().unwrap()["delayMs"] = json!(delay_ms);
     }
@@ -157,4 +159,48 @@ async fn request_with_service(
         .unwrap();
     parent_task.abort();
     response
+}
+
+#[tokio::test]
+async fn byo_router_rechecks_current_membership_and_permission() {
+    let (service, key) = service();
+    let bearer = token("https://api.example", unix_seconds() + 60, Some(&["read"]), &key);
+    let (verifier, reply, task) = crate::delegated_identity::tests::authority().await;
+    reply.lock().unwrap()["issuer"] = json!("https://issuer.example");
+    let mut state = super::state();
+    let editable = Arc::get_mut(&mut state).unwrap();
+    editable.byo_jwt = Some(Arc::new(service));
+    editable.delegated_identity = Some(Arc::new(verifier));
+    let app = super::router(state);
+    let original = reply.lock().unwrap().clone();
+    for patch in [
+        None,
+        Some(("active", json!(false))),
+        Some(("action", json!("write"))),
+        Some(("projectId", json!("other"))),
+        Some(("membershipScope", json!(null))),
+    ] {
+        *reply.lock().unwrap() = original.clone();
+        if let Some((field, value)) = &patch {
+            reply.lock().unwrap()[*field] = value.clone();
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/databases/db-a")
+                    .header("authorization", format!("Bearer {bearer}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        if patch.is_none() {
+            assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.headers()["x-terrascale-principal"], "user-1");
+        } else {
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{patch:?}");
+        }
+    }
+    task.abort();
 }

@@ -338,6 +338,25 @@ impl ReplicationProgress {
         self.changed.send_modify(|generation| *generation = generation.wrapping_add(1));
     }
 
+    /// Discards observations from replaced files while retaining accepted identity.
+    pub(crate) fn reset_database_evidence(
+        &self,
+        scope: DatabaseRouteScope,
+    ) -> Result<(), ReplicationWaitError> {
+        let mut databases = self.databases.lock().map_err(|_| ReplicationWaitError::Fenced)?;
+        let progress = databases.get_mut(&scope).ok_or(ReplicationWaitError::NotAdmitted)?;
+        if progress.fenced || self.fenced.load(Ordering::Acquire) {
+            return Err(ReplicationWaitError::Fenced);
+        }
+        progress.regional_sequence = 0;
+        progress.regional_observed = false;
+        progress.regions.clear();
+        progress.regional_by_peer.clear();
+        progress.regions_by_peer.clear();
+        self.changed.send_modify(|generation| *generation = generation.wrapping_add(1));
+        Ok(())
+    }
+
     /// Permanently revokes one database assignment and wakes its pending waits.
     pub fn fence_database(&self, scope: DatabaseRouteScope) {
         if let Ok(mut databases) = self.databases.lock()

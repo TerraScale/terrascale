@@ -153,11 +153,23 @@ struct Stream {
     paused: bool,
 }
 
+#[derive(Clone)]
+struct SuspendedStream {
+    keys: Arc<dyn BackupKeys>,
+    destinations: Vec<(Provider, Arc<ObjectDestination>)>,
+    policy_revision: String,
+    retention_days: u8,
+    staging: PathBuf,
+    placement: PlacementLock,
+    paused: bool,
+}
+
 /// A single shared scheduler, invoked by the member's background runtime.
 /// `&mut self` serializes ticks and bounds capture and upload concurrency to one.
 pub struct NativeBackupFleet {
     limits: FleetLimits,
     streams: BTreeMap<String, Stream>,
+    suspended: BTreeMap<String, SuspendedStream>,
 }
 
 /// Redacted scheduling/capture refusal.
@@ -267,7 +279,7 @@ impl NativeBackupFleet {
         {
             return Err(FleetError::Configuration);
         }
-        Ok(Self { limits, streams: BTreeMap::new() })
+        Ok(Self { limits, streams: BTreeMap::new(), suspended: BTreeMap::new() })
     }
 
     /// Attaches one explicitly catalogued stream and pins its retention floor.
@@ -281,8 +293,9 @@ impl NativeBackupFleet {
         if !matches!(config.retention_days, 1 | 7 | 30 | 35)
             || config.policy_revision.len() > 256
             || config.policy_revision.chars().any(char::is_control)
-            || self.streams.len() >= self.limits.streams
+            || self.streams.len() + self.suspended.len() >= self.limits.streams
             || self.streams.contains_key(&identity)
+            || self.suspended.contains_key(&identity)
             || config.policy_revision.trim().is_empty()
             || config.destinations.is_empty()
             || config.destinations.iter().any(|(provider, destination)| {
@@ -539,6 +552,41 @@ impl NativeBackupFleet {
     /// A running tick must finish before this exclusive operation can execute.
     pub fn detach(&mut self, database: &str) {
         self.streams.remove(database);
+    }
+
+    /// Releases a paused target's engine while retaining its exact backup policy.
+    /// The fleet lock serializes this with in-flight provider work.
+    pub fn suspend_for_restore(&mut self, database: &str) -> Result<(), FleetError> {
+        if self.suspended.contains_key(database) { return Ok(()); }
+        let Some(stream) = self.streams.get(database) else { return Ok(()); };
+        let engine = stream.config.engine.engine();
+        let tenant = crate::types::TenantId::try_new(&engine.database_owner().tenant().to_text())
+            .map_err(|_| FleetError::Configuration)?;
+        let state = engine.lifecycle_state(&engine.scope_for(&tenant)).map_err(|_| FleetError::Capture)?;
+        if !state.paused || state.access_revoked() { return Err(FleetError::Configuration); }
+        let stream = self.streams.remove(database).ok_or(FleetError::Configuration)?;
+        let StreamConfig { engine, keys, destinations, policy_revision, retention_days, staging, placement } = stream.config;
+        drop(engine);
+        self.suspended.insert(database.to_owned(), SuspendedStream {
+            keys, destinations, policy_revision, retention_days, staging, placement, paused: stream.paused,
+        });
+        Ok(())
+    }
+
+    /// Rebinds the retained policy to the reopened target after restore or rollback.
+    pub fn resume_after_restore(&mut self, database: &str, engine: Arc<dyn BackupEngineHandle>) -> Result<(), FleetError> {
+        if engine.engine().database_id().to_string() != database { return Err(FleetError::Configuration); }
+        let Some(policy) = self.suspended.remove(database) else { return Ok(()); };
+        let retained = policy.clone();
+        let result = self.attach(StreamConfig { engine, keys: policy.keys, destinations: policy.destinations,
+            policy_revision: policy.policy_revision, retention_days: policy.retention_days,
+            staging: policy.staging, placement: policy.placement });
+        if let Err(error) = result {
+            self.suspended.insert(database.to_owned(), retained);
+            return Err(error);
+        }
+        self.streams.get_mut(database).ok_or(FleetError::Configuration)?.paused = retained.paused;
+        Ok(())
     }
 
     /// Pauses capture for one stream while retaining its policy and artifacts.
@@ -1255,7 +1303,7 @@ mod tests {
             owner.environment().as_str(),
             owner.tenant(),
             owner.project(),
-            terrabase::identity::DatabaseUlid::generate(),
+            crate::identity::DatabaseUlid::generate(),
             owner.region(),
         )
         .unwrap();
@@ -1333,7 +1381,8 @@ mod tests {
                     .unwrap()
                     .is_empty()
             );
-            let (target_owner, target_config) = restore_config("fleet-outage-restore", engine.database_owner());
+            let (target_owner, target_config) =
+                restore_config("fleet-outage-restore", engine.database_owner());
             let receipt = fleet
                 .restore_from_provider(
                     &identity,
@@ -1490,16 +1539,18 @@ mod tests {
         .unwrap();
         assert_eq!(point_paths(staging, 8).unwrap().len(), 1);
         for provider in [Provider::Oci, Provider::Tigris] {
+            let (target_owner, target_config) =
+                restore_config("retained-root-restore", engine.database_owner());
             let receipt = fleet
                 .restore_from_provider(
                     &identity,
                     provider,
                     None,
-                    &restore_config("retained-root-restore", engine.database_owner()),
+                    &target_config,
                     &crate::backup::restore::RestoreIdentity {
                         operation_id: format!("retained-root-restore-{provider:?}"),
                         source_database_id: identity.clone(),
-                        target_database_id: "retained-root-restore".into(),
+                        target_database_id: target_owner.database().to_string(),
                         provider: format!("{provider:?}").to_lowercase(),
                         selection: "latest".into(),
                         expected_manifest_digest: root.manifest().identity().into(),
@@ -1580,7 +1631,8 @@ mod tests {
             ));
             assert!(fleet.sync_once().await.is_empty());
             for provider in [Provider::Oci, Provider::Tigris] {
-                let (target_owner, target_config) = restore_config("fleet-restore", engine.database_owner());
+                let (target_owner, target_config) =
+                    restore_config("fleet-restore", engine.database_owner());
                 let receipt = fleet
                     .restore_from_provider(
                         &identity,

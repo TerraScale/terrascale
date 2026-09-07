@@ -326,7 +326,13 @@ impl ViewCapabilityVerifier {
         expected.validate()?;
         let claims = self.verify(token, &expected.view, expected.generation, now)?;
         if claims.authorization_scope != expected.authorization_scope
-            && !claims.authorization_scope.strip_prefix(&format!("{}:", expected.authorization_scope)).is_some_and(|scope| crate::membership_revocations::valid_scope(&expected.authorization_scope) && crate::membership_revocations::valid_scope(scope))
+            && !claims
+                .authorization_scope
+                .strip_prefix(&format!("{}:", expected.authorization_scope))
+                .is_some_and(|scope| {
+                    crate::membership_revocations::valid_scope(&expected.authorization_scope)
+                        && crate::membership_revocations::valid_scope(scope)
+                })
             || claims.entitlement_epoch != expected.entitlement_epoch
             || claims.region != expected.region
         {

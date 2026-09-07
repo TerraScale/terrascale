@@ -233,6 +233,19 @@ impl NativeBackupRuntime {
         Ok(())
     }
 
+    /// Releases target engine references under the serialized native fleet lock.
+    pub fn suspend_for_restore(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
+        self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?
+            .suspend_for_restore(database).map_err(NativeBackupRuntimeError::Fleet)
+    }
+
+    /// Restores the same backup policy with the reopened admitted target engine.
+    pub fn resume_after_restore(&self, database: &str, host: Arc<MemberHost>) -> Result<(), NativeBackupRuntimeError> {
+        self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?
+            .resume_after_restore(database, Arc::new(AdmittedBackupEngine::new(host)))
+            .map_err(NativeBackupRuntimeError::Fleet)
+    }
+
     /// Detaches one stream while retaining its staged and remote artifacts.
     pub fn detach(&self, database: &str) -> Result<(), NativeBackupRuntimeError> {
         let mut fleet = self.fleet.lock().map_err(|_| NativeBackupRuntimeError::Poisoned)?;

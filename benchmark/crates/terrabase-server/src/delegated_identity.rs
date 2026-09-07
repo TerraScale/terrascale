@@ -218,9 +218,10 @@ impl IdentityVerifier {
         }
         let body = serde_json::to_vec(&input).map_err(|_| IdentityError::Denied)?;
         let _permit = self.permits.try_acquire().map_err(|_| IdentityError::Unavailable)?;
-        let admission: Admission = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
-            .await
-            .map_err(|_| IdentityError::Unavailable)??;
+        let admission: Admission =
+            tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
+                .await
+                .map_err(|_| IdentityError::Unavailable)??;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| IdentityError::Unavailable)?
@@ -247,13 +248,17 @@ impl IdentityVerifier {
             || Scope::database(database, verb),
             |name| Scope::database_collection(database, name, verb),
         );
-        let membership_scope = admission.membership_scope.filter(|s| crate::membership_revocations::valid_scope(s)).ok_or(IdentityError::Denied)?;
+        let membership_scope = admission
+            .membership_scope
+            .filter(|s| crate::membership_revocations::valid_scope(s))
+            .ok_or(IdentityError::Denied)?;
         Ok(Principal::delegated_for_owner(
             subject,
             admitted_scope,
             expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
             (organization.to_owned(), project.to_owned()),
-        ).with_membership_scope(membership_scope))
+        )
+        .with_membership_scope(membership_scope))
     }
 
     /// Revalidates a locally signature-verified BYO-JWT subject through the
@@ -324,13 +329,17 @@ impl IdentityVerifier {
             || Scope::database(database, verb),
             |name| Scope::database_collection(database, name, verb),
         );
-        let membership_scope = admission.membership_scope.filter(|s| crate::membership_revocations::valid_scope(s)).ok_or(IdentityError::Denied)?;
+        let membership_scope = admission
+            .membership_scope
+            .filter(|s| crate::membership_revocations::valid_scope(s))
+            .ok_or(IdentityError::Denied)?;
         Ok(Principal::delegated_for_owner(
             mapped_subject,
             scope,
             expires.checked_mul(1000).ok_or(IdentityError::Denied)?,
             (organization.to_owned(), project.to_owned()),
-        ).with_membership_scope(membership_scope))
+        )
+        .with_membership_scope(membership_scope))
     }
 
     /// Project-wide variant of [`Self::admit_verified_byo`].
@@ -395,11 +404,15 @@ impl IdentityVerifier {
     /// Starts one bounded control poll per identity authority, never per socket.
     pub(crate) fn start_membership_poll(self: &Arc<Self>) {
         use std::sync::atomic::Ordering;
-        if self.membership_started.swap(true, Ordering::AcqRel) { return; }
+        if self.membership_started.swap(true, Ordering::AcqRel) {
+            return;
+        }
         let authority = Arc::downgrade(self);
         tokio::spawn(async move {
             loop {
-                let Some(current) = authority.upgrade() else { return; };
+                let Some(current) = authority.upgrade() else {
+                    return;
+                };
                 let _ = current.refresh_membership().await;
                 drop(current);
                 tokio::time::sleep(Duration::from_secs(10)).await;
@@ -410,18 +423,32 @@ impl IdentityVerifier {
     pub(crate) async fn refresh_membership(&self) -> Result<(), IdentityError> {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
-        struct Reply { active: bool, membership_revocations: crate::membership_revocations::Snapshot }
-        let body = serde_json::to_vec(&serde_json::json!({"kind":"revocations","audience":self.audience}))
-            .map_err(|_| IdentityError::Unavailable)?;
+        struct Reply {
+            active: bool,
+            membership_revocations: crate::membership_revocations::Snapshot,
+        }
+        let body =
+            serde_json::to_vec(&serde_json::json!({"kind":"revocations","audience":self.audience}))
+                .map_err(|_| IdentityError::Unavailable)?;
         let reply: Reply = tokio::time::timeout(Duration::from_secs(5), self.exchange(body))
-            .await.map_err(|_| IdentityError::Unavailable)??;
-        if reply.active { return Err(IdentityError::Denied); }
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| IdentityError::Unavailable)?.as_secs();
-        self.membership.install(reply.membership_revocations, now).map_err(|_| IdentityError::Unavailable)
+            .await
+            .map_err(|_| IdentityError::Unavailable)??;
+        if reply.active {
+            return Err(IdentityError::Denied);
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| IdentityError::Unavailable)?
+            .as_secs();
+        self.membership
+            .install(reply.membership_revocations, now)
+            .map_err(|_| IdentityError::Unavailable)
     }
 
-    async fn exchange<T: serde::de::DeserializeOwned>(&self, body: Vec<u8>) -> Result<T, IdentityError> {
+    async fn exchange<T: serde::de::DeserializeOwned>(
+        &self,
+        body: Vec<u8>,
+    ) -> Result<T, IdentityError> {
         let host = self.endpoint.host().ok_or(IdentityError::Configuration)?;
         let port = self.endpoint.port_u16().unwrap_or(443);
         let name =
@@ -563,6 +590,12 @@ pub(crate) mod tests {
                                             request.into_body().collect().await.unwrap().to_bytes();
                                         let input: serde_json::Value =
                                             serde_json::from_slice(&body).unwrap();
+                                        if input.get("kind").is_some() {
+                                            assert_eq!(input, serde_json::json!({"kind":"revocations","audience":"https://api.example"}));
+                                            return Ok::<_, std::convert::Infallible>(hyper::Response::new(Full::new(Bytes::from(
+                                                serde_json::json!({"active":false,"membershipRevocations":responses.lock().unwrap()["membershipRevocations"]}).to_string()
+                                            ))));
+                                        }
                                         if input.get("token").is_some() {
                                             assert_eq!(input, expected);
                                         } else {

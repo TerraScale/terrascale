@@ -47,6 +47,7 @@ mod replication_wire;
 mod schema_indexes;
 mod schema_metadata;
 mod shard_split;
+mod cross_file;
 mod webhook_metadata;
 
 #[cfg(test)]

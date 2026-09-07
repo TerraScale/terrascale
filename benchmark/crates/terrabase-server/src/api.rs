@@ -56,6 +56,8 @@ use crate::api_keys::Verbs;
 
 #[path = "api_development.rs"]
 mod development;
+#[path = "api_operations.rs"]
+pub(crate) mod operations;
 #[path = "api_exports.rs"]
 mod exports;
 #[path = "api_lifecycle.rs"]
@@ -693,6 +695,7 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(regions))
         .routes(routes!(list_databases, create_database))
         .routes(routes!(get_provisioning_operation))
+        .routes(routes!(operations::list_operations))
         .routes(routes!(get_database, delete_database))
         .routes(routes!(lifecycle::deletion_status))
         .routes(routes!(restore_database))
@@ -1761,6 +1764,7 @@ fn unix_millis() -> u64 {
 /// paths fail closed toward `ADMIN`.
 fn is_project_administration(method: &Method, path: &str) -> bool {
     (*method == Method::POST && path == "/api/v1/databases")
+        || (*method == Method::GET && path == "/api/v1/operations")
         || (*method == Method::GET
             && path
                 .strip_prefix("/api/v1/operations/")
@@ -1768,6 +1772,9 @@ fn is_project_administration(method: &Method, path: &str) -> bool {
 }
 
 fn required_verb(method: &Method, path: &str) -> Verbs {
+    if path == "/api/v1/operations" {
+        return Verbs::ADMIN;
+    }
     if path
         .strip_prefix("/api/v1/operations/")
         .is_some_and(|id| !id.is_empty() && !id.contains('/'))

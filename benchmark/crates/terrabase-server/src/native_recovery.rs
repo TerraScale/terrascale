@@ -177,6 +177,7 @@ pub enum NativeRestoreSelection {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 /// Durable restore execution and reconciliation phase.
+#[serde(rename_all = "snake_case")]
 pub enum NativeRestorePhase {
     /// Request is durably admitted.
     Accepted,
@@ -659,7 +660,13 @@ impl NativeRecoveryRuntime {
             return Ok(true);
         }
         let placement = admitted.record.regions.clone();
-        match self.run_capture(&admitted.host, placement, &source, &operation) {
+        let runtime = Arc::clone(self);
+        let capture_source = source.clone();
+        let capture_operation = operation.clone();
+        let captured = tokio::task::spawn_blocking(move || {
+            runtime.run_capture(&admitted.host, placement, &capture_source, &capture_operation)
+        }).await.map_err(|_| NativeRecoveryError::Unavailable)?;
+        match captured {
             Ok(()) => {}
             Err(NativeRecoveryError::Unavailable) => return Err(NativeRecoveryError::Unavailable),
             Err(error) => {
@@ -893,8 +900,9 @@ impl NativeRecoveryRuntime {
         let capture = || {
             let manifest = {
                 let mut fleet = self.fleet.lock().map_err(|_| NativeRecoveryError::Unavailable)?;
-                tokio::runtime::Handle::current()
-                    .block_on(fleet.capture_snapshot(source))
+                    tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(fleet.capture_snapshot(source))
+                    })
                     .map_err(map_fleet_error)?
             };
             Ok(Checkpoint::from_manifest(&manifest, source, &placement))

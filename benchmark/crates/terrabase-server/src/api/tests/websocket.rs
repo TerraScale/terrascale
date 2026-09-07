@@ -23,7 +23,13 @@ impl Drop for Server {
 }
 impl Server {
     async fn new() -> Self {
-        let state = state_with_keys_and_control();
+        Self::with_identity(None).await
+    }
+    async fn with_identity(
+        identity: Option<Arc<crate::delegated_identity::IdentityVerifier>>,
+    ) -> Self {
+        let mut state = state_with_keys_and_control();
+        Arc::get_mut(&mut state).unwrap().delegated_identity = identity;
         let app = router(Arc::clone(&state));
         let response = app
             .clone()
@@ -400,4 +406,86 @@ async fn packed_sdk_cross_origin_browser_journey() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[tokio::test]
+async fn membership_revocation_closes_active_socket_without_delivery_authority_calls() {
+    let (identity, reply, authority_task) =
+        crate::delegated_identity::tests::authority_for("terrabase-local", "local", "prod", "read")
+            .await;
+    let identity = Arc::new(identity);
+    let snapshot = |entries: Vec<serde_json::Value>| {
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let canonical = entries
+            .iter()
+            .map(|entry| {
+                format!(
+                    "{}.{}\n",
+                    entry["scope"].as_str().unwrap(),
+                    entry["expiresAt"].as_u64().unwrap()
+                )
+            })
+            .collect::<String>();
+        serde_json::json!({"revision":hex::encode(aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256,canonical.as_bytes()).as_ref()),"validUntil":now+30,"entries":entries})
+    };
+    reply.lock().unwrap()["membershipRevocations"] = snapshot(vec![]);
+    identity.refresh_membership().await.unwrap();
+    let server = Server::with_identity(Some(identity.clone())).await;
+    server.put("one", 1).await;
+    let attached_response = server
+        .app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/reactive/views")
+                .header("authorization", "Bearer delegated-token")
+                .body(Body::from(
+                    serde_json::json!({"databaseId":"prod","statement":SQL}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(attached_response.status(), StatusCode::CREATED);
+    let attached: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(attached_response.into_body(), 65_536).await.unwrap(),
+    )
+    .unwrap();
+    let capability = attached["capability"].as_str().unwrap();
+    assert!(capability.split('.').nth(3).unwrap().ends_with(&format!(":scope-{}", "a".repeat(64))));
+    let view = attached["view"].as_str().unwrap();
+    let mut request = format!("ws://{}/api/v1/reactive/views/{view}/1/websocket", server.address)
+        .into_client_request()
+        .unwrap();
+    request.headers_mut().insert(
+        "sec-websocket-protocol",
+        format!("terrascale.sync.v1, terrascale.cap.{capability}").parse().unwrap(),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    send(&mut socket, subscribe(view, None)).await;
+    let _ = receive(&mut socket).await;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    reply.lock().unwrap()["membershipRevocations"] = snapshot(vec![
+        serde_json::json!({"scope":format!("scope-{}","a".repeat(64)),"expiresAt":now+1320}),
+    ]);
+    identity.refresh_membership().await.unwrap();
+    // No authority or Worker is needed for the one-second local socket fence.
+    authority_task.abort();
+    assert!(matches!(
+        decode_envelope(&receive(&mut socket).await).unwrap().message,
+        Message::Error { code: terrabase_sync_core::wire::ErrorCode::AuthenticationExpired, .. }
+    ));
+    let direct = server
+        .app
+        .clone()
+        .oneshot(
+            Request::get(attached["snapshot_chunks"][0].as_str().unwrap())
+                .header("authorization", KEY)
+                .header("x-terrascale-view-capability", capability)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(direct.status(), StatusCode::UNAUTHORIZED);
 }

@@ -135,7 +135,13 @@ impl Principal {
         expires_at: u64,
         owner: (String, String),
     ) -> Self {
-        Self { label, scope, expires_at: Some(expires_at), owner: Some(owner), membership_scope: None }
+        Self {
+            label,
+            scope,
+            expires_at: Some(expires_at),
+            owner: Some(owner),
+            membership_scope: None,
+        }
     }
 
     pub(crate) fn with_membership_scope(mut self, scope: String) -> Self {
@@ -272,7 +278,13 @@ impl KeyStore {
     ) {
         self.register_principal(
             key,
-            Principal { label: label.to_owned(), scope, expires_at, owner: Some(owner), membership_scope: None },
+            Principal {
+                label: label.to_owned(),
+                scope,
+                expires_at,
+                owner: Some(owner),
+                membership_scope: None,
+            },
         );
     }
 
@@ -291,7 +303,13 @@ impl KeyStore {
     ) {
         self.register_principal(
             key,
-            Principal { label: label.to_owned(), scope, expires_at, owner: None, membership_scope: None },
+            Principal {
+                label: label.to_owned(),
+                scope,
+                expires_at,
+                owner: None,
+                membership_scope: None,
+            },
         );
     }
 

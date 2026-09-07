@@ -105,7 +105,12 @@ impl Session {
                 if let Some(scope) = principal.membership_scope() {
                     let now = super::now_seconds();
                     if principal.is_expired_at(now.saturating_mul(1000))
-                        || !self.state.delegated_identity.as_ref().is_some_and(|identity| identity.membership.admits(scope, now)) {
+                        || !self
+                            .state
+                            .delegated_identity
+                            .as_ref()
+                            .is_some_and(|identity| identity.membership.admits(scope, now))
+                    {
                         return Err(ErrorCode::PermissionDenied);
                     }
                     return Ok(());
@@ -125,13 +130,8 @@ impl Session {
                 Ok(())
             }
             Authorization::View { view, generation, credential } => {
-                super::verify_socket_capability(
-                    view,
-                    *generation,
-                    credential,
-                    &self.state,
-                )
-                .map_err(|_| ErrorCode::AuthenticationExpired)
+                super::verify_socket_capability(view, *generation, credential, &self.state)
+                    .map_err(|_| ErrorCode::AuthenticationExpired)
             }
         };
         if result.is_ok() {

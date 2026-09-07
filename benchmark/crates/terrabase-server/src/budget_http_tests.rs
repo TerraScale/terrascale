@@ -52,6 +52,8 @@ struct Fixture {
     root: PathBuf,
     journal: Arc<UsageAdmissionJournal>,
     vector: Value,
+    placement: Arc<PlacementJournal>,
+    member: String,
 }
 
 impl Fixture {
@@ -98,7 +100,7 @@ impl Fixture {
             "production".into(),
             member.to_text(),
             "GRU".into(),
-            placement,
+            placement.clone(),
         )
         .unwrap()
         .with_allocation_verifier(verifier.unwrap_or_else(|| {
@@ -125,7 +127,22 @@ impl Fixture {
             }
         }))
         .unwrap();
-        Self { root, journal: Arc::new(journal), vector }
+        Self { root, journal: Arc::new(journal), vector, placement, member: member.to_text() }
+    }
+
+    fn reopen(&self, verifier: AllocationVerifierConfig) -> Arc<UsageAdmissionJournal> {
+        Arc::new(
+            UsageAdmissionJournal::open(
+                &self.root,
+                "production".into(),
+                self.member.clone(),
+                "GRU".into(),
+                self.placement.clone(),
+            )
+            .unwrap()
+            .with_allocation_verifier(verifier)
+            .unwrap(),
+        )
     }
 
     fn router(&self) -> Router {
@@ -272,6 +289,8 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
             .oneshot(
                 Request::post("/api/v1/databases")
                     .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
+                    .header("x-terrascale-tenant-id", "terrabase-local")
+                    .header("x-terrascale-project-id", "local")
                     .body(Body::from(r#"{"name":"prod","placement":["GRU"],"residency":null}"#))
                     .unwrap(),
             )
@@ -287,20 +306,18 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
             placement: "db-placement".into(),
             writer_epoch: 1,
         }));
-        let fixture = Fixture::with_verifier(
-            "holder",
-            Some(AllocationVerifierConfig {
-                key_id: signed["key_id"].as_str().unwrap().into(),
-                public_key_spki: spki,
-                policy_epoch: 1,
-                consent_epoch: 1,
-                resolver: binding.clone(),
-            }),
-        );
+        let verifier = AllocationVerifierConfig {
+            key_id: signed["key_id"].as_str().unwrap().into(),
+            public_key_spki: spki,
+            policy_epoch: 1,
+            consent_epoch: 1,
+            resolver: binding.clone(),
+        };
+        let fixture = Fixture::with_verifier("holder", Some(verifier.clone()));
         Arc::get_mut(&mut state).unwrap().budget = Some(Arc::new(
             crate::production_budget::ProductionBudgetRuntime::new(fixture.journal.clone()),
         ));
-        let app = super::router(state.clone());
+        let mut app = super::router(state.clone());
         let put = || {
             Request::put("/api/v1/databases/prod/collections/users/documents/doc-1")
                 .header("authorization", "Bearer tskey_test_abcdefghijklmnop")
@@ -334,6 +351,12 @@ async fn public_put_consumes_signed_included_and_paid_allocations_once() {
                 assert_eq!(&body, expected);
             } else {
                 first = Some(body);
+                drop(app);
+                Arc::get_mut(&mut state).unwrap().budget =
+                    Some(Arc::new(crate::production_budget::ProductionBudgetRuntime::new(
+                        fixture.reopen(verifier.clone()),
+                    )));
+                app = super::router(state.clone());
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
         }

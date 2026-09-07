@@ -28,8 +28,10 @@ use tokio::sync::{mpsc, watch};
 #[cfg(test)]
 mod admission_tests;
 mod retirement;
+mod suspension;
 #[cfg(test)]
 pub(crate) use admission_tests::failed_peer_owner;
+pub use suspension::ReplicationSuspension;
 
 pub use retirement::{RetiredPeerLane, RetiredPhysicalLane, RetirementEvidence};
 
@@ -179,6 +181,8 @@ pub struct ReplicationPeers {
     cuts: Arc<ReplicationCuts>,
     progress: Arc<ReplicationProgress>,
     admissions: BTreeMap<String, mpsc::Sender<PeerCommand>>,
+    suspension_operation: tokio::sync::Mutex<()>,
+    suspensions: std::sync::Mutex<BTreeMap<DatabaseRouteScope, u64>>,
     admitted: std::sync::Mutex<std::collections::BTreeSet<(String, DatabaseRouteScope)>>,
     observations: PeerObservations,
     live_workers: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
@@ -289,6 +293,8 @@ impl ReplicationPeers {
             observations,
             live_workers,
             admissions,
+            suspension_operation: tokio::sync::Mutex::new(()),
+            suspensions: std::sync::Mutex::new(BTreeMap::new()),
             admitted: std::sync::Mutex::new(admitted),
             cuts,
             progress: retained_progress,
@@ -563,7 +569,7 @@ fn spawn_peer_owner(
             workers.spawn(peer_worker(PeerWorkerContext {
                 runtime: runtime.clone(), progress: progress.clone(), id: id.clone(), lanes,
                 incoming: receiver, stopped: stopped.clone(), observations: worker_observations.clone(),
-                new_lanes: PeerInbox { receiver: Some(new_lanes), peer: id.as_str().to_owned(), worker_id, live_workers: worker_lifecycle.clone(), progress: progress.clone(), observations: worker_observations.clone(), retirement: None },
+                new_lanes: PeerInbox { receiver: Some(new_lanes), peer: id.as_str().to_owned(), worker_id, live_workers: worker_lifecycle.clone(), progress: progress.clone(), observations: worker_observations.clone(), retirement: None, suspended: Default::default() },
                 cuts: worker_cuts.clone(), worker_id,
             }));
         }
@@ -679,7 +685,7 @@ async fn peer_worker(context: PeerWorkerContext) {
                         retirement_park(&mut new_lanes, &mut stopped, &mut lanes).await;
                         return;
                     }
-                    apply_command(command, &mut lanes, &observations, id.as_str());
+                    apply_worker_command(command, &mut lanes, &observations, id.as_str(), &mut new_lanes);
                 } else { return; }
                 continue;
             },
@@ -734,7 +740,7 @@ async fn retirement_park(
                     let _ = done.send(result);
                 }
                 Some(PeerCommand::Remove { done, .. }) => { let _ = done.send(()); }
-                Some(PeerCommand::Add(_)) => {}
+                Some(PeerCommand::Add(_) | PeerCommand::Rebind(_) | PeerCommand::Suspend { .. }) => {}
                 None => return,
             }
         }
@@ -799,7 +805,7 @@ async fn session(
     let mut sent = BTreeMap::<DatabaseRouteScope, tokio::time::Instant>::new();
     let mut receipts = Vec::<(DatabaseRouteScope, u64, Vec<u8>)>::new();
     send_initial_checkpoints(&connection, lanes).await?;
-    let repair_lanes = build_repair_lanes(runtime, &connection, lanes)?;
+    let mut repair_lanes = build_repair_lanes(runtime, &connection, lanes)?;
     let started = tokio::time::Instant::now();
     let mut tick = tokio::time::interval(Duration::from_millis(20));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -809,12 +815,36 @@ async fn session(
         }
         tokio::select! {
             command = new_lanes.recv() => {
-                if handle_session_command(command, lanes, observations, new_lanes, connection.peer().member().as_str()).await? { return Err("__retire__".into()); }
-                return Ok(())
+                match command {
+                    Some(PeerCommand::Suspend { scope, done }) => {
+                        // All disk callbacks above are awaited before polling commands.
+                        // Drop session-local state before acknowledging lease release.
+                        repair_lanes.remove(&scope);
+                        receipts.retain(|(candidate, _, _)| *candidate != scope);
+                        resumed.remove(&scope);
+                        sent.remove(&scope);
+                        sent_readiness.remove(&scope);
+                        apply_worker_command(PeerCommand::Suspend { scope, done }, lanes, observations, connection.peer().member().as_str(), new_lanes);
+                    }
+                    Some(PeerCommand::Rebind(added)) => {
+                        let setup = async {
+                            send_initial_checkpoints(&connection, &added).await?;
+                            build_repair_lanes(runtime, &connection, &added)
+                        }.await;
+                        observe(observations, connection.peer().member().as_str(), &added, true, new_lanes.worker_id);
+                        apply_worker_command(PeerCommand::Rebind(added), lanes, observations, connection.peer().member().as_str(), new_lanes);
+                        repair_lanes.extend(setup?);
+                    }
+                    command => {
+                        if handle_session_command(command, lanes, observations, new_lanes, connection.peer().member().as_str()).await? { return Err("__retire__".into()); }
+                        return Ok(())
+                    }
+                }
             },
             frame = frames.recv() => {
                 let bytes = frame.ok_or_else(|| "replication reader closed".to_owned())?.map_err(failure)?;
                 let scope = frame_scope(&bytes)?;
+                if new_lanes.suspended.contains(&scope) { continue; }
                 progress.regional_covers(scope, 0).map_err(failure)?;
                 let lane = lanes.iter_mut().find(|lane| lane.scope == scope).ok_or_else(|| "unassigned replication scope".to_owned())?;
                 if bytes.starts_with(b"TBRCUT") {
@@ -1035,7 +1065,7 @@ async fn handle_session_command(
             Ok(true)
         }
         Some(command) => {
-            apply_command(command, lanes, observations, peer);
+            apply_worker_command(command, lanes, observations, peer, inbox);
             Ok(false)
         }
         None => Ok(false),
@@ -1333,6 +1363,11 @@ struct RepairLane {
 
 enum PeerCommand {
     Add(Vec<PeerDatabase>),
+    Suspend {
+        scope: DatabaseRouteScope,
+        done: tokio::sync::oneshot::Sender<()>,
+    },
+    Rebind(Vec<PeerDatabase>),
     Remove {
         scope: DatabaseRouteScope,
         done: tokio::sync::oneshot::Sender<()>,
@@ -1353,6 +1388,7 @@ struct PeerInbox {
     progress: Arc<ReplicationProgress>,
     observations: PeerObservations,
     retirement: Option<Result<Vec<(DatabaseRouteScope, RetiredPeerLane)>, String>>,
+    suspended: std::collections::BTreeSet<DatabaseRouteScope>,
 }
 
 impl PeerInbox {
@@ -1379,6 +1415,27 @@ impl Drop for PeerInbox {
     }
 }
 
+fn apply_worker_command(
+    command: PeerCommand,
+    lanes: &mut Vec<PeerDatabase>,
+    observations: &PeerObservations,
+    peer: &str,
+    inbox: &mut PeerInbox,
+) {
+    match &command {
+        PeerCommand::Suspend { scope, .. } => {
+            inbox.suspended.insert(*scope);
+        }
+        PeerCommand::Rebind(added) => {
+            for lane in added {
+                inbox.suspended.remove(&lane.scope);
+            }
+        }
+        _ => {}
+    }
+    apply_command(command, lanes, observations, peer);
+}
+
 fn apply_command(
     command: PeerCommand,
     lanes: &mut Vec<PeerDatabase>,
@@ -1386,8 +1443,8 @@ fn apply_command(
     peer: &str,
 ) {
     match command {
-        PeerCommand::Add(added) => lanes.extend(added),
-        PeerCommand::Remove { scope, done } => {
+        PeerCommand::Add(added) | PeerCommand::Rebind(added) => lanes.extend(added),
+        PeerCommand::Remove { scope, done } | PeerCommand::Suspend { scope, done } => {
             lanes.retain(|lane| lane.scope != scope);
             if let Ok(mut observations) = observations.lock() {
                 observations.remove(&(peer.to_owned(), scope));
@@ -1495,6 +1552,7 @@ mod tests {
             progress: progress.clone(),
             observations: observations.clone(),
             retirement: None,
+            suspended: Default::default(),
         };
         drop(sender);
         drop(inbox);

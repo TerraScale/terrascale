@@ -54,6 +54,7 @@ fn synthetic() -> Synthetic {
                 progress: progress.clone(),
                 observations: observations.clone(),
                 retirement: None,
+                suspended: Default::default(),
             },
         );
     }
@@ -64,6 +65,8 @@ fn synthetic() -> Synthetic {
             cuts: Arc::new(ReplicationCuts::default()),
             progress: progress.clone(),
             admissions,
+            suspensions: Default::default(),
+            suspension_operation: Default::default(),
             admitted: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             observations: observations.clone(),
             live_workers,

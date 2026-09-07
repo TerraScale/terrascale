@@ -271,6 +271,68 @@ impl ProvisioningClient {
         Ok(result)
     }
 
+    /// Discovers committed operations without requiring the original submission response.
+    pub(crate) async fn list_operations(
+        &self,
+        scope: &crate::delegated_identity::VerifiedProjectScope,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::api::operations::OperationPage, ProvisioningError> {
+        if !(1..=50).contains(&limit) || after.is_some_and(|value| value.len() > 256) {
+            return Err(ProvisioningError::InvalidRequest);
+        }
+        let _permit = self.permits.try_acquire().map_err(|_| ProvisioningError::Unavailable)?;
+        let body = serde_json::to_vec(&serde_json::json!({
+            "environment":self.environment,"tenant_id":scope.tenant_id,
+            "project_id":scope.project_id,"after":after.unwrap_or(""),"limit":limit,
+        }))
+        .map_err(|_| ProvisioningError::Unavailable)?;
+        #[derive(Deserialize)]
+        struct ScopedPage {
+            environment: String,
+            tenant_id: String,
+            project_id: String,
+            #[serde(flatten)]
+            page: crate::api::operations::OperationPage,
+        }
+        let result: ScopedPage = tokio::time::timeout(
+            Duration::from_secs(10),
+            self.exchange("/internal/v1/operations/list", body, hyper::StatusCode::OK),
+        )
+        .await
+        .map_err(|_| ProvisioningError::Unavailable)??;
+        if result.environment != self.environment
+            || result.tenant_id != scope.tenant_id
+            || result.project_id != scope.project_id
+        {
+            return Err(ProvisioningError::Unavailable);
+        }
+        let page = result.page;
+        if page.operations.len() > limit
+            || page.covered_kinds != ["database_create", "branch_create"]
+            || page
+                .next_cursor
+                .as_ref()
+                .is_some_and(|cursor| cursor.len() > 256 || page.operations.len() != limit)
+            || page.operations.iter().any(|operation| {
+                !valid_operation_id(&operation.operation_id)
+                    || !canonical_ulid(&operation.database_id)
+                    || !matches!(operation.kind.as_str(), "database_create" | "branch_create")
+                    || !matches!(
+                        (operation.state.as_str(), operation.stage.as_str()),
+                        ("queued", "accepted")
+                            | ("running", "members_admitted" | "placement_pending")
+                            | ("succeeded", "ready")
+                    )
+                    || operation.cancellable
+                    || operation.revision == 0
+            })
+        {
+            return Err(ProvisioningError::Unavailable);
+        }
+        Ok(page)
+    }
+
     async fn exchange<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,

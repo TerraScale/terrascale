@@ -626,12 +626,31 @@ pub(crate) struct AppliedFrontierEntry {
     pub(crate) hlc: u64,
 }
 
+/// Immutable identity for a cross-file storage participant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ParticipantIdentity {
+    pub(crate) operation: OperationId,
+    pub(crate) local_file: String,
+    pub(crate) owner: String,
+    pub(crate) incarnation: u128,
+    pub(crate) digest: [u8; 32],
+    pub(crate) epoch: u64,
+}
+
+/// Durable participant preparation result.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ParticipantPrepareReceipt {
+    pub(crate) identity: ParticipantIdentity,
+}
+
 /// The private storage adapter seam the Engine depends on.
 ///
 /// The production implementation is [`SqliteStorage`]. The trait exists so the
 /// storage seam stays substitutable behind one typed contract instead of
 /// leaking file, codec, or page details into the Engine.
 pub(crate) trait StoragePort: Send {
+    fn prepare_participant(&mut self, _identity: &ParticipantIdentity) -> Result<ParticipantPrepareReceipt, ()> { Err(()) }
+    fn resolve_participant(&mut self, _identity: &ParticipantIdentity) -> Result<Option<ParticipantPrepareReceipt>, ()> { Ok(None) }
     fn lifecycle_update(
         &mut self,
         _tenant: &TenantId,

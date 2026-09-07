@@ -547,6 +547,24 @@ impl AdmittedDatabaseRegistry {
         }
     }
 
+    /// Resolves a retained database for lifecycle authority checks, including
+    /// paused entries that are intentionally absent from serving resolution.
+    pub fn resolve_lifecycle(
+        &self,
+        database: &str,
+    ) -> Result<Option<Arc<AdmittedDatabase>>, String> {
+        if !(self.ready)() {
+            return Err("Member is not ready to serve".into());
+        }
+        if self.draining.load(Ordering::Acquire) {
+            return Err("Member is not ready to serve".into());
+        }
+        self.databases
+            .read()
+            .map_err(|_| "admitted registry unavailable".into())
+            .map(|databases| databases.get(database).cloned())
+    }
+
     /// Public metadata excludes pending entries but retains terminal deletion records.
     ///
     /// # Errors

@@ -315,6 +315,12 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("terrabase-export-key-{}", std::process::id()));
         std::fs::write(&path, [0_u8; 31]).expect("fixture");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                .expect("private fixture");
+        }
         assert!(crate::export_artifact_crypto::read_cursor_key(&path).is_err());
         std::fs::write(&path, [0_u8; 32]).expect("fixture");
         assert!(crate::export_artifact_crypto::read_cursor_key(&path).is_err());
@@ -322,6 +328,13 @@ mod tests {
         valid[0] = 1;
         std::fs::write(&path, valid).expect("fixture");
         assert_eq!(crate::export_artifact_crypto::read_cursor_key(&path).expect("key"), valid);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+                .expect("public fixture");
+            assert!(crate::export_artifact_crypto::read_cursor_key(&path).is_err());
+        }
         let _ = std::fs::remove_file(path);
     }
 
@@ -329,6 +342,7 @@ mod tests {
     fn errors_are_redacted() {
         assert_eq!(format!("{:?}", ProductionExportError::CursorKey), "CursorKey");
     }
+
     #[tokio::test]
     async fn remote_member_requires_manifest_authorization() {
         let destination = Arc::new(ObjectDestination::for_test(

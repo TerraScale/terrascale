@@ -600,6 +600,41 @@ impl NativeLifecycleWorker for RegistryLifecycleWorker {
     ) -> Result<NativeLifecycleReceipt, String> {
         self.registry.resume(&assignment.database, _operation).map(NativeLifecycleReceipt::State)
     }
+
+    async fn delete_owned_data(
+        &self,
+        assignment: &AcceptedLifecycleAssignment,
+        operation: &str,
+    ) -> Result<(), String> {
+        let database = self
+            .registry
+            .resolve_lifecycle(&assignment.database)?
+            .ok_or("database is not retained")?;
+        let tenant = terrabase::types::TenantId::try_new(&database.record.tenant_id)
+            .map_err(|_| "invalid admitted tenant")?;
+        let state = database
+            .host
+            .engine()
+            .lifecycle_state(&database.host.engine().scope_for(&tenant))
+            .map_err(|_| "lifecycle state unavailable")?;
+        let intent = state.deletion.ok_or("durable deletion intent is missing")?;
+        let retain_until = intent.retain_until.ok_or("deletion retention cutoff is unknown")?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "system clock unavailable")?
+            .as_millis() as u64;
+        if !state.access_revoked() || retain_until > now {
+            return Err("durable deletion retention boundary has not elapsed".into());
+        }
+        let backups = self.backups.as_ref().ok_or("native backup fleet is not composed")?;
+        backups
+            .lock()
+            .map_err(|_| "native backup fleet poisoned")?
+            .lifecycle_delete(&assignment.database, operation)
+            .await
+            .map_err(|_| "provider-owned backup deletion is pending")?;
+        Err("provider-owned backup deletion complete; local/key cleanup is pending".into())
+    }
 }
 
 /// Authority verifier for signed accepted placement proofs.
@@ -762,5 +797,139 @@ mod restore_digest_tests {
             restore_request_digest(&request).expect("digest"),
             "8de75d48c6ed3bba6d0b05f266c390a3fb36c155ba423a225e8e733fae64413d"
         );
+    }
+}
+
+#[cfg(test)]
+mod restore_stats_tests {
+    use super::*;
+    use crate::native_recovery::NativeRestoreReceipt;
+    use terrabase_tbep::proto::terrabase::v1::{LifecycleControlContext, RestoreStatsRequest};
+
+    struct Worker {
+        complete: bool,
+    }
+    #[async_trait::async_trait]
+    impl NativeLifecycleWorker for Worker {
+        async fn restore_request_facts(
+            &self,
+            operation: &str,
+            target: &str,
+            owner: &str,
+        ) -> Result<(String, Vec<String>), String> {
+            if (operation, target, owner) != ("restore-op", "target-db", "tenant/project") {
+                return Err("restore identity mismatch".into());
+            }
+            Ok(("retained-request-digest".into(), vec!["gru".into(), "sfo".into(), "fra".into()]))
+        }
+        async fn restore_stats(
+            &self,
+            request: &RestoreStatsRequest,
+        ) -> Result<NativeRestoreReceipt, String> {
+            if !self.complete || request.journal_cut != "42" || request.restore_epoch != 7 {
+                return Err("restore is not complete or identity mismatched".into());
+            }
+            Ok(NativeRestoreReceipt {
+                selected_identity: "manifest-sha256".into(),
+                logical_content_checksum: "logical-blake3".into(),
+                restored_documents: 12,
+                journal_cut: 42,
+            })
+        }
+        async fn ensure_snapshot(
+            &self,
+            _: &AcceptedLifecycleAssignment,
+            _: &str,
+        ) -> Result<NativeLifecycleReceipt, String> {
+            unreachable!("stats must not mutate lifecycle")
+        }
+        async fn close_database(
+            &self,
+            _: &AcceptedLifecycleAssignment,
+            _: &str,
+        ) -> Result<NativeLifecycleReceipt, String> {
+            unreachable!("stats must not mutate lifecycle")
+        }
+        async fn stop_native_backup(
+            &self,
+            _: &AcceptedLifecycleAssignment,
+            _: &str,
+        ) -> Result<NativeLifecycleReceipt, String> {
+            unreachable!("stats must not mutate lifecycle")
+        }
+        async fn reactivate(
+            &self,
+            _: &AcceptedLifecycleAssignment,
+            _: &str,
+        ) -> Result<NativeLifecycleReceipt, String> {
+            unreachable!("stats must not mutate lifecycle")
+        }
+    }
+    struct Authority;
+    impl LifecycleAuthority for Authority {
+        fn verify(
+            &self,
+            assignment: &AcceptedLifecycleAssignment,
+            action: LifecycleGrantAction,
+            operation: &str,
+            signature: &[u8],
+            grant: &[u8],
+            expected_digest: Option<&str>,
+        ) -> Result<(), String> {
+            if assignment.tenant != "tenant"
+                || assignment.project != "project"
+                || operation != "restore-op"
+                || action != LifecycleGrantAction::RestoreToTarget
+                || signature != b"signature"
+                || grant != b"grant"
+                || expected_digest != Some("retained-request-digest")
+            {
+                return Err("authority mismatch".into());
+            }
+            Ok(())
+        }
+    }
+    fn request() -> RestoreStatsRequest {
+        RestoreStatsRequest {
+            context: Some(LifecycleControlContext {
+                tenant: "tenant".into(),
+                project: "project".into(),
+                region: "gru".into(),
+                authority_signature: b"signature".to_vec(),
+                operation_grant: b"grant".to_vec(),
+                ..Default::default()
+            }),
+            operation_id: "restore-op".into(),
+            target_owner: "tenant/project".into(),
+            target_database: "target-db".into(),
+            journal_cut: "42".into(),
+            restore_epoch: 7,
+        }
+    }
+    fn control(complete: bool) -> ProductionLifecycleControl {
+        ProductionLifecycleControl {
+            worker: Arc::new(Worker { complete }),
+            authority: Arc::new(Authority),
+        }
+    }
+    #[tokio::test]
+    async fn restore_stats_preserves_verified_three_region_placement_and_identity() {
+        let request = request();
+        let stats = control(true).restore_stats(&request).await.expect("complete verified stats");
+        assert_eq!(stats.placement, ["gru", "sfo", "fra"]);
+        assert_eq!(stats.checksum, "logical-blake3");
+        assert_eq!(stats.row_count, 12);
+        assert_eq!(stats.journal_cut, "42");
+        assert!(control(false).restore_stats(&request).await.is_err());
+        let mut wrong_owner = request.clone();
+        wrong_owner.target_owner = "other-tenant/project".into();
+        assert!(control(true).restore_stats(&wrong_owner).await.is_err());
+        let mut wrong_epoch = request.clone();
+        wrong_epoch.restore_epoch = 8;
+        assert!(control(true).restore_stats(&wrong_epoch).await.is_err());
+        let mut wrong_authority = request;
+        wrong_authority.context.as_mut().expect("context").operation_grant =
+            b"wrong-grant".to_vec();
+        assert!(control(true).restore_stats(&wrong_authority).await.is_err());
     }
 }
