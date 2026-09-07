@@ -287,8 +287,9 @@ type BackupStatusResponse = BackupReadiness
 // RestoreBackupRequest restores a backup into a new database. At is Unix
 // milliseconds, matching the TerraBase PITR contract.
 type RestoreBackupRequest struct {
-	Name string `json:"name"`
-	At   *int64 `json:"at,omitempty"`
+	Name        string `json:"name"`
+	At          *int64 `json:"at,omitempty"`
+	OperationID string `json:"operation_id"`
 }
 
 // DatabaseUsage contains authoritative totals at one durable ledger high-water.
@@ -1191,7 +1192,7 @@ func (b *BackupsClient) ListDatabaseBackups(ctx context.Context, database string
 
 // RestoreBackup restores a PITR point into a new database. At is Unix
 // milliseconds and is deliberately not converted to local time.
-func (b *BackupsClient) RestoreBackup(ctx context.Context, database string, request RestoreBackupRequest, opts ...RequestOption) (*DatabaseRecord, error) {
+func (b *BackupsClient) RestoreBackup(ctx context.Context, database string, request RestoreBackupRequest, opts ...RequestOption) (*ProvisioningOperation, error) {
 	if err := managementContext(ctx); err != nil {
 		return nil, err
 	}
@@ -1208,7 +1209,7 @@ func (b *BackupsClient) RestoreBackup(ctx context.Context, database string, requ
 	if err := managementMutation(opts); err != nil {
 		return nil, err
 	}
-	var out DatabaseRecord
+	var out ProvisioningOperation
 	if err := b.c.do(ctx, "POST", path+"/backups/restore", nil, request, &out, "restore_backup", opts...); err != nil {
 		return nil, err
 	}
