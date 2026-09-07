@@ -12,6 +12,93 @@ import type { TerraScaleSqliteStore } from "../store.js";
 type Store = Pick<TerraScaleSqliteStore, "get" | "list" | "put" | "delete">;
 type Entity = LocalJsonObject & { readonly id: string; readonly projectId: string };
 
+type StoredDocument = {
+  readonly value: unknown;
+  readonly version: number;
+  readonly revision: string;
+  readonly updatedAt: string;
+};
+
+const documentKeyPrefix = "sdk-local/documents";
+
+function documentScope(database: string, collection: string): string {
+  return `${database}/${collection}`;
+}
+
+function documentEntry(
+  store: Store,
+  database: string,
+  collection: string,
+  id: string,
+): StoredDocument | undefined {
+  return store.get<StoredDocument>(
+    documentKeyPrefix,
+    documentScope(database, collection),
+    id,
+  );
+}
+
+function normalizeRevision(value: string): string {
+  return value.replace(/^W\//u, "").replace(/^"|"$/gu, "");
+}
+
+function putDocumentEntry(
+  store: Store,
+  database: string,
+  collection: string,
+  id: string,
+  value: unknown,
+  now: string,
+): StoredDocument {
+  const current = documentEntry(store, database, collection, id);
+  const version = (current?.version ?? 0) + 1;
+  const stored: StoredDocument = {
+    value,
+    version,
+    revision: `local-${version}`,
+    updatedAt: now,
+  };
+  const scope = documentScope(database, collection);
+  store.put(documentKeyPrefix, scope, id, stored);
+  const ids = new Set(
+    store.get<readonly string[]>(`${documentKeyPrefix}-index`, scope, "ids") ?? [],
+  );
+  ids.add(id);
+  store.put(`${documentKeyPrefix}-index`, scope, "ids", [...ids]);
+  return stored;
+}
+
+function removeDocumentEntry(
+  store: Store,
+  database: string,
+  collection: string,
+  id: string,
+): boolean {
+  const scope = documentScope(database, collection);
+  const removed = store.delete(documentKeyPrefix, scope, id);
+  if (removed) {
+    const ids = new Set(
+      store.get<readonly string[]>(`${documentKeyPrefix}-index`, scope, "ids") ?? [],
+    );
+    ids.delete(id);
+    store.put(`${documentKeyPrefix}-index`, scope, "ids", [...ids]);
+  }
+  return removed;
+}
+
+function mergePatch(target: unknown, patch: unknown): unknown {
+  if (patch === null || typeof patch !== "object" || Array.isArray(patch)) return patch;
+  const base =
+    target !== null && typeof target === "object" && !Array.isArray(target)
+      ? { ...(target as Record<string, unknown>) }
+      : {};
+  for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
+    if (value === null) delete base[key];
+    else base[key] = mergePatch(base[key], value);
+  }
+  return base;
+}
+
 const keyPrefix = "sdk-local/data/";
 
 /**
@@ -26,7 +113,9 @@ export async function handleLocalData(context: LocalRequestContext): Promise<Res
     "GET",
     "/api/v1/databases/{name}/collections/{collection}/documents",
   );
-  if (documents !== undefined) return jsonResponse({ documents: [] });
+  if (documents !== undefined) {
+    return listDocuments(context, documents.name!, documents.collection!);
+  }
 
   const document = matchLocalRoute(
     context,
@@ -34,11 +123,30 @@ export async function handleLocalData(context: LocalRequestContext): Promise<Res
     "/api/v1/databases/{name}/collections/{collection}/documents/{id}",
   );
   if (document !== undefined) {
-    if (context.method === "DELETE") return emptyResponse(204);
-    if (context.method === "PUT" || context.method === "PATCH") {
-      return jsonResponse({ revision: `local-${context.now}` });
+    const locator = {
+      database: document.name!,
+      collection: document.collection!,
+      id: document.id!,
+    };
+    if (context.method === "DELETE") return deleteDocument(context, locator);
+    if (context.method === "PUT") return writeDocument(context, locator, context.body);
+    if (context.method === "PATCH") {
+      return writeDocument(context, locator, context.body, { merge: true });
     }
-    if (context.method === "GET") return jsonResponse({});
+    if (context.method === "GET") return readDocument(context, locator);
+  }
+
+  const history = matchLocalRoute(
+    context,
+    "GET",
+    "/api/v1/databases/{name}/collections/{collection}/documents/{id}/history",
+  );
+  if (history !== undefined) {
+    return documentHistory(context, {
+      database: history.name!,
+      collection: history.collection!,
+      id: history.id!,
+    });
   }
 
   const sql = matchLocalRoute(context, "POST", "/api/v1/databases/{name}/sql");
@@ -83,6 +191,111 @@ export async function handleLocalData(context: LocalRequestContext): Promise<Res
   }
 
   return undefined;
+}
+
+type DocumentLocator = {
+  readonly database: string;
+  readonly collection: string;
+  readonly id: string;
+};
+
+function listDocuments(context: LocalRequestContext, database: string, collection: string): Response {
+  const params = context.url.searchParams;
+  const parsedLimit = Number.parseInt(params.get("limit") ?? "100", 10);
+  const limit = Math.min(
+    Math.max(Number.isSafeInteger(parsedLimit) ? parsedLimit : 100, 1),
+    1000,
+  );
+  const after = params.get("after");
+  const scope = documentScope(database, collection);
+  const ids = [
+    ...(context.store.get<readonly string[]>(
+      `${documentKeyPrefix}-index`,
+      scope,
+      "ids",
+    ) ?? []),
+  ].sort();
+  const documents = [];
+  for (const id of ids) {
+    if (after !== null && after !== "" && id <= after) continue;
+    const stored = documentEntry(context.store, database, collection, id);
+    if (stored === undefined) continue;
+    documents.push({ id, version: stored.version, value: stored.value });
+    if (documents.length >= limit) break;
+  }
+  return jsonResponse({ documents });
+}
+
+function readDocument(context: LocalRequestContext, locator: DocumentLocator): Response {
+  const stored = documentEntry(context.store, locator.database, locator.collection, locator.id);
+  if (stored === undefined) {
+    return problemResponse(404, "document_not_found", "The document was not found.");
+  }
+  return jsonResponse(stored.value, 200, { etag: `"${stored.revision}"` });
+}
+
+function writeDocument(
+  context: LocalRequestContext,
+  locator: DocumentLocator,
+  body: unknown,
+  options: { readonly merge?: boolean } = {},
+): Response {
+  if (body === undefined) {
+    return problemResponse(400, "invalid_request_body", "A JSON document value is required.");
+  }
+  const current = documentEntry(context.store, locator.database, locator.collection, locator.id);
+  const ifMatch = context.request.headers.get("if-match");
+  if (ifMatch !== null && (current === undefined || normalizeRevision(ifMatch) !== current.revision)) {
+    return problemResponse(
+      412,
+      "document_precondition_failed",
+      "The document changed since the supplied revision.",
+    );
+  }
+  const ifNoneMatch = context.request.headers.get("if-none-match")?.trim();
+  if (ifNoneMatch === "*" && current !== undefined) {
+    return problemResponse(
+      412,
+      "document_precondition_failed",
+      "The document already exists.",
+    );
+  }
+  const value =
+    options.merge === true
+      ? mergePatch(current?.value ?? {}, body)
+      : body;
+  const stored = putDocumentEntry(
+    context.store,
+    locator.database,
+    locator.collection,
+    locator.id,
+    value,
+    context.now,
+  );
+  return jsonResponse({ revision: stored.revision }, 200, {
+    etag: `"${stored.revision}"`,
+  });
+}
+
+function deleteDocument(context: LocalRequestContext, locator: DocumentLocator): Response {
+  const removed = removeDocumentEntry(
+    context.store,
+    locator.database,
+    locator.collection,
+    locator.id,
+  );
+  if (!removed) {
+    return problemResponse(404, "document_not_found", "The document was not found.");
+  }
+  return emptyResponse(204);
+}
+
+function documentHistory(context: LocalRequestContext, locator: DocumentLocator): Response {
+  const stored = documentEntry(context.store, locator.database, locator.collection, locator.id);
+  if (stored === undefined) {
+    return problemResponse(404, "document_not_found", "The document was not found.");
+  }
+  return jsonResponse({ history: [{ revision: stored.revision, deleted: false }] });
 }
 
 async function listDatabases(context: LocalRequestContext, projectId: string): Promise<readonly Entity[]> {
