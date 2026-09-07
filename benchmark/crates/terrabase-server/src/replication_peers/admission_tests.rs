@@ -416,6 +416,106 @@ async fn real_worker_suspension_releases_engine_and_rebinds_same_assignment() {
 }
 
 #[tokio::test]
+async fn real_session_io_failure_fences_old_session_before_restart() {
+    use crate::production::tests::{AcceptedMembership, Writer, opened_bootstrap, transport_pair};
+    use terrabase_cluster::wal_driver::WalEngineHandle;
+    use terrabase_cluster::wal_follower::WalTail;
+
+    let (bootstrap, root, spec) = opened_bootstrap("replication-session-restart");
+    let parts = bootstrap.into_parts();
+    let database = parts.member.database_ids().next().unwrap();
+    parts.member.accept_database_role(&database, &Writer).unwrap();
+    let placement = parts.placement.clone();
+    let (transport, remote) = transport_pair(&placement);
+    let config = transport.config();
+    let peer = config.peers().next().unwrap().identity().clone();
+    let database_scope = spec.scope().unwrap();
+    let scope = DatabaseRouteScope::new(
+        database_scope.tenant(),
+        database_scope.project(),
+        database_scope.database(),
+    );
+    let binding =
+        WalReplicaBinding::new(scope, &placement, config.local_identity().clone(), peer.clone())
+            .unwrap();
+    let member = parts.member.clone();
+    let runtime = Arc::new(
+        ProductionMemberRuntime::try_new(placement.clone(), parts.routes, parts.member, transport)
+            .unwrap(),
+    );
+    runtime.admit_membership(&AcceptedMembership(placement)).unwrap();
+    let database_lease: Arc<dyn WalEngineHandle> =
+        Arc::new(runtime.acquire_replication(&scope).unwrap());
+    let lane = PeerDatabase {
+        scope,
+        physical: Some(PhysicalDriver::Writer(WalWriterDriver::new(
+            binding,
+            database_lease,
+            WalTail::new(root.join("unused-tail")),
+        ))),
+        causal: None,
+    };
+    let progress = Arc::new(ReplicationProgress::default());
+    let peers = ReplicationPeers::start(
+        runtime.clone(),
+        progress,
+        PeerDatabaseBatch {
+            lanes: BTreeMap::from([(peer.member().as_str().to_owned(), vec![lane])]),
+            selected_regions: BTreeMap::from([(scope, BTreeSet::from(["GRU".into()]))]),
+        },
+    )
+    .unwrap();
+    let observations = peers.observations();
+    let remote_task = tokio::spawn(async move {
+        for _ in 0..2 {
+            let Some(connection) = remote.accept().await.unwrap() else { return };
+            let _ = connection.receive_frame().await;
+            // Closing immediately after authentication forces the real session
+            // owner through its transport-error fence and restart path.
+            drop(connection);
+        }
+    });
+    let first = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(facts) =
+                observations.lock().unwrap().get(&(peer.member().as_str().to_owned(), scope))
+                && facts.connected
+                && facts.session_id != 0
+            {
+                break facts.session_id;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("first authenticated session");
+    let second = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if let Some(facts) =
+                observations.lock().unwrap().get(&(peer.member().as_str().to_owned(), scope))
+                && facts.session_id > first
+            {
+                break facts.session_id;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("replacement session");
+    assert!(second > first);
+    let facts = observations.lock().unwrap();
+    let facts = facts.get(&(peer.member().as_str().to_owned(), scope)).unwrap();
+    assert!(facts.physical.is_none(), "closed session must not publish physical proof");
+    assert!(facts.readiness.is_none(), "closed session must not publish readiness proof");
+    drop(facts);
+    peers.drain().await.unwrap();
+    remote_task.await.unwrap();
+    drop(runtime);
+    drop(member);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
 async fn canceled_suspension_retries_without_retiring_or_removing_other_database() {
     let mut synthetic = synthetic();
     let target = scope(1);

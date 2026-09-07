@@ -777,6 +777,14 @@ impl NativeRecoveryRuntime {
                 operation.receipt = Some(receipt);
                 operation.phase = NativeRestorePhase::Complete;
                 operation.error = None;
+            } else if operation.phase == NativeRestorePhase::Verifying
+                && operation.receipt.is_none()
+            {
+                // Explicit readback proved the retained target is paused and
+                // active with no publication marker. No executor receipt claims
+                // an effect, so the same identity can execute on the next turn.
+                operation.phase = NativeRestorePhase::Accepted;
+                operation.error = None;
             } else {
                 operation.phase = NativeRestorePhase::Uncertain;
                 operation.error =
@@ -1191,6 +1199,25 @@ mod tests {
             runtime.restore_status("uncertain-operation").unwrap().unwrap().phase,
             NativeRestorePhase::Uncertain
         );
+        // A successful executor receipt claims an effect. Missing publication
+        // is inconsistent evidence, not permission to execute again.
+        let mut claimed = operation.clone();
+        claimed.phase = NativeRestorePhase::Verifying;
+        claimed.error = None;
+        claimed.receipt = Some(NativeRestoreReceipt {
+            selected_identity: claimed.request.recovery_point_id.clone(),
+            logical_content_checksum: blake3::hash(b"claimed").to_hex().to_string(),
+            restored_documents: 0,
+            journal_cut: 1,
+        });
+        runtime.save_restore(&claimed).unwrap();
+        assert!(runtime.process_restore_pending().await.unwrap());
+        assert_eq!(
+            runtime.restore_status("uncertain-operation").unwrap().unwrap().phase,
+            NativeRestorePhase::Uncertain
+        );
+        assert!(!runtime.process_restore_pending().await.unwrap());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         drop(member);
         let _ = std::fs::remove_dir_all(root);
     }
