@@ -97,6 +97,12 @@ where
     M: FnOnce(&Checkpoint) -> Result<RecoveryPointFacts, NativeRecoveryError>,
 {
     if matches!(state.phase, NativeRecoveryPhase::Complete) {
+        let point = checkpoint.as_ref().ok_or(NativeRecoveryError::VerificationFailed)?;
+        validate(Some(point), &state.source_database_id, placement)?;
+        let facts = state.facts.as_ref().ok_or(NativeRecoveryError::VerificationFailed)?;
+        if !point.matches_facts(facts) {
+            return Err(NativeRecoveryError::VerificationFailed);
+        }
         return Ok(());
     }
     if matches!(state.phase, NativeRecoveryPhase::Capturing) {
@@ -124,6 +130,7 @@ where
         persist(state, checkpoint.as_ref())?;
     } else if matches!(state.phase, NativeRecoveryPhase::Capturing) {
         state.phase = NativeRecoveryPhase::Measuring;
+        state.error = None;
         persist(state, checkpoint.as_ref())?;
     }
     let facts = measure(checkpoint.as_ref().ok_or(NativeRecoveryError::VerificationFailed)?)?;

@@ -1,4 +1,5 @@
 use super::*;
+use rusqlite::Connection;
 use std::cell::{Cell, RefCell};
 
 fn point() -> Checkpoint {
@@ -108,6 +109,26 @@ fn measuring_checkpoint_resumes_without_capture() {
 }
 
 #[test]
+fn capturing_checkpoint_retry_enters_measuring_without_stale_error() {
+    let mut operation = state(NativeRecoveryPhase::Capturing);
+    operation.error = Some("transient failure".into());
+    advance(
+        &mut operation,
+        Some(point()),
+        &["GRU".into()],
+        || panic!("capture after durable checkpoint"),
+        |state, checkpoint| {
+            assert_eq!(state.phase, NativeRecoveryPhase::Measuring);
+            assert!(state.error.is_none());
+            assert!(checkpoint.is_some());
+            Ok(())
+        },
+        |_| Ok(facts()),
+    )
+    .unwrap();
+}
+
+#[test]
 fn mismatched_measurement_facts_cannot_complete() {
     let mut operation = state(NativeRecoveryPhase::Measuring);
     let mut mismatched = facts();
@@ -154,7 +175,7 @@ fn accepted_checkpoint_retry_does_not_capture_and_complete_replay_does_nothing()
     operation.phase = NativeRecoveryPhase::Complete;
     advance(
         &mut operation,
-        None,
+        Some(point()),
         &["GRU".into()],
         || panic!("capture on complete"),
         |_, _| panic!("persist on complete"),
@@ -162,6 +183,97 @@ fn accepted_checkpoint_retry_does_not_capture_and_complete_replay_does_nothing()
     )
     .unwrap();
     assert_eq!((captures.get(), persists.get(), measures.get()), (0, 2, 1));
+}
+
+#[test]
+fn complete_replay_rejects_missing_or_mismatched_checkpoint() {
+    let mut operation = state(NativeRecoveryPhase::Complete);
+    operation.facts = Some(facts());
+    assert_eq!(
+        advance(
+            &mut operation,
+            None,
+            &["GRU".into()],
+            || panic!("capture on complete"),
+            |_, _| panic!("persist on complete"),
+            |_| panic!("measure on complete"),
+        ),
+        Err(NativeRecoveryError::VerificationFailed)
+    );
+    let mut mismatched = point();
+    mismatched.journal_cut += 1;
+    assert_eq!(
+        advance(
+            &mut operation,
+            Some(mismatched),
+            &["GRU".into()],
+            || panic!("capture on complete"),
+            |_, _| panic!("persist on complete"),
+            |_| panic!("measure on complete"),
+        ),
+        Err(NativeRecoveryError::VerificationFailed)
+    );
+}
+
+#[test]
+fn sqlite_reopen_resumes_measuring_checkpoint_without_capture() {
+    let path = std::env::temp_dir().join(format!(
+        "terrabase-native-recovery-checkpoint-{}-{}.sqlite",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    let _ = std::fs::remove_file(&path);
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE native_recovery_operations(
+                operation_id TEXT PRIMARY KEY NOT NULL,
+                source_database_id TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                record BLOB NOT NULL,
+                checkpoint BLOB
+            );",
+        )
+        .unwrap();
+    let mut operation = state(NativeRecoveryPhase::Capturing);
+    connection
+        .execute(
+            "INSERT INTO native_recovery_operations(operation_id,source_database_id,phase,record) VALUES(?1,?2,'capturing',?3)",
+            rusqlite::params![operation.operation_id, operation.source_database_id, serde_json::to_vec(&operation).unwrap()],
+        )
+        .unwrap();
+    operation.phase = NativeRecoveryPhase::Measuring;
+    crate::native_recovery::persistence::save(&connection, &operation, Some(&point())).unwrap();
+    drop(connection);
+
+    let reopened = Connection::open(&path).unwrap();
+    let checkpoint = crate::native_recovery::persistence::load_checkpoint(&reopened, "db", "op")
+        .unwrap()
+        .unwrap();
+    let bytes: Vec<u8> = reopened
+        .query_row(
+            "SELECT record FROM native_recovery_operations WHERE source_database_id='db' AND operation_id='op'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let mut reloaded: NativeRecoveryOperation = serde_json::from_slice(&bytes).unwrap();
+    let captures = Cell::new(0);
+    advance(
+        &mut reloaded,
+        Some(checkpoint),
+        &["GRU".into()],
+        || {
+            captures.set(captures.get() + 1);
+            panic!("durable measuring checkpoint must not recapture")
+        },
+        |_, _| Ok(()),
+        |_| Ok(facts()),
+    )
+    .unwrap();
+    assert_eq!(captures.get(), 0);
+    assert_eq!(reloaded.phase, NativeRecoveryPhase::Complete);
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]
@@ -271,7 +383,11 @@ fn capturing_failure_and_persist_failure_do_not_recapture() {
             || Ok(point()),
             |_, cp| {
                 persists.set(persists.get() + 1);
-                if cp.is_some() { Err(NativeRecoveryError::Unavailable) } else { Ok(()) }
+                if cp.is_some() {
+                    Err(NativeRecoveryError::Unavailable)
+                } else {
+                    Ok(())
+                }
             },
             |_| {
                 measures.set(measures.get() + 1);
