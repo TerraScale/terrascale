@@ -330,6 +330,7 @@ impl Engine {
         if context.permit.required() < context.drained_through
             || state.source_high_water() > context.drained_through
             || state.acked_through() > context.drained_through
+            || state.target_applied_through() < context.drained_through
         {
             return Err(RouteCatalogError::Conflict);
         }

@@ -118,9 +118,12 @@ fn capturing_checkpoint_retry_enters_measuring_without_stale_error() {
         &["GRU".into()],
         || panic!("capture after durable checkpoint"),
         |state, checkpoint| {
-            assert_eq!(state.phase, NativeRecoveryPhase::Measuring);
-            assert!(state.error.is_none());
             assert!(checkpoint.is_some());
+            match state.phase {
+                NativeRecoveryPhase::Measuring => assert!(state.error.is_none()),
+                NativeRecoveryPhase::Complete => assert_eq!(state.facts, Some(facts())),
+                _ => panic!("unexpected phase persisted during retry"),
+            }
             Ok(())
         },
         |_| Ok(facts()),

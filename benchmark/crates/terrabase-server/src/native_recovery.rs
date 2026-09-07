@@ -284,6 +284,24 @@ pub struct NativeRecoveryRuntime {
 }
 
 impl NativeRecoveryRuntime {
+    fn restore_residency_matches(
+        &self,
+        source_database_id: &str,
+        target_database_id: &str,
+    ) -> Result<bool, NativeRecoveryError> {
+        let source = self
+            .registry
+            .resolve(source_database_id)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .ok_or(NativeRecoveryError::VerificationFailed)?;
+        let target = self
+            .registry
+            .resolve(target_database_id)
+            .map_err(|_| NativeRecoveryError::Unavailable)?
+            .ok_or(NativeRecoveryError::VerificationFailed)?;
+        Ok(source.record.residency == target.record.residency)
+    }
+
     /// Opens durable native recovery operations for the admitted worker fleet.
     ///
     /// # Errors
@@ -786,6 +804,10 @@ impl NativeRecoveryRuntime {
             || admitted.record.regions != request.placement
             || format!("{}/{}", admitted.record.tenant_id, admitted.record.project_id)
                 != request.source_owner
+            || !self.restore_residency_matches(
+                &request.source_database_id,
+                &request.target_database_id,
+            )?
         {
             return Err(NativeRecoveryError::VerificationFailed);
         }
@@ -842,6 +864,10 @@ impl NativeRecoveryRuntime {
         if format!("{}/{}", target.database.record.tenant_id, target.database.record.project_id)
             != request.target_owner
             || target.database.record.regions != request.placement
+            || !self.restore_residency_matches(
+                &request.source_database_id,
+                &request.target_database_id,
+            )?
         {
             return Err(NativeRecoveryError::VerificationFailed);
         }
@@ -922,9 +948,6 @@ impl NativeRecoveryRuntime {
         operation: &str,
     ) -> Result<(), NativeRecoveryError> {
         let mut state = self.status(source, operation)?.ok_or(NativeRecoveryError::Unavailable)?;
-        if matches!(state.phase, NativeRecoveryPhase::Complete) {
-            return Ok(());
-        }
         if state.operation_id != operation || state.source_database_id != source {
             return Err(NativeRecoveryError::VerificationFailed);
         }
@@ -1362,6 +1385,69 @@ mod tests {
         registry.pause(&record.database_id, "pause-readback").unwrap();
         assert!(runtime.read_published_restore(&operation).unwrap().is_none());
         worker.shutdown().await.unwrap();
+        drop(member);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn runtime_rejects_corrupt_complete_checkpoint_and_durably_fails_row() {
+        let (registry, member, records, root) = crate::admitted_databases::tests::fixture();
+        let registry = Arc::new(registry);
+        let runtime_root = root.join("native-recovery-corrupt-complete");
+        let (runtime, worker) = NativeRecoveryRuntime::new(
+            &runtime_root,
+            fleet(),
+            Arc::clone(&registry),
+            limits(),
+            Arc::new(RejectRestore),
+        )
+        .unwrap();
+        worker.shutdown().await.unwrap();
+        let record = &records[0];
+        let state = NativeRecoveryOperation {
+            operation_id: "corrupt-complete".into(),
+            source_database_id: record.database_id.clone(),
+            phase: NativeRecoveryPhase::Complete,
+            facts: Some(RecoveryPointFacts {
+                recovery_point_id: "point".into(),
+                source_database_id: record.database_id.clone(),
+                journal_cut: 1,
+                captured_at_millis: 2,
+                checksum: blake3::hash(b"facts").to_hex().to_string(),
+                row_count: 0,
+                placement: record.regions.clone(),
+                retained_until_millis: 3,
+            }),
+            error: None,
+        };
+        {
+            let connection = runtime.operations.lock().unwrap();
+            connection
+                .execute(
+                    "INSERT INTO native_recovery_operations(operation_id,source_database_id,phase,record,checkpoint) VALUES(?1,?2,'complete',?3,?4)",
+                    rusqlite::params![
+                        state.operation_id,
+                        state.source_database_id,
+                        serde_json::to_vec(&state).unwrap(),
+                        b"{malformed checkpoint".as_slice()
+                    ],
+                )
+                .unwrap();
+        }
+        let admitted = registry.resolve(&record.database_id).unwrap().unwrap();
+        assert_eq!(
+            runtime.run_capture(
+                &admitted.host,
+                record.regions.clone(),
+                &record.database_id,
+                "corrupt-complete"
+            ),
+            Err(NativeRecoveryError::VerificationFailed)
+        );
+        assert_eq!(
+            runtime.status(&record.database_id, "corrupt-complete").unwrap().unwrap().phase,
+            NativeRecoveryPhase::Failed
+        );
         drop(member);
         let _ = std::fs::remove_dir_all(root);
     }

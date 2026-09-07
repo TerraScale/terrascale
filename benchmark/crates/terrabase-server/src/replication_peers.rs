@@ -586,7 +586,37 @@ fn spawn_peer_owner(
             tokio::select! {
                 _ = stopped.changed() => break,
                 result = workers.join_next(), if !workers.is_empty() => {
-                    worker_error = Some(match result { Some(Err(error)) => failure(error), _ => "replication peer worker stopped unexpectedly".into() });
+                    match result {
+                        Some(Ok(exit)) if !*stopped.borrow() && exit.restart => {
+                            // The old inbox Drop fences its session evidence. A
+                            // replacement gets a new identity and must rebuild
+                            // evidence through the normal checkpoint exchange.
+                            let mut context = exit.context;
+                            let peer = context.id.as_str().to_owned();
+                            let worker_id = NEXT_WORKER_ID.fetch_add(1, Ordering::Relaxed);
+                            // Revoke all evidence from the ended session before
+                            // handing its lanes to a new owner. The replacement
+                            // must repopulate evidence through fresh wire proofs.
+                            progress.fence_peer(&peer);
+                            if let Ok(mut live) = worker_lifecycle.lock() { live.insert(peer.clone()); }
+                            context.worker_id = worker_id;
+                            context.new_lanes.worker_id = worker_id;
+                            observe(&worker_observations, &peer, &context.lanes, false, worker_id);
+                            workers.spawn(peer_worker(context));
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
+                        Some(Ok(_)) => {}
+                        Some(Err(error)) => {
+                            // A panic has no recoverable lane state. Stop the
+                            // owner instead of reusing potentially corrupt state.
+                            worker_error = Some(failure(error));
+                            break;
+                        }
+                        None => {
+                            worker_error = Some("replication peer worker stopped unexpectedly".into());
+                            break;
+                        }
+                    }
                 },
                 _ = classifiers.join_next(), if !classifiers.is_empty() => {},
                 accepted = endpoint.accept() => match accepted {
@@ -663,7 +693,12 @@ struct PeerWorkerContext {
 
 static NEXT_WORKER_ID: AtomicU64 = AtomicU64::new(1);
 
-async fn peer_worker(context: PeerWorkerContext) {
+struct PeerWorkerExit {
+    context: PeerWorkerContext,
+    restart: bool,
+}
+
+async fn peer_worker(context: PeerWorkerContext) -> PeerWorkerExit {
     let PeerWorkerContext {
         runtime,
         progress,
@@ -680,17 +715,17 @@ async fn peer_worker(context: PeerWorkerContext) {
     let dial = endpoint.config().local_identity().member().as_str() < id.as_str();
     loop {
         let connection = tokio::select! {
-            _ = stopped.changed() => return,
+            _ = stopped.changed() => return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id }, restart: false },
             command = new_lanes.recv() => {
                 if let Some(command) = command {
                     if let PeerCommand::Retire { done } = command {
                         let result = capture_retirement(&mut lanes, &mut new_lanes).await;
                         let _ = done.send(result);
                         retirement_park(&mut new_lanes, &mut stopped, &mut lanes).await;
-                        return;
+                        return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id }, restart: false };
                     }
                     apply_worker_command(command, &mut lanes, &observations, id.as_str(), &mut new_lanes);
-                } else { return; }
+                } else { return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id }, restart: false }; }
                 continue;
             },
             connection = async {
@@ -717,14 +752,42 @@ async fn peer_worker(context: PeerWorkerContext) {
             .await;
             if matches!(session_result, Err(ref error) if error == "__retire__") {
                 retirement_park(&mut new_lanes, &mut stopped, &mut lanes).await;
-                return;
+                return PeerWorkerExit {
+                    context: PeerWorkerContext {
+                        runtime,
+                        progress,
+                        id,
+                        lanes,
+                        incoming,
+                        stopped,
+                        observations,
+                        new_lanes,
+                        cuts,
+                        worker_id,
+                    },
+                    restart: false,
+                };
             }
             observe(&observations, id.as_str(), &lanes, false, worker_id);
         } else if !dial {
-            return;
+            return PeerWorkerExit {
+                context: PeerWorkerContext {
+                    runtime,
+                    progress,
+                    id,
+                    lanes,
+                    incoming,
+                    stopped,
+                    observations,
+                    new_lanes,
+                    cuts,
+                    worker_id,
+                },
+                restart: true,
+            };
         }
         tokio::select! {
-            _ = stopped.changed() => return,
+            _ = stopped.changed() => return PeerWorkerExit { context: PeerWorkerContext { runtime, progress, id, lanes, incoming, stopped, observations, new_lanes, cuts, worker_id }, restart: false },
             () = tokio::time::sleep(Duration::from_secs(1)) => {}
         }
     }

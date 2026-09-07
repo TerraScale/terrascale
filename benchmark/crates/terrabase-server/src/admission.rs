@@ -184,12 +184,16 @@ impl AdmissionHost {
             return Err("invalid admission identity or placement".into());
         }
         let mut regions = std::collections::BTreeSet::new();
+        let mut parsed_regions = Vec::with_capacity(record.regions.len());
         for region in &record.regions {
-            region.parse::<RegionCode>().map_err(|_| "invalid region")?;
+            let parsed = region.parse::<RegionCode>().map_err(|_| "invalid region")?;
+            parsed_regions.push(parsed);
             if !regions.insert(region) {
                 return Err("duplicate region".into());
             }
         }
+        crate::control::validate_admission_residency(&record.residency, &parsed_regions)
+            .map_err(|_| "residency violates placement")?;
         Ok(())
     }
 
@@ -373,7 +377,7 @@ mod tests {
             key_version: DatabaseKeyVersion::generate().to_string(),
             name: "orders".into(),
             regions: vec!["GRU".into()],
-            residency: "regional".into(),
+            residency: "GRU".into(),
             operation_id: "create-1".into(),
             region: "GRU".into(),
             member_id: member.to_string(),
@@ -401,6 +405,9 @@ mod tests {
         negative_time.created_at = -1;
         assert!(host.admit(&negative_time).is_err());
         assert!(host.admit(&record).is_err());
+        let mut invalid_residency = record.clone();
+        invalid_residency.residency = "eu-only".into();
+        assert!(host.admit(&invalid_residency).is_err());
         drop(host);
         let host =
             AdmissionHost::open(&root, "production".into(), RegionCode::GRU, member, callback)

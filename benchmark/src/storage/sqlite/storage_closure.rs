@@ -78,7 +78,13 @@ pub(super) fn close(
     let observed = super::accounting::byte_millis(connection, tenant, start, end)?;
     let storage_intervals =
         super::storage_intervals::observe(connection, tenant, start_sql, end_sql)?;
+    // The accounting timeline is local logical bytes.  The accepted placement
+    // makes the same logical storage billable in every selected Region; apply
+    // that multiplier before carrying the sub-second remainder so rounding is
+    // performed once across the complete Region-adjusted total.
     let byte_millis = observed
+        .checked_mul(u128::from(selected_regions))
+        .ok_or(())?
         .checked_add(
             u128::try_from(previous.map_or(0, |(_, remainder)| remainder)).map_err(|_| ())?,
         )
@@ -163,7 +169,7 @@ mod tests {
             transaction.commit().unwrap();
             receipt
         };
-        assert_eq!(receipt.byte_seconds(), 1);
+        assert_eq!(receipt.byte_seconds(), 4);
         let transaction = connection.transaction().unwrap();
         assert_eq!(close(&transaction, scope.clone(), 3, window).unwrap(), receipt);
         assert!(
@@ -172,7 +178,7 @@ mod tests {
         );
         let next = close(&transaction, scope, 3, MeasurementWindow::interval(1500, 2000).unwrap())
             .unwrap();
-        assert_eq!(next.byte_seconds(), 2);
+        assert_eq!(next.byte_seconds(), 5);
         transaction.commit().unwrap();
         assert_eq!(
             connection

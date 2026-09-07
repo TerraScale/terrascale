@@ -606,6 +606,18 @@ fn validate_residency(
     Ok(())
 }
 
+/// Validates an already-authenticated admission record against the same
+/// launch geography rules used by the control plane. Admission replay has no
+/// caller-supplied catalog, so it is deliberately pinned to the production
+/// catalog generation.
+pub(crate) fn validate_admission_residency(
+    constraint: &str,
+    placement: &[RegionCode],
+) -> Result<(), String> {
+    validate_residency(&RegionCatalog::production(), constraint, placement)
+        .map_err(|error| error.to_string())
+}
+
 /// Wall-clock unix milliseconds. The registry's timestamps are display and
 /// window bookkeeping, not consensus facts.
 fn unix_millis() -> i64 {

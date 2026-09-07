@@ -1,5 +1,8 @@
 use super::shard_split::{RouteCatalog, RouteCatalogError, decode_catalog, encode_catalog};
-use crate::shard_split::{RouteTable, ShardRoute};
+use crate::shard_split::{
+    CutoverContext, DurableSplitState, RouteTable, ShardRoute, ShardSplit, SplitContext,
+    SplitPhase, WriterFence,
+};
 
 #[test]
 fn catalog_codec_round_trip_and_rejects_bad_inputs() {
@@ -21,4 +24,62 @@ fn catalog_codec_round_trip_and_rejects_bad_inputs() {
     let mut duplicate = encoded.clone();
     duplicate[30..38].copy_from_slice(&1_u64.to_be_bytes());
     assert_eq!(decode_catalog(&duplicate), Err(RouteCatalogError::Malformed));
+}
+
+#[test]
+fn split_cutover_refuses_drain_ahead_of_target_without_changing_route() {
+    let (dir, engine) = super::tests::open_engine("split-cutover-watermark");
+    let scope = super::tests::tenant_scope(&engine, "split-cutover-watermark");
+    let incarnation = u128::from_be_bytes(engine.database_id().as_bytes().to_owned());
+    let initial = RouteCatalog { table: RouteTable::single(1), generation: 0 };
+    let initial_bytes = encode_catalog(&initial).unwrap();
+    engine
+        .install_shard_route_catalog(
+            &scope,
+            incarnation,
+            None,
+            &initial_bytes,
+            &DurableSplitState::new(None, b"m".to_vec(), 0, 0, 0, SplitPhase::Planned),
+            super::tests::operation("split-route-init"),
+        )
+        .unwrap();
+
+    let context = SplitContext::new(1, incarnation, 1, 2, 1, 0);
+    let mut split = ShardSplit::plan_with_context(None, b"m".to_vec(), context).unwrap();
+    split.begin_backfill().unwrap();
+    split.begin_catch_up(1).unwrap();
+    split.note_source_high_water(1);
+    split.note_acked(1);
+    split.note_target_applied(1);
+    let mut fence = WriterFence::new();
+    fence.begin_drain(5).unwrap();
+    let permit = fence.try_fence(5).unwrap();
+    let cutover =
+        CutoverContext { split: context, route_generation: 0, drained_through: 5, permit };
+
+    assert_eq!(
+        engine.install_shard_split_route(
+            &scope,
+            &cutover,
+            &split.durable_state(),
+            super::tests::operation("split-route-stale-target"),
+        ),
+        Err(RouteCatalogError::Conflict)
+    );
+    assert_eq!(engine.load_shard_router(&scope).unwrap().unwrap().0.route(b"a"), Some(1));
+
+    split.note_target_applied(5);
+    let generation = engine
+        .install_shard_split_route(
+            &scope,
+            &cutover,
+            &split.durable_state(),
+            super::tests::operation("split-route-caught-up"),
+        )
+        .unwrap();
+    assert_eq!(generation, 1);
+    assert_eq!(engine.load_shard_router(&scope).unwrap().unwrap().0.route(b"a"), Some(2));
+    assert_eq!(engine.load_shard_router(&scope).unwrap().unwrap().0.route(b"z"), Some(1));
+    drop(engine);
+    let _ = std::fs::remove_dir_all(dir);
 }

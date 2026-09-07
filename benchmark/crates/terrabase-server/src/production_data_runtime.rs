@@ -611,8 +611,11 @@ impl crate::native_recovery::RestoreExecutor for ProductionRestoreExecutor {
             if format!("{}/{}", target.database.record.tenant_id, target.database.record.project_id)
                 != request.target_owner
                 || target.database.record.regions != request.placement
+                || target.database.record.residency != admitted.record.residency
             {
-                return Err("restore target facts do not match accepted admission".into());
+                return Err(
+                    "restore target facts do not match source residency or admission".into(),
+                );
             }
             let provider = match request.provider.as_str() {
                 "oci" => terrabase::backup::object_store::Provider::Oci,
