@@ -691,13 +691,6 @@ impl ReactiveClient {
         options: SubscribeOptions,
     ) -> Result<AttachedView> {
         query.validate()?;
-        if options.transport == Transport::WebSocket {
-            return Err(Error::new(
-                ErrorKind::Unavailable,
-                "websocket_not_supported",
-                "WebSocket delivery is an explicit opt-in boundary; this HTTP transport does not open WebSocket connections.",
-            ));
-        }
         if let Some(checkpoint) = options.checkpoint.as_ref() {
             Checkpoint::try_new(checkpoint.to_bytes())?;
         }

@@ -684,9 +684,21 @@ async fn cancellation_prevents_a_poll_request() {
 }
 
 #[tokio::test]
-async fn websocket_is_an_explicit_unsupported_boundary() {
-    let mock = Mock::new(std::iter::empty::<Result<Response>>());
-    let error = client(Arc::clone(&mock))
+async fn websocket_subscribe_reaches_the_published_attach_route() {
+    let mock = Mock::new([Ok(Response::json(
+        201,
+        &json!({
+            "view": "view-1",
+            "generation": 1,
+            "snapshot_chunks": [],
+            "log": "https://sync.api.terrascale.tech/api/v1/reactive/views/view-1/1/log",
+            "checkpoint": "Y3Ax",
+            "capability": "capability",
+            "offset": 1
+        }),
+    ))]);
+    let sdk = client(Arc::clone(&mock));
+    let view = sdk
         .reactive()
         .subscribe(
             &DatabaseScope::new("db"),
@@ -694,7 +706,7 @@ async fn websocket_is_an_explicit_unsupported_boundary() {
             SubscribeOptions::new().with_transport(Transport::WebSocket),
         )
         .await
-        .expect_err("HTTP transport cannot open websocket");
-    assert_eq!(error.code, "websocket_not_supported");
-    assert!(mock.requests.lock().expect("request mutex").is_empty());
+        .expect("published attach route");
+    assert_eq!(view.view_id, "view-1");
+    assert_eq!(mock.requests.lock().expect("request mutex").len(), 1);
 }
