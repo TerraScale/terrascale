@@ -129,8 +129,7 @@ public sealed class TerraScaleReactiveHttpClient
                 if (frame is (TerraScaleReactiveDelta or TerraScaleReactiveSnapshotFrame) && !IsStrongEtag(etagHeader))
                     throw new TerraScaleReactiveProtocolException("A data-bearing reactive response must carry an ETag.");
                 var immutableEtag = frame is TerraScaleReactiveDelta or TerraScaleReactiveSnapshotFrame ? etag : null;
-                if (immutableEtag is not null) subscription.RememberEtag(FrameRevision(frame, subscription.Offset), immutableEtag);
-                return subscription.Accept(frame, immutableEtag);
+                return subscription.AcceptHttpFrame(frame, immutableEtag);
             }
         }
     }
@@ -309,7 +308,7 @@ public sealed class TerraScaleReactiveHttpClient
 
     private static bool IsStrongEtag(EntityTagHeaderValue? value) => value is { Tag: not null, IsWeak: false } && value.Tag != "*";
 
-    private static ulong FrameRevision(TerraScaleReactiveFrame frame, ulong fallback) => frame switch
+    internal static ulong FrameRevision(TerraScaleReactiveFrame frame, ulong fallback) => frame switch
     {
         TerraScaleReactiveDelta delta => delta.ToRevision,
         TerraScaleReactiveSnapshotFrame snapshot => snapshot.Snapshot.Revision,
@@ -680,7 +679,7 @@ public abstract record TerraScaleReactiveFrame;
 public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
 {
     private readonly TerraScaleReactiveHttpClient client;
-    private readonly Dictionary<ulong, string> etags = [];
+    private (ulong Revision, string ETag)? retainedEtag;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly object lifecycleGate = new();
     private readonly CancellationTokenSource lifetime = new();
@@ -696,6 +695,7 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
     public TerraScaleViewSessionState SessionState { get; private set; }
     internal bool NeedsResume { get; private set; }
     internal bool IsDisposed => disposed;
+    internal int RetainedEtagCount => retainedEtag is null ? 0 : 1;
     internal async Task<ClientWebSocket> EnsureWebSocketAsync(Uri uri, string capability, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
@@ -826,8 +826,27 @@ public sealed class TerraScaleReactiveSubscription : IAsyncDisposable
         return index;
     }
     private static void ReplaceExisting(List<TerraScaleReactiveItem> items, string identity, TerraScaleReactiveItem replacement) => items[FindExisting(items, identity)] = replacement;
-    internal void RememberEtag(ulong offset, string etag) { if (etags.TryGetValue(offset, out var previous) && !string.Equals(previous, etag, StringComparison.Ordinal)) throw new TerraScaleReactiveProtocolException("An immutable reactive offset changed its ETag."); etags[offset] = etag; }
-    internal void Replace(TerraScaleReactiveAttachment attachment, TerraScaleReactiveSnapshot snapshot) { Attachment = attachment; CurrentSnapshot = snapshot; Offset = snapshot.Revision; etags.Clear(); LastETag = null; NeedsResume = false; SessionState = TerraScaleViewSessionState.Live; }
+    internal TerraScaleReactivePollResult AcceptHttpFrame(TerraScaleReactiveFrame frame, string? etag)
+    {
+        var revision = TerraScaleReactiveHttpClient.FrameRevision(frame, Offset);
+        if (etag is not null)
+        {
+            // Polls are serialized and request the current checkpoint. The producer
+            // returns a later revision or a reset, so historical data is never an
+            // outstanding valid response. Reject it instead of trusting an evicted ETag.
+            if (revision < Offset)
+                throw new TerraScaleReactiveProtocolException("The reactive response precedes the current checkpoint and requires a reset.");
+            if (retainedEtag is { } previous && previous.Revision == revision && !string.Equals(previous.ETag, etag, StringComparison.Ordinal))
+                throw new TerraScaleReactiveProtocolException("An immutable reactive offset changed its ETag.");
+        }
+
+        var result = Accept(frame, etag);
+        // Failed frames must not replace validation state for the accepted checkpoint.
+        if (etag is not null) retainedEtag = (revision, etag);
+        else if (frame is TerraScaleReactiveReset) retainedEtag = null;
+        return result;
+    }
+    internal void Replace(TerraScaleReactiveAttachment attachment, TerraScaleReactiveSnapshot snapshot) { Attachment = attachment; CurrentSnapshot = snapshot; Offset = snapshot.Revision; retainedEtag = null; LastETag = null; NeedsResume = false; SessionState = TerraScaleViewSessionState.Live; }
     internal void SetSessionState(TerraScaleViewSessionState state) => SessionState = state;
     public ValueTask DisposeAsync()
     {

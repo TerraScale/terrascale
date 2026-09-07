@@ -9,10 +9,11 @@ public static class TerraScaleContractPin
     public const int ManifestSchemaVersion = 1;
     public const string Version = "v1";
     public const string ContractVersion = Version;
-    public const string ManifestSha256 = "2831326446fda4cfbd09e784434d6e77f2bb5f643f0cdc95861c3e0045227a73";
+    public const string ManifestSha256 = "880ee3d1a9e09a4caccaae7f567f7eb21708044bcc70db1193654f79cff36052";
     public const string Blake3_ConformanceHttpJson = "cf70549f56d34107f315fb47b7b9366e2c8d6a5754fdf18fc215b16dc7d03ad8";
     public const string Blake3_ConformanceMsgpackHostileVectorsJson = "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3";
     public const string Blake3_ConformanceMsgpackMessageVectorsJson = "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c";
+    public const string Blake3_ConformanceOriginProofJson = "5364b464193257d9a25f1ded3070e23fd9d913a4542e337ada004bb6497cb305";
     public const string Blake3_ConformanceReactiveJson = "20f4f63ea988a78bb352de7796e68c0e493e558cb79a77bd7e502aaddbf3f4d8";
     public const string Blake3_MsgpackHostileVectorsJson = "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3";
     public const string Blake3_MsgpackMessageVectorsJson = "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c";

@@ -14,8 +14,10 @@ public sealed class TerraScaleDocumentsClientTests
         using var http = new HttpClient(handler);
         var client = new TerraScaleClient(http, new TerraScaleClientOptions
         {
-            BaseAddress = new Uri("https://api.example.invalid/"), ApiKey = "test-key",
-            MaxRetryAttempts = 2, RetryDelay = TimeSpan.Zero
+            BaseAddress = new Uri("https://api.example.invalid/"),
+            ApiKey = "test-key",
+            MaxRetryAttempts = 2,
+            RetryDelay = TimeSpan.Zero
         });
         await Assert.ThrowsAsync<HttpRequestException>(() => client.Documents.PutAsync("db", "items", "one", new { value = 1 }));
         await Assert.That(handler.Keys.Count).IsEqualTo(1);
@@ -31,8 +33,10 @@ public sealed class TerraScaleDocumentsClientTests
             var factoryCalls = 0;
             var client = new TerraScaleClient(http, new TerraScaleClientOptions
             {
-                BaseAddress = new Uri("https://api.example.invalid/"), ApiKey = "test-key",
-                MaxRetryAttempts = 1, RetryDelay = TimeSpan.Zero,
+                BaseAddress = new Uri("https://api.example.invalid/"),
+                ApiKey = "test-key",
+                MaxRetryAttempts = 1,
+                RetryDelay = TimeSpan.Zero,
                 IdempotencyKeyFactory = () => { factoryCalls++; return "factory-key"; }
             });
             var options = new TerraScaleDocumentMutationOptions(IdempotencyKey: " caller-key ");

@@ -53,6 +53,14 @@ uses the server's atomic create-only precondition. For conditional PUT, set
 `TerraScaleDocumentMutationOptions.CreateOnly`; it cannot be combined with
 `ExpectedChangeToken`.
 
+Document mutations retry only with a stable idempotency key, supplied through
+`TerraScaleDocumentMutationOptions.IdempotencyKey` or `IdempotencyKeyFactory`.
+The per-operation key takes precedence over the factory. A lost response or
+cancellation after transmission does not prove a write failed; retain the same
+key when resolving or retrying that operation. Unkeyed document PUTs are sent
+once. Disposing a reactive subscription cancels active and queued reads and
+waits for active transport cleanup.
+
 Configure `TenantId` and `ProjectId` together for project-scoped operations.
 These are selectors verified by server-side authority, not authorization grants.
 Webhook create and rotation return a one-time signing secret; list responses do

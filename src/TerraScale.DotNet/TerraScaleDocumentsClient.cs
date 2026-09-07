@@ -63,7 +63,7 @@ public sealed class TerraScaleDocumentsClient
     {
         ValidateMutationOptions(options);
         if (options is null) await client.SendNonRetryableNoContentAsync(HttpMethod.Delete, DocumentRoute(database, collection, documentId), cancellationToken).ConfigureAwait(false);
-        else await client.SendNoContentAsync(HttpMethod.Delete, DocumentRoute(database, collection, documentId), request => ConfigureMutation(request, options), options.IdempotencyKey, cancellationToken).ConfigureAwait(false);
+        else await client.SendNoContentAsync(HttpMethod.Delete, DocumentRoute(database, collection, documentId), request => ConfigureMutation(request, options), options.IdempotencyKey?.Trim(), cancellationToken).ConfigureAwait(false);
     }
 
     public Task<IReadOnlyList<TerraScaleDocumentHistoryEntry>> HistoryAsync(string database, string collection, string documentId, int limit = 100, string? after = null, CancellationToken cancellationToken = default)

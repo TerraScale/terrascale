@@ -302,6 +302,65 @@ public sealed class TerraScaleReactiveHttpClientTests
     }
 
     [Test]
+    public async Task LongSubscriptionBoundsEtagRetentionAndRejectsExpiredReplay()
+    {
+        var replayOldRevision = false;
+        using var handler = new ReactiveHandler(pollResponseFactory: request =>
+        {
+            var from = uint.Parse(request.RequestUri!.Query["?offset=".Length..], System.Globalization.CultureInfo.InvariantCulture);
+            var to = replayOldRevision ? 1u : from + 1;
+            var response = ReactiveHandler.Binary(Envelope(4, body: Delta("sub", 3, to - 1, to, "Y3AtMQ==")));
+            response.Headers.ETag = new EntityTagHeaderValue($"\"revision-{to}\"");
+            return response;
+        });
+        using var http = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(http, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+
+        for (var revision = 1ul; revision <= 10_000; revision++)
+        {
+            await subscription.ReadNextAsync();
+            await Assert.That(subscription.Offset).IsEqualTo(revision);
+            await Assert.That(subscription.RetainedEtagCount).IsEqualTo(1);
+        }
+
+        replayOldRevision = true;
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+        await Assert.That(subscription.Offset).IsEqualTo(10_000ul);
+        await Assert.That(subscription.RetainedEtagCount).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task CurrentRevisionEtagSurvivesHeartbeatAndRejectedFutureFrame()
+    {
+        var frame = Envelope(4, body: Delta("sub", 3, 0, 1, "Y3AtMQ=="));
+        var etag = "\"revision-1\"";
+        using var handler = new ReactiveHandler(pollResponseFactory: _ =>
+        {
+            var response = ReactiveHandler.Binary(frame);
+            response.Headers.ETag = new EntityTagHeaderValue(etag);
+            return response;
+        });
+        using var http = new HttpClient(handler);
+        var client = new TerraScaleReactiveHttpClient(http, new TerraScaleReactiveHttpClientOptions { MaxRetryAttempts = 0 });
+        await using var subscription = await client.SubscribeAsync("db", "sub", "SELECT * FROM docs");
+        await subscription.ReadNextAsync();
+        var replay = await subscription.ReadNextAsync();
+        await Assert.That(replay!.Frame).IsTypeOf<TerraScaleReactiveHeartbeat>();
+
+        frame = Envelope(6, body: [0x90]);
+        await subscription.ReadNextAsync();
+        frame = Envelope(4, body: Delta("sub", 3, 2, 3, "Y3AtMQ=="));
+        etag = "\"revision-3\"";
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+        frame = Envelope(4, body: Delta("sub", 3, 0, 1, "Y3AtMQ=="));
+        etag = "\"changed-revision-1\"";
+        await Assert.ThrowsAsync<TerraScaleReactiveProtocolException>(() => subscription.ReadNextAsync());
+        await Assert.That(subscription.Offset).IsEqualTo(1ul);
+        await Assert.That(subscription.RetainedEtagCount).IsEqualTo(1);
+    }
+
+    [Test]
     public async Task HostileFeatureAndMapFramesAreRejected()
     {
         foreach (var frame in new[] { Envelope(6, body: [0x90], features: 1), new byte[] { 0x81, 0xa1, (byte)'x', 0x01 } })
@@ -392,7 +451,7 @@ public sealed class TerraScaleReactiveHttpClientTests
         await Assert.That(regionSubscription.SessionState).IsEqualTo(TerraScaleViewSessionState.Live);
     }
 
-    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false, bool staleReattachAuthorization = false, string? websocketLog = null) : HttpMessageHandler
+    private sealed class ReactiveHandler(bool timeout = false, bool blockPoll = false, bool legacyFrame = false, byte[]? pollFrame = null, string subscription = "sub", HttpStatusCode? pollStatus = null, bool noStore = false, bool weakPollEtag = false, bool weakSnapshotEtag = false, bool wildcardPollEtag = false, bool wildcardSnapshotEtag = false, bool staleReattachAuthorization = false, string? websocketLog = null, Func<HttpRequestMessage, HttpResponseMessage>? pollResponseFactory = null) : HttpMessageHandler
     {
         public List<RequestObservation> Requests { get; } = [];
         public TaskCompletionSource PollStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -420,6 +479,7 @@ public sealed class TerraScaleReactiveHttpClientTests
             }
             PollStarted.TrySetResult();
             if (blockPoll) await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            if (pollResponseFactory is not null) return pollResponseFactory(request);
             if (pollStatus is not null)
             {
                 var response = Binary([]);
@@ -442,7 +502,7 @@ public sealed class TerraScaleReactiveHttpClientTests
         }
 
         private static HttpResponseMessage Json(string body, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
-        private static HttpResponseMessage Binary(byte[] body) => new(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
+        internal static HttpResponseMessage Binary(byte[] body) => new(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
     }
 
     private sealed record RequestObservation(HttpMethod Method, Uri Uri, IReadOnlyDictionary<string, string> Headers);
@@ -522,7 +582,9 @@ public sealed class TerraScaleReactiveHttpClientTests
         var bytes = Convert.FromBase64String(checkpoint);
         var result = new List<byte> { 0x97, (byte)(0xa0 | subscription.Length) };
         result.AddRange(Encoding.UTF8.GetBytes(subscription));
-        result.AddRange(new byte[] { (byte)generation, (byte)from, (byte)to });
+        result.AddRange(Unsigned(generation));
+        result.AddRange(Unsigned(from));
+        result.AddRange(Unsigned(to));
         result.AddRange(operations ?? [0x90]);
         result.Add((byte)(0xa0 | digest.Length));
         result.AddRange(Encoding.UTF8.GetBytes(digest));
@@ -530,6 +592,10 @@ public sealed class TerraScaleReactiveHttpClientTests
         result.AddRange(bytes);
         return result.ToArray();
     }
+
+    private static byte[] Unsigned(uint value) => value <= 0x7f
+        ? [(byte)value]
+        : [0xce, (byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value];
 
     private static byte[] SnapshotMessage(string subscription, byte[] snapshot)
     {
