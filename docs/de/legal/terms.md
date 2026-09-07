@@ -60,7 +60,7 @@ Writes and storage are the only billed dimensions.
   region.
 - **Storage** = logical bytes (current documents plus retained history,
   TTL-aware) multiplied by the number of regions holding the database.
-  Indexes, WAL, and backups are not billed.
+  Indexes and backups are not billed.
 
 Free and unbilled: reads, queries, egress, CDN delivery, fan-out, concurrent
 subscribers, WebSocket connections, webhook delivery, catch-up and replay,
