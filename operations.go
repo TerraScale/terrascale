@@ -24,16 +24,16 @@ type OperationPage struct {
 
 // OperationSummary is an authoritative, read-only operation projection.
 type OperationSummary struct {
-	OperationID        string    `json:"operation_id"`
-	Kind               string    `json:"kind"`
-	DatabaseID         string    `json:"database_id"`
-	Name               string    `json:"name"`
-	State              string    `json:"state"`
-	Stage              string    `json:"stage"`
-	CreatedAt          time.Time `json:"created_at"`
-	Revision           uint64    `json:"revision"`
-	Cancellable        bool      `json:"cancellable"`
-	CancellationReason string    `json:"cancellation_reason"`
+	OperationID        string     `json:"operation_id"`
+	Kind               string     `json:"kind"`
+	DatabaseID         string     `json:"database_id"`
+	Name               string     `json:"name"`
+	State              string     `json:"state"`
+	Stage              string     `json:"stage"`
+	CreatedAt          *time.Time `json:"created_at"`
+	Revision           *uint64    `json:"revision"`
+	Cancellable        bool       `json:"cancellable"`
+	CancellationReason string     `json:"cancellation_reason"`
 }
 
 // List returns the next page of operations for the client's configured

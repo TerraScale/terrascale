@@ -35,11 +35,29 @@ func TestOperationsListUsesProjectScopeAndOpaquePagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Operations) != 1 || page.Operations[0].Revision != math.MaxUint64 || page.Operations[0].CreatedAt.IsZero() {
+	if len(page.Operations) != 1 || page.Operations[0].Revision == nil || *page.Operations[0].Revision != math.MaxUint64 || page.Operations[0].CreatedAt == nil || page.Operations[0].CreatedAt.IsZero() {
 		t.Fatalf("operation facts lost: %+v", page)
 	}
 	if page.NextCursor == nil || *page.NextCursor != "next/cursor" {
 		t.Fatalf("next cursor = %v", page.NextCursor)
+	}
+}
+
+func TestOperationsListPreservesAbsentOptionalFacts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"operations":[{"operation_id":"op-2","kind":"branch_create","database_id":"db-2","name":"branch","state":"queued","stage":"accepted","cancellable":false,"cancellation_reason":"not cancellable"}],"covered_kinds":["branch_create"]}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(Config{APIBaseURL: server.URL, ProjectID: "project-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := client.Operations.List(t.Context(), "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Operations) != 1 || page.Operations[0].CreatedAt != nil || page.Operations[0].Revision != nil {
+		t.Fatalf("absent facts were invented: %+v", page.Operations[0])
 	}
 }
 
