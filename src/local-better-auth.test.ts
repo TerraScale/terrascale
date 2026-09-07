@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
-import { BetterAuthAdapterError, createLocalBetterAuthHttpOperations, createTerraScaleBetterAuthAdapter } from "./better-auth.js";
+import { createLocalBetterAuthHttpOperations, createTerraScaleBetterAuthAdapter } from "./better-auth.js";
 import { createLocalBetterAuthDatabaseOperations } from "./local/better-auth.js";
 import { TerraScaleSqliteStore } from "./local/store.js";
 
@@ -37,25 +37,27 @@ test("local Better Auth records survive a SQLite runtime restart", async () => {
 });
 
 
-test("local auth transactions reject before any callback effects", async () => {
+test("local auth transactions run as a development-only non-atomic passthrough", async () => {
   const directory = await mkdtemp(join(tmpdir(), "terrascale-auth-transaction-"));
   const store = new TerraScaleSqliteStore(join(directory, "auth.sqlite"));
   const oldCi = process.env.CI;
   delete process.env.CI;
   try {
     const local = createLocalBetterAuthDatabaseOperations(store);
+    const adapter = createTerraScaleBetterAuthAdapter(local);
+    let entered = false;
+    const result = await adapter.transaction(async transaction => {
+      entered = true;
+      await transaction.create({ model: "user", data: { email: "passthrough@example.test" } });
+      return "committed";
+    });
+    assert.equal(result, "committed");
+    assert.equal(entered, true);
+    assert.equal(await adapter.count({ model: "user", where: [] }), 1);
+
     const http = createLocalBetterAuthHttpOperations({ baseUrl: "http://127.0.0.1:18445" });
-    for (const operations of [local, http]) {
-      let entered = false;
-      const adapter = createTerraScaleBetterAuthAdapter(operations);
-      await assert.rejects(adapter.transaction(async transaction => {
-        entered = true;
-        await transaction.create({ model: "user", data: { email: "partial@example.test" } });
-        throw new Error("failure after first write");
-      }), error => error instanceof BetterAuthAdapterError && error.code === "transaction_unsupported");
-      assert.equal(entered, false);
-    }
-    assert.equal(await createTerraScaleBetterAuthAdapter(local).count({ model: "user", where: [] }), 0);
+    const httpAdapter = createTerraScaleBetterAuthAdapter(http);
+    assert.equal(await httpAdapter.transaction(async () => "ok"), "ok");
   } finally {
     if (oldCi === undefined) delete process.env.CI;
     else process.env.CI = oldCi;
