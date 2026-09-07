@@ -268,6 +268,8 @@ export type CreateDatabaseBranchRequest = {
 
 export type DeleteProjectDatabaseOptions = {
   readonly confirm: true;
+  /** Stable identity required to safely retry an accepted deletion request. */
+  readonly idempotencyKey: string;
   readonly projectId?: ProjectId | undefined;
 };
 

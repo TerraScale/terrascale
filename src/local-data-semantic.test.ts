@@ -47,7 +47,7 @@ test("SQLite local data APIs preserve semantic state across CRUD, commands, and 
       true,
     );
     const deletedDatabase = expectOk(
-      await client.databases.delete(database.databaseId, { confirm: true }),
+      await client.databases.delete(database.databaseId, { confirm: true, idempotencyKey: "semantic-delete" }),
     );
     assert.equal(deletedDatabase.deleted, true);
     expectFailure(await client.databases.get(database.databaseId), "database_not_found");

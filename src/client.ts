@@ -887,12 +887,19 @@ export class DatabasesClient {
     if (options?.confirm !== true) {
       throw new TypeError("Database deletion requires options.confirm to be true.");
     }
+    if (
+      typeof options.idempotencyKey !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(options.idempotencyKey)
+    ) {
+      throw new TypeError("Database deletion requires a stable options.idempotencyKey.");
+    }
 
     return this.#http.request({
       method: "DELETE",
       path: databaseRoot(this.#http, { projectId: options.projectId, databaseId }),
       routeName: "databases.delete",
       headers: { "x-terrascale-delete-confirmation": databaseId },
+      idempotencyKey: options.idempotencyKey,
     });
   }
 }
