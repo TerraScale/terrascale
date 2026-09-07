@@ -29,7 +29,10 @@ public sealed class TerraScaleOperationsClient(TerraScaleClient client)
             TerraScaleContractJsonContext.Default.OperationPage, cancellationToken);
     }
 
-    public Task<ProvisioningOperation> GetAsync(string operationId, CancellationToken cancellationToken = default) =>
-        client.SendJsonAsync(HttpMethod.Get, "/api/v1/operations/" + TerraScaleManagementPaths.Escape(operationId),
-            TerraScaleContractJsonContext.Default.ProvisioningOperation, cancellationToken);
+    public Task<OperationSummary> GetAsync(string operationId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(operationId);
+        return client.SendJsonAsync(HttpMethod.Get, "/api/v1/operations/" + TerraScaleManagementPaths.Escape(operationId),
+            TerraScaleContractJsonContext.Default.OperationSummary, cancellationToken);
+    }
 }
