@@ -48,12 +48,22 @@ if [[ "$TARGET" == postgresql-jsonb || "$TARGET" == pg-jsonb || "$TARGET" == all
 fi
 
 # Every comparator pin is an artifact digest.  Mutable image tags and empty
-# identities are rejected before any service is contacted.
-for pin_name in \
-  TERRABASE_BENCH_INGEST_RUNTIME_DIGEST \
-  TERRABASE_BENCH_INGEST_TERRABASE_ARTIFACT_SHA256 \
-  TERRABASE_BENCH_INGEST_POSTGRESQL_ARTIFACT_SHA256 \
-  TERRABASE_BENCH_INGEST_RAVENDB_ARTIFACT_SHA256; do
+# identities are rejected before any service is contacted.  Only the targets
+# this invocation actually drives are pinned: a terrabase-only run owes no
+# PostgreSQL or RavenDB artifact identity.
+targets=(terrabase postgresql-jsonb ravendb)
+if [[ "$TARGET" != all ]]; then
+  targets=("$TARGET")
+fi
+pin_names=(TERRABASE_BENCH_INGEST_RUNTIME_DIGEST)
+for driven in "${targets[@]}"; do
+  case "$driven" in
+    terrabase|tb) pin_names+=(TERRABASE_BENCH_INGEST_TERRABASE_ARTIFACT_SHA256) ;;
+    postgresql-jsonb|postgres-jsonb|pg-jsonb) pin_names+=(TERRABASE_BENCH_INGEST_POSTGRESQL_ARTIFACT_SHA256) ;;
+    ravendb|raven) pin_names+=(TERRABASE_BENCH_INGEST_RAVENDB_ARTIFACT_SHA256) ;;
+  esac
+done
+for pin_name in "${pin_names[@]}"; do
   pin_value="${!pin_name:-}"
   if [[ ! "$pin_value" =~ ^[[:xdigit:]]{64}$ ]]; then
     echo "ingest: $pin_name must be a 64-character immutable SHA-256 digest" >&2
@@ -71,11 +81,6 @@ command -v nice >/dev/null || { echo "ingest: nice is required" >&2; exit 2; }
 run_enveloped() {
   envelope_wrap nice -n 19 "$@"
 }
-
-targets=(terrabase postgresql-jsonb ravendb)
-if [[ "$TARGET" != all ]]; then
-  targets=("$TARGET")
-fi
 
 for target in "${targets[@]}"; do
   case "$target" in

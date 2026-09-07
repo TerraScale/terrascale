@@ -625,6 +625,8 @@ pub struct ApiState {
     pub webhook_keys: Option<Arc<dyn crate::webhook_api::WebhookKeyLeases>>,
     /// Configured durable export jobs and authorized encrypted artifact destination.
     pub exports: Option<Arc<crate::export_api::ExportRuntime>>,
+    /// Durable import owner; absent composition fails closed.
+    pub imports: Option<Arc<imports::ImportRuntime>>,
 }
 
 impl ApiState {
@@ -692,6 +694,7 @@ impl ApiState {
             capability_keys,
             webhook_keys,
             exports,
+            imports: None,
             budget,
         })
     }
@@ -720,6 +723,10 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(webhooks::list_deliveries))
         .routes(routes!(webhooks::replay_webhook))
         .routes(routes!(webhooks::rotate_secret))
+        .routes(routes!(imports::create_import))
+        .routes(routes!(imports::get_import))
+        .routes(routes!(imports::upload_import))
+        .routes(routes!(imports::resume_import))
         .routes(routes!(exports::list_exports, exports::create_export))
         .routes(routes!(exports::get_export))
         .routes(routes!(exports::resume_export))
@@ -1566,7 +1573,7 @@ async fn authenticate(
                 // Exports and webhooks expose data from every collection. A
                 // collection-scoped credential cannot widen through either API.
                 let database_resource = request.uri().path().split('/').nth(5);
-                if matches!(database_resource, Some("exports" | "webhooks" | "usage"))
+                if matches!(database_resource, Some("exports" | "imports" | "webhooks" | "usage"))
                     && !principal.scope().admits_database(verb, database)
                 {
                     return ApiError::forbidden("access to the whole database").into_response();
@@ -4800,6 +4807,7 @@ mod tests {
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             webhook_keys: None,
             exports: None,
+            imports: None,
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         })
     }
@@ -4859,6 +4867,7 @@ mod tests {
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             webhook_keys: None,
             exports: None,
+            imports: None,
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         })
     }

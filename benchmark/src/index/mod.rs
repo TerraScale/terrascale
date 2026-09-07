@@ -971,6 +971,23 @@ impl IndexCatalog {
         Err(IndexError::AutoIdentityMismatch)
     }
 
+    /// Removes a durable D-31 auto definition from the serving catalog.
+    ///
+    /// The durable lifecycle journal is authoritative for these entries. A
+    /// transition to an invisible or abandoned phase therefore must stop
+    /// planner selection immediately, while the physical candidate remains
+    /// owned by the storage lifecycle for its cleanup policy.
+    pub(crate) fn remove_auto(&self, namespace: &IndexNamespace) {
+        let mut state = self.state.lock().expect("index lock");
+        let remove = state.namespaces.get(&namespace.catalog_key()).is_some_and(|entry| {
+            entry.definition.as_ref().is_some_and(|definition| definition.kind() == IndexKind::Auto)
+        });
+        if remove {
+            state.namespaces.remove(&namespace.catalog_key());
+            state.optimizer.revision += 1;
+        }
+    }
+
     /// Returns every definition-carrying namespace of one tenant, in catalog
     /// order, with its published state, recency for ranking, and lifecycle
     /// facts for the IX-03 state machine.

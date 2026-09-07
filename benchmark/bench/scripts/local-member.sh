@@ -181,22 +181,64 @@ cmd_up() {
   [[ -n "$pid" ]] || die "cannot find member pid"
   printf '%s\n' "$pid" >"$MEMBER_DIR/member.pid"
   envelope_subject_evidence "terrabase-member" "$pid" "$MEMBER_DIR/resource-evidence.txt"
+  # The bench families address the database by name; provision it once per
+  # data root so a fresh member is immediately drivable.
+  local key
+  key="$(cat "$MEMBER_DIR/bootstrap.key")"
+  if ! curl -sf --max-time 5 -H "Authorization: Bearer $key" \
+    "http://127.0.0.1:$API_PORT/api/v1/databases" | grep -q '"name":"local"'; then
+    curl -sf --max-time 10 -X POST "http://127.0.0.1:$API_PORT/api/v1/databases" \
+      -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
+      -H 'x-terrascale-tenant-id: terrabase-local' -H 'x-terrascale-project-id: local' \
+      -d '{"name":"local","placement":["'"$REGION"'"]}' >/dev/null
+    log "database 'local' provisioned (placement $REGION)"
+  fi
   log "member up (pid $pid); evidence at $MEMBER_DIR/resource-evidence.txt"
 }
 
 cmd_env() {
   [[ -n "$(member_pid)" ]] || die "member is not up; run local-member.sh up"
-  local digest
+  local digest key version run_group
   digest="$(sha256sum "$BIN" | awk '{print $1}')"
+  key="$(cat "$MEMBER_DIR/bootstrap.key")"
+  version="$(healthy | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+  run_group="e13-local-$(date -u +%Y%m%dT%H%MZ)"
+  local workload_digest topology_digest run_digest
+  workload_digest="$(printf '%s' 'terrabase-se15-workload-v1' | sha256sum | awk '{print $1}')"
+  topology_digest="$(printf '%s' "single-node/local-member/$REGION/2ocpu-12gib" | sha256sum | awk '{print $1}')"
+  run_digest="$(printf '%s' "$run_group point-ops ingest indexed-query sync auto-index" | sha256sum | awk '{print $1}')"
   cat <<ENV
 export TERRABASE_BENCH_MEMBER_API="http://127.0.0.1:$API_PORT"
 export TERRABASE_BENCH_MEMBER_HEALTH="http://127.0.0.1:$API_PORT/api/v1/health"
-export TERRABASE_BENCH_MEMBER_AUTH="Authorization: Bearer $(cat "$MEMBER_DIR/bootstrap.key")"
-export TERRABASE_BENCH_MEMBER_KEY="$(cat "$MEMBER_DIR/bootstrap.key")"
-export TERRABASE_BENCH_MEMBER_VERSION="$(healthy | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')"
+export TERRABASE_BENCH_MEMBER_AUTH="Authorization: Bearer $key"
+export TERRABASE_BENCH_MEMBER_KEY="$key"
+export TERRABASE_BENCH_MEMBER_VERSION="$version"
 export TERRABASE_BENCH_MEMBER_ARTIFACT_SHA256="$digest"
 export TERRABASE_BENCH_MEMBER_RESOURCE_EVIDENCE="$MEMBER_DIR/resource-evidence.txt"
 export TERRABASE_BENCH_MEMBER_PID="$(member_pid)"
+
+# Point-ops lane (direct public-boundary runner). The drivers prepend the
+# header name themselves, so these values carry the credential only.
+export TERRABASE_BENCH_TERRABASE_API="http://127.0.0.1:$API_PORT"
+export TERRABASE_BENCH_TERRABASE_AUTH="Bearer $key"
+export TERRABASE_BENCH_TERRABASE_DATABASE="local"
+export TERRABASE_BENCH_RUN_GROUP="$run_group"
+export TERRABASE_BENCH_RUN_DIGEST="$run_digest"
+export TERRABASE_BENCH_CANDIDATE_DIGEST="$digest"
+export TERRABASE_BENCH_WORKLOAD_DIGEST="$workload_digest"
+export TERRABASE_BENCH_TOPOLOGY_DIGEST="$topology_digest"
+export TERRABASE_BENCH_HOST_IDENTITY="$(hostname);fenced-member=$REGION"
+
+# Ingest family (terrabase target)
+export TERRABASE_BENCH_INGEST_TERRABASE_SINGLE_NODE_ENDPOINT="http://127.0.0.1:$API_PORT/api/v1/databases/local/collections/users/documents/batch"
+export TERRABASE_BENCH_INGEST_TERRABASE_HEALTH_ENDPOINT="http://127.0.0.1:$API_PORT/api/v1/health"
+export TERRABASE_BENCH_INGEST_AUTHORIZATION="Bearer $key"
+export TERRABASE_BENCH_INGEST_TERRABASE_VERSION="$version"
+export TERRABASE_BENCH_INGEST_TERRABASE_ARTIFACT_SHA256="$digest"
+export TERRABASE_BENCH_INGEST_RUNTIME_DIGEST="$digest"
+export TERRABASE_BENCH_INGEST_RUN_GROUP="$run_group"
+export TERRABASE_BENCH_INGEST_MEMBER_OCPU="2"
+export TERRABASE_BENCH_INGEST_MEMBER_MEMORY="12G"
 ENV
 }
 

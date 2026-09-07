@@ -3,6 +3,20 @@
 use super::{Engine, EngineError};
 
 impl Engine {
+    /// Persists the schema-declared history window used by the retention
+    /// worker. This is deliberately a narrow storage seam so schema runtime
+    /// cannot mutate SQLite tables directly.
+    pub fn set_collection_history_retention(
+        &self,
+        collection: &crate::types::CollectionName,
+        days: u32,
+    ) -> Result<(), EngineError> {
+        self.lock_storage()?
+            .port
+            .set_collection_history(collection, days)
+            .map_err(|()| EngineError::StorageFailure)
+    }
+
     /// Removes a retired declared full-text descriptor and its term rows.
     ///
     /// # Errors
@@ -187,6 +201,48 @@ mod tests {
         assert!(engine.snapshot_documents(&scope, &snapshot).unwrap().is_empty());
         assert_eq!(engine.metering_live_bytes(&scope), 0);
         assert!(engine.metering_fact(&scope, "db").is_none_or(|fact| fact.writes() == 0));
+        engine.shutdown().expect("shutdown");
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn schema_history_retention_is_durable_across_restart() {
+        let directory = std::env::temp_dir().join(format!(
+            "terrabase-schema-history-{}-{}",
+            std::process::id(),
+            crate::identity::generate()
+        ));
+        let open =
+            || Engine::open(EngineConfig::durable(&directory).expect("config")).expect("open");
+        let collection = crate::types::CollectionName::try_new("items").expect("collection");
+        let engine = open();
+        engine.set_collection_history_retention(&collection, 1).expect("set retention");
+        let connection = engine.open_sqlite_read_connection().expect("read connection");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT days FROM collection_history WHERE collection = ?1",
+                    [&collection.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("retention row"),
+            1
+        );
+        drop(connection);
+        engine.shutdown().expect("shutdown");
+        let engine = open();
+        let connection = engine.open_sqlite_read_connection().expect("read connection");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT days FROM collection_history WHERE collection = ?1",
+                    [&collection.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("retention row after restart"),
+            1
+        );
+        drop(connection);
         engine.shutdown().expect("shutdown");
         std::fs::remove_dir_all(directory).expect("cleanup");
     }

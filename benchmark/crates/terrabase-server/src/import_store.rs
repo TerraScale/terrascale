@@ -1,6 +1,6 @@
 //! Durable metadata for authenticated import input sessions.
 //!
-//! This owner is intentionally not wired into HTTP yet.  `input_digest` and
+//! `input_digest` and
 //! `input_length` describe encrypted staged bytes; callers must use an
 //! import-purpose `ArtifactCrypto` lease before invoking `commit_input`.
 
@@ -9,15 +9,20 @@ use std::{path::Path, sync::Mutex, time::Duration};
 
 const MAX_INPUT_BYTES: u64 = 1 << 30;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub(crate) struct ImportJob {
     pub operation_id: String,
     pub tenant_id: String,
     pub project_id: String,
     pub database_id: String,
     pub format: String,
+    pub durability: String,
+    pub pending_operation: Option<String>,
+    pub pending_cursor: Option<u64>,
+    pub pending_records: Option<u64>,
     pub input_digest: Option<String>,
     pub input_length: Option<u64>,
+    #[serde(skip)]
     pub input_path: Option<String>,
     pub input_committed: bool,
     pub cursor: u64,
@@ -41,7 +46,8 @@ impl ImportStore {
              CREATE TABLE IF NOT EXISTS import_jobs(
                operation_id TEXT PRIMARY KEY NOT NULL,
                tenant_id TEXT NOT NULL, project_id TEXT NOT NULL,
-               database_id TEXT NOT NULL, format TEXT NOT NULL,
+               database_id TEXT NOT NULL, format TEXT NOT NULL, durability TEXT NOT NULL,
+               pending_operation TEXT, pending_cursor INTEGER, pending_records INTEGER,
                input_digest TEXT, input_length INTEGER, input_path TEXT,
                input_committed INTEGER NOT NULL DEFAULT 0,
                cursor INTEGER NOT NULL DEFAULT 0,
@@ -55,8 +61,8 @@ impl ImportStore {
     pub(crate) fn admit(&self, job: &ImportJob) -> rusqlite::Result<()> {
         let connection = self.connection.lock().expect("import store lock");
         connection.execute(
-            "INSERT INTO import_jobs(operation_id,tenant_id,project_id,database_id,format,state)
-             VALUES(?1,?2,?3,?4,?5,?6)
+            "INSERT INTO import_jobs(operation_id,tenant_id,project_id,database_id,format,state,durability)
+             VALUES(?1,?2,?3,?4,?5,?6,?7)
              ON CONFLICT(operation_id) DO NOTHING",
             params![
                 job.operation_id,
@@ -64,7 +70,7 @@ impl ImportStore {
                 job.project_id,
                 job.database_id,
                 job.format,
-                job.state
+                job.state, job.durability
             ],
         )?;
         Ok(())
@@ -74,11 +80,12 @@ impl ImportStore {
         let connection = self.connection.lock().expect("import store lock");
         connection.query_row(
             "SELECT operation_id,tenant_id,project_id,database_id,format,input_digest,input_length,input_path,
-             input_committed,cursor,committed_records,state,error FROM import_jobs WHERE operation_id=?1",
+             input_committed,cursor,committed_records,state,error,durability,pending_operation,pending_cursor,pending_records FROM import_jobs WHERE operation_id=?1",
             [operation_id],
             |row| Ok(ImportJob {
                 operation_id: row.get(0)?, tenant_id: row.get(1)?, project_id: row.get(2)?,
-                database_id: row.get(3)?, format: row.get(4)?, input_digest: row.get(5)?,
+                database_id: row.get(3)?, format: row.get(4)?, durability: row.get(13)?,
+                pending_operation: row.get(14)?, pending_cursor: row.get::<_, Option<i64>>(15)?.map(|v| v as u64), pending_records: row.get::<_, Option<i64>>(16)?.map(|v| v as u64), input_digest: row.get(5)?,
                 input_length: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
                 input_path: row.get(7)?,
                 input_committed: row.get::<_, i64>(8)? != 0, cursor: row.get::<_, i64>(9)? as u64,
@@ -136,7 +143,7 @@ impl ImportStore {
     ) -> rusqlite::Result<()> {
         let connection = self.connection.lock().expect("import store lock");
         let changed = connection.execute(
-            "UPDATE import_jobs SET cursor=?2, committed_records=?3, state='running'
+            "UPDATE import_jobs SET cursor=?2, committed_records=?3, state='running', pending_operation=NULL,pending_cursor=NULL,pending_records=NULL
              WHERE operation_id=?1 AND input_committed=1
                AND cursor<=?2 AND committed_records<=?3
                AND state IN ('queued','running','failed')",
@@ -168,6 +175,45 @@ impl ImportStore {
                 "import operation is unavailable".into(),
             ));
         }
+        Ok(())
+    }
+
+    pub(crate) fn list(&self) -> rusqlite::Result<Vec<ImportJob>> {
+        let ids = {
+            let connection = self.connection.lock().expect("import store lock");
+            let mut statement = connection.prepare("SELECT operation_id FROM import_jobs ORDER BY operation_id")?;
+            statement.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        ids.iter().map(|id| self.get(id)?.ok_or(rusqlite::Error::InvalidQuery)).collect()
+    }
+
+    pub(crate) fn claim(&self, id: &str) -> rusqlite::Result<bool> {
+        let connection = self.connection.lock().expect("import store lock");
+        Ok(connection.execute("UPDATE import_jobs SET state='running',error=NULL WHERE operation_id=?1 AND input_committed=1 AND state IN ('queued','failed','unknown')", [id])? == 1)
+    }
+
+    pub(crate) fn begin_batch(&self, id: &str, operation: &str, cursor: u64, records: u64) -> rusqlite::Result<()> {
+        let connection = self.connection.lock().expect("import store lock");
+        if connection.execute("UPDATE import_jobs SET pending_operation=?2,pending_cursor=?3,pending_records=?4 WHERE operation_id=?1 AND state='running' AND pending_operation IS NULL", params![id, operation, cursor, records])? != 1 { return Err(rusqlite::Error::InvalidQuery); }
+        Ok(())
+    }
+
+    pub(crate) fn hold(&self, id: &str) -> rusqlite::Result<()> {
+        let connection = self.connection.lock().expect("import store lock");
+        connection.execute("UPDATE import_jobs SET state='unknown',error='import commit outcome unknown' WHERE operation_id=?1 AND pending_operation IS NOT NULL", [id])?;
+        Ok(())
+    }
+
+    pub(crate) fn clear_rejected(&self, id: &str) -> rusqlite::Result<()> {
+        let connection = self.connection.lock().expect("import store lock");
+        connection.execute("UPDATE import_jobs SET pending_operation=NULL,pending_cursor=NULL,pending_records=NULL WHERE operation_id=?1", [id])?;
+        Ok(())
+    }
+
+    /// A process crash cannot prove whether a running batch landed.
+    pub(crate) fn recover(&self) -> rusqlite::Result<()> {
+        let connection = self.connection.lock().expect("import store lock");
+        connection.execute("UPDATE import_jobs SET state=CASE WHEN pending_operation IS NULL THEN 'queued' ELSE 'unknown' END WHERE state='running'", [])?;
         Ok(())
     }
 

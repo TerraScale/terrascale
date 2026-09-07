@@ -8,6 +8,13 @@ use crate::usage::{UsageAdmissionContext, VerifiedAllocation};
 
 use super::StorageRootId;
 
+/// Snapshot identity used by TTL maintenance to prevent deleting a renewed row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TtlGuard {
+    pub(crate) revision: String,
+    pub(crate) expires_at: i64,
+}
+
 /// One staged document mutation inside a transaction.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum StagedWrite {
@@ -17,6 +24,8 @@ pub(crate) enum StagedWrite {
         document: Document,
         /// The version the transaction expects.
         expected: ExpectedVersion,
+        /// Optional exact TTL row identity captured during expiry discovery.
+        pub(crate) ttl_guard: Option<TtlGuard>,
     },
     /// Delete one document.
     Delete {

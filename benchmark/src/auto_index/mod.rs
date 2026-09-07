@@ -743,7 +743,7 @@ pub fn verify_shadow(
         WelchEvidence { baseline_mean: bm, candidate_mean: cm, improvement, statistic, regression };
     let significant = statistic >= 2.0;
     let outcome = if regression {
-        ShadowOutcome::ActivateWithPins
+        ShadowOutcome::Abandon
     } else if significant && improvement >= MIN_IMPROVEMENT_FRACTION {
         ShadowOutcome::Activate
     } else {
@@ -1021,6 +1021,8 @@ pub struct ShadowEvidence {
     pub improvement: f64,
     /// Whether any five-percent guard was crossed.
     pub regression: bool,
+    /// Authenticated decision produced by the bounded shadow gate.
+    pub outcome: ShadowOutcome,
     /// Digest committed with the lifecycle event.
     pub digest: [u8; 32],
 }
@@ -1460,6 +1462,17 @@ impl LifecycleStore {
             .next()
     }
 
+    pub(crate) fn evidence_outcome(
+        &self,
+        tenant: &str,
+        index_id: &str,
+        template_digest: [u8; 32],
+    ) -> Option<ShadowOutcome> {
+        self.evidence
+            .get(&(tenant.to_owned(), index_id.to_owned(), template_digest))
+            .map(|evidence| evidence.outcome)
+    }
+
     pub(crate) fn shadow_candidate(
         &self,
         tenant: &str,
@@ -1660,6 +1673,26 @@ impl LifecycleStore {
         Ok(evidence)
     }
 
+    /// Permanently abandons a shadow candidate after the measured gate rejects it.
+    pub(crate) fn abandon_shadow(
+        &mut self,
+        storage: &mut dyn StoragePort,
+        identity: (&str, &str),
+        at_millis: u64,
+        digest: [u8; 32],
+    ) -> Result<(), ()> {
+        let key = (identity.0.to_owned(), identity.1.to_owned());
+        let mut view = self.indexes.get(&key).cloned().ok_or(())?;
+        if view.phase != LifecyclePhase::Shadowing || view.visible {
+            return Err(());
+        }
+        view.phase = LifecyclePhase::Abandoned;
+        view.generation = self.generation(identity.0).checked_add(1).ok_or(())?;
+        self.append(storage, LifecycleDetail::Retire, Some(&view), identity, at_millis, digest)?;
+        self.indexes.insert(key, view);
+        Ok(())
+    }
+
     /// Returns whether a shape has been forbidden by customer control.
     pub(crate) fn is_forbidden(&self, tenant: &str, id: &str) -> bool {
         self.forbidden.contains(&(tenant.to_owned(), id.to_owned()))
@@ -1695,7 +1728,7 @@ fn make_evidence(
     {
         return Err(());
     }
-    let (_, verified) = verify_shadow(&baseline, &candidate).map_err(|_| ())?;
+    let (outcome, verified) = verify_shadow(&baseline, &candidate).map_err(|_| ())?;
     let mut bytes = b"terrabase-shadow-evidence-v1".to_vec();
     put_string(&mut bytes, tenant)?;
     put_string(&mut bytes, index_id)?;
@@ -1711,6 +1744,7 @@ fn make_evidence(
         candidate,
         improvement: verified.improvement,
         regression: verified.regression,
+        outcome,
         digest: *blake3::hash(&bytes).as_bytes(),
     })
 }

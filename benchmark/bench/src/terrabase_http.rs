@@ -190,7 +190,9 @@ impl Slot for TerraBaseHttpSlot {
             return Err(format!("read returned {}", response.status()).into());
         }
         let body = response.into_string()?;
-        if !body.contains(&document::seeded_id(seeded_index)) {
+        // The document body carries the value, not the id: the seeded name
+        // proves the requested document came back.
+        if !body.contains(&document::seeded_name(seeded_index)) {
             return Err("a seeded read must return the requested document".into());
         }
         Ok(())

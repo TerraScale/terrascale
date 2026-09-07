@@ -18,6 +18,15 @@ pub(crate) trait ImportCipher: Send + Sync {
     fn open_chunk(&self, operation_id: &str, chunk: u64, ciphertext: &[u8]) -> io::Result<Vec<u8>>;
 }
 
+impl<T: ImportCipher + ?Sized> ImportCipher for Arc<T> {
+    fn seal_chunk(&self, operation_id: &str, chunk: u64, plaintext: &[u8]) -> io::Result<Vec<u8>> {
+        (**self).seal_chunk(operation_id, chunk, plaintext)
+    }
+    fn open_chunk(&self, operation_id: &str, chunk: u64, ciphertext: &[u8]) -> io::Result<Vec<u8>> {
+        (**self).open_chunk(operation_id, chunk, ciphertext)
+    }
+}
+
 /// Production import cipher. The purpose and upload identity are part of the
 /// authenticated encryption context and cannot be reused by export members.
 pub(crate) struct ImportLeaseCipher {
@@ -130,7 +139,7 @@ impl<C: ImportCipher> ImportInputWriter<C> {
                 "import input already staged",
             ));
         }
-        let file = File::create(&path)?;
+        let file = File::options().write(true).create_new(true).open(&path)?;
         Ok(Self {
             file,
             path,
@@ -206,7 +215,7 @@ impl<C: ImportCipher> ImportInputWriter<C> {
     pub(crate) fn finish(mut self) -> io::Result<(PathBuf, String, u64)> {
         self.file.sync_all()?;
         let digest = self.digest.finalize().to_hex().to_string();
-        let complete = self.path.with_extension("upload");
+        let complete = self.path.with_extension("");
         if complete.exists() {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -230,6 +239,14 @@ impl<C: ImportCipher> ImportInputWriter<C> {
             .commit_input(&operation_id, &result.1, result.2, &result.0)
             .map_err(|_| io::Error::other("import metadata commit failed"))?;
         Ok(result)
+    }
+}
+
+impl<C> Drop for ImportInputWriter<C> {
+    fn drop(&mut self) {
+        // Only the uncommitted name is removed. A completed immutable upload
+        // survives process/request teardown and is owned by ImportStore.
+        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -351,6 +368,55 @@ impl<C: ImportCipher> ImportInputReader<C> {
             return Err(invalid_input());
         }
         Ok(())
+    }
+}
+
+/// Bounded plaintext reader; validates the complete immutable upload before
+/// any records can reach a write transaction.
+pub(crate) struct ImportPlaintextReader<C> {
+    input: ImportInputReader<C>,
+    chunk: u64,
+    pending: io::Cursor<Vec<u8>>,
+}
+impl<C: ImportCipher> ImportInputReader<C> {
+    pub(crate) fn verified_reader(self, digest: &str, length: u64) -> io::Result<ImportPlaintextReader<C>> {
+        let mut reader = ImportPlaintextReader { input: self, chunk: 0, pending: io::Cursor::new(Vec::new()) };
+        let mut actual = Hasher::new();
+        let mut total = 0u64;
+        let mut buffer = [0u8; 65536];
+        loop {
+            let read = reader.read(&mut buffer)?;
+            if read == 0 { break; }
+            total = total.checked_add(read as u64).ok_or_else(invalid_input)?;
+            if total > length || total > MAX_INPUT_BYTES { return Err(invalid_input()); }
+            actual.update(&buffer[..read]);
+        }
+        if total != length || actual.finalize().to_hex().as_str() != digest { return Err(invalid_input()); }
+        reader.input.file.seek(io::SeekFrom::Start(0))?;
+        reader.chunk = 0;
+        reader.pending = io::Cursor::new(Vec::new());
+        Ok(reader)
+    }
+}
+impl<C: ImportCipher> Read for ImportPlaintextReader<C> {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() { return Ok(0); }
+        loop {
+            let count = self.pending.read(output)?;
+            if count != 0 { return Ok(count); }
+            let mut size = [0u8; 8];
+            if self.input.file.read(&mut size[..1])? == 0 { return Ok(0); }
+            self.input.file.read_exact(&mut size[1..])?;
+            let size = u64::from_be_bytes(size);
+            // Upload routes produce chunks of at most 64 KiB. Retain a
+            // generous bounded ceiling for existing admitted staged inputs.
+            if !(32..=2 * 1024 * 1024).contains(&size) { return Err(invalid_input()); }
+            let mut encrypted = vec![0; size as usize];
+            self.input.file.read_exact(&mut encrypted)?;
+            let plaintext = self.input.cipher.open_chunk(&self.input.operation_id, self.chunk, &encrypted)?;
+            self.chunk = self.chunk.checked_add(1).ok_or_else(invalid_input)?;
+            self.pending = io::Cursor::new(plaintext);
+        }
     }
 }
 

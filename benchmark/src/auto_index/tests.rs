@@ -138,7 +138,7 @@ fn shadow_regression_gets_pinned_and_not_activated_unconditionally() {
     let candidate = vec![LogicalCost::new(1, 12); MIN_SHADOW_SAMPLES];
     let (outcome, evidence) = verify_shadow(&baseline, &candidate).expect("bounded evidence");
     assert!(evidence.regression);
-    assert_eq!(outcome, ShadowOutcome::ActivateWithPins);
+    assert_eq!(outcome, ShadowOutcome::Abandon);
 }
 
 #[test]
@@ -155,7 +155,7 @@ fn shadow_guards_reject_component_and_tail_regressions() {
         .unwrap();
         assert!(evidence.improvement > MIN_IMPROVEMENT_FRACTION);
         assert!(evidence.regression);
-        assert_eq!(outcome, ShadowOutcome::ActivateWithPins);
+        assert_eq!(outcome, ShadowOutcome::Abandon);
     }
     // Nearest-rank p95 of 22 samples includes the second-largest sample.
     // Flooring (n - 1) * 0.95 would miss both expensive executions here.

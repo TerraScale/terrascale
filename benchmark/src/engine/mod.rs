@@ -49,6 +49,7 @@ mod schema_indexes;
 mod schema_metadata;
 pub(crate) mod shard_catchup;
 mod shard_split;
+pub(crate) mod shard_supervisor;
 mod webhook_metadata;
 
 #[cfg(test)]
@@ -3415,10 +3416,14 @@ impl Engine {
             let mut transaction = self.begin(&scope, snapshot, operation)?;
             transaction.internal_maintenance = true;
             for key in &group {
-                transaction.delete_in_collection(
+                transaction.delete_expired_ttl(
                     &key.collection,
                     key.id.clone(),
-                    ExpectedVersion::Any,
+                    ExpectedVersion::Exact(key.version),
+                    crate::storage::intent::TtlGuard {
+                        revision: key.revision.clone(),
+                        expires_at: key.expires_at,
+                    },
                 );
             }
             match transaction.commit(LocalDurability::Written) {
@@ -3953,10 +3958,14 @@ impl Engine {
         }
         let mut view =
             lifecycle.index(tenant.as_str(), index_id).cloned().ok_or(EngineError::Conflict)?;
+        let Some(evidence_digest) = lifecycle.evidence_digest(tenant.as_str(), index_id) else {
+            return Err(EngineError::Conflict);
+        };
         if view.phase != crate::auto_index::LifecyclePhase::Shadowing
             || view.visible
             || view.target_watermark != Some(view.covered_watermark)
-            || lifecycle.evidence_digest(tenant.as_str(), index_id).is_none()
+            || lifecycle.evidence_outcome(tenant.as_str(), index_id, evidence_digest)
+                != Some(crate::auto_index::ShadowOutcome::Activate)
         {
             return Err(EngineError::Conflict);
         }
@@ -3969,6 +3978,37 @@ impl Engine {
             .map_err(|()| EngineError::StorageFailure)?;
         view.generation = lifecycle.generation(tenant.as_str());
         Ok(view)
+    }
+
+    /// Abandons a shadow candidate rejected by the measured gate.
+    pub fn auto_index_abandon_shadow(
+        &self,
+        tenant: &TenantId,
+        index_id: &str,
+        expected_generation: u64,
+        at_millis: u64,
+    ) -> Result<crate::auto_index::LifecycleIndexView, EngineError> {
+        self.validate_tenant(tenant)?;
+        let mut lifecycle =
+            self.auto_index_lifecycle.lock().map_err(|_| EngineError::StorageFailure)?;
+        if lifecycle.generation(tenant.as_str()) != expected_generation {
+            return Err(EngineError::Conflict);
+        }
+        let view =
+            lifecycle.index(tenant.as_str(), index_id).cloned().ok_or(EngineError::Conflict)?;
+        lifecycle
+            .abandon_shadow(
+                self.lock_storage()?.port.as_mut(),
+                (tenant.as_str(), index_id),
+                at_millis,
+                *blake3::hash(index_id.as_bytes()).as_bytes(),
+            )
+            .map_err(|_| EngineError::Conflict)?;
+        let mut abandoned = view;
+        abandoned.phase = crate::auto_index::LifecyclePhase::Abandoned;
+        abandoned.visible = false;
+        abandoned.generation = lifecycle.generation(tenant.as_str());
+        Ok(abandoned)
     }
 
     /// Hides an active index immediately after a verified regression. The
@@ -4153,6 +4193,7 @@ impl Engine {
                 candidate,
                 improvement: 0.0,
                 regression: false,
+                outcome: crate::auto_index::ShadowOutcome::Abandon,
                 digest: [0; 32],
             },
             at_millis,
@@ -4233,6 +4274,7 @@ impl Engine {
                 candidate: candidate_samples,
                 improvement: 0.0,
                 regression: false,
+                outcome: crate::auto_index::ShadowOutcome::Abandon,
                 digest: [0; 32],
             },
             now,
@@ -4728,30 +4770,34 @@ impl Engine {
                         && let Ok(Some(evidence)) =
                             self.auto_index_shadow_evidence(&tenant, &index.id, digest, 64)
                     {
-                        if evidence.regression {
-                            let started = Instant::now();
-                            let result = self.auto_index_revert(
-                                &tenant,
-                                &index.id,
-                                generation,
-                                Self::now_millis(),
-                            );
-                            self.metrics.record_index(
-                                if result.is_ok() { Outcome::Success } else { Outcome::Error },
-                                started.elapsed(),
-                            );
-                        } else if evidence.baseline.len() >= 20 {
-                            let started = Instant::now();
-                            let result = self.auto_index_activate(
-                                &tenant,
-                                &index.id,
-                                generation,
-                                Self::now_millis(),
-                            );
-                            self.metrics.record_index(
-                                if result.is_ok() { Outcome::Success } else { Outcome::Error },
-                                started.elapsed(),
-                            );
+                        match evidence.outcome {
+                            crate::auto_index::ShadowOutcome::Abandon => {
+                                let started = Instant::now();
+                                let result = self.auto_index_abandon_shadow(
+                                    &tenant,
+                                    &index.id,
+                                    generation,
+                                    Self::now_millis(),
+                                );
+                                self.metrics.record_index(
+                                    if result.is_ok() { Outcome::Success } else { Outcome::Error },
+                                    started.elapsed(),
+                                );
+                            }
+                            crate::auto_index::ShadowOutcome::Activate => {
+                                let started = Instant::now();
+                                let result = self.auto_index_activate(
+                                    &tenant,
+                                    &index.id,
+                                    generation,
+                                    Self::now_millis(),
+                                );
+                                self.metrics.record_index(
+                                    if result.is_ok() { Outcome::Success } else { Outcome::Error },
+                                    started.elapsed(),
+                                );
+                            }
+                            crate::auto_index::ShadowOutcome::ActivateWithPins => {}
                         }
                     }
                 }
@@ -5066,7 +5112,7 @@ impl Transaction<'_> {
     /// be read to resolve the document's collection.
     pub fn delete(&mut self, id: DocumentId, expected: ExpectedVersion) -> Result<(), EngineError> {
         let collection = self.read(&id)?.map(|document| document.collection().clone());
-        self.writes.push(StagedWrite::Delete { collection, id, expected });
+        self.writes.push(StagedWrite::Delete { collection, id, expected, ttl_guard: None });
         Ok(())
     }
 
@@ -5092,6 +5138,20 @@ impl Transaction<'_> {
             collection: Some(collection.clone()),
             id,
             expected,
+            ttl_guard: None,
+        });
+    }
+
+    /// Stages a TTL delete guarded by the exact discovered row identity.
+    pub(crate) fn delete_expired_ttl(
+        &mut self,
+        collection: &CollectionName,
+        id: DocumentId,
+        expected: ExpectedVersion,
+        guard: crate::storage::intent::TtlGuard,
+    ) {
+        self.writes.push(StagedWrite::Delete {
+            collection: Some(collection.clone()), id, expected, ttl_guard: Some(guard),
         });
     }
 

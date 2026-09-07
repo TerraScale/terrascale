@@ -3,10 +3,10 @@
 use super::{CommitError, CommitOutcome, Engine, EngineError, EngineOpenError};
 use crate::{
     shard_split::{
-        AtomicSplitCutover, CommittedSplitRoute, CopyBatch, CopyEntry, CutoverContext,
-        DurableSplitState, RangeCopySource, RangeCopyTarget, RouteTable, ShardAdmissionToken,
-        ShardRoute, ShardSplit, SplitContext, SplitEngineAdapter, SplitPhase, SplitStateStore,
-        canonical_shard_key, decode_canonical_shard_key,
+        canonical_shard_key, decode_canonical_shard_key, AtomicSplitCutover, CommittedSplitRoute,
+        CopyBatch, CopyEntry, CutoverContext, DurableSplitState, RangeCopySource, RangeCopyTarget,
+        RouteTable, ShardAdmissionToken, ShardRoute, ShardSplit, SplitContext, SplitEngineAdapter,
+        SplitPhase, SplitStateStore,
     },
     types::{
         DocumentValue, ExpectedVersion, LocalDurability, OperationId, StorageSequence, TenantScope,
@@ -289,12 +289,12 @@ impl RangeCopySource for ScopedShardRangeSource {
 /// stable operation identity derived from its canonical bytes, making a crash
 /// retry safe while preserving the source document version in its envelope.
 pub(crate) struct ScopedShardRangeTarget {
-    engine: Engine,
+    engine: std::sync::Arc<Engine>,
     scope: TenantScope,
 }
 
 impl ScopedShardRangeTarget {
-    pub(crate) fn open(engine: Engine, source_scope: &TenantScope) -> Self {
+    pub(crate) fn open(engine: std::sync::Arc<Engine>, source_scope: &TenantScope) -> Self {
         let scope = engine.scope_for(source_scope.tenant());
         Self { engine, scope }
     }

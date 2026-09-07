@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::{
     engine::{Engine, ReplicatedPublication},
-    shard_split::{SplitContext, canonical_shard_key},
+    shard_split::{DurableSplitState, canonical_shard_key},
     types::{StorageSequence, TenantScope},
 };
 
@@ -57,12 +57,12 @@ impl ShardJournalCatchUp {
         target: Arc<Engine>,
         source_scope: TenantScope,
         target_scope: TenantScope,
-        context: &SplitContext,
+        state: &DurableSplitState,
         applied_through: u64,
     ) -> Result<Self, ShardCatchUpError> {
-        let upper = context.split_key().to_vec();
+        let upper = state.split_key().to_vec();
         if upper.is_empty()
-            || context.lower().is_some_and(|lower| lower.is_empty() || lower >= context.split_key())
+            || state.lower().is_some_and(|lower| lower.is_empty() || lower >= state.split_key())
         {
             return Err(ShardCatchUpError::InvalidRange);
         }
@@ -71,7 +71,7 @@ impl ShardJournalCatchUp {
             target,
             source_scope,
             target_scope,
-            lower: context.lower().map(ToOwned::to_owned),
+            lower: state.lower().map(ToOwned::to_owned),
             upper,
             applied_through,
         })
@@ -97,7 +97,8 @@ impl ShardJournalCatchUp {
             return Err(ShardCatchUpError::BatchTooLarge);
         }
         let journal_high_water = self.source_high_water()?;
-        let published = self.source.published_state().0.get();
+        let published =
+            self.source.published_sequence().map_err(|_| ShardCatchUpError::SourceFailed)?.get();
         if journal_high_water < published {
             return Err(ShardCatchUpError::SourceHistoryGap);
         }
@@ -139,4 +140,65 @@ fn range_publication(
         lower.is_none_or(|bound| key.as_slice() >= bound) && key.as_slice() < upper
     });
     selected
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        engine::{CommitOutcome, EngineConfig},
+        types::{
+            CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
+            OperationId, TenantId,
+        },
+    };
+
+    #[test]
+    fn retained_engine_publication_is_filtered_by_canonical_range() {
+        let path = std::env::temp_dir().join(format!(
+            "terrabase-shard-catchup-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let engine = Engine::open(EngineConfig::durable(&path).expect("config")).expect("open");
+        let tenant = TenantId::try_new("catchup-test").expect("tenant");
+        let scope = engine.scope_for(&tenant);
+        let collection = CollectionName::try_new("docs").expect("collection");
+        let mut transaction = engine
+            .begin(
+                &scope,
+                engine.read_snapshot(&scope).expect("snapshot"),
+                OperationId::try_new("catchup-write").expect("operation"),
+            )
+            .expect("begin");
+        for id in ["a", "z"] {
+            transaction
+                .put(
+                    Document::new(
+                        DocumentId::try_new(id).expect("id"),
+                        collection.clone(),
+                        DocumentValue::String(id.to_owned()),
+                    ),
+                    ExpectedVersion::Any,
+                )
+                .expect("put");
+        }
+        assert!(matches!(transaction.commit(LocalDurability::Synced), CommitOutcome::Committed(_)));
+        let publication = engine
+            .replication_publications(&scope, 0, 1)
+            .expect("journal")
+            .pop()
+            .expect("publication")
+            .1;
+        let upper = canonical_shard_key(&collection, &DocumentId::try_new("z").expect("id"));
+        let selected = range_publication(&publication, None, &upper);
+        assert_eq!(selected.records.len(), 1);
+        assert_eq!(selected.records[0].id.as_str(), "a");
+        assert_eq!(selected.private_payload, publication.private_payload);
+        drop(engine);
+        let _ = std::fs::remove_dir_all(path);
+    }
 }

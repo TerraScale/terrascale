@@ -7,7 +7,10 @@
 
 use base64::Engine as _;
 use serde_json::Value;
-use std::{fmt, io::{self, BufRead, Read}};
+use std::{
+    fmt,
+    io::{self, BufRead, Read},
+};
 
 /// Supported import/export interchange formats.
 #[derive(
@@ -257,12 +260,18 @@ fn decode_csv_reader<R: Read, F: FnMut(u64, ImportRecord) -> io::Result<()>>(
             if byte == b'"' {
                 if quoted {
                     if peek_byte(input)? == Some(b'"') {
-                        if row.len() >= max_record { return Err(CodecError::Oversized); }
+                        if row.len() >= max_record {
+                            return Err(CodecError::Oversized);
+                        }
                         row.push(next_byte(input, &mut offset)?.expect("peeked byte"));
-                    } else { quoted = false; }
+                    } else {
+                        quoted = false;
+                    }
                 } else if row.len() == 1 || row[row.len() - 2] == b',' {
                     quoted = true;
-                } else { return Err(CodecError::Malformed); }
+                } else {
+                    return Err(CodecError::Malformed);
+                }
             } else if byte == b'\n' && !quoted {
                 ended = true;
                 break;
@@ -274,21 +283,37 @@ fn decode_csv_reader<R: Read, F: FnMut(u64, ImportRecord) -> io::Result<()>>(
         if quoted {
             return Err(CodecError::Malformed);
         }
-        if row.last() == Some(&b'\n') { row.pop(); }
-        if row.last() == Some(&b'\r') { row.pop(); }
+        if row.last() == Some(&b'\n') {
+            row.pop();
+        }
+        if row.last() == Some(&b'\r') {
+            row.pop();
+        }
         let fields = parse_csv_row(&row)?;
         if header {
-            if fields.as_slice() != ["collection", "id", "value"] { return Err(CodecError::Malformed); }
+            if fields.as_slice() != ["collection", "id", "value"] {
+                return Err(CodecError::Malformed);
+            }
             header = false;
         } else {
-            if fields.len() != 3 { return Err(CodecError::Malformed); }
-            let value = serde_json::from_str::<Value>(&fields[2]).map_err(|_| CodecError::Malformed)?;
+            if fields.len() != 3 {
+                return Err(CodecError::Malformed);
+            }
+            let value =
+                serde_json::from_str::<Value>(&fields[2]).map_err(|_| CodecError::Malformed)?;
             let value = serde_json::to_vec(&value).map_err(|_| CodecError::Malformed)?;
-            if value.len() > max_record { return Err(CodecError::Oversized); }
-            consume(offset, ImportRecord { collection: fields[0].clone(), id: fields[1].clone(), value })
-                .map_err(|_| CodecError::Malformed)?;
+            if value.len() > max_record {
+                return Err(CodecError::Oversized);
+            }
+            consume(
+                offset,
+                ImportRecord { collection: fields[0].clone(), id: fields[1].clone(), value },
+            )
+            .map_err(|_| CodecError::Malformed)?;
         }
-        if !ended { break; }
+        if !ended {
+            break;
+        }
     }
     if header { Err(CodecError::Malformed) } else { Ok(()) }
 }
@@ -305,39 +330,71 @@ fn parse_csv_row(row: &[u8]) -> Result<Vec<String>, CodecError> {
         if row[index] == b'"' {
             index += 1;
             loop {
-                if index >= row.len() { return Err(CodecError::Malformed); }
+                if index >= row.len() {
+                    return Err(CodecError::Malformed);
+                }
                 match row[index] {
-                    b'"' if row.get(index + 1) == Some(&b'"') => { field.push(b'"'); index += 2; }
+                    b'"' if row.get(index + 1) == Some(&b'"') => {
+                        field.push(b'"');
+                        index += 2;
+                    }
                     b'"' => {
                         index += 1;
-                        if row.get(index).is_some_and(|byte| *byte != b',') { return Err(CodecError::Malformed); }
+                        if row.get(index).is_some_and(|byte| *byte != b',') {
+                            return Err(CodecError::Malformed);
+                        }
                         break;
                     }
-                    byte => { field.push(byte); index += 1; }
+                    byte => {
+                        field.push(byte);
+                        index += 1;
+                    }
                 }
             }
         } else {
-            while index < row.len() && row[index] != b',' { field.push(row[index]); index += 1; }
+            while index < row.len() && row[index] != b',' {
+                field.push(row[index]);
+                index += 1;
+            }
         }
         fields.push(String::from_utf8(std::mem::take(&mut field)).map_err(|_| CodecError::Utf8)?);
-        if index < row.len() { index += 1; }
+        if index < row.len() {
+            index += 1;
+        }
     }
-    if row.last() == Some(&b',') { fields.push(String::new()); }
+    if row.last() == Some(&b',') {
+        fields.push(String::new());
+    }
     Ok(fields)
 }
 
 fn decode_json_array_reader<R: Read, F: FnMut(u64, ImportRecord) -> io::Result<()>>(
-    input: &mut R, format: TransferFormat, max_record: usize, consume: &mut F,
+    input: &mut R,
+    format: TransferFormat,
+    max_record: usize,
+    consume: &mut F,
 ) -> Result<(), CodecError> {
     let mut offset = 0u64;
-    loop { match next_byte(input, &mut offset)? { Some(b) if b.is_ascii_whitespace() => continue, Some(b'[') => break, _ => return Err(CodecError::Malformed) } }
+    loop {
+        match next_byte(input, &mut offset)? {
+            Some(b) if b.is_ascii_whitespace() => continue,
+            Some(b'[') => break,
+            _ => return Err(CodecError::Malformed),
+        }
+    }
     let mut after_comma = false;
     loop {
-        while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) { let _ = next_byte(input, &mut offset)?; }
-        if peek_byte(input)? == Some(b']') {
-            if after_comma { return Err(CodecError::Malformed); }
+        while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) {
             let _ = next_byte(input, &mut offset)?;
-            while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) { let _ = next_byte(input, &mut offset)?; }
+        }
+        if peek_byte(input)? == Some(b']') {
+            if after_comma {
+                return Err(CodecError::Malformed);
+            }
+            let _ = next_byte(input, &mut offset)?;
+            while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) {
+                let _ = next_byte(input, &mut offset)?;
+            }
             return if peek_byte(input)?.is_none() { Ok(()) } else { Err(CodecError::Malformed) };
         }
         let mut value = Vec::new();
@@ -346,24 +403,50 @@ fn decode_json_array_reader<R: Read, F: FnMut(u64, ImportRecord) -> io::Result<(
         let mut escaped = false;
         loop {
             let byte = next_byte(input, &mut offset)?.ok_or(CodecError::Malformed)?;
-            if value.len() >= max_record { return Err(CodecError::Oversized); }
+            if value.len() >= max_record {
+                return Err(CodecError::Oversized);
+            }
             value.push(byte);
             if string {
-                if escaped { escaped = false; } else if byte == b'\\' { escaped = true; } else if byte == b'"' { string = false; }
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == b'"' {
+                    string = false;
+                }
                 continue;
             }
-            match byte { b'"' => string = true, b'{' | b'[' => depth += 1, b'}' | b']' => depth = depth.checked_sub(1).ok_or(CodecError::Malformed)?, _ => {} }
-            if depth == 0 { break; }
+            match byte {
+                b'"' => string = true,
+                b'{' | b'[' => depth += 1,
+                b'}' | b']' => depth = depth.checked_sub(1).ok_or(CodecError::Malformed)?,
+                _ => {}
+            }
+            if depth == 0 {
+                break;
+            }
         }
         let parsed: Value = serde_json::from_slice(&value).map_err(|_| CodecError::Malformed)?;
         let record = decode_value(parsed, format, max_record)?;
-        while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) { let _ = next_byte(input, &mut offset)?; }
+        while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) {
+            let _ = next_byte(input, &mut offset)?;
+        }
         match next_byte(input, &mut offset)? {
-            Some(b',') => { consume(offset, record).map_err(|_| CodecError::Malformed)?; after_comma = true; }
+            Some(b',') => {
+                consume(offset, record).map_err(|_| CodecError::Malformed)?;
+                after_comma = true;
+            }
             Some(b']') => {
                 consume(offset, record).map_err(|_| CodecError::Malformed)?;
-                while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) { let _ = next_byte(input, &mut offset)?; }
-                return if peek_byte(input)?.is_none() { Ok(()) } else { Err(CodecError::Malformed) };
+                while matches!(peek_byte(input)?, Some(b) if b.is_ascii_whitespace()) {
+                    let _ = next_byte(input, &mut offset)?;
+                }
+                return if peek_byte(input)?.is_none() {
+                    Ok(())
+                } else {
+                    Err(CodecError::Malformed)
+                };
             }
             _ => return Err(CodecError::Malformed),
         }
@@ -730,6 +813,37 @@ mod tests {
             decode_jsonl_reader(&input[..], TransferFormat::Jsonl, 8, |_, _| Ok(())),
             Err(CodecError::Oversized)
         );
+    }
+
+    #[test]
+    fn streams_multiline_csv_and_json_arrays_with_offsets() {
+        let csv = b"collection,id,value\n\"users\",\"a\",\"{\"\"note\"\":\"\"line1\nline2\"\"}\"\n";
+        let mut rows = Vec::new();
+        decode_reader(&csv[..], TransferFormat::Csv, 128, |offset, record| {
+            rows.push((offset, record));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.id, "a");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&rows[0].1.value).unwrap()["note"],
+            "line1\nline2"
+        );
+
+        let json = br#"[
+          {"_id":"a","value":{"n":1}},
+          {"_id":"b","value":{"n":2}}
+        ]"#;
+        let mut ids = Vec::new();
+        decode_reader(&json[..], TransferFormat::MongoJson, 128, |offset, record| {
+            ids.push((offset, record.id));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids[0].0 < ids[1].0 && ids[1].0 == json.len() as u64);
+        assert_eq!(ids.into_iter().map(|(_, id)| id).collect::<Vec<_>>(), vec!["a", "b"]);
     }
 
     #[test]

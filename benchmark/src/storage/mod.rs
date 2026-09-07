@@ -529,6 +529,12 @@ pub struct ExpiredTtlKey {
     pub collection: CollectionName,
     /// The expired document's identifier.
     pub id: DocumentId,
+    /// The logical version selected from the newest row.
+    pub version: u64,
+    /// The public revision selected from the newest row.
+    pub revision: String,
+    /// The expiry selected from the newest row, in Unix milliseconds.
+    pub expires_at: i64,
 }
 
 /// The durable progress of one governed backfill batch.
@@ -753,6 +759,9 @@ pub(crate) trait StoragePort: Send {
         branch: &str,
         collection: &str,
     ) -> Result<Option<Vec<u8>>, ()>;
+
+    /// Durably records the declared history window for one collection.
+    fn set_collection_history(&mut self, collection: &CollectionName, days: u32) -> Result<(), ()>;
 
     /// Runs a file capture with commits and background checkpoints excluded.
     fn with_quiescent_wal(&self, capture: &mut dyn FnMut(&std::path::Path)) -> Result<(), ()>;

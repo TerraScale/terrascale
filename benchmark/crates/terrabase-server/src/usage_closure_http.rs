@@ -210,6 +210,7 @@ mod tests {
             origin_proof_keys: Arc::new(crate::reactive_api::OriginProofKeyRing::default()),
             webhook_keys: None,
             exports: None,
+            imports: None,
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
         })
     }

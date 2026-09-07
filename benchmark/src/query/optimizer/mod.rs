@@ -942,6 +942,7 @@ pub(crate) fn run(
 ) -> Result<Option<IndexNamespace>, QueryError> {
     let query = plan.model();
     super::execute::check_bounds(query.deadline(), query.cancellation_signal())?;
+    sync_durable_lifecycle(engine, catalog, &snapshot.tenant());
     lifecycle::maintain(engine, catalog, snapshot.engine_identity());
     super::execute::check_bounds(query.deadline(), query.cancellation_signal())?;
     let tenant = snapshot.tenant().clone();
@@ -975,6 +976,62 @@ pub(crate) fn run(
         }
     }
     Ok(None) // unreachable in practice: the final attempt always records
+}
+
+/// Reconciles the durable D-31 lifecycle with the process-local serving
+/// catalog. The lifecycle journal is authoritative across restart, while the
+/// catalog owns immutable segments consumed by the query executor. Only a
+/// fully verified, planner-visible durable candidate is admitted; all other
+/// phases are removed from planner consideration.
+fn sync_durable_lifecycle(engine: &Engine, catalog: &IndexCatalog, tenant: &TenantId) {
+    let Ok(snapshot) = engine.auto_index_lifecycle_snapshot(tenant, None, 256) else {
+        // Local/development engines may have no production lifecycle owner.
+        // Their ordinary optimizer catalog remains the serving authority.
+        return;
+    };
+    for durable in snapshot.indexes {
+        let Ok(namespace) = IndexNamespace::try_new(tenant.clone(), &durable.id) else {
+            continue;
+        };
+        let eligible = durable.phase == crate::auto_index::LifecyclePhase::Active
+            && durable.visible
+            && durable.target_watermark == Some(durable.covered_watermark)
+            && durable.zero_stale_reads
+            && durable.regression_free;
+        if !eligible {
+            catalog.remove_auto(&namespace);
+            continue;
+        }
+        let Ok(collection) = crate::types::CollectionName::try_new(&durable.collection) else {
+            continue;
+        };
+        let fields = durable
+            .fields
+            .iter()
+            .filter_map(|field| IndexField::try_new(field, IndexCapabilities::FULL).ok())
+            .collect::<Vec<_>>();
+        let Ok(definition) = IndexDefinition::try_new(collection, fields, IndexKind::Auto) else {
+            continue;
+        };
+        if catalog.register_auto(tenant, &definition).is_err() {
+            continue;
+        }
+        let needs_build = catalog
+            .definitions(tenant)
+            .into_iter()
+            .find(|entry| entry.namespace() == &namespace)
+            .is_none_or(|entry| entry.covered_sequence().unwrap_or(0) < durable.covered_watermark);
+        if needs_build
+            && let Some(delta) = catalog.delta()
+            && delta.covered_sequence() >= durable.covered_watermark
+        {
+            let _ = IndexBuilder::new(catalog, engine).rebuild_from(
+                &namespace,
+                &delta,
+                engine.identity(),
+            );
+        }
+    }
 }
 
 /// Extracts the selected namespace from one recorded outcome. A created auto

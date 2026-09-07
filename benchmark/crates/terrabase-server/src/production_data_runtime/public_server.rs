@@ -144,6 +144,7 @@ impl PreparedProductionPublic {
             .as_ref()
             .map(|config| crate::lifecycle_publication::spawn(config, registry).map_err(failure))
             .transpose()?;
+        crate::api::imports::recover_imports(&state)?;
         let dispatcher = crate::api::spawn_webhook_dispatcher(&state);
         let migrations = crate::api::spawn_schema_migrations(&state);
         let workers =
@@ -170,6 +171,7 @@ impl PreparedProductionPublic {
         let result =
             axum::serve(listener, router).with_graceful_shutdown(shutdown).await.map_err(failure);
         status_guard.status.serving.store(false, Ordering::Release);
+        if let Some(imports) = &state.imports { imports.shutdown().await; }
         let workers = workers.shutdown().await;
         result.and(workers)
     }
@@ -237,6 +239,7 @@ mod tests {
             capability_keys: Arc::new(crate::reactive_api::CapabilityKeyRing::conformance()),
             webhook_keys: None,
             exports: None,
+            imports: None,
         })
     }
 
@@ -417,6 +420,7 @@ mod tests {
             dispatcher: None,
             migrations: Some(migration),
             exports: None,
+            imports: None,
         };
         let result = workers.shutdown().await;
         assert!(result.is_err(), "panic must be surfaced by worker shutdown");
@@ -430,6 +434,7 @@ mod tests {
             dispatcher: None,
             migrations: Some(migration),
             exports: None,
+            imports: None,
         };
         drop(guard);
         timeout(Duration::from_secs(1), async {

@@ -728,7 +728,7 @@ mod tests {
             HeaderValue::from_str(&origin_proof_for(
                 &Method::GET,
                 uri.path(),
-                time / 600 * 600,
+                time / 600,
                 key,
                 terrabase::regions::RegionCode::GRU,
             ))

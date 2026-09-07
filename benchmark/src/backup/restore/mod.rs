@@ -2103,6 +2103,7 @@ impl Replay {
                 collection: staged_collection,
                 id: staged_id,
                 expected: ExpectedVersion::Any,
+                ttl_guard: None,
             },
             batch_key,
         )

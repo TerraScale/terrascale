@@ -2565,6 +2565,7 @@ fn stage_intent(
                 document.collection(),
                 document.id(),
                 *expected,
+                None,
                 snapshot_sequence,
                 *watermark,
             )?,
@@ -2574,19 +2575,21 @@ fn stage_intent(
                 document.collection(),
                 document.id(),
                 crate::types::ExpectedVersion::Any,
+                None,
                 snapshot_sequence,
                 *watermark,
             )?,
-            StagedWrite::Delete { collection: Some(collection), id, expected } => conflict_between(
+            StagedWrite::Delete { collection: Some(collection), id, expected, ttl_guard } => conflict_between(
                 transaction,
                 &intent.tenant,
                 collection,
                 id,
                 *expected,
+                ttl_guard.as_ref(),
                 snapshot_sequence,
                 *watermark,
             )?,
-            StagedWrite::Delete { collection: None, id, expected } => conflict_for_absent_document(
+            StagedWrite::Delete { collection: None, id, expected, .. } => conflict_for_absent_document(
                 transaction,
                 &intent.tenant,
                 id,
@@ -2600,6 +2603,7 @@ fn stage_intent(
                 collection,
                 id,
                 crate::types::ExpectedVersion::Any,
+                None,
                 snapshot_sequence,
                 *watermark,
             )?,
@@ -4158,13 +4162,32 @@ fn conflict_between(
     collection: &CollectionName,
     id: &DocumentId,
     expected: ExpectedVersion,
+    ttl_guard: Option<&crate::storage::intent::TtlGuard>,
     snapshot_sequence: u64,
     published_sequence: u64,
 ) -> Result<bool, ()> {
     let snapshot_version = version_at(transaction, tenant, collection, id, snapshot_sequence)?;
     let published_version = version_at(transaction, tenant, collection, id, published_sequence)?;
+    let ttl_matches = |sequence| -> Result<bool, ()> {
+        let Some(guard) = ttl_guard else { return Ok(true) };
+        let row = transaction
+            .query_row(
+                "SELECT revision, expires_at FROM documents
+                 WHERE tenant = ?1 AND collection = ?2 AND id = ?3 AND commit_seq <= ?4
+                 ORDER BY commit_seq DESC LIMIT 1",
+                rusqlite::params![tenant.as_str(), collection.as_str(), id.as_str(), sequence as i64],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()
+            .map_err(|_| ())?;
+        Ok(row.is_some_and(|(revision, expires_at)| {
+            revision == guard.revision && expires_at == Some(guard.expires_at)
+        }))
+    };
     Ok(snapshot_version != published_version
-        || !codec::matches_expectation(snapshot_version, expected))
+        || !codec::matches_expectation(snapshot_version, expected)
+        || !ttl_matches(snapshot_sequence)?
+        || !ttl_matches(published_sequence)?)
 }
 
 /// Checks a delete of an identifier the snapshot does not contain.
@@ -4651,6 +4674,14 @@ impl StoragePort for SqliteStorage {
         collection: &str,
     ) -> Result<Option<Vec<u8>>, ()> {
         self.load_schema_metadata(database, branch, collection)
+    }
+
+    fn set_collection_history(
+        &mut self,
+        collection: &CollectionName,
+        days: u32,
+    ) -> Result<(), ()> {
+        SqliteStorage::set_collection_history(self, collection, days)
     }
 
     fn index_lifecycle_events(&self, from: u64, limit: usize) -> Result<Vec<Vec<u8>>, ()> {
@@ -6005,7 +6036,9 @@ impl StoragePort for SqliteStorage {
     fn expired_ttl_keys(&self, now_millis: i64, batch: u32) -> Result<Vec<ExpiredTtlKey>, ()> {
         use crate::storage::ExpiredTtlKey;
         let mut keys = Vec::new();
-        for (tenant, collection, id) in self.expired_ttl_keys(now_millis, batch)? {
+        for (tenant, collection, id, version, revision, expires_at) in
+            self.expired_ttl_keys(now_millis, batch)?
+        {
             let (Some(tenant), Some(collection), Some(id)) = (
                 TenantId::try_new(&tenant).ok(),
                 CollectionName::try_new(&collection).ok(),
@@ -6013,7 +6046,10 @@ impl StoragePort for SqliteStorage {
             ) else {
                 continue;
             };
-            keys.push(ExpiredTtlKey { tenant, collection, id });
+            let Ok(version) = u64::try_from(version) else {
+                continue;
+            };
+            keys.push(ExpiredTtlKey { tenant, collection, id, version, revision, expires_at });
         }
         Ok(keys)
     }
@@ -7329,15 +7365,27 @@ impl SqliteStorage {
         &self,
         now_millis: i64,
         batch: u32,
-    ) -> Result<Vec<(String, String, String)>, ()> {
+    ) -> Result<Vec<(String, String, String, i64, String, i64)>, ()> {
         let reader = self.reader();
         let mut statement = reader
             .connection()
             .prepare_cached(
-                "SELECT tenant, collection, id, MAX(commit_seq) FROM documents
-                 WHERE collection != ?3
-                 GROUP BY tenant, collection, id
-                 HAVING deleted = 0 AND expires_at IS NOT NULL AND expires_at <= ?1
+                "SELECT current.tenant, current.collection, current.id,
+                        current.version, current.revision, current.expires_at
+                 FROM documents AS current
+                 JOIN (
+                     SELECT tenant, collection, id, MAX(commit_seq) AS commit_seq
+                     FROM documents
+                     WHERE collection != ?3
+                     GROUP BY tenant, collection, id
+                 ) AS newest
+                   ON newest.tenant = current.tenant
+                  AND newest.collection = current.collection
+                  AND newest.id = current.id
+                  AND newest.commit_seq = current.commit_seq
+                 WHERE current.deleted = 0
+                   AND current.expires_at IS NOT NULL
+                   AND current.expires_at <= ?1
                  LIMIT ?2",
             )
             .map_err(|_| ())?;
@@ -7349,6 +7397,9 @@ impl SqliteStorage {
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(5)?,
                     ))
                 },
             )

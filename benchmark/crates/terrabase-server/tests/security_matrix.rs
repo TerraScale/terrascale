@@ -267,10 +267,9 @@ fn origin_proofs_accept_current_previous_and_reject_expired_or_wrong_scope() {
 
 #[test]
 fn origin_proof_cross_runtime_vector_uses_bucket_index_wire() {
-    let vector: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../contracts/conformance/origin-proof.json"
-    ))
-    .expect("origin proof vector");
+    let vector: serde_json::Value =
+        serde_json::from_str(include_str!("../../../contracts/conformance/origin-proof.json"))
+            .expect("origin proof vector");
     let now = vector["now"].as_u64().expect("vector now");
     let bucket = vector["bucket"].as_u64().expect("vector bucket");
     assert_eq!(now / 600, bucket, "wire bucket is Unix seconds / 600");

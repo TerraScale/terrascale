@@ -836,6 +836,7 @@ fn delete(collection: Option<&str>, id: &str, expected: ExpectedVersion) -> Stag
         collection: collection.map(|name| CollectionName::try_new(name).expect("collection")),
         id: DocumentId::try_new(id).expect("identifier"),
         expected,
+        ttl_guard: None,
     }
 }
 
@@ -2131,6 +2132,7 @@ fn filtered_scan_resolves_the_newest_version_and_hides_tombstones() {
         collection: Some(users.clone()),
         id: DocumentId::try_new("doc").expect("valid identifier"),
         expected: ExpectedVersion::Any,
+        ttl_guard: None,
     }];
     let seq_three = stored_sequence(&commit(&mut storage, "op-3", writes));
     assert_eq!(
@@ -3183,6 +3185,7 @@ fn invisible_index_build_resumes_and_tracks_transactional_writes() {
                 collection: Some(users.clone()),
                 id: DocumentId::try_new("b").unwrap(),
                 expected: ExpectedVersion::Any,
+                ttl_guard: None,
             }]
         ),
         CommitResult::Committed(_)
@@ -3229,6 +3232,7 @@ fn verify_hidden_shadow_results(
 fn shadow_evidence_retains_each_template_and_refuses_capacity_without_eviction() {
     use crate::auto_index::{
         LifecycleIndexView, LifecyclePhase, LifecycleStore, LogicalCost, ShadowEvidence,
+        ShadowOutcome,
     };
     let (dir, mut storage) = sqlite_store("shadow-template-set");
     let mut store = LifecycleStore::open(&storage).unwrap();
@@ -3259,6 +3263,7 @@ fn shadow_evidence_retains_each_template_and_refuses_capacity_without_eviction()
         candidate: vec![LogicalCost::new(0, 150); 20],
         improvement: 0.0,
         regression: false,
+        outcome: ShadowOutcome::Abandon,
         digest: [0; 32],
     };
     let regressed = store.record_evidence(&mut storage, "tenant", sample.clone(), 2).unwrap();
@@ -3339,6 +3344,7 @@ fn shadow_evidence_is_durable_scoped_and_atomic() {
         // Supplied derived fields cannot authorize a decision.
         improvement: f64::NAN,
         regression: true,
+        outcome: crate::auto_index::ShadowOutcome::Activate,
         digest: [0; 32],
     };
     let before = lifecycle.snapshot("tenant", None, 10);

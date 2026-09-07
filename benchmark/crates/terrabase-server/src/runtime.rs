@@ -558,7 +558,7 @@ async fn serve_admitted_production(
                 .map_err(|_| DaemonError::ProductionConfigurationMissing)
             })
             .transpose()?;
-        let state = crate::api::ApiState::production(
+        let mut state = crate::api::ApiState::production(
             native,
             Arc::clone(&recovery),
             native_restore_target,
@@ -582,6 +582,9 @@ async fn serve_admitted_production(
             Some(Arc::new(exports)),
             admission.budget_runtime().map(Arc::new),
         );
+        let imports = crate::api::imports::ImportRuntime::open(primary.backup_root.join("imports"))
+            .map_err(|_| DaemonError::ProductionConfigurationMissing)?;
+        Arc::get_mut(&mut state).expect("unique production API state").imports = Some(Arc::new(imports));
         let prepared = admission.prepare_public(public, state, auth).await.map_err(|_| {
             Box::new(DaemonError::ProductionStartup(ProductionStartupError::Component(
                 crate::production::ProductionComponentError {
@@ -1376,6 +1379,7 @@ async fn serve_public_api(
             crate::export_api::ExportRuntime::local(&backup_root.with_file_name("exports"), region)
                 .map_err(|_| DaemonError::Engine("local export dependencies unavailable".into()))?,
         )),
+        imports: None,
         delegated_identity,
         byo_jwt: None,
         development: Arc::default(),

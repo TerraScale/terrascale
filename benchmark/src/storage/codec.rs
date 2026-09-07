@@ -290,10 +290,17 @@ fn encode_digest_write(out: &mut Vec<u8>, write: &StagedWrite) {
             encode_expected(out, *expected);
             encode_document(out, document);
         }
-        StagedWrite::Delete { id, expected, .. } => {
+        StagedWrite::Delete { id, expected, ttl_guard, .. } => {
             push_u8(out, 2);
             push_str(out, id.as_str());
             encode_expected(out, *expected);
+            if let Some(guard) = ttl_guard {
+                push_u8(out, 1);
+                push_str(out, &guard.revision);
+                push_u64(out, u64::from_le_bytes(guard.expires_at.to_le_bytes()));
+            } else {
+                push_u8(out, 0);
+            }
         }
         StagedWrite::ReplicatedPut {
             document,

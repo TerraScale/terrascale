@@ -1,0 +1,21 @@
+{
+  "status": "failed",
+  "family": "e13-production-bulk-ingest-v1",
+  "target": "terra-base",
+  "topology": "single-node",
+  "envelope": {
+    "ocpu": 2,
+    "memory_bytes": 12884901888,
+    "spec": "2ocpu/12GiB",
+    "enforcement": "systemd cgroup CPUQuota=200%, MemoryMax=12G; member scope verified by ingest.sh"
+  },
+  "workload_version": "terrabase-e13-ingest-workload-v1",
+  "workload_digest": "aa41e8a0bd13dc295c2c3fd6fc6e65f56d6709e394f1e1f7e2658315b69d1928",
+  "run_group": "e13-local-20260907T2248Z",
+  "runtime_digest": "fa8dc665da801f866224289c80869b379d5335485fe127e1e43a0ec319743e2b",
+  "error": "TerraBase health probe failed: http://127.0.0.1:7211/api/v1/health: status code 401",
+  "samples": [],
+  "limits": [
+    "failed attempts are retained and never comparable"
+  ]
+}

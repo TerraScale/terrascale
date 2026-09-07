@@ -29,6 +29,9 @@ pub(super) fn advance(
 ) -> Result<bool, String> {
     let schema = &record.document.schema;
     let collection = CollectionName::try_new(&schema.name).map_err(|_| "invalid collection")?;
+    engine
+        .set_collection_history_retention(&collection, schema.history_retention_days)
+        .map_err(|_| "history retention installation failed")?;
     let fields = scalar_fields(schema);
     let mut ready = true;
     for field in &fields {
