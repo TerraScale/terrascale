@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::client::SharedClient;
 use crate::error::{Error, ErrorKind, Result};
 use crate::regions::RegionCode;
-use crate::transport::{Method, Request};
+use crate::transport::{Method, Request, Response};
 
 /// Maximum encoded size of one document value (D-25).
 pub const MAX_DOCUMENT_BYTES: usize = 1 << 20;
@@ -465,7 +465,9 @@ impl DocumentsClient {
             body: None,
         };
         let request = apply_read_headers(request, &options);
-        let body: serde_json::Value = self.shared.send_typed(request).await?;
+        let response = self.shared.send_response(request).await?;
+        require_json_response(&response)?;
+        let body: serde_json::Value = response.json_body()?;
         Ok(Document {
             id: id.to_owned(),
             collection: collection.to_owned(),
@@ -473,7 +475,7 @@ impl DocumentsClient {
             body,
             created_at: None,
             updated_at: None,
-            etag: None,
+            etag: response.header("etag").map(str::to_owned),
             session: self.shared.session_token(),
         })
     }
@@ -626,10 +628,12 @@ impl DocumentsClient {
             body: Some(encoded),
         };
         let request = apply_operation_headers(request, options);
-        let mut response: DocumentWriteResponse = self.shared.send_typed(request).await?;
-        response.etag = Some(format!("\"{}\"", response.revision));
-        response.session = self.shared.session_token();
-        Ok(response)
+        let response = self.shared.send_response(request).await?;
+        require_json_response(&response)?;
+        let mut result: DocumentWriteResponse = response.json_body()?;
+        result.etag = response.header("etag").map(str::to_owned);
+        result.session = self.shared.session_token();
+        Ok(result)
     }
 
     /// Delete one document (the server writes a tombstone).
@@ -834,6 +838,19 @@ fn encode_document(value: &serde_json::Value) -> Result<Vec<u8>> {
         ));
     }
     Ok(encoded)
+}
+
+fn require_json_response(response: &Response) -> Result<()> {
+    let media_type = response
+        .header("content-type")
+        .and_then(|value| value.split(';').next())
+        .map(str::trim);
+    if media_type != Some("application/json") {
+        return Err(Error::invalid_response(
+            "document responses require application/json",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_header_value(value: &str, field: &str, max: usize) -> Result<()> {

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde_json::json;
 use terrascale::{
-    ClientConfig, HttpTransport, Method, Request, Response, Result, TerraScaleClient,
+    ClientConfig, DatabaseScope, HttpTransport, Method, Request, Response, Result, TerraScaleClient,
 };
 
 #[derive(Debug)]
@@ -36,6 +36,59 @@ impl HttpTransport for Mock {
 
 fn document_response() -> Response {
     Response::json(200, &json!({"revision": "rev_1"}))
+}
+
+#[tokio::test]
+async fn documents_propagate_authoritative_etag_and_require_json_success_media() {
+    let get = Response {
+        status: 200,
+        headers: vec![
+            ("content-type".into(), "application/json".into()),
+            ("etag".into(), "\"served-get\"".into()),
+        ],
+        body: br#"{"name":"Ada"}"#.to_vec(),
+    };
+    let put = Response {
+        status: 200,
+        headers: vec![
+            (
+                "content-type".into(),
+                "application/json; charset=utf-8".into(),
+            ),
+            ("etag".into(), "\"served-put\"".into()),
+        ],
+        body: br#"{"revision":"revision-body"}"#.to_vec(),
+    };
+    let wrong_media = Response {
+        status: 200,
+        headers: vec![("content-type".into(), "text/plain".into())],
+        body: br#"{"name":"Ada"}"#.to_vec(),
+    };
+    let mock = Mock::new([get, put, wrong_media]);
+    let sdk = TerraScaleClient::with_transport(
+        ClientConfig::builder().build().expect("config"),
+        Arc::clone(&mock) as Arc<dyn HttpTransport>,
+    );
+    let scope = DatabaseScope::new("database");
+    let fetched = sdk
+        .documents()
+        .get(&scope, "users", "doc")
+        .await
+        .expect("get");
+    assert_eq!(fetched.etag.as_deref(), Some("\"served-get\""));
+    let written = sdk
+        .documents()
+        .put(&scope, "users", "doc", json!({"name": "Ada"}))
+        .await
+        .expect("put");
+    assert_eq!(written.revision, "revision-body");
+    assert_eq!(written.etag.as_deref(), Some("\"served-put\""));
+    let error = sdk
+        .documents()
+        .get(&scope, "users", "doc")
+        .await
+        .expect_err("wrong media type");
+    assert_eq!(error.kind, terrascale::ErrorKind::InvalidResponse);
 }
 
 #[tokio::test]
