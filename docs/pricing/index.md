@@ -69,7 +69,8 @@ email intake and staffed response coverage are not advertised as available.
 - **$1 per 1M** writes
 - **$0.20 per GB-month** per region
 
-Both may only go down.
+These are draft targets; any change requires an owner decision, measured unit
+economics, and publication approval.
 
 ## Shared organization allowances
 
