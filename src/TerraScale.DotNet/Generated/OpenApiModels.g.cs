@@ -314,7 +314,7 @@ public sealed record OperationSummary(
     [property: JsonPropertyName("kind"), JsonRequired] string Kind,
     [property: JsonPropertyName("name"), JsonRequired] string Name,
     [property: JsonPropertyName("operation_id"), JsonRequired] string OperationId,
-    [property: JsonPropertyName("revision"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Revision,
+    [property: JsonPropertyName("revision"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ulong? Revision,
     [property: JsonPropertyName("stage"), JsonRequired] string Stage,
     [property: JsonPropertyName("state"), JsonRequired] string State
 );

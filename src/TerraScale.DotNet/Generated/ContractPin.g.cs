@@ -9,15 +9,15 @@ public static class TerraScaleContractPin
     public const int ManifestSchemaVersion = 1;
     public const string Version = "v1";
     public const string ContractVersion = Version;
-    public const string ManifestSha256 = "50cb882fbb94860ca7eec5e1b440bf530bd8b3a69df53fed489324c162cd35ff";
-    public const string Blake3_ConformanceHttpJson = "ee4aa8a158d8e37902035ddc48f61e45c80f31d9a28011e69a3c0a65c3d3b6a7";
+    public const string ManifestSha256 = "0ba19cac156ef614d6448df8fcc7b0b85cf3187bf228317eca32bad5334ce4d6";
+    public const string Blake3_ConformanceHttpJson = "360dd77ff93132b677d8e0ad987f3bcd420f6e15baea400d7cc6dda04e42ad77";
     public const string Blake3_ConformanceMsgpackHostileVectorsJson = "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3";
     public const string Blake3_ConformanceMsgpackMessageVectorsJson = "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c";
-    public const string Blake3_ConformanceReactiveJson = "f92d0c63f48209500c260473bf8cc86e37f1e197c8c840e16bd75fa756ed2693";
+    public const string Blake3_ConformanceReactiveJson = "20f4f63ea988a78bb352de7796e68c0e493e558cb79a77bd7e502aaddbf3f4d8";
     public const string Blake3_MsgpackHostileVectorsJson = "f0b3945c856a1330e837a5233907f87a24a3bef47b4a86db7b4920c891cef2e3";
     public const string Blake3_MsgpackMessageVectorsJson = "d636f18eddd1b172ba81ef6fce7035695871808a5aa74a587b3890332505b96c";
     public const string Blake3_MsgpackTerrascaleSyncV1MsgpackJson = "b18dd38c268fa5848f6b87f83adc909954156391c4b0491a04ad0ddeec398a27";
-    public const string Blake3_OpenapiJson = "5303d7b02b82410250b7a4a6e314a525cf69644624701dc424a72a9df1268595";
+    public const string Blake3_OpenapiJson = "05d640bef461d93e090571d67934cb82f43834018065f5a8f70602585d852320";
     public const string Blake3_ProtoTerrabaseV1EngineProto = "eddd647a5824625e069bbc43f64aff2f685f50ca79613e13bc3e643428925fe2";
     public const string Blake3_ProtoTerrabaseV1FamilyProto = "5bcaff241de738e58018b81cbc09141b1ee453a3426a1b44dbf1afe934ec8d40";
 }

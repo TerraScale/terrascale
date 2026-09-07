@@ -23,7 +23,7 @@ public sealed class TerraScaleOperationsClientTests
     [Test]
     public async Task ListAsync_UsesProjectScopeAndDecodesPage()
     {
-        using var handler = new RecordingHandler("{\"operations\":[{\"operation_id\":\"op-1\",\"kind\":\"database_create\",\"database_id\":\"db-1\",\"name\":\"orders\",\"state\":\"running\",\"stage\":\"members_admitted\",\"created_at\":\"2026-09-06T12:00:00Z\",\"revision\":9223372036854775807,\"cancellable\":false,\"cancellation_reason\":\"\"}],\"next_cursor\":\"cursor/one\",\"covered_kinds\":[\"database_create\",\"branch_create\"]}");
+        using var handler = new RecordingHandler("{\"operations\":[{\"operation_id\":\"op-1\",\"kind\":\"database_create\",\"database_id\":\"db-1\",\"name\":\"orders\",\"state\":\"running\",\"stage\":\"members_admitted\",\"created_at\":\"2026-09-06T12:00:00Z\",\"revision\":18446744073709551615,\"cancellable\":false,\"cancellation_reason\":\"\"}],\"next_cursor\":\"cursor/one\",\"covered_kinds\":[\"database_create\",\"branch_create\"]}");
         using var httpClient = new HttpClient(handler);
         var client = CreateClient(httpClient);
 
