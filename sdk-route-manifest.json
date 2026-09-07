@@ -6,7 +6,7 @@
     "bundle": "contracts",
     "openapi": "openapi.json"
   },
-  "routeCount": 64,
+  "routeCount": 66,
   "routes": [
     {
       "base": "api",
@@ -28,7 +28,7 @@
       "method": "POST",
       "pathTemplate": "/api/v1/databases",
       "requestType": "CreateDatabaseRequest",
-      "responseType": "DatabaseRecord | ProvisioningOperation"
+      "responseType": "ProvisioningOperation"
     },
     {
       "base": "api",
@@ -215,7 +215,7 @@
       "method": "DELETE",
       "pathTemplate": "/api/v1/databases/{name}",
       "requestType": "void",
-      "responseType": "DatabaseRecord"
+      "responseType": "DeletionOperation"
     },
     {
       "base": "api",
@@ -248,7 +248,7 @@
       "method": "POST",
       "pathTemplate": "/api/v1/databases/{name}/backups/restore",
       "requestType": "RestoreRequest",
-      "responseType": "DatabaseRecord"
+      "responseType": "ProvisioningOperation"
     },
     {
       "base": "api",
@@ -269,8 +269,8 @@
       "routeName": "databases.createBranch",
       "method": "POST",
       "pathTemplate": "/api/v1/databases/{name}/branches",
-      "requestType": "RestoreRequest",
-      "responseType": "DatabaseRecord"
+      "requestType": "CreateBranchRequest",
+      "responseType": "ProvisioningOperation"
     },
     {
       "base": "api",
@@ -425,6 +425,17 @@
       "pathTemplate": "/api/v1/databases/{name}/collections/{collection}/schema",
       "requestType": "CollectionSchema",
       "responseType": "SchemaDocument"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "deletionStatus",
+      "operationId": "deletion_status",
+      "routeName": "databases.deletionStatus",
+      "method": "GET",
+      "pathTemplate": "/api/v1/databases/{name}/deletions/{operation_id}",
+      "requestType": "void",
+      "responseType": "DeletionOperation"
     },
     {
       "base": "api",
@@ -645,6 +656,17 @@
       "pathTemplate": "/api/v1/health",
       "requestType": "void",
       "responseType": "HealthResponse"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "operation": "listOperations",
+      "operationId": "list_operations",
+      "routeName": "databases.listOperations",
+      "method": "GET",
+      "pathTemplate": "/api/v1/operations",
+      "requestType": "void",
+      "responseType": "OperationPage"
     },
     {
       "base": "api",

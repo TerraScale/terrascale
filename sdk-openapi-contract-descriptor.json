@@ -1,7 +1,7 @@
 {
   "contractVersion": "v1",
   "descriptorVersion": 2,
-  "routeCount": 64,
+  "routeCount": 66,
   "routes": [
     {
       "base": "api",
@@ -283,7 +283,7 @@
       ],
       "routeName": "databases.deleteDatabase",
       "sdkRequestType": "void",
-      "sdkResponseType": "DatabaseRecord"
+      "sdkResponseType": "DeletionOperation"
     },
     {
       "base": "api",
@@ -8374,6 +8374,271 @@
       "base": "api",
       "client": "databases",
       "method": "GET",
+      "operation": "deletionStatus",
+      "operationId": "deletion_status",
+      "parameters": [
+        {
+          "in": "path",
+          "name": "name",
+          "parameter": {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "operation_id",
+          "parameter": {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/databases/{name}/deletions/{operation_id}",
+      "request": {
+        "kind": "void"
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionOperation",
+                  "siblings": {
+                    "resolved": {
+                      "description": "Durable asynchronous database deletion progress.",
+                      "properties": {
+                        "cutoff": {
+                          "format": "date-time",
+                          "type": "string"
+                        },
+                        "request": {
+                          "properties": {
+                            "database_id": {
+                              "type": "string"
+                            },
+                            "environment": {
+                              "type": "string"
+                            },
+                            "operation_id": {
+                              "type": "string"
+                            },
+                            "project_id": {
+                              "type": "string"
+                            },
+                            "tenant_id": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "environment",
+                            "tenant_id",
+                            "project_id",
+                            "database_id",
+                            "operation_id"
+                          ],
+                          "type": "object"
+                        },
+                        "state": {
+                          "enum": [
+                            "preparing",
+                            "stopping",
+                            "cleanup_pending"
+                          ],
+                          "type": "string"
+                        },
+                        "targets": {
+                          "items": {
+                            "properties": {
+                              "stop": {
+                                "additionalProperties": true,
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "stop"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "request",
+                        "state",
+                        "cutoff",
+                        "targets"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "description": "Durable asynchronous database deletion progress.",
+                        "properties": {
+                          "cutoff": {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          "request": {
+                            "properties": {
+                              "database_id": {
+                                "type": "string"
+                              },
+                              "environment": {
+                                "type": "string"
+                              },
+                              "operation_id": {
+                                "type": "string"
+                              },
+                              "project_id": {
+                                "type": "string"
+                              },
+                              "tenant_id": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "environment",
+                              "tenant_id",
+                              "project_id",
+                              "database_id",
+                              "operation_id"
+                            ],
+                            "type": "object"
+                          },
+                          "state": {
+                            "enum": [
+                              "preparing",
+                              "stopping",
+                              "cleanup_pending"
+                            ],
+                            "type": "string"
+                          },
+                          "targets": {
+                            "items": {
+                              "properties": {
+                                "stop": {
+                                  "additionalProperties": true,
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "stop"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "request",
+                          "state",
+                          "cutoff",
+                          "targets"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "description": "Durable asynchronous database deletion progress.",
+                    "properties": {
+                      "cutoff": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "request": {
+                        "properties": {
+                          "database_id": {
+                            "type": "string"
+                          },
+                          "environment": {
+                            "type": "string"
+                          },
+                          "operation_id": {
+                            "type": "string"
+                          },
+                          "project_id": {
+                            "type": "string"
+                          },
+                          "tenant_id": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "environment",
+                          "tenant_id",
+                          "project_id",
+                          "database_id",
+                          "operation_id"
+                        ],
+                        "type": "object"
+                      },
+                      "state": {
+                        "enum": [
+                          "preparing",
+                          "stopping",
+                          "cleanup_pending"
+                        ],
+                        "type": "string"
+                      },
+                      "targets": {
+                        "items": {
+                          "properties": {
+                            "stop": {
+                              "additionalProperties": true,
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "stop"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "request",
+                      "state",
+                      "cutoff",
+                      "targets"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "Authoritative deletion progress including regional stop receipts"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "databases.deletionStatus",
+      "sdkRequestType": "void",
+      "sdkResponseType": "DeletionOperation"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "method": "GET",
       "operation": "developmentLogs",
       "operationId": "development_logs",
       "parameters": [
@@ -12217,6 +12482,505 @@
       "base": "api",
       "client": "databases",
       "method": "GET",
+      "operation": "listOperations",
+      "operationId": "list_operations",
+      "parameters": [
+        {
+          "in": "query",
+          "name": "after",
+          "parameter": {
+            "description": "Opaque cursor returned by the preceding page, bound to the verified project.",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "in": "query",
+          "name": "limit",
+          "parameter": {
+            "description": "Maximum records, from one through fifty; defaults to fifty.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": false,
+          "schema": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          }
+        }
+      ],
+      "pathTemplate": "/api/v1/operations",
+      "request": {
+        "kind": "void"
+      },
+      "responses": [
+        {
+          "response": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationPage",
+                  "siblings": {
+                    "resolved": {
+                      "properties": {
+                        "covered_kinds": {
+                          "description": "Journal kinds currently covered by this endpoint; additional owners remain explicit.",
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "next_cursor": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "operations": {
+                          "items": {
+                            "$ref": "#/components/schemas/OperationSummary",
+                            "siblings": {
+                              "resolved": {
+                                "properties": {
+                                  "cancellable": {
+                                    "type": "boolean"
+                                  },
+                                  "cancellation_reason": {
+                                    "type": "string"
+                                  },
+                                  "created_at": {
+                                    "description": "Optional because some owner journals do not persist a creation time.",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "database_id": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "operation_id": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
+                                    "format": "int64",
+                                    "minimum": 0,
+                                    "type": [
+                                      "integer",
+                                      "null"
+                                    ]
+                                  },
+                                  "stage": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "description": "Queued, running, or succeeded, derived only from committed owner state.",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "operation_id",
+                                  "kind",
+                                  "database_id",
+                                  "name",
+                                  "state",
+                                  "stage",
+                                  "cancellable",
+                                  "cancellation_reason"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "resolved": {
+                              "properties": {
+                                "cancellable": {
+                                  "type": "boolean"
+                                },
+                                "cancellation_reason": {
+                                  "type": "string"
+                                },
+                                "created_at": {
+                                  "description": "Optional because some owner journals do not persist a creation time.",
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "database_id": {
+                                  "type": "string"
+                                },
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "operation_id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
+                                  "format": "int64",
+                                  "minimum": 0,
+                                  "type": [
+                                    "integer",
+                                    "null"
+                                  ]
+                                },
+                                "stage": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "description": "Queued, running, or succeeded, derived only from committed owner state.",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "operation_id",
+                                "kind",
+                                "database_id",
+                                "name",
+                                "state",
+                                "stage",
+                                "cancellable",
+                                "cancellation_reason"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "operations",
+                        "covered_kinds"
+                      ],
+                      "type": "object"
+                    },
+                    "siblings": {
+                      "resolved": {
+                        "properties": {
+                          "covered_kinds": {
+                            "description": "Journal kinds currently covered by this endpoint; additional owners remain explicit.",
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "next_cursor": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "operations": {
+                            "items": {
+                              "$ref": "#/components/schemas/OperationSummary",
+                              "siblings": {
+                                "resolved": {
+                                  "properties": {
+                                    "cancellable": {
+                                      "type": "boolean"
+                                    },
+                                    "cancellation_reason": {
+                                      "type": "string"
+                                    },
+                                    "created_at": {
+                                      "description": "Optional because some owner journals do not persist a creation time.",
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "database_id": {
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "operation_id": {
+                                      "type": "string"
+                                    },
+                                    "revision": {
+                                      "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
+                                      "format": "int64",
+                                      "minimum": 0,
+                                      "type": [
+                                        "integer",
+                                        "null"
+                                      ]
+                                    },
+                                    "stage": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "description": "Queued, running, or succeeded, derived only from committed owner state.",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "operation_id",
+                                    "kind",
+                                    "database_id",
+                                    "name",
+                                    "state",
+                                    "stage",
+                                    "cancellable",
+                                    "cancellation_reason"
+                                  ],
+                                  "type": "object"
+                                },
+                                "siblings": {
+                                  "resolved": {
+                                    "properties": {
+                                      "cancellable": {
+                                        "type": "boolean"
+                                      },
+                                      "cancellation_reason": {
+                                        "type": "string"
+                                      },
+                                      "created_at": {
+                                        "description": "Optional because some owner journals do not persist a creation time.",
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
+                                      "database_id": {
+                                        "type": "string"
+                                      },
+                                      "kind": {
+                                        "type": "string"
+                                      },
+                                      "name": {
+                                        "type": "string"
+                                      },
+                                      "operation_id": {
+                                        "type": "string"
+                                      },
+                                      "revision": {
+                                        "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
+                                        "format": "int64",
+                                        "minimum": 0,
+                                        "type": [
+                                          "integer",
+                                          "null"
+                                        ]
+                                      },
+                                      "stage": {
+                                        "type": "string"
+                                      },
+                                      "state": {
+                                        "description": "Queued, running, or succeeded, derived only from committed owner state.",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "operation_id",
+                                      "kind",
+                                      "database_id",
+                                      "name",
+                                      "state",
+                                      "stage",
+                                      "cancellable",
+                                      "cancellation_reason"
+                                    ],
+                                    "type": "object"
+                                  }
+                                }
+                              },
+                              "resolved": {
+                                "properties": {
+                                  "cancellable": {
+                                    "type": "boolean"
+                                  },
+                                  "cancellation_reason": {
+                                    "type": "string"
+                                  },
+                                  "created_at": {
+                                    "description": "Optional because some owner journals do not persist a creation time.",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "database_id": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "operation_id": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
+                                    "format": "int64",
+                                    "minimum": 0,
+                                    "type": [
+                                      "integer",
+                                      "null"
+                                    ]
+                                  },
+                                  "stage": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "description": "Queued, running, or succeeded, derived only from committed owner state.",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "operation_id",
+                                  "kind",
+                                  "database_id",
+                                  "name",
+                                  "state",
+                                  "stage",
+                                  "cancellable",
+                                  "cancellation_reason"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "operations",
+                          "covered_kinds"
+                        ],
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "resolved": {
+                    "properties": {
+                      "covered_kinds": {
+                        "description": "Journal kinds currently covered by this endpoint; additional owners remain explicit.",
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "next_cursor": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "operations": {
+                        "items": {
+                          "$ref": "#/components/schemas/OperationSummary",
+                          "resolved": {
+                            "properties": {
+                              "cancellable": {
+                                "type": "boolean"
+                              },
+                              "cancellation_reason": {
+                                "type": "string"
+                              },
+                              "created_at": {
+                                "description": "Optional because some owner journals do not persist a creation time.",
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "database_id": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "operation_id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "description": "Durable journal revision; viewing does not advance it.\nOptional because member-local journals may not expose a revision.",
+                                "format": "int64",
+                                "minimum": 0,
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "stage": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "description": "Queued, running, or succeeded, derived only from committed owner state.",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "operation_id",
+                              "kind",
+                              "database_id",
+                              "name",
+                              "state",
+                              "stage",
+                              "cancellable",
+                              "cancellation_reason"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "operations",
+                      "covered_kinds"
+                    ],
+                    "type": "object"
+                  }
+                }
+              }
+            },
+            "description": "Project-scoped durable operation discovery with explicit journal coverage"
+          },
+          "status": "200"
+        }
+      ],
+      "routeName": "databases.listOperations",
+      "sdkRequestType": "void",
+      "sdkResponseType": "OperationPage"
+    },
+    {
+      "base": "api",
+      "client": "databases",
+      "method": "GET",
       "operation": "getProvisioningOperation",
       "operationId": "get_provisioning_operation",
       "parameters": [
@@ -14560,7 +15324,7 @@
       ],
       "routeName": "databases.createDatabase",
       "sdkRequestType": "CreateDatabaseRequest",
-      "sdkResponseType": "DatabaseRecord | ProvisioningOperation"
+      "sdkResponseType": "ProvisioningOperation"
     },
     {
       "base": "api",
@@ -32544,7 +33308,7 @@
       ],
       "routeName": "databases.restoreBackup",
       "sdkRequestType": "RestoreRequest",
-      "sdkResponseType": "DatabaseRecord"
+      "sdkResponseType": "ProvisioningOperation"
     },
     {
       "base": "api",
@@ -32932,8 +33696,8 @@
         }
       ],
       "routeName": "databases.createBranch",
-      "sdkRequestType": "RestoreRequest",
-      "sdkResponseType": "DatabaseRecord"
+      "sdkRequestType": "CreateBranchRequest",
+      "sdkResponseType": "ProvisioningOperation"
     },
     {
       "base": "api",
@@ -50056,6 +50820,6 @@
   ],
   "sources": {
     "openApiSha256": "1db95e5dd6044bb35328377551447bdadc691b774122e42706025b22a5916b79",
-    "routeManifestSha256": "d17509fb2f1cfbbc30de40176461c2047472161964b587581774ffd5c0926973"
+    "routeManifestSha256": "0a67e3be425cbe12b2ef2ba27d995b921882d9a435ff99e1078d2a53dcdfc908"
   }
 }
