@@ -10,6 +10,42 @@ const projectId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const databaseId = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
 
 describe("TerraScaleHttp request policy", () => {
+  test("cancels while the credential provider is pending without dispatching a request", async () => {
+    const controller = new AbortController();
+    let resolveToken!: (token: string) => void;
+    let started!: () => void;
+    const providerStarted = new Promise<void>(resolve => { started = resolve; });
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "http://127.0.0.1:1",
+      accessToken: () => {
+        started();
+        return new Promise<string>(resolve => { resolveToken = resolve; });
+      },
+    });
+    const pending = http.request({
+      method: "GET", path: "/api/v1/regions", routeName: "regions.list", signal: controller.signal,
+    });
+    await providerStarted;
+    controller.abort(new Error("cancelled credential wait"));
+    const result = await pending;
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error.message, "cancelled credential wait");
+    resolveToken("late-token");
+  });
+
+  test("an already cancelled request never invokes the credential provider", async () => {
+    let calls = 0;
+    const http = new TerraScaleHttp({
+      apiBaseUrl: "http://127.0.0.1:1",
+      accessToken: () => { calls++; return "token"; },
+    });
+    const result = await http.request({
+      method: "GET", path: "/api/v1/regions", routeName: "regions.list", signal: AbortSignal.abort(),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(calls, 0);
+  });
+
   test("attaches idempotency keys to all requested mutation methods only", async () => {
     const captured: Request[] = [];
     const http = new TerraScaleHttp({

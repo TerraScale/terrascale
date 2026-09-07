@@ -133,6 +133,7 @@ export class TerraScaleHttp {
     let idempotencyKey: string | undefined;
 
     try {
+      options.signal?.throwIfAborted();
       idempotencyKey = this.resolveIdempotencyKey(options);
       let attempt = 0;
       let repaired421 = false;
@@ -141,10 +142,15 @@ export class TerraScaleHttp {
         let responseReceived = false;
         let fetchStarted = false;
         try {
+          options.signal?.throwIfAborted();
           const requestBase = this.baseUrl(requestRegionHint);
           const globalFirstContact = this.isGlobalFirstContact(requestBase, requestRegionHint);
           const url = buildUrl(requestBase, options.path, options.query);
-          const headers = await this.buildHeaders({ ...options, regionHint: requestRegionHint }, idempotencyKey);
+          const headers = await withCancellation(
+            this.buildHeaders({ ...options, regionHint: requestRegionHint }, idempotencyKey),
+            options.signal,
+          );
+          options.signal?.throwIfAborted();
           const requestInit: RequestInit = {
             method: options.method,
             headers,
@@ -482,6 +488,16 @@ function retryDelay(response: Response | undefined, baseDelayMs: number, attempt
   }
 
   return Math.min(baseDelayMs * (2 ** attempt), 30_000);
+}
+
+function withCancellation<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) return operation;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    void operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 function delayForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {

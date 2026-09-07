@@ -330,7 +330,7 @@ function customAdapter(
     },
     delete: async (input: DeleteInput) => { await ensure(); unwrap(await port.deleteOne({ model: input.model, predicates: where(input.model, input.where, "delete") }, mutationOptions())); },
     deleteMany: async (input: DeleteManyInput) => { await ensure(); return safeCount(unwrap(await port.deleteMany({ model: input.model, predicates: where(input.model, input.where, "deleteMany") }, mutationOptions())).count); },
-    consumeOne: async <T>(input: ConsumeInput) => { await ensure(); return outputRecord(unwrap(await port.consumeMatching({ model: input.model, predicates: where(input.model, input.where, "consumeOne") }, mutationOptions())).record) as T | null; },
+    consumeOne: async <T>(input: ConsumeInput) => { await ensure(); return consumedRecord(unwrap(await port.consumeMatching({ model: input.model, predicates: where(input.model, input.where, "consumeOne") }, mutationOptions()))) as T | null; },
     incrementOne: async <T>(input: IncrementInput) => { await ensure(); return outputRecord(unwrap(await port.incrementOne({ model: input.model, predicates: where(input.model, input.where, "incrementOne"), increment: input.increment, ...(input.set === undefined ? {} : { set: jsonObject(input.set) }) }, mutationOptions())).record) as T | null; },
     count: async (input: CountInput) => { await ensure(); return safeCount(unwrap(await port.count({ model: input.model, predicates: where(input.model, input.where ?? [], "count") }, queryOptions())).count); },
   };
@@ -387,6 +387,16 @@ function joins(input: JoinConfig): readonly AuthQueryJoin[] {
 function unwrap(result: TerraScaleResult<AuthPersistenceResult>): AuthPersistenceResult {
   if (result.ok) return result.value;
   throw new TerraScaleAuthAdapterError(result.error.message, result.error.code, result.error);
+}
+
+function consumedRecord(result: AuthPersistenceResult): JsonObject | null {
+  // A token is usable only when the authority confirms its atomic removal.
+  // An unmatched response carrying a record must never become a redemption.
+  if (result.matched === false && result.record === null) return null;
+  if (result.matched !== true || result.record === null || typeof result.record !== "object" || Array.isArray(result.record)) {
+    throw new TypeError("Auth consume operation returned an invalid success result.");
+  }
+  return jsonObject(result.record);
 }
 
 function outputRecord(record: Record<string, unknown> | JsonObject | null | undefined, select?: readonly string[]): JsonObject | null {

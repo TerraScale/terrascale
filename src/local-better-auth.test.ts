@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
-import { createLocalBetterAuthHttpOperations, createTerraScaleBetterAuthAdapter } from "./better-auth.js";
+import { BetterAuthAdapterError, createLocalBetterAuthHttpOperations, createTerraScaleBetterAuthAdapter } from "./better-auth.js";
 import { createLocalBetterAuthDatabaseOperations } from "./local/better-auth.js";
 import { TerraScaleSqliteStore } from "./local/store.js";
 
@@ -37,27 +37,31 @@ test("local Better Auth records survive a SQLite runtime restart", async () => {
 });
 
 
-test("local auth transactions run as a development-only non-atomic passthrough", async () => {
+test("local auth transactions reject before callback writes or HTTP requests", async () => {
   const directory = await mkdtemp(join(tmpdir(), "terrascale-auth-transaction-"));
   const store = new TerraScaleSqliteStore(join(directory, "auth.sqlite"));
   const oldCi = process.env.CI;
   delete process.env.CI;
   try {
-    const local = createLocalBetterAuthDatabaseOperations(store);
-    const adapter = createTerraScaleBetterAuthAdapter(local);
+    const adapter = createTerraScaleBetterAuthAdapter(createLocalBetterAuthDatabaseOperations(store));
     let entered = false;
-    const result = await adapter.transaction(async transaction => {
+    const unsupported = (error: unknown) => error instanceof BetterAuthAdapterError && error.code === "transaction_unsupported";
+    await assert.rejects(adapter.transaction(async transaction => {
       entered = true;
-      await transaction.create({ model: "user", data: { email: "passthrough@example.test" } });
-      return "committed";
-    });
-    assert.equal(result, "committed");
-    assert.equal(entered, true);
-    assert.equal(await adapter.count({ model: "user", where: [] }), 1);
+      await transaction.create({ model: "user", data: { email: "partial@example.test" } });
+      throw new Error("later write failed");
+    }), unsupported);
+    assert.equal(entered, false);
+    assert.equal(await adapter.count({ model: "user", where: [] }), 0);
 
-    const http = createLocalBetterAuthHttpOperations({ baseUrl: "http://127.0.0.1:18445" });
-    const httpAdapter = createTerraScaleBetterAuthAdapter(http);
-    assert.equal(await httpAdapter.transaction(async () => "ok"), "ok");
+    let requests = 0;
+    const http = createLocalBetterAuthHttpOperations({
+      baseUrl: "http://127.0.0.1:18445",
+      fetch: async () => { requests += 1; throw new Error("Unexpected request"); },
+    });
+    await assert.rejects(createTerraScaleBetterAuthAdapter(http).transaction(async () => { entered = true; }), unsupported);
+    assert.equal(entered, false);
+    assert.equal(requests, 0);
   } finally {
     if (oldCi === undefined) delete process.env.CI;
     else process.env.CI = oldCi;

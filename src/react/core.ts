@@ -380,22 +380,30 @@ export class ReactiveMutationObserver<TValue, TVariables> {
     this.#activeRun = run;
     this.#activeKey = idempotencyKey;
     this.#setState({ status: "pending", data: this.#state.data, error: undefined, idempotencyKey, isPending: true });
+    let rollback: (() => void) | undefined;
+    const rollbackNow = (): void => {
+      const pending = rollback;
+      rollback = undefined;
+      pending?.();
+    };
+    this.#rollback = rollbackNow;
     try {
-      this.#rollback = toRollback(await options.onMutate?.(variables, context));
+      rollback = toRollback(await options.onMutate?.(variables, context));
       if (abort.signal.aborted || run !== this.#activeRun) throw cancelledError();
       const result = await options.mutationFn(variables, context);
       if (abort.signal.aborted) throw cancelledError();
       const value = unwrapMutationResult(result);
-      this.#rollback = undefined;
+      rollback = undefined;
       if (run === this.#activeRun) this.#setState({ status: "success", data: value, error: undefined, idempotencyKey, isPending: false });
       return value;
     } catch (cause) {
-      this.#rollbackNow();
+      rollbackNow();
       const error = normalizeReactiveError(cause, abort.signal.aborted ? "cancelled" : "mutation");
       if (run === this.#activeRun) this.#setState({ status: error.kind === "cancelled" ? "cancelled" : "error", data: this.#state.data, error, idempotencyKey, isPending: false });
       throw cause instanceof Error ? cause : new ReactiveMutationError(error.code, error.message, cause);
     } finally {
       if (run === this.#activeRun) {
+        this.#rollback = undefined;
         this.#abort = undefined;
         this.#activeKey = undefined;
       }

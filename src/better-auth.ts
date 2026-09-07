@@ -285,11 +285,13 @@ export function createLocalBetterAuthHttpOperations(
     deleteMany: (input) => request("deleteMany", input),
     consumeOne: (input) => request("consumeOne", input),
     incrementOne: (input) => request("incrementOne", input),
-    // Better Auth wraps sign-up/email writes in adapter.transaction and has no
-    // way to opt out per adapter; the loopback runtime offers no cross-request
-    // atomicity, so run the callback as a plain non-atomic passthrough exactly
-    // like Better Auth's own missing-transaction fallback.
-    transaction: async (callback) => callback(operations),
+    async transaction() {
+      throw new BetterAuthAdapterError(
+        "The local Better Auth HTTP runtime does not support atomic transactions.",
+        "transaction_unsupported",
+        undefined,
+      );
+    },
     migrate: (input) => request("migrate", input),
   };
   return operations;

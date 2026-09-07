@@ -1,4 +1,4 @@
-import { type BetterAuthDatabaseOperations, type BetterAuthWhere } from "../better-auth.js";
+import { BetterAuthAdapterError, type BetterAuthDatabaseOperations, type BetterAuthWhere } from "../better-auth.js";
 import { ok } from "../result.js";
 import type { TerraScaleSqliteStore } from "./store.js";
 
@@ -90,13 +90,12 @@ export function createLocalBetterAuthDatabaseOperations(
       for (const [field, amount] of Object.entries(input.increment)) updated[field] = Number(row[field] ?? 0) + Number(amount);
       return success("incrementOne", save(input.model, updated));
     },
-    // Development-only non-atomic passthrough: Better Auth's sign-up flow wraps
-    // its writes in adapter.transaction, and the in-process SQLite runtime has
-    // no cross-operation atomicity to offer over that callback.
-    async transaction<T>(
-      callback: (operations: Omit<BetterAuthDatabaseOperations, "transaction">) => Promise<T>,
-    ): Promise<T> {
-      return callback(operations);
+    async transaction() {
+      throw new BetterAuthAdapterError(
+        "The local Better Auth SQLite runtime does not support atomic transactions.",
+        "transaction_unsupported",
+        undefined,
+      );
     },
     async migrate() {
       return { code: "local_sqlite_ready", path: "better-auth" };

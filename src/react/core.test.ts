@@ -106,4 +106,48 @@ describe("reactive hook core", () => {
     assert.equal(rollback, 1);
     assert.equal(observer.getSnapshot().status, "cancelled");
   });
+
+  for (const phase of ["presentation", "request"] as const) {
+    test(`late cancelled ${phase} completion cannot roll back a replacement mutation`, async () => {
+      const rollbacks: string[] = [];
+      const writes: string[] = [];
+      let finishPresentation!: () => void;
+      let finishRequest!: () => void;
+      const presentation = new Promise<void>(resolve => { finishPresentation = resolve; });
+      const request = new Promise<void>(resolve => { finishRequest = resolve; });
+      const observer = new ReactiveMutationObserver<void, string>({
+        idempotencyKey: value => value,
+        onMutate: async value => {
+          if (value === "first" && phase === "presentation") await presentation;
+          return () => { rollbacks.push(value); };
+        },
+        mutationFn: async value => {
+          writes.push(value);
+          await request;
+        },
+      });
+      const first = observer.mutateAsync("first");
+      const firstRejected = assert.rejects(first, /cancelled/u);
+      await flush();
+      observer.cancel();
+      const second = observer.mutateAsync("second");
+      await flush();
+      finishPresentation();
+      if (phase === "request") finishRequest();
+      await firstRejected;
+      if (phase === "presentation") {
+        assert.equal(observer.getSnapshot().status, "pending");
+        assert.deepEqual(writes, ["second"]);
+        observer.cancel();
+        finishRequest();
+        await assert.rejects(second, /cancelled/u);
+        assert.deepEqual(rollbacks, ["first", "second"]);
+      } else {
+        await second;
+        assert.deepEqual(rollbacks, ["first"]);
+        assert.equal(observer.getSnapshot().status, "success");
+      }
+    });
+  }
+
 });
