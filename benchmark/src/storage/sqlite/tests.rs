@@ -17,7 +17,7 @@ use std::{
 use rusqlite::Connection;
 
 use crate::engine::{CommitError, CommitOutcome, DurableResolution, Engine, EngineConfig};
-use crate::storage::intent::{CommitIntent, CommitResult, StagedWrite};
+use crate::storage::intent::{CommitIntent, CommitResult, StagedWrite, TtlGuard};
 use crate::storage::{DbUsageFact, FaultPoint, StorageOpenError, StoragePort, write_set_digest};
 use crate::types::{
     CollectionName, Document, DocumentId, DocumentValue, ExpectedVersion, LocalDurability,
@@ -888,6 +888,113 @@ fn stored_sequence(result: &CommitResult) -> u64 {
         CommitResult::Committed(receipt) => receipt.sequence.get(),
         other => panic!("expected a commit, got {other:?}"),
     }
+}
+
+#[test]
+fn stale_ttl_expiry_work_item_cannot_delete_a_renewed_document() {
+    let (dir, mut storage) = sqlite_store("ttl-renewal-guard");
+    let expiry_now = 10_i64;
+    let expired = Document::new(
+        DocumentId::try_new("session").expect("identifier"),
+        CollectionName::try_new("sessions").expect("collection"),
+        DocumentValue::Object(
+            [
+                ("value".to_owned(), DocumentValue::String("v1".to_owned())),
+                ("expires_at".to_owned(), DocumentValue::Integer(5)),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    let first = stored_sequence(&commit(
+        &mut storage,
+        "ttl-v1",
+        vec![StagedWrite::Put { document: expired, expected: ExpectedVersion::New }],
+    ));
+
+    // Capture the exact work item before a concurrent writer renews it.
+    let key = StoragePort::expired_ttl_keys(&storage, expiry_now, 16)
+        .expect("expired work list")
+        .into_iter()
+        .next()
+        .expect("v1 is expired");
+    assert_eq!(key.version, 1);
+    assert_eq!(key.expires_at, 5);
+
+    let renewed = Document::new(
+        DocumentId::try_new("session").expect("identifier"),
+        CollectionName::try_new("sessions").expect("collection"),
+        DocumentValue::Object(
+            [
+                ("value".to_owned(), DocumentValue::String("v2".to_owned())),
+                ("expires_at".to_owned(), DocumentValue::Integer(1_000)),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    let second = stored_sequence(&commit(
+        &mut storage,
+        "ttl-v2",
+        vec![StagedWrite::Put { document: renewed, expected: ExpectedVersion::Exact(1) }],
+    ));
+
+    // Recreate the sweep's already-staged delete against its old snapshot.
+    let mut stale = intent(
+        "ttl-stale-delete",
+        vec![StagedWrite::Delete {
+            collection: Some(key.collection.clone()),
+            id: key.id.clone(),
+            expected: ExpectedVersion::Exact(key.version),
+            ttl_guard: Some(TtlGuard { revision: key.revision, expires_at: key.expires_at }),
+        }],
+        LocalDurability::Written,
+    );
+    stale.snapshot_sequence = StorageSequence::new(first);
+    stale.internal_maintenance = true;
+    assert!(matches!(storage.commit(stale), CommitResult::Rejected(_)));
+
+    let current = storage
+        .read_document_in_collection_at(
+            StorageSequence::new(second),
+            &tenant(),
+            &key.collection,
+            &key.id,
+        )
+        .expect("renewed document survives");
+    assert_eq!(
+        current.value(),
+        &DocumentValue::Object(
+            [
+                ("value".to_owned(), DocumentValue::String("v2".to_owned())),
+                ("expires_at".to_owned(), DocumentValue::Integer(1_000)),
+            ]
+            .into_iter()
+            .collect(),
+        )
+    );
+    assert!(
+        StoragePort::expired_ttl_keys(&storage, expiry_now, 16)
+            .expect("retry work list")
+            .is_empty()
+    );
+    assert_eq!(
+        storage
+            .document_history_in_collection(&tenant(), &key.collection, &key.id, 16)
+            .iter()
+            .filter(|entry| entry.deleted)
+            .count(),
+        0,
+        "no TTL tombstone"
+    );
+    assert_eq!(
+        storage.metering_fact("tenant-a").expect("write usage").writes(),
+        2,
+        "the rejected maintenance retry creates no billed TTL units"
+    );
+
+    drop(storage);
+    std::fs::remove_dir_all(dir).ok();
 }
 
 // ---- SQLite-focused: the journal-pruning floor ---------------------------

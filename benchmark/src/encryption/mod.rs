@@ -558,6 +558,7 @@ impl ArtifactCipher {
                     | "snapshot"
                     | "large-value-chunk"
                     | "webhook-secret"
+                    | "import"
             ),
             KeyPurpose::Backup => matches!(context.artifact_kind(), "backup" | "export" | "branch"),
             KeyPurpose::Checkpoint => context.artifact_kind() == "checkpoint",

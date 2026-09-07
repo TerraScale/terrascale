@@ -32,7 +32,7 @@ pub use shadow::{
 #[cfg(test)]
 pub(crate) use faults::FaultPoint;
 pub(crate) use intent::{
-    CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite,
+    CommitIntent, CommitRejection, CommitResult, OperationResolution, StagedWrite, TtlGuard,
     SupersededReplication, UnknownCause,
 };
 pub(crate) use ownership::validate_local_restore_source;

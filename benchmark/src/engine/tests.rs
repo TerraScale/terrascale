@@ -93,7 +93,7 @@ pub(super) fn tenant_scope(engine: &Engine, tenant_name: &str) -> TenantScope {
     TenantScope::from_parts(tenant(tenant_name), engine.identity())
 }
 
-fn open_owned_engine(tag: &str) -> (PathBuf, Engine, TenantId) {
+pub(super) fn open_owned_engine(tag: &str) -> (PathBuf, Engine, TenantId) {
     let dir = location(tag);
     let owner = crate::storage::DatabaseOwner::local_development();
     let owner_tenant = tenant(&owner.tenant().to_text());

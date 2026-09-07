@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn encoded_order_matches_sqlite_binary_tuple_order() {
         let values = [("a", "z"), ("a", "aa"), ("aa", "a"), ("é", "a"), ("a", "😀")];
-        let mut connection = Connection::open_in_memory().unwrap();
+        let connection = Connection::open_in_memory().unwrap();
         connection
             .execute(
                 "CREATE TABLE keys (collection TEXT COLLATE BINARY, id TEXT COLLATE BINARY)",
@@ -137,7 +137,7 @@ mod tests {
             .unwrap()
             .map(Result::unwrap)
             .collect();
-        let mut encoded_order: Vec<(String, String)> = values
+        let mut encoded_order = values
             .iter()
             .map(|(c, i)| (*c, *i))
             .map(|(c, i)| {

@@ -28,6 +28,11 @@ pub use crate::storage::{DatabaseOwner, EnvironmentName};
 use crate::types::{OperationId, TenantScope};
 use crate::{Engine, EngineConfig, EngineOpenError, EngineShutdownError};
 
+mod split_runtime;
+pub use split_runtime::{
+    MemberSplitError, MemberSplitRuntime, MemberSplitStep, SplitAdmission, SplitAdmissionAuthority,
+};
+
 /// The maximum UTF-8 byte length of a database identity.
 pub const MAX_DATABASE_ID_BYTES: usize = 26;
 /// The maximum number of databases in one Member catalog.
@@ -1634,6 +1639,10 @@ impl DatabaseLease {
     #[must_use]
     pub fn database_owner(&self) -> &DatabaseOwner {
         self.engine.database_owner()
+    }
+
+    pub(crate) fn shared_engine(&self) -> Arc<Engine> {
+        Arc::clone(&self.engine)
     }
 
     /// Begins an origin transaction after routing its key through the

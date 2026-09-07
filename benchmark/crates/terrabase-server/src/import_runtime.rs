@@ -44,9 +44,10 @@ impl ImportLeaseCipher {
 impl ImportCipher for ImportLeaseCipher {
     fn seal_chunk(&self, operation_id: &str, chunk: u64, plaintext: &[u8]) -> io::Result<Vec<u8>> {
         let tag = chunk_tag(operation_id, chunk, plaintext);
-        let context = EncryptionContext::new(
+        let context = EncryptionContext::new_with_project(
             self.lease.metadata().scope().environment(),
             &self.tenant,
+            self.lease.metadata().scope().project().ok_or_else(permission_error)?.to_text(),
             &self.database,
             "import",
             blake3::Hash::from(tag).to_hex().to_string(),
@@ -76,9 +77,10 @@ impl ImportCipher for ImportLeaseCipher {
             .ok_or_else(invalid_input)?
             .try_into()
             .map_err(|_| invalid_input())?;
-        let context = EncryptionContext::new(
+        let context = EncryptionContext::new_with_project(
             self.lease.metadata().scope().environment(),
             &self.tenant,
+            self.lease.metadata().scope().project().ok_or_else(permission_error)?.to_text(),
             &self.database,
             "import",
             blake3::Hash::from(tag).to_hex().to_string(),
@@ -151,50 +153,6 @@ impl<C: ImportCipher> ImportInputWriter<C> {
         })
     }
 
-    /// Reopens a durable partial upload after a process crash, validating every
-    /// existing record before allowing more chunks to be appended.
-    pub(crate) fn resume(
-        root: impl AsRef<Path>,
-        operation_id: &str,
-        cipher: C,
-    ) -> io::Result<Self> {
-        if operation_id.is_empty() || operation_id.contains('/') || operation_id.contains('\\') {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid operation identity"));
-        }
-        let path = root.as_ref().join(format!("{operation_id}.upload.part"));
-        let mut file = File::options().read(true).write(true).open(&path)?;
-        let mut digest = Hasher::new();
-        let mut length = 0u64;
-        let mut chunk = 0u64;
-        loop {
-            let mut size = [0u8; 8];
-            let read = file.read(&mut size)?;
-            if read == 0 {
-                break;
-            }
-            if read != size.len() {
-                return Err(invalid_input());
-            }
-            let encrypted_len = u64::from_be_bytes(size);
-            if encrypted_len < 32 || encrypted_len > MAX_INPUT_BYTES {
-                return Err(invalid_input());
-            }
-            let mut encrypted =
-                vec![0u8; usize::try_from(encrypted_len).map_err(|_| invalid_input())?];
-            file.read_exact(&mut encrypted)?;
-            let plaintext = cipher.open_chunk(operation_id, chunk, &encrypted)?;
-            let next = length.checked_add(plaintext.len() as u64).ok_or_else(invalid_input)?;
-            if next > MAX_INPUT_BYTES {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, "input exceeds 1 GiB"));
-            }
-            digest.update(&plaintext);
-            length = next;
-            chunk = chunk.checked_add(1).ok_or_else(invalid_input)?;
-        }
-        file.seek(std::io::SeekFrom::End(0))?;
-        Ok(Self { file, path, cipher, operation_id: operation_id.into(), digest, length, chunk })
-    }
-
     pub(crate) fn write_chunk(&mut self, plaintext: &[u8]) -> io::Result<()> {
         let next = self
             .length
@@ -212,7 +170,7 @@ impl<C: ImportCipher> ImportInputWriter<C> {
         Ok(())
     }
 
-    pub(crate) fn finish(mut self) -> io::Result<(PathBuf, String, u64)> {
+    pub(crate) fn finish(self) -> io::Result<(PathBuf, String, u64)> {
         self.file.sync_all()?;
         let digest = self.digest.finalize().to_hex().to_string();
         let complete = self.path.with_extension("");
@@ -266,108 +224,16 @@ impl<C: ImportCipher> ImportInputReader<C> {
         Ok(Self { file, cipher, operation_id: operation_id.into() })
     }
 
+    #[cfg(test)]
     pub(crate) fn read_all(
-        mut self,
+        self,
         expected_digest: &str,
         expected_length: u64,
     ) -> io::Result<Vec<u8>> {
-        if expected_length > MAX_INPUT_BYTES
-            || expected_digest.len() != 64
-            || !expected_digest.bytes().all(|b| b.is_ascii_hexdigit())
-        {
-            return Err(invalid_input());
-        }
-        let mut digest = Hasher::new();
+        let mut reader = self.verified_reader(expected_digest, expected_length)?;
         let mut output = Vec::new();
-        let mut chunk = 0u64;
-        loop {
-            let mut size = [0u8; 8];
-            let read = self.file.read(&mut size)?;
-            if read == 0 {
-                break;
-            }
-            if read != size.len() {
-                return Err(invalid_input());
-            }
-            let encrypted_len = u64::from_be_bytes(size);
-            if encrypted_len < 32 || encrypted_len > MAX_INPUT_BYTES {
-                return Err(invalid_input());
-            }
-            let mut encrypted =
-                vec![0u8; usize::try_from(encrypted_len).map_err(|_| invalid_input())?];
-            self.file.read_exact(&mut encrypted)?;
-            let plaintext = self.cipher.open_chunk(&self.operation_id, chunk, &encrypted)?;
-            let next = u64::try_from(output.len())
-                .unwrap()
-                .checked_add(plaintext.len() as u64)
-                .ok_or_else(invalid_input)?;
-            if next > expected_length || next > MAX_INPUT_BYTES {
-                return Err(invalid_input());
-            }
-            digest.update(&plaintext);
-            output.extend_from_slice(&plaintext);
-            chunk = chunk.checked_add(1).ok_or_else(invalid_input)?;
-        }
-        if output.len() as u64 != expected_length
-            || digest.finalize().to_hex().as_str() != expected_digest
-        {
-            return Err(invalid_input());
-        }
+        reader.read_to_end(&mut output)?;
         Ok(output)
-    }
-
-    /// Streams authenticated plaintext to `consume` without retaining the
-    /// upload in memory. The callback receives one encrypted-chunk's
-    /// plaintext at a time; callers must perform record framing themselves
-    /// and must not retain the supplied slice after returning.
-    pub(crate) fn for_each_chunk<F>(
-        mut self,
-        expected_digest: &str,
-        expected_length: u64,
-        mut consume: F,
-    ) -> io::Result<()>
-    where
-        F: FnMut(&[u8]) -> io::Result<()>,
-    {
-        if expected_length > MAX_INPUT_BYTES
-            || expected_digest.len() != 64
-            || !expected_digest.bytes().all(|b| b.is_ascii_hexdigit())
-        {
-            return Err(invalid_input());
-        }
-        let mut digest = Hasher::new();
-        let mut length = 0u64;
-        let mut chunk = 0u64;
-        loop {
-            let mut size = [0u8; 8];
-            let read = self.file.read(&mut size)?;
-            if read == 0 {
-                break;
-            }
-            if read != size.len() {
-                return Err(invalid_input());
-            }
-            let encrypted_len = u64::from_be_bytes(size);
-            if !(32..=MAX_INPUT_BYTES).contains(&encrypted_len) {
-                return Err(invalid_input());
-            }
-            let mut encrypted =
-                vec![0u8; usize::try_from(encrypted_len).map_err(|_| invalid_input())?];
-            self.file.read_exact(&mut encrypted)?;
-            let plaintext = self.cipher.open_chunk(&self.operation_id, chunk, &encrypted)?;
-            let next = length.checked_add(plaintext.len() as u64).ok_or_else(invalid_input)?;
-            if next > expected_length || next > MAX_INPUT_BYTES {
-                return Err(invalid_input());
-            }
-            digest.update(&plaintext);
-            consume(&plaintext)?;
-            length = next;
-            chunk = chunk.checked_add(1).ok_or_else(invalid_input)?;
-        }
-        if length != expected_length || digest.finalize().to_hex().as_str() != expected_digest {
-            return Err(invalid_input());
-        }
-        Ok(())
     }
 }
 
@@ -379,19 +245,30 @@ pub(crate) struct ImportPlaintextReader<C> {
     pending: io::Cursor<Vec<u8>>,
 }
 impl<C: ImportCipher> ImportInputReader<C> {
-    pub(crate) fn verified_reader(self, digest: &str, length: u64) -> io::Result<ImportPlaintextReader<C>> {
-        let mut reader = ImportPlaintextReader { input: self, chunk: 0, pending: io::Cursor::new(Vec::new()) };
+    pub(crate) fn verified_reader(
+        self,
+        digest: &str,
+        length: u64,
+    ) -> io::Result<ImportPlaintextReader<C>> {
+        let mut reader =
+            ImportPlaintextReader { input: self, chunk: 0, pending: io::Cursor::new(Vec::new()) };
         let mut actual = Hasher::new();
         let mut total = 0u64;
         let mut buffer = [0u8; 65536];
         loop {
             let read = reader.read(&mut buffer)?;
-            if read == 0 { break; }
+            if read == 0 {
+                break;
+            }
             total = total.checked_add(read as u64).ok_or_else(invalid_input)?;
-            if total > length || total > MAX_INPUT_BYTES { return Err(invalid_input()); }
+            if total > length || total > MAX_INPUT_BYTES {
+                return Err(invalid_input());
+            }
             actual.update(&buffer[..read]);
         }
-        if total != length || actual.finalize().to_hex().as_str() != digest { return Err(invalid_input()); }
+        if total != length || actual.finalize().to_hex().as_str() != digest {
+            return Err(invalid_input());
+        }
         reader.input.file.seek(io::SeekFrom::Start(0))?;
         reader.chunk = 0;
         reader.pending = io::Cursor::new(Vec::new());
@@ -400,20 +277,29 @@ impl<C: ImportCipher> ImportInputReader<C> {
 }
 impl<C: ImportCipher> Read for ImportPlaintextReader<C> {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
-        if output.is_empty() { return Ok(0); }
+        if output.is_empty() {
+            return Ok(0);
+        }
         loop {
             let count = self.pending.read(output)?;
-            if count != 0 { return Ok(count); }
+            if count != 0 {
+                return Ok(count);
+            }
             let mut size = [0u8; 8];
-            if self.input.file.read(&mut size[..1])? == 0 { return Ok(0); }
+            if self.input.file.read(&mut size[..1])? == 0 {
+                return Ok(0);
+            }
             self.input.file.read_exact(&mut size[1..])?;
             let size = u64::from_be_bytes(size);
             // Upload routes produce chunks of at most 64 KiB. Retain a
             // generous bounded ceiling for existing admitted staged inputs.
-            if !(32..=2 * 1024 * 1024).contains(&size) { return Err(invalid_input()); }
+            if !(32..=2 * 1024 * 1024).contains(&size) {
+                return Err(invalid_input());
+            }
             let mut encrypted = vec![0; size as usize];
             self.input.file.read_exact(&mut encrypted)?;
-            let plaintext = self.input.cipher.open_chunk(&self.input.operation_id, self.chunk, &encrypted)?;
+            let plaintext =
+                self.input.cipher.open_chunk(&self.input.operation_id, self.chunk, &encrypted)?;
             self.chunk = self.chunk.checked_add(1).ok_or_else(invalid_input)?;
             self.pending = io::Cursor::new(plaintext);
         }
@@ -459,18 +345,19 @@ mod tests {
     #[test]
     fn leased_input_roundtrip_and_scope_binding() {
         let root = test_root();
+        let cipher = Arc::new(leased_cipher());
         let mut writer =
-            ImportInputWriter::create(&root, "operation", leased_cipher()).expect("writer");
+            ImportInputWriter::create(&root, "operation", Arc::clone(&cipher)).expect("writer");
         writer.write_chunk(b"first").expect("chunk");
         writer.write_chunk(b"second").expect("chunk");
         let (path, digest, length) = writer.finish().expect("finish");
-        let bytes = ImportInputReader::open(&path, "operation", leased_cipher())
+        let bytes = ImportInputReader::open(&path, "operation", Arc::clone(&cipher))
             .expect("reader")
             .read_all(&digest, length)
             .expect("readback");
         assert_eq!(bytes, b"firstsecond");
         assert!(
-            ImportInputReader::open(&path, "other-operation", leased_cipher())
+            ImportInputReader::open(&path, "other-operation", Arc::clone(&cipher))
                 .expect("reader")
                 .read_all(&digest, length)
                 .is_err()
@@ -481,27 +368,29 @@ mod tests {
     #[test]
     fn leased_input_rejects_corrupt_and_truncated_chunks() {
         let root = test_root();
+        let cipher = Arc::new(leased_cipher());
         let mut writer =
-            ImportInputWriter::create(&root, "operation", leased_cipher()).expect("writer");
+            ImportInputWriter::create(&root, "operation", Arc::clone(&cipher)).expect("writer");
         writer.write_chunk(b"payload").expect("chunk");
         let (path, digest, length) = writer.finish().expect("finish");
         let mut bytes = std::fs::read(&path).expect("artifact");
-        bytes[bytes.len() - 1] ^= 1;
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
         std::fs::write(&path, &bytes).expect("corrupt");
         assert!(
-            ImportInputReader::open(&path, "operation", leased_cipher())
+            ImportInputReader::open(&path, "operation", Arc::clone(&cipher))
+                .expect("reader")
+                .read_all(&digest, length)
+                .is_err()
+        );
+        bytes.pop();
+        std::fs::write(&path, &bytes).expect("truncate");
+        assert!(
+            ImportInputReader::open(&path, "operation", Arc::clone(&cipher))
                 .expect("reader")
                 .read_all(&digest, length)
                 .is_err()
         );
         std::fs::remove_dir_all(root).expect("cleanup");
-        bytes.pop();
-        std::fs::write(&path, &bytes).expect("truncate");
-        assert!(
-            ImportInputReader::open(&path, "operation", leased_cipher())
-                .expect("reader")
-                .read_all(&digest, length)
-                .is_err()
-        );
     }
 }

@@ -9,7 +9,7 @@ use std::{path::Path, sync::Mutex, time::Duration};
 
 const MAX_INPUT_BYTES: u64 = 1 << 30;
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, utoipa::ToSchema)]
 pub(crate) struct ImportJob {
     pub operation_id: String,
     pub tenant_id: String,
@@ -17,6 +17,8 @@ pub(crate) struct ImportJob {
     pub database_id: String,
     pub format: String,
     pub durability: String,
+    #[serde(skip)]
+    pub key_version: String,
     pub pending_operation: Option<String>,
     pub pending_cursor: Option<u64>,
     pub pending_records: Option<u64>,
@@ -46,7 +48,7 @@ impl ImportStore {
              CREATE TABLE IF NOT EXISTS import_jobs(
                operation_id TEXT PRIMARY KEY NOT NULL,
                tenant_id TEXT NOT NULL, project_id TEXT NOT NULL,
-               database_id TEXT NOT NULL, format TEXT NOT NULL, durability TEXT NOT NULL,
+               database_id TEXT NOT NULL, format TEXT NOT NULL, durability TEXT NOT NULL, key_version TEXT NOT NULL,
                pending_operation TEXT, pending_cursor INTEGER, pending_records INTEGER,
                input_digest TEXT, input_length INTEGER, input_path TEXT,
                input_committed INTEGER NOT NULL DEFAULT 0,
@@ -61,8 +63,8 @@ impl ImportStore {
     pub(crate) fn admit(&self, job: &ImportJob) -> rusqlite::Result<()> {
         let connection = self.connection.lock().expect("import store lock");
         connection.execute(
-            "INSERT INTO import_jobs(operation_id,tenant_id,project_id,database_id,format,state,durability)
-             VALUES(?1,?2,?3,?4,?5,?6,?7)
+            "INSERT INTO import_jobs(operation_id,tenant_id,project_id,database_id,format,state,durability,key_version)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
              ON CONFLICT(operation_id) DO NOTHING",
             params![
                 job.operation_id,
@@ -70,7 +72,7 @@ impl ImportStore {
                 job.project_id,
                 job.database_id,
                 job.format,
-                job.state, job.durability
+                job.state, job.durability, job.key_version
             ],
         )?;
         Ok(())
@@ -80,11 +82,11 @@ impl ImportStore {
         let connection = self.connection.lock().expect("import store lock");
         connection.query_row(
             "SELECT operation_id,tenant_id,project_id,database_id,format,input_digest,input_length,input_path,
-             input_committed,cursor,committed_records,state,error,durability,pending_operation,pending_cursor,pending_records FROM import_jobs WHERE operation_id=?1",
+             input_committed,cursor,committed_records,state,error,durability,pending_operation,pending_cursor,pending_records,key_version FROM import_jobs WHERE operation_id=?1",
             [operation_id],
             |row| Ok(ImportJob {
                 operation_id: row.get(0)?, tenant_id: row.get(1)?, project_id: row.get(2)?,
-                database_id: row.get(3)?, format: row.get(4)?, durability: row.get(13)?,
+                database_id: row.get(3)?, format: row.get(4)?, durability: row.get(13)?, key_version: row.get(17)?,
                 pending_operation: row.get(14)?, pending_cursor: row.get::<_, Option<i64>>(15)?.map(|v| v as u64), pending_records: row.get::<_, Option<i64>>(16)?.map(|v| v as u64), input_digest: row.get(5)?,
                 input_length: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
                 input_path: row.get(7)?,
@@ -181,10 +183,19 @@ impl ImportStore {
     pub(crate) fn list(&self) -> rusqlite::Result<Vec<ImportJob>> {
         let ids = {
             let connection = self.connection.lock().expect("import store lock");
-            let mut statement = connection.prepare("SELECT operation_id FROM import_jobs ORDER BY operation_id")?;
-            statement.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?
+            let mut statement =
+                connection.prepare("SELECT operation_id FROM import_jobs ORDER BY operation_id")?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
         };
         ids.iter().map(|id| self.get(id)?.ok_or(rusqlite::Error::InvalidQuery)).collect()
+    }
+
+    pub(crate) fn queue_resume(&self, id: &str) -> rusqlite::Result<()> {
+        let connection = self.connection.lock().expect("import store lock");
+        connection.execute("UPDATE import_jobs SET state='queued' WHERE operation_id=?1 AND input_committed=1 AND state IN ('failed','unknown')", [id])?;
+        Ok(())
     }
 
     pub(crate) fn claim(&self, id: &str) -> rusqlite::Result<bool> {
@@ -192,7 +203,13 @@ impl ImportStore {
         Ok(connection.execute("UPDATE import_jobs SET state='running',error=NULL WHERE operation_id=?1 AND input_committed=1 AND state IN ('queued','failed','unknown')", [id])? == 1)
     }
 
-    pub(crate) fn begin_batch(&self, id: &str, operation: &str, cursor: u64, records: u64) -> rusqlite::Result<()> {
+    pub(crate) fn begin_batch(
+        &self,
+        id: &str,
+        operation: &str,
+        cursor: u64,
+        records: u64,
+    ) -> rusqlite::Result<()> {
         let connection = self.connection.lock().expect("import store lock");
         if connection.execute("UPDATE import_jobs SET pending_operation=?2,pending_cursor=?3,pending_records=?4 WHERE operation_id=?1 AND state='running' AND pending_operation IS NULL", params![id, operation, cursor, records])? != 1 { return Err(rusqlite::Error::InvalidQuery); }
         Ok(())

@@ -42,7 +42,10 @@ fn per_database_rollup_applies_accepted_region_multiplier_once() {
             ExpectedVersion::New,
         )
         .unwrap();
-    transaction.commit(LocalDurability::Synced).unwrap();
+    assert!(matches!(
+        transaction.commit(LocalDurability::Synced),
+        crate::engine::CommitOutcome::Committed(_)
+    ));
 
     let usage = engine
         .usage_page(&scope, UsagePageRequest::try_new(None, MAX_USAGE_PAGE_SIZE, None).unwrap())

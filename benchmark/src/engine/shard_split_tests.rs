@@ -1,7 +1,7 @@
 use super::shard_split::{RouteCatalog, RouteCatalogError, decode_catalog, encode_catalog};
 use crate::shard_split::{
     CutoverContext, DurableSplitState, RouteTable, ShardRoute, ShardSplit, SplitContext,
-    SplitEngineAdapter, SplitPhase, WriterFence,
+    SplitEngineAdapter, SplitPhase, SplitStateStore, WriterFence,
 };
 
 #[test]

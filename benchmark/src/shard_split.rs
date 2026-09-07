@@ -23,7 +23,7 @@ pub use cutover::{CutoverPermit, FenceError, WriterFence, WriterFenceState};
 pub use journal::{
     CatchUpError, JournalCatchUp, JournalEntry, JournalOperation, JournalReader, JournalWriter,
 };
-pub(crate) use key::{ShardKeyError, canonical_shard_key, decode_canonical_shard_key};
+pub(crate) use key::{canonical_shard_key, decode_canonical_shard_key};
 pub use lifecycle::{ShardSplit, SplitCutoverError, SplitPhase, SplitPlanError};
 pub use range_copy::{
     CopyBatch, CopyCheckpoint, CopyEntry, CopyError, RangeCopier, RangeCopySource, RangeCopyTarget,

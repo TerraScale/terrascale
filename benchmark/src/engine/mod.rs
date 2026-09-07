@@ -54,6 +54,7 @@ mod webhook_metadata;
 
 #[cfg(test)]
 mod ingest_tests;
+mod commit_timing_probe;
 
 #[cfg(test)]
 mod metadata_tests;
@@ -2845,6 +2846,20 @@ impl Engine {
         storage.port.flush().map_err(|()| EngineShutdownError::StorageFailure)
     }
 
+    /// Returns the admitted renewable artifact key source for this database.
+    /// The source exposes scoped leases, never raw key material.
+    ///
+    /// # Errors
+    /// Returns a scope mismatch or storage failure when the admitted lease
+    /// cannot be validated. Unencrypted local engines have no artifact source.
+    pub fn artifact_key_source(
+        &self,
+        scope: &TenantScope,
+    ) -> Result<Arc<dyn crate::encryption::DatabaseKeySource>, EngineError> {
+        self.validate_scope(scope)?;
+        self.storage_keys.clone().ok_or(EngineError::StorageFailure)
+    }
+
     /// Revalidates authorization even when `SQLite` satisfies a read from cache.
     ///
     /// # Errors
@@ -3420,7 +3435,7 @@ impl Engine {
                     &key.collection,
                     key.id.clone(),
                     ExpectedVersion::Exact(key.version),
-                    crate::storage::intent::TtlGuard {
+                    crate::storage::TtlGuard {
                         revision: key.revision.clone(),
                         expires_at: key.expires_at,
                     },
@@ -5148,7 +5163,7 @@ impl Transaction<'_> {
         collection: &CollectionName,
         id: DocumentId,
         expected: ExpectedVersion,
-        guard: crate::storage::intent::TtlGuard,
+        guard: crate::storage::TtlGuard,
     ) {
         self.writes.push(StagedWrite::Delete {
             collection: Some(collection.clone()), id, expected, ttl_guard: Some(guard),

@@ -42,10 +42,18 @@ struct WorkerGuard {
     dispatcher: Option<crate::api::DispatchWorker>,
     migrations: Option<tokio::task::JoinHandle<()>>,
     exports: Option<Arc<crate::export_api::ExportRuntime>>,
+    imports: Option<Arc<crate::api::imports::ImportRuntime>>,
+    import_worker: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl Drop for WorkerGuard {
     fn drop(&mut self) {
+        if let Some(imports) = &self.imports {
+            imports.stop();
+        }
+        if let Some(worker) = &self.import_worker {
+            worker.abort();
+        }
         if let Some(migrations) = &self.migrations {
             migrations.abort();
         }
@@ -57,6 +65,12 @@ impl Drop for WorkerGuard {
 
 impl WorkerGuard {
     async fn shutdown(mut self) -> Result<(), String> {
+        if let Some(imports) = &self.imports {
+            imports.shutdown().await;
+        }
+        if let Some(worker) = &self.import_worker {
+            worker.abort();
+        }
         let publication = match self.publication.take() {
             Some(publication) => publication.shutdown().await.map_err(failure),
             None => Ok(()),
@@ -147,9 +161,18 @@ impl PreparedProductionPublic {
         crate::api::imports::recover_imports(&state)?;
         let dispatcher = crate::api::spawn_webhook_dispatcher(&state);
         let migrations = crate::api::spawn_schema_migrations(&state);
-        let workers =
-            WorkerGuard { publication, dispatcher, migrations, exports: state.exports.clone() };
+        let workers = WorkerGuard {
+            publication,
+            dispatcher,
+            migrations,
+            exports: state.exports.clone(),
+            imports: state.imports.clone(),
+            import_worker: crate::api::imports::spawn_imports(&state),
+        };
         let mut worker_handles = Vec::new();
+        if let Some(worker) = &workers.import_worker {
+            worker_handles.push(worker.abort_handle());
+        }
         if let Some(publication) = workers.publication.as_ref() {
             worker_handles.push(publication.abort_handle());
         }
@@ -171,7 +194,6 @@ impl PreparedProductionPublic {
         let result =
             axum::serve(listener, router).with_graceful_shutdown(shutdown).await.map_err(failure);
         status_guard.status.serving.store(false, Ordering::Release);
-        if let Some(imports) = &state.imports { imports.shutdown().await; }
         let workers = workers.shutdown().await;
         result.and(workers)
     }
@@ -240,6 +262,7 @@ mod tests {
             webhook_keys: None,
             exports: None,
             imports: None,
+            import_worker: None,
         })
     }
 
@@ -421,6 +444,7 @@ mod tests {
             migrations: Some(migration),
             exports: None,
             imports: None,
+            import_worker: None,
         };
         let result = workers.shutdown().await;
         assert!(result.is_err(), "panic must be surfaced by worker shutdown");
@@ -435,6 +459,7 @@ mod tests {
             migrations: Some(migration),
             exports: None,
             imports: None,
+            import_worker: None,
         };
         drop(guard);
         timeout(Duration::from_secs(1), async {

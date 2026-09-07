@@ -24,8 +24,6 @@ pub(crate) enum StagedWrite {
         document: Document,
         /// The version the transaction expects.
         expected: ExpectedVersion,
-        /// Optional exact TTL row identity captured during expiry discovery.
-        pub(crate) ttl_guard: Option<TtlGuard>,
     },
     /// Delete one document.
     Delete {
@@ -36,6 +34,8 @@ pub(crate) enum StagedWrite {
         id: DocumentId,
         /// The version the transaction expects.
         expected: ExpectedVersion,
+        /// Optional exact TTL row identity captured during expiry discovery.
+        ttl_guard: Option<TtlGuard>,
     },
     /// Insert or replace one document replicated from a peer region
     /// (D-35/D-36), checked against the merge snapshot and stamped

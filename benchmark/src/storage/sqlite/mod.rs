@@ -5531,6 +5531,7 @@ impl StoragePort for SqliteStorage {
             &intent.collection,
             &intent.id,
             ExpectedVersion::Any,
+            None,
             intent.snapshot_sequence.get(),
             i64::MAX as u64,
         )

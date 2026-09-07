@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::{
     engine::{Engine, ReplicatedPublication},
     shard_split::{DurableSplitState, canonical_shard_key},
-    types::{StorageSequence, TenantScope},
+    types::TenantScope,
 };
 
 /// Maximum number of retained source transactions read by one catch-up step.

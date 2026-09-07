@@ -723,7 +723,7 @@ fn openapi_router() -> OpenApiRouter<Arc<ApiState>> {
         .routes(routes!(webhooks::list_deliveries))
         .routes(routes!(webhooks::replay_webhook))
         .routes(routes!(webhooks::rotate_secret))
-        .routes(routes!(imports::create_import))
+        .routes(routes!(imports::create_import, imports::list_imports))
         .routes(routes!(imports::get_import))
         .routes(routes!(imports::upload_import))
         .routes(routes!(imports::resume_import))
@@ -2234,6 +2234,7 @@ async fn restore_database(
 async fn list_collections(
     State(state): State<Arc<ApiState>>,
     Path(name): Path<String>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
     let host = match document_host(&state, &name) {
         Ok(host) => host,
@@ -2246,8 +2247,21 @@ async fn list_collections(
     let Ok(scope) = document_scope(engine) else {
         return ApiError::control_unavailable().into_response();
     };
-    let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::storage_failure().into_response();
+    let mut session = if headers.contains_key(&SESSION_HEADER) {
+        match open_session(engine, &scope, &headers) {
+            Ok(session) => Some(session),
+            Err(error) => return error.into_response(),
+        }
+    } else {
+        None
+    };
+    let snapshot = match &mut session {
+        Some(session) => session.read_snapshot().map_err(session_error),
+        None => engine.read_snapshot(&scope).map_err(|_| ApiError::storage_failure()),
+    };
+    let snapshot = match snapshot {
+        Ok(snapshot) => snapshot,
+        Err(error) => return error.into_response(),
     };
     match engine.collections_at(&scope, &snapshot) {
         Ok(collections) => {
@@ -2264,7 +2278,11 @@ async fn list_collections(
             if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
                 return error.into_response();
             }
-            json_response(StatusCode::OK, body)
+            let mut response = json_response(StatusCode::OK, body);
+            if let Some(session) = &session {
+                with_session(&mut response, session.session_token());
+            }
+            response
         }
         Err(_) => ApiError::storage_failure().into_response(),
     }
@@ -2276,6 +2294,7 @@ async fn list_collections(
 async fn list_indexes(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
     let host = match document_host(&state, &name) {
         Ok(host) => host,
@@ -2285,9 +2304,25 @@ async fn list_indexes(
         return error.into_response();
     }
     let engine = host.engine();
+    let Ok(scope) = document_scope(engine) else {
+        return ApiError::control_unavailable().into_response();
+    };
     let Ok(collection) = CollectionName::try_new(&collection) else {
         return invalid_identifier("collection name", &collection).into_response();
     };
+    let mut session = if headers.contains_key(&SESSION_HEADER) {
+        match open_session(engine, &scope, &headers) {
+            Ok(session) => Some(session),
+            Err(error) => return error.into_response(),
+        }
+    } else {
+        None
+    };
+    if let Some(session) = &mut session {
+        if let Err(error) = session.read_snapshot() {
+            return session_error(error).into_response();
+        }
+    }
     match engine.index_descriptors() {
         Ok(descriptors) => {
             let mut body = String::from("{\"indexes\":[");
@@ -2311,7 +2346,11 @@ async fn list_indexes(
             if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
                 return error.into_response();
             }
-            json_response(StatusCode::OK, body)
+            let mut response = json_response(StatusCode::OK, body);
+            if let Some(session) = &session {
+                with_session(&mut response, session.session_token());
+            }
+            response
         }
         Err(_) => ApiError::storage_failure().into_response(),
     }
@@ -2391,6 +2430,7 @@ async fn create_index(
 async fn list_documents(
     State(state): State<Arc<ApiState>>,
     Path((name, collection)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
     extract::Query(paging): extract::Query<DocumentPaging>,
 ) -> Response {
     let host = match document_host(&state, &name) {
@@ -2407,8 +2447,21 @@ async fn list_documents(
     let Ok(collection) = CollectionName::try_new(&collection) else {
         return invalid_identifier("collection name", &collection).into_response();
     };
-    let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::storage_failure().into_response();
+    let mut session = if headers.contains_key(&SESSION_HEADER) {
+        match open_session(engine, &scope, &headers) {
+            Ok(session) => Some(session),
+            Err(error) => return error.into_response(),
+        }
+    } else {
+        None
+    };
+    let snapshot = match &mut session {
+        Some(session) => session.read_snapshot().map_err(session_error),
+        None => engine.read_snapshot(&scope).map_err(|_| ApiError::storage_failure()),
+    };
+    let snapshot = match snapshot {
+        Ok(snapshot) => snapshot,
+        Err(error) => return error.into_response(),
     };
     let limit = paging.limit.unwrap_or(100).clamp(1, 1000);
     let Ok(documents) = engine.snapshot_documents_in_collection(&scope, &snapshot, &collection)
@@ -2441,7 +2494,11 @@ async fn list_documents(
     if let Err(error) = account_direct_read(&state, &name, response_bytes(body.len())) {
         return error.into_response();
     }
-    json_response(StatusCode::OK, body)
+    let mut response = json_response(StatusCode::OK, body);
+    if let Some(session) = &session {
+        with_session(&mut response, session.session_token());
+    }
+    response
 }
 
 /// The documents list's paging parameters.
@@ -4013,6 +4070,14 @@ async fn execute_sql(
     {
         return error.into_response();
     }
+    let mut session = if headers.contains_key(&SESSION_HEADER) {
+        match open_session(engine, &scope, &headers) {
+            Ok(session) => Some(session),
+            Err(error) => return error.into_response(),
+        }
+    } else {
+        None
+    };
     let request: serde_json::Value = match serde_json::from_str(&body) {
         Ok(value) => value,
         Err(_) => {
@@ -4114,10 +4179,19 @@ async fn execute_sql(
         if let Err(error) = account_direct_read(&state, &name, response_bytes(explained.len())) {
             return error.into_response();
         }
-        return json_response(StatusCode::OK, explained);
+        let mut response = json_response(StatusCode::OK, explained);
+        if let Some(session) = &session {
+            with_session(&mut response, session.session_token());
+        }
+        return response;
     }
-    let Ok(snapshot) = engine.read_snapshot(&scope) else {
-        return ApiError::storage_failure().into_response();
+    let snapshot = match &mut session {
+        Some(session) => session.read_snapshot().map_err(session_error),
+        None => engine.read_snapshot(&scope).map_err(|_| ApiError::storage_failure()),
+    };
+    let snapshot = match snapshot {
+        Ok(snapshot) => snapshot,
+        Err(error) => return error.into_response(),
     };
     match store.execute(&plan, &snapshot) {
         Ok(result) => {
@@ -4152,7 +4226,11 @@ async fn execute_sql(
             if let Err(error) = account_direct_read(&state, &name, response_bytes(rendered.len())) {
                 return error.into_response();
             }
-            json_response(StatusCode::OK, rendered)
+            let mut response = json_response(StatusCode::OK, rendered);
+            if let Some(session) = &session {
+                with_session(&mut response, session.session_token());
+            }
+            response
         }
         Err(error) => ApiError::query(error).into_response(),
     }
